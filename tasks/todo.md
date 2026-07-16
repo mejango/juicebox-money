@@ -3,18 +3,18 @@
 
 Order minimizes rework. Commit per batch; Sepolia sims per encoding change.
 
-- [ ] B1 P5 issuance base currency (ETH/USD choice; project-wide, encodes
+- [x] B1 P5 issuance base currency (ETH/USD choice; project-wide, encodes
       per-ruleset — website has per-stage granularity, ours is one choice)
-- [ ] B2 smalls: P17 custom cash-out tax %, P16 tags, P18 ToS checkbox,
+- [x] B2 smalls: P17 custom cash-out tax %, P16 tags, P18 ToS checkbox,
       P19 25MB media
-- [ ] B3 flavor batch: P12 custom approval-hook address (+per-chain),
+- [x] B3 flavor batch: P12 custom approval-hook address (+per-chain),
       P13 router terminal toggle, P15 per-chain owner/operator, P14 verify
       custom token on every selected chain
-- [ ] B4 splits batch: P10 split locks (fixed-duration stages),
+- [x] B4 splits batch: P10 split locks (fixed-duration stages),
       P11 pay vs add-to-balance for project payout splits, split HOOK
       recipients (custom hook addr + optional projectId/beneficiary; Fund
       market LP option for reserved splits)
-- [ ] B5 P4 surplus allowance: capped amount + currency; owner-surplus
+- [x] B5 P4 surplus allowance: capped amount + currency; owner-surplus
       toggle alongside routed payouts
 - [ ] B6 P2 multi-token payouts (per-context modes/amounts) + per-chain
       payout AMOUNT overrides (website has data model only; jango adds UI
