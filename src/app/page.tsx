@@ -1,39 +1,16 @@
 import Link from 'next/link'
-import { getTrendingSuckerGroups, BsSuckerGroup } from '@/lib/bendystraw'
+import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { ProjectCard } from '@/components/ProjectCard'
 
 export const revalidate = 120
 
 export default async function HomePage() {
-  let groups: BsSuckerGroup[] = []
+  let cards: TrendingCard[] = []
   try {
-    groups = await getTrendingSuckerGroups(12)
+    cards = await getTrendingCards(12)
   } catch {
-    // Bendystraw hiccup: render the page anyway with an empty grid.
+    // Data hiccup: render the page anyway with an empty grid.
   }
-  // One card per omnichain project: representative = the member with the
-  // richest identity (name/logo), preferring the lowest chain id on ties.
-  const cards = groups
-    // Trending is a storefront: skip projects with no name and no activity.
-    .filter(
-      group =>
-        BigInt(group.volume) > 0n ||
-        group.projects.items.some(m => m.name),
-    )
-    .map(group => {
-      const members = group.projects.items
-      const representative =
-        members.find(m => m.name && m.logoUri) ??
-        members.find(m => m.name) ??
-        members[0]
-      if (!representative) return null
-      return {
-        group,
-        representative,
-        chainIds: members.map(m => m.chainId),
-      }
-    })
-    .filter(<T,>(card: T | null): card is T => card !== null)
 
   return (
     <>
@@ -79,14 +56,8 @@ export default async function HomePage() {
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {cards.map(({ group, representative, chainIds }) => (
-              <ProjectCard
-                key={group.id}
-                project={representative}
-                chainIds={chainIds}
-                volume={group.volume}
-                paymentsCount={group.paymentsCount}
-              />
+            {cards.map(card => (
+              <ProjectCard key={card.key} card={card} />
             ))}
           </div>
         )}
