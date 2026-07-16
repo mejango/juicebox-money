@@ -16,7 +16,7 @@ import { AddButton } from './ui'
  */
 
 export type DraftItem = {
-  id: number
+  id: string
   name: string
   /** Human units in the store currency (ETH or USD). */
   price: string
@@ -35,11 +35,9 @@ export type DraftItem = {
   moreOpen: boolean
 }
 
-let nextId = 1
-
 export function newDraftItem(): DraftItem {
   return {
-    id: nextId++,
+    id: crypto.randomUUID(),
     name: '',
     price: '',
     supply: '',
@@ -113,17 +111,17 @@ export function StoreEditor({
   currencyLabel: 'ETH' | 'USD'
   disabled: boolean
 }) {
-  const update = (id: number, patch: Partial<DraftItem>) => {
+  const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(items.map(item => (item.id === id ? { ...item, ...patch } : item)))
   }
 
-  const remove = (id: number) => {
+  const remove = (id: string) => {
     const item = items.find(i => i.id === id)
     if (item?.imagePreview) URL.revokeObjectURL(item.imagePreview)
     onChange(items.filter(i => i.id !== id))
   }
 
-  const onImageChange = (id: number, file: File | null) => {
+  const onImageChange = (id: string, file: File | null) => {
     const item = items.find(i => i.id === id)
     if (item?.imagePreview) URL.revokeObjectURL(item.imagePreview)
     if (!file || !file.type.startsWith('image/') || file.size > MAX_IMAGE_BYTES) {

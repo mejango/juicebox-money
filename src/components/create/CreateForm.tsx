@@ -33,7 +33,7 @@ import {
   stageSummaryParts,
   type DraftStage,
 } from './StageRulesEditor'
-import { CheckIcon, SubSection } from './ui'
+import { CheckIcon, Piped, SubSection } from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -149,7 +149,7 @@ export function CreateForm() {
   )
   const [approvalDeadline, setApprovalDeadline] =
     useState<ApprovalDeadline>('1day')
-  const setStage = (id: number, next: DraftStage) =>
+  const setStage = (id: string, next: DraftStage) =>
     setStages(prev => prev.map(s => (s.id === id ? next : s)))
   // Step 1's Basics starts open; everything else starts collapsed.
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
@@ -1078,7 +1078,7 @@ export function CreateForm() {
                     Ruleset #{i + 1}
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-smoke-700">
-                    {stageSummary(stage, i, unitLabel)}
+                    <Piped text={stageSummary(stage, i, unitLabel)} />
                   </span>
                 </button>
                 {i > 0 ? (

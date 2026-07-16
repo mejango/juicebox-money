@@ -16,7 +16,7 @@ import { CheckRow, ChipButton, OptionRow, SubSection } from './ui'
  */
 
 export type DraftStage = {
-  id: number
+  id: string
   /** Duration select value: '0' Flexible, preset seconds, FOREVER, 'custom'. */
   durationValue: string
   customDuration: string
@@ -41,11 +41,9 @@ export type DraftStage = {
   open: Record<string, boolean>
 }
 
-let nextId = 1
-
 export function newDraftStage(first: boolean): DraftStage {
   return {
-    id: nextId++,
+    id: crypto.randomUUID(),
     durationValue: '0',
     customDuration: '',
     customUnit: 'days',

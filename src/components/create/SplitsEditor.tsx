@@ -4,7 +4,7 @@ import { resolvedAddress } from '@/lib/ens'
 import { chainName } from '@/lib/urn'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField, ProjectIdField } from './AddressField'
-import { AddButton } from './ui'
+import { AddButton, Piped } from './ui'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
@@ -19,7 +19,7 @@ import { AddButton } from './ui'
 export type SplitsMode = 'percent' | 'amount'
 
 export type DraftSplit = {
-  id: number
+  id: string
   /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
   value: string
   kind: 'address' | 'project'
@@ -36,11 +36,9 @@ export type DraftSplit = {
   perChainOpen: boolean
 }
 
-let nextId = 1
-
 export function newDraftSplit(): DraftSplit {
   return {
-    id: nextId++,
+    id: crypto.randomUUID(),
     value: '',
     kind: 'address',
     recipient: '',
@@ -115,7 +113,7 @@ export function SplitsEditor({
   /** Selected launch chains; >1 enables per-chain recipient overrides. */
   chainIds?: number[]
 }) {
-  const update = (id: number, patch: Partial<DraftSplit>) => {
+  const update = (id: string, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
   }
   const total = splitsTotal(splits, mode)
@@ -305,17 +303,25 @@ export function SplitsEditor({
             <span
               className={`text-xs tabular-nums ${total > 100 ? 'font-medium text-red-600' : 'text-smoke-700'}`}
             >
-              {total > 100
-                ? `${total}% — over 100%`
-                : total < 100
-                  ? `${total}% allocated | remaining ${bucketLabel} ${remainderNote}`
-                  : '100% allocated'}
+              {total > 100 ? (
+                `${total}% — over 100%`
+              ) : total < 100 ? (
+                <Piped
+                  text={`${total}% allocated | remaining ${bucketLabel} ${remainderNote}`}
+                />
+              ) : (
+                '100% allocated'
+              )}
             </span>
           ) : (
             <span className="text-xs tabular-nums text-smoke-700">
-              {total > 0
-                ? `${total.toLocaleString('en-US')} ${amountLabel} total | the rest stays in the project`
-                : ''}
+              {total > 0 ? (
+                <Piped
+                  text={`${total.toLocaleString('en-US')} ${amountLabel} total | the rest stays in the project`}
+                />
+              ) : (
+                ''
+              )}
             </span>
           )
         ) : null}

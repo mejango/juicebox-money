@@ -1,6 +1,27 @@
 'use client'
 
+import { Fragment } from 'react'
+
 /** Shared create-flow UI primitives. */
+
+/** Render " | "-separated text with subtle, spaced pipes. */
+export function Piped({ text }: { text: string }) {
+  const parts = text.split(' | ')
+  return (
+    <>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 ? (
+            <span aria-hidden className="mx-2 text-smoke-300">
+              |
+            </span>
+          ) : null}
+          {part}
+        </Fragment>
+      ))}
+    </>
+  )
+}
 
 export function CheckIcon({ className }: { className: string }) {
   return (
@@ -180,7 +201,7 @@ export function SubSection({
         <span className="flex min-w-0 items-center gap-2.5">
           {!open ? (
             <span className="truncate text-sm font-medium text-ink">
-              {summary}
+              <Piped text={summary} />
             </span>
           ) : null}
           <svg
