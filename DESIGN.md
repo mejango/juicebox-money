@@ -54,14 +54,15 @@ panels, live activity rail, bold statement copy).
 3. **Live activity rail** ("Fresh activity"): right column on desktop, below
    the fold on mobile. Monospace rows: `<who> paid 0.01 ETH → <project>` with
    colored amounts, relative time, chain chip. Auto-refreshing (poll ~15s).
-4. **CTAs**: solid juice blocks, black mono text, subtle 2px hard shadow
-   (offset 3px, no blur — printed-sticker feel). Hover: shadow collapses +
-   translate(1px,1px). Focus: cyan 2px outline.
+4. **CTAs**: FLAT solid juice blocks, dark pixel text, radius 2px. Hover:
+   darken to juice-600. No shadows, no translate — precision, not stickers.
+   Focus: cyan 2px outline. (Owner feedback: skeuomorphic shadows read goofy.)
 5. **Inputs**: dark wells (#0f0d12), 2px cyan border on focus, mono
    placeholder in dim.
-6. **The juice character energy**: we don't have the mascot art in-repo; use
-   the 🧃 mark + "JUICE!" burst-style headline accents (skewed juice-colored
-   highlight behind key words) instead. No stock illustrations.
+6. **Serious first.** The playfulness lives in the pixel type, the chips, and
+   the live data — never in decorative effects (no confetti, no burst marks,
+   no mascot substitutes). Pro/serious is the register; Elektron restraint
+   wins every tie.
 
 ## Elektron synthesis (second reference: elektron.se)
 juicy.vision brings the density and color; Elektron brings the restraint and
@@ -77,11 +78,11 @@ the hardware-instrument feel. The blend:
 - **Silkscreen labels.** Tiny uppercase dim labels over values everywhere
   (ETH RAISED / PAYMENTS / SUPPORTERS) — instrument-panel typography. Already
   in the stat rows; apply consistently (inputs, activity, chips).
-- **One expressive headline moment per page.** Elektron's hand-painted
-  "SYNTAKT 1.40" energy — ours is a heavy, slightly rotated juice-orange
-  highlight mark behind the key headline words (CSS only, -1.5deg skew, rough
-  edge via clip-path polygon). Body stays strict mono; the contrast between
-  one loud element and an otherwise disciplined page IS the look.
+- **Headline accent = restraint.** Headlines are plain ink grotesque; the only
+  accent is a juice-colored terminal period ("Fund your thing·"). NO highlight
+  marks, skews, or painted effects — the owner rejected them as goofy. The
+  loudness budget goes to the data (orange/lime amounts, chips), never to
+  decoration.
 - **Hero restraint.** The home hero is a near-empty dark band: the statement,
   one line of copy, two buttons (one solid, one pixel-outline). Let the
   activity rail and trending mosaic below carry the color density.

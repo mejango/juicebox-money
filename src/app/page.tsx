@@ -23,7 +23,7 @@ export default async function HomePage() {
       <section className="border-b-2 border-frame">
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-24">
           <h1 className="max-w-3xl font-display text-5xl font-extrabold leading-[1.08] tracking-[-0.03em] sm:text-6xl lg:text-7xl">
-            Fund <span className="juice-mark">your thing</span>.
+            Fund your thing<span className="text-juice">.</span>
           </h1>
           <p className="mt-6 max-w-xl text-base leading-relaxed text-dim sm:text-lg">
             Raise money from anyone, anywhere. Supporters get tokens, you get

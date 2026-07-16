@@ -8,7 +8,7 @@ export default function NotFound() {
         404 · Not found
       </p>
       <h1 className="mt-4 font-display text-4xl font-extrabold tracking-[-0.03em] sm:text-5xl">
-        This juicebox is <span className="juice-mark">empty</span>.
+        This juicebox is empty<span className="text-juice">.</span>
       </h1>
       <p className="mt-4 max-w-md text-base leading-relaxed text-dim">
         We couldn&apos;t find that page. It may have moved, or the project

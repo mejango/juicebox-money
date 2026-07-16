@@ -43,19 +43,15 @@
     @apply rounded-md border-2 border-juice bg-panel;
   }
 
-  /* --- Primary CTA: solid juice block, printed-sticker shadow --- */
+  /* --- Primary CTA: flat solid juice block. Precision, no tricks. --- */
   .btn-juice {
     @apply inline-flex items-center justify-center bg-juice font-pixel uppercase tracking-wider text-bg;
-    border-radius: 4px;
-    box-shadow: 3px 3px 0 0 rgb(227 145 23 / 0.45);
-    transition:
-      transform 120ms ease,
-      box-shadow 120ms ease;
+    border-radius: 2px;
+    transition: background-color 120ms ease;
   }
 
   .btn-juice:hover:not(:disabled) {
-    transform: translate(1px, 1px);
-    box-shadow: 1px 1px 0 0 rgb(227 145 23 / 0.45);
+    background-color: theme('colors.juice.600');
   }
 
   .btn-juice:disabled {
@@ -105,33 +101,6 @@
 }
 
 @layer utilities {
-  /* The one expressive moment per page: skewed, rough-edged juice highlight
-     behind key headline words (DESIGN.md §Elektron synthesis). */
-  .juice-mark {
-    position: relative;
-    display: inline-block;
-    color: theme('colors.bg');
-    padding: 0 0.18em;
-  }
-
-  .juice-mark::before {
-    content: '';
-    position: absolute;
-    inset: 0.02em -0.12em -0.04em -0.1em;
-    background: theme('colors.juice.DEFAULT');
-    transform: rotate(-1.5deg) skewX(-4deg);
-    clip-path: polygon(
-      1% 8%,
-      99% 0%,
-      100% 62%,
-      98% 96%,
-      55% 100%,
-      2% 94%,
-      0% 55%
-    );
-    z-index: -1;
-  }
-
   /* Pixel blip: loading-bar stub above section headlines. */
   .pixel-blip {
     display: inline-block;
@@ -145,38 +114,15 @@
   }
 
   .card-lift {
-    transition:
-      transform 150ms ease,
-      border-color 150ms ease;
+    transition: border-color 150ms ease;
   }
 
   .card-lift:hover {
-    transform: translate(1px, 1px);
     border-color: theme('colors.juice.DEFAULT');
   }
 
-  /* One-shot confetti burst for the launch success view. */
-  .confetti-piece {
-    position: absolute;
-    top: 0;
-    width: 8px;
-    height: 13px;
-    border-radius: 1px;
-    opacity: 0;
-    animation: confetti-fall 1.4s cubic-bezier(0.25, 0.6, 0.45, 1) forwards;
-  }
 }
 
-@keyframes confetti-fall {
-  0% {
-    transform: translateY(-10px) rotate(0deg);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(150px) rotate(520deg);
-    opacity: 0;
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .btn-juice,
@@ -187,8 +133,4 @@
     transform: none;
   }
 
-  .confetti-piece {
-    animation: none;
-    opacity: 0;
-  }
 }

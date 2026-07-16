@@ -46,27 +46,6 @@ function StepBadge({ n }: { n: number }) {
   )
 }
 
-/** A one-shot, CSS-only confetti burst — tasteful, plays once. */
-function Confetti() {
-  const colors = ['#FFB32C', '#46E4D8', '#7DE858', '#E85D9B', '#F5A312']
-  return (
-    <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-0">
-      {Array.from({ length: 18 }).map((_, i) => (
-        <span
-          key={i}
-          className="confetti-piece"
-          style={{
-            left: `${4 + ((i * 37) % 92)}%`,
-            backgroundColor: colors[i % colors.length],
-            animationDelay: `${(i % 6) * 90}ms`,
-            animationDuration: `${1100 + ((i * 97) % 700)}ms`,
-          }}
-        />
-      ))}
-    </div>
-  )
-}
-
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet()
   const config = useConfig()
@@ -316,7 +295,6 @@ export function CreateForm() {
   if (phase === 'done') {
     return (
       <div className="relative mx-auto max-w-2xl px-4 py-14 sm:px-6 sm:py-20">
-        <Confetti />
         <div className="panel-juice p-8 text-center sm:p-10">
           <span className="mx-auto flex h-16 w-16 items-center justify-center rounded border-2 border-lime">
             <svg
@@ -384,7 +362,7 @@ export function CreateForm() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
       <h1 className="font-display text-4xl font-extrabold leading-tight tracking-[-0.03em] sm:text-5xl">
-        Start <span className="juice-mark">a project</span>.
+        Start a project<span className="text-juice">.</span>
       </h1>
       <p className="mt-3 max-w-lg text-base leading-relaxed text-dim sm:text-lg">
         Give it a name, pick your chains, and launch. Live in minutes — you
