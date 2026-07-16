@@ -1,102 +1,79 @@
-# juicebox.money design system — "juice terminal"
+# juicebox.money design system — Juicebox Brand 2023
 
-The site should feel like juicy.vision's sibling: an arcade terminal, not
-another SaaS landing page. Dark, monospace, neon-framed panels, dense color.
-Unique and a little loud — but everything still legible and mainstream-usable.
-Reference: juicy.vision (dark mosaic of colored chips, orange-framed bento
-panels, live activity rail, bold statement copy).
+The site uses the OFFICIAL Juicebox Design System (2023 brand guidelines —
+"inspired by tropical fruits and good times: playful nature while building
+trust"). This is the system live on current juicebox.money; the new site
+continues it faithfully. It replaces all prior experimental themes.
 
 ## Foundations
-- **Single dark theme.** Background `#141217` (near-black plum-charcoal) with a
-  very subtle radial glow (juice orange at ~6% opacity, top-right). No light mode.
-- **Three-voice type system** (the Elektron trick — the contrast IS the look):
-  1. **Display**: big, heavy, tight neo-grotesque for page/section headlines
-     ("Other fun stuff" scale — text-5xl+ with -0.03em tracking). System sans
-     stack (`-apple-system, "Helvetica Neue", Inter, Arial`).
-  2. **Data/body**: system mono (`ui-monospace, "SF Mono", "Cascadia Mono",
-     Menlo, monospace`) for everything informational — stats, activity rows,
-     addresses, inputs, labels, paragraphs.
-  3. **Pixel/bitmap**: buttons, badges, and tiny controls use the Silkscreen
-     bitmap face (OFL) — the ONE font asset we ship (self-hosted woff2 subset,
-     ~10KB, license file in-repo). "WATCH VIDEO"-style: uppercase pixel text
-     in a 1px-outlined box. If the asset can't be sourced cleanly, fall back
-     to uppercase mono + letterspacing — but the pixel face is the identity.
-- **Pixel motifs**: small dash/blip glyph fragments above section headlines
-  (like a loading bar stub), chunky 8-bit chevrons for carousel/steppers —
-  CSS box-shadow pixel art or the pixel font's glyphs.
-- **Panels, not cards.** Regions are hard-edged panels: `border: 2px solid` in
-  a strong accent, radius 6px MAX, background `#1c1922` (panel surface), tiled
-  bento-style with 12–16px gaps. The page is a composition of framed panels —
-  like a tiling window manager.
-- **Copy voice**: bold, direct, a little cheeky. "Fund your thing." /
-  "Don't just stand there." No corporate fluff. Sentence case.
+- **Light warm theme.** Page background **Bone `#FFF7E8`**. Surfaces white or
+  Bone-tinted; borders thin near-black (`#201E1A`-family) or Smoke.
+  (The Slate scale exists for a future dark theme — NOT used now.)
+- **Type — the brand's three faces** (all self-hosted woff2 in /public/fonts,
+  already licensed for juicebox.money):
+  - **Display**: PP Agrandir Wide (Bold / Medium) — big statements only
+    (Display 1–4: 72/60/48/36px → text-7xl…4xl).
+  - **Headings**: PP Agrandir Medium — H1–H5 (48/36/30/24/20px).
+  - **Body & UI**: Beatrice (Regular / Medium) — 18/16/14px. Numbers/data can
+    use tabular figures via font-feature-settings where alignment matters.
+  - Load via next/font/local with fallbacks (`Agrandir → system sans`,
+    `Beatrice → system sans`); font-display swap.
+- **Voice**: playful but trustworthy. Sentence case. "Fund anything" energy.
+  Brand values: transparency, trust, fun & exciting, community-driven,
+  customization, reliability.
 
-## Color
-- `bg`: #141217 · `panel`: #1c1922 · `panel2`: #221e2a (nested)
-- `ink`: #F2EFE6 (primary text) · `dim`: #9b95a8 (secondary)
-- `juice`: #FFB32C (frames, primary CTAs, highlights) — the brand anchor
-- `cyan`: #46E4D8 (inputs focus, interactive outlines)
-- `lime`: #7DE858 (success, positive amounts, links-on-dark)
-- `magenta`: #E85D9B (accents, event highlights)
-- `teal`: #2A9D8F, `olive`: #8A8A1F, `navy`: #274690 (chip family, cycle for
-  tags/chains) — chips are SOLID blocks with light text, tiny (11–12px), like
-  keyboard keys.
-- Amount coloring in data: ETH amounts in juice orange, token amounts in lime,
-  addresses/timestamps in dim.
+## Color tokens (from the official scales; base marked)
+- **Split** (primary yellow-orange): 25 #FFFCF5 · 50(Bone) #FFF7E8 ·
+  100 #FFEECC · 200 #FFE1A6 · 300 #FFD27A · **400 #FFBB45 (base)** ·
+  500 #F5A312 · 600 #D98909 · 700 #BD6800 · 800 #824100 · 900 #5C2C00 ·
+  950 #2E1605
+- **Bluebs** (primary blue): 25 #EEF1FD · 50 #DEE5FC · 100 #CFD9FA ·
+  200 #BBC8F6 · 300 #9AAEF5 · 400 #748EED · **500 #5777EB (base)** ·
+  600 #4864C8 · 700 #3A52A6 · 800 #233575 · 900 #152254 · 950 #0F193D
+- **Melon** (green): base 500 #68CA8F (25 #F6FEF9, 400 #86D5A5, 600 #4FA270,
+  700 #3D7955, 950 #15281D)
+- **Peel** (orange): base 400 #EE6F3A (25 #FFF8F2, 100 #FFDAC9, 300 #F2936B,
+  500 #E0561B, 600 #BD4513, 800 #69280C)
+- **Grape** (purple): base 400 #A57AED (100 #EDE4FB, 300 #C9AFF4, 500 #8651E0,
+  700 #461791)
+- **Crush** (pink): base 500 #FF9FD5 (100 #FFECF7, 300 #FFC5E6, 400 #FFB2DD,
+  600 #E47FB8, 700 #C85F9A)
+- **Smoke** (warm neutral): 25 #FEFDFB · 75 #F5F4EF · 100 #EFECE6 ·
+  200 #E7E3DC · 300 #D4D1C7 · 400 #C0BBAD · 500 #9C9580 · 700 #575344 ·
+  900 #353026
+- **Grey**: standard 25 #FCFCFC … 950 #0C0C03 (400 #A3A3A3, 700 #424242,
+  900 #1A1A1A)
+- **Ink** (text): Grey-900/950 family on Bone; secondary text Smoke-700 or
+  Grey-600.
 
-## Signature elements
-1. **Framed bento layout**: the home page = tiled panels (hero statement panel,
-   trending mosaic panel, live activity rail panel). Panel frames alternate
-   juice orange (primary regions) and dim (#39333f) for secondary ones.
-2. **Chip mosaic**: tags, chains, versions render as dense solid-color chips
-   with 1-2 letter badges where useful. Chain chips: ETH=dim-gray, OP=red,
-   BASE=navy blue, ARB=cyan-blue — solid blocks, white/light text, uppercase.
-3. **Live activity rail** ("Fresh activity"): right column on desktop, below
-   the fold on mobile. Monospace rows: `<who> paid 0.01 ETH → <project>` with
-   colored amounts, relative time, chain chip. Auto-refreshing (poll ~15s).
-4. **CTAs**: FLAT solid juice blocks, dark pixel text, radius 2px. Hover:
-   darken to juice-600. No shadows, no translate — precision, not stickers.
-   Focus: cyan 2px outline. (Owner feedback: skeuomorphic shadows read goofy.)
-5. **Inputs**: dark wells (#0f0d12), 2px cyan border on focus, mono
-   placeholder in dim.
-6. **Serious first.** The playfulness lives in the pixel type, the chips, and
-   the live data — never in decorative effects (no confetti, no burst marks,
-   no mascot substitutes). Pro/serious is the register; Elektron restraint
-   wins every tie.
-
-## Elektron synthesis (second reference: elektron.se)
-juicy.vision brings the density and color; Elektron brings the restraint and
-the hardware-instrument feel. The blend:
-- **Bands + bento, not bento everywhere.** Pages are full-width horizontal
-  bands (Elektron) separated by plain dark space; the juicy framed-panel bento
-  lives INSIDE the bands that earn it (trending mosaic, activity rail). Not
-  every region gets a frame — negative space is part of the design.
-- **Pixel-outline buttons (secondary actions).** Uppercase mono label,
-  1–2px light border, transparent background — like silkscreened hardware
-  buttons ("FIND OUT MORE"). Primary CTAs stay solid juice blocks. ALL button
-  labels uppercase.
-- **Silkscreen labels.** Tiny uppercase dim labels over values everywhere
-  (ETH RAISED / PAYMENTS / SUPPORTERS) — instrument-panel typography. Already
-  in the stat rows; apply consistently (inputs, activity, chips).
-- **Headline accent = restraint.** Headlines are plain ink grotesque; the only
-  accent is a juice-colored terminal period ("Fund your thing·"). NO highlight
-  marks, skews, or painted effects — the owner rejected them as goofy. The
-  loudness budget goes to the data (orange/lime amounts, chips), never to
-  decoration.
-- **Hero restraint.** The home hero is a near-empty dark band: the statement,
-  one line of copy, two buttons (one solid, one pixel-outline). Let the
-  activity rail and trending mosaic below carry the color density.
-- **Two-up media bands.** Content sections (future: featured projects,
-  stories) use Elektron's edge-to-edge two-up grid: full-bleed media, caption +
-  pixel-outline button below, chunky pixel chevrons if it scrolls.
+## Components (the guideline language)
+1. **Pill buttons & labels** — the brand's signature: rounded-lg/xl bone or
+   white fill, thin (1.5px) near-black border, SMALL black offset shadow
+   (~2px 2px 0, no blur), Agrandir label. Primary action variant: Split-400
+   fill, black text, same border+shadow. Keep the shadow SMALL and precise —
+   refined stationery, not stickers. Hover: fill shifts one scale stop;
+   active: shadow collapses 1px.
+2. **Cards/panels**: white or Bone surface, 1px Smoke-200/300 border,
+   rounded-xl, generous padding. No heavy frames.
+3. **Chips/badges**: soft tints of the fruit scales (e.g. Melon-100 bg with
+   Melon-700 text; chain badges use per-chain tints) with rounded-full shape,
+   Beatrice 12-14px. Version chips: Smoke-100 bg / Smoke-700 text.
+4. **Icons**: fun, playful & modern line icons in colored circular tiles
+   (Split/Crush/Grape/Bluebs/Peel/Melon 400s) — inline SVG, 1.5px strokes.
+5. **Amount coloring**: data stays legible on light — ETH amounts Ink bold,
+   positive/receive values Melon-700, project-token amounts Bluebs-600.
+6. **Logo**: /public/brand/logo-full.svg (main) in the nav; logo-icon.svg
+   (bolt carton) for favicon/compact contexts.
+7. **Activity rail**: stays a signature element — white panel, Beatrice rows,
+   Bluebs links, relative times in Smoke-500; calm on light.
+8. **Inputs**: white wells, 1.5px Smoke-300 border, focus border Bluebs-500;
+   Beatrice.
 
 ## Rules
-- Responsive first: bento collapses to a single column on mobile; the activity
-  rail stacks under trending; chips wrap; touch targets ≥44px.
-- Accessibility: all text ≥ 4.5:1 on its surface (dim on panel passes; check
-  chip text); focus outlines always visible; prefers-reduced-motion disables
-  the hover translate + confetti.
-- Lean: no new dependencies, no images except project logos, CSS-only effects.
-- Every page (home, project, create, 404) speaks this language — no mixed
-  light/dark leftovers. Para modal theme flips to dark (#1c1922 bg, juice
-  foreground).
+- Responsive mobile/tablet/desktop; touch targets ≥44px.
+- Contrast ≥4.5:1 for text (fruit tints as backgrounds only with their 700+
+  text stops; Split-400 with black text passes).
+- Lean: self-hosted brand fonts + logo SVGs are the only assets; no icon
+  libraries; CSS-only effects; reduced-motion respected.
+- The playfulness budget: color tiles, chips, pill shadows, friendly copy.
+  Never: skewed marks, confetti, pixel fonts, chunky sticker shadows.
