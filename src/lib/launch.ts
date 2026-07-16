@@ -71,10 +71,37 @@ export type SplitConfig = {
   beneficiary: Address
 }
 
-export type LaunchPlan = {
-  currency: TreasuryCurrency
-  /** Tokens issued per ETH (or USD, for USDC treasuries) paid — 18-dec FP. */
+/** Duration sentinel for a final stage that lasts forever (uint32 max). */
+export const FOREVER_SECONDS = 4_294_967_295
+
+/** The approval condition queued ruleset edits must clear (shared across
+ *  every stage, matching website/). 'none' = no condition (address(0)). */
+export type ApprovalDeadline = 'none' | '3hours' | '1day' | '3days' | '7days'
+
+const DEADLINE_CONTRACT: Record<
+  Exclude<ApprovalDeadline, 'none'>,
+  'JBDeadline3Hours' | 'JBDeadline1Day' | 'JBDeadline3Days' | 'JBDeadline7Days'
+> = {
+  '3hours': 'JBDeadline3Hours',
+  '1day': 'JBDeadline1Day',
+  '3days': 'JBDeadline3Days',
+  '7days': 'JBDeadline7Days',
+}
+
+/** One stage = one queued JBRulesetConfig. */
+export type StageRules = {
+  /** Seconds. 0 = flexible/open-ended (last stage only — a 0-duration
+   *  non-final stage never advances). FOREVER_SECONDS = lasts forever. */
+  duration: number
+  /** Unix seconds the FIRST stage must start at or after; 0 = deploy block.
+   *  Later stages always encode 0 — the controller chains each after the
+   *  previous stage's duration. */
+  mustStartAtOrAfter: number
+  /** Tokens issued per ETH/USD paid — 18-dec FP. On stage 2+, 0n = inherit
+   *  the previous stage's (cut) rate. */
   weight: bigint
+  /** Issuance cut applied each cycle, out of 1e9. */
+  weightCutPercent: number
   /** Share of newly issued tokens kept back from payers, out of 10000. */
   reservedPercent: number
   /** Where reserved tokens go. Any unallocated remainder → the owner. */
@@ -97,6 +124,21 @@ export type LaunchPlan = {
   /** Cash-out tax out of 10000, or null = cash outs disabled. */
   cashOutTaxRate: number | null
   allowOwnerMinting: boolean
+  /** Pause payments (and with them, token issuance) for this stage. */
+  pausePay: boolean
+}
+
+export type LaunchPlan = {
+  currency: TreasuryCurrency
+  /** The queued stages, in order. At least one. */
+  stages: StageRules[]
+  /** What happens after the last timed stage (website/'s "Afterwards"):
+   *  'wait' appends a standby stage (payments paused, no issuance),
+   *  'terminal' appends a forever clone of the last stage,
+   *  'cycle' lets the last ruleset repeat as-is. Ignored when the last
+   *  stage is open-ended (duration 0) or forever. */
+  afterMode: 'wait' | 'terminal' | 'cycle'
+  approvalDeadline: ApprovalDeadline
   /** The 721 store collection. Always deployed — even with zero items — so
    *  every project can stock its store later without a ruleset change. */
   store: {
@@ -106,9 +148,11 @@ export type LaunchPlan = {
   }
 }
 
-export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
-  currency: 'eth',
+export const DEFAULT_STAGE: StageRules = {
+  duration: 0,
+  mustStartAtOrAfter: 0,
   weight: DEFAULT_WEIGHT,
+  weightCutPercent: 0,
   reservedPercent: 0,
   reservedSplits: [],
   payouts: 'none',
@@ -117,6 +161,37 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   holdFees: false,
   cashOutTaxRate: null,
   allowOwnerMinting: false,
+  pausePay: false,
+}
+
+export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
+  currency: 'eth',
+  stages: [DEFAULT_STAGE],
+  afterMode: 'wait',
+  approvalDeadline: '1day',
+}
+
+/**
+ * Expand the "Afterwards" choice into the final queued stage, exactly like
+ * website/'s resolveStages: only applies when the last stage is timed.
+ */
+export function resolveStages(plan: LaunchPlan): StageRules[] {
+  const last = plan.stages[plan.stages.length - 1]
+  const lastTimed = last.duration > 0 && last.duration !== FOREVER_SECONDS
+  if (!lastTimed || plan.afterMode === 'cycle') return plan.stages
+  if (plan.afterMode === 'terminal') {
+    return [...plan.stages, { ...last, duration: FOREVER_SECONDS }]
+  }
+  // 'wait': standby — payments (and issuance) pause, cash outs preserved.
+  return [
+    ...plan.stages,
+    {
+      ...DEFAULT_STAGE,
+      weight: 0n,
+      pausePay: true,
+      cashOutTaxRate: last.cashOutTaxRate,
+    },
+  ]
 }
 
 /** Reserved-token splits live in group 1; payout splits in group
@@ -168,65 +243,77 @@ export function buildLaunchRequest(args: {
   const token = treasuryToken(plan.currency, chainId)
   const context = buildAccountingContext(token, isUsd ? 6 : 18)
 
-  const metadata = buildRulesetMetadata({
-    baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
-    reservedPercent: plan.reservedPercent,
-    // Routing ALL funds (unlimited payout limit) leaves no surplus for cash
-    // outs — keep them formally disabled in that mode. Fixed-amount routing
-    // and flexible (surplus allowance) leave surplus intact, so they coexist.
-    cashOutTaxRate:
-      plan.payouts === 'routed' && plan.payoutLimitAmount === null
-        ? CASH_OUTS_OFF
-        : (plan.cashOutTaxRate ?? CASH_OUTS_OFF),
-    allowOwnerMinting: plan.allowOwnerMinting,
-    holdFees: plan.holdFees,
-  })
+  const stages = resolveStages(plan)
 
-  const splitGroups = [
-    ...(plan.reservedPercent > 0 && plan.reservedSplits.length > 0
-      ? [{ groupId: RESERVED_SPLIT_GROUP, splits: toJbSplits(plan.reservedSplits) }]
-      : []),
-    ...(plan.payouts === 'routed' && plan.payoutSplits.length > 0
-      ? [
-          {
-            groupId: BigInt(token),
-            splits: toJbSplits(plan.payoutSplits),
-          },
-        ]
-      : []),
-  ]
+  // The approval condition is shared across stages. It's meaningless when
+  // the last stage lasts forever — force address(0) then (website/ parity).
+  const lastForever =
+    stages[stages.length - 1].duration === FOREVER_SECONDS
+  const approvalHook =
+    plan.approvalDeadline === 'none' || lastForever
+      ? zeroAddress
+      : v6Address(DEADLINE_CONTRACT[plan.approvalDeadline], chainId)
 
-  const fundAccessLimitGroups =
-    plan.payouts === 'none'
-      ? []
-      : [
-          {
-            terminal: v6Address('JBMultiTerminal', chainId),
-            token,
-            payoutLimits:
-              plan.payouts === 'routed'
-                ? [
-                    {
-                      amount: plan.payoutLimitAmount ?? UNLIMITED_PAYOUT,
-                      currency: context.currency,
-                    },
-                  ]
-                : [],
-            surplusAllowances:
-              plan.payouts === 'flexible'
-                ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
-                : [],
-          },
-        ]
-
-  const rulesetConfigurations = [
+  const rulesetConfigurations = stages.map((stage, i) =>
     buildRulesetConfiguration({
-      weight: plan.weight,
-      metadata,
-      splitGroups,
-      fundAccessLimitGroups,
+      // Only the first stage carries a real start; later stages encode 0 so
+      // the controller chains each after the previous stage's duration.
+      mustStartAtOrAfter: i === 0 ? stage.mustStartAtOrAfter : 0,
+      duration: stage.duration,
+      weight: stage.weight,
+      weightCutPercent: stage.weightCutPercent,
+      approvalHook,
+      metadata: buildRulesetMetadata({
+        baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+        reservedPercent: stage.reservedPercent,
+        // Routing ALL funds (unlimited payout limit) leaves no surplus for
+        // cash outs — keep them formally disabled in that mode. Fixed-amount
+        // routing and flexible (surplus allowance) leave surplus intact.
+        cashOutTaxRate:
+          stage.payouts === 'routed' && stage.payoutLimitAmount === null
+            ? CASH_OUTS_OFF
+            : (stage.cashOutTaxRate ?? CASH_OUTS_OFF),
+        allowOwnerMinting: stage.allowOwnerMinting,
+        holdFees: stage.holdFees,
+        pausePay: stage.pausePay,
+      }),
+      splitGroups: [
+        ...(stage.reservedPercent > 0 && stage.reservedSplits.length > 0
+          ? [
+              {
+                groupId: RESERVED_SPLIT_GROUP,
+                splits: toJbSplits(stage.reservedSplits),
+              },
+            ]
+          : []),
+        ...(stage.payouts === 'routed' && stage.payoutSplits.length > 0
+          ? [{ groupId: BigInt(token), splits: toJbSplits(stage.payoutSplits) }]
+          : []),
+      ],
+      fundAccessLimitGroups:
+        stage.payouts === 'none'
+          ? []
+          : [
+              {
+                terminal: v6Address('JBMultiTerminal', chainId),
+                token,
+                payoutLimits:
+                  stage.payouts === 'routed'
+                    ? [
+                        {
+                          amount: stage.payoutLimitAmount ?? UNLIMITED_PAYOUT,
+                          currency: context.currency,
+                        },
+                      ]
+                    : [],
+                surplusAllowances:
+                  stage.payouts === 'flexible'
+                    ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
+                    : [],
+              },
+            ],
     }),
-  ]
+  )
 
   const terminalConfigurations = buildTerminalConfigurations({
     chainId,

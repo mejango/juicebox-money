@@ -12,20 +12,26 @@ import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
 import {
+  FOREVER_SECONDS,
   buildLaunchRequest,
   projectIdFromReceipt,
+  type ApprovalDeadline,
   type LaunchPlan,
   type SplitConfig,
+  type StageRules,
   type StoreItem,
   type TreasuryCurrency,
 } from '@/lib/launch'
-import { CashOutCurve } from './CashOutCurve'
+import { splitOk, type DraftSplit } from './SplitsEditor'
 import {
-  SplitsEditor,
-  splitOk,
-  splitsTotal,
-  type DraftSplit,
-} from './SplitsEditor'
+  StageRulesEditor,
+  newDraftStage,
+  stageDurationSeconds,
+  stageOk,
+  stageSummary,
+  type DraftStage,
+} from './StageRulesEditor'
+import { CheckIcon, SubSection } from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -96,119 +102,6 @@ function StepBadge({ n }: { n: number }) {
   )
 }
 
-function CheckIcon({ className }: { className: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="m5 13 4 4L19 7" />
-    </svg>
-  )
-}
-
-/** One questionnaire choice: radio-style row with a title and a one-liner. */
-function OptionRow({
-  checked,
-  onSelect,
-  disabled,
-  title,
-  blurb,
-}: {
-  checked: boolean
-  onSelect: () => void
-  disabled: boolean
-  title: string
-  blurb: string
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      disabled={disabled}
-      aria-pressed={checked}
-      className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-        checked
-          ? 'border-ink bg-white'
-          : 'border-smoke-200 bg-white hover:border-smoke-400'
-      }`}
-    >
-      <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
-          checked ? 'border-ink bg-ink' : 'border-smoke-300'
-        }`}
-      >
-        {checked ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-ink">{title}</span>
-        <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-          {blurb}
-        </span>
-      </span>
-    </button>
-  )
-}
-
-const CASH_OUT_TAXES = [
-  { rate: 0, label: 'No tax' },
-  { rate: 1000, label: '10% tax' },
-  { rate: 3000, label: '30% tax' },
-  { rate: 5000, label: '50% tax' },
-] as const
-
-/** Collapsible questionnaire subsection: label + summary when closed. */
-function SubSection({
-  label,
-  summary,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string
-  summary: string
-  open: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <div className="mt-3 rounded-xl border border-smoke-200 bg-white">
-      <button
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex min-h-[52px] w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <span className="field-label !text-smoke-700">{label}</span>
-        <span className="flex min-w-0 items-center gap-2.5">
-          {!open ? (
-            <span className="truncate text-sm font-medium text-ink">
-              {summary}
-            </span>
-          ) : null}
-          <svg
-            viewBox="0 0 24 24"
-            className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${open ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </span>
-      </button>
-      {open ? <div className="px-4 pb-4">{children}</div> : null}
-    </div>
-  )
-}
-
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet()
   const config = useConfig()
@@ -243,19 +136,19 @@ export function CreateForm() {
   const setLink = (key: keyof typeof links, value: string) =>
     setLinks(prev => ({ ...prev, [key]: value.slice(0, 300) }))
   const [currency, setCurrency] = useState<TreasuryCurrency>('eth')
-  const [selected, setSelected] = useState<number[]>([SUPPORTED_CHAINS[0].id])
+  const [selected, setSelected] = useState<number[]>(
+    SUPPORTED_CHAINS.map(chain => chain.id),
+  )
 
-  // --- 2: Rules ---
-  const [issuanceRate, setIssuanceRate] = useState('10000')
-  const [reservedPct, setReservedPct] = useState('0')
-  const [reservedSplits, setReservedSplits] = useState<DraftSplit[]>([])
-  const [payouts, setPayouts] = useState<'none' | 'flexible' | 'routed'>('none')
-  const [routedMode, setRoutedMode] = useState<'all' | 'amounts'>('all')
-  const [payoutSplits, setPayoutSplits] = useState<DraftSplit[]>([])
-  const [holdFees, setHoldFees] = useState(false)
-  const [cashOuts, setCashOuts] = useState(false)
-  const [cashOutTax, setCashOutTax] = useState(0)
-  const [ownerMinting, setOwnerMinting] = useState(false)
+  // --- 2: Rules (one entry per queued ruleset/stage) ---
+  const [stages, setStages] = useState<DraftStage[]>([newDraftStage(true)])
+  const [afterMode, setAfterMode] = useState<'wait' | 'terminal' | 'cycle'>(
+    'wait',
+  )
+  const [approvalDeadline, setApprovalDeadline] =
+    useState<ApprovalDeadline>('1day')
+  const setStage = (id: number, next: DraftStage) =>
+    setStages(prev => prev.map(s => (s.id === id ? next : s)))
   // Step 1's Basics starts open; everything else starts collapsed.
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({
     basics: true,
@@ -377,35 +270,17 @@ export function CreateForm() {
   }, [fees, selected])
 
   const nameOk = name.trim().length > 0
-  const issuanceOk =
-    issuanceRate.trim() !== '' &&
-    Number.isFinite(Number(issuanceRate)) &&
-    Number(issuanceRate) >= 0
-  const reservedOk =
-    reservedPct.trim() !== '' &&
-    Number.isFinite(Number(reservedPct)) &&
-    Number(reservedPct) >= 0 &&
-    Number(reservedPct) <= 100
-  const reservedOn = reservedOk && Number(reservedPct) > 0
-  const reservedSplitsOk =
-    !reservedOn ||
-    (reservedSplits.every(s => splitOk(s, 'percent')) &&
-      splitsTotal(reservedSplits, 'percent') <= 100)
-  const payoutsMode = routedMode === 'all' ? 'percent' : 'amount'
-  // No recipients is fine — payouts default to the project owner.
-  const payoutSplitsOk =
-    payouts !== 'routed' ||
-    (payoutSplits.every(s => splitOk(s, payoutsMode)) &&
-      (payoutsMode !== 'percent' ||
-        splitsTotal(payoutSplits, 'percent') <= 100))
+  const stagesOk = stages.every((s, i) => stageOk(s, i === 0))
+  // A 0-duration non-final stage never advances (website/'s badStageIndex).
+  const badStage = stages.findIndex(
+    (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
+  )
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
     selected.length > 0 &&
-    issuanceOk &&
-    reservedOk &&
-    reservedSplitsOk &&
-    payoutSplitsOk &&
+    stagesOk &&
+    badStage === -1 &&
     itemsOk &&
     (phase === 'form' || phase === 'failed')
 
@@ -443,18 +318,17 @@ export function CreateForm() {
         ...toRecipient(row),
       }))
 
-  /** Routed payouts: '%' mode splits all funds (unlimited limit); 'amounts'
-   *  mode fixes each recipient's amount — the payout limit is the sum and
-   *  split percents are the amounts' shares of it (last row absorbs
-   *  rounding so the limit is fully allocated). */
-  const buildRoutedSplits = (): {
-    splits: SplitConfig[]
-    limit: bigint | null
-  } => {
-    if (routedMode === 'all') {
-      return { splits: toSplitConfigs(payoutSplits), limit: null }
+  /** Routed payouts for one stage: '%' mode splits all funds (unlimited
+   *  limit); 'amounts' mode fixes each recipient's amount — the payout
+   *  limit is the sum and split percents are the amounts' shares of it
+   *  (last row absorbs rounding so the limit is fully allocated). */
+  const buildRoutedSplits = (
+    stage: DraftStage,
+  ): { splits: SplitConfig[]; limit: bigint | null } => {
+    if (stage.routedMode === 'all') {
+      return { splits: toSplitConfigs(stage.payoutSplits), limit: null }
     }
-    const valid = payoutSplits.filter(s => splitOk(s, 'amount'))
+    const valid = stage.payoutSplits.filter(s => splitOk(s, 'amount'))
     const values = valid.map(row => parseUnits(row.value, isUsd ? 6 : 18))
     const total = values.reduce((a, b) => a + b, 0n)
     if (total === 0n) return { splits: [], limit: null }
@@ -472,23 +346,55 @@ export function CreateForm() {
     }
   }
 
-  /** The launch plan, assembled from the questionnaire (pure state). */
-  const buildPlan = (store: LaunchPlan['store']): LaunchPlan => {
-    const routed = payouts === 'routed' ? buildRoutedSplits() : null
+  /** One draft stage → StageRules (the encoded plan shape). */
+  const toStageRules = (
+    stage: DraftStage,
+    index: number,
+    deployStart: number,
+  ): StageRules => {
+    const routed = stage.payouts === 'routed' ? buildRoutedSplits(stage) : null
+    const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
+    const reservedOn =
+      Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
     return {
-      currency,
-      weight: parseUnits(issuanceRate || '0', 18),
-      reservedPercent: Math.round(Number(reservedPct || '0') * 100),
-      reservedSplits: reservedOn ? toSplitConfigs(reservedSplits) : [],
-      payouts,
+      duration: stageDurationSeconds(stage),
+      // Stage 1 honors a scheduled start; multichain launches pin a shared
+      // near-future start so every chain begins at the same moment. Later
+      // stages chain automatically (encoded 0 in launch.ts).
+      mustStartAtOrAfter:
+        index === 0
+          ? stage.scheduleOn && stage.schedule
+            ? Math.floor(new Date(stage.schedule).getTime() / 1000)
+            : selected.length > 1
+              ? deployStart
+              : 0
+          : 0,
+      // Empty rate on a later stage = keep the previous (cut) rate.
+      weight:
+        stage.issuanceRate.trim() === '' && index > 0
+          ? 0n
+          : parseUnits(stage.issuanceRate || '0', 18),
+      weightCutPercent: Math.round(Number(stage.cutPct || '0') * 1e7),
+      reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
+      reservedSplits: reservedOn ? toSplitConfigs(stage.reservedSplits) : [],
+      payouts: stage.payouts,
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
-      holdFees: payouts !== 'none' && holdFees,
-      cashOutTaxRate:
-        cashOuts && !(payouts === 'routed' && routedMode === 'all')
-          ? cashOutTax
-          : null,
-      allowOwnerMinting: ownerMinting,
+      holdFees: stage.payouts !== 'none' && stage.holdFees,
+      cashOutTaxRate: stage.cashOuts && !routedAll ? stage.cashOutTax : null,
+      allowOwnerMinting: stage.ownerMinting,
+      pausePay: false,
+    }
+  }
+
+  /** The launch plan, assembled from the questionnaire (pure state). */
+  const buildPlan = (store: LaunchPlan['store']): LaunchPlan => {
+    const deployStart = Math.floor(Date.now() / 1000) + 600
+    return {
+      currency,
+      stages: stages.map((stage, i) => toStageRules(stage, i, deployStart)),
+      afterMode,
+      approvalDeadline,
       store,
     }
   }
@@ -710,36 +616,17 @@ export function CreateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneUnindexed.join(',')])
 
-  // ---- Questionnaire summaries (shown on collapsed subsections) ----
+  // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter(v => v.trim()).length
   const linksSummary = linkCount > 0 ? `${linkCount} added` : 'None'
-  const taxLabel = cashOutTax === 0 ? 'no tax' : `${cashOutTax / 100}% tax`
-  const validPayoutSplits = payoutSplits.filter(s =>
-    splitOk(s, payoutsMode),
-  ).length
-  const routedAll = payouts === 'routed' && routedMode === 'all'
-  const tokensSummary = issuanceOk
-    ? `${Number(issuanceRate).toLocaleString('en-US')} per ${unitLabel}${
-        reservedOn ? ` · ${Number(reservedPct)}% reserved` : ''
-      }`
-    : '—'
-  const payoutsSummary =
-    (payouts === 'none'
-      ? 'Funds stay in the project'
-      : payouts === 'flexible'
-        ? 'Flexible withdrawals'
-        : validPayoutSplits === 0
-          ? 'Routing all funds to you'
-          : routedMode === 'all'
-            ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`
-            : `Routing ${splitsTotal(payoutSplits, 'amount').toLocaleString('en-US')} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
-    (payouts !== 'none' && holdFees ? ' · fees held' : '')
-  const cashOutsSummary = routedAll
-    ? 'Off — all funds routed'
-    : cashOuts
-      ? `On · ${taxLabel}`
-      : 'Off'
-  const ownerSummary = ownerMinting ? 'Can mint tokens' : 'Standard'
+  const lastStage = stages[stages.length - 1]
+  const lastDuration = stageDurationSeconds(lastStage)
+  // "Afterwards" applies only when the last stage is timed (website/ parity).
+  const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS
+  // The approval condition is meaningless when rules end in a forever stage.
+  const deadlineApplies =
+    lastDuration !== FOREVER_SECONDS &&
+    !(afterApplies && afterMode === 'terminal')
 
   // ---- Success view ----
   if (phase === 'done') {
@@ -1123,7 +1010,7 @@ export function CreateForm() {
         </div>
       </section>
 
-      {/* 2 — Rules questionnaire */}
+      {/* 2 — Rules: one card per queued ruleset (stage) */}
       <section className={step === 1 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
@@ -1132,286 +1019,150 @@ export function CreateForm() {
           </h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          The defaults make a simple, flexible project. Open a section to
-          adjust it — everything can be changed later by you, the owner.
+          The defaults make a simple, flexible project. Rules live in
+          rulesets — give one a duration and you can queue what comes next.
         </p>
 
         <div className="mt-5">
-          {/* Tokens */}
-          <SubSection
-            label="Tokens"
-            summary={tokensSummary}
-            open={!!openSection.tokens}
-            onToggle={() => toggleSection('tokens')}
-          >
-            <p className="text-xs leading-relaxed text-smoke-700">
-              Supporters get newly issued project tokens when they pay.
-            </p>
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={issuanceRate}
-                onChange={e => setIssuanceRate(e.target.value.slice(0, 15))}
-                disabled={busy}
-                className={`input-well min-h-[44px] w-36 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                  issuanceOk ? '' : '!border-red-400'
-                }`}
-              />
-              <span className="text-sm text-smoke-700">
-                tokens per {unitLabel} paid
-              </span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={reservedPct}
-                onChange={e => setReservedPct(e.target.value.slice(0, 5))}
-                disabled={busy}
-                className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                  reservedOk ? '' : '!border-red-400'
-                }`}
-              />
-              <span className="text-sm text-smoke-700">
-                % of new tokens reserved
-              </span>
-            </div>
-            {reservedOn ? (
-              <div className="mt-4">
-                <p className="text-xs leading-relaxed text-smoke-700">
-                  Where should reserved tokens go? Leave empty to keep them
-                  all for yourself.
-                </p>
-                <SplitsEditor
-                  splits={reservedSplits}
-                  onChange={setReservedSplits}
-                  disabled={busy}
-                  bucketLabel="reserved tokens"
-                />
-              </div>
-            ) : null}
-          </SubSection>
-
-          {/* Payouts */}
-          <SubSection
-            label="Payouts"
-            summary={payoutsSummary}
-            open={!!openSection.payouts}
-            onToggle={() => toggleSection('payouts')}
-          >
-            <div className="space-y-2">
-              <OptionRow
-                checked={payouts === 'none'}
-                onSelect={() => setPayouts('none')}
-                disabled={busy}
-                title="Keep funds in the project"
-                blurb="Nothing can be paid out until you change the rules. The clearest promise to supporters."
-              />
-              <OptionRow
-                checked={payouts === 'flexible'}
-                onSelect={() => setPayouts('flexible')}
-                disabled={busy}
-                title="Flexible withdrawals"
-                blurb="You can withdraw any amount from the project's surplus, any time."
-              />
-              <OptionRow
-                checked={payouts === 'routed'}
-                onSelect={() => setPayouts('routed')}
-                disabled={busy}
-                title="Routed payouts"
-                blurb="Incoming funds route automatically to recipients you set — anyone can trigger the payout."
-              />
-            </div>
-            {payouts === 'routed' ? (
-              <div className="mt-3">
-                <div className="flex flex-wrap gap-2">
-                  {(
-                    [
-                      ['all', 'Split all funds by %'],
-                      ['amounts', `Fixed ${unitLabel} amounts`],
-                    ] as const
-                  ).map(([value, label]) => {
-                    const active = routedMode === value
-                    return (
-                      <button
-                        key={value}
-                        onClick={() => !busy && setRoutedMode(value)}
-                        disabled={busy}
-                        aria-pressed={active}
-                        className={
-                          active
-                            ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-                            : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                        }
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                  {routedMode === 'all'
-                    ? 'Every incoming payment is split among the recipients by percentage.'
-                    : `Each recipient gets up to their ${unitLabel} amount — anything beyond stays in the project as surplus.`}
-                </p>
-                <SplitsEditor
-                  splits={payoutSplits}
-                  onChange={setPayoutSplits}
-                  disabled={busy}
-                  bucketLabel="payouts"
-                  mode={payoutsMode}
-                  amountLabel={unitLabel}
-                />
-                {payoutSplits.length === 0 ? (
-                  <p className="mt-2 text-xs text-smoke-700">
-                    No recipients yet — payouts go to you, the owner.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            {payouts !== 'none' ? (
-              <div className="mt-5 border-t border-smoke-200 pt-4">
-                <span className="field-label">Fees</span>
-                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Funds leaving the project — payouts and withdrawals — pay a
-                  small fee to the Juicebox protocol. Paying it makes you a
-                  part-owner of Juicebox itself, earning a cut of everyone
-                  else&apos;s fees. Money moving between Juicebox projects
-                  never pays a fee.
-                </p>
+          {stages.map((stage, i) => (
+            <div
+              key={stage.id}
+              className="mt-4 rounded-xl border border-smoke-300 bg-bone first:mt-0"
+            >
+              <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
-                  onClick={() => !busy && setHoldFees(h => !h)}
+                  onClick={() =>
+                    setStages(prev =>
+                      prev.map(s =>
+                        s.id === stage.id
+                          ? { ...s, expanded: !s.expanded }
+                          : { ...s, expanded: false },
+                      ),
+                    )
+                  }
                   disabled={busy}
-                  aria-pressed={holdFees}
-                  className={`mt-2.5 flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-                    holdFees
-                      ? 'border-ink bg-white'
-                      : 'border-smoke-200 bg-white hover:border-smoke-400'
-                  }`}
+                  aria-expanded={stage.expanded}
+                  className="min-w-0 flex-1 text-left"
                 >
-                  <span
-                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                      holdFees ? 'border-ink bg-ink' : 'border-smoke-300'
-                    }`}
-                  >
-                    {holdFees ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
+                  <span className="block font-agrandir text-sm font-medium text-ink">
+                    Ruleset #{i + 1}
                   </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-ink">
-                      Hold fees in the project
-                    </span>
-                    <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                      Keep the fee amount in your project instead of paying it
-                      right away. Useful if you might put funds back into your
-                      Juicebox later — issuing refunds, say — since returned
-                      funds unlock the held fee.
-                    </span>
+                  <span className="mt-0.5 block truncate text-xs text-smoke-700">
+                    {stageSummary(stage, i, unitLabel)}
                   </span>
                 </button>
+                {i > 0 ? (
+                  <button
+                    onClick={() =>
+                      setStages(prev => prev.filter(s => s.id !== stage.id))
+                    }
+                    disabled={busy}
+                    aria-label={`Remove ruleset ${i + 1}`}
+                    className="shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                  >
+                    Remove
+                  </button>
+                ) : null}
+                <svg
+                  viewBox="0 0 24 24"
+                  className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${stage.expanded ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
               </div>
-            ) : null}
-          </SubSection>
-
-          {/* Cash outs */}
-          <SubSection
-            label="Cash outs"
-            summary={cashOutsSummary}
-            open={!!openSection.cashouts}
-            onToggle={() => toggleSection('cashouts')}
-          >
-            {routedAll ? (
-              <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                Routing all funds by percentage leaves no surplus for token
-                holders to cash out. Switch payouts to fixed amounts to leave
-                a surplus.
-              </p>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <OptionRow
-                    checked={!cashOuts}
-                    onSelect={() => setCashOuts(false)}
+              {stage.expanded ? (
+                <div className="px-4 pb-4">
+                  <StageRulesEditor
+                    stage={stage}
+                    onChange={next => setStage(stage.id, next)}
+                    isFirst={i === 0}
+                    isLast={i === stages.length - 1}
+                    index={i}
+                    unitLabel={unitLabel}
                     disabled={busy}
-                    title="Off"
-                    blurb="Tokens are for support and standing — holders can't pull funds out."
-                  />
-                  <OptionRow
-                    checked={cashOuts}
-                    onSelect={() => setCashOuts(true)}
-                    disabled={busy}
-                    title="On"
-                    blurb="Holders can cash out tokens any time for their share of the surplus."
                   />
                 </div>
-                {cashOuts ? (
-                  <>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {CASH_OUT_TAXES.map(tax => {
-                        const active = cashOutTax === tax.rate
-                        return (
-                          <button
-                            key={tax.rate}
-                            onClick={() => !busy && setCashOutTax(tax.rate)}
-                            disabled={busy}
-                            aria-pressed={active}
-                            className={
-                              active
-                                ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-                                : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                            }
-                          >
-                            {tax.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                      A tax leaves part of each cash out behind for holders who
-                      stay.
-                    </p>
-                    <CashOutCurve rate={cashOutTax} />
-                  </>
-                ) : null}
-              </>
-            )}
-          </SubSection>
+              ) : null}
+            </div>
+          ))}
 
-          {/* Owner powers */}
-          <SubSection
-            label="Owner powers"
-            summary={ownerSummary}
-            open={!!openSection.owner}
-            onToggle={() => toggleSection('owner')}
-          >
-            <button
-              onClick={() => !busy && setOwnerMinting(o => !o)}
-              disabled={busy}
-              aria-pressed={ownerMinting}
-              className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-                ownerMinting
-                  ? 'border-ink bg-white'
-                  : 'border-smoke-200 bg-white hover:border-smoke-400'
-              }`}
-            >
-              <span
-                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                  ownerMinting ? 'border-ink bg-ink' : 'border-smoke-300'
-                }`}
+          {badStage !== -1 ? (
+            <p className="mt-3 text-sm text-red-600">
+              Ruleset #{badStage + 1} needs a duration so Ruleset #
+              {badStage + 2} knows when to start.
+            </p>
+          ) : null}
+
+          {afterApplies ? (
+            <div className="mt-5 border-t border-smoke-200 pt-4">
+              <span className="field-label">
+                Afterwards — when Ruleset #{stages.length} ends
+              </span>
+              <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                <select
+                  value={afterMode}
+                  onChange={e => {
+                    if (e.target.value === 'custom') {
+                      setStages(prev => [
+                        ...prev.map(s => ({ ...s, expanded: false })),
+                        { ...newDraftStage(false), expanded: true },
+                      ])
+                      setAfterMode('wait')
+                    } else {
+                      setAfterMode(e.target.value as typeof afterMode)
+                    }
+                  }}
+                  disabled={busy}
+                  className="input-well min-h-[44px] w-full max-w-md px-3.5 pr-8 text-sm disabled:opacity-60"
+                >
+                  <option value="wait">
+                    Pause — payments and issuance stop until you queue more rules
+                  </option>
+                  <option value="terminal">
+                    Continue on the same terms, forever
+                  </option>
+                  <option value="cycle">Repeat this ruleset, cycle after cycle</option>
+                  <option value="custom">Queue another ruleset…</option>
+                </select>
+              </div>
+            </div>
+          ) : null}
+
+          {deadlineApplies ? (
+            <div className="mt-5 border-t border-smoke-200 pt-4">
+              <span className="field-label">Rule-change notice</span>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                The condition a queued rule change must satisfy before it
+                takes effect, giving supporters time to review changes.
+              </p>
+              <select
+                value={approvalDeadline}
+                onChange={e =>
+                  setApprovalDeadline(e.target.value as ApprovalDeadline)
+                }
+                disabled={busy}
+                className="input-well mt-2 min-h-[44px] w-full max-w-md px-3.5 pr-8 text-sm disabled:opacity-60"
               >
-                {ownerMinting ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-medium text-ink">
-                  Owner can mint tokens any time
-                </span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                  Mint any amount without payment. Supporters can see this
-                  power on your project, so leave it off unless you need it.
-                </span>
-              </span>
-            </button>
-          </SubSection>
+                <option value="3hours">Changes take effect after 3 hours</option>
+                <option value="1day">Changes take effect after 1 day</option>
+                <option value="3days">Changes take effect after 3 days</option>
+                <option value="7days">Changes take effect after 7 days</option>
+                <option value="none">No notice — changes can be immediate</option>
+              </select>
+              {approvalDeadline === 'none' ? (
+                <p className="mt-2 text-xs leading-relaxed text-peel-600">
+                  No notice lets the owner make last-second edits before a
+                  ruleset takes effect, which supporters may see as risky.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -1461,38 +1212,49 @@ export function CreateForm() {
               {selected.map(id => chainName(id)).join(', ') || '—'}
             </dd>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Tokens</dt>
-            <dd className="font-medium text-ink">
-              {issuanceOk ? Number(issuanceRate).toLocaleString('en-US') : '—'} per{' '}
-              {unitLabel}
-              {reservedOk && Number(reservedPct) > 0
-                ? ` · ${Number(reservedPct)}% reserved`
-                : ''}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Payouts</dt>
-            <dd className="font-medium text-ink">
-              {payoutsSummary}
-            </dd>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Cash outs</dt>
-            <dd className="font-medium text-ink">{cashOutsSummary}</dd>
-          </div>
+          {stages.map((stage, i) => (
+            <div
+              key={stage.id}
+              className="flex items-start justify-between gap-3"
+            >
+              <dt className="shrink-0 text-smoke-700">Ruleset #{i + 1}</dt>
+              <dd className="text-right font-medium text-ink">
+                {stageSummary(stage, i, unitLabel)}
+              </dd>
+            </div>
+          ))}
+          {afterApplies ? (
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-smoke-700">Afterwards</dt>
+              <dd className="font-medium text-ink">
+                {afterMode === 'wait'
+                  ? 'Pause until new rules'
+                  : afterMode === 'terminal'
+                    ? 'Same terms forever'
+                    : 'Repeats each cycle'}
+              </dd>
+            </div>
+          ) : null}
+          {deadlineApplies ? (
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-smoke-700">Rule changes</dt>
+              <dd className="font-medium text-ink">
+                {approvalDeadline === 'none'
+                  ? 'Immediate'
+                  : `${
+                      { '3hours': '3 hours', '1day': '1 day', '3days': '3 days', '7days': '7 days' }[
+                        approvalDeadline
+                      ]
+                    } notice`}
+              </dd>
+            </div>
+          ) : null}
           {items.length > 0 ? (
             <div className="flex items-center justify-between gap-3">
               <dt className="text-smoke-700">Store</dt>
               <dd className="font-medium text-ink">
                 {items.length} item{items.length === 1 ? '' : 's'}
               </dd>
-            </div>
-          ) : null}
-          {ownerMinting ? (
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-smoke-700">Owner minting</dt>
-              <dd className="font-medium text-ink">Enabled</dd>
             </div>
           ) : null}
           {selected.map(chainId => (
