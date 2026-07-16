@@ -5,7 +5,7 @@ import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BaseError, parseUnits, type PublicClient } from 'viem'
+import { BaseError, parseUnits, type Address, type PublicClient } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
@@ -15,9 +15,17 @@ import {
   buildLaunchRequest,
   projectIdFromReceipt,
   type LaunchPlan,
+  type SplitConfig,
   type StoreItem,
   type TreasuryCurrency,
 } from '@/lib/launch'
+import { CashOutCurve } from './CashOutCurve'
+import {
+  SplitsEditor,
+  splitOk,
+  splitsTotal,
+  type DraftSplit,
+} from './SplitsEditor'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -146,10 +154,58 @@ function OptionRow({
 }
 
 const CASH_OUT_TAXES = [
-  { rate: 0, label: 'No tax', blurb: 'Everyone gets their full share.' },
-  { rate: 3000, label: '30% tax', blurb: 'Leaves value behind for holders who stay.' },
-  { rate: 5000, label: '50% tax', blurb: 'Strongly rewards long-term holders.' },
+  { rate: 0, label: 'No tax' },
+  { rate: 1000, label: '10% tax' },
+  { rate: 3000, label: '30% tax' },
+  { rate: 5000, label: '50% tax' },
 ] as const
+
+/** Collapsible questionnaire subsection: label + summary when closed. */
+function SubSection({
+  label,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string
+  summary: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mt-3 rounded-xl border border-smoke-200 bg-white">
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex min-h-[52px] w-full items-center justify-between gap-3 px-4 py-3 text-left"
+      >
+        <span className="field-label !text-smoke-700">{label}</span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          {!open ? (
+            <span className="truncate text-sm font-medium text-ink">
+              {summary}
+            </span>
+          ) : null}
+          <svg
+            viewBox="0 0 24 24"
+            className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${open ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </span>
+      </button>
+      {open ? <div className="px-4 pb-4">{children}</div> : null}
+    </div>
+  )
+}
 
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet()
@@ -174,12 +230,18 @@ export function CreateForm() {
   const [selected, setSelected] = useState<number[]>([SUPPORTED_CHAINS[0].id])
 
   // --- 2: Rules ---
-  const [issuanceRate, setIssuanceRate] = useState('1000000')
+  const [issuanceRate, setIssuanceRate] = useState('10000')
   const [reservedPct, setReservedPct] = useState('0')
-  const [payouts, setPayouts] = useState<'none' | 'flexible'>('none')
+  const [reservedSplits, setReservedSplits] = useState<DraftSplit[]>([])
+  const [payouts, setPayouts] = useState<'none' | 'flexible' | 'routed'>('none')
+  const [payoutSplits, setPayoutSplits] = useState<DraftSplit[]>([])
+  const [holdFees, setHoldFees] = useState(false)
   const [cashOuts, setCashOuts] = useState(false)
   const [cashOutTax, setCashOutTax] = useState(0)
   const [ownerMinting, setOwnerMinting] = useState(false)
+  const [openSection, setOpenSection] = useState<Record<string, boolean>>({})
+  const toggleSection = (key: string) =>
+    setOpenSection(prev => ({ ...prev, [key]: !prev[key] }))
 
   // --- 3: Store ---
   const [items, setItems] = useState<DraftItem[]>([])
@@ -273,12 +335,23 @@ export function CreateForm() {
     Number.isFinite(Number(reservedPct)) &&
     Number(reservedPct) >= 0 &&
     Number(reservedPct) <= 100
+  const reservedOn = reservedOk && Number(reservedPct) > 0
+  const reservedSplitsOk =
+    !reservedOn ||
+    (reservedSplits.every(splitOk) && splitsTotal(reservedSplits) <= 100)
+  const payoutSplitsOk =
+    payouts !== 'routed' ||
+    (payoutSplits.length > 0 &&
+      payoutSplits.every(splitOk) &&
+      splitsTotal(payoutSplits) <= 100)
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
     selected.length > 0 &&
     issuanceOk &&
     reservedOk &&
+    reservedSplitsOk &&
+    payoutSplitsOk &&
     itemsOk &&
     (phase === 'form' || phase === 'failed')
 
@@ -296,13 +369,29 @@ export function CreateForm() {
     }))
   }
 
+  /** Parse valid split rows: 0x… → address split; #12 / 12 → project split
+   *  whose tokens go to the owner. Percent → out of 1e9. */
+  const toSplitConfigs = (rows: DraftSplit[]): SplitConfig[] =>
+    rows.filter(splitOk).map(row => {
+      const recipient = row.recipient.trim()
+      const isAddr = recipient.startsWith('0x')
+      return {
+        percent: Math.round(Number(row.percent) * 1e7),
+        projectId: isAddr ? 0n : BigInt(recipient.replace('#', '')),
+        beneficiary: isAddr ? (recipient as Address) : address!,
+      }
+    })
+
   /** The launch plan, assembled from the questionnaire (pure state). */
   const buildPlan = (store: LaunchPlan['store']): LaunchPlan => ({
     currency,
     weight: parseUnits(issuanceRate || '0', 18),
     reservedPercent: Math.round(Number(reservedPct || '0') * 100),
+    reservedSplits: reservedOn ? toSplitConfigs(reservedSplits) : [],
     payouts,
-    cashOutTaxRate: payouts === 'none' && cashOuts ? cashOutTax : null,
+    payoutSplits: payouts === 'routed' ? toSplitConfigs(payoutSplits) : [],
+    holdFees: payouts !== 'none' && holdFees,
+    cashOutTaxRate: payouts !== 'routed' && cashOuts ? cashOutTax : null,
     allowOwnerMinting: ownerMinting,
     store,
   })
@@ -484,6 +573,29 @@ export function CreateForm() {
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneUnindexed.join(',')])
+
+  // ---- Questionnaire summaries (shown on collapsed subsections) ----
+  const taxLabel = cashOutTax === 0 ? 'no tax' : `${cashOutTax / 100}% tax`
+  const validPayoutSplits = payoutSplits.filter(splitOk).length
+  const tokensSummary = issuanceOk
+    ? `${Number(issuanceRate).toLocaleString('en-US')} per ${unitLabel}${
+        reservedOn ? ` · ${Number(reservedPct)}% reserved` : ''
+      }`
+    : '—'
+  const payoutsSummary =
+    (payouts === 'none'
+      ? 'Funds stay in the project'
+      : payouts === 'flexible'
+        ? 'Flexible withdrawals'
+        : `Routed to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
+    (payouts !== 'none' && holdFees ? ' · fees held' : '')
+  const cashOutsSummary =
+    payouts === 'routed'
+      ? 'Off — routed payouts'
+      : cashOuts
+        ? `On · ${taxLabel}`
+        : 'Off'
+  const ownerSummary = ownerMinting ? 'Can mint tokens' : 'Standard'
 
   // ---- Success view ----
   if (phase === 'done') {
@@ -723,156 +835,242 @@ export function CreateForm() {
           </h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          The defaults make a simple, flexible project. Everything here can be
-          changed later by you, the owner.
+          The defaults make a simple, flexible project. Open a section to
+          adjust it — everything can be changed later by you, the owner.
         </p>
 
-        {/* Tokens */}
-        <div className="mt-6">
-          <span className="field-label">Tokens</span>
-          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            Supporters get newly issued project tokens when they pay.
-          </p>
-          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={issuanceRate}
-              onChange={e => setIssuanceRate(e.target.value.slice(0, 15))}
-              disabled={busy}
-              className={`input-well min-h-[44px] w-36 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                issuanceOk ? '' : '!border-red-400'
-              }`}
-            />
-            <span className="text-sm text-smoke-700">
-              tokens per {unitLabel} paid
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={reservedPct}
-              onChange={e => setReservedPct(e.target.value.slice(0, 5))}
-              disabled={busy}
-              className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                reservedOk ? '' : '!border-red-400'
-              }`}
-            />
-            <span className="text-sm text-smoke-700">
-              % of new tokens reserved for you, the owner
-            </span>
-          </div>
-        </div>
-
-        {/* Payouts */}
-        <div className="mt-6">
-          <span className="field-label">Payouts</span>
-          <div className="mt-2.5 space-y-2">
-            <OptionRow
-              checked={payouts === 'none'}
-              onSelect={() => setPayouts('none')}
-              disabled={busy}
-              title="Keep funds in the project"
-              blurb="Nothing can be paid out until you change the rules. The clearest promise to supporters."
-            />
-            <OptionRow
-              checked={payouts === 'flexible'}
-              onSelect={() => setPayouts('flexible')}
-              disabled={busy}
-              title="Flexible withdrawals"
-              blurb="You can pay out any amount to any account, any time."
-            />
-          </div>
-        </div>
-
-        {/* Cash outs */}
-        <div className="mt-6">
-          <span className="field-label">Cash outs</span>
-          {payouts === 'flexible' ? (
-            <p className="mt-2 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-              With flexible withdrawals there&apos;s no guaranteed surplus for
-              token holders to claim, so cash outs stay off.
+        <div className="mt-5">
+          {/* Tokens */}
+          <SubSection
+            label="Tokens"
+            summary={tokensSummary}
+            open={!!openSection.tokens}
+            onToggle={() => toggleSection('tokens')}
+          >
+            <p className="text-xs leading-relaxed text-smoke-700">
+              Supporters get newly issued project tokens when they pay.
             </p>
-          ) : (
-            <>
-              <div className="mt-2.5 space-y-2">
-                <OptionRow
-                  checked={!cashOuts}
-                  onSelect={() => setCashOuts(false)}
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={issuanceRate}
+                onChange={e => setIssuanceRate(e.target.value.slice(0, 15))}
+                disabled={busy}
+                className={`input-well min-h-[44px] w-36 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                  issuanceOk ? '' : '!border-red-400'
+                }`}
+              />
+              <span className="text-sm text-smoke-700">
+                tokens per {unitLabel} paid
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={reservedPct}
+                onChange={e => setReservedPct(e.target.value.slice(0, 5))}
+                disabled={busy}
+                className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                  reservedOk ? '' : '!border-red-400'
+                }`}
+              />
+              <span className="text-sm text-smoke-700">
+                % of new tokens reserved
+              </span>
+            </div>
+            {reservedOn ? (
+              <div className="mt-4">
+                <p className="text-xs leading-relaxed text-smoke-700">
+                  Where should reserved tokens go? Leave empty to keep them
+                  all for yourself.
+                </p>
+                <SplitsEditor
+                  splits={reservedSplits}
+                  onChange={setReservedSplits}
                   disabled={busy}
-                  title="Off"
-                  blurb="Tokens are for support and standing — holders can't pull funds out."
-                />
-                <OptionRow
-                  checked={cashOuts}
-                  onSelect={() => setCashOuts(true)}
-                  disabled={busy}
-                  title="On"
-                  blurb="Holders can cash out tokens any time for their share of the treasury."
+                  bucketLabel="reserved tokens"
                 />
               </div>
-              {cashOuts ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {CASH_OUT_TAXES.map(tax => {
-                    const active = cashOutTax === tax.rate
-                    return (
-                      <button
-                        key={tax.rate}
-                        onClick={() => !busy && setCashOutTax(tax.rate)}
-                        disabled={busy}
-                        aria-pressed={active}
-                        title={tax.blurb}
-                        className={
-                          active
-                            ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-                            : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                        }
-                      >
-                        {tax.label}
-                      </button>
-                    )
-                  })}
-                  <p className="w-full text-xs leading-relaxed text-smoke-700">
-                    A tax leaves part of each cash out behind for holders who
-                    stay. Taxed cash outs also pay a 2.5% protocol fee.
-                  </p>
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
+            ) : null}
+          </SubSection>
 
-        {/* Owner powers */}
-        <div className="mt-6">
-          <span className="field-label">Owner powers</span>
-          <button
-            onClick={() => !busy && setOwnerMinting(o => !o)}
-            disabled={busy}
-            aria-pressed={ownerMinting}
-            className={`mt-2.5 flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-              ownerMinting
-                ? 'border-ink bg-white'
-                : 'border-smoke-200 bg-white hover:border-smoke-400'
-            }`}
+          {/* Payouts */}
+          <SubSection
+            label="Payouts"
+            summary={payoutsSummary}
+            open={!!openSection.payouts}
+            onToggle={() => toggleSection('payouts')}
           >
-            <span
-              className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                ownerMinting ? 'border-ink bg-ink' : 'border-smoke-300'
+            <div className="space-y-2">
+              <OptionRow
+                checked={payouts === 'none'}
+                onSelect={() => setPayouts('none')}
+                disabled={busy}
+                title="Keep funds in the project"
+                blurb="Nothing can be paid out until you change the rules. The clearest promise to supporters."
+              />
+              <OptionRow
+                checked={payouts === 'flexible'}
+                onSelect={() => setPayouts('flexible')}
+                disabled={busy}
+                title="Flexible withdrawals"
+                blurb="You can withdraw any amount from the project's surplus, any time."
+              />
+              <OptionRow
+                checked={payouts === 'routed'}
+                onSelect={() => setPayouts('routed')}
+                disabled={busy}
+                title="Routed payouts"
+                blurb="Incoming funds route automatically to recipients you set — anyone can trigger the payout."
+              />
+            </div>
+            {payouts === 'routed' ? (
+              <div className="mt-3">
+                <SplitsEditor
+                  splits={payoutSplits}
+                  onChange={setPayoutSplits}
+                  disabled={busy}
+                  bucketLabel="payouts"
+                />
+                {payoutSplits.length === 0 ? (
+                  <p className="mt-2 text-xs text-red-600">
+                    Add at least one recipient to route payouts to.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {payouts !== 'none' ? (
+              <button
+                onClick={() => !busy && setHoldFees(h => !h)}
+                disabled={busy}
+                aria-pressed={holdFees}
+                className={`mt-3 flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
+                  holdFees
+                    ? 'border-ink bg-white'
+                    : 'border-smoke-200 bg-white hover:border-smoke-400'
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
+                    holdFees ? 'border-ink bg-ink' : 'border-smoke-300'
+                  }`}
+                >
+                  {holdFees ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">
+                    Hold fees in the project
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                    Funds leaving the project pay a small protocol fee. Holding
+                    keeps that fee amount in your project instead — it stays
+                    unlocked as long as the funds are added back later.
+                  </span>
+                </span>
+              </button>
+            ) : null}
+          </SubSection>
+
+          {/* Cash outs */}
+          <SubSection
+            label="Cash outs"
+            summary={cashOutsSummary}
+            open={!!openSection.cashouts}
+            onToggle={() => toggleSection('cashouts')}
+          >
+            {payouts === 'routed' ? (
+              <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
+                Routed payouts send all incoming funds to your recipients, so
+                there&apos;s no surplus for token holders to cash out.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <OptionRow
+                    checked={!cashOuts}
+                    onSelect={() => setCashOuts(false)}
+                    disabled={busy}
+                    title="Off"
+                    blurb="Tokens are for support and standing — holders can't pull funds out."
+                  />
+                  <OptionRow
+                    checked={cashOuts}
+                    onSelect={() => setCashOuts(true)}
+                    disabled={busy}
+                    title="On"
+                    blurb="Holders can cash out tokens any time for their share of the surplus."
+                  />
+                </div>
+                {cashOuts ? (
+                  <>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {CASH_OUT_TAXES.map(tax => {
+                        const active = cashOutTax === tax.rate
+                        return (
+                          <button
+                            key={tax.rate}
+                            onClick={() => !busy && setCashOutTax(tax.rate)}
+                            disabled={busy}
+                            aria-pressed={active}
+                            className={
+                              active
+                                ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
+                                : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                            }
+                          >
+                            {tax.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                      A tax leaves part of each cash out behind for holders who
+                      stay.
+                    </p>
+                    <CashOutCurve rate={cashOutTax} />
+                  </>
+                ) : null}
+              </>
+            )}
+          </SubSection>
+
+          {/* Owner powers */}
+          <SubSection
+            label="Owner powers"
+            summary={ownerSummary}
+            open={!!openSection.owner}
+            onToggle={() => toggleSection('owner')}
+          >
+            <button
+              onClick={() => !busy && setOwnerMinting(o => !o)}
+              disabled={busy}
+              aria-pressed={ownerMinting}
+              className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
+                ownerMinting
+                  ? 'border-ink bg-white'
+                  : 'border-smoke-200 bg-white hover:border-smoke-400'
               }`}
             >
-              {ownerMinting ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-ink">
-                Owner can mint tokens any time
+              <span
+                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
+                  ownerMinting ? 'border-ink bg-ink' : 'border-smoke-300'
+                }`}
+              >
+                {ownerMinting ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
               </span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                Mint any amount without payment. Supporters can see this power
-                on your project, so leave it off unless you need it.
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-ink">
+                  Owner can mint tokens any time
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                  Mint any amount without payment. Supporters can see this
+                  power on your project, so leave it off unless you need it.
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+          </SubSection>
         </div>
       </section>
 
@@ -935,18 +1133,12 @@ export function CreateForm() {
           <div className="flex items-center justify-between gap-3">
             <dt className="text-smoke-700">Payouts</dt>
             <dd className="font-medium text-ink">
-              {payouts === 'none' ? 'Funds stay in the project' : 'Flexible'}
+              {payoutsSummary}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-3">
             <dt className="text-smoke-700">Cash outs</dt>
-            <dd className="font-medium text-ink">
-              {payouts === 'none' && cashOuts
-                ? cashOutTax === 0
-                  ? 'On · no tax'
-                  : `On · ${cashOutTax / 100}% tax`
-                : 'Off'}
-            </dd>
+            <dd className="font-medium text-ink">{cashOutsSummary}</dd>
           </div>
           {items.length > 0 ? (
             <div className="flex items-center justify-between gap-3">

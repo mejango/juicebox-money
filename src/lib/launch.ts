@@ -15,8 +15,8 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
 
-/** 1,000,000 tokens per ETH/USD paid (18-decimal fixed point). */
-export const DEFAULT_WEIGHT = 10n ** 24n
+/** 10,000 tokens per ETH/USD paid (18-decimal fixed point). */
+export const DEFAULT_WEIGHT = 10n ** 22n
 
 /** cashOutTaxRate sentinel: 100% tax = cash outs disabled. */
 const CASH_OUTS_OFF = 10_000
@@ -39,15 +39,33 @@ export type StoreItem = {
   encodedIpfsUri: `0x${string}`
 }
 
+/** One split recipient: an address, or a project (its tokens go to
+ *  `beneficiary`). Percent is out of 1e9 (SPLITS_TOTAL_PERCENT). */
+export type SplitConfig = {
+  percent: number
+  projectId: bigint
+  beneficiary: Address
+}
+
 export type LaunchPlan = {
   currency: TreasuryCurrency
   /** Tokens issued per ETH (or USD, for USDC treasuries) paid — 18-dec FP. */
   weight: bigint
-  /** Share of newly issued tokens kept for the owner, out of 10000. */
+  /** Share of newly issued tokens kept back from payers, out of 10000. */
   reservedPercent: number
-  /** 'none': funds only leave via cash outs (if enabled). 'flexible': the
-   *  owner can pay out any amount to anyone, anytime (⇒ no surplus). */
-  payouts: 'none' | 'flexible'
+  /** Where reserved tokens go. Any unallocated remainder → the owner. */
+  reservedSplits: SplitConfig[]
+  /** 'none': funds only leave via cash outs (if enabled).
+   *  'flexible': unlimited surplus allowance — the owner can withdraw any
+   *  amount from surplus, anytime; cash outs share the same surplus.
+   *  'routed': unlimited payout limit + splits — anyone can trigger payouts
+   *  that route incoming funds to the recipients (⇒ no surplus). */
+  payouts: 'none' | 'flexible' | 'routed'
+  /** Recipients for 'routed' payouts. Unallocated remainder → the owner. */
+  payoutSplits: SplitConfig[]
+  /** Hold payout/allowance fees in the project instead of processing them,
+   *  so they can be unlocked if the funds come back. */
+  holdFees: boolean
   /** Cash-out tax out of 10000, or null = cash outs disabled. */
   cashOutTaxRate: number | null
   allowOwnerMinting: boolean
@@ -64,9 +82,27 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   currency: 'eth',
   weight: DEFAULT_WEIGHT,
   reservedPercent: 0,
+  reservedSplits: [],
   payouts: 'none',
+  payoutSplits: [],
+  holdFees: false,
   cashOutTaxRate: null,
   allowOwnerMinting: false,
+}
+
+/** Reserved-token splits live in group 1; payout splits in group
+ *  uint256(token). Split percents are out of 1e9. */
+const RESERVED_SPLIT_GROUP = 1n
+
+function toJbSplits(splits: SplitConfig[]) {
+  return splits.map(split => ({
+    percent: split.percent,
+    projectId: split.projectId,
+    beneficiary: split.beneficiary,
+    preferAddToBalance: false,
+    lockedUntil: 0,
+    hook: zeroAddress,
+  }))
 }
 
 export function treasuryToken(
@@ -106,30 +142,53 @@ export function buildLaunchRequest(args: {
   const metadata = buildRulesetMetadata({
     baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
     reservedPercent: plan.reservedPercent,
-    // Flexible payouts leave no surplus, so cash outs would be worthless —
-    // keep them formally disabled in that mode.
+    // Routed payouts consume everything (unlimited payout limit), so there's
+    // no surplus for cash outs — keep them formally disabled in that mode.
+    // Flexible (surplus allowance) leaves surplus intact, so they coexist.
     cashOutTaxRate:
-      plan.payouts === 'flexible' ? CASH_OUTS_OFF : (plan.cashOutTaxRate ?? CASH_OUTS_OFF),
+      plan.payouts === 'routed' ? CASH_OUTS_OFF : (plan.cashOutTaxRate ?? CASH_OUTS_OFF),
     allowOwnerMinting: plan.allowOwnerMinting,
+    holdFees: plan.holdFees,
   })
+
+  const splitGroups = [
+    ...(plan.reservedPercent > 0 && plan.reservedSplits.length > 0
+      ? [{ groupId: RESERVED_SPLIT_GROUP, splits: toJbSplits(plan.reservedSplits) }]
+      : []),
+    ...(plan.payouts === 'routed' && plan.payoutSplits.length > 0
+      ? [
+          {
+            groupId: BigInt(token),
+            splits: toJbSplits(plan.payoutSplits),
+          },
+        ]
+      : []),
+  ]
+
+  const fundAccessLimitGroups =
+    plan.payouts === 'none'
+      ? []
+      : [
+          {
+            terminal: v6Address('JBMultiTerminal', chainId),
+            token,
+            payoutLimits:
+              plan.payouts === 'routed'
+                ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
+                : [],
+            surplusAllowances:
+              plan.payouts === 'flexible'
+                ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
+                : [],
+          },
+        ]
 
   const rulesetConfigurations = [
     buildRulesetConfiguration({
       weight: plan.weight,
       metadata,
-      fundAccessLimitGroups:
-        plan.payouts === 'flexible'
-          ? [
-              {
-                terminal: v6Address('JBMultiTerminal', chainId),
-                token,
-                payoutLimits: [
-                  { amount: UNLIMITED_PAYOUT, currency: context.currency },
-                ],
-                surplusAllowances: [],
-              },
-            ]
-          : [],
+      splitGroups,
+      fundAccessLimitGroups,
     }),
   ]
 
