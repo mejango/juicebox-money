@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { ActivityList } from '@/components/ActivityList'
-import { ChainBadge, chainChipClass } from '@/components/ChainBadge'
+import { ChainIcon } from '@/components/ChainIcon'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
@@ -185,67 +185,66 @@ export default async function ProjectPage({
           className="rounded-xl"
         />
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
-              {name}
-            </h1>
-            <ChainBadge chainId={project.chainId} full />
-          </div>
+          <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
+            {name}
+          </h1>
           {project.projectTagline ? (
             <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
               {project.projectTagline}
             </p>
           ) : null}
-          <p className="mt-2 text-sm text-smoke-700">
+          <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
             {project.owner ? (
               <>
-                Owned by{' '}
-                {etherscan ? (
-                  <a
-                    href={`https://${etherscan}/address/${project.owner}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hover:text-ink hover:underline"
-                  >
-                    {truncateAddress(project.owner)}
-                  </a>
-                ) : (
-                  <span>
-                    {truncateAddress(project.owner)}
-                  </span>
-                )}
-                {' · '}
+                <span>
+                  Owned by{' '}
+                  {etherscan ? (
+                    <a
+                      href={`https://${etherscan}/address/${project.owner}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-ink hover:underline"
+                    >
+                      {truncateAddress(project.owner)}
+                    </a>
+                  ) : (
+                    <span>{truncateAddress(project.owner)}</span>
+                  )}
+                </span>
+                <span
+                  aria-hidden
+                  className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
+                />
               </>
             ) : null}
-            Since {formatDate(project.createdAt)}
-          </p>
+            <span>Since {formatDate(project.createdAt)}</span>
+            <span
+              aria-hidden
+              className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
+            />
+            <span className="inline-flex items-center gap-1.5">
+              <span>on</span>
+              {(chains.length > 1 ? chains : [project]).map(p =>
+                p.chainId === project.chainId ? (
+                  <ChainIcon
+                    key={p.chainId}
+                    chainId={p.chainId}
+                    className="ring-1 ring-ink/60 ring-offset-1 ring-offset-bone"
+                  />
+                ) : (
+                  <Link
+                    key={p.chainId}
+                    href={`/${toUrn(p.chainId, p.projectId)}`}
+                    className="opacity-55 transition-opacity hover:opacity-100"
+                  >
+                    <ChainIcon chainId={p.chainId} />
+                  </Link>
+                ),
+              )}
+            </span>
+          </div>
         </div>
       </header>
-
-      {/* Chain selector */}
-      {chains.length > 1 ? (
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <span className="field-label">Also on</span>
-          {chains.map(p =>
-            p.chainId === project.chainId ? (
-              <span
-                key={p.chainId}
-                className={`chip !px-3 !py-1.5 ${chainChipClass(p.chainId)} ring-1 ring-ink`}
-              >
-                {chainName(p.chainId)}
-              </span>
-            ) : (
-              <Link
-                key={p.chainId}
-                href={`/${toUrn(p.chainId, p.projectId)}`}
-                className={`chip !px-3 !py-1.5 ${chainChipClass(p.chainId)} opacity-70 transition-opacity hover:opacity-100`}
-              >
-                {chainName(p.chainId)}
-              </Link>
-            ),
-          )}
-        </div>
-      ) : null}
 
       {/* Stats */}
       <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
