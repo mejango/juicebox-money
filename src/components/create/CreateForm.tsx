@@ -338,46 +338,44 @@ export function CreateForm() {
     }
     const projectUri = `ipfs://${json.cid}`
 
-    let store: LaunchPlan['store'] = null
-    const validItems = items.filter(itemOk)
-    if (validItems.length > 0) {
-      const pinned: StoreItem[] = []
-      for (const item of validItems) {
-        const imageUri = item.imageFile ? await pinFile(item.imageFile) : undefined
-        const itemRes = await fetch('/api/ipfs/pin-item', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: item.name.trim(),
-            description: item.description.trim() || undefined,
-            image: imageUri,
-          }),
-        })
-        const itemJson = (await itemRes.json()) as { cid?: string; error?: string }
-        if (!itemRes.ok || !itemJson.cid) {
-          throw new Error(
-            itemJson.error ?? `Saving "${item.name.trim()}" failed — try again.`,
-          )
-        }
-        // parseUnits rounds sub-precision input to 0 — refuse accidental
-        // free items (e.g. a 0.0000001 USD price against 6 decimals).
-        const price = parseUnits(item.price, isUsd ? 6 : 18)
-        if (price === 0n) {
-          throw new Error(
-            `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
-          )
-        }
-        pinned.push({
-          price,
-          supply: item.supply.trim() === '' ? null : Number(item.supply),
-          encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
-        })
+    const pinned: StoreItem[] = []
+    for (const item of items.filter(itemOk)) {
+      const imageUri = item.imageFile ? await pinFile(item.imageFile) : undefined
+      const itemRes = await fetch('/api/ipfs/pin-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: item.name.trim(),
+          description: item.description.trim() || undefined,
+          image: imageUri,
+        }),
+      })
+      const itemJson = (await itemRes.json()) as { cid?: string; error?: string }
+      if (!itemRes.ok || !itemJson.cid) {
+        throw new Error(
+          itemJson.error ?? `Saving "${item.name.trim()}" failed — try again.`,
+        )
       }
-      store = {
-        name: name.trim(),
-        symbol: deriveSymbol(name),
-        items: pinned,
+      // parseUnits rounds sub-precision input to 0 — refuse accidental
+      // free items (e.g. a 0.0000001 USD price against 6 decimals).
+      const price = parseUnits(item.price, isUsd ? 6 : 18)
+      if (price === 0n) {
+        throw new Error(
+          `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
+        )
       }
+      pinned.push({
+        price,
+        supply: item.supply.trim() === '' ? null : Number(item.supply),
+        encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
+      })
+    }
+    // The store collection deploys with every launch (even empty) so the
+    // project can stock it later without a ruleset change.
+    const store: LaunchPlan['store'] = {
+      name: name.trim(),
+      symbol: deriveSymbol(name),
+      items: pinned,
     }
     return { projectUri, store, salt: randomSalt() }
   }
@@ -887,7 +885,7 @@ export function CreateForm() {
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           Sell things right from your project page. Each sale pays your
           treasury, and the buyer gets the item plus your project tokens.
-          Optional — leave empty to launch without a store.
+          Optional — you can stock your store any time after launch.
         </p>
         <StoreEditor
           items={items}

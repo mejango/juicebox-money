@@ -8,7 +8,6 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   buildAccountingContext,
-  buildLaunchProjectTx,
   buildRulesetConfiguration,
   buildRulesetMetadata,
   buildTerminalConfigurations,
@@ -52,11 +51,13 @@ export type LaunchPlan = {
   /** Cash-out tax out of 10000, or null = cash outs disabled. */
   cashOutTaxRate: number | null
   allowOwnerMinting: boolean
+  /** The 721 store collection. Always deployed — even with zero items — so
+   *  every project can stock its store later without a ruleset change. */
   store: {
     name: string
     symbol: string
     items: StoreItem[]
-  } | null
+  }
 }
 
 export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
@@ -79,11 +80,11 @@ export function treasuryToken(
  * Assemble the launch request for one chain. Pure — no wallet, no network —
  * so it's directly testable via `simulateContract`.
  *
- * Plain launches go through `JBController.launchProjectFor`. Launches with
- * store items go through `JB721TiersHookProjectDeployer.launchProjectFor`,
- * which deploys the tiered-721 hook and injects it as the ruleset's pay data
- * hook itself (its ruleset tuple omits dataHook/useDataHookForPay; viem
- * drops those extra metadata keys by name).
+ * Every launch goes through `JB721TiersHookProjectDeployer.launchProjectFor`
+ * (even with zero store items) so the store hook exists from day 1. The
+ * deployer injects the hook as the ruleset's pay data hook itself — its
+ * ruleset tuple omits dataHook/useDataHookForPay, and viem drops those extra
+ * metadata keys by name.
  *
  * Multi-chain launches are independent per-chain transactions — no suckers
  * are configured, so byte-identical rulesets aren't required.
@@ -94,8 +95,8 @@ export function buildLaunchRequest(args: {
   projectUri: string
   creationFee: bigint
   plan: LaunchPlan
-  /** Unique per launch run; only used for store launches (hook create2). */
-  salt?: `0x${string}`
+  /** Unique per launch run (the hook's create2 salt). */
+  salt: `0x${string}`
 }) {
   const { chainId, plan } = args
   const isUsd = plan.currency === 'usdc'
@@ -136,18 +137,6 @@ export function buildLaunchRequest(args: {
     chainId,
     accountingContexts: [context],
   })
-
-  if (!args.plan.store || args.plan.store.items.length === 0) {
-    return buildLaunchProjectTx({
-      chainId,
-      owner: args.owner,
-      projectUri: args.projectUri,
-      rulesetConfigurations,
-      terminalConfigurations,
-      memo: '',
-      creationFee: args.creationFee,
-    })
-  }
 
   const store = args.plan.store
   const tiers = store.items.map(item => ({
@@ -207,7 +196,7 @@ export function buildLaunchRequest(args: {
         memo: '',
       },
       v6Address('JBController', chainId),
-      args.salt ?? `0x${'00'.repeat(32)}`,
+      args.salt,
     ],
     value: args.creationFee,
   } as const
