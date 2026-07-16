@@ -651,14 +651,23 @@ export function StageRulesEditor({
         ) : null}
         {stage.payouts !== 'none' ? (
           <div className="mt-5 border-t border-smoke-200 pt-4">
-            <span className="field-label">Fees</span>
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Funds leaving the project — payouts and withdrawals — pay a
-              small fee to the Juicebox protocol. Paying it makes you a
-              part-owner of Juicebox itself, earning a cut of everyone
-              else&apos;s fees. Money moving between Juicebox projects never
-              pays a fee.
-            </p>
+            <button
+              onClick={() => toggleOpen('fees')}
+              disabled={disabled}
+              aria-expanded={!!stage.open.fees}
+              className="text-xs font-medium text-smoke-700 hover:text-ink disabled:opacity-60"
+            >
+              Read about fees {stage.open.fees ? '▾' : '▸'}
+            </button>
+            {stage.open.fees ? (
+              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                Funds leaving the project — payouts and withdrawals — pay a
+                small fee to the Juicebox protocol. Paying it makes you a
+                part-owner of Juicebox itself, earning a cut of everyone
+                else&apos;s fees. Money moving between Juicebox projects never
+                pays a fee.
+              </p>
+            ) : null}
             <div className="mt-2.5">
               <CheckRow
                 checked={stage.holdFees}
