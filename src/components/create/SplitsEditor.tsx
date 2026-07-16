@@ -138,50 +138,53 @@ export function SplitsEditor({
             />
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <select
-                  value={split.kind}
-                  onChange={e =>
-                    update(split.id, {
-                      kind: e.target.value as DraftSplit['kind'],
-                      perChain: {},
-                    })
-                  }
-                  disabled={disabled}
-                  aria-label="Recipient type"
-                  className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
-                >
-                  <option value="address">Address</option>
-                  <option value="project">Project</option>
-                </select>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-start gap-2">
+                  <select
+                    value={split.kind}
+                    onChange={e =>
+                      update(split.id, {
+                        kind: e.target.value as DraftSplit['kind'],
+                        perChain: {},
+                      })
+                    }
+                    disabled={disabled}
+                    aria-label="Recipient type"
+                    className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
+                  >
+                    <option value="address">Address</option>
+                    <option value="project">Project</option>
+                  </select>
+                  {split.kind === 'project' ? (
+                    <ProjectIdField
+                      value={split.projectId}
+                      onChange={projectId => update(split.id, { projectId })}
+                      disabled={disabled}
+                      chainId={chainIds?.[0] ?? 1}
+                      className="w-28"
+                    />
+                  ) : null}
+                </div>
                 <button
                   onClick={() => onChange(splits.filter(s => s.id !== split.id))}
                   disabled={disabled}
                   aria-label="Remove recipient"
-                  className="shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                  className="mt-3 shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
                 >
                   Remove
                 </button>
               </div>
 
-              <div className="mt-2">
-                {split.kind === 'address' ? (
+              {split.kind === 'address' ? (
+                <div className="mt-2">
                   <AddressField
                     value={split.recipient}
                     onChange={recipient => update(split.id, { recipient })}
                     disabled={disabled}
                     ariaLabel="Recipient address"
                   />
-                ) : (
-                  <ProjectIdField
-                    value={split.projectId}
-                    onChange={projectId => update(split.id, { projectId })}
-                    disabled={disabled}
-                    chainId={chainIds?.[0] ?? 1}
-                    className="w-28"
-                  />
-                )}
-              </div>
+                </div>
+              ) : null}
 
               {split.kind === 'project' ? (
                 <div className="mt-2 flex items-center gap-2">
