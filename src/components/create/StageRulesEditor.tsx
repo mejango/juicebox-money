@@ -190,6 +190,7 @@ export function StageRulesEditor({
   index,
   unitLabel,
   disabled,
+  chainIds,
 }: {
   stage: DraftStage
   onChange: (stage: DraftStage) => void
@@ -198,6 +199,8 @@ export function StageRulesEditor({
   index: number
   unitLabel: 'ETH' | 'USD'
   disabled: boolean
+  /** Selected launch chains (enables per-chain recipient overrides). */
+  chainIds: number[]
 }) {
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch })
   const toggleOpen = (key: string) =>
@@ -421,6 +424,7 @@ export function StageRulesEditor({
               onChange={reservedSplits => set({ reservedSplits })}
               disabled={disabled}
               bucketLabel="reserved tokens"
+              chainIds={chainIds}
             />
           </div>
         ) : null}
@@ -486,6 +490,7 @@ export function StageRulesEditor({
               bucketLabel="payouts"
               mode={payoutsMode}
               amountLabel={unitLabel}
+              chainIds={chainIds}
             />
             {stage.payoutSplits.length === 0 ? (
               <p className="mt-2 text-xs text-smoke-700">

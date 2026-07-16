@@ -1,6 +1,7 @@
 'use client'
 
-import { isAddress } from 'viem'
+import { resolvedAddress } from '@/lib/ens'
+import { AddressField } from './AddressField'
 import {
   SplitsEditor,
   splitOk,
@@ -77,7 +78,7 @@ export function itemReserveOk(item: DraftItem): boolean {
     Number.isInteger(n) &&
     n >= 1 &&
     n <= 65_535 &&
-    isAddress(item.reserveBeneficiary.trim())
+    resolvedAddress(item.reserveBeneficiary) !== null
   )
 }
 
@@ -286,19 +287,14 @@ export function StoreEditor({
                     }`}
                   />
                   <span className="text-sm text-smoke-700">sold goes to</span>
-                  <input
-                    type="text"
+                  <AddressField
                     value={item.reserveBeneficiary}
-                    onChange={e =>
-                      update(item.id, {
-                        reserveBeneficiary: e.target.value.trim().slice(0, 42),
-                      })
+                    onChange={reserveBeneficiary =>
+                      update(item.id, { reserveBeneficiary })
                     }
                     disabled={disabled}
-                    placeholder="0x address"
-                    className={`input-well min-h-[44px] min-w-0 flex-1 px-3 font-mono text-xs disabled:opacity-60 ${
-                      itemReserveOk(item) ? '' : '!border-red-400'
-                    }`}
+                    ariaLabel="Reserve beneficiary"
+                    className="flex-1"
                   />
                 </div>
               </div>

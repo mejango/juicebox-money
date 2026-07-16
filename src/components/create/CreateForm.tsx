@@ -11,6 +11,7 @@ import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
+import { resolvedAddress } from '@/lib/ens'
 import {
   FOREVER_SECONDS,
   buildLaunchRequest,
@@ -88,7 +89,7 @@ const STEP_TILES = [
   'bg-melon-400 text-ink',
 ]
 
-const WIZARD_STEPS = ['Project', 'Rules', 'Store', 'Launch']
+const WIZARD_STEPS = ['Basics', 'Rules', 'Store', 'Launch']
 
 function StepBadge({ n }: { n: number }) {
   return (
@@ -181,7 +182,7 @@ export function CreateForm() {
     projectUri: string
     store: LaunchPlan['store']
     salt: `0x${string}`
-    plan: LaunchPlan
+    plans: Record<number, LaunchPlan>
   } | null>(null)
 
   const busy = phase !== 'form'
@@ -298,26 +299,31 @@ export function CreateForm() {
     }))
   }
 
-  /** Recipient half of a split row: an address, or a project id plus the
-   *  beneficiary who receives that project's tokens. */
-  const toRecipient = (row: DraftSplit) =>
-    row.kind === 'project'
-      ? {
-          projectId: BigInt(row.projectId.trim().replace('#', '')),
-          beneficiary: row.beneficiary.trim() as Address,
-        }
-      : {
-          projectId: 0n,
-          beneficiary: row.recipient.trim() as Address,
-        }
+  /** Recipient half of a split row for one chain: an address (per-chain
+   *  override → default; ENS already resolved into the sync cache), or a
+   *  project id plus the beneficiary who receives that project's tokens. */
+  const toRecipient = (row: DraftSplit, chainId: number) => {
+    const override = row.perChain[chainId]?.trim() || ''
+    if (row.kind === 'project') {
+      const id = (override || row.projectId).trim().replace('#', '')
+      return {
+        projectId: BigInt(id),
+        beneficiary: resolvedAddress(row.beneficiary)!,
+      }
+    }
+    return {
+      projectId: 0n,
+      beneficiary: resolvedAddress(override || row.recipient)!,
+    }
+  }
 
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
-  const toSplitConfigs = (rows: DraftSplit[]): SplitConfig[] =>
+  const toSplitConfigs = (rows: DraftSplit[], chainId: number): SplitConfig[] =>
     rows
       .filter(s => splitOk(s, 'percent'))
       .map(row => ({
         percent: Math.round(Number(row.value) * 1e7),
-        ...toRecipient(row),
+        ...toRecipient(row, chainId),
       }))
 
   /** Routed payouts for one stage: '%' mode splits all funds (unlimited
@@ -326,9 +332,10 @@ export function CreateForm() {
    *  (last row absorbs rounding so the limit is fully allocated). */
   const buildRoutedSplits = (
     stage: DraftStage,
+    chainId: number,
   ): { splits: SplitConfig[]; limit: bigint | null } => {
     if (stage.routedMode === 'all') {
-      return { splits: toSplitConfigs(stage.payoutSplits), limit: null }
+      return { splits: toSplitConfigs(stage.payoutSplits, chainId), limit: null }
     }
     const valid = stage.payoutSplits.filter(s => splitOk(s, 'amount'))
     const values = valid.map(row => parseUnits(row.value, isUsd ? 6 : 18))
@@ -343,7 +350,10 @@ export function CreateForm() {
       )
     }
     return {
-      splits: valid.map((row, i) => ({ percent: percents[i], ...toRecipient(row) })),
+      splits: valid.map((row, i) => ({
+        percent: percents[i],
+        ...toRecipient(row, chainId),
+      })),
       limit: total,
     }
   }
@@ -353,8 +363,10 @@ export function CreateForm() {
     stage: DraftStage,
     index: number,
     deployStart: number,
+    chainId: number,
   ): StageRules => {
-    const routed = stage.payouts === 'routed' ? buildRoutedSplits(stage) : null
+    const routed =
+      stage.payouts === 'routed' ? buildRoutedSplits(stage, chainId) : null
     const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
     const reservedOn =
       Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
@@ -378,7 +390,9 @@ export function CreateForm() {
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: Math.round(Number(stage.cutPct || '0') * 1e7),
       reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
-      reservedSplits: reservedOn ? toSplitConfigs(stage.reservedSplits) : [],
+      reservedSplits: reservedOn
+        ? toSplitConfigs(stage.reservedSplits, chainId)
+        : [],
       payouts: stage.payouts,
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
@@ -389,16 +403,26 @@ export function CreateForm() {
     }
   }
 
-  /** The launch plan, assembled from the questionnaire (pure state). */
-  const buildPlan = (store: LaunchPlan['store']): LaunchPlan => {
+  /** Per-chain launch plans (recipients can differ per chain), sharing one
+   *  deployStart so multichain first rulesets begin together. */
+  const buildPlans = (
+    store: LaunchPlan['store'],
+  ): Record<number, LaunchPlan> => {
     const deployStart = Math.floor(Date.now() / 1000) + 600
-    return {
-      currency,
-      stages: stages.map((stage, i) => toStageRules(stage, i, deployStart)),
-      afterMode,
-      approvalDeadline,
-      store,
-    }
+    return Object.fromEntries(
+      selected.map(chainId => [
+        chainId,
+        {
+          currency,
+          stages: stages.map((stage, i) =>
+            toStageRules(stage, i, deployStart, chainId),
+          ),
+          afterMode,
+          approvalDeadline,
+          store,
+        },
+      ]),
+    )
   }
 
   const pinFile = async (file: File): Promise<string> => {
@@ -415,7 +439,7 @@ export function CreateForm() {
   /** Pin logo, project metadata, and store items. Returns everything the
    *  per-chain launches need. */
   const pinAll = async (): Promise<
-    Omit<NonNullable<typeof pinnedRef.current>, 'plan'>
+    Omit<NonNullable<typeof pinnedRef.current>, 'plans'>
   > => {
     const logoUri = logoFile ? await pinFile(logoFile) : undefined
     const coverImageUri = coverFile ? await pinFile(coverFile) : undefined
@@ -483,9 +507,11 @@ export function CreateForm() {
         )
         rel[rel.length - 1] =
           1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0)
+        // Store items are shared across chains — no per-chain overrides, so
+        // any selected chain resolves the same recipients.
         splits = splitRows.map((r, i) => ({
           percent: rel[i],
-          ...toRecipient(r),
+          ...toRecipient(r, selected[0]),
         }))
       }
       const reserveOn = item.reserveN.trim() !== ''
@@ -498,7 +524,7 @@ export function CreateForm() {
         discountPercent: Math.round(Number(item.discountPct || '0') * 2),
         reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
         reserveBeneficiary: reserveOn
-          ? (item.reserveBeneficiary.trim() as Address)
+          ? resolvedAddress(item.reserveBeneficiary)
           : null,
       })
     }
@@ -518,7 +544,6 @@ export function CreateForm() {
    */
   const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase('launching')
-    const plan = pinned.plan
     for (const chainId of selected) {
       if (statusesRef.current[chainId]?.phase === 'done') continue
       updateStatus(chainId, { phase: 'signing', error: undefined })
@@ -538,7 +563,7 @@ export function CreateForm() {
           owner: address!,
           projectUri: pinned.projectUri,
           creationFee,
-          plan,
+          plan: pinned.plans[chainId],
           salt: pinned.salt,
         })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -578,7 +603,7 @@ export function CreateForm() {
           Object.fromEntries(selected.map(id => [id, { phase: 'pending' }])),
         )
         const pinned = await pinAll()
-        pinnedRef.current = { ...pinned, plan: buildPlan(pinned.store) }
+        pinnedRef.current = { ...pinned, plans: buildPlans(pinned.store) }
       }
       await runChains(pinnedRef.current)
     } catch (e) {
@@ -1088,6 +1113,7 @@ export function CreateForm() {
                     index={i}
                     unitLabel={unitLabel}
                     disabled={busy}
+                    chainIds={selected}
                   />
                 </div>
               ) : null}

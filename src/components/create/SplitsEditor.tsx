@@ -1,14 +1,19 @@
 'use client'
 
-import { isAddress } from 'viem'
+import { resolvedAddress } from '@/lib/ens'
+import { chainName } from '@/lib/urn'
+import { ChainIcon } from '@/components/ChainIcon'
+import { AddressField, ProjectIdField } from './AddressField'
 import { AddButton } from './ui'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
  * sale splits. Each row picks a recipient type first (website/ parity):
- * an address, or a project — which also needs a token beneficiary (who
- * receives the tokens the paid project issues). Percentages are out of 100
- * of the bucket being split; any unallocated remainder goes to the owner.
+ * an address (ENS names resolve), or a project — which also needs a token
+ * beneficiary. On multichain launches every row can override its recipient
+ * per chain, in case the same address doesn't represent the entity
+ * everywhere. Percentages are out of 100 of the bucket being split; any
+ * unallocated remainder goes to the owner.
  */
 
 export type SplitsMode = 'percent' | 'amount'
@@ -18,12 +23,15 @@ export type DraftSplit = {
   /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
   value: string
   kind: 'address' | 'project'
-  /** The receiving address ('address' kind). */
+  /** The receiving address ('address' kind) — 0x… or an ENS name. */
   recipient: string
   /** The receiving project id ('project' kind). */
   projectId: string
   /** Who receives the paid project's tokens ('project' kind, required). */
   beneficiary: string
+  /** Per-chain overrides of the identity field (address or project id). */
+  perChain: Record<number, string>
+  perChainOpen: boolean
 }
 
 let nextId = 1
@@ -36,6 +44,8 @@ export function newDraftSplit(): DraftSplit {
     recipient: '',
     projectId: '',
     beneficiary: '',
+    perChain: {},
+    perChainOpen: false,
   }
 }
 
@@ -46,14 +56,26 @@ export function splitValueOk(value: string, mode: SplitsMode): boolean {
 }
 
 function projectIdOk(projectId: string): boolean {
-  return /^#?\d{1,10}$/.test(projectId.trim()) && Number(projectId.replace('#', '')) > 0
+  return (
+    /^#?\d{1,10}$/.test(projectId.trim()) &&
+    Number(projectId.replace('#', '')) > 0
+  )
 }
 
 export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
   if (!splitValueOk(split.value, mode)) return false
-  return split.kind === 'address'
-    ? isAddress(split.recipient.trim())
-    : projectIdOk(split.projectId) && isAddress(split.beneficiary.trim())
+  const overrides = Object.values(split.perChain).filter(v => v.trim() !== '')
+  if (split.kind === 'address') {
+    return (
+      resolvedAddress(split.recipient) !== null &&
+      overrides.every(v => resolvedAddress(v) !== null)
+    )
+  }
+  return (
+    projectIdOk(split.projectId) &&
+    resolvedAddress(split.beneficiary) !== null &&
+    overrides.every(projectIdOk)
+  )
 }
 
 export function splitsTotal(splits: DraftSplit[], mode: SplitsMode): number {
@@ -71,6 +93,7 @@ export function SplitsEditor({
   mode = 'percent',
   amountLabel = '',
   remainderNote = 'go to you',
+  chainIds,
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -82,11 +105,14 @@ export function SplitsEditor({
   amountLabel?: string
   /** Where the unallocated remainder goes, e.g. "go to you". */
   remainderNote?: string
+  /** Selected launch chains; >1 enables per-chain recipient overrides. */
+  chainIds?: number[]
 }) {
   const update = (id: number, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
   }
   const total = splitsTotal(splits, mode)
+  const multiChain = (chainIds?.length ?? 0) > 1
 
   return (
     <div>
@@ -111,85 +137,128 @@ export function SplitsEditor({
               }`}
             />
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
-            <select
-              value={split.kind}
-              onChange={e =>
-                update(split.id, { kind: e.target.value as DraftSplit['kind'] })
-              }
-              disabled={disabled}
-              aria-label="Recipient type"
-              className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
-            >
-              <option value="address">Address</option>
-              <option value="project">Project</option>
-            </select>
-            {split.kind === 'address' ? (
-              <input
-                type="text"
-                value={split.recipient}
-                onChange={e =>
-                  update(split.id, { recipient: e.target.value.trim().slice(0, 64) })
-                }
-                disabled={disabled}
-                placeholder="0x…"
-                aria-label="Recipient address"
-                className={`input-well min-h-[44px] min-w-0 flex-1 px-3 font-mono text-xs disabled:opacity-60 ${
-                  split.recipient && !isAddress(split.recipient.trim())
-                    ? '!border-red-400'
-                    : ''
-                }`}
-              />
-            ) : (
-              <input
-                type="text"
-                inputMode="numeric"
-                value={split.projectId}
-                onChange={e =>
-                  update(split.id, { projectId: e.target.value.trim().slice(0, 11) })
-                }
-                disabled={disabled}
-                placeholder="#12"
-                aria-label="Project id"
-                className={`input-well min-h-[44px] w-24 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                  split.projectId && !projectIdOk(split.projectId)
-                    ? '!border-red-400'
-                    : ''
-                }`}
-              />
-            )}
-            <button
-              onClick={() => onChange(splits.filter(s => s.id !== split.id))}
-              disabled={disabled}
-              aria-label="Remove recipient"
-              className="mt-3 shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
-            >
-              Remove
-            </button>
-          </div>
-          {split.kind === 'project' ? (
-            <div className="mt-2 flex items-center gap-2">
-              <span className="shrink-0 text-xs text-smoke-700">
-                who gets the project&apos;s tokens:
-              </span>
-              <input
-                type="text"
-                value={split.beneficiary}
-                onChange={e =>
-                  update(split.id, {
-                    beneficiary: e.target.value.trim().slice(0, 42),
-                  })
-                }
-                disabled={disabled}
-                placeholder="0x…"
-                aria-label="Token beneficiary"
-                className={`input-well min-h-[40px] min-w-0 flex-1 px-3 font-mono text-xs disabled:opacity-60 ${
-                  split.beneficiary && !isAddress(split.beneficiary.trim())
-                    ? '!border-red-400'
-                    : ''
-                }`}
-              />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <select
+                  value={split.kind}
+                  onChange={e =>
+                    update(split.id, {
+                      kind: e.target.value as DraftSplit['kind'],
+                      perChain: {},
+                    })
+                  }
+                  disabled={disabled}
+                  aria-label="Recipient type"
+                  className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
+                >
+                  <option value="address">Address</option>
+                  <option value="project">Project</option>
+                </select>
+                <button
+                  onClick={() => onChange(splits.filter(s => s.id !== split.id))}
+                  disabled={disabled}
+                  aria-label="Remove recipient"
+                  className="shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                >
+                  Remove
+                </button>
+              </div>
+
+              <div className="mt-2">
+                {split.kind === 'address' ? (
+                  <AddressField
+                    value={split.recipient}
+                    onChange={recipient => update(split.id, { recipient })}
+                    disabled={disabled}
+                    ariaLabel="Recipient address"
+                  />
+                ) : (
+                  <ProjectIdField
+                    value={split.projectId}
+                    onChange={projectId => update(split.id, { projectId })}
+                    disabled={disabled}
+                    chainId={chainIds?.[0] ?? 1}
+                    className="w-28"
+                  />
+                )}
+              </div>
+
+              {split.kind === 'project' ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="shrink-0 text-xs text-smoke-700">
+                    who gets the project&apos;s tokens:
+                  </span>
+                  <AddressField
+                    value={split.beneficiary}
+                    onChange={beneficiary => update(split.id, { beneficiary })}
+                    disabled={disabled}
+                    ariaLabel="Token beneficiary"
+                    className="flex-1"
+                    compact
+                  />
+                </div>
+              ) : null}
+
+              {multiChain ? (
+                <div className="mt-2">
+                  <button
+                    onClick={() =>
+                      update(split.id, { perChainOpen: !split.perChainOpen })
+                    }
+                    disabled={disabled}
+                    aria-expanded={split.perChainOpen}
+                    className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+                  >
+                    {split.perChainOpen
+                      ? 'Same on every chain'
+                      : `Set per chain — if this ${split.kind === 'address' ? 'address' : 'project id'} differs by chain`}
+                  </button>
+                  {split.perChainOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {chainIds!.map(chainId => (
+                        <div key={chainId} className="flex items-center gap-2">
+                          <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
+                            <ChainIcon chainId={chainId} size={14} />
+                            {chainName(chainId)}
+                          </span>
+                          {split.kind === 'address' ? (
+                            <AddressField
+                              value={split.perChain[chainId] ?? ''}
+                              onChange={v =>
+                                update(split.id, {
+                                  perChain: { ...split.perChain, [chainId]: v },
+                                })
+                              }
+                              disabled={disabled}
+                              placeholder={split.recipient.trim() || 'default'}
+                              ariaLabel={`Recipient on ${chainName(chainId)}`}
+                              className="flex-1"
+                              compact
+                            />
+                          ) : (
+                            <ProjectIdField
+                              value={split.perChain[chainId] ?? ''}
+                              onChange={v =>
+                                update(split.id, {
+                                  perChain: { ...split.perChain, [chainId]: v },
+                                })
+                              }
+                              disabled={disabled}
+                              chainId={chainId}
+                              className="w-28"
+                            />
+                          )}
+                        </div>
+                      ))}
+                      <p className="text-[11px] leading-relaxed text-smoke-500">
+                        Empty fields use the default above.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          </div>
         </div>
       ))}
 
