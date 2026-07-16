@@ -298,16 +298,18 @@ export function CreateForm() {
     }))
   }
 
-  /** Recipient half of a split row: 0x… → address split; #12 / 12 →
-   *  project split whose tokens go to the owner. */
-  const toRecipient = (row: DraftSplit) => {
-    const recipient = row.recipient.trim()
-    const isAddr = recipient.startsWith('0x')
-    return {
-      projectId: isAddr ? 0n : BigInt(recipient.replace('#', '')),
-      beneficiary: isAddr ? (recipient as Address) : address!,
-    }
-  }
+  /** Recipient half of a split row: an address, or a project id plus the
+   *  beneficiary who receives that project's tokens. */
+  const toRecipient = (row: DraftSplit) =>
+    row.kind === 'project'
+      ? {
+          projectId: BigInt(row.projectId.trim().replace('#', '')),
+          beneficiary: row.beneficiary.trim() as Address,
+        }
+      : {
+          projectId: 0n,
+          beneficiary: row.recipient.trim() as Address,
+        }
 
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
   const toSplitConfigs = (rows: DraftSplit[]): SplitConfig[] =>
