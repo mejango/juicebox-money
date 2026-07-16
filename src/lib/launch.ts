@@ -66,12 +66,23 @@ export const DEFAULT_ITEM_EXTRAS: Pick<
   reserveBeneficiary: null,
 }
 
-/** One split recipient: an address, or a project (its tokens go to
- *  `beneficiary`). Percent is out of 1e9 (SPLITS_TOTAL_PERCENT). */
+/** The Uniswap V4 LP split hook ("Fund market") — same address on every
+ *  supported chain (website/ deployments). */
+export const LP_SPLIT_HOOK =
+  '0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0' as Address
+
+/** One split recipient: an address, a project (its tokens go to
+ *  `beneficiary`), or a split hook. Percent is out of 1e9. */
 export type SplitConfig = {
   percent: number
   projectId: bigint
   beneficiary: Address
+  /** Project payouts only: add to balance instead of paying (no tokens). */
+  preferAddToBalance: boolean
+  /** Unix seconds this split can't be changed before. 0 = unlocked. */
+  lockedUntil: number
+  /** A split hook contract, or address(0). */
+  hook: Address
 }
 
 /** Duration sentinel for a final stage that lasts forever (uint32 max). */
@@ -286,9 +297,9 @@ function toJbSplits(splits: SplitConfig[]) {
     percent: split.percent,
     projectId: split.projectId,
     beneficiary: split.beneficiary,
-    preferAddToBalance: false,
-    lockedUntil: 0,
-    hook: zeroAddress,
+    preferAddToBalance: split.preferAddToBalance,
+    lockedUntil: split.lockedUntil,
+    hook: split.hook,
   }))
 }
 

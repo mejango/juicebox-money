@@ -22,7 +22,7 @@ export type DraftSplit = {
   id: string
   /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
   value: string
-  kind: 'address' | 'project'
+  kind: 'address' | 'project' | 'hook'
   /** The receiving address ('address' kind) — 0x… or an ENS name. */
   recipient: string
   /** The receiving project id ('project' kind). */
@@ -34,6 +34,13 @@ export type DraftSplit = {
   /** Per-chain overrides of the token beneficiary ('project' kind). */
   perChainBeneficiary: Record<number, string>
   perChainOpen: boolean
+  /** 'hook' kind: the Fund market LP hook, or a custom hook address. */
+  hookKind: 'fundmarket' | 'custom'
+  hookAddress: string
+  /** Project payout routing: pay (default) or add to balance. */
+  preferAddToBalance: boolean
+  /** Lock this split until a date (datetime-local; '' = unlocked). */
+  lockedUntil: string
 }
 
 export function newDraftSplit(): DraftSplit {
@@ -47,6 +54,10 @@ export function newDraftSplit(): DraftSplit {
     perChain: {},
     perChainBeneficiary: {},
     perChainOpen: false,
+    hookKind: 'fundmarket',
+    hookAddress: '',
+    preferAddToBalance: false,
+    lockedUntil: '',
   }
 }
 
@@ -65,6 +76,8 @@ function projectIdOk(projectId: string): boolean {
 
 export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
   if (!splitValueOk(split.value, mode)) return false
+  if (split.lockedUntil && Number.isNaN(new Date(split.lockedUntil).getTime()))
+    return false
   const overrides = Object.values(split.perChain).filter(v => v.trim() !== '')
   if (split.kind === 'address') {
     return (
@@ -72,12 +85,23 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
       overrides.every(v => resolvedAddress(v) !== null)
     )
   }
+  if (split.kind === 'hook') {
+    if (split.hookKind === 'fundmarket') return true
+    return (
+      resolvedAddress(split.hookAddress) !== null &&
+      // Optional project + beneficiary riders must be valid when set.
+      (split.projectId.trim() === '' || projectIdOk(split.projectId)) &&
+      (split.beneficiary.trim() === '' ||
+        resolvedAddress(split.beneficiary) !== null)
+    )
+  }
   const beneficiaryOverrides = Object.values(split.perChainBeneficiary).filter(
     v => v.trim() !== '',
   )
   return (
     projectIdOk(split.projectId) &&
-    resolvedAddress(split.beneficiary) !== null &&
+    (split.preferAddToBalance ||
+      resolvedAddress(split.beneficiary) !== null) &&
     overrides.every(projectIdOk) &&
     beneficiaryOverrides.every(v => resolvedAddress(v) !== null)
   )
@@ -101,6 +125,10 @@ export function SplitsEditor({
   chainIds,
   addLabel = 'Add a recipient',
   allocatedLabel = 'allocated',
+  allowHook = false,
+  allowFundMarket = false,
+  showRouting = false,
+  allowLock = false,
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -117,6 +145,14 @@ export function SplitsEditor({
   addLabel?: string
   /** Word after the total percent, e.g. 'allocated' or 'split limit'. */
   allocatedLabel?: string
+  /** Offer split-hook recipients. */
+  allowHook?: boolean
+  /** Offer the Fund market LP hook preset (reserved-token splits). */
+  allowFundMarket?: boolean
+  /** Offer Pay vs Add-to-balance routing on project rows (payouts). */
+  showRouting?: boolean
+  /** Offer per-split locks (fixed-duration stages). */
+  allowLock?: boolean
 }) {
   const update = (id: string, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
@@ -165,7 +201,24 @@ export function SplitsEditor({
                   >
                     <option value="address">Address</option>
                     <option value="project">Project</option>
+                    {allowHook ? <option value="hook">Hook</option> : null}
                   </select>
+                  {split.kind === 'hook' && allowFundMarket ? (
+                    <select
+                      value={split.hookKind}
+                      onChange={e =>
+                        update(split.id, {
+                          hookKind: e.target.value as DraftSplit['hookKind'],
+                        })
+                      }
+                      disabled={disabled}
+                      aria-label="Hook type"
+                      className="input-well select-caret min-h-[44px] w-36 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
+                    >
+                      <option value="fundmarket">Fund market</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  ) : null}
                   {split.kind === 'project' ? (
                     <ProjectIdField
                       value={split.projectId}
@@ -197,7 +250,73 @@ export function SplitsEditor({
                 </div>
               ) : null}
 
-              {split.kind === 'project' ? (
+              {split.kind === 'hook' ? (
+                split.hookKind === 'fundmarket' && allowFundMarket ? (
+                  <p className="mt-2 rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
+                    Pools split tokens into a Uniswap V4 buyback position.
+                    Trading fees route back to your project.
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    <AddressField
+                      value={split.hookAddress}
+                      onChange={hookAddress => update(split.id, { hookAddress })}
+                      disabled={disabled}
+                      placeholder="0x… (split hook contract)"
+                      ariaLabel="Split hook address"
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 text-xs text-smoke-700">
+                        with project (optional):
+                      </span>
+                      <ProjectIdField
+                        value={split.projectId}
+                        onChange={projectId => update(split.id, { projectId })}
+                        disabled={disabled}
+                        chainId={chainIds?.[0] ?? 1}
+                        className="w-24"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 text-xs text-smoke-700">
+                        and beneficiary (optional):
+                      </span>
+                      <AddressField
+                        value={split.beneficiary}
+                        onChange={beneficiary =>
+                          update(split.id, { beneficiary })
+                        }
+                        disabled={disabled}
+                        ariaLabel="Hook beneficiary"
+                        className="flex-1"
+                        compact
+                      />
+                    </div>
+                  </div>
+                )
+              ) : null}
+
+              {split.kind === 'project' && showRouting ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="shrink-0 text-xs text-smoke-700">route as:</span>
+                  <select
+                    value={split.preferAddToBalance ? 'balance' : 'pay'}
+                    onChange={e =>
+                      update(split.id, {
+                        preferAddToBalance: e.target.value === 'balance',
+                      })
+                    }
+                    disabled={disabled}
+                    aria-label="Payout routing"
+                    className="input-well select-caret min-h-[40px] w-40 px-3 pr-8 text-xs disabled:opacity-60"
+                  >
+                    <option value="pay">Pay (mints tokens)</option>
+                    <option value="balance">Add to balance</option>
+                  </select>
+                </div>
+              ) : null}
+
+              {split.kind === 'project' && !split.preferAddToBalance ? (
                 <div className="mt-2 flex items-center gap-2">
                   <span className="shrink-0 text-xs text-smoke-700">
                     who gets the project&apos;s tokens:
@@ -213,7 +332,46 @@ export function SplitsEditor({
                 </div>
               ) : null}
 
-              {multiChain ? (
+              {allowLock ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-[11px] font-medium text-smoke-700">
+                    <input
+                      type="checkbox"
+                      checked={split.lockedUntil !== ''}
+                      onChange={e =>
+                        update(split.id, {
+                          lockedUntil: e.target.checked
+                            ? new Date(Date.now() + 30 * 86_400_000)
+                                .toISOString()
+                                .slice(0, 16)
+                            : '',
+                        })
+                      }
+                      disabled={disabled}
+                      className="h-3.5 w-3.5 accent-ink"
+                    />
+                    Lock until
+                  </label>
+                  {split.lockedUntil !== '' ? (
+                    <input
+                      type="datetime-local"
+                      value={split.lockedUntil}
+                      onChange={e =>
+                        update(split.id, { lockedUntil: e.target.value })
+                      }
+                      disabled={disabled}
+                      className="input-well min-h-[36px] px-2.5 text-xs disabled:opacity-60"
+                    />
+                  ) : (
+                    <span className="text-[11px] text-smoke-500">
+                      — locked splits can&apos;t be removed until the date
+                      passes
+                    </span>
+                  )}
+                </div>
+              ) : null}
+
+              {multiChain && split.kind !== 'hook' ? (
                 <div className="mt-2">
                   <button
                     onClick={() =>

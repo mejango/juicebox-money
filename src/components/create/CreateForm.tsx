@@ -5,7 +5,13 @@ import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { BaseError, parseUnits, type Address, type PublicClient } from 'viem'
+import {
+  BaseError,
+  parseUnits,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
@@ -21,6 +27,7 @@ import {
 import {
   DEFAULT_STORE_FLAGS,
   FOREVER_SECONDS,
+  LP_SPLIT_HOOK,
   buildLaunchRequest,
   projectIdFromReceipt,
   type ApprovalDeadline,
@@ -466,23 +473,47 @@ export function CreateForm() {
     }))
   }
 
-  /** Recipient half of a split row for one chain: an address (per-chain
-   *  override → default; ENS already resolved into the sync cache), or a
-   *  project id plus the beneficiary who receives that project's tokens. */
+  /** Recipient tail of a split row for one chain: an address (per-chain
+   *  override → default; ENS already resolved into the sync cache), a
+   *  project id + token beneficiary, or a split hook. */
   const toRecipient = (row: DraftSplit, chainId: number) => {
     const override = row.perChain[chainId]?.trim() || ''
+    const lockedUntil = row.lockedUntil
+      ? Math.floor(new Date(row.lockedUntil).getTime() / 1000)
+      : 0
+    if (row.kind === 'hook') {
+      const optionalId = row.projectId.trim().replace('#', '')
+      return {
+        projectId: optionalId ? BigInt(optionalId) : 0n,
+        beneficiary: resolvedAddress(row.beneficiary) ?? zeroAddress,
+        preferAddToBalance: false,
+        lockedUntil,
+        hook:
+          row.hookKind === 'fundmarket'
+            ? LP_SPLIT_HOOK
+            : resolvedAddress(row.hookAddress)!,
+      }
+    }
     if (row.kind === 'project') {
       const id = (override || row.projectId).trim().replace('#', '')
       const beneficiary =
         row.perChainBeneficiary[chainId]?.trim() || row.beneficiary
       return {
         projectId: BigInt(id),
-        beneficiary: resolvedAddress(beneficiary)!,
+        beneficiary: row.preferAddToBalance
+          ? (resolvedAddress(beneficiary) ?? zeroAddress)
+          : resolvedAddress(beneficiary)!,
+        preferAddToBalance: row.preferAddToBalance,
+        lockedUntil,
+        hook: zeroAddress,
       }
     }
     return {
       projectId: 0n,
       beneficiary: resolvedAddress(override || row.recipient)!,
+      preferAddToBalance: false,
+      lockedUntil,
+      hook: zeroAddress,
     }
   }
 

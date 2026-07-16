@@ -94,13 +94,18 @@ function sanitizeSplit(raw: unknown): DraftSplit {
   return {
     id: crypto.randomUUID(),
     value: numStr(s.value, 10),
-    kind: s.kind === 'project' ? 'project' : 'address',
+    kind:
+      s.kind === 'project' ? 'project' : s.kind === 'hook' ? 'hook' : 'address',
     recipient: str(s.recipient, 64),
     projectId: numStr(s.projectId, 11),
     beneficiary: str(s.beneficiary, 64),
     perChain,
     perChainBeneficiary,
     perChainOpen: false,
+    hookKind: s.hookKind === 'custom' ? 'custom' : 'fundmarket',
+    hookAddress: str(s.hookAddress, 64),
+    preferAddToBalance: bool(s.preferAddToBalance),
+    lockedUntil: str(s.lockedUntil, 20),
   }
 }
 

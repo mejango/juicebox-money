@@ -608,6 +608,8 @@ export function StageRulesEditor({
               chainIds={chainIds}
               addLabel="Add split"
               allocatedLabel="split limit"
+              allowHook
+              allowFundMarket
             />
           </div>
         ) : (
@@ -641,6 +643,9 @@ export function StageRulesEditor({
                   disabled={disabled}
                   bucketLabel="reserved tokens"
                   chainIds={chainIds}
+                  allowHook
+                  allowFundMarket
+                  allowLock={duration > 0 && duration !== FOREVER_SECONDS}
                 />
               </div>
             ) : null}
@@ -710,6 +715,9 @@ export function StageRulesEditor({
               mode={payoutsMode}
               amountLabel={unitLabel}
               chainIds={chainIds}
+              allowHook
+              showRouting
+              allowLock={duration > 0 && duration !== FOREVER_SECONDS}
             />
             {stage.payoutSplits.length === 0 ? (
               <p className="mt-2 text-xs text-smoke-700">
