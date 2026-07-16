@@ -1079,10 +1079,10 @@ export function CreateForm() {
                 <span className="field-label">Fees</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Funds leaving the project — payouts and withdrawals — pay a
-                  small fee to the Juicebox protocol. In return you get
-                  ownership of the protocol&apos;s fee mechanism itself, which
-                  earns from every project&apos;s fees. Money moving between
-                  Juicebox projects never pays a fee.
+                  small fee to the Juicebox protocol. Paying it makes you a
+                  part-owner of Juicebox itself, earning a cut of everyone
+                  else&apos;s fees. Money moving between Juicebox projects
+                  never pays a fee.
                 </p>
                 <button
                   onClick={() => !busy && setHoldFees(h => !h)}
