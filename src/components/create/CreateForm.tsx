@@ -1111,9 +1111,9 @@ export function CreateForm() {
       </p>
 
       {/* Draft import/export */}
-      <div className="mt-6 flex items-center justify-end gap-4 text-sm">
-        <label className="cursor-pointer font-medium text-bluebs-600 hover:text-bluebs-700">
-          Import
+      <div className="mt-6 flex items-center gap-2.5">
+        <label className="btn-secondary min-h-[36px] cursor-pointer gap-1.5 px-4 text-xs">
+          <span aria-hidden>↑</span> Import .jb
           <input
             type="file"
             accept=".jb,application/json"
@@ -1128,13 +1128,16 @@ export function CreateForm() {
         <button
           onClick={exportDraft}
           disabled={busy}
-          className="font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+          className="btn-secondary min-h-[36px] gap-1.5 px-4 text-xs disabled:opacity-60"
         >
-          Export
+          <span aria-hidden>↓</span> Export
         </button>
+        <span className="text-xs text-smoke-500">
+          Your draft saves as you go.
+        </span>
       </div>
       {importError ? (
-        <p className="mt-2 text-right text-xs text-red-600">{importError}</p>
+        <p className="mt-2 text-xs text-red-600">{importError}</p>
       ) : null}
 
       {/* Horizontal stepper */}
