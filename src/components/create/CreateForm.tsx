@@ -24,6 +24,7 @@ import {
   type TreasuryCurrency,
 } from '@/lib/launch'
 import { splitOk, type DraftSplit } from './SplitsEditor'
+import { AddressField } from './AddressField'
 import {
   StageRulesEditor,
   newDraftStage,
@@ -33,7 +34,7 @@ import {
   stageSummaryParts,
   type DraftStage,
 } from './StageRulesEditor'
-import { CheckIcon, Piped, SubSection } from './ui'
+import { CheckIcon, OptionRow, Piped, SubSection } from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -84,13 +85,12 @@ function randomSalt(): `0x${string}` {
 }
 
 const STEP_TILES = [
+  'bg-peel-300 text-ink',
   'bg-split-400 text-ink',
   'bg-bluebs-400 text-ink',
   'bg-grape-400 text-ink',
   'bg-melon-400 text-ink',
 ]
-
-const WIZARD_STEPS = ['Basics', 'Rules', 'Store', 'Launch']
 
 function StepBadge({ n }: { n: number }) {
   return (
@@ -141,6 +141,12 @@ export function CreateForm() {
   const [selected, setSelected] = useState<number[]>(
     SUPPORTED_CHAINS.map(chain => chain.id),
   )
+
+  // --- 0: Flavor ---
+  const [flavor, setFlavor] = useState<'project' | 'revnet'>('project')
+  /** Project owner (or revnet operator). Empty = the connected wallet. */
+  const [owner, setOwner] = useState('')
+  const [ticker, setTicker] = useState('')
 
   // --- 2: Rules (one entry per queued ruleset/stage) ---
   const [stages, setStages] = useState<DraftStage[]>([newDraftStage(true)])
@@ -272,6 +278,8 @@ export function CreateForm() {
   }, [fees, selected])
 
   const nameOk = name.trim().length > 0
+  const ownerOk = owner.trim() === '' || resolvedAddress(owner) !== null
+  const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
   const stagesOk = stages.every((s, i) => stageOk(s, i === 0))
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage = stages.findIndex(
@@ -280,6 +288,8 @@ export function CreateForm() {
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
+    ownerOk &&
+    tickerOk &&
     selected.length > 0 &&
     stagesOk &&
     badStage === -1 &&
@@ -558,7 +568,7 @@ export function CreateForm() {
     // project can stock it later without a ruleset change.
     const store: LaunchPlan['store'] = {
       name: name.trim(),
-      symbol: deriveSymbol(name),
+      symbol: ticker.trim() || deriveSymbol(name),
       items: pinned,
     }
     return { projectUri, store, salt: randomSalt() }
@@ -586,7 +596,7 @@ export function CreateForm() {
         )
         const request = buildLaunchRequest({
           chainId: chainId as JBChainId,
-          owner: address!,
+          owner: resolvedAddress(owner) ?? address!,
           projectUri: pinned.projectUri,
           creationFee,
           plan: pinned.plans[chainId],
@@ -669,6 +679,14 @@ export function CreateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneUnindexed.join(',')])
 
+  const wizardSteps = [
+    'Flavor',
+    'Basics',
+    flavor === 'revnet' ? 'Stages' : 'Rules',
+    'Store',
+    'Launch',
+  ]
+
   // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter(v => v.trim()).length
   const linksSummary = linkCount > 0 ? `${linkCount} added` : 'None'
@@ -750,7 +768,7 @@ export function CreateForm() {
 
       {/* Horizontal stepper */}
       <nav aria-label="Create steps" className="mt-8 flex items-center gap-1.5">
-        {WIZARD_STEPS.map((label, i) => (
+        {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
               <span
@@ -789,10 +807,126 @@ export function CreateForm() {
         ))}
       </nav>
 
-      {/* 1 — Identity + treasury + chains */}
+      {/* 0 — Flavor: what kind of thing is this? */}
       <section className={step === 0 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={1} />
+          <h2 className="font-agrandir text-xl font-medium">
+            What are you launching?
+          </h2>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <OptionRow
+            checked={flavor === 'project'}
+            onSelect={() => !busy && setFlavor('project')}
+            disabled={busy}
+            title="Project"
+            blurb="You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything."
+          />
+          <OptionRow
+            checked={flavor === 'revnet'}
+            onSelect={() => !busy && setFlavor('revnet')}
+            disabled={busy}
+            title="Revnet"
+            blurb="Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability."
+          />
+        </div>
+
+        <div className="mt-6">
+          <span className="field-label">Chains</span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            Your {flavor === 'revnet' ? 'revnet' : 'project'} gets the same ID
+            space on every chain you pick. You&apos;ll confirm one transaction
+            per chain.
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {SUPPORTED_CHAINS.map(chain => {
+              const active = selected.includes(chain.id)
+              return (
+                <button
+                  key={chain.id}
+                  onClick={() => toggleChain(chain.id)}
+                  disabled={busy}
+                  aria-pressed={active}
+                  className={
+                    active
+                      ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
+                      : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                  }
+                >
+                  {active ? <CheckIcon className="h-4 w-4" /> : null}
+                  {chainName(chain.id)}
+                </button>
+              )
+            })}
+          </div>
+          {selected.length === 0 ? (
+            <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
+          ) : null}
+        </div>
+
+        <div className="mt-6">
+          <span className="field-label">
+            {flavor === 'revnet' ? 'Accounting' : 'Treasury'}
+          </span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            {flavor === 'revnet'
+              ? 'The reserve asset that backs the value of your token. Cannot be changed later.'
+              : 'The token your project holds and accounts in. Payments in other tokens convert automatically.'}
+          </p>
+          <div className="mt-2.5 flex gap-2">
+            {(
+              [
+                ['eth', 'ETH'],
+                ['usdc', 'USDC'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = currency === value
+              return (
+                <button
+                  key={value}
+                  onClick={() => !busy && setCurrency(value)}
+                  disabled={busy}
+                  aria-pressed={active}
+                  className={
+                    active
+                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
+                      : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                  }
+                >
+                  {active ? <CheckIcon className="h-4 w-4" /> : null}
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <span className="field-label">
+            {flavor === 'revnet' ? 'Operator' : 'Owner'}
+          </span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            {flavor === 'revnet'
+              ? 'The address that operates the few controls available in revnets.'
+              : 'Receives the project and full control over its rules.'}{' '}
+            Leave empty to use your connected wallet.
+          </p>
+          <AddressField
+            value={owner}
+            onChange={setOwner}
+            disabled={busy}
+            ariaLabel={flavor === 'revnet' ? 'Operator' : 'Owner'}
+            className="mt-2"
+          />
+        </div>
+      </section>
+
+      {/* 1 — Identity + treasury + chains */}
+      <section className={step === 1 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+        <div className="flex items-center gap-3">
+          <StepBadge n={2} />
           <h2 className="font-agrandir text-xl font-medium">
             What are you making?
           </h2>
@@ -818,6 +952,39 @@ export function CreateForm() {
                 className="input-well mt-1.5 min-h-[52px] px-4 text-lg font-medium placeholder:font-normal disabled:opacity-60"
               />
             </label>
+
+            <div className="mt-4">
+              <span className="field-label">
+                Token ticker
+                {flavor === 'revnet' ? (
+                  <span className="text-peel-500"> *</span>
+                ) : null}
+              </span>
+              <div className="mt-1.5 flex items-center gap-3">
+                <input
+                  type="text"
+                  value={ticker}
+                  onChange={e =>
+                    setTicker(
+                      e.target.value
+                        .toUpperCase()
+                        .replace(/[^A-Z0-9]/g, '')
+                        .slice(0, 11),
+                    )
+                  }
+                  disabled={busy}
+                  placeholder="TOKEN"
+                  className="input-well min-h-[48px] w-40 px-4 text-sm disabled:opacity-60"
+                />
+                <p className="text-xs leading-relaxed text-smoke-700">
+                  {flavor === 'revnet'
+                    ? "Names your revnet's token — supporters hold $" +
+                      (ticker || 'TOKEN') +
+                      '.'
+                    : 'Optional — names your token and store collection.'}
+                </p>
+              </div>
+            </div>
 
             <label className="mt-4 block">
               <span className="flex items-baseline justify-between">
@@ -986,87 +1153,13 @@ export function CreateForm() {
               className="input-well mt-2 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
             />
           </SubSection>
-
-          <SubSection
-            label="Treasury"
-            summary={isUsd ? 'USDC' : 'ETH'}
-            open={!!openSection.treasury}
-            onToggle={() => toggleSection('treasury')}
-          >
-            <p className="text-xs leading-relaxed text-smoke-700">
-              The token your project holds and accounts in. Payments in other
-              tokens convert automatically.
-            </p>
-            <div className="mt-2.5 flex gap-2">
-              {(
-                [
-                  ['eth', 'ETH'],
-                  ['usdc', 'USDC'],
-                ] as const
-              ).map(([value, label]) => {
-                const active = currency === value
-                return (
-                  <button
-                    key={value}
-                    onClick={() => !busy && setCurrency(value)}
-                    disabled={busy}
-                    aria-pressed={active}
-                    className={
-                      active
-                        ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                        : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                    }
-                  >
-                    {active ? <CheckIcon className="h-4 w-4" /> : null}
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          </SubSection>
-
-          <SubSection
-            label="Chains"
-            summary={selected.map(id => chainName(id)).join(', ') || 'Pick one'}
-            open={!!openSection.chains}
-            onToggle={() => toggleSection('chains')}
-          >
-            <p className="text-xs leading-relaxed text-smoke-700">
-              Your project gets the same ID space on every chain you pick.
-              You&apos;ll confirm one transaction per chain.
-            </p>
-            <div className="mt-2.5 flex flex-wrap gap-2">
-              {SUPPORTED_CHAINS.map(chain => {
-                const active = selected.includes(chain.id)
-                return (
-                  <button
-                    key={chain.id}
-                    onClick={() => toggleChain(chain.id)}
-                    disabled={busy}
-                    aria-pressed={active}
-                    className={
-                      active
-                        ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
-                        : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                    }
-                  >
-                    {active ? <CheckIcon className="h-4 w-4" /> : null}
-                    {chainName(chain.id)}
-                  </button>
-                )
-              })}
-            </div>
-            {selected.length === 0 ? (
-              <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
-            ) : null}
-          </SubSection>
         </div>
       </section>
 
       {/* 2 — Rules: one card per queued ruleset (stage) */}
-      <section className={step === 1 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section className={step === 2 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
-          <StepBadge n={2} />
+          <StepBadge n={3} />
           <h2 className="font-agrandir text-xl font-medium">
             How should it work?
           </h2>
@@ -1238,9 +1331,9 @@ export function CreateForm() {
       </section>
 
       {/* 3 — Store */}
-      <section className={step === 2 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section className={step === 3 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
-          <StepBadge n={3} />
+          <StepBadge n={4} />
           <h2 className="font-agrandir text-xl font-medium">Stock your store</h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
@@ -1257,9 +1350,9 @@ export function CreateForm() {
       </section>
 
       {/* 4 — Review & launch */}
-      <section className={step === 3 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section className={step === 4 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
-          <StepBadge n={4} />
+          <StepBadge n={5} />
           <h2 className="font-agrandir text-xl font-medium">
             Review &amp; launch
           </h2>
@@ -1455,7 +1548,7 @@ export function CreateForm() {
         >
           ← Back
         </button>
-        {step < WIZARD_STEPS.length - 1 ? (
+        {step < wizardSteps.length - 1 ? (
           <button
             onClick={() => goToStep(step + 1)}
             disabled={busy}

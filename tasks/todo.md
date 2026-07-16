@@ -1,43 +1,37 @@
-# Create flow: 4 steps (identity+treasury+chains / rules / store / review)
+# Create flow completion: Flavor step, revnet path, full options, .jb files
 
-Spec (user, 2026-07-16):
-- Step 1: identity + accounting context selector (ETH | USDC) + chain selectors move in.
-- Step 2: quick rules questionnaire (website/-style checkboxes, far less verbose).
-  Defaults: flexible project, no payouts, no cash outs, simple issuance, 0 reserved.
-- Step 3: Store (website/ create-flow Shop, in jbm style/language).
-- Step 4: Review & launch.
+Spec (user, 2026-07-16): (a) new Flavor step choosing Revnet vs Project —
+move accounting context, chain select there, add project owner/operator
+field; (b) revnet flavor turns Rules into Stages (REVDeployer semantics);
+(c) fold remaining per-ruleset options into the friendly UX; (d) .jb
+import/export like website/.
 
-## Encoding facts (from website/ + SDK)
-- Accounting context: token USDC_ADDRESSES[chain] dec 6 (or native, 18); context
-  currency = uint32(uint160(token)). Ruleset baseCurrency = 1 ETH / 2 USD.
-- No payouts = NO fundAccessLimitGroups entry. Flexible = payoutLimit UINT224_MAX
-  in context currency, no splits (remainder → owner).
-- Cash outs off = cashOutTaxRate 10000. Flexible payouts ⇒ no surplus ⇒ force off.
-- Reserved % out of 10000, no splits → all reserved to owner.
-- Store: JB721TiersHookProjectDeployer.launchProjectFor(owner, hookCfg,
-  {projectUri, rulesetConfigurations(payDataHook variant — same metadata object,
-  viem drops extra dataHook/useDataHookForPay keys), terminalConfigs, memo},
-  controller, salt) payable=creationFee. Tier prices in standard currency
-  (1/18dec ETH, 2/6dec USD). encodedIpfsUri = bytes32 sha256 digest of CIDv0
-  (Infura /api/v0/add already returns CIDv0). Unlimited supply = 999999999.
+## Facts
+- SDK v6 revnets: buildRevnetStageConfig (startsAtOrAfter ABSOLUTE unix,
+  strictly increasing; initialIssuance 1n = inherit-with-cuts sentinel;
+  splitPercent /10000; splits total EXACTLY 1e9; issuanceCutFrequency secs =
+  ruleset duration; cut% /1e9; cashOutTaxRate /10000) and buildDeployRevnetTx
+  (payable creationFee for new; tiered721Config switches to 6-arg overload;
+  suckerConfig empty deployerConfigurations for unlinked).
+- Custom-flow missing options (website/): pausePay ("Accept payments"),
+  pauseCreditTransfers, owner superpowers (allowSetTerminals/Controller/
+  TerminalMigration/SetCustomToken/AddAccountingContext/AddPriceFeed).
 
 ## Tasks
-- [x] Explore website/ create flow + SDK surface
-- [x] src/lib/launch.ts: LaunchPlan type, USDC context, payouts/cashout/reserved
-      encoding, 721 store branch, salt
-- [x] src/lib/ipfs-cid.ts: base58 CIDv0 → bytes32 digest (verified vs
-      independent BigInt decode; rejects CIDv1)
-- [x] /api/ipfs/pin-item: pin {name, description?, image?} tier metadata
-- [x] StoreEditor.tsx: item list editor (image, name, price, qty, description)
-- [x] CreateForm.tsx: 4 sections, plan state, pin items during launch
-- [x] Verify: ts:check clean; live Sepolia simulateContract PASS ×5
-      (eth-default, eth-flexible+reserved+minting, usdc-taxed-cashouts,
-      eth-store, usdc-store-two-items); UI screenshots (USDC/store states)
-- [ ] Commit
-
-## Review
-The controller path is unchanged for default launches. Store launches go
-through JB721TiersHookProjectDeployer with the same ruleset/terminal configs
-(viem drops the metadata keys the payDataHook tuple omits). Cash outs are
-forced off with flexible payouts (no surplus). Tier metadata pins as CIDv0 via
-the existing Infura route; encodedIpfsUri is its sha2-256 digest.
+- [ ] A1 Flavor step (step 0): Project|Revnet picker + copy; move Chains +
+      Treasury/Accounting; Owner (project) / Operator (revnet) AddressField
+      defaulting to connected wallet; 5-step stepper (dynamic Rules|Stages)
+- [ ] A2 Basics: ticker field (revnet requires; custom optional for store
+      symbol); owner used in launch encoding
+- [ ] B1 launch.ts: RevnetPlan → buildDeployRevnetTx per chain (no suckers,
+      independent chains like custom flow); stages map (daysAfter cumulative
+      from shared deployStart, snapped to prev cutFreq multiples)
+- [ ] B2 Stage editor revnet mode: Timing (starts N days after prev),
+      Tokens (issuance, cut % + every N days, split % + splits to operator
+      remainder), Cash outs; hide Payouts/Owner powers; store via 721
+      overload
+- [ ] C  Custom stage editor: Accept payments toggle (Timing), Advanced
+      subsection (pause credit transfers + 6 superpowers w/ warning copy)
+- [ ] D  .jb export/import of the whole draft + localStorage persistence
+- [ ] Verify: tsc, Sepolia sims (revnet single+multi stage, 721 revnet),
+      screenshots; commit per phase
