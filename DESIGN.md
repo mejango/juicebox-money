@@ -9,8 +9,21 @@ panels, live activity rail, bold statement copy).
 ## Foundations
 - **Single dark theme.** Background `#141217` (near-black plum-charcoal) with a
   very subtle radial glow (juice orange at ~6% opacity, top-right). No light mode.
-- **Monospace everywhere.** System mono stack: `ui-monospace, "SF Mono",
-  "Cascadia Mono", "JetBrains Mono", Menlo, monospace`. No webfont dependency.
+- **Three-voice type system** (the Elektron trick — the contrast IS the look):
+  1. **Display**: big, heavy, tight neo-grotesque for page/section headlines
+     ("Other fun stuff" scale — text-5xl+ with -0.03em tracking). System sans
+     stack (`-apple-system, "Helvetica Neue", Inter, Arial`).
+  2. **Data/body**: system mono (`ui-monospace, "SF Mono", "Cascadia Mono",
+     Menlo, monospace`) for everything informational — stats, activity rows,
+     addresses, inputs, labels, paragraphs.
+  3. **Pixel/bitmap**: buttons, badges, and tiny controls use the Silkscreen
+     bitmap face (OFL) — the ONE font asset we ship (self-hosted woff2 subset,
+     ~10KB, license file in-repo). "WATCH VIDEO"-style: uppercase pixel text
+     in a 1px-outlined box. If the asset can't be sourced cleanly, fall back
+     to uppercase mono + letterspacing — but the pixel face is the identity.
+- **Pixel motifs**: small dash/blip glyph fragments above section headlines
+  (like a loading bar stub), chunky 8-bit chevrons for carousel/steppers —
+  CSS box-shadow pixel art or the pixel font's glyphs.
 - **Panels, not cards.** Regions are hard-edged panels: `border: 2px solid` in
   a strong accent, radius 6px MAX, background `#1c1922` (panel surface), tiled
   bento-style with 12–16px gaps. The page is a composition of framed panels —
@@ -72,6 +85,9 @@ the hardware-instrument feel. The blend:
 - **Hero restraint.** The home hero is a near-empty dark band: the statement,
   one line of copy, two buttons (one solid, one pixel-outline). Let the
   activity rail and trending mosaic below carry the color density.
+- **Two-up media bands.** Content sections (future: featured projects,
+  stories) use Elektron's edge-to-edge two-up grid: full-bleed media, caption +
+  pixel-outline button below, chunky pixel chevrons if it scrolls.
 
 ## Rules
 - Responsive first: bento collapses to a single column on mobile; the activity
