@@ -1079,7 +1079,9 @@ export function CreateForm() {
                 <span className="field-label">Fees</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Funds leaving the project — payouts and withdrawals — pay a
-                  small fee to the Juicebox protocol. Money moving between
+                  small fee to the Juicebox protocol. In return you get
+                  ownership of the protocol&apos;s fee mechanism itself, which
+                  earns from every project&apos;s fees. Money moving between
                   Juicebox projects never pays a fee.
                 </p>
                 <button
@@ -1105,8 +1107,9 @@ export function CreateForm() {
                     </span>
                     <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
                       Keep the fee amount in your project instead of paying it
-                      right away — it stays unlocked as long as the funds come
-                      back later.
+                      right away. Useful if you might put funds back into your
+                      Juicebox later — issuing refunds, say — since returned
+                      funds unlock the held fee.
                     </span>
                   </span>
                 </button>
