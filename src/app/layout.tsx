@@ -64,6 +64,13 @@ export default function RootLayout({
                 Juicebox
               </Link>
               <SearchBox />
+              {/* Desktop-only nav item; mobile keeps it in the hero. */}
+              <Link
+                href="/create"
+                className="hidden shrink-0 text-sm font-semibold text-ink/70 transition-colors hover:text-ink md:inline"
+              >
+                Start a project
+              </Link>
               <div className="shrink-0">
                 <WalletButton />
               </div>
