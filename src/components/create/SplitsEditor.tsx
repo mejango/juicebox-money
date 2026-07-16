@@ -1,6 +1,7 @@
 'use client'
 
 import { isAddress } from 'viem'
+import { AddButton } from './ui'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
@@ -193,13 +194,12 @@ export function SplitsEditor({
       ))}
 
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
-        <button
+        <AddButton
           onClick={() => onChange([...splits, newDraftSplit()])}
           disabled={disabled}
-          className="text-sm font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
         >
-          + Add a recipient
-        </button>
+          Add a recipient
+        </AddButton>
         {splits.length > 0 ? (
           mode === 'percent' ? (
             <span

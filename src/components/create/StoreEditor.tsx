@@ -7,6 +7,7 @@ import {
   splitsTotal,
   type DraftSplit,
 } from './SplitsEditor'
+import { AddButton } from './ui'
 
 /**
  * Store items editor for the create flow. Purely controlled — drafts live in
@@ -321,13 +322,14 @@ export function StoreEditor({
         </div>
       ))}
 
-      <button
-        onClick={() => onChange([...items, newDraftItem()])}
-        disabled={disabled}
-        className="mt-4 text-sm font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
-      >
-        + Add an item
-      </button>
+      <div className="mt-4">
+        <AddButton
+          onClick={() => onChange([...items, newDraftItem()])}
+          disabled={disabled}
+        >
+          Add an item
+        </AddButton>
+      </div>
     </div>
   )
 }

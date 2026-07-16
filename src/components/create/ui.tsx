@@ -103,6 +103,30 @@ export function CheckRow({
   )
 }
 
+/** Friendly dashed add-pill ("+ Add a recipient", "+ Add an item"). */
+export function AddButton({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void
+  disabled: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="group inline-flex min-h-[40px] items-center gap-2 rounded-full border border-dashed border-smoke-400 bg-white py-1.5 pl-1.5 pr-4 text-xs font-medium text-smoke-700 transition-colors hover:border-bluebs-500 hover:text-bluebs-700 disabled:opacity-60"
+    >
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-bluebs-100 font-agrandir text-sm text-bluebs-700 transition-colors group-hover:bg-bluebs-500 group-hover:text-white">
+        +
+      </span>
+      {children}
+    </button>
+  )
+}
+
 /** Small pill chip toggle (tax rates, modes, currencies). */
 export function ChipButton({
   active,
