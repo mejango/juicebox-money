@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
     logoUri,
     coverImageUri,
     payDisclosure,
+    tags,
     infoUri,
     twitter,
     discord,
@@ -69,6 +70,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
     }
     metadata[key] = value
+  }
+
+  if (tags !== undefined) {
+    if (
+      !Array.isArray(tags) ||
+      tags.length > 3 ||
+      tags.some(t => typeof t !== 'string' || t.length > 30)
+    ) {
+      return NextResponse.json({ error: 'Invalid tags' }, { status: 400 })
+    }
+    if (tags.length > 0)
+      (metadata as Record<string, unknown>).tags = tags
   }
 
   if (payDisclosure !== undefined) {

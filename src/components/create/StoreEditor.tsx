@@ -100,7 +100,7 @@ export function itemOk(item: DraftItem): boolean {
   )
 }
 
-const MAX_MEDIA_BYTES = 10 * 1024 * 1024
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024
 
 function mediaAllowed(type: string): boolean {
   return (

@@ -4,7 +4,7 @@ import { pinToIpfs } from '@/lib/ipfs-server'
 export const runtime = 'nodejs'
 
 /** Store-item media: any common media type, larger cap than logos. */
-const MAX_BYTES = 10 * 1024 * 1024
+const MAX_BYTES = 25 * 1024 * 1024
 
 function typeAllowed(type: string): boolean {
   return (
@@ -19,7 +19,7 @@ function typeAllowed(type: string): boolean {
 export async function POST(req: NextRequest) {
   const declaredLength = Number(req.headers.get('content-length') ?? 0)
   if (declaredLength > MAX_BYTES * 1.05) {
-    return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 413 })
+    return NextResponse.json({ error: 'File too large (max 25MB)' }, { status: 413 })
   }
 
   let form: FormData
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing file field' }, { status: 400 })
   }
   if (file.size === 0 || file.size > MAX_BYTES) {
-    return NextResponse.json({ error: 'File must be 1 byte – 10MB' }, { status: 413 })
+    return NextResponse.json({ error: 'File must be 1 byte – 25MB' }, { status: 413 })
   }
   if (!typeAllowed(file.type)) {
     return NextResponse.json(

@@ -151,6 +151,10 @@ export type AccountingConfig = {
 
 export type LaunchPlan = {
   accounting: AccountingConfig
+  /** Issuance denomination when accounting is standard tokens: null =
+   *  follow accounting (ETH when present, else USD). Custom-token
+   *  accounting always prices in the token itself. */
+  issuanceBase: 'eth' | 'usd' | null
   /** 'project' launches via the 721 project deployer with owner-changeable
    *  rules; 'revnet' deploys fixed-forever stages via REVDeployer. */
   flavor: 'project' | 'revnet'
@@ -226,6 +230,7 @@ export const DEFAULT_STORE_FLAGS = {
 
 export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   accounting: DEFAULT_ACCOUNTING,
+  issuanceBase: null,
   flavor: 'project',
   operator: null,
   ticker: '',
@@ -321,7 +326,8 @@ export function buildLaunchRequest(args: {
       )
   const baseCurrency = accounting.custom
     ? tokenCurrencyId(accounting.custom.address)
-    : accounting.tokens.includes('eth')
+    : (plan.issuanceBase ?? (accounting.tokens.includes('eth') ? 'eth' : 'usd')) ===
+        'eth'
       ? BASE_CURRENCY_ETH
       : BASE_CURRENCY_USD
 

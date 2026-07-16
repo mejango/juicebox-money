@@ -36,6 +36,7 @@ import { AddressField } from './AddressField'
 import {
   StageRulesEditor,
   newDraftStage,
+  stageCashOutTax,
   stageDurationSeconds,
   stageOk,
   stageSummary,
@@ -99,6 +100,14 @@ function randomSalt(): `0x${string}` {
   return `0x${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`
 }
 
+const TAG_OPTIONS = [
+  'AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Collectibles',
+  'Community', 'Creator', 'DAO', 'DeFi', 'DeSci', 'Education', 'Events',
+  'Film', 'Fundraising', 'Games', 'Grants', 'Hackathon', 'Media', 'Memes',
+  'Music', 'NFT', 'Open Source', 'Podcast', 'Public Goods', 'Research',
+  'Social', 'Software', 'Sports', 'Tooling', 'Writing',
+]
+
 const STEP_TILES = [
   'bg-peel-300 text-ink',
   'bg-split-400 text-ink',
@@ -142,6 +151,8 @@ export function CreateForm() {
   const [coverPreview, setCoverPreview] = useState<string | null>(null)
   const [coverError, setCoverError] = useState<string | null>(null)
   const [payNotice, setPayNotice] = useState('')
+  const [tags, setTags] = useState<string[]>([])
+  const [tosAccepted, setTosAccepted] = useState(false)
   const [links, setLinks] = useState({
     infoUri: '',
     twitter: '',
@@ -160,6 +171,8 @@ export function CreateForm() {
     decimals: number
     symbol: string
   } | null>(null)
+  /** Issuance denomination; null = follow accounting. */
+  const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
   const [selected, setSelected] = useState<number[]>(
     SUPPORTED_CHAINS.map(chain => chain.id),
   )
@@ -226,9 +239,11 @@ export function CreateForm() {
 
   const busy = phase !== 'form'
   const customActive = customOn && customMeta !== null
+  const effectiveBase =
+    issuanceBase ?? (accepts.includes('eth') ? 'eth' : 'usd')
   const unitLabel = customActive
     ? customMeta.symbol || 'TOKEN'
-    : accepts.includes('eth')
+    : effectiveBase === 'eth'
       ? 'ETH'
       : 'USD'
   const effectiveStoreCurrency =
@@ -377,6 +392,7 @@ export function CreateForm() {
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
+    tosAccepted &&
     accountingOk &&
     ownerOk &&
     tickerOk &&
@@ -500,7 +516,7 @@ export function CreateForm() {
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
       holdFees: stage.payouts !== 'none' && stage.holdFees,
-      cashOutTaxRate: stage.cashOuts && !routedAll ? stage.cashOutTax : null,
+      cashOutTaxRate: stage.cashOuts && !routedAll ? stageCashOutTax(stage) : null,
       allowOwnerMinting: stage.ownerMinting,
       pausePay: !stage.acceptPayments,
       pauseCreditTransfers: stage.pauseCreditTransfers,
@@ -555,7 +571,7 @@ export function CreateForm() {
       holdFees: false,
       // Revnets can't disable cash outs entirely — 'off' is the maximum
       // allowed 99.99% tax.
-      cashOutTaxRate: stage.cashOuts ? stage.cashOutTax : 9_999,
+      cashOutTaxRate: stage.cashOuts ? stageCashOutTax(stage) : 9_999,
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
@@ -614,6 +630,7 @@ export function CreateForm() {
         return [
           chainId,
           {
+            issuanceBase,
             accounting: {
               tokens: accepts,
               custom:
@@ -665,6 +682,7 @@ export function CreateForm() {
         logoUri,
         coverImageUri,
         payDisclosure: payNotice.trim() || undefined,
+        tags: tags.length > 0 ? tags : undefined,
         infoUri: links.infoUri.trim() || undefined,
         twitter: links.twitter.trim().replace(/^@/, '') || undefined,
         discord: links.discord.trim() || undefined,
@@ -898,10 +916,12 @@ export function CreateForm() {
     tagline,
     description,
     payNotice,
+    tags,
     links,
     owner,
     accepts,
     customAddress: customOn ? customAddress : '',
+    issuanceBase,
     chains: selected,
     stages,
     afterMode,
@@ -918,6 +938,7 @@ export function CreateForm() {
     setTagline(draft.tagline)
     setDescription(draft.description)
     setPayNotice(draft.payNotice)
+    setTags(draft.tags)
     setLinks({
       infoUri: draft.links.infoUri ?? '',
       twitter: draft.links.twitter ?? '',
@@ -930,6 +951,7 @@ export function CreateForm() {
     setAccepts(draft.accepts)
     setCustomOn(draft.customAddress !== '')
     setCustomAddress(draft.customAddress)
+    setIssuanceBase(draft.issuanceBase)
     const validChains = draft.chains.filter(id =>
       SUPPORTED_CHAINS.some(chain => chain.id === id),
     )
@@ -1008,11 +1030,13 @@ export function CreateForm() {
     tagline,
     description,
     payNotice,
+    tags,
     links,
     owner,
     accepts,
     customOn,
     customAddress,
+    issuanceBase,
     selected,
     stages,
     afterMode,
@@ -1309,6 +1333,42 @@ export function CreateForm() {
           ) : null}
         </div>
 
+        {!customOn ? (
+          <div className="mt-6">
+            <span className="field-label">Issuance priced in</span>
+            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+              The unit your token issuance is quoted in — e.g. 10,000 tokens
+              per ETH, or per USD.
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              {(
+                [
+                  ['eth', 'ETH'],
+                  ['usd', 'USD'],
+                ] as const
+              ).map(([value, label]) => {
+                const active = effectiveBase === value
+                return (
+                  <button
+                    key={value}
+                    onClick={() => !busy && setIssuanceBase(value)}
+                    disabled={busy}
+                    aria-pressed={active}
+                    className={
+                      active
+                        ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
+                        : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                    }
+                  >
+                    {active ? <CheckIcon className="h-4 w-4" /> : null}
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+
         <div className="mt-6">
           <span className="field-label">
             {flavor === 'revnet' ? 'Operator' : 'Owner'}
@@ -1389,6 +1449,42 @@ export function CreateForm() {
                       '.'
                     : 'Optional — names your token and store collection.'}
                 </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <span className="field-label">Tags</span>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                Pick up to 3 so supporters can find you.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {TAG_OPTIONS.map(tag => {
+                  const active = tags.includes(tag)
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => {
+                        if (busy) return
+                        setTags(prev =>
+                          prev.includes(tag)
+                            ? prev.filter(t => t !== tag)
+                            : prev.length < 3
+                              ? [...prev, tag]
+                              : prev,
+                        )
+                      }}
+                      disabled={busy || (!active && tags.length >= 3)}
+                      aria-pressed={active}
+                      className={
+                        active
+                          ? 'inline-flex min-h-[32px] items-center rounded-full bg-split-100 px-3 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
+                          : 'inline-flex min-h-[32px] items-center rounded-full border border-smoke-300 bg-white px-3 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-40'
+                      }
+                    >
+                      {tag}
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -1964,9 +2060,7 @@ export function CreateForm() {
             </dd>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">
-              {flavor === 'revnet' ? 'Accounting' : 'Treasury'}
-            </dt>
+            <dt className="text-smoke-700">Accounting</dt>
             <dd className="font-medium text-ink">
               {customOn
                 ? `$${customMeta?.symbol ?? 'TOKEN'}`
@@ -2052,6 +2146,16 @@ export function CreateForm() {
             </div>
           ) : null}
         </dl>
+
+        <div className="mt-5">
+          <CheckRow
+            checked={tosAccepted}
+            onToggle={() => !busy && setTosAccepted(t => !t)}
+            disabled={busy}
+            title="I understand the risks"
+            blurb="Juicebox is experimental onchain software. Your project is controlled by its rules and owner — not by Juicebox — and launches are irreversible."
+          />
+        </div>
 
         <button
           onClick={launch}

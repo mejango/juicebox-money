@@ -20,10 +20,12 @@ export type CreateDraft = {
   tagline: string
   description: string
   payNotice: string
+  tags: string[]
   links: Record<string, string>
   owner: string
   accepts: TreasuryCurrency[]
   customAddress: string
+  issuanceBase: 'eth' | 'usd' | null
   chains: number[]
   stages: DraftStage[]
   afterMode: 'wait' | 'terminal' | 'cycle'
@@ -125,6 +127,8 @@ function sanitizeStage(raw: unknown): DraftStage {
       s.cashOutTax < 10_000
         ? s.cashOutTax
         : 0,
+    taxCustomOn: bool(s.taxCustomOn),
+    taxCustomPct: numStr(s.taxCustomPct, 5),
     ownerMinting: bool(s.ownerMinting),
     acceptPayments: s.acceptPayments === undefined ? true : bool(s.acceptPayments),
     pauseCreditTransfers: bool(s.pauseCreditTransfers),
@@ -199,6 +203,10 @@ export function parseDraft(text: string): CreateDraft {
     tagline: str(d.tagline, 100),
     description: str(d.description, 5000),
     payNotice: str(d.payNotice, 1000),
+    tags: (Array.isArray(d.tags) ? d.tags : [])
+      .filter((t): t is string => typeof t === 'string')
+      .map(t => t.slice(0, 30))
+      .slice(0, 3),
     links,
     owner: str(d.owner, 64),
     accepts: (Array.isArray(d.accepts) ? d.accepts : ['eth'])
@@ -209,6 +217,8 @@ export function parseDraft(text: string): CreateDraft {
           .slice(0, 2)
       : ['eth'],
     customAddress: str(d.customAddress, 64),
+    issuanceBase:
+      d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
     chains: (Array.isArray(d.chains) ? d.chains : [])
       .filter(c => Number.isInteger(c))
       .slice(0, 16) as number[],
