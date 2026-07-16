@@ -227,8 +227,8 @@ export function SplitsEditor({
                   {split.perChainOpen ? (
                     <div className="mt-2 space-y-2">
                       {chainIds!.map(chainId => (
-                        <div key={chainId} className="flex items-center gap-2">
-                          <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
+                        <div key={chainId} className="flex items-start gap-2">
+                          <span className="mt-3.5 flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
                             <ChainIcon chainId={chainId} size={14} />
                             {chainName(chainId)}
                           </span>
@@ -247,7 +247,7 @@ export function SplitsEditor({
                               compact
                             />
                           ) : (
-                            <>
+                            <div className="min-w-0 flex-1">
                               <ProjectIdField
                                 value={split.perChain[chainId] ?? ''}
                                 onChange={v =>
@@ -257,7 +257,7 @@ export function SplitsEditor({
                                 }
                                 disabled={disabled}
                                 chainId={chainId}
-                                className="w-24 shrink-0"
+                                className="w-24"
                               />
                               <AddressField
                                 value={split.perChainBeneficiary[chainId] ?? ''}
@@ -274,10 +274,10 @@ export function SplitsEditor({
                                   split.beneficiary.trim() || 'beneficiary'
                                 }
                                 ariaLabel={`Beneficiary on ${chainName(chainId)}`}
-                                className="flex-1"
+                                className="mt-2"
                                 compact
                               />
-                            </>
+                            </div>
                           )}
                         </div>
                       ))}
