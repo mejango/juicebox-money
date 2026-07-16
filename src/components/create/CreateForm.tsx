@@ -1119,18 +1119,21 @@ export function CreateForm() {
                     }
                   }}
                   disabled={busy}
-                  className="input-well select-caret min-h-[44px] w-full max-w-md px-3.5 pr-9 text-sm disabled:opacity-60"
+                  className="input-well select-caret min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
                 >
-                  <option value="wait">
-                    Pause — payments and issuance stop until you queue more rules
-                  </option>
-                  <option value="terminal">
-                    Continue on the same terms, forever
-                  </option>
-                  <option value="cycle">Repeat this ruleset, cycle after cycle</option>
+                  <option value="wait">Pause</option>
+                  <option value="terminal">Continue</option>
+                  <option value="cycle">Repeat</option>
                   <option value="custom">Queue another ruleset…</option>
                 </select>
               </div>
+              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                {afterMode === 'wait'
+                  ? 'Payments and issuance stop until you queue more rules.'
+                  : afterMode === 'terminal'
+                    ? 'The same terms continue, forever.'
+                    : 'This ruleset repeats, cycle after cycle.'}
+              </p>
             </div>
           ) : null}
 
@@ -1147,14 +1150,28 @@ export function CreateForm() {
                   setApprovalDeadline(e.target.value as ApprovalDeadline)
                 }
                 disabled={busy}
-                className="input-well select-caret mt-2 min-h-[44px] w-full max-w-md px-3.5 pr-9 text-sm disabled:opacity-60"
+                className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
               >
-                <option value="3hours">Changes take effect after 3 hours</option>
-                <option value="1day">Changes take effect after 1 day</option>
-                <option value="3days">Changes take effect after 3 days</option>
-                <option value="7days">Changes take effect after 7 days</option>
-                <option value="none">No notice — changes can be immediate</option>
+                <option value="3hours">3 hours</option>
+                <option value="1day">1 day</option>
+                <option value="3days">3 days</option>
+                <option value="7days">7 days</option>
+                <option value="none">No notice</option>
               </select>
+              {approvalDeadline !== 'none' ? (
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  Queued changes take effect{' '}
+                  {
+                    {
+                      '3hours': '3 hours',
+                      '1day': '1 day',
+                      '3days': '3 days',
+                      '7days': '7 days',
+                    }[approvalDeadline]
+                  }{' '}
+                  after they&apos;re proposed.
+                </p>
+              ) : null}
               {approvalDeadline === 'none' ? (
                 <p className="mt-2 text-xs leading-relaxed text-peel-600">
                   No notice lets the owner make last-second edits before a
