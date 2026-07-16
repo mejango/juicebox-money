@@ -37,6 +37,30 @@ export type StoreItem = {
   /** null = unlimited inventory. */
   supply: number | null
   encodedIpfsUri: `0x${string}`
+  /** Share of each sale routed to `splits`, out of 1e9. 0 = none. */
+  splitPercent: number
+  /** Relative shares of the split bucket (sum to 1e9). */
+  splits: SplitConfig[]
+  /** Initial discount out of 200 (0.5% steps — uint8 cap). */
+  discountPercent: number
+  /** Reserve 1 of every N mints for the beneficiary. 0 = off. */
+  reserveFrequency: number
+  reserveBeneficiary: Address | null
+}
+
+export const DEFAULT_ITEM_EXTRAS: Pick<
+  StoreItem,
+  | 'splitPercent'
+  | 'splits'
+  | 'discountPercent'
+  | 'reserveFrequency'
+  | 'reserveBeneficiary'
+> = {
+  splitPercent: 0,
+  splits: [],
+  discountPercent: 0,
+  reserveFrequency: 0,
+  reserveBeneficiary: null,
 }
 
 /** One split recipient: an address, or a project (its tokens go to
@@ -214,22 +238,23 @@ export function buildLaunchRequest(args: {
     price: item.price,
     initialSupply: item.supply ?? TIER_UNLIMITED_SUPPLY,
     votingUnits: 0,
-    reserveFrequency: 0,
-    reserveBeneficiary: zeroAddress,
+    reserveFrequency: item.reserveFrequency,
+    reserveBeneficiary: item.reserveBeneficiary ?? zeroAddress,
     encodedIpfsUri: item.encodedIpfsUri,
     category: 0,
-    discountPercent: 0,
+    discountPercent: item.discountPercent,
     flags: {
       allowOwnerMint: false,
-      useReserveBeneficiaryAsDefault: false,
+      useReserveBeneficiaryAsDefault:
+        item.reserveFrequency > 0 && item.reserveBeneficiary !== null,
       transfersPausable: false,
       useVotingUnits: false,
       cantBeRemoved: false,
       cantIncreaseDiscountPercent: false,
       cantBuyWithCredits: false,
     },
-    splitPercent: 0,
-    splits: [],
+    splitPercent: item.splitPercent,
+    splits: toJbSplits(item.splits),
   }))
 
   return {

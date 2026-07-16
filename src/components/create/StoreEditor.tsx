@@ -1,5 +1,13 @@
 'use client'
 
+import { isAddress } from 'viem'
+import {
+  SplitsEditor,
+  splitOk,
+  splitsTotal,
+  type DraftSplit,
+} from './SplitsEditor'
+
 /**
  * Store items editor for the create flow. Purely controlled — drafts live in
  * CreateForm state; pinning and encoding happen at launch time.
@@ -15,6 +23,14 @@ export type DraftItem = {
   description: string
   imageFile: File | null
   imagePreview: string | null
+  /** Initial discount, 0–100 (%). '' = none. */
+  discountPct: string
+  /** Reserve 1 of every N for the beneficiary. '' = off. */
+  reserveN: string
+  reserveBeneficiary: string
+  /** % of each sale routed to recipients (percent mode). */
+  splits: DraftSplit[]
+  moreOpen: boolean
 }
 
 let nextId = 1
@@ -28,6 +44,11 @@ export function newDraftItem(): DraftItem {
     description: '',
     imageFile: null,
     imagePreview: null,
+    discountPct: '',
+    reserveN: '',
+    reserveBeneficiary: '',
+    splits: [],
+    moreOpen: false,
   }
 }
 
@@ -42,11 +63,38 @@ export function itemSupplyOk(supply: string): boolean {
   return Number.isInteger(n) && n >= 1 && n <= 999_999_998
 }
 
+export function itemDiscountOk(discountPct: string): boolean {
+  if (discountPct.trim() === '') return true
+  const n = Number(discountPct)
+  return Number.isFinite(n) && n >= 0 && n <= 100
+}
+
+export function itemReserveOk(item: DraftItem): boolean {
+  if (item.reserveN.trim() === '') return true
+  const n = Number(item.reserveN)
+  return (
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= 65_535 &&
+    isAddress(item.reserveBeneficiary.trim())
+  )
+}
+
+export function itemSplitsOk(item: DraftItem): boolean {
+  return (
+    item.splits.every(s => splitOk(s, 'percent')) &&
+    splitsTotal(item.splits, 'percent') <= 100
+  )
+}
+
 export function itemOk(item: DraftItem): boolean {
   return (
     item.name.trim().length > 0 &&
     itemPriceOk(item.price) &&
-    itemSupplyOk(item.supply)
+    itemSupplyOk(item.supply) &&
+    itemDiscountOk(item.discountPct) &&
+    itemReserveOk(item) &&
+    itemSplitsOk(item)
   )
 }
 
@@ -102,7 +150,7 @@ export function StoreEditor({
           </div>
 
           <div className="mt-3 flex gap-4">
-            <label className="shrink-0 cursor-pointer">
+            <div className="flex shrink-0 flex-col items-center gap-2">
               {item.imagePreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -111,19 +159,21 @@ export function StoreEditor({
                   className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
                 />
               ) : (
-                <span className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-smoke-300 text-center text-[11px] leading-tight text-smoke-700">
-                  <span className="text-lg">🖼️</span>
-                  Add image
+                <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
+                  🖼️
                 </span>
               )}
-              <input
-                type="file"
-                accept="image/*"
-                disabled={disabled}
-                className="sr-only"
-                onChange={e => onImageChange(item.id, e.target.files?.[0] ?? null)}
-              />
-            </label>
+              <label className="btn-secondary min-h-[32px] cursor-pointer px-2.5 text-[11px]">
+                {item.imageFile ? 'Change image' : 'Upload image'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={disabled}
+                  className="sr-only"
+                  onChange={e => onImageChange(item.id, e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
 
             <div className="min-w-0 flex-1 space-y-3">
               <input
@@ -177,6 +227,97 @@ export function StoreEditor({
             placeholder="Short description (optional)"
             className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
           />
+
+          <button
+            onClick={() => update(item.id, { moreOpen: !item.moreOpen })}
+            disabled={disabled}
+            aria-expanded={item.moreOpen}
+            className="mt-3 text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+          >
+            {item.moreOpen ? 'Fewer options' : 'More options'}
+          </button>
+
+          {item.moreOpen ? (
+            <div className="mt-3 space-y-5 border-t border-smoke-200 pt-4">
+              <div>
+                <span className="field-label">Discount</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Launch the item at a discount off its price — you can end
+                  the discount later.
+                </p>
+                <div className="mt-2 flex items-center gap-2.5">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={item.discountPct}
+                    onChange={e =>
+                      update(item.id, { discountPct: e.target.value.slice(0, 5) })
+                    }
+                    disabled={disabled}
+                    placeholder="0"
+                    className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                      itemDiscountOk(item.discountPct) ? '' : '!border-red-400'
+                    }`}
+                  />
+                  <span className="text-sm text-smoke-700">% off</span>
+                </div>
+              </div>
+
+              <div>
+                <span className="field-label">Reserve inventory</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Set aside some of this item for a specific wallet as others
+                  buy it.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                  <span className="text-sm text-smoke-700">1 of every</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={item.reserveN}
+                    onChange={e =>
+                      update(item.id, { reserveN: e.target.value.slice(0, 5) })
+                    }
+                    disabled={disabled}
+                    placeholder="—"
+                    className={`input-well min-h-[44px] w-16 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                      itemReserveOk(item) ? '' : '!border-red-400'
+                    }`}
+                  />
+                  <span className="text-sm text-smoke-700">sold goes to</span>
+                  <input
+                    type="text"
+                    value={item.reserveBeneficiary}
+                    onChange={e =>
+                      update(item.id, {
+                        reserveBeneficiary: e.target.value.trim().slice(0, 42),
+                      })
+                    }
+                    disabled={disabled}
+                    placeholder="0x address"
+                    className={`input-well min-h-[44px] min-w-0 flex-1 px-3 font-mono text-xs disabled:opacity-60 ${
+                      itemReserveOk(item) ? '' : '!border-red-400'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="field-label">Split sales</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Route a share of each sale of this item to other accounts or
+                  projects.
+                </p>
+                <SplitsEditor
+                  splits={item.splits}
+                  onChange={splits => update(item.id, { splits })}
+                  disabled={disabled}
+                  bucketLabel="sale proceeds"
+                  remainderNote="stay with the project"
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
       ))}
 

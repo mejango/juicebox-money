@@ -53,6 +53,7 @@ export function TreasuryCard({
   projectName,
   accountingToken,
   accountingTokenSymbol,
+  payDisclosure,
 }: {
   chainId: JBChainId
   projectId: number
@@ -61,6 +62,8 @@ export function TreasuryCard({
   accountingToken?: string | null
   /** The accounting token's symbol per bendystraw (e.g. "ETH", "USDC"). */
   accountingTokenSymbol?: string | null
+  /** The project's payment notice, shown before paying. */
+  payDisclosure?: string
 }) {
   const [tab, setTab] = useState<Tab>('pay')
 
@@ -102,6 +105,7 @@ export function TreasuryCard({
             chainId={chainId}
             projectId={projectId}
             projectName={projectName}
+            payDisclosure={payDisclosure}
           />
         ) : (
           <CashOutPanel
@@ -122,10 +126,12 @@ function PayPanel({
   chainId,
   projectId,
   projectName,
+  payDisclosure,
 }: {
   chainId: JBChainId
   projectId: number
   projectName: string
+  payDisclosure?: string
 }) {
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as
@@ -329,6 +335,13 @@ function PayPanel({
           + Add a note
         </button>
       )}
+
+      {payDisclosure ? (
+        <p className="mt-4 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+          <span className="font-medium">Note from the project:</span>{' '}
+          {payDisclosure}
+        </p>
+      ) : null}
 
       <button
         onClick={pay}

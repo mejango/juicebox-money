@@ -40,6 +40,11 @@ export type OwnerPanelInitial = {
   infoUri?: string
   twitter?: string
   discord?: string
+  telegram?: string
+  whatsapp?: string
+  instagram?: string
+  coverImageUri?: string
+  payDisclosure?: string
 }
 
 function friendlyError(e: unknown): string {
@@ -257,6 +262,11 @@ function DetailsRow({
         infoUri: initial.infoUri,
         twitter: initial.twitter,
         discord: initial.discord,
+        telegram: initial.telegram,
+        whatsapp: initial.whatsapp,
+        instagram: initial.instagram,
+        coverImageUri: initial.coverImageUri,
+        payDisclosure: initial.payDisclosure,
       }),
     })
     const json = (await res.json()) as { cid?: string; error?: string }

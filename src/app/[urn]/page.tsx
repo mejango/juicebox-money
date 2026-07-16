@@ -32,9 +32,14 @@ type ProjectMetadata = {
   projectTagline?: string
   description?: string
   logoUri?: string
+  coverImageUri?: string
+  payDisclosure?: string
   infoUri?: string
   twitter?: string
   discord?: string
+  telegram?: string
+  whatsapp?: string
+  instagram?: string
 }
 
 async function fetchProjectMetadata(
@@ -163,9 +168,25 @@ export default async function ProjectPage({
   const twitter = twitterHandle && /^\w{1,15}$/.test(twitterHandle)
     ? `https://x.com/${twitterHandle}`
     : null
-  const discord = metadata?.discord?.startsWith('https://')
-    ? httpsOnly(metadata.discord)
+  const igHandle = metadata?.instagram?.replace(/^@/, '').trim()
+  const instagram = igHandle && /^[\w.]{1,30}$/.test(igHandle)
+    ? `https://instagram.com/${igHandle}`
     : null
+  const httpsLink = (value: string | undefined) =>
+    value?.startsWith('https://') ? httpsOnly(value) : null
+  const discord = httpsLink(metadata?.discord)
+  const telegram = httpsLink(metadata?.telegram)
+  const whatsapp = httpsLink(metadata?.whatsapp)
+  const coverImage = ipfsUrl(metadata?.coverImageUri ?? null)
+  const socialLinks: [string, string | null][] = [
+    ['Website', infoUri],
+    ['X', twitter],
+    ['Discord', discord],
+    ['Telegram', telegram],
+    ['WhatsApp', whatsapp],
+    ['Instagram', instagram],
+  ]
+  const hasLinks = socialLinks.some(([, href]) => href)
 
   const stats: [string, string][] = [
     [`${symbol} raised`, formatTokenAmount(project.volume, decimals)],
@@ -176,6 +197,14 @@ export default async function ProjectPage({
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+      {coverImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={coverImage}
+          alt=""
+          className="mb-6 h-32 w-full rounded-xl border border-smoke-200 object-cover sm:h-44"
+        />
+      ) : null}
       {/* Header */}
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
         <ProjectLogo
@@ -262,6 +291,7 @@ export default async function ProjectPage({
             projectName={name}
             accountingToken={project.token}
             accountingTokenSymbol={project.tokenSymbol}
+            payDisclosure={metadata?.payDisclosure}
           />
           <section className="mt-8">
             <h2 className="mb-3 font-agrandir text-xl font-medium">
@@ -290,9 +320,14 @@ export default async function ProjectPage({
               infoUri: metadata?.infoUri,
               twitter: metadata?.twitter,
               discord: metadata?.discord,
+              telegram: metadata?.telegram,
+              whatsapp: metadata?.whatsapp,
+              instagram: metadata?.instagram,
+              coverImageUri: metadata?.coverImageUri,
+              payDisclosure: metadata?.payDisclosure,
             }}
           />
-          {description.length > 0 || infoUri || twitter || discord ? (
+          {description.length > 0 || hasLinks ? (
             <section>
               <h2 className="mb-3 font-agrandir text-xl font-medium">
                 About
@@ -304,15 +339,13 @@ export default async function ProjectPage({
                   ))}
                 </div>
               ) : null}
-              {infoUri || twitter || discord ? (
+              {hasLinks ? (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {infoUri ? (
-                    <ExternalLink href={infoUri} label="Website" />
-                  ) : null}
-                  {twitter ? <ExternalLink href={twitter} label="X" /> : null}
-                  {discord ? (
-                    <ExternalLink href={discord} label="Discord" />
-                  ) : null}
+                  {socialLinks.map(([label, href]) =>
+                    href ? (
+                      <ExternalLink key={label} href={href} label={label} />
+                    ) : null,
+                  )}
                 </div>
               ) : null}
             </section>

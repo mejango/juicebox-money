@@ -52,6 +52,7 @@ export function SplitsEditor({
   bucketLabel,
   mode = 'percent',
   amountLabel = '',
+  remainderNote = 'go to you',
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -61,6 +62,8 @@ export function SplitsEditor({
   mode?: SplitsMode
   /** Currency label for 'amount' mode, e.g. "ETH". */
   amountLabel?: string
+  /** Where the unallocated remainder goes, e.g. "go to you". */
+  remainderNote?: string
 }) {
   const update = (id: number, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
@@ -127,7 +130,7 @@ export function SplitsEditor({
               {total > 100
                 ? `${total}% — over 100%`
                 : total < 100
-                  ? `${total}% allocated · remaining ${bucketLabel} go to you`
+                  ? `${total}% allocated · remaining ${bucketLabel} ${remainderNote}`
                   : '100% allocated'}
             </span>
           ) : (

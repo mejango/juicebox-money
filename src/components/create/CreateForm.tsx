@@ -228,6 +228,20 @@ export function CreateForm() {
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
   const [logoError, setLogoError] = useState<string | null>(null)
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverPreview, setCoverPreview] = useState<string | null>(null)
+  const [coverError, setCoverError] = useState<string | null>(null)
+  const [payNotice, setPayNotice] = useState('')
+  const [links, setLinks] = useState({
+    infoUri: '',
+    twitter: '',
+    discord: '',
+    telegram: '',
+    whatsapp: '',
+    instagram: '',
+  })
+  const setLink = (key: keyof typeof links, value: string) =>
+    setLinks(prev => ({ ...prev, [key]: value.slice(0, 300) }))
   const [currency, setCurrency] = useState<TreasuryCurrency>('eth')
   const [selected, setSelected] = useState<number[]>([SUPPORTED_CHAINS[0].id])
 
@@ -264,11 +278,14 @@ export function CreateForm() {
   const statusesRef = useRef(statuses)
   statusesRef.current = statuses
   const [launchError, setLaunchError] = useState<string | null>(null)
-  // Everything pinned once per run; retries reuse it (inputs lock while busy).
+  // Everything pinned + the assembled plan, once per run; retries reuse it
+  // (inputs lock while busy). Building the plan up front also keeps its
+  // validation throws inside launch()'s try.
   const pinnedRef = useRef<{
     projectUri: string
     store: LaunchPlan['store']
     salt: `0x${string}`
+    plan: LaunchPlan
   } | null>(null)
 
   const busy = phase !== 'form'
@@ -278,8 +295,9 @@ export function CreateForm() {
   useEffect(
     () => () => {
       if (logoPreview) URL.revokeObjectURL(logoPreview)
+      if (coverPreview) URL.revokeObjectURL(coverPreview)
     },
-    [logoPreview],
+    [logoPreview, coverPreview],
   )
 
   const onLogoChange = (file: File | null) => {
@@ -300,6 +318,26 @@ export function CreateForm() {
     }
     setLogoFile(file)
     setLogoPreview(URL.createObjectURL(file))
+  }
+
+  const onCoverChange = (file: File | null) => {
+    setCoverError(null)
+    if (coverPreview) URL.revokeObjectURL(coverPreview)
+    if (!file) {
+      setCoverFile(null)
+      setCoverPreview(null)
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setCoverError('Please pick an image file.')
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setCoverError('Cover images must be under 1MB.')
+      return
+    }
+    setCoverFile(file)
+    setCoverPreview(URL.createObjectURL(file))
   }
 
   // Live creation fees, read per chain through the app's wagmi clients.
@@ -351,10 +389,10 @@ export function CreateForm() {
     (reservedSplits.every(s => splitOk(s, 'percent')) &&
       splitsTotal(reservedSplits, 'percent') <= 100)
   const payoutsMode = routedMode === 'all' ? 'percent' : 'amount'
+  // No recipients is fine — payouts default to the project owner.
   const payoutSplitsOk =
     payouts !== 'routed' ||
-    (payoutSplits.length > 0 &&
-      payoutSplits.every(s => splitOk(s, payoutsMode)) &&
+    (payoutSplits.every(s => splitOk(s, payoutsMode)) &&
       (payoutsMode !== 'percent' ||
         splitsTotal(payoutSplits, 'percent') <= 100))
   const itemsOk = items.every(itemOk)
@@ -465,8 +503,11 @@ export function CreateForm() {
 
   /** Pin logo, project metadata, and store items. Returns everything the
    *  per-chain launches need. */
-  const pinAll = async (): Promise<NonNullable<typeof pinnedRef.current>> => {
+  const pinAll = async (): Promise<
+    Omit<NonNullable<typeof pinnedRef.current>, 'plan'>
+  > => {
     const logoUri = logoFile ? await pinFile(logoFile) : undefined
+    const coverImageUri = coverFile ? await pinFile(coverFile) : undefined
     const res = await fetch('/api/ipfs/pin-json', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -475,6 +516,14 @@ export function CreateForm() {
         projectTagline: tagline.trim() || undefined,
         description: description.trim() || undefined,
         logoUri,
+        coverImageUri,
+        payDisclosure: payNotice.trim() || undefined,
+        infoUri: links.infoUri.trim() || undefined,
+        twitter: links.twitter.trim().replace(/^@/, '') || undefined,
+        discord: links.discord.trim() || undefined,
+        telegram: links.telegram.trim() || undefined,
+        whatsapp: links.whatsapp.trim() || undefined,
+        instagram: links.instagram.trim().replace(/^@/, '') || undefined,
       }),
     })
     const json = (await res.json()) as { cid?: string; error?: string }
@@ -509,10 +558,37 @@ export function CreateForm() {
           `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
         )
       }
+      // Split-sales rows: user enters % of the sale. splitPercent is the
+      // summed share (of 1e9); each split's percent is its relative share of
+      // that bucket, with the last row absorbing rounding.
+      const splitRows = item.splits.filter(s => splitOk(s, 'percent'))
+      const totalSplitPct = splitRows.reduce((s, r) => s + Number(r.value), 0)
+      let splitPercent = 0
+      let splits: SplitConfig[] = []
+      if (totalSplitPct > 0) {
+        splitPercent = Math.round((totalSplitPct / 100) * 1e9)
+        const rel = splitRows.map(r =>
+          Math.round((Number(r.value) / totalSplitPct) * 1e9),
+        )
+        rel[rel.length - 1] =
+          1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0)
+        splits = splitRows.map((r, i) => ({
+          percent: rel[i],
+          ...toRecipient(r),
+        }))
+      }
+      const reserveOn = item.reserveN.trim() !== ''
       pinned.push({
         price,
         supply: item.supply.trim() === '' ? null : Number(item.supply),
         encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
+        splitPercent,
+        splits,
+        discountPercent: Math.round(Number(item.discountPct || '0') * 2),
+        reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
+        reserveBeneficiary: reserveOn
+          ? (item.reserveBeneficiary.trim() as Address)
+          : null,
       })
     }
     // The store collection deploys with every launch (even empty) so the
@@ -531,7 +607,7 @@ export function CreateForm() {
    */
   const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase('launching')
-    const plan = buildPlan(pinned.store)
+    const plan = pinned.plan
     for (const chainId of selected) {
       if (statusesRef.current[chainId]?.phase === 'done') continue
       updateStatus(chainId, { phase: 'signing', error: undefined })
@@ -590,7 +666,8 @@ export function CreateForm() {
         setStatuses(
           Object.fromEntries(selected.map(id => [id, { phase: 'pending' }])),
         )
-        pinnedRef.current = await pinAll()
+        const pinned = await pinAll()
+        pinnedRef.current = { ...pinned, plan: buildPlan(pinned.store) }
       }
       await runChains(pinnedRef.current)
     } catch (e) {
@@ -646,9 +723,11 @@ export function CreateForm() {
       ? 'Funds stay in the project'
       : payouts === 'flexible'
         ? 'Flexible withdrawals'
-        : routedMode === 'all'
-          ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`
-          : `Routing ${splitsTotal(payoutSplits, 'amount').toLocaleString('en-US')} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
+        : validPayoutSplits === 0
+          ? 'Routing all funds to you'
+          : routedMode === 'all'
+            ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`
+            : `Routing ${splitsTotal(payoutSplits, 'amount').toLocaleString('en-US')} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
     (payouts !== 'none' && holdFees ? ' · fees held' : '')
   const cashOutsSummary = routedAll
     ? 'Off — all funds routed'
@@ -861,6 +940,89 @@ export function CreateForm() {
         </div>
 
         <div className="mt-6">
+          <span className="field-label">Cover image</span>
+          {coverPreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={coverPreview}
+              alt="Cover preview"
+              className="mt-1.5 h-24 w-full rounded-lg border border-smoke-200 object-cover"
+            />
+          ) : null}
+          <div className="mt-2 flex items-center gap-3">
+            <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
+              {coverFile ? 'Change image' : 'Upload image'}
+              <input
+                type="file"
+                accept="image/*"
+                disabled={busy}
+                className="sr-only"
+                onChange={e => onCoverChange(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {coverFile ? (
+              <button
+                onClick={() => onCoverChange(null)}
+                disabled={busy}
+                className="text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
+              >
+                Remove
+              </button>
+            ) : null}
+            <p className="text-xs text-smoke-700">
+              Banner across your project page. Wide works best — optional.
+            </p>
+          </div>
+          {coverError ? (
+            <p className="mt-1 text-xs text-red-600">{coverError}</p>
+          ) : null}
+        </div>
+
+        <div className="mt-6">
+          <span className="field-label">Links</span>
+          <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {(
+              [
+                ['infoUri', 'Website', 'https://…'],
+                ['twitter', 'X handle', '@handle'],
+                ['discord', 'Discord', 'https://discord.gg/…'],
+                ['telegram', 'Telegram', 'https://t.me/…'],
+                ['whatsapp', 'WhatsApp', 'https://wa.me/…'],
+                ['instagram', 'Instagram', '@handle'],
+              ] as const
+            ).map(([key, label, placeholder]) => (
+              <label key={key} className="block">
+                <span className="text-xs text-smoke-700">{label}</span>
+                <input
+                  type="text"
+                  value={links[key]}
+                  onChange={e => setLink(key, e.target.value)}
+                  disabled={busy}
+                  placeholder={placeholder}
+                  className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <span className="field-label">Payment notice</span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            Shown to supporters as they check out — a disclaimer, shipping
+            note, or anything they should know before paying.
+          </p>
+          <textarea
+            value={payNotice}
+            onChange={e => setPayNotice(e.target.value.slice(0, 1000))}
+            disabled={busy}
+            rows={2}
+            placeholder="Optional"
+            className="input-well mt-2 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
+          />
+        </div>
+
+        <div className="mt-6">
           <span className="field-label">Treasury</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             The token your project holds and accounts in. Payments in other
@@ -1068,8 +1230,8 @@ export function CreateForm() {
                   amountLabel={unitLabel}
                 />
                 {payoutSplits.length === 0 ? (
-                  <p className="mt-2 text-xs text-red-600">
-                    Add at least one recipient to route payouts to.
+                  <p className="mt-2 text-xs text-smoke-700">
+                    No recipients yet — payouts go to you, the owner.
                   </p>
                 ) : null}
               </div>

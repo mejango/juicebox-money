@@ -21,8 +21,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected a JSON object' }, { status: 400 })
   }
 
-  const { name, projectTagline, description, logoUri, infoUri, twitter, discord } =
-    body as Record<string, unknown>
+  const {
+    name,
+    projectTagline,
+    description,
+    logoUri,
+    coverImageUri,
+    payDisclosure,
+    infoUri,
+    twitter,
+    discord,
+    telegram,
+    whatsapp,
+    instagram,
+  } = body as Record<string, unknown>
 
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
     return NextResponse.json(
@@ -45,22 +57,36 @@ export async function POST(req: NextRequest) {
     }
     if (description.trim()) metadata.description = description.trim()
   }
-  if (logoUri !== undefined) {
+  for (const [key, value] of [
+    ['logoUri', logoUri],
+    ['coverImageUri', coverImageUri],
+  ] as const) {
+    if (value === undefined) continue
     if (
-      typeof logoUri !== 'string' ||
-      !/^ipfs:\/\/[a-zA-Z0-9]{1,128}$/.test(logoUri)
+      typeof value !== 'string' ||
+      !/^ipfs:\/\/[a-zA-Z0-9]{1,128}$/.test(value)
     ) {
-      return NextResponse.json({ error: 'Invalid logoUri' }, { status: 400 })
+      return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
     }
-    metadata.logoUri = logoUri
+    metadata[key] = value
+  }
+
+  if (payDisclosure !== undefined) {
+    if (typeof payDisclosure !== 'string' || payDisclosure.length > 1000) {
+      return NextResponse.json({ error: 'Invalid payDisclosure' }, { status: 400 })
+    }
+    if (payDisclosure.trim()) metadata.payDisclosure = payDisclosure.trim()
   }
 
   // Plain length-capped strings; project pages sanitize on render
-  // (https-only URLs, handle-shaped twitter).
+  // (https-only URLs, handle-shaped twitter/instagram).
   const links: [string, unknown, number][] = [
     ['infoUri', infoUri, 300],
     ['twitter', twitter, 100],
     ['discord', discord, 300],
+    ['telegram', telegram, 300],
+    ['whatsapp', whatsapp, 300],
+    ['instagram', instagram, 100],
   ]
   for (const [key, value, max] of links) {
     if (value === undefined) continue
