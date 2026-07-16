@@ -34,7 +34,7 @@ import {
   stageSummaryParts,
   type DraftStage,
 } from './StageRulesEditor'
-import { CheckIcon, OptionRow, Piped, SubSection } from './ui'
+import { AddButton, CheckIcon, OptionRow, Piped, SubSection } from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -280,11 +280,14 @@ export function CreateForm() {
   const nameOk = name.trim().length > 0
   const ownerOk = owner.trim() === '' || resolvedAddress(owner) !== null
   const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
-  const stagesOk = stages.every((s, i) => stageOk(s, i === 0))
+  const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor))
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
-  const badStage = stages.findIndex(
-    (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
-  )
+  const badStage =
+    flavor === 'revnet'
+      ? -1
+      : stages.findIndex(
+          (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
+        )
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
@@ -413,7 +416,60 @@ export function CreateForm() {
       cashOutTaxRate: stage.cashOuts && !routedAll ? stage.cashOutTax : null,
       allowOwnerMinting: stage.ownerMinting,
       pausePay: false,
+      issuanceCutFrequency: 0,
     }
+  }
+
+  /** Revnet stages: ABSOLUTE cumulative starts from one shared deployStart,
+   *  later stages offset by daysAfter snapped UP to the previous stage's
+   *  cut-cycle boundary (website/ parity). */
+  const toRevnetStageRules = (
+    stage: DraftStage,
+    index: number,
+    start: number,
+    chainId: number,
+  ): StageRules => {
+    const cutOn = Number(stage.cutPct) > 0
+    const reservedOn =
+      Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
+    return {
+      duration: 0,
+      mustStartAtOrAfter: start,
+      // Empty rate on a later stage = 0n = inherit the previous (cut) rate.
+      weight:
+        stage.issuanceRate.trim() === '' && index > 0
+          ? 0n
+          : parseUnits(stage.issuanceRate || '0', 18),
+      weightCutPercent: cutOn ? Math.round(Number(stage.cutPct) * 1e7) : 0,
+      reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
+      reservedSplits: reservedOn ? toSplitConfigs(stage.reservedSplits, chainId) : [],
+      payouts: 'none',
+      payoutSplits: [],
+      payoutLimitAmount: null,
+      holdFees: false,
+      cashOutTaxRate: stage.cashOutTax,
+      allowOwnerMinting: false,
+      pausePay: false,
+      issuanceCutFrequency: cutOn
+        ? Math.round(Number(stage.cutFreqDays || '0') * 86_400)
+        : 0,
+    }
+  }
+
+  /** A later revnet stage's start: daysAfter rounded UP to a positive
+   *  multiple of the previous stage's cut interval. */
+  const revnetStageStart = (
+    prevStart: number,
+    prevStage: DraftStage,
+    stage: DraftStage,
+  ): number => {
+    let days = Math.max(1, Math.round(Number(stage.daysAfter) || 1))
+    const prevFreq =
+      Number(prevStage.cutPct) > 0 ? Number(prevStage.cutFreqDays) || 0 : 0
+    if (prevFreq >= 1) {
+      days = Math.ceil(days / prevFreq) * prevFreq
+    }
+    return prevStart + days * 86_400
   }
 
   /** Per-chain launch plans (recipients can differ per chain), sharing one
@@ -423,18 +479,37 @@ export function CreateForm() {
   ): Record<number, LaunchPlan> => {
     const deployStart = Math.floor(Date.now() / 1000) + 600
     return Object.fromEntries(
-      selected.map(chainId => [
-        chainId,
-        {
-          currency,
-          stages: stages.map((stage, i) =>
+      selected.map(chainId => {
+        let planStages: StageRules[]
+        if (flavor === 'revnet') {
+          planStages = []
+          let start =
+            stages[0].scheduleOn && stages[0].schedule
+              ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
+              : deployStart
+          stages.forEach((stage, i) => {
+            if (i > 0) start = revnetStageStart(start, stages[i - 1], stage)
+            planStages.push(toRevnetStageRules(stage, i, start, chainId))
+          })
+        } else {
+          planStages = stages.map((stage, i) =>
             toStageRules(stage, i, deployStart, chainId),
-          ),
-          afterMode,
-          approvalDeadline,
-          store,
-        },
-      ]),
+          )
+        }
+        return [
+          chainId,
+          {
+            currency,
+            flavor,
+            operator: resolvedAddress(owner),
+            ticker: ticker.trim(),
+            stages: planStages,
+            afterMode,
+            approvalDeadline,
+            store,
+          },
+        ]
+      }),
     )
   }
 
@@ -1165,8 +1240,9 @@ export function CreateForm() {
           </h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          The defaults make a simple, flexible project. Rules live in
-          rulesets — give one a duration and you can queue what comes next.
+          {flavor === 'revnet'
+            ? 'Revnet stages are locked in at launch and can never be changed — supporters know exactly what they get, forever.'
+            : 'The defaults make a simple, flexible project. Rules live in rulesets — give one a duration and you can queue what comes next.'}
         </p>
 
         <div className="mt-5">
@@ -1191,10 +1267,10 @@ export function CreateForm() {
                   className="min-w-0 flex-1 text-left"
                 >
                   <span className="block font-agrandir text-sm font-medium text-ink">
-                    Ruleset #{i + 1}
+                    {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-smoke-700">
-                    <Piped text={stageSummary(stage, i, unitLabel)} />
+                    <Piped text={stageSummary(stage, i, unitLabel, flavor)} />
                   </span>
                 </button>
                 {i > 0 ? (
@@ -1203,7 +1279,7 @@ export function CreateForm() {
                       setStages(prev => prev.filter(s => s.id !== stage.id))
                     }
                     disabled={busy}
-                    aria-label={`Remove ruleset ${i + 1}`}
+                    aria-label={`Remove ${flavor === 'revnet' ? 'stage' : 'ruleset'} ${i + 1}`}
                     className="shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
                   >
                     Remove
@@ -1233,6 +1309,7 @@ export function CreateForm() {
                     unitLabel={unitLabel}
                     disabled={busy}
                     chainIds={selected}
+                    flavor={flavor}
                   />
                 </div>
               ) : null}
@@ -1246,7 +1323,23 @@ export function CreateForm() {
             </p>
           ) : null}
 
-          {afterApplies ? (
+          {flavor === 'revnet' ? (
+            <div className="mt-4">
+              <AddButton
+                onClick={() =>
+                  setStages(prev => [
+                    ...prev.map(s => ({ ...s, expanded: false })),
+                    { ...newDraftStage(false), expanded: true },
+                  ])
+                }
+                disabled={busy}
+              >
+                Add a stage
+              </AddButton>
+            </div>
+          ) : null}
+
+          {flavor !== 'revnet' && afterApplies ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <span className="field-label">
                 Afterwards — when Ruleset #{stages.length} ends
@@ -1284,7 +1377,7 @@ export function CreateForm() {
             </div>
           ) : null}
 
-          {deadlineApplies ? (
+          {flavor !== 'revnet' && deadlineApplies ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <span className="field-label">Rule-change notice</span>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
@@ -1370,7 +1463,17 @@ export function CreateForm() {
             </dd>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Treasury</dt>
+            <dt className="text-smoke-700">Launching</dt>
+            <dd className="font-medium text-ink">
+              {flavor === 'revnet'
+                ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ''}`
+                : 'Project'}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <dt className="text-smoke-700">
+              {flavor === 'revnet' ? 'Accounting' : 'Treasury'}
+            </dt>
             <dd className="font-medium text-ink">
               {isUsd ? 'USDC' : 'ETH'} on{' '}
               {selected.map(id => chainName(id)).join(', ') || '—'}
@@ -1381,9 +1484,11 @@ export function CreateForm() {
               key={stage.id}
               className="flex items-start justify-between gap-3"
             >
-              <dt className="shrink-0 text-smoke-700">Ruleset #{i + 1}</dt>
+              <dt className="shrink-0 text-smoke-700">
+                {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
+              </dt>
               <dd className="text-right font-medium text-ink">
-                {stageSummaryParts(stage, i, unitLabel).map(part => (
+                {stageSummaryParts(stage, i, unitLabel, flavor).map(part => (
                   <span key={part} className="block">
                     {part}
                   </span>
@@ -1391,7 +1496,7 @@ export function CreateForm() {
               </dd>
             </div>
           ))}
-          {afterApplies ? (
+          {flavor !== 'revnet' && afterApplies ? (
             <div className="flex items-center justify-between gap-3">
               <dt className="text-smoke-700">Afterwards</dt>
               <dd className="font-medium text-ink">
@@ -1403,7 +1508,7 @@ export function CreateForm() {
               </dd>
             </div>
           ) : null}
-          {deadlineApplies ? (
+          {flavor !== 'revnet' && deadlineApplies ? (
             <div className="flex items-center justify-between gap-3">
               <dt className="text-smoke-700">Rule changes</dt>
               <dd className="font-medium text-ink">

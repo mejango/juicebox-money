@@ -8,6 +8,8 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   buildAccountingContext,
+  buildDeployRevnetTx,
+  buildRevnetStageConfig,
   buildRulesetConfiguration,
   buildRulesetMetadata,
   buildTerminalConfigurations,
@@ -126,10 +128,18 @@ export type StageRules = {
   allowOwnerMinting: boolean
   /** Pause payments (and with them, token issuance) for this stage. */
   pausePay: boolean
+  /** Revnet only: seconds between issuance cuts (0 = no cuts). */
+  issuanceCutFrequency: number
 }
 
 export type LaunchPlan = {
   currency: TreasuryCurrency
+  /** 'project' launches via the 721 project deployer with owner-changeable
+   *  rules; 'revnet' deploys fixed-forever stages via REVDeployer. */
+  flavor: 'project' | 'revnet'
+  /** Revnet only: the operator address and the token ticker. */
+  operator: Address | null
+  ticker: string
   /** The queued stages, in order. At least one. */
   stages: StageRules[]
   /** What happens after the last timed stage (website/'s "Afterwards"):
@@ -162,10 +172,14 @@ export const DEFAULT_STAGE: StageRules = {
   cashOutTaxRate: null,
   allowOwnerMinting: false,
   pausePay: false,
+  issuanceCutFrequency: 0,
 }
 
 export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   currency: 'eth',
+  flavor: 'project',
+  operator: null,
+  ticker: '',
   stages: [DEFAULT_STAGE],
   afterMode: 'wait',
   approvalDeadline: '1day',
@@ -242,6 +256,75 @@ export function buildLaunchRequest(args: {
   const isUsd = plan.currency === 'usdc'
   const token = treasuryToken(plan.currency, chainId)
   const context = buildAccountingContext(token, isUsd ? 6 : 18)
+
+  if (plan.flavor === 'revnet') {
+    // Fixed-forever stages via REVDeployer (website/ parity). Stage starts
+    // are ABSOLUTE and strictly increasing — the caller bakes them into
+    // mustStartAtOrAfter. Reserved% / reservedSplits map to the stage's
+    // splitPercent / splits; the split bucket must total exactly 1e9, so
+    // any unallocated remainder goes to the operator.
+    const operator = plan.operator ?? args.owner
+    const stageConfigurations = plan.stages.map(stage => {
+      const splits = [...toJbSplits(stage.reservedSplits)]
+      const allocated = splits.reduce((sum, split) => sum + split.percent, 0)
+      if (stage.reservedPercent > 0 && allocated < 1_000_000_000) {
+        splits.push({
+          percent: 1_000_000_000 - allocated,
+          projectId: 0n,
+          beneficiary: operator,
+          preferAddToBalance: false,
+          lockedUntil: 0,
+          hook: zeroAddress,
+        })
+      }
+      return buildRevnetStageConfig({
+        startsAtOrAfter: stage.mustStartAtOrAfter,
+        // 0n on later stages = inherit the previous (cut) rate — the JB
+        // ruleset weight semantic REVDeployer passes straight through.
+        initialIssuance: stage.weight,
+        splitPercent: stage.reservedPercent,
+        splits: stage.reservedPercent > 0 ? splits : [],
+        issuanceCutFrequency: stage.issuanceCutFrequency,
+        issuanceCutPercent: stage.weightCutPercent,
+        cashOutTaxRate: stage.cashOutTaxRate ?? 0,
+      })
+    })
+
+    return buildDeployRevnetTx({
+      chainId,
+      config: {
+        description: {
+          name: plan.store.name,
+          ticker: plan.ticker,
+          uri: args.projectUri,
+          salt: args.salt,
+        },
+        baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+        operator,
+        scopeCashOutsToLocalBalances: false,
+        stageConfigurations,
+      },
+      accountingContexts: [context],
+      // Independent per-chain deploys — no suckers wired at launch.
+      suckerConfig: { deployerConfigurations: [], salt: args.salt },
+      creationFee: args.creationFee,
+      tiered721Config:
+        plan.store.items.length > 0
+          ? {
+              baseline721HookConfiguration: build721HookConfig(
+                plan.store,
+                args.projectUri,
+                isUsd,
+              ),
+              salt: args.salt,
+              preventOperatorAdjustingTiers: false,
+              preventOperatorUpdatingMetadata: false,
+              preventOperatorMinting: false,
+              preventOperatorIncreasingDiscountPercent: false,
+            }
+          : undefined,
+    })
+  }
 
   const stages = resolveStages(plan)
 
@@ -320,7 +403,33 @@ export function buildLaunchRequest(args: {
     accountingContexts: [context],
   })
 
-  const store = args.plan.store
+  return {
+    chainId,
+    address: v6Address('JB721TiersHookProjectDeployer', chainId),
+    abi: jb721TiersHookProjectDeployerAbi,
+    functionName: 'launchProjectFor' as const,
+    args: [
+      args.owner,
+      build721HookConfig(args.plan.store, args.projectUri, isUsd),
+      {
+        projectUri: args.projectUri,
+        rulesetConfigurations,
+        terminalConfigurations,
+        memo: '',
+      },
+      v6Address('JBController', chainId),
+      args.salt,
+    ],
+    value: args.creationFee,
+  } as const
+}
+
+/** The tiered-721 hook config shared by both deploy flavors. */
+function build721HookConfig(
+  store: LaunchPlan['store'],
+  projectUri: string,
+  isUsd: boolean,
+) {
   const tiers = store.items.map(item => ({
     price: item.price,
     initialSupply: item.supply ?? TIER_UNLIMITED_SUPPLY,
@@ -343,46 +452,27 @@ export function buildLaunchRequest(args: {
     splitPercent: item.splitPercent,
     splits: toJbSplits(item.splits),
   }))
-
   return {
-    chainId,
-    address: v6Address('JB721TiersHookProjectDeployer', chainId),
-    abi: jb721TiersHookProjectDeployerAbi,
-    functionName: 'launchProjectFor' as const,
-    args: [
-      args.owner,
-      {
-        name: store.name,
-        symbol: store.symbol,
-        baseUri: 'ipfs://',
-        tokenUriResolver: zeroAddress,
-        contractUri: args.projectUri,
-        tiersConfig: {
-          tiers,
-          // Tier prices are in a standard currency (never token-keyed):
-          // ETH prices in 18 decimals, USD prices in 6 (1 USDC pays $1).
-          currency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
-          decimals: isUsd ? 6 : 18,
-        },
-        flags: {
-          noNewTiersWithReserves: false,
-          noNewTiersWithVotes: false,
-          noNewTiersWithOwnerMinting: false,
-          preventOverspending: false,
-          issueTokensForSplits: false,
-        },
-      },
-      {
-        projectUri: args.projectUri,
-        rulesetConfigurations,
-        terminalConfigurations,
-        memo: '',
-      },
-      v6Address('JBController', chainId),
-      args.salt,
-    ],
-    value: args.creationFee,
-  } as const
+    name: store.name,
+    symbol: store.symbol,
+    baseUri: 'ipfs://',
+    tokenUriResolver: zeroAddress,
+    contractUri: projectUri,
+    tiersConfig: {
+      tiers,
+      // Tier prices are in a standard currency (never token-keyed):
+      // ETH prices in 18 decimals, USD prices in 6 (1 USDC pays $1).
+      currency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+      decimals: isUsd ? 6 : 18,
+    },
+    flags: {
+      noNewTiersWithReserves: false,
+      noNewTiersWithVotes: false,
+      noNewTiersWithOwnerMinting: false,
+      preventOverspending: false,
+      issueTokensForSplits: false,
+    },
+  }
 }
 
 const ERC721_TRANSFER_TOPIC =

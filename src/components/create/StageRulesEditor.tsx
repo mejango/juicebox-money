@@ -28,6 +28,10 @@ export type DraftStage = {
   issuanceRate: string
   /** Issuance cut per cycle, 0–100 (%). '' = none. */
   cutPct: string
+  /** Revnet: days between issuance cuts. */
+  cutFreqDays: string
+  /** Revnet, stage 2+: starts this many days after the previous stage. */
+  daysAfter: string
   reservedPct: string
   reservedSplits: DraftSplit[]
   payouts: 'none' | 'flexible' | 'routed'
@@ -51,6 +55,8 @@ export function newDraftStage(first: boolean): DraftStage {
     schedule: '',
     issuanceRate: first ? '10000' : '',
     cutPct: '',
+    cutFreqDays: '30',
+    daysAfter: '30',
     reservedPct: '0',
     reservedSplits: [],
     payouts: 'none',
@@ -113,17 +119,33 @@ export function stageIssuanceOk(stage: DraftStage, isFirst: boolean): boolean {
   return numOk(stage.issuanceRate)
 }
 
-export function stageOk(stage: DraftStage, isFirst: boolean): boolean {
+export function stageOk(
+  stage: DraftStage,
+  isFirst: boolean,
+  flavor: 'project' | 'revnet' = 'project',
+): boolean {
   const reservedOn =
     numOk(stage.reservedPct, 100) && Number(stage.reservedPct) > 0
   const payoutsMode = stage.routedMode === 'all' ? 'percent' : 'amount'
-  return (
+  const common =
     stageIssuanceOk(stage, isFirst) &&
     (stage.cutPct.trim() === '' || numOk(stage.cutPct, 100)) &&
     (stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)) &&
     (!reservedOn ||
       (stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
-        splitsTotal(stage.reservedSplits, 'percent') <= 100)) &&
+        splitsTotal(stage.reservedSplits, 'percent') <= 100))
+  if (flavor === 'revnet') {
+    const cutOn = Number(stage.cutPct) > 0
+    return (
+      common &&
+      (!cutOn || (Number(stage.cutFreqDays) >= 1 && numOk(stage.cutFreqDays))) &&
+      (isFirst || Number(stage.daysAfter) >= 1) &&
+      // Revnets can't turn cash outs off completely (100% tax reverts).
+      (stage.cashOutTax < 10_000)
+    )
+  }
+  return (
+    common &&
     (stage.payouts !== 'routed' ||
       (stage.payoutSplits.every(s => splitOk(s, payoutsMode)) &&
         (payoutsMode !== 'percent' ||
@@ -137,6 +159,7 @@ export function stageSummaryParts(
   stage: DraftStage,
   index: number,
   unitLabel: string,
+  flavor: 'project' | 'revnet' = 'project',
 ): string[] {
   const parts: string[] = []
   if (index === 0) {
@@ -145,17 +168,20 @@ export function stageSummaryParts(
         ? 'Starts at a set time'
         : 'Starts at launch',
     )
+  } else if (flavor === 'revnet') {
+    parts.push(`Starts ${Number(stage.daysAfter) || '?'} days after Stage #${index}`)
   } else {
     parts.push(`Starts after Ruleset #${index}`)
   }
   const duration = stageDurationSeconds(stage)
-  parts.push(
-    duration === 0
-      ? 'lasts until changed'
-      : duration === FOREVER_SECONDS
-        ? 'lasts forever'
-        : `lasts ${secondsLabel(duration)}`,
-  )
+  if (flavor !== 'revnet')
+    parts.push(
+      duration === 0
+        ? 'lasts until changed'
+        : duration === FOREVER_SECONDS
+          ? 'lasts forever'
+          : `lasts ${secondsLabel(duration)}`,
+    )
   if (stage.issuanceRate.trim() === '' && index > 0) {
     parts.push('keeps issuance')
   } else if (Number(stage.issuanceRate) > 0) {
@@ -166,10 +192,23 @@ export function stageSummaryParts(
     parts.push('no issuance')
   }
   if (Number(stage.reservedPct) > 0)
-    parts.push(`${Number(stage.reservedPct)}% reserved`)
-  if (Number(stage.cutPct) > 0) parts.push(`-${Number(stage.cutPct)}%/cycle`)
+    parts.push(
+      flavor === 'revnet'
+        ? `${Number(stage.reservedPct)}% to splits`
+        : `${Number(stage.reservedPct)}% reserved`,
+    )
+  if (Number(stage.cutPct) > 0)
+    parts.push(
+      flavor === 'revnet'
+        ? `-${Number(stage.cutPct)}%/${Number(stage.cutFreqDays) || '?'}d`
+        : `-${Number(stage.cutPct)}%/cycle`,
+    )
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
-  if (stage.cashOuts && !routedAll) parts.push('cash outs on')
+  if (flavor === 'revnet') {
+    parts.push(`${stage.cashOutTax / 100}% cash out tax`)
+  } else if (stage.cashOuts && !routedAll) {
+    parts.push('cash outs on')
+  }
   return parts
 }
 
@@ -178,8 +217,9 @@ export function stageSummary(
   stage: DraftStage,
   index: number,
   unitLabel: string,
+  flavor: 'project' | 'revnet' = 'project',
 ): string {
-  return stageSummaryParts(stage, index, unitLabel).join(' | ')
+  return stageSummaryParts(stage, index, unitLabel, flavor).join(' | ')
 }
 
 const CASH_OUT_TAXES = [
@@ -198,6 +238,7 @@ export function StageRulesEditor({
   unitLabel,
   disabled,
   chainIds,
+  flavor = 'project',
 }: {
   stage: DraftStage
   onChange: (stage: DraftStage) => void
@@ -208,7 +249,9 @@ export function StageRulesEditor({
   disabled: boolean
   /** Selected launch chains (enables per-chain recipient overrides). */
   chainIds: number[]
+  flavor?: 'project' | 'revnet'
 }) {
+  const isRevnet = flavor === 'revnet'
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch })
   const toggleOpen = (key: string) =>
     set({ open: { ...stage.open, [key]: !stage.open[key] } })
@@ -219,19 +262,25 @@ export function StageRulesEditor({
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   const issuanceOk = stageIssuanceOk(stage, isFirst)
 
-  const timingSummary = `${
-    isFirst
+  const timingSummary = isRevnet
+    ? isFirst
       ? stage.scheduleOn && stage.schedule
         ? 'Scheduled'
         : 'At launch'
-      : `After Ruleset #${index}`
-  } | ${
-    duration === 0
-      ? 'flexible'
-      : duration === FOREVER_SECONDS
-        ? 'forever'
-        : secondsLabel(duration)
-  }`
+      : `${Number(stage.daysAfter) || '?'}d after Stage #${index}`
+    : `${
+        isFirst
+          ? stage.scheduleOn && stage.schedule
+            ? 'Scheduled'
+            : 'At launch'
+          : `After Ruleset #${index}`
+      } | ${
+        duration === 0
+          ? 'flexible'
+          : duration === FOREVER_SECONDS
+            ? 'forever'
+            : secondsLabel(duration)
+      }`
 
   const tokensSummary = issuanceOk
     ? `${
@@ -294,6 +343,32 @@ export function StageRulesEditor({
           </div>
         ) : null}
 
+        {isRevnet && !isFirst ? (
+          <div>
+            <span className="field-label">Starts</span>
+            <div className="mt-2 flex flex-wrap items-center gap-2.5">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={stage.daysAfter}
+                onChange={e => set({ daysAfter: e.target.value.slice(0, 5) })}
+                disabled={disabled}
+                className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                  Number(stage.daysAfter) >= 1 ? '' : '!border-red-400'
+                }`}
+              />
+              <span className="text-sm text-smoke-700">
+                days after Stage #{index} begins
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+              Stage changes land on issuance-cut boundaries, so the start
+              snaps to the previous stage&apos;s cut cycle.
+            </p>
+          </div>
+        ) : null}
+        {isRevnet ? null : (
+          <>
         <span className="field-label">Duration</span>
         <p className="mt-1 text-xs leading-relaxed text-smoke-700">
           How long these rules run. Flexible rules last until you change
@@ -352,6 +427,8 @@ export function StageRulesEditor({
             when to start.
           </p>
         ) : null}
+          </>
+        )}
       </SubSection>
 
       {/* Tokens */}
@@ -383,7 +460,38 @@ export function StageRulesEditor({
             tokens per {unitLabel} paid
           </span>
         </div>
-        {duration > 0 && duration !== FOREVER_SECONDS ? (
+        {isRevnet ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-sm text-smoke-700">cut issuance</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={stage.cutPct}
+              onChange={e => set({ cutPct: e.target.value.slice(0, 5) })}
+              disabled={disabled}
+              placeholder="0"
+              className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                stage.cutPct.trim() === '' || numOk(stage.cutPct, 100)
+                  ? ''
+                  : '!border-red-400'
+              }`}
+            />
+            <span className="text-sm text-smoke-700">% every</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={stage.cutFreqDays}
+              onChange={e => set({ cutFreqDays: e.target.value.slice(0, 5) })}
+              disabled={disabled}
+              className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                Number(stage.cutPct) > 0 && !(Number(stage.cutFreqDays) >= 1)
+                  ? '!border-red-400'
+                  : ''
+              }`}
+            />
+            <span className="text-sm text-smoke-700">days</span>
+          </div>
+        ) : duration > 0 && duration !== FOREVER_SECONDS ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
             <input
               type="text"
@@ -417,27 +525,30 @@ export function StageRulesEditor({
             }`}
           />
           <span className="text-sm text-smoke-700">
-            % of new tokens reserved
+            {isRevnet ? '% of new tokens to splits' : '% of new tokens reserved'}
           </span>
         </div>
         {reservedOn ? (
           <div className="mt-4">
             <p className="text-xs leading-relaxed text-smoke-700">
-              Where should reserved tokens go? Leave empty to keep them all
-              for yourself.
+              {isRevnet
+                ? 'Where should split tokens go? Any remainder goes to the operator.'
+                : 'Where should reserved tokens go? Leave empty to keep them all for yourself.'}
             </p>
             <SplitsEditor
               splits={stage.reservedSplits}
               onChange={reservedSplits => set({ reservedSplits })}
               disabled={disabled}
-              bucketLabel="reserved tokens"
+              bucketLabel={isRevnet ? 'split tokens' : 'reserved tokens'}
+              remainderNote={isRevnet ? 'go to the operator' : 'go to you'}
               chainIds={chainIds}
             />
           </div>
         ) : null}
       </SubSection>
 
-      {/* Payouts */}
+      {/* Payouts (owner-managed money never applies to revnets) */}
+      {isRevnet ? null : (
       <SubSection
         label="Payouts"
         summary={payoutsSummary}
@@ -528,6 +639,7 @@ export function StageRulesEditor({
           </div>
         ) : null}
       </SubSection>
+      )}
 
       {/* Cash outs */}
       <SubSection
@@ -536,7 +648,31 @@ export function StageRulesEditor({
         open={!!stage.open.cashouts}
         onToggle={() => toggleOpen('cashouts')}
       >
-        {routedAll ? (
+        {isRevnet ? (
+          <>
+            <p className="text-xs leading-relaxed text-smoke-700">
+              Revnets always allow cash outs — holders can exit for their
+              share of the treasury at any time. Pick the tax.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {CASH_OUT_TAXES.map(tax => (
+                <ChipButton
+                  key={tax.rate}
+                  active={stage.cashOutTax === tax.rate}
+                  onClick={() => set({ cashOutTax: tax.rate })}
+                  disabled={disabled}
+                >
+                  {tax.label}
+                </ChipButton>
+              ))}
+            </div>
+            <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+              A tax leaves part of each cash out behind for holders who
+              stay.
+            </p>
+            <CashOutCurve rate={stage.cashOutTax} />
+          </>
+        ) : routedAll ? (
           <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
             Routing all funds by percentage leaves no surplus for token
             holders to cash out. Switch payouts to fixed amounts to leave a
@@ -585,7 +721,8 @@ export function StageRulesEditor({
         )}
       </SubSection>
 
-      {/* Owner powers */}
+      {/* Owner powers (revnets have no owner) */}
+      {isRevnet ? null : (
       <SubSection
         label="Owner powers"
         summary={stage.ownerMinting ? 'Can mint tokens' : 'Standard'}
@@ -600,6 +737,7 @@ export function StageRulesEditor({
           blurb="Mint any amount without payment. Supporters can see this power on your project, so leave it off unless you need it."
         />
       </SubSection>
+      )}
     </div>
   )
 }
