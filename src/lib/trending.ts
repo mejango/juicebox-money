@@ -165,8 +165,11 @@ async function getLegacyTrending(limit: number): Promise<TrendingCard[]> {
   return withMetadata.flatMap(({ project, name, tagline, logoUri }) => {
     if (!name) return [] // No identity at all: not storefront material.
     const version = project.pv === '1' ? 1 : 2
+    // juicebox.money routes v1 by handle only; a handle-less v1 project has
+    // no correct destination, so leave it out rather than mislink it.
+    if (version === 1 && !project.handle) return []
     const href =
-      version === 1 && project.handle
+      version === 1
         ? `${LEGACY_SITE}/p/${project.handle}`
         : `${LEGACY_SITE}/v2/p/${project.projectId}`
     return [
