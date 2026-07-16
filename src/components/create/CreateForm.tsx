@@ -1110,38 +1110,8 @@ export function CreateForm() {
         rules stay flexible unless you lock them in.
       </p>
 
-      {/* Draft import/export */}
-      <div className="mb-10 mt-8 flex flex-wrap items-center gap-2.5">
-        <label className="inline-flex min-h-[34px] cursor-pointer items-center gap-1.5 rounded-full border border-smoke-300 bg-transparent px-3.5 text-xs font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink">
-          <span aria-hidden>↑</span> Import .jb
-          <input
-            type="file"
-            accept=".jb,application/json"
-            disabled={busy}
-            className="sr-only"
-            onChange={e => {
-              void importDraftFile(e.target.files?.[0] ?? null)
-              e.target.value = ''
-            }}
-          />
-        </label>
-        <button
-          onClick={exportDraft}
-          disabled={busy}
-          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-smoke-300 bg-transparent px-3.5 text-xs font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
-        >
-          <span aria-hidden>↓</span> Export
-        </button>
-        <span className="text-xs text-smoke-500">
-          Your draft saves as you go.
-        </span>
-      </div>
-      {importError ? (
-        <p className="-mt-8 mb-8 text-xs text-red-600">{importError}</p>
-      ) : null}
-
       {/* Horizontal stepper */}
-      <nav aria-label="Create steps" className="flex items-center gap-1.5">
+      <nav aria-label="Create steps" className="mt-8 flex items-center gap-1.5">
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
@@ -2185,6 +2155,36 @@ export function CreateForm() {
           >
             Next →
           </button>
+        ) : null}
+      </div>
+
+      {/* Draft import/export — quiet utilities at the very bottom */}
+      <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-smoke-200 pt-4">
+        <label className="inline-flex min-h-[28px] cursor-pointer items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink">
+          <span aria-hidden>↑</span> Import .jb
+          <input
+            type="file"
+            accept=".jb,application/json"
+            disabled={busy}
+            className="sr-only"
+            onChange={e => {
+              void importDraftFile(e.target.files?.[0] ?? null)
+              e.target.value = ''
+            }}
+          />
+        </label>
+        <button
+          onClick={exportDraft}
+          disabled={busy}
+          className="inline-flex min-h-[28px] items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
+        >
+          <span aria-hidden>↓</span> Export
+        </button>
+        <span className="text-[11px] text-smoke-500">
+          Your draft saves as you go.
+        </span>
+        {importError ? (
+          <span className="text-[11px] text-red-600">{importError}</span>
         ) : null}
       </div>
     </div>
