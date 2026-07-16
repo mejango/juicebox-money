@@ -8,16 +8,19 @@ import { isAddress } from 'viem'
  * bucket being split; any unallocated remainder goes to the owner.
  */
 
+export type SplitsMode = 'percent' | 'amount'
+
 export type DraftSplit = {
   id: number
-  percent: string
+  /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
+  value: string
   recipient: string
 }
 
 let nextId = 1
 
 export function newDraftSplit(): DraftSplit {
-  return { id: nextId++, percent: '', recipient: '' }
+  return { id: nextId++, value: '', recipient: '' }
 }
 
 export function recipientOk(recipient: string): boolean {
@@ -25,18 +28,19 @@ export function recipientOk(recipient: string): boolean {
   return isAddress(r) || /^#?\d{1,10}$/.test(r)
 }
 
-export function splitPercentOk(percent: string): boolean {
-  const n = Number(percent)
-  return Number.isFinite(n) && n > 0 && n <= 100
+export function splitValueOk(value: string, mode: SplitsMode): boolean {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return false
+  return mode === 'percent' ? n <= 100 : true
 }
 
-export function splitOk(split: DraftSplit): boolean {
-  return splitPercentOk(split.percent) && recipientOk(split.recipient)
+export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
+  return splitValueOk(split.value, mode) && recipientOk(split.recipient)
 }
 
-export function splitsTotal(splits: DraftSplit[]): number {
+export function splitsTotal(splits: DraftSplit[], mode: SplitsMode): number {
   return splits.reduce(
-    (sum, s) => sum + (splitPercentOk(s.percent) ? Number(s.percent) : 0),
+    (sum, s) => sum + (splitValueOk(s.value, mode) ? Number(s.value) : 0),
     0,
   )
 }
@@ -46,17 +50,22 @@ export function SplitsEditor({
   onChange,
   disabled,
   bucketLabel,
+  mode = 'percent',
+  amountLabel = '',
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
   disabled: boolean
   /** e.g. "reserved tokens" or "payouts" — used in the remainder note. */
   bucketLabel: string
+  mode?: SplitsMode
+  /** Currency label for 'amount' mode, e.g. "ETH". */
+  amountLabel?: string
 }) {
   const update = (id: number, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
   }
-  const total = splitsTotal(splits)
+  const total = splitsTotal(splits, mode)
 
   return (
     <div>
@@ -66,13 +75,13 @@ export function SplitsEditor({
             <input
               type="text"
               inputMode="decimal"
-              value={split.percent}
-              onChange={e => update(split.id, { percent: e.target.value.slice(0, 6) })}
+              value={split.value}
+              onChange={e => update(split.id, { value: e.target.value.slice(0, 10) })}
               disabled={disabled}
-              placeholder="%"
-              aria-label="Percent"
+              placeholder={mode === 'percent' ? '%' : amountLabel}
+              aria-label={mode === 'percent' ? 'Percent' : `Amount (${amountLabel})`}
               className={`input-well min-h-[44px] px-3 text-sm tabular-nums disabled:opacity-60 ${
-                split.percent && !splitPercentOk(split.percent)
+                split.value && !splitValueOk(split.value, mode)
                   ? '!border-red-400'
                   : ''
               }`}
@@ -111,15 +120,23 @@ export function SplitsEditor({
           + Add a recipient
         </button>
         {splits.length > 0 ? (
-          <span
-            className={`text-xs tabular-nums ${total > 100 ? 'font-medium text-red-600' : 'text-smoke-700'}`}
-          >
-            {total > 100
-              ? `${total}% — over 100%`
-              : total < 100
-                ? `${total}% allocated · remaining ${bucketLabel} go to you`
-                : '100% allocated'}
-          </span>
+          mode === 'percent' ? (
+            <span
+              className={`text-xs tabular-nums ${total > 100 ? 'font-medium text-red-600' : 'text-smoke-700'}`}
+            >
+              {total > 100
+                ? `${total}% — over 100%`
+                : total < 100
+                  ? `${total}% allocated · remaining ${bucketLabel} go to you`
+                  : '100% allocated'}
+            </span>
+          ) : (
+            <span className="text-xs tabular-nums text-smoke-700">
+              {total > 0
+                ? `${total.toLocaleString('en-US')} ${amountLabel} total · the rest stays in the project`
+                : ''}
+            </span>
+          )
         ) : null}
       </div>
     </div>

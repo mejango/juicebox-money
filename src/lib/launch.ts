@@ -58,11 +58,15 @@ export type LaunchPlan = {
   /** 'none': funds only leave via cash outs (if enabled).
    *  'flexible': unlimited surplus allowance — the owner can withdraw any
    *  amount from surplus, anytime; cash outs share the same surplus.
-   *  'routed': unlimited payout limit + splits — anyone can trigger payouts
-   *  that route incoming funds to the recipients (⇒ no surplus). */
+   *  'routed': payout limit + splits — anyone can trigger payouts that
+   *  route funds to the recipients. */
   payouts: 'none' | 'flexible' | 'routed'
   /** Recipients for 'routed' payouts. Unallocated remainder → the owner. */
   payoutSplits: SplitConfig[]
+  /** For 'routed': null routes ALL funds by percentage (unlimited payout
+   *  limit ⇒ no surplus, cash outs off). A fixed amount (in the accounting
+   *  token's units) caps total payouts — the rest stays as surplus. */
+  payoutLimitAmount: bigint | null
   /** Hold payout/allowance fees in the project instead of processing them,
    *  so they can be unlocked if the funds come back. */
   holdFees: boolean
@@ -85,6 +89,7 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   reservedSplits: [],
   payouts: 'none',
   payoutSplits: [],
+  payoutLimitAmount: null,
   holdFees: false,
   cashOutTaxRate: null,
   allowOwnerMinting: false,
@@ -142,11 +147,13 @@ export function buildLaunchRequest(args: {
   const metadata = buildRulesetMetadata({
     baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
     reservedPercent: plan.reservedPercent,
-    // Routed payouts consume everything (unlimited payout limit), so there's
-    // no surplus for cash outs — keep them formally disabled in that mode.
-    // Flexible (surplus allowance) leaves surplus intact, so they coexist.
+    // Routing ALL funds (unlimited payout limit) leaves no surplus for cash
+    // outs — keep them formally disabled in that mode. Fixed-amount routing
+    // and flexible (surplus allowance) leave surplus intact, so they coexist.
     cashOutTaxRate:
-      plan.payouts === 'routed' ? CASH_OUTS_OFF : (plan.cashOutTaxRate ?? CASH_OUTS_OFF),
+      plan.payouts === 'routed' && plan.payoutLimitAmount === null
+        ? CASH_OUTS_OFF
+        : (plan.cashOutTaxRate ?? CASH_OUTS_OFF),
     allowOwnerMinting: plan.allowOwnerMinting,
     holdFees: plan.holdFees,
   })
@@ -174,7 +181,12 @@ export function buildLaunchRequest(args: {
             token,
             payoutLimits:
               plan.payouts === 'routed'
-                ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
+                ? [
+                    {
+                      amount: plan.payoutLimitAmount ?? UNLIMITED_PAYOUT,
+                      currency: context.currency,
+                    },
+                  ]
                 : [],
             surplusAllowances:
               plan.payouts === 'flexible'

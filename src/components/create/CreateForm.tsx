@@ -236,6 +236,7 @@ export function CreateForm() {
   const [reservedPct, setReservedPct] = useState('0')
   const [reservedSplits, setReservedSplits] = useState<DraftSplit[]>([])
   const [payouts, setPayouts] = useState<'none' | 'flexible' | 'routed'>('none')
+  const [routedMode, setRoutedMode] = useState<'all' | 'amounts'>('all')
   const [payoutSplits, setPayoutSplits] = useState<DraftSplit[]>([])
   const [holdFees, setHoldFees] = useState(false)
   const [cashOuts, setCashOuts] = useState(false)
@@ -347,12 +348,15 @@ export function CreateForm() {
   const reservedOn = reservedOk && Number(reservedPct) > 0
   const reservedSplitsOk =
     !reservedOn ||
-    (reservedSplits.every(splitOk) && splitsTotal(reservedSplits) <= 100)
+    (reservedSplits.every(s => splitOk(s, 'percent')) &&
+      splitsTotal(reservedSplits, 'percent') <= 100)
+  const payoutsMode = routedMode === 'all' ? 'percent' : 'amount'
   const payoutSplitsOk =
     payouts !== 'routed' ||
     (payoutSplits.length > 0 &&
-      payoutSplits.every(splitOk) &&
-      splitsTotal(payoutSplits) <= 100)
+      payoutSplits.every(s => splitOk(s, payoutsMode)) &&
+      (payoutsMode !== 'percent' ||
+        splitsTotal(payoutSplits, 'percent') <= 100))
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
@@ -378,32 +382,75 @@ export function CreateForm() {
     }))
   }
 
-  /** Parse valid split rows: 0x… → address split; #12 / 12 → project split
-   *  whose tokens go to the owner. Percent → out of 1e9. */
+  /** Recipient half of a split row: 0x… → address split; #12 / 12 →
+   *  project split whose tokens go to the owner. */
+  const toRecipient = (row: DraftSplit) => {
+    const recipient = row.recipient.trim()
+    const isAddr = recipient.startsWith('0x')
+    return {
+      projectId: isAddr ? 0n : BigInt(recipient.replace('#', '')),
+      beneficiary: isAddr ? (recipient as Address) : address!,
+    }
+  }
+
+  /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
   const toSplitConfigs = (rows: DraftSplit[]): SplitConfig[] =>
-    rows.filter(splitOk).map(row => {
-      const recipient = row.recipient.trim()
-      const isAddr = recipient.startsWith('0x')
-      return {
-        percent: Math.round(Number(row.percent) * 1e7),
-        projectId: isAddr ? 0n : BigInt(recipient.replace('#', '')),
-        beneficiary: isAddr ? (recipient as Address) : address!,
-      }
-    })
+    rows
+      .filter(s => splitOk(s, 'percent'))
+      .map(row => ({
+        percent: Math.round(Number(row.value) * 1e7),
+        ...toRecipient(row),
+      }))
+
+  /** Routed payouts: '%' mode splits all funds (unlimited limit); 'amounts'
+   *  mode fixes each recipient's amount — the payout limit is the sum and
+   *  split percents are the amounts' shares of it (last row absorbs
+   *  rounding so the limit is fully allocated). */
+  const buildRoutedSplits = (): {
+    splits: SplitConfig[]
+    limit: bigint | null
+  } => {
+    if (routedMode === 'all') {
+      return { splits: toSplitConfigs(payoutSplits), limit: null }
+    }
+    const valid = payoutSplits.filter(s => splitOk(s, 'amount'))
+    const values = valid.map(row => parseUnits(row.value, isUsd ? 6 : 18))
+    const total = values.reduce((a, b) => a + b, 0n)
+    if (total === 0n) return { splits: [], limit: null }
+    const percents = values.map(v => Number((v * 1_000_000_000n) / total))
+    percents[percents.length - 1] =
+      1_000_000_000 - percents.slice(0, -1).reduce((a, b) => a + b, 0)
+    if (percents.some(p => p <= 0)) {
+      throw new Error(
+        'One payout amount is too small relative to the total — even out the amounts.',
+      )
+    }
+    return {
+      splits: valid.map((row, i) => ({ percent: percents[i], ...toRecipient(row) })),
+      limit: total,
+    }
+  }
 
   /** The launch plan, assembled from the questionnaire (pure state). */
-  const buildPlan = (store: LaunchPlan['store']): LaunchPlan => ({
-    currency,
-    weight: parseUnits(issuanceRate || '0', 18),
-    reservedPercent: Math.round(Number(reservedPct || '0') * 100),
-    reservedSplits: reservedOn ? toSplitConfigs(reservedSplits) : [],
-    payouts,
-    payoutSplits: payouts === 'routed' ? toSplitConfigs(payoutSplits) : [],
-    holdFees: payouts !== 'none' && holdFees,
-    cashOutTaxRate: payouts !== 'routed' && cashOuts ? cashOutTax : null,
-    allowOwnerMinting: ownerMinting,
-    store,
-  })
+  const buildPlan = (store: LaunchPlan['store']): LaunchPlan => {
+    const routed = payouts === 'routed' ? buildRoutedSplits() : null
+    return {
+      currency,
+      weight: parseUnits(issuanceRate || '0', 18),
+      reservedPercent: Math.round(Number(reservedPct || '0') * 100),
+      reservedSplits: reservedOn ? toSplitConfigs(reservedSplits) : [],
+      payouts,
+      payoutSplits: routed?.splits ?? [],
+      payoutLimitAmount: routed?.limit ?? null,
+      holdFees: payouts !== 'none' && holdFees,
+      cashOutTaxRate:
+        cashOuts && !(payouts === 'routed' && routedMode === 'all')
+          ? cashOutTax
+          : null,
+      allowOwnerMinting: ownerMinting,
+      store,
+    }
+  }
 
   const pinFile = async (file: File): Promise<string> => {
     const form = new FormData()
@@ -585,7 +632,10 @@ export function CreateForm() {
 
   // ---- Questionnaire summaries (shown on collapsed subsections) ----
   const taxLabel = cashOutTax === 0 ? 'no tax' : `${cashOutTax / 100}% tax`
-  const validPayoutSplits = payoutSplits.filter(splitOk).length
+  const validPayoutSplits = payoutSplits.filter(s =>
+    splitOk(s, payoutsMode),
+  ).length
+  const routedAll = payouts === 'routed' && routedMode === 'all'
   const tokensSummary = issuanceOk
     ? `${Number(issuanceRate).toLocaleString('en-US')} per ${unitLabel}${
         reservedOn ? ` · ${Number(reservedPct)}% reserved` : ''
@@ -596,14 +646,15 @@ export function CreateForm() {
       ? 'Funds stay in the project'
       : payouts === 'flexible'
         ? 'Flexible withdrawals'
-        : `Routed to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
+        : routedMode === 'all'
+          ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`
+          : `Routing ${splitsTotal(payoutSplits, 'amount').toLocaleString('en-US')} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
     (payouts !== 'none' && holdFees ? ' · fees held' : '')
-  const cashOutsSummary =
-    payouts === 'routed'
-      ? 'Off — routed payouts'
-      : cashOuts
-        ? `On · ${taxLabel}`
-        : 'Off'
+  const cashOutsSummary = routedAll
+    ? 'Off — all funds routed'
+    : cashOuts
+      ? `On · ${taxLabel}`
+      : 'Off'
   const ownerSummary = ownerMinting ? 'Can mint tokens' : 'Standard'
 
   // ---- Success view ----
@@ -978,11 +1029,43 @@ export function CreateForm() {
             </div>
             {payouts === 'routed' ? (
               <div className="mt-3">
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ['all', 'Split all funds by %'],
+                      ['amounts', `Fixed ${unitLabel} amounts`],
+                    ] as const
+                  ).map(([value, label]) => {
+                    const active = routedMode === value
+                    return (
+                      <button
+                        key={value}
+                        onClick={() => !busy && setRoutedMode(value)}
+                        disabled={busy}
+                        aria-pressed={active}
+                        className={
+                          active
+                            ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
+                            : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                        }
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  {routedMode === 'all'
+                    ? 'Every incoming payment is split among the recipients by percentage.'
+                    : `Each recipient gets up to their ${unitLabel} amount — anything beyond stays in the project as surplus.`}
+                </p>
                 <SplitsEditor
                   splits={payoutSplits}
                   onChange={setPayoutSplits}
                   disabled={busy}
                   bucketLabel="payouts"
+                  mode={payoutsMode}
+                  amountLabel={unitLabel}
                 />
                 {payoutSplits.length === 0 ? (
                   <p className="mt-2 text-xs text-red-600">
@@ -992,34 +1075,42 @@ export function CreateForm() {
               </div>
             ) : null}
             {payouts !== 'none' ? (
-              <button
-                onClick={() => !busy && setHoldFees(h => !h)}
-                disabled={busy}
-                aria-pressed={holdFees}
-                className={`mt-3 flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-                  holdFees
-                    ? 'border-ink bg-white'
-                    : 'border-smoke-200 bg-white hover:border-smoke-400'
-                }`}
-              >
-                <span
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                    holdFees ? 'border-ink bg-ink' : 'border-smoke-300'
+              <div className="mt-5 border-t border-smoke-200 pt-4">
+                <span className="field-label">Fees</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Funds leaving the project — payouts and withdrawals — pay a
+                  small fee to the Juicebox protocol. Money moving between
+                  Juicebox projects never pays a fee.
+                </p>
+                <button
+                  onClick={() => !busy && setHoldFees(h => !h)}
+                  disabled={busy}
+                  aria-pressed={holdFees}
+                  className={`mt-2.5 flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
+                    holdFees
+                      ? 'border-ink bg-white'
+                      : 'border-smoke-200 bg-white hover:border-smoke-400'
                   }`}
                 >
-                  {holdFees ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">
-                    Hold fees in the project
+                  <span
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
+                      holdFees ? 'border-ink bg-ink' : 'border-smoke-300'
+                    }`}
+                  >
+                    {holdFees ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
                   </span>
-                  <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                    Funds leaving the project pay a small protocol fee. Holding
-                    keeps that fee amount in your project instead — it stays
-                    unlocked as long as the funds are added back later.
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-ink">
+                      Hold fees in the project
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                      Keep the fee amount in your project instead of paying it
+                      right away — it stays unlocked as long as the funds come
+                      back later.
+                    </span>
                   </span>
-                </span>
-              </button>
+                </button>
+              </div>
             ) : null}
           </SubSection>
 
@@ -1030,10 +1121,11 @@ export function CreateForm() {
             open={!!openSection.cashouts}
             onToggle={() => toggleSection('cashouts')}
           >
-            {payouts === 'routed' ? (
+            {routedAll ? (
               <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                Routed payouts send all incoming funds to your recipients, so
-                there&apos;s no surplus for token holders to cash out.
+                Routing all funds by percentage leaves no surplus for token
+                holders to cash out. Switch payouts to fixed amounts to leave
+                a surplus.
               </p>
             ) : (
               <>
