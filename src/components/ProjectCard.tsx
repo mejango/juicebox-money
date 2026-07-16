@@ -34,22 +34,20 @@ export function ProjectCard({
       href={`/${toUrn(project.chainId, project.projectId)}`}
       className="card-lift group flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-juice-500"
     >
-      <div className="flex items-start gap-3.5">
-        <ProjectLogo
-          name={project.name}
-          logoUri={project.logoUri}
-          size={56}
-        />
-        <div className="min-w-0">
-          <h3 className="truncate font-bold leading-snug group-hover:text-juice-600">
+      <div>
+        <div className="flex items-center gap-3.5">
+          <ProjectLogo
+            name={project.name}
+            logoUri={project.logoUri}
+            size={56}
+          />
+          <h3 className="min-w-0 break-words font-bold leading-snug group-hover:text-juice-600">
             {project.name ?? `Project ${project.projectId}`}
           </h3>
-          {project.projectTagline ? (
-            <p className="mt-0.5 line-clamp-2 text-sm text-ink/60">
-              {project.projectTagline}
-            </p>
-          ) : null}
         </div>
+        {project.projectTagline ? (
+          <p className="mt-3 text-sm text-ink/60">{project.projectTagline}</p>
+        ) : null}
       </div>
       <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <span className="font-semibold">
