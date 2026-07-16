@@ -76,7 +76,7 @@ export function newDraftStage(
     routedMode: 'all',
     payoutSplits: [],
     holdFees: false,
-    cashOuts: false,
+    cashOuts: flavor === 'revnet',
     cashOutTax: flavor === 'revnet' ? 1000 : 0,
     ownerMinting: false,
     acceptPayments: true,
@@ -162,9 +162,7 @@ export function stageOk(
     return (
       common &&
       (!cutOn || (Number(stage.cutFreqDays) >= 1 && numOk(stage.cutFreqDays))) &&
-      (isFirst || Number(stage.daysAfter) >= 1) &&
-      // Revnets can't turn cash outs off completely (100% tax reverts).
-      (stage.cashOutTax < 10_000)
+      (isFirst || Number(stage.daysAfter) >= 1)
     )
   }
   return (
@@ -228,7 +226,11 @@ export function stageSummaryParts(
     )
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   if (flavor === 'revnet') {
-    parts.push(`${stage.cashOutTax / 100}% cash out tax`)
+    parts.push(
+      stage.cashOuts
+        ? `${stage.cashOutTax / 100}% cash out tax`
+        : 'cash outs off',
+    )
   } else if (stage.cashOuts && !routedAll) {
     parts.push('cash outs on')
   }
@@ -262,6 +264,7 @@ export function StageRulesEditor({
   disabled,
   chainIds,
   flavor = 'project',
+  tokenLabel = 'tokens',
 }: {
   stage: DraftStage
   onChange: (stage: DraftStage) => void
@@ -273,6 +276,8 @@ export function StageRulesEditor({
   /** Selected launch chains (enables per-chain recipient overrides). */
   chainIds: number[]
   flavor?: 'project' | 'revnet'
+  /** "$TICK" when a ticker is set, else "tokens". */
+  tokenLabel?: string
 }) {
   const isRevnet = flavor === 'revnet'
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch })
@@ -463,15 +468,15 @@ export function StageRulesEditor({
         )}
       </SubSection>
 
-      {/* Tokens */}
+      {/* Issuance */}
       <SubSection
-        label="Tokens"
+        label="Issuance"
         summary={tokensSummary}
         open={!!stage.open.tokens}
         onToggle={() => toggleOpen('tokens')}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Supporters get newly issued project tokens when they pay.
+          Supporters get newly issued {tokenLabel} when they pay.
           {!isFirst
             ? ' Leave the rate empty to keep the previous ruleset’s rate.'
             : ''}
@@ -489,12 +494,12 @@ export function StageRulesEditor({
             }`}
           />
           <span className="text-sm text-smoke-700">
-            tokens per {unitLabel} paid
+            {tokenLabel} per {unitLabel} paid
           </span>
         </div>
         {isRevnet ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-sm text-smoke-700">cut issuance</span>
+            <span className="text-sm text-smoke-700">cut</span>
             <input
               type="text"
               inputMode="decimal"
@@ -557,7 +562,9 @@ export function StageRulesEditor({
             }`}
           />
           <span className="text-sm text-smoke-700">
-            {isRevnet ? '% of new tokens to splits' : '% of new tokens reserved'}
+            {isRevnet
+              ? `% of new ${tokenLabel} to splits`
+              : `% of new ${tokenLabel} reserved`}
           </span>
         </div>
         {reservedOn ? (
@@ -691,27 +698,50 @@ export function StageRulesEditor({
       >
         {isRevnet ? (
           <>
-            <p className="text-xs leading-relaxed text-smoke-700">
-              Revnets always allow cash outs — holders can exit for their
-              share of the treasury at any time. Pick the tax.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {CASH_OUT_TAXES.map(tax => (
-                <ChipButton
-                  key={tax.rate}
-                  active={stage.cashOutTax === tax.rate}
-                  onClick={() => set({ cashOutTax: tax.rate })}
-                  disabled={disabled}
-                >
-                  {tax.label}
-                </ChipButton>
-              ))}
+            <div className="space-y-2">
+              <OptionRow
+                checked={!stage.cashOuts}
+                onSelect={() => set({ cashOuts: false })}
+                disabled={disabled}
+                title="Off"
+                blurb="Tokens are for support and standing — cashing out returns almost nothing."
+              />
+              <OptionRow
+                checked={stage.cashOuts}
+                onSelect={() => set({ cashOuts: true })}
+                disabled={disabled}
+                title="On"
+                blurb={`Holders can cash out ${tokenLabel} any time for their share of the treasury.`}
+              />
             </div>
-            <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-              A tax leaves part of each cash out behind for holders who
-              stay.
-            </p>
-            <CashOutCurve rate={stage.cashOutTax} />
+            {stage.cashOuts ? (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {CASH_OUT_TAXES.map(tax => (
+                    <ChipButton
+                      key={tax.rate}
+                      active={stage.cashOutTax === tax.rate}
+                      onClick={() => set({ cashOutTax: tax.rate })}
+                      disabled={disabled}
+                    >
+                      {tax.label}
+                    </ChipButton>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  A tax leaves part of each cash out behind for holders who
+                  stay.
+                </p>
+                <CashOutCurve rate={stage.cashOutTax} />
+              </>
+            ) : (
+              <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
+                Revnets can&apos;t fully disable cash outs — Off applies the
+                maximum 99.99% tax, so partial cash outs return next to
+                nothing while cashing out every token still claims the full
+                treasury.
+              </p>
+            )}
           </>
         ) : routedAll ? (
           <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
@@ -734,7 +764,7 @@ export function StageRulesEditor({
                 onSelect={() => set({ cashOuts: true })}
                 disabled={disabled}
                 title="On"
-                blurb="Holders can cash out tokens any time for their share of the surplus."
+                blurb={`Holders can cash out ${tokenLabel} any time for their share of the surplus.`}
               />
             </div>
             {stage.cashOuts ? (
@@ -781,7 +811,7 @@ export function StageRulesEditor({
           checked={stage.ownerMinting}
           onToggle={() => set({ ownerMinting: !stage.ownerMinting })}
           disabled={disabled}
-          title="Owner can mint tokens any time"
+          title={`Owner can mint ${tokenLabel} any time`}
           blurb="Mint any amount without payment. Supporters can see this power on your project, so leave it off unless you need it."
         />
         <div className="mt-5 border-t border-smoke-200 pt-4">

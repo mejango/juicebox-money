@@ -235,6 +235,7 @@ export function CreateForm() {
     storeCurrency ??
     (customOn ? 'token' : accepts.includes('eth') ? 'eth' : 'usd')
   const storeUsd = effectiveStoreCurrency === 'usd'
+  const tokenLabel = ticker.trim() ? `$${ticker.trim()}` : 'tokens'
   const accountingDecimals = customActive
     ? customMeta.decimals
     : accepts.includes('eth')
@@ -359,9 +360,7 @@ export function CreateForm() {
   }, [fees, selected])
 
   const nameOk = name.trim().length > 0
-  const anyCashOuts = stages.some(
-    s => s.cashOuts || (flavor === 'revnet' && s.cashOutTax < 10_000),
-  )
+  const anyCashOuts = stages.some(s => s.cashOuts)
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0
@@ -542,7 +541,9 @@ export function CreateForm() {
       payoutSplits: [],
       payoutLimitAmount: null,
       holdFees: false,
-      cashOutTaxRate: stage.cashOutTax,
+      // Revnets can't disable cash outs entirely — 'off' is the maximum
+      // allowed 99.99% tax.
+      cashOutTaxRate: stage.cashOuts ? stage.cashOutTax : 9_999,
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
@@ -1183,11 +1184,13 @@ export function CreateForm() {
               const next = e.target.value as 'project' | 'revnet'
               setFlavor(next)
               if (next === 'revnet') {
-                // Revnets default to a 10% cash-out tax.
+                // Revnets default to cash outs on with a 10% tax.
                 setStages(prev =>
-                  prev.map(s =>
-                    s.cashOutTax === 0 ? { ...s, cashOutTax: 1000 } : s,
-                  ),
+                  prev.map(s => ({
+                    ...s,
+                    cashOuts: true,
+                    cashOutTax: s.cashOutTax === 0 ? 1000 : s.cashOutTax,
+                  })),
                 )
               }
             }}
@@ -1653,6 +1656,7 @@ export function CreateForm() {
                     disabled={busy}
                     chainIds={selected}
                     flavor={flavor}
+                    tokenLabel={tokenLabel}
                   />
                 </div>
               ) : null}
@@ -1774,8 +1778,8 @@ export function CreateForm() {
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           Sell things right from your project page. Each sale pays your
-          treasury, and the buyer gets the item plus your project tokens.
-          Optional — you can stock your store any time after launch.
+          treasury, and the buyer gets the item plus {tokenLabel}. Optional —
+          you can stock your store any time after launch.
         </p>
         <div className="mt-4">
           <span className="field-label">Pricing currency</span>
