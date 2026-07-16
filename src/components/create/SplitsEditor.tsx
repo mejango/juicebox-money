@@ -392,28 +392,32 @@ export function SplitsEditor({
                     <div className="mt-2 space-y-2">
                       {chainIds!.map(chainId => (
                         <div key={chainId} className="flex items-start gap-2">
-                          <span className="mt-3.5 flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
-                            <ChainIcon chainId={chainId} size={14} />
-                            {chainName(chainId)}
+                          <span className="mt-1.5 flex w-9 shrink-0 items-center justify-center">
+                            <ChainIcon chainId={chainId} size={28} />
                           </span>
                           {mode === 'amount' ? (
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={split.perChainAmount[chainId] ?? ''}
-                              onChange={e =>
-                                update(split.id, {
-                                  perChainAmount: {
-                                    ...split.perChainAmount,
-                                    [chainId]: e.target.value.slice(0, 10),
-                                  },
-                                })
-                              }
-                              disabled={disabled}
-                              placeholder={split.value.trim() || amountLabel}
-                              aria-label={`Amount on ${chainName(chainId)}`}
-                              className="input-well min-h-[40px] w-24 shrink-0 px-2.5 text-xs tabular-nums disabled:opacity-60"
-                            />
+                            <>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={split.perChainAmount[chainId] ?? ''}
+                                onChange={e =>
+                                  update(split.id, {
+                                    perChainAmount: {
+                                      ...split.perChainAmount,
+                                      [chainId]: e.target.value.slice(0, 10),
+                                    },
+                                  })
+                                }
+                                disabled={disabled}
+                                placeholder={split.value.trim() || amountLabel}
+                                aria-label={`Amount on ${chainName(chainId)}`}
+                                className="input-well min-h-[40px] w-24 shrink-0 px-2.5 text-xs tabular-nums disabled:opacity-60"
+                              />
+                              <span className="mt-2.5 shrink-0 text-xs text-smoke-700">
+                                to
+                              </span>
+                            </>
                           ) : null}
                           {split.kind === 'address' ? (
                             <AddressField

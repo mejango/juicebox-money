@@ -504,9 +504,8 @@ export function StoreEditor({
                     <div className="mt-2 space-y-2">
                       {chainIds.map(chainId => (
                         <div key={chainId} className="flex items-center gap-2">
-                          <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
-                            <ChainIcon chainId={chainId} size={14} />
-                            {chainName(chainId)}
+                          <span className="mt-1 flex w-9 shrink-0 items-center justify-center">
+                            <ChainIcon chainId={chainId} size={28} />
                           </span>
                           <input
                             type="text"
