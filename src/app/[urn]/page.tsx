@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { ActivityList } from '@/components/ActivityList'
 import { ChainBadge } from '@/components/ChainBadge'
-import { PayCard } from '@/components/PayCard'
+import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import {
   BsActivityEvent,
@@ -264,10 +264,12 @@ export default async function ProjectPage({
       <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
         <aside className="order-1 lg:order-2 lg:col-span-1">
           <div className="lg:sticky lg:top-24">
-            <PayCard
+            <TreasuryCard
               chainId={urn.chainId}
               projectId={project.projectId}
               projectName={name}
+              accountingToken={project.token}
+              accountingTokenSymbol={project.tokenSymbol}
             />
           </div>
         </aside>
