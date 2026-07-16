@@ -224,23 +224,15 @@ export default async function ProjectPage({
             />
             <span className="inline-flex items-center gap-1.5">
               <span>on</span>
-              {(chains.length > 1 ? chains : [project]).map(p =>
-                p.chainId === project.chainId ? (
-                  <ChainIcon
-                    key={p.chainId}
-                    chainId={p.chainId}
-                    className="ring-1 ring-ink/60 ring-offset-1 ring-offset-bone"
-                  />
-                ) : (
-                  <Link
-                    key={p.chainId}
-                    href={`/${toUrn(p.chainId, p.projectId)}`}
-                    className="opacity-55 transition-opacity hover:opacity-100"
-                  >
-                    <ChainIcon chainId={p.chainId} />
-                  </Link>
-                ),
-              )}
+              {(chains.length > 1 ? chains : [project]).map(p => (
+                <Link
+                  key={p.chainId}
+                  href={`/${toUrn(p.chainId, p.projectId)}`}
+                  className="transition-opacity hover:opacity-70"
+                >
+                  <ChainIcon chainId={p.chainId} />
+                </Link>
+              ))}
             </span>
           </div>
         </div>
