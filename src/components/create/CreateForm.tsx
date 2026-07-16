@@ -224,6 +224,9 @@ export function CreateForm() {
 
   // --- 3: Store ---
   const [items, setItems] = useState<DraftItem[]>([])
+  const [storeCategories, setStoreCategories] = useState<
+    { id: number; name: string }[]
+  >([])
   /** null = follow the accounting context picked in Flavor. */
   const [storeCurrency, setStoreCurrency] = useState<
     'eth' | 'usd' | 'token' | null
@@ -630,6 +633,7 @@ export function CreateForm() {
       allowOwnerMinting: stage.ownerMinting,
       pausePay: !stage.acceptPayments,
       pauseCreditTransfers: stage.pauseCreditTransfers,
+      autoIssuances: [],
       allowSetTerminals: stage.powers.setTerminals,
       allowSetController: stage.powers.setController,
       allowTerminalMigration: stage.powers.terminalMigration,
@@ -689,6 +693,18 @@ export function CreateForm() {
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
+      autoIssuances: stage.autoIssuances
+        .filter(
+          a =>
+            Number(a.count) > 0 &&
+            resolvedAddress(a.perChain[chainId]?.trim() || a.address) !== null,
+        )
+        .map(a => ({
+          count: parseUnits(a.count, 18),
+          beneficiary: resolvedAddress(
+            a.perChain[chainId]?.trim() || a.address,
+          )!,
+        })),
       allowSetTerminals: false,
       allowSetController: false,
       allowTerminalMigration: false,
@@ -856,6 +872,9 @@ export function CreateForm() {
           image: imageUri,
           animation_url: animationUri,
           mediaType: item.mediaFile?.type || undefined,
+          categoryName:
+            storeCategories.find(c => c.id === item.category)?.name ||
+            undefined,
         }),
       })
       const itemJson = (await itemRes.json()) as { cid?: string; error?: string }
@@ -894,6 +913,13 @@ export function CreateForm() {
         }))
       }
       const reserveOn = item.reserveN.trim() !== ''
+      const perChainSupply: Record<number, number | null> = {}
+      for (const [cid, v] of Object.entries(item.perChainSupply)) {
+        const trimmed = v.trim()
+        if (trimmed === '') continue
+        perChainSupply[Number(cid)] =
+          trimmed === 'unlimited' ? null : Number(trimmed)
+      }
       pinned.push({
         price,
         supply: item.supply.trim() === '' ? null : Number(item.supply),
@@ -905,6 +931,17 @@ export function CreateForm() {
         reserveBeneficiary: reserveOn
           ? resolvedAddress(item.reserveBeneficiary)
           : null,
+        category: item.category,
+        votingUnits:
+          item.votingUnits.trim() === '' ? 0 : Number(item.votingUnits),
+        flags: {
+          allowOwnerMint: item.allowOwnerMint,
+          transfersPausable: item.transfersPausable,
+          cantBeRemoved: item.cantBeRemoved,
+          allowCredits: item.allowCredits,
+          ownerCanEditDiscount: item.ownerCanEditDiscount,
+        },
+        perChainSupply,
       })
     }
     // The store collection deploys with every launch (even empty) so the
@@ -922,6 +959,10 @@ export function CreateForm() {
       noNewTiersWithOwnerMinting: storeConfig.noNewTiersWithOwnerMinting,
       issueTokensForSplits: storeConfig.issueTokensForSplits,
       itemsRedeem: storeConfig.itemsRedeem && !anyCashOuts,
+      operatorCanAdjustTiers: storeConfig.operatorCanAdjustTiers,
+      operatorCanUpdateMetadata: storeConfig.operatorCanUpdateMetadata,
+      operatorCanMint: storeConfig.operatorCanMint,
+      operatorCanIncreaseDiscount: storeConfig.operatorCanIncreaseDiscount,
       items: pinned,
     }
     return { projectUri, store, salt: randomSalt() }
@@ -1058,6 +1099,7 @@ export function CreateForm() {
     approvalDeadline,
     storeCurrency,
     storeConfig,
+    storeCategories,
     items: items.map(({ mediaFile, mediaPreview, ...rest }) => rest),
   })
 
@@ -1099,6 +1141,7 @@ export function CreateForm() {
     setApprovalDeadline(draft.approvalDeadline)
     setStoreCurrency(draft.storeCurrency)
     setStoreConfig(draft.storeConfig)
+    setStoreCategories(draft.storeCategories)
     setItems(
       draft.items.map(item => ({
         ...item,
@@ -1181,6 +1224,7 @@ export function CreateForm() {
     approvalDeadline,
     storeCurrency,
     storeConfig,
+    storeCategories,
     items,
     busy,
   ])
@@ -2260,6 +2304,32 @@ export function CreateForm() {
                   />
                 )}
               </div>
+              {flavor === 'revnet' ? (
+                <div className="space-y-2 border-t border-smoke-200 pt-4">
+                  <span className="field-label">
+                    What the operator can do after launch
+                  </span>
+                  {(
+                    [
+                      ['operatorCanAdjustTiers', 'Add & remove items'],
+                      ['operatorCanUpdateMetadata', 'Update item metadata'],
+                      ['operatorCanMint', 'Mint items for free'],
+                      ['operatorCanIncreaseDiscount', 'Increase discounts'],
+                    ] as const
+                  ).map(([key, title]) => (
+                    <CheckRow
+                      key={key}
+                      checked={storeConfig[key]}
+                      onToggle={() =>
+                        setStoreConfig(c => ({ ...c, [key]: !c[key] }))
+                      }
+                      disabled={busy}
+                      title={title}
+                      blurb=""
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -2267,8 +2337,22 @@ export function CreateForm() {
         <StoreEditor
           items={items}
           onChange={setItems}
-          currencyLabel={storeUsd ? 'USD' : 'ETH'}
+          currencyLabel={
+            effectiveStoreCurrency === 'token'
+              ? (customMeta?.symbol ?? 'TOKEN')
+              : storeUsd
+                ? 'USD'
+                : 'ETH'
+          }
           disabled={busy}
+          categories={storeCategories}
+          onAddCategory={name => {
+            const id =
+              storeCategories.reduce((max, c) => Math.max(max, c.id), 0) + 1
+            setStoreCategories(prev => [...prev, { id, name: name.slice(0, 40) }])
+            return id
+          }}
+          chainIds={selected}
         />
       </section>
 

@@ -8,7 +8,9 @@ import {
   splitsTotal,
   type DraftSplit,
 } from './SplitsEditor'
-import { CheckRow, ChipButton, OptionRow, SubSection } from './ui'
+import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from './ui'
+import { AddressField } from './AddressField'
+import { resolvedAddress } from '@/lib/ens'
 
 /**
  * One stage = one queued ruleset (website/ parity). Every rule here is
@@ -56,6 +58,13 @@ export type DraftStage = {
   ownerMinting: boolean
   acceptPayments: boolean
   pauseCreditTransfers: boolean
+  /** Revnet: tokens minted to beneficiaries when the stage starts. */
+  autoIssuances: {
+    id: string
+    count: string
+    address: string
+    perChain: Record<number, string>
+  }[]
   powers: {
     setTerminals: boolean
     setController: boolean
@@ -102,6 +111,7 @@ export function newDraftStage(
     ownerMinting: false,
     acceptPayments: true,
     pauseCreditTransfers: false,
+    autoIssuances: [],
     powers: {
       setTerminals: false,
       setController: false,
@@ -206,7 +216,12 @@ export function stageOk(
           Number(stage.cutFreqDays) >= 1 &&
           numOk(stage.cutFreqDays))) &&
       (isFirst || Number(stage.daysAfter) >= 1) &&
-      (!stage.cashOuts || stageTaxOk(stage))
+      (!stage.cashOuts || stageTaxOk(stage)) &&
+      stage.autoIssuances.every(
+        a =>
+          (a.count.trim() === '' && a.address.trim() === '') ||
+          (Number(a.count) > 0 && resolvedAddress(a.address) !== null),
+      )
     )
   }
   return (
@@ -636,6 +651,83 @@ export function StageRulesEditor({
               allowHook
               allowFundMarket
             />
+            <div className="mt-5 border-t border-smoke-200 pt-4">
+              <span className="field-label">Auto-issuance</span>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                Mint {tokenLabel} to specific wallets the moment this stage
+                starts — no payment involved. Visible to everyone up front.
+              </p>
+              {stage.autoIssuances.map(row => (
+                <div key={row.id} className="mt-2 flex items-start gap-2">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={row.count}
+                    onChange={e =>
+                      set({
+                        autoIssuances: stage.autoIssuances.map(a =>
+                          a.id === row.id
+                            ? { ...a, count: e.target.value.slice(0, 15) }
+                            : a,
+                        ),
+                      })
+                    }
+                    disabled={disabled}
+                    placeholder="1000"
+                    aria-label="Auto-issuance amount"
+                    className="input-well min-h-[44px] w-28 shrink-0 px-3 text-sm tabular-nums disabled:opacity-60"
+                  />
+                  <span className="mt-3 shrink-0 text-xs text-smoke-700">to</span>
+                  <AddressField
+                    value={row.address}
+                    onChange={v =>
+                      set({
+                        autoIssuances: stage.autoIssuances.map(a =>
+                          a.id === row.id ? { ...a, address: v } : a,
+                        ),
+                      })
+                    }
+                    disabled={disabled}
+                    ariaLabel="Auto-issuance beneficiary"
+                    className="flex-1"
+                  />
+                  <button
+                    onClick={() =>
+                      set({
+                        autoIssuances: stage.autoIssuances.filter(
+                          a => a.id !== row.id,
+                        ),
+                      })
+                    }
+                    disabled={disabled}
+                    aria-label="Remove auto-issuance"
+                    className="mt-3 shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <div className="mt-2">
+                <AddButton
+                  onClick={() =>
+                    set({
+                      autoIssuances: [
+                        ...stage.autoIssuances,
+                        {
+                          id: crypto.randomUUID(),
+                          count: '',
+                          address: '',
+                          perChain: {},
+                        },
+                      ],
+                    })
+                  }
+                  disabled={disabled}
+                >
+                  Add auto-issuance
+                </AddButton>
+              </div>
+            </div>
           </div>
         ) : (
           <>

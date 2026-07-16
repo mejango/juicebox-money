@@ -49,6 +49,20 @@ export type StoreItem = {
   /** Reserve 1 of every N mints for the beneficiary. 0 = off. */
   reserveFrequency: number
   reserveBeneficiary: Address | null
+  /** Tier category (0 = default). Tiers sort by category at encode. */
+  category: number
+  /** Custom voting power per item (0 = none). */
+  votingUnits: number
+  flags: {
+    allowOwnerMint: boolean
+    transfersPausable: boolean
+    cantBeRemoved: boolean
+    /** Inverted encodings: credits allowed / owner can edit discounts. */
+    allowCredits: boolean
+    ownerCanEditDiscount: boolean
+  }
+  /** Per-chain supply overrides (null value = unlimited on that chain). */
+  perChainSupply: Record<number, number | null>
 }
 
 export const DEFAULT_ITEM_EXTRAS: Pick<
@@ -58,12 +72,26 @@ export const DEFAULT_ITEM_EXTRAS: Pick<
   | 'discountPercent'
   | 'reserveFrequency'
   | 'reserveBeneficiary'
+  | 'category'
+  | 'votingUnits'
+  | 'flags'
+  | 'perChainSupply'
 > = {
   splitPercent: 0,
   splits: [],
   discountPercent: 0,
   reserveFrequency: 0,
   reserveBeneficiary: null,
+  category: 0,
+  votingUnits: 0,
+  flags: {
+    allowOwnerMint: false,
+    transfersPausable: false,
+    cantBeRemoved: false,
+    allowCredits: true,
+    ownerCanEditDiscount: true,
+  },
+  perChainSupply: {},
 }
 
 /** The Uniswap V4 LP split hook ("Fund market") — same address on every
@@ -166,6 +194,8 @@ export type StageRules = {
   allowAddPriceFeed: boolean
   /** Revnet only: seconds between issuance cuts (0 = no cuts). */
   issuanceCutFrequency: number
+  /** Revnet only: tokens minted to beneficiaries when the stage starts. */
+  autoIssuances: { count: bigint; beneficiary: Address }[]
 }
 
 /** What the treasury holds: standard tokens (ETH and/or USDC), or one
@@ -218,6 +248,11 @@ export type LaunchPlan = {
     /** Let items cash out for surplus (mutually exclusive with token cash
      *  outs — the UI enforces it). */
     itemsRedeem: boolean
+    /** Revnet only: what the operator may do to the store after launch. */
+    operatorCanAdjustTiers: boolean
+    operatorCanUpdateMetadata: boolean
+    operatorCanMint: boolean
+    operatorCanIncreaseDiscount: boolean
     items: StoreItem[]
   }
 }
@@ -241,6 +276,7 @@ export const DEFAULT_STAGE: StageRules = {
   allowOwnerMinting: false,
   pausePay: false,
   pauseCreditTransfers: false,
+  autoIssuances: [],
   allowSetTerminals: false,
   allowSetController: false,
   allowTerminalMigration: false,
@@ -262,6 +298,10 @@ export const DEFAULT_STORE_FLAGS = {
   noNewTiersWithOwnerMinting: false,
   issueTokensForSplits: false,
   itemsRedeem: false,
+  operatorCanAdjustTiers: true,
+  operatorCanUpdateMetadata: true,
+  operatorCanMint: true,
+  operatorCanIncreaseDiscount: true,
 }
 
 export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
@@ -392,6 +432,11 @@ export function buildLaunchRequest(args: {
       }
       return buildRevnetStageConfig({
         startsAtOrAfter: stage.mustStartAtOrAfter,
+        autoIssuances: stage.autoIssuances.map(a => ({
+          chainId,
+          count: a.count,
+          beneficiary: a.beneficiary,
+        })),
         // 0n on later stages = inherit the previous (cut) rate — the JB
         // ruleset weight semantic REVDeployer passes straight through.
         initialIssuance: stage.weight,
@@ -428,12 +473,15 @@ export function buildLaunchRequest(args: {
                 plan.store,
                 args.projectUri,
                 accounting,
+                chainId,
               ),
               salt: args.salt,
-              preventOperatorAdjustingTiers: false,
-              preventOperatorUpdatingMetadata: false,
-              preventOperatorMinting: false,
-              preventOperatorIncreasingDiscountPercent: false,
+              preventOperatorAdjustingTiers: !plan.store.operatorCanAdjustTiers,
+              preventOperatorUpdatingMetadata:
+                !plan.store.operatorCanUpdateMetadata,
+              preventOperatorMinting: !plan.store.operatorCanMint,
+              preventOperatorIncreasingDiscountPercent:
+                !plan.store.operatorCanIncreaseDiscount,
             }
           : undefined,
     })
@@ -551,7 +599,7 @@ export function buildLaunchRequest(args: {
     functionName: 'launchProjectFor' as const,
     args: [
       args.owner,
-      build721HookConfig(args.plan.store, args.projectUri, accounting),
+      build721HookConfig(args.plan.store, args.projectUri, accounting, chainId),
       {
         projectUri: args.projectUri,
         rulesetConfigurations,
@@ -606,6 +654,7 @@ function build721HookConfig(
   store: LaunchPlan['store'],
   projectUri: string,
   accounting: AccountingConfig,
+  chainId: JBChainId,
 ) {
   // Tier pricing: a standard currency, or the custom accounting token
   // itself (token-keyed id, its own decimals — no feed needed).
@@ -618,28 +667,38 @@ function build721HookConfig(
       : store.currency === 'usd'
         ? { currency: BASE_CURRENCY_USD, decimals: 6 }
         : { currency: BASE_CURRENCY_ETH, decimals: 18 }
-  const tiers = store.items.map(item => ({
-    price: item.price,
-    initialSupply: item.supply ?? TIER_UNLIMITED_SUPPLY,
-    votingUnits: 0,
-    reserveFrequency: item.reserveFrequency,
-    reserveBeneficiary: item.reserveBeneficiary ?? zeroAddress,
-    encodedIpfsUri: item.encodedIpfsUri,
-    category: 0,
-    discountPercent: item.discountPercent,
-    flags: {
-      allowOwnerMint: false,
-      useReserveBeneficiaryAsDefault:
-        item.reserveFrequency > 0 && item.reserveBeneficiary !== null,
-      transfersPausable: false,
-      useVotingUnits: false,
-      cantBeRemoved: false,
-      cantIncreaseDiscountPercent: false,
-      cantBuyWithCredits: false,
-    },
-    splitPercent: item.splitPercent,
-    splits: toJbSplits(item.splits),
-  }))
+  // Tiers must be sorted by category ascending; per-chain supply overrides
+  // pick this chain's number (null = unlimited here).
+  const tiers = [...store.items]
+    .sort((a, b) => a.category - b.category)
+    .map(item => {
+      const supply =
+        chainId in item.perChainSupply
+          ? item.perChainSupply[chainId]
+          : item.supply
+      return {
+        price: item.price,
+        initialSupply: supply ?? TIER_UNLIMITED_SUPPLY,
+        votingUnits: item.votingUnits,
+        reserveFrequency: item.reserveFrequency,
+        reserveBeneficiary: item.reserveBeneficiary ?? zeroAddress,
+        encodedIpfsUri: item.encodedIpfsUri,
+        category: item.category,
+        discountPercent: item.discountPercent,
+        flags: {
+          allowOwnerMint: item.flags.allowOwnerMint,
+          useReserveBeneficiaryAsDefault:
+            item.reserveFrequency > 0 && item.reserveBeneficiary !== null,
+          transfersPausable: item.flags.transfersPausable,
+          useVotingUnits: item.votingUnits > 0,
+          cantBeRemoved: item.flags.cantBeRemoved,
+          cantIncreaseDiscountPercent: !item.flags.ownerCanEditDiscount,
+          cantBuyWithCredits: !item.flags.allowCredits,
+        },
+        splitPercent: item.splitPercent,
+        splits: toJbSplits(item.splits),
+      }
+    })
   return {
     name: store.name,
     symbol: store.symbol,

@@ -44,7 +44,12 @@ export type CreateDraft = {
     noNewTiersWithOwnerMinting: boolean
     issueTokensForSplits: boolean
     itemsRedeem: boolean
+    operatorCanAdjustTiers: boolean
+    operatorCanUpdateMetadata: boolean
+    operatorCanMint: boolean
+    operatorCanIncreaseDiscount: boolean
   }
+  storeCategories: { id: number; name: string }[]
   items: Omit<DraftItem, 'mediaFile' | 'mediaPreview'>[]
 }
 
@@ -166,6 +171,17 @@ function sanitizeStage(raw: unknown): DraftStage {
     ownerMinting: bool(s.ownerMinting),
     acceptPayments: s.acceptPayments === undefined ? true : bool(s.acceptPayments),
     pauseCreditTransfers: bool(s.pauseCreditTransfers),
+    autoIssuances: (Array.isArray(s.autoIssuances) ? s.autoIssuances : [])
+      .slice(0, 100)
+      .map(raw => {
+        const a = (raw ?? {}) as Record<string, unknown>
+        return {
+          id: crypto.randomUUID(),
+          count: numStr(a.count, 15),
+          address: str(a.address, 64),
+          perChain: sanitizeChainMap(a.perChain),
+        }
+      }),
     powers: {
       setTerminals: bool(powers.setTerminals),
       setController: bool(powers.setController),
@@ -193,6 +209,19 @@ function sanitizeItem(raw: unknown): Omit<DraftItem, 'mediaFile' | 'mediaPreview
     splits: (Array.isArray(s.splits) ? s.splits : [])
       .slice(0, 100)
       .map(sanitizeSplit),
+    category:
+      Number.isInteger(Number(s.category)) && Number(s.category) >= 0
+        ? Number(s.category)
+        : 0,
+    votingUnits: numStr(s.votingUnits, 10),
+    allowOwnerMint: bool(s.allowOwnerMint),
+    transfersPausable: bool(s.transfersPausable),
+    cantBeRemoved: bool(s.cantBeRemoved),
+    allowCredits: s.allowCredits === undefined ? true : bool(s.allowCredits),
+    ownerCanEditDiscount:
+      s.ownerCanEditDiscount === undefined ? true : bool(s.ownerCanEditDiscount),
+    perChainSupply: sanitizeChainMap(s.perChainSupply),
+    perChainSupplyOpen: false,
     moreOpen: false,
   }
 }
@@ -288,8 +317,32 @@ export function parseDraft(text: string): CreateDraft {
         noNewTiersWithOwnerMinting: bool(c.noNewTiersWithOwnerMinting),
         issueTokensForSplits: bool(c.issueTokensForSplits),
         itemsRedeem: bool(c.itemsRedeem),
+        operatorCanAdjustTiers:
+          c.operatorCanAdjustTiers === undefined
+            ? true
+            : bool(c.operatorCanAdjustTiers),
+        operatorCanUpdateMetadata:
+          c.operatorCanUpdateMetadata === undefined
+            ? true
+            : bool(c.operatorCanUpdateMetadata),
+        operatorCanMint:
+          c.operatorCanMint === undefined ? true : bool(c.operatorCanMint),
+        operatorCanIncreaseDiscount:
+          c.operatorCanIncreaseDiscount === undefined
+            ? true
+            : bool(c.operatorCanIncreaseDiscount),
       }
     })(),
+    storeCategories: (Array.isArray(d.storeCategories) ? d.storeCategories : [])
+      .slice(0, 255)
+      .flatMap(raw => {
+        const c = (raw ?? {}) as Record<string, unknown>
+        const id = Number(c.id)
+        const name = str(c.name, 40)
+        return Number.isInteger(id) && id > 0 && name
+          ? [{ id, name }]
+          : []
+      }),
     items: (Array.isArray(d.items) ? d.items : [])
       .slice(0, 100)
       .map(sanitizeItem),

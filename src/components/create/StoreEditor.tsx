@@ -8,7 +8,9 @@ import {
   splitsTotal,
   type DraftSplit,
 } from './SplitsEditor'
-import { AddButton } from './ui'
+import { AddButton, CheckRow } from './ui'
+import { ChainIcon } from '@/components/ChainIcon'
+import { chainName } from '@/lib/urn'
 
 /**
  * Store items editor for the create flow. Purely controlled — drafts live in
@@ -34,8 +36,21 @@ export type DraftItem = {
   reserveBeneficiary: string
   /** % of each sale routed to recipients (percent mode). */
   splits: DraftSplit[]
+  /** Category id (0 = default). */
+  category: number
+  votingUnits: string
+  allowOwnerMint: boolean
+  transfersPausable: boolean
+  cantBeRemoved: boolean
+  allowCredits: boolean
+  ownerCanEditDiscount: boolean
+  /** Per-chain quantity overrides ('' = default; 'unlimited' allowed). */
+  perChainSupply: Record<number, string>
+  perChainSupplyOpen: boolean
   moreOpen: boolean
 }
+
+export type StoreCategory = { id: number; name: string }
 
 export function newDraftItem(): DraftItem {
   return {
@@ -50,6 +65,15 @@ export function newDraftItem(): DraftItem {
     reserveN: '',
     reserveBeneficiary: '',
     splits: [],
+    category: 0,
+    votingUnits: '',
+    allowOwnerMint: false,
+    transfersPausable: false,
+    cantBeRemoved: false,
+    allowCredits: true,
+    ownerCanEditDiscount: true,
+    perChainSupply: {},
+    perChainSupplyOpen: false,
     moreOpen: false,
   }
 }
@@ -89,6 +113,12 @@ export function itemSplitsOk(item: DraftItem): boolean {
   )
 }
 
+export function itemVotingOk(item: DraftItem): boolean {
+  if (item.votingUnits.trim() === '') return true
+  const n = Number(item.votingUnits)
+  return Number.isInteger(n) && n >= 0 && n <= 4_294_967_295
+}
+
 export function itemOk(item: DraftItem): boolean {
   return (
     item.name.trim().length > 0 &&
@@ -96,7 +126,11 @@ export function itemOk(item: DraftItem): boolean {
     itemSupplyOk(item.supply) &&
     itemDiscountOk(item.discountPct) &&
     itemReserveOk(item) &&
-    itemSplitsOk(item)
+    itemSplitsOk(item) &&
+    itemVotingOk(item) &&
+    Object.values(item.perChainSupply).every(
+      v => v.trim() === '' || v.trim() === 'unlimited' || itemSupplyOk(v),
+    )
   )
 }
 
@@ -124,11 +158,17 @@ export function StoreEditor({
   onChange,
   currencyLabel,
   disabled,
+  categories,
+  onAddCategory,
+  chainIds,
 }: {
   items: DraftItem[]
   onChange: (items: DraftItem[]) => void
-  currencyLabel: 'ETH' | 'USD'
+  currencyLabel: string
   disabled: boolean
+  categories: StoreCategory[]
+  onAddCategory: (name: string) => number
+  chainIds: number[]
 }) {
   const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(items.map(item => (item.id === id ? { ...item, ...patch } : item)))
@@ -274,6 +314,37 @@ export function StoreEditor({
           {item.moreOpen ? (
             <div className="mt-3 space-y-5 border-t border-smoke-200 pt-4">
               <div>
+                <span className="field-label">Category</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Group items into named shelves on your store page.
+                </p>
+                <select
+                  value={String(item.category)}
+                  onChange={e => {
+                    if (e.target.value === 'new') {
+                      const name = window.prompt('New category name')?.trim()
+                      if (name) {
+                        const id = onAddCategory(name)
+                        update(item.id, { category: id })
+                      }
+                    } else {
+                      update(item.id, { category: Number(e.target.value) })
+                    }
+                  }}
+                  disabled={disabled}
+                  className="input-well select-caret mt-2 min-h-[44px] w-56 px-3 pr-8 text-sm disabled:opacity-60"
+                >
+                  <option value="0">Default</option>
+                  {categories.map(cat => (
+                    <option key={cat.id} value={String(cat.id)}>
+                      {cat.name}
+                    </option>
+                  ))}
+                  <option value="new">+ Add category…</option>
+                </select>
+              </div>
+
+              <div>
                 <span className="field-label">Discount</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Launch the item at a discount off its price — you can end
@@ -345,6 +416,125 @@ export function StoreEditor({
                   remainderNote="stay with the project"
                 />
               </div>
+
+              <div>
+                <span className="field-label">Voting power</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Give each of this item a custom number of governance votes.
+                </p>
+                <div className="mt-2 flex items-center gap-2.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={item.votingUnits}
+                    onChange={e =>
+                      update(item.id, {
+                        votingUnits: e.target.value.slice(0, 10),
+                      })
+                    }
+                    disabled={disabled}
+                    placeholder="0"
+                    className={`input-well min-h-[44px] w-28 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                      itemVotingOk(item) ? '' : '!border-red-400'
+                    }`}
+                  />
+                  <span className="text-sm text-smoke-700">votes each</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="field-label">Item rules</span>
+                {(
+                  [
+                    [
+                      'allowOwnerMint',
+                      'Owner can mint for free',
+                      'The project owner (or revnet operator) can mint this item without paying.',
+                    ],
+                    [
+                      'transfersPausable',
+                      'Transfers pausable',
+                      'Rulesets can pause transfers of this item.',
+                    ],
+                    [
+                      'cantBeRemoved',
+                      'Permanent',
+                      'This item can never be removed from the store.',
+                    ],
+                    [
+                      'allowCredits',
+                      'Allow credit purchases',
+                      'Buyers can spend leftover pay credits on this item.',
+                    ],
+                    [
+                      'ownerCanEditDiscount',
+                      'Discounts can change later',
+                      'The owner can raise or end the discount after launch.',
+                    ],
+                  ] as const
+                ).map(([key, title, blurb]) => (
+                  <CheckRow
+                    key={key}
+                    checked={item[key]}
+                    onToggle={() => update(item.id, { [key]: !item[key] })}
+                    disabled={disabled}
+                    title={title}
+                    blurb={blurb}
+                  />
+                ))}
+              </div>
+
+              {chainIds.length > 1 ? (
+                <div>
+                  <button
+                    onClick={() =>
+                      update(item.id, {
+                        perChainSupplyOpen: !item.perChainSupplyOpen,
+                      })
+                    }
+                    disabled={disabled}
+                    aria-expanded={item.perChainSupplyOpen}
+                    className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+                  >
+                    {item.perChainSupplyOpen
+                      ? 'Same quantity on every chain'
+                      : 'Set quantity per chain'}
+                  </button>
+                  {item.perChainSupplyOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {chainIds.map(chainId => (
+                        <div key={chainId} className="flex items-center gap-2">
+                          <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
+                            <ChainIcon chainId={chainId} size={14} />
+                            {chainName(chainId)}
+                          </span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={item.perChainSupply[chainId] ?? ''}
+                            onChange={e =>
+                              update(item.id, {
+                                perChainSupply: {
+                                  ...item.perChainSupply,
+                                  [chainId]: e.target.value.slice(0, 9),
+                                },
+                              })
+                            }
+                            disabled={disabled}
+                            placeholder={item.supply.trim() || 'Unlimited'}
+                            aria-label={`Quantity on ${chainName(chainId)}`}
+                            className="input-well min-h-[40px] w-28 px-2.5 text-xs tabular-nums disabled:opacity-60"
+                          />
+                        </div>
+                      ))}
+                      <p className="text-[11px] leading-relaxed text-smoke-500">
+                        Empty = the default quantity; type &quot;unlimited&quot;
+                        for no cap on a chain.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
