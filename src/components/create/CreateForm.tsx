@@ -13,6 +13,12 @@ import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
 import { resolvedAddress } from '@/lib/ens'
 import {
+  DRAFT_KEY,
+  draftFileName,
+  parseDraft,
+  type CreateDraft,
+} from '@/lib/draft'
+import {
   FOREVER_SECONDS,
   buildLaunchRequest,
   projectIdFromReceipt,
@@ -173,6 +179,10 @@ export function CreateForm() {
 
   // --- 3: Store ---
   const [items, setItems] = useState<DraftItem[]>([])
+  /** null = follow the accounting context picked in Flavor. */
+  const [storeCurrency, setStoreCurrency] = useState<'eth' | 'usd' | null>(
+    null,
+  )
 
   // --- Launch state ---
   const [phase, setPhase] = useState<
@@ -195,6 +205,8 @@ export function CreateForm() {
   const busy = phase !== 'form'
   const isUsd = currency === 'usdc'
   const unitLabel = isUsd ? 'USD' : 'ETH'
+  const effectiveStoreCurrency = storeCurrency ?? (isUsd ? 'usd' : 'eth')
+  const storeUsd = effectiveStoreCurrency === 'usd'
 
   useEffect(
     () => () => {
@@ -415,7 +427,14 @@ export function CreateForm() {
       holdFees: stage.payouts !== 'none' && stage.holdFees,
       cashOutTaxRate: stage.cashOuts && !routedAll ? stage.cashOutTax : null,
       allowOwnerMinting: stage.ownerMinting,
-      pausePay: false,
+      pausePay: !stage.acceptPayments,
+      pauseCreditTransfers: stage.pauseCreditTransfers,
+      allowSetTerminals: stage.powers.setTerminals,
+      allowSetController: stage.powers.setController,
+      allowTerminalMigration: stage.powers.terminalMigration,
+      allowSetCustomToken: stage.powers.setCustomToken,
+      allowAddAccountingContext: stage.powers.addAccountingContext,
+      allowAddPriceFeed: stage.powers.addPriceFeed,
       issuanceCutFrequency: 0,
     }
   }
@@ -450,6 +469,13 @@ export function CreateForm() {
       cashOutTaxRate: stage.cashOutTax,
       allowOwnerMinting: false,
       pausePay: false,
+      pauseCreditTransfers: false,
+      allowSetTerminals: false,
+      allowSetController: false,
+      allowTerminalMigration: false,
+      allowSetCustomToken: false,
+      allowAddAccountingContext: false,
+      allowAddPriceFeed: false,
       issuanceCutFrequency: cutOn
         ? Math.round(Number(stage.cutFreqDays || '0') * 86_400)
         : 0,
@@ -598,7 +624,7 @@ export function CreateForm() {
       }
       // parseUnits rounds sub-precision input to 0 — refuse accidental
       // free items (e.g. a 0.0000001 USD price against 6 decimals).
-      const price = parseUnits(item.price, isUsd ? 6 : 18)
+      const price = parseUnits(item.price, storeUsd ? 6 : 18)
       if (price === 0n) {
         throw new Error(
           `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
@@ -644,6 +670,7 @@ export function CreateForm() {
     const store: LaunchPlan['store'] = {
       name: name.trim(),
       symbol: ticker.trim() || deriveSymbol(name),
+      currency: effectiveStoreCurrency,
       items: pinned,
     }
     return { projectUri, store, salt: randomSalt() }
@@ -754,6 +781,133 @@ export function CreateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneUnindexed.join(',')])
 
+  /** The serializable wizard state (.jb file + localStorage draft).
+   *  Uploaded files can't serialize and are dropped. */
+  const buildDraft = (): CreateDraft => ({
+    v: 1,
+    flavor,
+    name,
+    ticker,
+    tagline,
+    description,
+    payNotice,
+    links,
+    owner,
+    currency,
+    chains: selected,
+    stages,
+    afterMode,
+    approvalDeadline,
+    storeCurrency,
+    items: items.map(({ mediaFile, mediaPreview, ...rest }) => rest),
+  })
+
+  const applyDraft = (draft: CreateDraft) => {
+    setFlavor(draft.flavor)
+    setName(draft.name)
+    setTicker(draft.ticker)
+    setTagline(draft.tagline)
+    setDescription(draft.description)
+    setPayNotice(draft.payNotice)
+    setLinks({
+      infoUri: draft.links.infoUri ?? '',
+      twitter: draft.links.twitter ?? '',
+      discord: draft.links.discord ?? '',
+      telegram: draft.links.telegram ?? '',
+      whatsapp: draft.links.whatsapp ?? '',
+      instagram: draft.links.instagram ?? '',
+    })
+    setOwner(draft.owner)
+    setCurrency(draft.currency)
+    const validChains = draft.chains.filter(id =>
+      SUPPORTED_CHAINS.some(chain => chain.id === id),
+    )
+    setSelected(
+      validChains.length > 0
+        ? validChains
+        : SUPPORTED_CHAINS.map(chain => chain.id),
+    )
+    setStages(draft.stages)
+    setAfterMode(draft.afterMode)
+    setApprovalDeadline(draft.approvalDeadline)
+    setStoreCurrency(draft.storeCurrency)
+    setItems(
+      draft.items.map(item => ({
+        ...item,
+        mediaFile: null,
+        mediaPreview: null,
+      })),
+    )
+    setStep(0)
+  }
+
+  const [importError, setImportError] = useState<string | null>(null)
+  const importDraftFile = async (file: File | null) => {
+    if (!file) return
+    setImportError(null)
+    try {
+      applyDraft(parseDraft(await file.text()))
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : 'Import failed.')
+    }
+  }
+
+  const exportDraft = () => {
+    const blob = new Blob([JSON.stringify(buildDraft(), null, 2)], {
+      type: 'application/json',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = draftFileName(name)
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // Hydrate a saved draft once on mount, then persist (debounced) so a
+  // refresh never loses work. Files don't persist.
+  const hydratedRef = useRef(false)
+  useEffect(() => {
+    if (hydratedRef.current) return
+    hydratedRef.current = true
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY)
+      if (saved) applyDraft(parseDraft(saved))
+    } catch {
+      // Corrupt draft — start fresh.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (!hydratedRef.current || busy) return
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(buildDraft()))
+      } catch {
+        // Storage full/unavailable — drafts just won't persist.
+      }
+    }, 500)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    flavor,
+    name,
+    ticker,
+    tagline,
+    description,
+    payNotice,
+    links,
+    owner,
+    currency,
+    selected,
+    stages,
+    afterMode,
+    approvalDeadline,
+    storeCurrency,
+    items,
+    busy,
+  ])
+
   const wizardSteps = [
     'Flavor',
     'Basics',
@@ -841,8 +995,35 @@ export function CreateForm() {
         rules stay flexible unless you lock them in.
       </p>
 
+      {/* Draft import/export */}
+      <div className="mt-6 flex items-center justify-end gap-4 text-sm">
+        <label className="cursor-pointer font-medium text-bluebs-600 hover:text-bluebs-700">
+          Import
+          <input
+            type="file"
+            accept=".jb,application/json"
+            disabled={busy}
+            className="sr-only"
+            onChange={e => {
+              void importDraftFile(e.target.files?.[0] ?? null)
+              e.target.value = ''
+            }}
+          />
+        </label>
+        <button
+          onClick={exportDraft}
+          disabled={busy}
+          className="font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+        >
+          Export
+        </button>
+      </div>
+      {importError ? (
+        <p className="mt-2 text-right text-xs text-red-600">{importError}</p>
+      ) : null}
+
       {/* Horizontal stepper */}
-      <nav aria-label="Create steps" className="mt-8 flex items-center gap-1.5">
+      <nav aria-label="Create steps" className="mt-2 flex items-center gap-1.5">
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
@@ -901,7 +1082,16 @@ export function CreateForm() {
           />
           <OptionRow
             checked={flavor === 'revnet'}
-            onSelect={() => !busy && setFlavor('revnet')}
+            onSelect={() => {
+              if (busy) return
+              setFlavor('revnet')
+              // Revnets default to a 10% cash-out tax.
+              setStages(prev =>
+                prev.map(s =>
+                  s.cashOutTax === 0 ? { ...s, cashOutTax: 1000 } : s,
+                ),
+              )
+            }}
             disabled={busy}
             title="Revnet"
             blurb="Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability."
@@ -911,9 +1101,8 @@ export function CreateForm() {
         <div className="mt-6">
           <span className="field-label">Chains</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            Your {flavor === 'revnet' ? 'revnet' : 'project'} gets the same ID
-            space on every chain you pick. You&apos;ll confirm one transaction
-            per chain.
+            Your {flavor === 'revnet' ? 'revnet' : 'project'} lives on every
+            chain you pick. You&apos;ll confirm one transaction per chain.
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             {SUPPORTED_CHAINS.map(chain => {
@@ -1329,7 +1518,7 @@ export function CreateForm() {
                 onClick={() =>
                   setStages(prev => [
                     ...prev.map(s => ({ ...s, expanded: false })),
-                    { ...newDraftStage(false), expanded: true },
+                    { ...newDraftStage(false, 'revnet'), expanded: true },
                   ])
                 }
                 disabled={busy}
@@ -1434,10 +1623,43 @@ export function CreateForm() {
           treasury, and the buyer gets the item plus your project tokens.
           Optional — you can stock your store any time after launch.
         </p>
+        <div className="mt-4">
+          <span className="field-label">Pricing currency</span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            The currency your items are priced in — buyers can still pay
+            with anything.
+          </p>
+          <div className="mt-2.5 flex gap-2">
+            {(
+              [
+                ['eth', 'ETH'],
+                ['usd', 'USD'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = effectiveStoreCurrency === value
+              return (
+                <button
+                  key={value}
+                  onClick={() => !busy && setStoreCurrency(value)}
+                  disabled={busy}
+                  aria-pressed={active}
+                  className={
+                    active
+                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
+                      : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                  }
+                >
+                  {active ? <CheckIcon className="h-4 w-4" /> : null}
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
         <StoreEditor
           items={items}
           onChange={setItems}
-          currencyLabel={unitLabel}
+          currencyLabel={storeUsd ? 'USD' : 'ETH'}
           disabled={busy}
         />
       </section>
@@ -1480,19 +1702,16 @@ export function CreateForm() {
             </dd>
           </div>
           {stages.map((stage, i) => (
-            <div
-              key={stage.id}
-              className="flex items-start justify-between gap-3"
-            >
-              <dt className="shrink-0 text-smoke-700">
+            <div key={stage.id}>
+              <dt className="text-smoke-700">
                 {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
               </dt>
-              <dd className="text-right font-medium text-ink">
-                {stageSummaryParts(stage, i, unitLabel, flavor).map(part => (
-                  <span key={part} className="block">
-                    {part}
-                  </span>
-                ))}
+              <dd className="mt-1">
+                <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
+                  {stageSummaryParts(stage, i, unitLabel, flavor).map(part => (
+                    <li key={part}>{part}</li>
+                  ))}
+                </ul>
               </dd>
             </div>
           ))}

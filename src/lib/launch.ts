@@ -128,6 +128,15 @@ export type StageRules = {
   allowOwnerMinting: boolean
   /** Pause payments (and with them, token issuance) for this stage. */
   pausePay: boolean
+  /** Freeze internal credit transfers (claimed ERC-20s stay transferable). */
+  pauseCreditTransfers: boolean
+  /** Owner superpowers — all default off; supporters can see them. */
+  allowSetTerminals: boolean
+  allowSetController: boolean
+  allowTerminalMigration: boolean
+  allowSetCustomToken: boolean
+  allowAddAccountingContext: boolean
+  allowAddPriceFeed: boolean
   /** Revnet only: seconds between issuance cuts (0 = no cuts). */
   issuanceCutFrequency: number
 }
@@ -154,6 +163,8 @@ export type LaunchPlan = {
   store: {
     name: string
     symbol: string
+    /** Tier pricing currency — independent of the accounting context. */
+    currency: 'eth' | 'usd'
     items: StoreItem[]
   }
 }
@@ -172,6 +183,13 @@ export const DEFAULT_STAGE: StageRules = {
   cashOutTaxRate: null,
   allowOwnerMinting: false,
   pausePay: false,
+  pauseCreditTransfers: false,
+  allowSetTerminals: false,
+  allowSetController: false,
+  allowTerminalMigration: false,
+  allowSetCustomToken: false,
+  allowAddAccountingContext: false,
+  allowAddPriceFeed: false,
   issuanceCutFrequency: 0,
 }
 
@@ -314,7 +332,6 @@ export function buildLaunchRequest(args: {
               baseline721HookConfiguration: build721HookConfig(
                 plan.store,
                 args.projectUri,
-                isUsd,
               ),
               salt: args.salt,
               preventOperatorAdjustingTiers: false,
@@ -359,6 +376,13 @@ export function buildLaunchRequest(args: {
         allowOwnerMinting: stage.allowOwnerMinting,
         holdFees: stage.holdFees,
         pausePay: stage.pausePay,
+        pauseCreditTransfers: stage.pauseCreditTransfers,
+        allowSetTerminals: stage.allowSetTerminals,
+        allowSetController: stage.allowSetController,
+        allowTerminalMigration: stage.allowTerminalMigration,
+        allowSetCustomToken: stage.allowSetCustomToken,
+        allowAddAccountingContext: stage.allowAddAccountingContext,
+        allowAddPriceFeed: stage.allowAddPriceFeed,
       }),
       splitGroups: [
         ...(stage.reservedPercent > 0 && stage.reservedSplits.length > 0
@@ -410,7 +434,7 @@ export function buildLaunchRequest(args: {
     functionName: 'launchProjectFor' as const,
     args: [
       args.owner,
-      build721HookConfig(args.plan.store, args.projectUri, isUsd),
+      build721HookConfig(args.plan.store, args.projectUri),
       {
         projectUri: args.projectUri,
         rulesetConfigurations,
@@ -425,11 +449,8 @@ export function buildLaunchRequest(args: {
 }
 
 /** The tiered-721 hook config shared by both deploy flavors. */
-function build721HookConfig(
-  store: LaunchPlan['store'],
-  projectUri: string,
-  isUsd: boolean,
-) {
+function build721HookConfig(store: LaunchPlan['store'], projectUri: string) {
+  const usdPricing = store.currency === 'usd'
   const tiers = store.items.map(item => ({
     price: item.price,
     initialSupply: item.supply ?? TIER_UNLIMITED_SUPPLY,
@@ -462,8 +483,8 @@ function build721HookConfig(
       tiers,
       // Tier prices are in a standard currency (never token-keyed):
       // ETH prices in 18 decimals, USD prices in 6 (1 USDC pays $1).
-      currency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
-      decimals: isUsd ? 6 : 18,
+      currency: usdPricing ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+      decimals: usdPricing ? 6 : 18,
     },
     flags: {
       noNewTiersWithReserves: false,

@@ -41,11 +41,24 @@ export type DraftStage = {
   cashOuts: boolean
   cashOutTax: number
   ownerMinting: boolean
+  acceptPayments: boolean
+  pauseCreditTransfers: boolean
+  powers: {
+    setTerminals: boolean
+    setController: boolean
+    terminalMigration: boolean
+    setCustomToken: boolean
+    addAccountingContext: boolean
+    addPriceFeed: boolean
+  }
   expanded: boolean
   open: Record<string, boolean>
 }
 
-export function newDraftStage(first: boolean): DraftStage {
+export function newDraftStage(
+  first: boolean,
+  flavor: 'project' | 'revnet' = 'project',
+): DraftStage {
   return {
     id: crypto.randomUUID(),
     durationValue: '0',
@@ -64,8 +77,18 @@ export function newDraftStage(first: boolean): DraftStage {
     payoutSplits: [],
     holdFees: false,
     cashOuts: false,
-    cashOutTax: 0,
+    cashOutTax: flavor === 'revnet' ? 1000 : 0,
     ownerMinting: false,
+    acceptPayments: true,
+    pauseCreditTransfers: false,
+    powers: {
+      setTerminals: false,
+      setController: false,
+      terminalMigration: false,
+      setCustomToken: false,
+      addAccountingContext: false,
+      addPriceFeed: false,
+    },
     expanded: first,
     open: {},
   }
@@ -369,6 +392,15 @@ export function StageRulesEditor({
         ) : null}
         {isRevnet ? null : (
           <>
+        <div className="mb-3">
+          <CheckRow
+            checked={stage.acceptPayments}
+            onToggle={() => set({ acceptPayments: !stage.acceptPayments })}
+            disabled={disabled}
+            title="Accept payments"
+            blurb="Uncheck to pause payments (and token issuance) for this ruleset — useful for a deliberate quiet period."
+          />
+        </div>
         <span className="field-label">Duration</span>
         <p className="mt-1 text-xs leading-relaxed text-smoke-700">
           How long these rules run. Flexible rules last until you change
@@ -725,7 +757,15 @@ export function StageRulesEditor({
       {isRevnet ? null : (
       <SubSection
         label="Owner powers"
-        summary={stage.ownerMinting ? 'Can mint tokens' : 'Standard'}
+        summary={
+          [
+            stage.ownerMinting ? 'mints tokens' : '',
+            stage.pauseCreditTransfers ? 'credits paused' : '',
+            Object.values(stage.powers).some(Boolean) ? 'superpowers' : '',
+          ]
+            .filter(Boolean)
+            .join(' | ') || 'Standard'
+        }
         open={!!stage.open.owner}
         onToggle={() => toggleOpen('owner')}
       >
@@ -736,6 +776,75 @@ export function StageRulesEditor({
           title="Owner can mint tokens any time"
           blurb="Mint any amount without payment. Supporters can see this power on your project, so leave it off unless you need it."
         />
+        <div className="mt-2">
+          <CheckRow
+            checked={stage.pauseCreditTransfers}
+            onToggle={() =>
+              set({ pauseCreditTransfers: !stage.pauseCreditTransfers })
+            }
+            disabled={disabled}
+            title="Pause credit transfers"
+            blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
+          />
+        </div>
+
+        <div className="mt-5 border-t border-smoke-200 pt-4">
+          <span className="field-label">Superpowers</span>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            Deep controls most projects never need. Each one gives the owner
+            real power over supporter funds — leave them off unless you know
+            why you need them.
+          </p>
+          <div className="mt-2.5 space-y-2">
+            {(
+              [
+                [
+                  'setTerminals',
+                  'Change payment terminals',
+                  'Add or remove the contracts that receive funds, at any time.',
+                ],
+                [
+                  'setController',
+                  'Change the controller',
+                  "Swap the contract that enforces the project's rules.",
+                ],
+                [
+                  'terminalMigration',
+                  'Migrate terminals',
+                  'Move funds to a new version of a terminal.',
+                ],
+                [
+                  'setCustomToken',
+                  'Replace the token',
+                  "Swap the project's token for a custom ERC-20.",
+                ],
+                [
+                  'addAccountingContext',
+                  'Add accounting tokens',
+                  'Accept and account for new tokens in the treasury.',
+                ],
+                [
+                  'addPriceFeed',
+                  'Add price feeds',
+                  'Register new price feeds the project prices against.',
+                ],
+              ] as const
+            ).map(([key, title, blurb]) => (
+              <CheckRow
+                key={key}
+                checked={stage.powers[key]}
+                onToggle={() =>
+                  set({
+                    powers: { ...stage.powers, [key]: !stage.powers[key] },
+                  })
+                }
+                disabled={disabled}
+                title={title}
+                blurb={blurb}
+              />
+            ))}
+          </div>
+        </div>
       </SubSection>
       )}
     </div>
