@@ -138,6 +138,10 @@ export type StageRules = {
    *  limit ⇒ no surplus, cash outs off). A fixed amount (in the accounting
    *  token's units) caps total payouts — the rest stays as surplus. */
   payoutLimitAmount: bigint | null
+  /** Multi-token (ETH+USDC) routed payouts: USDC gets its own splits and
+   *  limit; the primary fields cover ETH (or the single token). */
+  payoutSplitsUsdc: SplitConfig[]
+  payoutLimitAmountUsdc: bigint | null
   /** Owner surplus access: on for 'flexible'; optional alongside
    *  fixed-amount routed payouts. */
   surplusAllowanceOn: boolean
@@ -228,6 +232,8 @@ export const DEFAULT_STAGE: StageRules = {
   payouts: 'none',
   payoutSplits: [],
   payoutLimitAmount: null,
+  payoutSplitsUsdc: [],
+  payoutLimitAmountUsdc: null,
   surplusAllowanceOn: false,
   surplusAllowanceAmount: null,
   holdFees: false,
@@ -488,11 +494,13 @@ export function buildLaunchRequest(args: {
               },
             ]
           : []),
-        ...(stage.payouts === 'routed' && stage.payoutSplits.length > 0
-          ? contexts.map(ctx => ({
-              groupId: BigInt(ctx.token),
-              splits: toJbSplits(stage.payoutSplits),
-            }))
+        ...(stage.payouts === 'routed'
+          ? contexts.flatMap(ctx => {
+              const splits = payoutSplitsFor(plan, stage, ctx.token, chainId)
+              return splits.length > 0
+                ? [{ groupId: BigInt(ctx.token), splits: toJbSplits(splits) }]
+                : []
+            })
           : []),
       ],
       // One fund-access group per accounting context (website/ parity).
@@ -506,7 +514,9 @@ export function buildLaunchRequest(args: {
                 stage.payouts === 'routed'
                   ? [
                       {
-                        amount: stage.payoutLimitAmount ?? UNLIMITED_PAYOUT,
+                        amount:
+                          payoutLimitFor(plan, stage, ctx.token, chainId) ??
+                          UNLIMITED_PAYOUT,
                         currency: ctx.currency,
                       },
                     ]
@@ -553,6 +563,42 @@ export function buildLaunchRequest(args: {
     ],
     value: args.creationFee,
   } as const
+}
+
+/** Whether this context uses the stage's USDC-specific payout config
+ *  (only when BOTH standard tokens are accepted). */
+function usesUsdcConfig(
+  plan: LaunchPlan,
+  token: Address,
+  chainId: JBChainId,
+): boolean {
+  return (
+    plan.accounting.custom === null &&
+    plan.accounting.tokens.length > 1 &&
+    token.toLowerCase() === USDC_ADDRESSES[chainId].toLowerCase()
+  )
+}
+
+function payoutSplitsFor(
+  plan: LaunchPlan,
+  stage: StageRules,
+  token: Address,
+  chainId: JBChainId,
+): SplitConfig[] {
+  return usesUsdcConfig(plan, token, chainId)
+    ? stage.payoutSplitsUsdc
+    : stage.payoutSplits
+}
+
+function payoutLimitFor(
+  plan: LaunchPlan,
+  stage: StageRules,
+  token: Address,
+  chainId: JBChainId,
+): bigint | null {
+  return usesUsdcConfig(plan, token, chainId)
+    ? stage.payoutLimitAmountUsdc
+    : stage.payoutLimitAmount
 }
 
 /** The tiered-721 hook config shared by both deploy flavors. */

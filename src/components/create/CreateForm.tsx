@@ -267,6 +267,7 @@ export function CreateForm() {
     (customOn ? 'token' : accepts.includes('eth') ? 'eth' : 'usd')
   const storeUsd = effectiveStoreCurrency === 'usd'
   const tokenLabel = ticker.trim() ? `$${ticker.trim()}` : 'tokens'
+  const multiToken = !customOn && accepts.length > 1
   const accountingDecimals = customActive
     ? customMeta.decimals
     : accepts.includes('eth')
@@ -437,7 +438,7 @@ export function CreateForm() {
         v => v.trim() === '' || resolvedAddress(v) !== null,
       ))
   const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
-  const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor))
+  const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor, multiToken))
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage =
     flavor === 'revnet'
@@ -531,14 +532,18 @@ export function CreateForm() {
    *  limit is the sum and split percents are the amounts' shares of it
    *  (last row absorbs rounding so the limit is fully allocated). */
   const buildRoutedSplits = (
-    stage: DraftStage,
+    rows: DraftSplit[],
+    routedMode: 'all' | 'amounts',
+    decimals: number,
     chainId: number,
   ): { splits: SplitConfig[]; limit: bigint | null } => {
-    if (stage.routedMode === 'all') {
-      return { splits: toSplitConfigs(stage.payoutSplits, chainId), limit: null }
+    if (routedMode === 'all') {
+      return { splits: toSplitConfigs(rows, chainId), limit: null }
     }
-    const valid = stage.payoutSplits.filter(s => splitOk(s, 'amount'))
-    const values = valid.map(row => parseUnits(row.value, accountingDecimals))
+    const valid = rows.filter(s => splitOk(s, 'amount'))
+    const values = valid.map(row =>
+      parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
+    )
     const total = values.reduce((a, b) => a + b, 0n)
     if (total === 0n) return { splits: [], limit: null }
     const percents = values.map(v => Number((v * 1_000_000_000n) / total))
@@ -566,8 +571,22 @@ export function CreateForm() {
     chainId: number,
   ): StageRules => {
     const routed =
-      stage.payouts === 'routed' ? buildRoutedSplits(stage, chainId) : null
-    const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
+      stage.payouts === 'routed'
+        ? buildRoutedSplits(
+            stage.payoutSplits,
+            stage.routedMode,
+            accountingDecimals,
+            chainId,
+          )
+        : null
+    const routedUsdc =
+      stage.payouts === 'routed' && multiToken
+        ? buildRoutedSplits(stage.payoutSplitsUsdc, stage.routedModeUsdc, 6, chainId)
+        : null
+    const routedAll =
+      stage.payouts === 'routed' &&
+      stage.routedMode === 'all' &&
+      (!multiToken || stage.routedModeUsdc === 'all')
     const surplusOn =
       stage.payouts === 'flexible' ||
       (stage.payouts === 'routed' && !routedAll && stage.routedSurplusOn)
@@ -599,6 +618,8 @@ export function CreateForm() {
       payouts: stage.payouts,
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
+      payoutSplitsUsdc: routedUsdc?.splits ?? [],
+      payoutLimitAmountUsdc: routedUsdc?.limit ?? null,
       surplusAllowanceOn: surplusOn,
       surplusAllowanceAmount:
         surplusOn && stage.surplusCapOn
@@ -657,6 +678,8 @@ export function CreateForm() {
       payouts: 'none',
       payoutSplits: [],
       payoutLimitAmount: null,
+      payoutSplitsUsdc: [],
+      payoutLimitAmountUsdc: null,
       surplusAllowanceOn: false,
       surplusAllowanceAmount: null,
       holdFees: false,
@@ -1909,6 +1932,7 @@ export function CreateForm() {
                     chainIds={selected}
                     flavor={flavor}
                     tokenLabel={tokenLabel}
+                    multiToken={multiToken}
                   />
                 </div>
               ) : null}

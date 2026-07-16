@@ -39,6 +39,9 @@ export type DraftStage = {
   payouts: 'none' | 'flexible' | 'routed'
   routedMode: 'all' | 'amounts'
   payoutSplits: DraftSplit[]
+  /** Multi-token (ETH+USDC): USDC's own routed config. */
+  routedModeUsdc: 'all' | 'amounts'
+  payoutSplitsUsdc: DraftSplit[]
   holdFees: boolean
   /** Flexible: cap owner withdrawals; Routed(amounts): optional owner
    *  surplus access. */
@@ -86,6 +89,8 @@ export function newDraftStage(
     payouts: 'none',
     routedMode: 'all',
     payoutSplits: [],
+    routedModeUsdc: 'all',
+    payoutSplitsUsdc: [],
     holdFees: false,
     surplusCapOn: false,
     surplusAmount: '',
@@ -178,6 +183,7 @@ export function stageOk(
   stage: DraftStage,
   isFirst: boolean,
   flavor: 'project' | 'revnet' = 'project',
+  multiToken = false,
 ): boolean {
   const reservedOn =
     numOk(stage.reservedPct, 100) && Number(stage.reservedPct) > 0
@@ -206,9 +212,15 @@ export function stageOk(
   return (
     common &&
     (stage.payouts !== 'routed' ||
-      (stage.payoutSplits.every(s => splitOk(s, payoutsMode)) &&
+      ((stage.payoutSplits.every(s => splitOk(s, payoutsMode)) &&
         (payoutsMode !== 'percent' ||
-          splitsTotal(stage.payoutSplits, 'percent') <= 100))) &&
+          splitsTotal(stage.payoutSplits, 'percent') <= 100)) &&
+        (!multiToken ||
+          (stage.payoutSplitsUsdc.every(s =>
+            splitOk(s, stage.routedModeUsdc === 'all' ? 'percent' : 'amount'),
+          ) &&
+            (stage.routedModeUsdc !== 'all' ||
+              splitsTotal(stage.payoutSplitsUsdc, 'percent') <= 100))))) &&
     (stage.durationValue !== 'custom' || stageDurationSeconds(stage) > 0) &&
     (!stage.cashOuts || stageTaxOk(stage)) &&
     (!stage.surplusCapOn ||
@@ -309,6 +321,7 @@ export function StageRulesEditor({
   chainIds,
   flavor = 'project',
   tokenLabel = 'tokens',
+  multiToken = false,
 }: {
   stage: DraftStage
   onChange: (stage: DraftStage) => void
@@ -322,6 +335,8 @@ export function StageRulesEditor({
   flavor?: 'project' | 'revnet'
   /** "$TICK" when a ticker is set, else "tokens". */
   tokenLabel?: string
+  /** ETH+USDC accounting: payouts configure per token. */
+  multiToken?: boolean
 }) {
   const isRevnet = flavor === 'revnet'
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch })
@@ -696,7 +711,10 @@ export function StageRulesEditor({
         </div>
         {stage.payouts === 'routed' ? (
           <div className="mt-3">
-            <div className="flex flex-wrap gap-2">
+            {multiToken ? (
+              <span className="field-label">ETH payouts</span>
+            ) : null}
+            <div className="mt-1 flex flex-wrap gap-2">
               <ChipButton
                 active={stage.routedMode === 'all'}
                 onClick={() => set({ routedMode: 'all' })}
@@ -733,6 +751,45 @@ export function StageRulesEditor({
               <p className="mt-2 text-xs text-smoke-700">
                 No recipients yet — payouts go to you, the owner.
               </p>
+            ) : null}
+
+            {multiToken ? (
+              <div className="mt-5 border-t border-smoke-200 pt-4">
+                <span className="field-label">USDC payouts</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <ChipButton
+                    active={stage.routedModeUsdc === 'all'}
+                    onClick={() => set({ routedModeUsdc: 'all' })}
+                    disabled={disabled}
+                  >
+                    Split all funds by %
+                  </ChipButton>
+                  <ChipButton
+                    active={stage.routedModeUsdc === 'amounts'}
+                    onClick={() => set({ routedModeUsdc: 'amounts' })}
+                    disabled={disabled}
+                  >
+                    Fixed USD amounts
+                  </ChipButton>
+                </div>
+                <SplitsEditor
+                  splits={stage.payoutSplitsUsdc}
+                  onChange={payoutSplitsUsdc => set({ payoutSplitsUsdc })}
+                  disabled={disabled}
+                  bucketLabel="USDC payouts"
+                  mode={stage.routedModeUsdc === 'all' ? 'percent' : 'amount'}
+                  amountLabel="USD"
+                  chainIds={chainIds}
+                  allowHook
+                  showRouting
+                  allowLock={duration > 0 && duration !== FOREVER_SECONDS}
+                />
+                {stage.payoutSplitsUsdc.length === 0 ? (
+                  <p className="mt-2 text-xs text-smoke-700">
+                    No recipients yet — USDC payouts go to you, the owner.
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}

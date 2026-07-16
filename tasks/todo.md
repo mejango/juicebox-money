@@ -16,7 +16,7 @@ Order minimizes rework. Commit per batch; Sepolia sims per encoding change.
       market LP option for reserved splits)
 - [x] B5 P4 surplus allowance: capped amount + currency; owner-surplus
       toggle alongside routed payouts
-- [ ] B6 P2 multi-token payouts (per-context modes/amounts) + per-chain
+- [x] B6 P2 multi-token payouts (per-context modes/amounts) + per-chain
       payout AMOUNT overrides (website has data model only; jango adds UI
       there)
 - [ ] B7 store batch: P8 categories, P9 per-item flags + voting units,

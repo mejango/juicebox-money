@@ -79,9 +79,11 @@ function sanitizeSplit(raw: unknown): DraftSplit {
   const s = (raw ?? {}) as Record<string, unknown>
   const perChain: Record<number, string> = {}
   const perChainBeneficiary: Record<number, string> = {}
+  const perChainAmount: Record<number, string> = {}
   for (const [source, target] of [
     [s.perChain, perChain],
     [s.perChainBeneficiary, perChainBeneficiary],
+    [s.perChainAmount, perChainAmount],
   ] as const) {
     if (source && typeof source === 'object' && !Array.isArray(source)) {
       for (const [k, v] of Object.entries(source).slice(0, 16)) {
@@ -101,6 +103,7 @@ function sanitizeSplit(raw: unknown): DraftSplit {
     beneficiary: str(s.beneficiary, 64),
     perChain,
     perChainBeneficiary,
+    perChainAmount,
     perChainOpen: false,
     hookKind: s.hookKind === 'custom' ? 'custom' : 'fundmarket',
     hookAddress: str(s.hookAddress, 64),
@@ -137,6 +140,13 @@ function sanitizeStage(raw: unknown): DraftStage {
       : 'none',
     routedMode: s.routedMode === 'amounts' ? 'amounts' : 'all',
     payoutSplits: (Array.isArray(s.payoutSplits) ? s.payoutSplits : [])
+      .slice(0, 100)
+      .map(sanitizeSplit),
+    routedModeUsdc: s.routedModeUsdc === 'amounts' ? 'amounts' : 'all',
+    payoutSplitsUsdc: (Array.isArray(s.payoutSplitsUsdc)
+      ? s.payoutSplitsUsdc
+      : []
+    )
       .slice(0, 100)
       .map(sanitizeSplit),
     holdFees: bool(s.holdFees),

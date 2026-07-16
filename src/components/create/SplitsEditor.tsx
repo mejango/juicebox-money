@@ -33,6 +33,8 @@ export type DraftSplit = {
   perChain: Record<number, string>
   /** Per-chain overrides of the token beneficiary ('project' kind). */
   perChainBeneficiary: Record<number, string>
+  /** Per-chain amount overrides ('amount' mode payout rows). */
+  perChainAmount: Record<number, string>
   perChainOpen: boolean
   /** 'hook' kind: the Fund market LP hook, or a custom hook address. */
   hookKind: 'fundmarket' | 'custom'
@@ -53,6 +55,7 @@ export function newDraftSplit(): DraftSplit {
     beneficiary: '',
     perChain: {},
     perChainBeneficiary: {},
+    perChainAmount: {},
     perChainOpen: false,
     hookKind: 'fundmarket',
     hookAddress: '',
@@ -393,6 +396,25 @@ export function SplitsEditor({
                             <ChainIcon chainId={chainId} size={14} />
                             {chainName(chainId)}
                           </span>
+                          {mode === 'amount' ? (
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={split.perChainAmount[chainId] ?? ''}
+                              onChange={e =>
+                                update(split.id, {
+                                  perChainAmount: {
+                                    ...split.perChainAmount,
+                                    [chainId]: e.target.value.slice(0, 10),
+                                  },
+                                })
+                              }
+                              disabled={disabled}
+                              placeholder={split.value.trim() || amountLabel}
+                              aria-label={`Amount on ${chainName(chainId)}`}
+                              className="input-well min-h-[40px] w-24 shrink-0 px-2.5 text-xs tabular-nums disabled:opacity-60"
+                            />
+                          ) : null}
                           {split.kind === 'address' ? (
                             <AddressField
                               value={split.perChain[chainId] ?? ''}
