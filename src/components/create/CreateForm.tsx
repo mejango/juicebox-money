@@ -359,8 +359,16 @@ export function CreateForm() {
             itemJson.error ?? `Saving "${item.name.trim()}" failed — try again.`,
           )
         }
+        // parseUnits rounds sub-precision input to 0 — refuse accidental
+        // free items (e.g. a 0.0000001 USD price against 6 decimals).
+        const price = parseUnits(item.price, isUsd ? 6 : 18)
+        if (price === 0n) {
+          throw new Error(
+            `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
+          )
+        }
         pinned.push({
-          price: parseUnits(item.price, isUsd ? 6 : 18),
+          price,
           supply: item.supply.trim() === '' ? null : Number(item.supply),
           encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
         })
