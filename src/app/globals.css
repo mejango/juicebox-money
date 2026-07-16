@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-cream text-ink;
+  }
+
+  ::selection {
+    @apply bg-juice-400/40;
+  }
+}
+
+@layer utilities {
+  /* Hand-drawn-ish underline swash for hero words. */
+  .juice-underline {
+    background-image: linear-gradient(
+      to top,
+      theme('colors.juice.400 / 55%') 0%,
+      theme('colors.juice.400 / 55%') 38%,
+      transparent 38%
+    );
+  }
+
+  .card-lift {
+    transition:
+      transform 150ms ease,
+      box-shadow 150ms ease,
+      border-color 150ms ease;
+  }
+
+  .card-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px -12px rgb(32 30 26 / 0.18);
+  }
+}
