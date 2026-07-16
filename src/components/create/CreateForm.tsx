@@ -523,7 +523,7 @@ export function CreateForm() {
     start: number,
     chainId: number,
   ): StageRules => {
-    const cutOn = Number(stage.cutPct) > 0
+    const cutOn = stage.cutOn && Number(stage.cutPct) > 0
     const reservedOn =
       Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
     return {

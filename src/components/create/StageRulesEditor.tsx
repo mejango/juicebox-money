@@ -26,6 +26,8 @@ export type DraftStage = {
   schedule: string
   /** '' on stage 2+ = keep the previous stage's (cut) rate. */
   issuanceRate: string
+  /** Automatic issuance cuts on/off (revnet). */
+  cutOn: boolean
   /** Issuance cut per cycle, 0–100 (%). '' = none. */
   cutPct: string
   /** Revnet: days between issuance cuts. */
@@ -67,6 +69,7 @@ export function newDraftStage(
     scheduleOn: false,
     schedule: '',
     issuanceRate: first ? '10000' : '',
+    cutOn: false,
     cutPct: '',
     cutFreqDays: '30',
     daysAfter: '30',
@@ -158,10 +161,13 @@ export function stageOk(
       (stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
         splitsTotal(stage.reservedSplits, 'percent') <= 100))
   if (flavor === 'revnet') {
-    const cutOn = Number(stage.cutPct) > 0
     return (
       common &&
-      (!cutOn || (Number(stage.cutFreqDays) >= 1 && numOk(stage.cutFreqDays))) &&
+      (!stage.cutOn ||
+        (Number(stage.cutPct) > 0 &&
+          numOk(stage.cutPct, 100) &&
+          Number(stage.cutFreqDays) >= 1 &&
+          numOk(stage.cutFreqDays))) &&
       (isFirst || Number(stage.daysAfter) >= 1)
     )
   }
@@ -218,7 +224,10 @@ export function stageSummaryParts(
         ? `${Number(stage.reservedPct)}% to splits`
         : `${Number(stage.reservedPct)}% reserved`,
     )
-  if (Number(stage.cutPct) > 0)
+  if (
+    Number(stage.cutPct) > 0 &&
+    (flavor !== 'revnet' || stage.cutOn)
+  )
     parts.push(
       flavor === 'revnet'
         ? `-${Number(stage.cutPct)}%/${Number(stage.cutFreqDays) || '?'}d`
@@ -498,35 +507,44 @@ export function StageRulesEditor({
           </span>
         </div>
         {isRevnet ? (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-sm text-smoke-700">cut</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={stage.cutPct}
-              onChange={e => set({ cutPct: e.target.value.slice(0, 5) })}
+          <div className="mt-3">
+            <CheckRow
+              checked={stage.cutOn}
+              onToggle={() => set({ cutOn: !stage.cutOn })}
               disabled={disabled}
-              placeholder="0"
-              className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                stage.cutPct.trim() === '' || numOk(stage.cutPct, 100)
-                  ? ''
-                  : '!border-red-400'
-              }`}
+              title="Automatic cuts"
+              blurb="The issuance rate drops by a set amount on a schedule — rewarding earlier supporters."
             />
-            <span className="text-sm text-smoke-700">% every</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={stage.cutFreqDays}
-              onChange={e => set({ cutFreqDays: e.target.value.slice(0, 5) })}
-              disabled={disabled}
-              className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                Number(stage.cutPct) > 0 && !(Number(stage.cutFreqDays) >= 1)
-                  ? '!border-red-400'
-                  : ''
-              }`}
-            />
-            <span className="text-sm text-smoke-700">days</span>
+            {stage.cutOn ? (
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="text-sm text-smoke-700">cut</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={stage.cutPct}
+                  onChange={e => set({ cutPct: e.target.value.slice(0, 5) })}
+                  disabled={disabled}
+                  placeholder="10"
+                  className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                    Number(stage.cutPct) > 0 && numOk(stage.cutPct, 100)
+                      ? ''
+                      : '!border-red-400'
+                  }`}
+                />
+                <span className="text-sm text-smoke-700">% every</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={stage.cutFreqDays}
+                  onChange={e => set({ cutFreqDays: e.target.value.slice(0, 5) })}
+                  disabled={disabled}
+                  className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                    Number(stage.cutFreqDays) >= 1 ? '' : '!border-red-400'
+                  }`}
+                />
+                <span className="text-sm text-smoke-700">days</span>
+              </div>
+            ) : null}
           </div>
         ) : duration > 0 && duration !== FOREVER_SECONDS ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">

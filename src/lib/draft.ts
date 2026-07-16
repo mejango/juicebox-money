@@ -101,6 +101,7 @@ function sanitizeStage(raw: unknown): DraftStage {
     scheduleOn: bool(s.scheduleOn),
     schedule: str(s.schedule, 32),
     issuanceRate: numStr(s.issuanceRate, 15),
+    cutOn: bool(s.cutOn),
     cutPct: numStr(s.cutPct, 5),
     cutFreqDays: numStr(s.cutFreqDays, 5) || '30',
     daysAfter: numStr(s.daysAfter, 5) || '30',
