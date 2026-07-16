@@ -295,7 +295,7 @@ export function StageRulesEditor({
             value={stage.durationValue}
             onChange={e => set({ durationValue: e.target.value })}
             disabled={disabled}
-            className="input-well min-h-[44px] w-44 px-3.5 pr-8 text-sm disabled:opacity-60"
+            className="input-well select-caret min-h-[44px] w-44 px-3.5 pr-9 text-sm disabled:opacity-60"
           >
             <option value="0">Flexible</option>
             {DURATION_PRESETS.map(([seconds, label]) => (
@@ -325,7 +325,7 @@ export function StageRulesEditor({
                   set({ customUnit: e.target.value as DraftStage['customUnit'] })
                 }
                 disabled={disabled}
-                className="input-well min-h-[44px] w-28 px-3 pr-8 text-sm disabled:opacity-60"
+                className="input-well select-caret min-h-[44px] w-28 px-3 pr-9 text-sm disabled:opacity-60"
               >
                 {(['hours', 'days', 'weeks', 'years'] as const).map(unit => (
                   <option key={unit} value={unit}>

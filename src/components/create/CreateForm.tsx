@@ -1119,7 +1119,7 @@ export function CreateForm() {
                     }
                   }}
                   disabled={busy}
-                  className="input-well min-h-[44px] w-full max-w-md px-3.5 pr-8 text-sm disabled:opacity-60"
+                  className="input-well select-caret min-h-[44px] w-full max-w-md px-3.5 pr-9 text-sm disabled:opacity-60"
                 >
                   <option value="wait">
                     Pause — payments and issuance stop until you queue more rules
@@ -1147,7 +1147,7 @@ export function CreateForm() {
                   setApprovalDeadline(e.target.value as ApprovalDeadline)
                 }
                 disabled={busy}
-                className="input-well mt-2 min-h-[44px] w-full max-w-md px-3.5 pr-8 text-sm disabled:opacity-60"
+                className="input-well select-caret mt-2 min-h-[44px] w-full max-w-md px-3.5 pr-9 text-sm disabled:opacity-60"
               >
                 <option value="3hours">Changes take effect after 3 hours</option>
                 <option value="1day">Changes take effect after 1 day</option>
