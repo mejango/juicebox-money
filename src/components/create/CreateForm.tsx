@@ -472,7 +472,28 @@ export function CreateForm() {
 
     const pinned: StoreItem[] = []
     for (const item of items.filter(itemOk)) {
-      const imageUri = item.imageFile ? await pinFile(item.imageFile) : undefined
+      // Any media type pins as-is; images become `image`, everything else
+      // `animation_url` (website/ parity).
+      let imageUri: string | undefined
+      let animationUri: string | undefined
+      if (item.mediaFile) {
+        const form = new FormData()
+        form.append('file', item.mediaFile)
+        const mediaRes = await fetch('/api/ipfs/pin-media', {
+          method: 'POST',
+          body: form,
+        })
+        const mediaJson = (await mediaRes.json()) as {
+          cid?: string
+          error?: string
+        }
+        if (!mediaRes.ok || !mediaJson.cid) {
+          throw new Error(mediaJson.error ?? 'Media upload failed — try again.')
+        }
+        const uri = `ipfs://${mediaJson.cid}`
+        if (item.mediaFile.type.startsWith('image/')) imageUri = uri
+        else animationUri = uri
+      }
       const itemRes = await fetch('/api/ipfs/pin-item', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -480,6 +501,8 @@ export function CreateForm() {
           name: item.name.trim(),
           description: item.description.trim() || undefined,
           image: imageUri,
+          animation_url: animationUri,
+          mediaType: item.mediaFile?.type || undefined,
         }),
       })
       const itemJson = (await itemRes.json()) as { cid?: string; error?: string }
@@ -722,7 +745,7 @@ export function CreateForm() {
       </h1>
       <p className="mt-3 max-w-lg text-base leading-relaxed text-smoke-700 sm:text-lg">
         Give it a name, answer a few questions, and launch. Live in minutes —
-        you can change the rules any time.
+        rules stay flexible unless you lock them in.
       </p>
 
       {/* Horizontal stepper */}

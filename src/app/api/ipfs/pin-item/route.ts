@@ -19,7 +19,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected a JSON object' }, { status: 400 })
   }
 
-  const { name, description, image } = body as Record<string, unknown>
+  const { name, description, image, animation_url, mediaType } =
+    body as Record<string, unknown>
 
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
     return NextResponse.json(
@@ -36,14 +37,28 @@ export async function POST(req: NextRequest) {
     }
     if (description.trim()) metadata.description = description.trim()
   }
-  if (image !== undefined) {
+  // Images pin as `image`; other media as `animation_url` (website/ parity).
+  for (const [key, value] of [
+    ['image', image],
+    ['animation_url', animation_url],
+  ] as const) {
+    if (value === undefined) continue
     if (
-      typeof image !== 'string' ||
-      !/^ipfs:\/\/[a-zA-Z0-9]{1,128}$/.test(image)
+      typeof value !== 'string' ||
+      !/^ipfs:\/\/[a-zA-Z0-9]{1,128}$/.test(value)
     ) {
-      return NextResponse.json({ error: 'Invalid image' }, { status: 400 })
+      return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
     }
-    metadata.image = image
+    metadata[key] = value
+  }
+  if (mediaType !== undefined) {
+    if (
+      typeof mediaType !== 'string' ||
+      !/^[a-z]+\/[\w.+-]{1,80}$/.test(mediaType)
+    ) {
+      return NextResponse.json({ error: 'Invalid mediaType' }, { status: 400 })
+    }
+    metadata.mediaType = mediaType
   }
 
   try {

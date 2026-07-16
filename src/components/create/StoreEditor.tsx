@@ -23,8 +23,10 @@ export type DraftItem = {
   /** '' = unlimited inventory. */
   supply: string
   description: string
-  imageFile: File | null
-  imagePreview: string | null
+  /** Any media: image, video, audio, PDF, or text (website/ parity). */
+  mediaFile: File | null
+  /** Object URL preview — images only. */
+  mediaPreview: string | null
   /** Initial discount, 0–100 (%). '' = none. */
   discountPct: string
   /** Reserve 1 of every N for the beneficiary. '' = off. */
@@ -42,8 +44,8 @@ export function newDraftItem(): DraftItem {
     price: '',
     supply: '',
     description: '',
-    imageFile: null,
-    imagePreview: null,
+    mediaFile: null,
+    mediaPreview: null,
     discountPct: '',
     reserveN: '',
     reserveBeneficiary: '',
@@ -98,7 +100,24 @@ export function itemOk(item: DraftItem): boolean {
   )
 }
 
-const MAX_IMAGE_BYTES = 1024 * 1024
+const MAX_MEDIA_BYTES = 10 * 1024 * 1024
+
+function mediaAllowed(type: string): boolean {
+  return (
+    type.startsWith('image/') ||
+    type.startsWith('video/') ||
+    type.startsWith('audio/') ||
+    type === 'application/pdf' ||
+    type === 'text/plain'
+  )
+}
+
+/** A friendly tile for non-image media. */
+function mediaEmoji(type: string): string {
+  if (type.startsWith('video/')) return '🎬'
+  if (type.startsWith('audio/')) return '🎵'
+  return '📄'
+}
 
 export function StoreEditor({
   items,
@@ -117,18 +136,23 @@ export function StoreEditor({
 
   const remove = (id: string) => {
     const item = items.find(i => i.id === id)
-    if (item?.imagePreview) URL.revokeObjectURL(item.imagePreview)
+    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
     onChange(items.filter(i => i.id !== id))
   }
 
-  const onImageChange = (id: string, file: File | null) => {
+  const onMediaChange = (id: string, file: File | null) => {
     const item = items.find(i => i.id === id)
-    if (item?.imagePreview) URL.revokeObjectURL(item.imagePreview)
-    if (!file || !file.type.startsWith('image/') || file.size > MAX_IMAGE_BYTES) {
-      update(id, { imageFile: null, imagePreview: null })
+    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
+    if (!file || !mediaAllowed(file.type) || file.size > MAX_MEDIA_BYTES) {
+      update(id, { mediaFile: null, mediaPreview: null })
       return
     }
-    update(id, { imageFile: file, imagePreview: URL.createObjectURL(file) })
+    update(id, {
+      mediaFile: file,
+      mediaPreview: file.type.startsWith('image/')
+        ? URL.createObjectURL(file)
+        : null,
+    })
   }
 
   return (
@@ -151,26 +175,36 @@ export function StoreEditor({
 
           <div className="mt-3 flex gap-4">
             <div className="flex shrink-0 flex-col items-center gap-2">
-              {item.imagePreview ? (
+              {item.mediaPreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={item.imagePreview}
+                  src={item.mediaPreview}
                   alt=""
                   className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
                 />
+              ) : item.mediaFile ? (
+                <span
+                  title={item.mediaFile.name}
+                  className="flex h-20 w-20 flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border border-smoke-200 bg-white px-1 text-center"
+                >
+                  <span className="text-2xl">{mediaEmoji(item.mediaFile.type)}</span>
+                  <span className="w-full truncate text-[10px] text-smoke-700">
+                    {item.mediaFile.name}
+                  </span>
+                </span>
               ) : (
                 <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
                   🖼️
                 </span>
               )}
               <label className="btn-secondary min-h-[32px] cursor-pointer px-2.5 text-[11px]">
-                {item.imageFile ? 'Change image' : 'Upload image'}
+                {item.mediaFile ? 'Change media' : 'Upload media'}
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*,audio/*,application/pdf,text/plain"
                   disabled={disabled}
                   className="sr-only"
-                  onChange={e => onImageChange(item.id, e.target.files?.[0] ?? null)}
+                  onChange={e => onMediaChange(item.id, e.target.files?.[0] ?? null)}
                 />
               </label>
             </div>

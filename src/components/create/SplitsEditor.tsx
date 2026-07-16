@@ -124,7 +124,7 @@ export function SplitsEditor({
       {splits.map(split => (
         <div
           key={split.id}
-          className="mt-2 rounded-lg border border-smoke-200 bg-white p-2.5"
+          className="mt-2 rounded-lg border border-smoke-200 bg-smoke-75 p-2.5"
         >
           <div className="flex items-start gap-2">
             <input
