@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
   html {
@@ -12,125 +12,119 @@
   }
 
   body {
-    @apply bg-bg font-mono text-ink;
-    /* Subtle juice radial glow, top-right — the room's neon sign. */
-    background-image: radial-gradient(
-      42rem 42rem at 85% -8%,
-      rgb(255 179 44 / 0.06),
-      transparent 70%
-    );
-    background-repeat: no-repeat;
+    @apply bg-bone font-sans text-ink;
   }
 
   ::selection {
-    @apply bg-juice text-bg;
+    @apply bg-split-200 text-ink;
   }
 
-  /* Focus is always visible, always cyan. */
+  /* Focus is always visible, always Bluebs. */
   :focus-visible {
-    outline: 2px solid theme('colors.jcyan');
+    outline: 2px solid theme('colors.bluebs.500');
     outline-offset: 2px;
   }
 }
 
 @layer components {
-  /* --- Panels: hard-edged framed regions (DESIGN.md §Panels) --- */
-  .panel {
-    @apply rounded-md border-2 border-frame bg-panel;
+  /* --- Cards: white surfaces, thin Smoke border (DESIGN.md §Cards) --- */
+  .card {
+    @apply rounded-xl border border-smoke-200 bg-white;
   }
 
-  .panel-juice {
-    @apply rounded-md border-2 border-juice bg-panel;
-  }
-
-  /* --- Primary CTA: flat solid juice block. Precision, no tricks. --- */
-  .btn-juice {
-    @apply inline-flex items-center justify-center bg-juice font-pixel uppercase tracking-wider text-bg;
-    border-radius: 2px;
-    transition: background-color 120ms ease;
-  }
-
-  .btn-juice:hover:not(:disabled) {
-    background-color: theme('colors.juice.600');
-  }
-
-  .btn-juice:disabled {
-    @apply cursor-not-allowed opacity-50;
-  }
-
-  /* --- Secondary: pixel-outline button (silkscreened hardware key) --- */
-  .btn-pixel {
-    @apply inline-flex items-center justify-center border-2 border-ink/40 bg-transparent font-pixel uppercase tracking-wider text-ink;
-    border-radius: 4px;
+  /* --- Primary pill button: Split fill, thin near-black border, the
+         brand's SMALL offset shadow (DESIGN.md §Pill buttons) --- */
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-split-400 font-agrandir font-medium text-ink;
+    border: 1.5px solid #201e1a;
+    box-shadow: 2px 2px 0 #000;
     transition:
-      border-color 120ms ease,
-      color 120ms ease,
-      background-color 120ms ease;
+      background-color 120ms ease,
+      box-shadow 120ms ease,
+      transform 120ms ease;
   }
 
-  .btn-pixel:hover:not(:disabled) {
-    @apply border-juice text-juice;
+  .btn-primary:hover:not(:disabled) {
+    @apply bg-split-300;
   }
 
-  .btn-pixel:disabled {
+  .btn-primary:active:not(:disabled) {
+    box-shadow: 1px 1px 0 #000;
+    transform: translate(1px, 1px);
+  }
+
+  .btn-primary:disabled {
     @apply cursor-not-allowed opacity-50;
   }
 
-  /* --- Chips: tiny solid blocks, like keyboard keys --- */
+  /* --- Secondary pill: white fill, same border + shadow --- */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-xl bg-white font-agrandir font-medium text-ink;
+    border: 1.5px solid #201e1a;
+    box-shadow: 2px 2px 0 #000;
+    transition:
+      background-color 120ms ease,
+      box-shadow 120ms ease,
+      transform 120ms ease;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    @apply bg-bone;
+  }
+
+  .btn-secondary:active:not(:disabled) {
+    box-shadow: 1px 1px 0 #000;
+    transform: translate(1px, 1px);
+  }
+
+  .btn-secondary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* --- Chips: soft fruit tints, rounded-full, Beatrice --- */
   .chip {
-    @apply inline-flex items-center px-1.5 py-0.5 font-pixel text-[10px] uppercase leading-none tracking-wide;
-    border-radius: 3px;
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium leading-none;
   }
 
-  /* --- Silkscreen label: tiny uppercase dim label over values --- */
-  .silk-label {
-    @apply block font-pixel text-[10px] uppercase tracking-widest text-dim;
+  /* --- Field label: small Smoke uppercase label over values --- */
+  .field-label {
+    @apply block text-xs uppercase tracking-wide text-smoke-700;
   }
 
-  /* --- Inputs: dark wells, cyan focus --- */
+  /* --- Inputs: white wells, Smoke border, Bluebs focus --- */
   .input-well {
-    @apply w-full rounded border-2 border-frame bg-well text-ink outline-none placeholder:text-dim/50;
+    @apply w-full rounded-lg bg-white text-ink outline-none placeholder:text-smoke-500;
+    border: 1.5px solid theme('colors.smoke.300');
     transition: border-color 120ms ease;
   }
 
   .input-well:focus,
   .input-well:focus-within {
-    border-color: theme('colors.jcyan');
+    border-color: theme('colors.bluebs.500');
     outline: none;
   }
 }
 
 @layer utilities {
-  /* Pixel blip: loading-bar stub above section headlines. */
-  .pixel-blip {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    background: theme('colors.juice.DEFAULT');
-    box-shadow:
-      10px 0 0 theme('colors.juice.DEFAULT'),
-      20px 0 0 theme('colors.frame'),
-      30px 0 0 theme('colors.frame');
-  }
-
   .card-lift {
-    transition: border-color 150ms ease;
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
   }
 
   .card-lift:hover {
-    border-color: theme('colors.juice.DEFAULT');
+    border-color: theme('colors.smoke.400');
+    box-shadow: 0 4px 12px rgb(32 30 26 / 0.06);
   }
-
 }
 
-
 @media (prefers-reduced-motion: reduce) {
-  .btn-juice,
-  .btn-juice:hover:not(:disabled),
+  .btn-primary,
+  .btn-secondary,
   .card-lift,
-  .card-lift:hover {
+  .card-lift:hover,
+  .input-well {
     transition: none;
     transform: none;
   }
-
 }

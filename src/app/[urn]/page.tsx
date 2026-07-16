@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { ActivityList } from '@/components/ActivityList'
-import { ChainBadge } from '@/components/ChainBadge'
+import { ChainBadge, chainChipClass } from '@/components/ChainBadge'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
@@ -118,7 +118,7 @@ function ExternalLink({ href, label }: { href: string; label: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="btn-pixel min-h-[36px] px-3.5 text-[11px]"
+      className="btn-secondary min-h-[36px] px-3.5 text-xs"
     >
       {label}
     </a>
@@ -182,21 +182,21 @@ export default async function ProjectPage({
           name={project.name}
           logoUri={project.logoUri}
           size={88}
-          className="rounded-md"
+          className="rounded-xl"
         />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="font-display text-3xl font-extrabold tracking-[-0.03em] sm:text-4xl">
+            <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
               {name}
             </h1>
             <ChainBadge chainId={project.chainId} full />
           </div>
           {project.projectTagline ? (
-            <p className="mt-1.5 text-base text-dim sm:text-lg">
+            <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
               {project.projectTagline}
             </p>
           ) : null}
-          <p className="mt-2 text-sm text-dim/80">
+          <p className="mt-2 text-sm text-smoke-700">
             {project.owner ? (
               <>
                 Owned by{' '}
@@ -225,12 +225,12 @@ export default async function ProjectPage({
       {/* Chain selector */}
       {chains.length > 1 ? (
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          <span className="silk-label">Also on</span>
+          <span className="field-label">Also on</span>
           {chains.map(p =>
             p.chainId === project.chainId ? (
               <span
                 key={p.chainId}
-                className="chip !px-3 !py-1.5 bg-juice !text-[11px] text-bg"
+                className={`chip !px-3 !py-1.5 ${chainChipClass(p.chainId)} ring-1 ring-ink`}
               >
                 {chainName(p.chainId)}
               </span>
@@ -238,7 +238,7 @@ export default async function ProjectPage({
               <Link
                 key={p.chainId}
                 href={`/${toUrn(p.chainId, p.projectId)}`}
-                className="chip !px-3 !py-1.5 bg-frame !text-[11px] text-ink transition-colors hover:bg-panel2"
+                className={`chip !px-3 !py-1.5 ${chainChipClass(p.chainId)} opacity-70 transition-opacity hover:opacity-100`}
               >
                 {chainName(p.chainId)}
               </Link>
@@ -252,10 +252,10 @@ export default async function ProjectPage({
         {stats.map(([label, value]) => (
           <div
             key={label}
-            className="panel px-4 py-3.5"
+            className="card px-4 py-3.5"
           >
-            <dt className="silk-label">{label}</dt>
-            <dd className="mt-1 text-xl font-extrabold tracking-tight text-juice sm:text-2xl">
+            <dt className="field-label">{label}</dt>
+            <dd className="mt-1 font-agrandir text-xl font-medium text-ink sm:text-2xl">
               {value}
             </dd>
           </div>
@@ -295,11 +295,11 @@ export default async function ProjectPage({
           />
           {description.length > 0 || infoUri || twitter || discord ? (
             <section>
-              <h2 className="mb-3 font-display text-xl font-extrabold tracking-[-0.02em]">
+              <h2 className="mb-3 font-agrandir text-xl font-medium">
                 About
               </h2>
               {description.length > 0 ? (
-                <div className="panel space-y-3 p-5 text-sm leading-relaxed text-ink/90">
+                <div className="card space-y-3 p-5 text-sm leading-relaxed text-ink/90">
                   {description.map((p, i) => (
                     <p key={i}>{p}</p>
                   ))}
@@ -326,7 +326,7 @@ export default async function ProjectPage({
                 : ''
             }
           >
-            <h2 className="mb-3 font-display text-xl font-extrabold tracking-[-0.02em]">
+            <h2 className="mb-3 font-agrandir text-xl font-medium">
               Activity
             </h2>
             <ActivityList

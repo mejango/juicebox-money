@@ -108,8 +108,10 @@ export function OwnerPanel({
 
   return (
     <section className="mb-10">
-      <span className="silk-label">Owner</span>
-      <div className="panel mt-1.5 divide-y-2 divide-frame">
+      <span className="chip bg-smoke-100 uppercase tracking-wide text-smoke-700">
+        Owner
+      </span>
+      <div className="card mt-2 divide-y divide-smoke-200">
         <DetailsRow
           chainId={chainId}
           projectId={projectId}
@@ -143,8 +145,8 @@ function Row({
     <div>
       <div className="flex items-center justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
-          <p className="text-sm font-bold text-ink">{title}</p>
-          <p className="mt-0.5 text-xs text-dim">{byline}</p>
+          <p className="font-agrandir text-sm font-medium text-ink">{title}</p>
+          <p className="mt-0.5 text-xs text-smoke-700">{byline}</p>
         </div>
         {action}
       </div>
@@ -155,8 +157,8 @@ function Row({
 
 function RefreshHint() {
   return (
-    <p className="mt-3 flex items-center gap-2 text-xs text-dim">
-      <span className="chip bg-frame text-ink">Refresh</span>
+    <p className="mt-3 flex items-center gap-2 text-xs text-smoke-700">
+      <span className="chip bg-melon-400 text-ink">Refresh</span>
       Saved onchain — this page picks it up in about a minute.
     </p>
   )
@@ -164,7 +166,7 @@ function RefreshHint() {
 
 function ErrorNote({ message }: { message: string }) {
   return (
-    <p className="mt-3 rounded border-2 border-red-400/40 bg-well px-3 py-2 text-sm text-red-300">
+    <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
       {message}
     </p>
   )
@@ -304,38 +306,38 @@ function DetailsRow({
       action={
         <button
           onClick={() => (open ? close() : setOpen(true))}
-          className="btn-pixel min-h-[36px] shrink-0 px-4 text-[11px]"
+          className="btn-secondary min-h-[36px] shrink-0 px-4 text-xs"
         >
           {open ? 'Close' : 'Edit'}
         </button>
       }
     >
       {open ? (
-        <div className="border-t-2 border-frame px-5 py-5">
+        <div className="border-t border-smoke-200 px-5 py-5">
           {saved ? (
             <div>
-              <p className="text-sm font-bold text-lime">Details updated.</p>
+              <p className="text-sm font-medium text-melon-700">Details updated.</p>
               <RefreshHint />
             </div>
           ) : (
             <>
               <label className="block">
-                <span className="silk-label">
-                  Name <span className="text-juice">*</span>
+                <span className="field-label">
+                  Name <span className="text-peel-500">*</span>
                 </span>
                 <input
                   type="text"
                   value={name}
                   onChange={e => setName(e.target.value.slice(0, 100))}
                   disabled={busy}
-                  className="input-well mt-1.5 min-h-[48px] px-4 text-base font-semibold disabled:opacity-60"
+                  className="input-well mt-1.5 min-h-[48px] px-4 text-base font-medium disabled:opacity-60"
                 />
               </label>
 
               <label className="mt-4 block">
                 <span className="flex items-baseline justify-between">
-                  <span className="silk-label">Tagline</span>
-                  <span className="text-xs text-dim">{tagline.length}/100</span>
+                  <span className="field-label">Tagline</span>
+                  <span className="text-xs text-smoke-500">{tagline.length}/100</span>
                 </span>
                 <input
                   type="text"
@@ -348,7 +350,7 @@ function DetailsRow({
               </label>
 
               <label className="mt-4 block">
-                <span className="silk-label">Description</span>
+                <span className="field-label">Description</span>
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value.slice(0, 5000))}
@@ -360,22 +362,22 @@ function DetailsRow({
               </label>
 
               <div className="mt-4">
-                <span className="silk-label">Logo</span>
+                <span className="field-label">Logo</span>
                 <div className="mt-1.5 flex items-center gap-4">
                   {currentLogoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={currentLogoUrl}
                       alt="Logo preview"
-                      className="h-16 w-16 rounded border-2 border-frame object-cover"
+                      className="h-16 w-16 rounded-lg border border-smoke-200 object-cover"
                     />
                   ) : (
-                    <span className="flex h-16 w-16 items-center justify-center rounded border-2 border-dashed border-frame text-xl">
+                    <span className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-xl">
                       🧃
                     </span>
                   )}
                   <div>
-                    <label className="btn-pixel min-h-[36px] cursor-pointer px-4 text-[11px]">
+                    <label className="btn-secondary min-h-[36px] cursor-pointer px-4 text-xs">
                       {logoFile || initial.logoUri ? 'Change image' : 'Upload image'}
                       <input
                         type="file"
@@ -389,16 +391,16 @@ function DetailsRow({
                       <button
                         onClick={() => onLogoChange(null)}
                         disabled={busy}
-                        className="ml-3 font-pixel text-[11px] uppercase tracking-wider text-dim hover:text-ink"
+                        className="ml-3 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
                       >
                         Undo
                       </button>
                     ) : null}
-                    <p className="mt-1.5 text-xs text-dim">
+                    <p className="mt-1.5 text-xs text-smoke-700">
                       Square works best. Up to 1MB.
                     </p>
                     {logoError ? (
-                      <p className="mt-1 text-xs text-red-400">{logoError}</p>
+                      <p className="mt-1 text-xs text-red-600">{logoError}</p>
                     ) : null}
                   </div>
                 </div>
@@ -407,7 +409,7 @@ function DetailsRow({
               <button
                 onClick={save}
                 disabled={busy || !name.trim()}
-                className="btn-juice mt-5 min-h-[48px] w-full text-sm"
+                className="btn-primary mt-5 min-h-[48px] w-full text-sm"
               >
                 {phase === 'pinning'
                   ? 'Saving your details…'
@@ -519,7 +521,7 @@ function TokenRow({
         byline={
           <>
             {tokenSymbol ? (
-              <span className="mr-2 font-semibold text-lime">{tokenSymbol}</span>
+              <span className="mr-2 font-medium text-melon-700">{tokenSymbol}</span>
             ) : null}
             {deployed
               ? 'Deployed — supporters can now claim their tokens.'
@@ -532,12 +534,12 @@ function TokenRow({
               href={`https://${etherscan}/token/${token}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-pixel min-h-[36px] shrink-0 px-4 text-[11px]"
+              className="btn-secondary min-h-[36px] shrink-0 px-4 text-xs"
             >
               {truncateAddress(token)}
             </a>
           ) : (
-            <span className="text-xs text-dim">{truncateAddress(token)}</span>
+            <span className="text-xs text-smoke-700">{truncateAddress(token)}</span>
           )
         }
       />
@@ -556,7 +558,7 @@ function TokenRow({
         tokenLoading ? null : (
           <button
             onClick={() => setOpen(o => !o)}
-            className="btn-pixel min-h-[36px] shrink-0 px-4 text-[11px]"
+            className="btn-secondary min-h-[36px] shrink-0 px-4 text-xs"
           >
             {open ? 'Close' : 'Create token'}
           </button>
@@ -564,20 +566,20 @@ function TokenRow({
       }
     >
       {open && !tokenLoading ? (
-        <div className="border-t-2 border-frame px-5 py-5">
+        <div className="border-t border-smoke-200 px-5 py-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_9rem]">
             <label className="block">
-              <span className="silk-label">Token name</span>
+              <span className="field-label">Token name</span>
               <input
                 type="text"
                 value={name}
                 onChange={e => setName(e.target.value.slice(0, 100))}
                 disabled={busy}
-                className="input-well mt-1.5 min-h-[44px] px-4 text-sm font-semibold disabled:opacity-60"
+                className="input-well mt-1.5 min-h-[44px] px-4 text-sm font-medium disabled:opacity-60"
               />
             </label>
             <label className="block">
-              <span className="silk-label">Symbol</span>
+              <span className="field-label">Symbol</span>
               <input
                 type="text"
                 value={symbol}
@@ -589,7 +591,7 @@ function TokenRow({
                 disabled={busy}
                 placeholder="JUICE"
                 aria-label="Token symbol, 1 to 8 uppercase characters"
-                className="input-well mt-1.5 min-h-[44px] px-4 font-pixel text-sm uppercase tracking-wider disabled:opacity-60"
+                className="input-well mt-1.5 min-h-[44px] px-4 text-sm font-medium uppercase tracking-wider disabled:opacity-60"
               />
             </label>
           </div>
@@ -597,7 +599,7 @@ function TokenRow({
           <button
             onClick={deploy}
             disabled={busy || !symbolOk || !name.trim()}
-            className="btn-juice mt-4 min-h-[48px] w-full text-sm"
+            className="btn-primary mt-4 min-h-[48px] w-full text-sm"
           >
             {sending
               ? 'Confirm in your wallet…'
@@ -608,7 +610,7 @@ function TokenRow({
                   : 'Deploy token'}
           </button>
 
-          <p className="mt-2.5 text-xs text-dim">
+          <p className="mt-2.5 text-xs text-smoke-700">
             One transaction. Existing balances carry over — nothing changes
             for supporters until they choose to claim.
           </p>

@@ -23,16 +23,16 @@ function Row({
     body = (
       <>
         <p className="text-sm">
-          <span className="text-dim">
+          <span className="text-smoke-700">
             {truncateAddress(event.payEvent.beneficiary)}
           </span>{' '}
           paid{' '}
-          <span className="font-bold text-juice">
+          <span className="font-bold text-ink">
             {formatTokenAmount(event.payEvent.amount, decimals)} {symbol}
           </span>
         </p>
         {event.payEvent.memo ? (
-          <p className="mt-1 truncate text-sm italic text-dim">
+          <p className="mt-1 truncate text-sm italic text-smoke-700">
             “{event.payEvent.memo}”
           </p>
         ) : null}
@@ -41,11 +41,11 @@ function Row({
   } else if (event.cashOutTokensEvent) {
     body = (
       <p className="text-sm">
-        <span className="text-dim">
+        <span className="text-smoke-700">
           {truncateAddress(event.cashOutTokensEvent.beneficiary)}
         </span>{' '}
         cashed out for{' '}
-        <span className="font-bold text-lime">
+        <span className="font-bold text-melon-700">
           {formatTokenAmount(event.cashOutTokensEvent.reclaimAmount, decimals)}{' '}
           {symbol}
         </span>
@@ -58,7 +58,7 @@ function Row({
   return (
     <li className="flex items-start justify-between gap-4 py-3.5">
       <div className="min-w-0">{body}</div>
-      <div className="shrink-0 text-right text-xs text-dim">
+      <div className="shrink-0 text-right text-xs text-smoke-500">
         {link ? (
           <a
             href={link}
@@ -89,14 +89,14 @@ export function ActivityList({
 
   if (visible.length === 0) {
     return (
-      <p className="rounded-md border-2 border-dashed border-frame p-6 text-sm text-dim">
+      <p className="rounded-xl border border-dashed border-smoke-300 p-6 text-sm text-smoke-700">
         No activity yet — be the first to pay this project.
       </p>
     )
   }
 
   return (
-    <ul className="panel divide-y divide-frame/60 px-5 py-1">
+    <ul className="card divide-y divide-smoke-100 px-5 py-1">
       {visible.map(e => (
         <Row key={e.id} event={e} decimals={decimals} symbol={symbol} />
       ))}

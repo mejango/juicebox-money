@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
+import Image from 'next/image'
 import Link from 'next/link'
 import '@getpara/react-sdk-lite/styles.css'
 import './globals.css'
@@ -7,16 +8,52 @@ import { SearchBox } from '@/components/SearchBox'
 import { WalletButton } from '@/components/WalletButton'
 import { ParaHost, Providers } from '@/providers/Providers'
 
-// Voice 3 — the Silkscreen bitmap face (OFL, license in src/fonts).
-// Buttons, badges, and tiny labels ONLY.
-const silkscreen = localFont({
-  src: [
-    { path: '../fonts/silkscreen-400.woff2', weight: '400', style: 'normal' },
-    { path: '../fonts/silkscreen-700.woff2', weight: '700', style: 'normal' },
-  ],
-  variable: '--font-pixel',
+// The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
+// Headings — PP Agrandir Medium.
+const agrandir = localFont({
+  src: '../../public/fonts/PPAgrandir-Medium.woff2',
+  weight: '500',
+  variable: '--font-agrandir',
   display: 'swap',
-  fallback: ['ui-monospace', 'Menlo', 'monospace'],
+  fallback: ['-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
+})
+
+// Display — PP Agrandir Wide (big statements only).
+const agrandirWide = localFont({
+  src: [
+    {
+      path: '../../public/fonts/PPAgrandir-WideMedium.woff2',
+      weight: '500',
+      style: 'normal',
+    },
+    {
+      path: '../../public/fonts/PPAgrandir-WideBold.woff2',
+      weight: '700',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-agrandir-wide',
+  display: 'swap',
+  fallback: ['-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
+})
+
+// Body & UI — Beatrice.
+const beatrice = localFont({
+  src: [
+    {
+      path: '../../public/fonts/Beatrice-Regular.woff2',
+      weight: '400',
+      style: 'normal',
+    },
+    {
+      path: '../../public/fonts/Beatrice-Medium.woff2',
+      weight: '500',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-beatrice',
+  display: 'swap',
+  fallback: ['-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
 })
 
 export const metadata: Metadata = {
@@ -26,36 +63,13 @@ export const metadata: Metadata = {
   },
   description:
     'Raise funds, reward supporters, and run your treasury in the open. Juicebox is programmable money for projects.',
+  icons: {
+    icon: '/brand/logo-icon.svg',
+  },
 }
 
 export const viewport: Viewport = {
-  themeColor: '#141217',
-}
-
-function JuiceboxMark() {
-  // A tiny juicebox: carton + straw.
-  return (
-    <svg viewBox="0 0 24 24" className="h-7 w-7" aria-hidden>
-      <rect
-        x="4"
-        y="7"
-        width="13"
-        height="14"
-        rx="1.5"
-        className="fill-juice"
-      />
-      <rect x="4" y="7" width="13" height="5" rx="1.5" className="fill-juice-600" />
-      <path
-        d="M14 8 L19 2.5"
-        stroke="#F2EFE6"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <circle cx="8.5" cy="15.5" r="1.3" fill="#141217" />
-      <circle cx="12.5" cy="15.5" r="1.3" fill="#141217" />
-    </svg>
-  )
+  themeColor: '#FFF7E8',
 }
 
 export default function RootLayout({
@@ -64,23 +78,29 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={silkscreen.variable}>
+    <html
+      lang="en"
+      className={`${agrandir.variable} ${agrandirWide.variable} ${beatrice.variable}`}
+    >
       <body className="flex min-h-screen flex-col">
         <Providers>
-          <header className="sticky top-0 z-40 border-b-2 border-frame bg-bg/90 backdrop-blur">
+          <header className="sticky top-0 z-40 border-b border-smoke-200 bg-bone/90 backdrop-blur">
             <nav className="relative mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-              <Link
-                href="/"
-                className="flex shrink-0 items-center gap-2 font-display text-lg font-extrabold tracking-tight text-ink"
-              >
-                <JuiceboxMark />
-                Juicebox
+              <Link href="/" className="flex shrink-0 items-center">
+                <Image
+                  src="/brand/logo-full.svg"
+                  alt="Juicebox"
+                  width={124}
+                  height={28}
+                  priority
+                  className="h-7 w-auto"
+                />
               </Link>
               <SearchBox />
               {/* Desktop-only nav item; mobile keeps it in the hero. */}
               <Link
                 href="/create"
-                className="hidden shrink-0 font-pixel text-xs uppercase tracking-wider text-dim transition-colors hover:text-juice md:inline"
+                className="hidden shrink-0 text-sm font-medium text-smoke-700 transition-colors hover:text-ink md:inline"
               >
                 Start a project
               </Link>
@@ -92,18 +112,21 @@ export default function RootLayout({
 
           <main className="flex-1">{children}</main>
 
-          <footer className="border-t-2 border-frame">
-            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-dim sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <p className="flex items-center gap-2 font-display font-bold text-ink">
-                <JuiceboxMark />
-                Juicebox
-              </p>
+          <footer className="border-t border-smoke-200">
+            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-smoke-700 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <Image
+                src="/brand/logo-full.svg"
+                alt="Juicebox"
+                width={106}
+                height={24}
+                className="h-6 w-auto"
+              />
               <div className="flex gap-6">
                 <a
                   href="https://docs.juicebox.money"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-pixel text-xs uppercase tracking-wider hover:text-juice"
+                  className="font-medium hover:text-ink"
                 >
                   Docs
                 </a>
@@ -111,7 +134,7 @@ export default function RootLayout({
                   href="https://github.com/Bananapus"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-pixel text-xs uppercase tracking-wider hover:text-juice"
+                  className="font-medium hover:text-ink"
                 >
                   GitHub
                 </a>

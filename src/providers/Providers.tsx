@@ -111,11 +111,9 @@ export function ParaHost() {
         authLayout: ['AUTH:FULL'],
         oAuthMethods: ['GOOGLE', 'TWITTER', 'APPLE', 'DISCORD', 'FARCASTER'],
         theme: {
-          mode: 'dark',
-          darkBackgroundColor: '#1c1922',
-          backgroundColor: '#1c1922',
-          darkForegroundColor: '#FFB32C',
-          foregroundColor: '#FFB32C',
+          mode: 'light',
+          backgroundColor: '#FFF7E8',
+          foregroundColor: '#5777EB',
           borderRadius: 'md',
         },
       }}

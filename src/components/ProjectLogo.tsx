@@ -1,14 +1,15 @@
 import Image from 'next/image'
 import { ipfsUrl } from '@/lib/format'
 
-// Palette tiles with checked contrast: dark bg text on the bright ones,
-// white on navy (8.9:1).
+// Fruit-scale placeholder tiles (DESIGN.md §Icons) with checked contrast:
+// ink on split-400 = 10.3, melon-400 = 10.0, crush-400 = 10.5,
+// grape-300 = 9.1, bluebs-300 = 8.1.
 const TILES = [
-  'bg-juice text-bg',
-  'bg-lime text-bg',
-  'bg-jcyan text-bg',
-  'bg-magenta text-bg',
-  'bg-navy text-white',
+  'bg-split-400 text-ink',
+  'bg-melon-400 text-ink',
+  'bg-crush-400 text-ink',
+  'bg-grape-300 text-ink',
+  'bg-bluebs-300 text-ink',
 ]
 
 /** Project logo image, or a colored initial tile when there's no usable logo. */
@@ -35,7 +36,7 @@ export function ProjectLogo({
         alt=""
         width={size}
         height={size}
-        className={`shrink-0 rounded border-2 border-frame bg-panel2 object-cover ${className}`}
+        className={`shrink-0 rounded-lg border border-smoke-200 bg-smoke-75 object-cover ${className}`}
         style={{ width: size, height: size }}
       />
     )
@@ -49,8 +50,8 @@ export function ProjectLogo({
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded font-pixel font-bold ${tile} ${className}`}
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
+      className={`flex shrink-0 items-center justify-center rounded-lg font-agrandir font-medium ${tile} ${className}`}
+      style={{ width: size, height: size, fontSize: size * 0.42 }}
     >
       {label[0].toUpperCase()}
     </span>

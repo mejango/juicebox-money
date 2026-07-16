@@ -10,7 +10,7 @@ import { ChainBadge } from './ChainBadge'
 const POLL_MS = 15_000
 
 /**
- * The "Fresh activity" rail (DESIGN.md §Signature 3): latest V6 pay and
+ * The "Fresh activity" rail (DESIGN.md §Activity rail): latest V6 pay and
  * cash-out events across every project. Server-renders the initial rows,
  * then a lightweight poll keeps them fresh.
  */
@@ -45,14 +45,14 @@ export function FreshActivity({
 
   if (events.length === 0) {
     return (
-      <p className="px-4 py-6 text-sm text-dim">
+      <p className="px-4 py-6 text-sm text-smoke-700">
         The chain is quiet right now — check back in a moment.
       </p>
     )
   }
 
   return (
-    <ul className="divide-y divide-frame/60">
+    <ul className="divide-y divide-smoke-100">
       {events.map(event => (
         <Row key={event.id} event={event} />
       ))}
@@ -70,27 +70,27 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
   if (event.payEvent) {
     line = (
       <>
-        <span className="text-dim">{who}</span> paid{' '}
-        <span className="font-bold text-juice">
+        <span className="text-smoke-700">{who}</span> paid{' '}
+        <span className="font-bold text-ink">
           {formatTokenAmount(event.payEvent.amount, decimals)} {symbol}
         </span>{' '}
-        <span aria-hidden className="text-dim">
+        <span aria-hidden className="text-smoke-500">
           →
         </span>{' '}
-        <span className="font-bold text-ink">{name}</span>
+        <span className="font-medium text-bluebs-600">{name}</span>
       </>
     )
   } else if (event.cashOutTokensEvent) {
     line = (
       <>
-        <span className="text-dim">{who}</span> cashed out{' '}
-        <span className="font-bold text-lime">
+        <span className="text-smoke-700">{who}</span> cashed out{' '}
+        <span className="font-bold text-bluebs-600">
           {formatTokenAmount(event.cashOutTokensEvent.cashOutCount, 18)} tokens
         </span>{' '}
-        <span aria-hidden className="text-dim">
+        <span aria-hidden className="text-smoke-500">
           →
         </span>{' '}
-        <span className="font-bold text-ink">{name}</span>
+        <span className="font-medium text-bluebs-600">{name}</span>
       </>
     )
   } else {
@@ -101,7 +101,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
     <li>
       <Link
         href={`/${toUrn(event.chainId, event.projectId)}`}
-        className="flex items-start justify-between gap-3 px-4 py-3 transition-colors hover:bg-panel2"
+        className="flex items-start justify-between gap-3 px-4 py-3 transition-colors hover:bg-smoke-25"
       >
         <span className="min-w-0 break-words text-[13px] leading-relaxed">
           {line}
@@ -109,7 +109,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
         <span className="flex shrink-0 flex-col items-end gap-1.5">
           <ChainBadge chainId={event.chainId} />
           <span
-            className="text-xs text-dim"
+            className="text-xs text-smoke-500"
             // Relative times drift between server render and hydration.
             suppressHydrationWarning
           >

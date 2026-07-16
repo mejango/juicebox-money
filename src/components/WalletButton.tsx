@@ -32,30 +32,30 @@ export function WalletButton() {
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="btn-pixel flex min-h-[44px] items-center gap-2 px-4 text-xs"
+          className="btn-secondary flex min-h-[44px] items-center gap-2 px-4 text-sm"
         >
-          <span className="h-2 w-2 bg-lime" />
+          <span className="h-2 w-2 rounded-full bg-melon-500" />
           {truncateAddress(address)}
         </button>
       ) : (
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="btn-juice min-h-[44px] px-5 text-xs"
+          className="btn-primary min-h-[44px] px-5 text-sm"
         >
           Sign in
         </button>
       )}
 
       {menuOpen ? (
-        <div className="panel absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]">
+        <div className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {connected ? (
             <button
               onClick={() => {
                 setMenuOpen(false)
                 disconnect()
               }}
-              className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-panel2"
+              className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
             >
               Sign out
             </button>
@@ -66,14 +66,14 @@ export function WalletButton() {
                   setMenuOpen(false)
                   openSignIn()
                 }}
-                className="block w-full px-4 py-3 text-left text-sm font-semibold text-ink hover:bg-panel2"
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
               >
                 Email or social
-                <span className="block text-xs font-normal text-dim">
+                <span className="block text-xs font-normal text-smoke-700">
                   No wallet needed — we make one for you
                 </span>
               </button>
-              <div className="mx-4 my-1 border-t border-frame" />
+              <div className="mx-4 my-1 border-t border-smoke-200" />
               {connectors.map(c => (
                 <button
                   key={c.id}
@@ -81,7 +81,7 @@ export function WalletButton() {
                     setMenuOpen(false)
                     connectWith(c.id).catch(() => {})
                   }}
-                  className="block w-full px-4 py-2.5 text-left text-sm font-medium text-ink/90 hover:bg-panel2"
+                  className="block w-full px-4 py-2.5 text-left text-sm font-medium text-ink/90 hover:bg-smoke-25"
                 >
                   {c.name}
                 </button>

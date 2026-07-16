@@ -11,6 +11,7 @@ import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
+import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
@@ -38,9 +39,19 @@ function friendlyError(e: unknown): string {
     : message
 }
 
+const STEP_TILES = [
+  'bg-split-400 text-ink',
+  'bg-bluebs-400 text-ink',
+  'bg-melon-400 text-ink',
+]
+
 function StepBadge({ n }: { n: number }) {
   return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[3px] bg-juice font-pixel text-sm font-bold text-bg">
+    <span
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-agrandir text-sm font-medium ${
+        STEP_TILES[(n - 1) % STEP_TILES.length]
+      }`}
+    >
       {n}
     </span>
   )
@@ -295,11 +306,11 @@ export function CreateForm() {
   if (phase === 'done') {
     return (
       <div className="relative mx-auto max-w-2xl px-4 py-14 sm:px-6 sm:py-20">
-        <div className="panel-juice p-8 text-center sm:p-10">
-          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded border-2 border-lime">
+        <div className="card p-8 text-center sm:p-10">
+          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-melon-400">
             <svg
               viewBox="0 0 24 24"
-              className="h-8 w-8 text-lime"
+              className="h-8 w-8 text-ink"
               fill="none"
               stroke="currentColor"
               strokeWidth="2.5"
@@ -310,10 +321,10 @@ export function CreateForm() {
               <path d="m5 13 4 4L19 7" />
             </svg>
           </span>
-          <h1 className="mt-5 font-display text-3xl font-extrabold tracking-[-0.03em] sm:text-4xl">
+          <h1 className="mt-5 font-agrandir text-3xl font-medium sm:text-4xl">
             {name.trim()} is live!
           </h1>
-          <p className="mt-2 text-sm text-dim">
+          <p className="mt-2 text-sm text-smoke-700">
             Your project page is being indexed — it usually takes about a
             minute to show up everywhere.
           </p>
@@ -326,26 +337,26 @@ export function CreateForm() {
               return (
                 <li
                   key={chainId}
-                  className="panel flex items-center justify-between gap-3 !bg-panel2 px-4 py-3.5"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-smoke-200 bg-bone px-4 py-3.5"
                 >
                   <div className="min-w-0">
-                    <p className="font-bold text-ink">
+                    <p className="font-medium text-ink">
                       Project #{s.projectId} on {chainName(chainId)}
                     </p>
-                    <p className="text-xs text-dim">
+                    <p className="text-xs text-smoke-700">
                       {s.indexed ? 'Indexed and ready' : 'Indexing…'}
                     </p>
                   </div>
                   {s.indexed ? (
                     <Link
                       href={`/${urn}`}
-                      className="btn-juice min-h-[40px] shrink-0 px-5 text-xs"
+                      className="btn-primary min-h-[40px] shrink-0 px-5 text-xs"
                     >
                       View project
                     </Link>
                   ) : (
-                    <span className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded border-2 border-frame px-5 text-sm text-dim">
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-frame border-t-dim" />
+                    <span className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-full border border-smoke-300 px-5 text-sm text-smoke-700">
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-smoke-300 border-t-smoke-700" />
                       {urn}
                     </span>
                   )}
@@ -361,26 +372,26 @@ export function CreateForm() {
   // ---- Form + progress checklist ----
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
-      <h1 className="font-display text-4xl font-extrabold leading-tight tracking-[-0.03em] sm:text-5xl">
-        Start a project<span className="text-juice">.</span>
+      <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-5xl">
+        Start a project<span className="text-split-500">.</span>
       </h1>
-      <p className="mt-3 max-w-lg text-base leading-relaxed text-dim sm:text-lg">
+      <p className="mt-3 max-w-lg text-base leading-relaxed text-smoke-700 sm:text-lg">
         Give it a name, pick your chains, and launch. Live in minutes — you
         can change everything later.
       </p>
 
       {/* 1 — Identity */}
-      <section className="panel mt-10 p-6 sm:p-7">
+      <section className="card mt-10 p-6 sm:p-7">
         <div className="flex items-center gap-3">
           <StepBadge n={1} />
-          <h2 className="font-display text-xl font-extrabold tracking-[-0.02em]">
+          <h2 className="font-agrandir text-xl font-medium">
             What are you making?
           </h2>
         </div>
 
         <label className="mt-5 block">
-          <span className="silk-label">
-            Project name <span className="text-juice">*</span>
+          <span className="field-label">
+            Project name <span className="text-peel-500">*</span>
           </span>
           <input
             type="text"
@@ -388,14 +399,14 @@ export function CreateForm() {
             onChange={e => setName(e.target.value.slice(0, 100))}
             disabled={busy}
             placeholder="My juicy project"
-            className="input-well mt-1.5 min-h-[52px] px-4 text-lg font-semibold placeholder:font-normal disabled:opacity-60"
+            className="input-well mt-1.5 min-h-[52px] px-4 text-lg font-medium placeholder:font-normal disabled:opacity-60"
           />
         </label>
 
         <label className="mt-4 block">
           <span className="flex items-baseline justify-between">
-            <span className="silk-label">Tagline</span>
-            <span className="text-xs text-dim">{tagline.length}/100</span>
+            <span className="field-label">Tagline</span>
+            <span className="text-xs text-smoke-500">{tagline.length}/100</span>
           </span>
           <input
             type="text"
@@ -408,7 +419,7 @@ export function CreateForm() {
         </label>
 
         <label className="mt-4 block">
-          <span className="silk-label">Description</span>
+          <span className="field-label">Description</span>
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value.slice(0, 5000))}
@@ -420,22 +431,22 @@ export function CreateForm() {
         </label>
 
         <div className="mt-4">
-          <span className="silk-label">Logo</span>
+          <span className="field-label">Logo</span>
           <div className="mt-1.5 flex items-center gap-4">
             {logoPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={logoPreview}
                 alt="Logo preview"
-                className="h-20 w-20 rounded border-2 border-frame object-cover"
+                className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
               />
             ) : (
-              <span className="flex h-20 w-20 items-center justify-center rounded border-2 border-dashed border-frame text-2xl">
+              <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
                 🧃
               </span>
             )}
             <div>
-              <label className="btn-pixel min-h-[40px] cursor-pointer px-4 text-[11px]">
+              <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
                 {logoFile ? 'Change image' : 'Upload image'}
                 <input
                   type="file"
@@ -449,16 +460,16 @@ export function CreateForm() {
                 <button
                   onClick={() => onLogoChange(null)}
                   disabled={busy}
-                  className="ml-3 font-pixel text-[11px] uppercase tracking-wider text-dim hover:text-ink"
+                  className="ml-3 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
                 >
                   Remove
                 </button>
               ) : null}
-              <p className="mt-1.5 text-xs text-dim">
+              <p className="mt-1.5 text-xs text-smoke-700">
                 Square works best. Up to 1MB — optional.
               </p>
               {logoError ? (
-                <p className="mt-1 text-xs text-red-400">{logoError}</p>
+                <p className="mt-1 text-xs text-red-600">{logoError}</p>
               ) : null}
             </div>
           </div>
@@ -466,14 +477,14 @@ export function CreateForm() {
       </section>
 
       {/* 2 — Chains */}
-      <section className="panel mt-5 p-6 sm:p-7">
+      <section className="card mt-5 p-6 sm:p-7">
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
-          <h2 className="font-display text-xl font-extrabold tracking-[-0.02em]">
+          <h2 className="font-agrandir text-xl font-medium">
             Where does it live?
           </h2>
         </div>
-        <p className="mt-3 text-sm leading-relaxed text-dim">
+        <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           Your project gets the same address &amp; ID space on every chain you
           pick. You&apos;ll confirm one transaction per chain.
         </p>
@@ -488,8 +499,8 @@ export function CreateForm() {
                 aria-pressed={active}
                 className={
                   active
-                    ? 'inline-flex min-h-[44px] items-center gap-2 rounded bg-juice px-5 font-pixel text-xs uppercase tracking-wider text-bg transition-colors disabled:opacity-60'
-                    : 'inline-flex min-h-[44px] items-center gap-2 rounded border-2 border-frame bg-well px-5 font-pixel text-xs uppercase tracking-wider text-dim transition-colors hover:border-juice hover:text-ink disabled:opacity-60'
+                    ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
+                    : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
                 }
               >
                 {active ? (
@@ -512,27 +523,27 @@ export function CreateForm() {
           })}
         </div>
         {selected.length === 0 ? (
-          <p className="mt-3 text-sm text-red-400">Pick at least one chain.</p>
+          <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
         ) : null}
       </section>
 
       {/* 3 — Review & launch */}
-      <section className="panel mt-5 p-6 sm:p-7">
+      <section className="card mt-5 p-6 sm:p-7">
         <div className="flex items-center gap-3">
           <StepBadge n={3} />
-          <h2 className="font-display text-xl font-extrabold tracking-[-0.02em]">
+          <h2 className="font-agrandir text-xl font-medium">
             Review &amp; launch
           </h2>
         </div>
 
         <dl className="mt-5 space-y-2.5 text-sm">
           <div className="flex items-center justify-between gap-3">
-            <dt className="text-dim">Owner</dt>
-            <dd className="font-semibold text-ink">
+            <dt className="text-smoke-700">Owner</dt>
+            <dd className="font-medium text-ink">
               {connected ? (
                 <span>{truncateAddress(address!)}</span>
               ) : (
-                <span className="text-dim">Your connected wallet</span>
+                <span className="text-smoke-700">Your connected wallet</span>
               )}
             </dd>
           </div>
@@ -541,10 +552,10 @@ export function CreateForm() {
               key={chainId}
               className="flex items-center justify-between gap-3"
             >
-              <dt className="text-dim">
+              <dt className="text-smoke-700">
                 Creation fee · {chainName(chainId)}
               </dt>
-              <dd className="font-semibold tabular-nums text-ink">
+              <dd className="font-medium tabular-nums text-ink">
                 {fees?.[chainId] !== undefined && fees?.[chainId] !== null
                   ? `${formatTokenAmount(fees[chainId]!, 18, 6)} ${
                       JB_CHAINS[chainId as JBChainId]?.nativeTokenSymbol ?? 'ETH'
@@ -554,9 +565,9 @@ export function CreateForm() {
             </div>
           ))}
           {selected.length > 1 ? (
-            <div className="flex items-center justify-between gap-3 border-t-2 border-frame pt-2.5">
-              <dt className="font-semibold text-ink">Total</dt>
-              <dd className="font-extrabold tabular-nums text-juice">
+            <div className="flex items-center justify-between gap-3 border-t border-smoke-200 pt-2.5">
+              <dt className="font-medium text-ink">Total</dt>
+              <dd className="font-bold tabular-nums text-ink">
                 {totalFee !== null
                   ? `${formatTokenAmount(totalFee, 18, 6)} ETH`
                   : '…'}
@@ -565,7 +576,7 @@ export function CreateForm() {
           ) : null}
         </dl>
 
-        <p className="mt-4 text-xs leading-relaxed text-dim/80">
+        <p className="mt-4 text-xs leading-relaxed text-smoke-700">
           Your project launches with friendly defaults: supporters get
           1,000,000 tokens per ETH, and you can change the rules any time.
         </p>
@@ -573,7 +584,7 @@ export function CreateForm() {
         <button
           onClick={launch}
           disabled={connected && !canLaunch}
-          className="btn-juice mt-5 min-h-[56px] w-full text-base"
+          className="btn-primary mt-5 min-h-[56px] w-full text-base"
         >
           {phase === 'pinning'
             ? 'Saving your project details…'
@@ -589,7 +600,7 @@ export function CreateForm() {
         </button>
 
         {launchError ? (
-          <p className="mt-3 rounded border-2 border-red-400/40 bg-well px-3 py-2 text-sm text-red-300">
+          <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
             {launchError}
           </p>
         ) : null}
@@ -613,13 +624,13 @@ export function CreateForm() {
               return (
                 <li
                   key={chainId}
-                  className="flex items-center gap-3 rounded border-2 border-frame bg-panel2 px-4 py-3"
+                  className="flex items-center gap-3 rounded-xl border border-smoke-200 bg-white px-4 py-3"
                 >
                   {s.phase === 'done' ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border-2 border-lime">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-melon-400">
                       <svg
                         viewBox="0 0 24 24"
-                        className="h-3.5 w-3.5 text-lime"
+                        className="h-3.5 w-3.5 text-ink"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="3"
@@ -631,18 +642,18 @@ export function CreateForm() {
                       </svg>
                     </span>
                   ) : s.phase === 'failed' ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border-2 border-red-400 text-xs font-bold text-red-400">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-red-500 text-xs font-bold text-red-600">
                       !
                     </span>
                   ) : s.phase === 'pending' ? (
-                    <span className="h-6 w-6 shrink-0 rounded-full border-2 border-frame" />
+                    <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
                   ) : (
-                    <span className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-frame border-t-juice" />
+                    <span className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-smoke-200 border-t-split-500" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-ink">{chainName(chainId)}</p>
+                    <p className="text-sm font-medium text-ink">{chainName(chainId)}</p>
                     <p
-                      className={`truncate text-xs ${s.phase === 'failed' ? 'text-red-400' : 'text-dim'}`}
+                      className={`truncate text-xs ${s.phase === 'failed' ? 'text-red-600' : 'text-smoke-700'}`}
                     >
                       {label}
                     </p>
@@ -650,7 +661,7 @@ export function CreateForm() {
                   {s.phase === 'failed' && phase === 'failed' ? (
                     <button
                       onClick={retry}
-                      className="btn-pixel shrink-0 px-4 py-1.5 text-[11px]"
+                      className="btn-secondary shrink-0 px-4 py-1.5 text-xs"
                     >
                       Retry
                     </button>

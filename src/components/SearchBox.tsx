@@ -94,7 +94,7 @@ export function SearchBox() {
 
   const input = (
     <div className="relative w-full">
-      <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-dim" />
+      <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-smoke-500" />
       <input
         type="text"
         value={query}
@@ -109,15 +109,15 @@ export function SearchBox() {
         }}
         placeholder="Search projects, or eth:1"
         aria-label="Search projects"
-        className="input-well min-h-[44px] rounded pl-10 pr-4 text-sm"
+        className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />
       {(open && results.length > 0) || (open && urn) ? (
-        <ul className="panel absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]">
+        <ul className="card absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {urn ? (
             <li>
               <button
                 onClick={() => go(`/${toUrn(urn.chainId, urn.projectId)}`)}
-                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-panel2"
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-smoke-25"
               >
                 Go to project {urn.projectId} on {chainName(urn.chainId)}
               </button>
@@ -127,14 +127,14 @@ export function SearchBox() {
               <li key={`${r.chainId}-${r.projectId}`}>
                 <button
                   onClick={() => go(`/${toUrn(r.chainId, r.projectId)}`)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-panel2"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-smoke-25"
                 >
                   <ProjectLogo name={r.name} logoUri={r.logoUri} size={32} />
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-ink">
+                    <span className="block truncate text-sm font-medium text-ink">
                       {r.name ?? `Project ${r.projectId}`}
                     </span>
-                    <span className="block text-xs text-dim">
+                    <span className="block text-xs text-smoke-700">
                       {chainName(r.chainId)}
                     </span>
                   </span>
@@ -158,12 +158,12 @@ export function SearchBox() {
           onClick={() => setMobileOpen(o => !o)}
           aria-label="Search"
           aria-expanded={mobileOpen}
-          className="flex h-11 w-11 items-center justify-center rounded border-2 border-frame bg-well text-dim"
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-smoke-300 bg-white text-smoke-700"
         >
           <MagnifierIcon className="h-5 w-5" />
         </button>
         {mobileOpen ? (
-          <div className="absolute inset-x-0 top-full border-b-2 border-frame bg-bg px-4 py-3">
+          <div className="absolute inset-x-0 top-full border-b border-smoke-200 bg-bone px-4 py-3">
             {input}
           </div>
         ) : null}
