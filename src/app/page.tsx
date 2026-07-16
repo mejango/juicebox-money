@@ -1,16 +1,39 @@
 import Link from 'next/link'
-import { getTrendingProjects, BsProject } from '@/lib/bendystraw'
+import { getTrendingSuckerGroups, BsSuckerGroup } from '@/lib/bendystraw'
 import { ProjectCard } from '@/components/ProjectCard'
 
 export const revalidate = 120
 
 export default async function HomePage() {
-  let projects: BsProject[] = []
+  let groups: BsSuckerGroup[] = []
   try {
-    projects = await getTrendingProjects(12)
+    groups = await getTrendingSuckerGroups(12)
   } catch {
     // Bendystraw hiccup: render the page anyway with an empty grid.
   }
+  // One card per omnichain project: representative = the member with the
+  // richest identity (name/logo), preferring the lowest chain id on ties.
+  const cards = groups
+    // Trending is a storefront: skip projects with no name and no activity.
+    .filter(
+      group =>
+        BigInt(group.volume) > 0n ||
+        group.projects.items.some(m => m.name),
+    )
+    .map(group => {
+      const members = group.projects.items
+      const representative =
+        members.find(m => m.name && m.logoUri) ??
+        members.find(m => m.name) ??
+        members[0]
+      if (!representative) return null
+      return {
+        group,
+        representative,
+        chainIds: members.map(m => m.chainId),
+      }
+    })
+    .filter(<T,>(card: T | null): card is T => card !== null)
 
   return (
     <>
@@ -50,14 +73,20 @@ export default async function HomePage() {
         <h2 className="mb-6 text-2xl font-extrabold tracking-tight sm:text-3xl">
           Trending projects
         </h2>
-        {projects.length === 0 ? (
+        {cards.length === 0 ? (
           <p className="rounded-2xl border border-ink/10 bg-white p-8 text-ink/60">
             Projects are loading slowly right now — check back in a moment.
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {projects.map(p => (
-              <ProjectCard key={`${p.chainId}-${p.projectId}`} project={p} />
+            {cards.map(({ group, representative, chainIds }) => (
+              <ProjectCard
+                key={group.id}
+                project={representative}
+                chainIds={chainIds}
+                volume={group.volume}
+                paymentsCount={group.paymentsCount}
+              />
             ))}
           </div>
         )}

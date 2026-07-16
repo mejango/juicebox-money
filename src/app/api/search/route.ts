@@ -9,7 +9,17 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q')?.trim() ?? ''
   if (q.length < 2 || q.length > 64) return NextResponse.json({ projects: [] })
   try {
-    const projects = await searchProjects(q)
+    const all = await searchProjects(q)
+    // One result per omnichain project (highest-volume member wins).
+    const byGroup = new Map<string, (typeof all)[number]>()
+    for (const p of all) {
+      const key = p.suckerGroupId ?? `${p.chainId}-${p.projectId}`
+      const existing = byGroup.get(key)
+      if (!existing || BigInt(p.volume) > BigInt(existing.volume)) {
+        byGroup.set(key, p)
+      }
+    }
+    const projects = Array.from(byGroup.values())
     return NextResponse.json({
       projects: projects.map(p => ({
         projectId: p.projectId,

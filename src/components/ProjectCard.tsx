@@ -5,9 +5,29 @@ import { toUrn } from '@/lib/urn'
 import { ChainBadge } from './ChainBadge'
 import { ProjectLogo } from './ProjectLogo'
 
-export function ProjectCard({ project }: { project: BsProject }) {
-  const raised = formatTokenAmount(project.volume, project.decimals ?? 18)
+/**
+ * One card per project ACROSS chains: `project` is the representative
+ * deployment (used for identity + link), `chainIds` every chain it lives on,
+ * and the stats are sucker-group aggregates.
+ */
+export function ProjectCard({
+  project,
+  chainIds,
+  volume,
+  paymentsCount,
+}: {
+  project: BsProject
+  chainIds?: number[]
+  volume?: string
+  paymentsCount?: number
+}) {
+  const raised = formatTokenAmount(
+    volume ?? project.volume,
+    project.decimals ?? 18,
+  )
   const symbol = project.tokenSymbol ?? 'ETH'
+  const payments = paymentsCount ?? project.paymentsCount
+  const chains = chainIds?.length ? chainIds : [project.chainId]
 
   return (
     <Link
@@ -37,11 +57,12 @@ export function ProjectCard({ project }: { project: BsProject }) {
           <span className="font-normal text-ink/50"> raised</span>
         </span>
         <span className="text-ink/50">
-          {project.paymentsCount}{' '}
-          {project.paymentsCount === 1 ? 'payment' : 'payments'}
+          {payments} {payments === 1 ? 'payment' : 'payments'}
         </span>
-        <span className="ml-auto">
-          <ChainBadge chainId={project.chainId} />
+        <span className="ml-auto flex flex-wrap justify-end gap-1">
+          {chains.map(chainId => (
+            <ChainBadge key={chainId} chainId={chainId} />
+          ))}
         </span>
       </div>
     </Link>
