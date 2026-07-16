@@ -1111,8 +1111,8 @@ export function CreateForm() {
       </p>
 
       {/* Draft import/export */}
-      <div className="mt-6 flex items-center gap-2.5">
-        <label className="btn-secondary min-h-[36px] cursor-pointer gap-1.5 px-4 text-xs">
+      <div className="mb-10 mt-8 flex flex-wrap items-center gap-2.5">
+        <label className="inline-flex min-h-[34px] cursor-pointer items-center gap-1.5 rounded-full border border-smoke-300 bg-transparent px-3.5 text-xs font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink">
           <span aria-hidden>↑</span> Import .jb
           <input
             type="file"
@@ -1128,7 +1128,7 @@ export function CreateForm() {
         <button
           onClick={exportDraft}
           disabled={busy}
-          className="btn-secondary min-h-[36px] gap-1.5 px-4 text-xs disabled:opacity-60"
+          className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-smoke-300 bg-transparent px-3.5 text-xs font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
         >
           <span aria-hidden>↓</span> Export
         </button>
@@ -1137,11 +1137,11 @@ export function CreateForm() {
         </span>
       </div>
       {importError ? (
-        <p className="mt-2 text-xs text-red-600">{importError}</p>
+        <p className="-mt-8 mb-8 text-xs text-red-600">{importError}</p>
       ) : null}
 
       {/* Horizontal stepper */}
-      <nav aria-label="Create steps" className="mt-2 flex items-center gap-1.5">
+      <nav aria-label="Create steps" className="flex items-center gap-1.5">
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
