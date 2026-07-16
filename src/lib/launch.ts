@@ -1,7 +1,10 @@
 import {
+  MappableAsset,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
   jb721TiersHookProjectDeployerAbi,
+  jbOmnichainDeployerAbi,
+  parseSuckerDeployerConfig,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -232,6 +235,10 @@ export type LaunchPlan = {
   allowAnyToken: boolean
   /** Owner (project) for this chain; null = connected wallet at send. */
   owner: Address | null
+  /** Every chain this launch targets (sucker config needs the full set). */
+  chains: number[]
+  /** Link the chains with CCIP suckers so tokens/treasury bridge. */
+  linkChains: boolean
   /** The 721 store collection. Always deployed — even with zero items — so
    *  every project can stock its store later without a ruleset change. */
   store: {
@@ -316,6 +323,8 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   approvalCustomAddress: null,
   allowAnyToken: true,
   owner: null,
+  chains: [],
+  linkChains: true,
 }
 
 /**
@@ -463,8 +472,7 @@ export function buildLaunchRequest(args: {
         stageConfigurations,
       },
       accountingContexts: contexts,
-      // Independent per-chain deploys — no suckers wired at launch.
-      suckerConfig: { deployerConfigurations: [], salt: args.salt },
+      suckerConfig: suckerConfigFor(plan, chainId, args.salt),
       creationFee: args.creationFee,
       tiered721Config:
         plan.store.items.length > 0
@@ -592,6 +600,38 @@ export function buildLaunchRequest(args: {
         },
       ]
 
+  // Linked multichain launches go through the omnichain deployer: same
+  // 721-hook config, plus the sucker deployment config (shared salt pairs
+  // the suckers). Its ruleset tuple takes FULL metadata; the deployer
+  // injects the 721 hook as the pay data hook itself.
+  if (plan.linkChains && plan.chains.length > 1) {
+    return {
+      chainId,
+      address: v6Address('JBOmnichainDeployer', chainId),
+      abi: jbOmnichainDeployerAbi,
+      functionName: 'launchProjectFor' as const,
+      args: [
+        args.owner,
+        args.projectUri,
+        {
+          deployTiersHookConfig: build721HookConfig(
+            args.plan.store,
+            args.projectUri,
+            accounting,
+            chainId,
+          ),
+          useDataHookForCashOut: plan.store.itemsRedeem,
+          salt: args.salt,
+        },
+        rulesetConfigurations,
+        terminalConfigurations,
+        '',
+        suckerConfigFor(plan, chainId, args.salt),
+      ],
+      value: args.creationFee,
+    } as const
+  }
+
   return {
     chainId,
     address: v6Address('JB721TiersHookProjectDeployer', chainId),
@@ -611,6 +651,50 @@ export function buildLaunchRequest(args: {
     ],
     value: args.creationFee,
   } as const
+}
+
+/** Sucker deployment config for one chain: CCIP deployer + token mappings
+ *  per remote chain, sharing ONE salt so the suckers pair. Unlinked (or
+ *  single-chain) launches pass empty configurations. Custom-token
+ *  accounting maps no terminal tokens — only project tokens bridge. */
+function suckerConfigFor(
+  plan: LaunchPlan,
+  chainId: JBChainId,
+  salt: `0x${string}`,
+) {
+  if (!plan.linkChains || plan.chains.length < 2) {
+    return { deployerConfigurations: [], salt }
+  }
+  const assets = plan.accounting.custom
+    ? []
+    : [
+        ...(plan.accounting.tokens.includes('eth')
+          ? [MappableAsset.NATIVE]
+          : []),
+        ...(plan.accounting.tokens.includes('usdc')
+          ? [MappableAsset.USDC]
+          : []),
+      ]
+  const config = parseSuckerDeployerConfig(
+    chainId,
+    plan.chains as JBChainId[],
+    assets,
+    { version: 6 },
+  )
+  return {
+    // version 6 always yields the peer'd shape; the SDK type is a v5|v6
+    // union so narrow it here.
+    deployerConfigurations: config.deployerConfigurations as readonly {
+      deployer: Address
+      peer: `0x${string}`
+      mappings: readonly {
+        localToken: Address
+        minGas: number
+        remoteToken: `0x${string}`
+      }[]
+    }[],
+    salt,
+  }
 }
 
 /** Whether this context uses the stage's USDC-specific payout config

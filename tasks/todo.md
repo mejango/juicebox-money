@@ -22,11 +22,14 @@ Order minimizes rework. Commit per batch; Sepolia sims per encoding change.
 - [x] B7 store batch: P8 categories, P9 per-item flags + voting units,
       per-chain item supply overrides, P7 revnet operator store
       permissions, P6 revnet auto-issuances
-- [ ] B8 P1 suckers/chain linking: bridge choice (native/ccip/both),
+- [x] B8 P1 suckers/chain linking (CCIP via SDK parseSuckerDeployerConfig; omnichain deployer for linked projects): bridge choice (native/ccip/both),
       parseSuckerDeployerConfig both flavors, omnichain deployer + shared
       salt for projects
-- [ ] B9 P3 Relayr pay-once (evaluate; may keep per-chain signing — decide
-      with user)
+- [ ] B9 P3 Relayr pay-once — DECISION FOR USER: keep per-chain signing
+      (simple, no third-party dependency, works today) or integrate
+      Relayr's bundle API (one gas payment, but adds quote/refund flow +
+      external service dependency). website has Relayr; jbm could keep
+      per-chain as a deliberate simplification.
 - [ ] P20 network toggle: SKIPPED as architecture — jbm is env-scoped per
       network (bendystraw + wagmi config baked per deployment); flag for
       user sign-off

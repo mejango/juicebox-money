@@ -182,6 +182,8 @@ export function CreateForm() {
   /** Issuance denomination; null = follow accounting. */
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
   const [allowAnyToken, setAllowAnyToken] = useState(true)
+  /** Link selected chains with CCIP suckers (multichain launches). */
+  const [linkChains, setLinkChains] = useState(true)
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
   const [ownerPerChainOpen, setOwnerPerChainOpen] = useState(false)
   const [approvalCustom, setApprovalCustom] = useState('')
@@ -760,6 +762,8 @@ export function CreateForm() {
         return [
           chainId,
           {
+            chains: selected,
+            linkChains,
             issuanceBase,
             allowAnyToken: flavor === 'revnet' ? true : allowAnyToken,
             owner: resolvedAddress(
@@ -1093,6 +1097,7 @@ export function CreateForm() {
     accepts,
     customAddress: customOn ? customAddress : '',
     issuanceBase,
+    linkChains,
     chains: selected,
     stages,
     afterMode,
@@ -1128,6 +1133,7 @@ export function CreateForm() {
     setCustomOn(draft.customAddress !== '')
     setCustomAddress(draft.customAddress)
     setIssuanceBase(draft.issuanceBase)
+    setLinkChains(draft.linkChains)
     const validChains = draft.chains.filter(id =>
       SUPPORTED_CHAINS.some(chain => chain.id === id),
     )
@@ -1218,6 +1224,7 @@ export function CreateForm() {
     customOn,
     customAddress,
     issuanceBase,
+    linkChains,
     selected,
     stages,
     afterMode,
@@ -1427,6 +1434,21 @@ export function CreateForm() {
           </div>
           {selected.length === 0 ? (
             <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
+          ) : null}
+          {selected.length > 1 ? (
+            <div className="mt-3">
+              <CheckRow
+                checked={linkChains}
+                onToggle={() => !busy && setLinkChains(l => !l)}
+                disabled={busy}
+                title="Link the chains"
+                blurb={
+                  customOn
+                    ? 'Your token can move between chains via Chainlink CCIP. (Custom accounting tokens themselves don’t bridge — only your project token does.)'
+                    : 'Your token and treasury can move between chains via Chainlink CCIP. Unchecking launches independent, unconnected copies.'
+                }
+              />
+            </div>
           ) : null}
         </div>
 

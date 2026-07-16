@@ -30,6 +30,7 @@ export type CreateDraft = {
   accepts: TreasuryCurrency[]
   customAddress: string
   issuanceBase: 'eth' | 'usd' | null
+  linkChains: boolean
   chains: number[]
   stages: DraftStage[]
   afterMode: 'wait' | 'terminal' | 'cycle'
@@ -286,6 +287,7 @@ export function parseDraft(text: string): CreateDraft {
     customAddress: str(d.customAddress, 64),
     issuanceBase:
       d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
+    linkChains: d.linkChains === undefined ? true : bool(d.linkChains),
     chains: (Array.isArray(d.chains) ? d.chains : [])
       .filter(c => Number.isInteger(c))
       .slice(0, 16) as number[],
