@@ -332,6 +332,7 @@ export function StageRulesEditor({
   isLast,
   index,
   unitLabel,
+  unitChoice,
   disabled,
   chainIds,
   flavor = 'project',
@@ -344,6 +345,11 @@ export function StageRulesEditor({
   isLast: boolean
   index: number
   unitLabel: string
+  /** When set, the issuance unit is a choice (ETH/USD) picked inline. */
+  unitChoice?: {
+    value: 'eth' | 'usd'
+    onChange: (value: 'eth' | 'usd') => void
+  }
   disabled: boolean
   /** Selected launch chains (enables per-chain recipient overrides). */
   chainIds: number[]
@@ -567,9 +573,28 @@ export function StageRulesEditor({
               issuanceOk ? '' : '!border-red-400'
             }`}
           />
-          <span className="text-sm text-smoke-700">
-            {tokenLabel} per {unitLabel} paid
-          </span>
+          {unitChoice && isFirst ? (
+            <span className="flex items-center gap-2 whitespace-nowrap text-sm text-smoke-700">
+              {tokenLabel} per
+              <select
+                value={unitChoice.value}
+                onChange={e =>
+                  unitChoice.onChange(e.target.value as 'eth' | 'usd')
+                }
+                disabled={disabled}
+                aria-label="Issuance priced in"
+                className="select-caret input-well min-h-[44px] pl-3 pr-8 text-sm disabled:opacity-60"
+              >
+                <option value="eth">ETH</option>
+                <option value="usd">USD</option>
+              </select>
+              paid
+            </span>
+          ) : (
+            <span className="text-sm text-smoke-700">
+              {tokenLabel} per {unitLabel} paid
+            </span>
+          )}
         </div>
         {isRevnet ? (
           <div className="mt-3">

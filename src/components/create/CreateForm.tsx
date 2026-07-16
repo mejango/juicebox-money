@@ -183,7 +183,6 @@ export function CreateForm() {
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
   const [allowAnyToken, setAllowAnyToken] = useState(true)
   /** Link selected chains with CCIP suckers (multichain launches). */
-  const [linkChains, setLinkChains] = useState(true)
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
   const [ownerPerChainOpen, setOwnerPerChainOpen] = useState(false)
   const [approvalCustom, setApprovalCustom] = useState('')
@@ -271,7 +270,8 @@ export function CreateForm() {
     storeCurrency ??
     (customOn ? 'token' : accepts.includes('eth') ? 'eth' : 'usd')
   const storeUsd = effectiveStoreCurrency === 'usd'
-  const tokenLabel = ticker.trim() ? `$${ticker.trim()}` : 'tokens'
+  const tokenLabel =
+    flavor === 'revnet' && ticker.trim() ? `$${ticker.trim()}` : 'tokens'
   const multiToken = !customOn && accepts.length > 1
   const accountingDecimals = customActive
     ? customMeta.decimals
@@ -763,7 +763,7 @@ export function CreateForm() {
           chainId,
           {
             chains: selected,
-            linkChains,
+            linkChains: true,
             issuanceBase,
             allowAnyToken: flavor === 'revnet' ? true : allowAnyToken,
             owner: resolvedAddress(
@@ -954,7 +954,7 @@ export function CreateForm() {
       name: storeConfig.collectionName.trim() || name.trim(),
       symbol:
         storeConfig.collectionSymbol.trim() ||
-        ticker.trim() ||
+        (flavor === 'revnet' ? ticker.trim() : '') ||
         deriveSymbol(name),
       currency: effectiveStoreCurrency,
       preventOverspending: storeConfig.preventOverspending,
@@ -1097,7 +1097,7 @@ export function CreateForm() {
     accepts,
     customAddress: customOn ? customAddress : '',
     issuanceBase,
-    linkChains,
+    linkChains: true,
     chains: selected,
     stages,
     afterMode,
@@ -1133,7 +1133,6 @@ export function CreateForm() {
     setCustomOn(draft.customAddress !== '')
     setCustomAddress(draft.customAddress)
     setIssuanceBase(draft.issuanceBase)
-    setLinkChains(draft.linkChains)
     const validChains = draft.chains.filter(id =>
       SUPPORTED_CHAINS.some(chain => chain.id === id),
     )
@@ -1224,7 +1223,6 @@ export function CreateForm() {
     customOn,
     customAddress,
     issuanceBase,
-    linkChains,
     selected,
     stages,
     afterMode,
@@ -1320,7 +1318,7 @@ export function CreateForm() {
       </h1>
       <p className="mt-3 max-w-lg text-base leading-relaxed text-smoke-700 sm:text-lg">
         Give it a name, answer a few questions, and launch. Live in minutes —
-        rules stay flexible unless you lock them in.
+        rules stay flexible unless you lock&nbsp;them&nbsp;in.
       </p>
 
       {/* Horizontal stepper */}
@@ -1436,19 +1434,11 @@ export function CreateForm() {
             <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
           ) : null}
           {selected.length > 1 ? (
-            <div className="mt-3">
-              <CheckRow
-                checked={linkChains}
-                onToggle={() => !busy && setLinkChains(l => !l)}
-                disabled={busy}
-                title="Link the chains"
-                blurb={
-                  customOn
-                    ? 'Your token can move between chains via Chainlink CCIP. (Custom accounting tokens themselves don’t bridge — only your project token does.)'
-                    : 'Your token and treasury can move between chains via Chainlink CCIP. Unchecking launches independent, unconnected copies.'
-                }
-              />
-            </div>
+            <p className="mt-3 text-xs leading-relaxed text-smoke-700">
+              {customOn
+                ? 'The chains are linked — your token can move between them via Chainlink CCIP. (Custom accounting tokens themselves don’t bridge — only your project token does.)'
+                : 'The chains are linked — your token and treasury can move between them via Chainlink CCIP.'}
+            </p>
           ) : null}
         </div>
 
@@ -1553,42 +1543,6 @@ export function CreateForm() {
           ) : null}
         </div>
 
-        {!customOn ? (
-          <div className="mt-6">
-            <span className="field-label">Issuance priced in</span>
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              The unit your token issuance is quoted in — e.g. 10,000 tokens
-              per ETH, or per USD.
-            </p>
-            <div className="mt-2.5 flex gap-2">
-              {(
-                [
-                  ['eth', 'ETH'],
-                  ['usd', 'USD'],
-                ] as const
-              ).map(([value, label]) => {
-                const active = effectiveBase === value
-                return (
-                  <button
-                    key={value}
-                    onClick={() => !busy && setIssuanceBase(value)}
-                    disabled={busy}
-                    aria-pressed={active}
-                    className={
-                      active
-                        ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                        : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                    }
-                  >
-                    {active ? <CheckIcon className="h-4 w-4" /> : null}
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ) : null}
-
         <div className="mt-6">
           <span className="field-label">
             {flavor === 'revnet' ? 'Operator' : 'Owner'}
@@ -1678,38 +1632,35 @@ export function CreateForm() {
               />
             </label>
 
-            <div className="mt-4">
-              <span className="field-label">
-                Token ticker
-                {flavor === 'revnet' ? (
+            {flavor === 'revnet' ? (
+              <div className="mt-4">
+                <span className="field-label">
+                  Token ticker
                   <span className="text-peel-500"> *</span>
-                ) : null}
-              </span>
-              <div className="mt-1.5 flex items-center gap-3">
-                <input
-                  type="text"
-                  value={ticker}
-                  onChange={e =>
-                    setTicker(
-                      e.target.value
-                        .toUpperCase()
-                        .replace(/[^A-Z0-9]/g, '')
-                        .slice(0, 11),
-                    )
-                  }
-                  disabled={busy}
-                  placeholder="TOKEN"
-                  className="input-well min-h-[48px] w-40 px-4 text-sm disabled:opacity-60"
-                />
-                <p className="text-xs leading-relaxed text-smoke-700">
-                  {flavor === 'revnet'
-                    ? "Names your revnet's token — supporters hold $" +
-                      (ticker || 'TOKEN') +
-                      '.'
-                    : 'Optional — names your token and store collection.'}
-                </p>
+                </span>
+                <div className="mt-1.5 flex items-center gap-3">
+                  <input
+                    type="text"
+                    value={ticker}
+                    onChange={e =>
+                      setTicker(
+                        e.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]/g, '')
+                          .slice(0, 11),
+                      )
+                    }
+                    disabled={busy}
+                    placeholder="TOKEN"
+                    className="input-well min-h-[48px] w-40 px-4 text-sm disabled:opacity-60"
+                  />
+                  <p className="text-xs leading-relaxed text-smoke-700">
+                    Names your revnet&apos;s token — supporters hold $
+                    {ticker || 'TOKEN'}.
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : null}
 
             <div className="mt-4">
               <span className="field-label">Tags</span>
@@ -1955,7 +1906,7 @@ export function CreateForm() {
                   <span className="block font-agrandir text-sm font-medium text-ink">
                     {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
                   </span>
-                  <span className="mt-0.5 block truncate text-xs text-smoke-700">
+                  <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
                     <Piped text={stageSummary(stage, i, unitLabel, flavor)} />
                   </span>
                 </button>
@@ -1993,6 +1944,11 @@ export function CreateForm() {
                     isLast={i === stages.length - 1}
                     index={i}
                     unitLabel={unitLabel}
+                    unitChoice={
+                      !customOn
+                        ? { value: effectiveBase, onChange: setIssuanceBase }
+                        : undefined
+                    }
                     disabled={busy}
                     chainIds={selected}
                     flavor={flavor}
@@ -2259,7 +2215,7 @@ export function CreateForm() {
                       }))
                     }
                     disabled={busy}
-                    placeholder={ticker.trim() || deriveSymbol(name)}
+                    placeholder={(flavor === 'revnet' && ticker.trim()) || deriveSymbol(name)}
                     className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
                   />
                 </label>
