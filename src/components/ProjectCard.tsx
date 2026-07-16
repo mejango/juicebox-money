@@ -5,42 +5,44 @@ import { ChainBadge } from './ChainBadge'
 import { ProjectLogo } from './ProjectLogo'
 
 /**
- * One card per project across chains and protocol versions. V6 cards link
- * within this site; older-version cards link out to juicebox.money, marked
- * with a small version chip.
+ * One framed panel per project across chains and protocol versions. V6 cards
+ * link within this site; older-version cards link out to juicebox.money,
+ * marked with a version chip.
  */
 export function ProjectCard({ card }: { card: TrendingCard }) {
   const raised = formatTokenAmount(card.volume, card.decimals)
   const className =
-    'card-lift group flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-juice-500'
+    'panel card-lift group flex flex-col gap-4 p-4 sm:p-5'
 
   const body = (
     <>
       <div>
         <div className="flex items-center gap-3.5">
           <ProjectLogo name={card.name} logoUri={card.logoUri} size={56} />
-          <h3 className="min-w-0 break-words font-bold leading-snug group-hover:text-juice-600">
+          <h3 className="min-w-0 break-words font-display font-bold leading-snug text-ink group-hover:text-juice">
             {card.name}
           </h3>
         </div>
         {card.tagline ? (
-          <p className="mt-3 text-sm text-ink/60">{card.tagline}</p>
+          <p className="mt-3 text-sm leading-relaxed text-dim">{card.tagline}</p>
         ) : null}
       </div>
-      <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-        <span className="font-semibold">
-          {raised} {card.symbol}
-          <span className="font-normal text-ink/50"> raised</span>
+      <div className="mt-auto flex flex-wrap items-end gap-x-5 gap-y-2">
+        <span className="min-w-0">
+          <span className="silk-label">Raised</span>
+          <span className="text-sm font-bold text-juice">
+            {raised} {card.symbol}
+          </span>
         </span>
-        <span className="text-ink/50">
-          {card.paymentsCount}{' '}
-          {card.paymentsCount === 1 ? 'payment' : 'payments'}
+        <span className="min-w-0">
+          <span className="silk-label">Payments</span>
+          <span className="text-sm font-bold text-ink">
+            {card.paymentsCount.toLocaleString('en-US')}
+          </span>
         </span>
         <span className="ml-auto flex flex-wrap justify-end gap-1">
           {card.version < 6 ? (
-            <span className="inline-flex items-center rounded-full border border-ink/10 bg-ink/5 px-2.5 py-0.5 text-xs font-medium text-ink/60">
-              V{card.version}
-            </span>
+            <span className="chip bg-frame text-ink">V{card.version}</span>
           ) : null}
           {card.chainIds.map(chainId => (
             <ChainBadge key={chainId} chainId={chainId} />

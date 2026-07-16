@@ -94,7 +94,7 @@ export function SearchBox() {
 
   const input = (
     <div className="relative w-full">
-      <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink/40" />
+      <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-dim" />
       <input
         type="text"
         value={query}
@@ -109,15 +109,15 @@ export function SearchBox() {
         }}
         placeholder="Search projects, or eth:1"
         aria-label="Search projects"
-        className="min-h-[44px] w-full rounded-full border border-ink/15 bg-white pl-10 pr-4 text-sm outline-none transition-colors placeholder:text-ink/40 focus:border-juice-500 focus:ring-2 focus:ring-juice-400/30"
+        className="input-well min-h-[44px] rounded pl-10 pr-4 text-sm"
       />
       {(open && results.length > 0) || (open && urn) ? (
-        <ul className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto rounded-2xl border border-ink/10 bg-white py-1.5 shadow-xl">
+        <ul className="panel absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.5)]">
           {urn ? (
             <li>
               <button
                 onClick={() => go(`/${toUrn(urn.chainId, urn.projectId)}`)}
-                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-juice-50"
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-panel2"
               >
                 Go to project {urn.projectId} on {chainName(urn.chainId)}
               </button>
@@ -127,14 +127,14 @@ export function SearchBox() {
               <li key={`${r.chainId}-${r.projectId}`}>
                 <button
                   onClick={() => go(`/${toUrn(r.chainId, r.projectId)}`)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-juice-50"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-panel2"
                 >
                   <ProjectLogo name={r.name} logoUri={r.logoUri} size={32} />
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">
+                    <span className="block truncate text-sm font-semibold text-ink">
                       {r.name ?? `Project ${r.projectId}`}
                     </span>
-                    <span className="block text-xs text-ink/50">
+                    <span className="block text-xs text-dim">
                       {chainName(r.chainId)}
                     </span>
                   </span>
@@ -158,12 +158,12 @@ export function SearchBox() {
           onClick={() => setMobileOpen(o => !o)}
           aria-label="Search"
           aria-expanded={mobileOpen}
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-ink/15 bg-white text-ink/70"
+          className="flex h-11 w-11 items-center justify-center rounded border-2 border-frame bg-well text-dim"
         >
           <MagnifierIcon className="h-5 w-5" />
         </button>
         {mobileOpen ? (
-          <div className="absolute inset-x-0 top-full border-b border-ink/10 bg-cream px-4 py-3 shadow-sm">
+          <div className="absolute inset-x-0 top-full border-b-2 border-frame bg-bg px-4 py-3">
             {input}
           </div>
         ) : null}

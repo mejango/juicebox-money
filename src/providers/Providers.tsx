@@ -111,9 +111,12 @@ export function ParaHost() {
         authLayout: ['AUTH:FULL'],
         oAuthMethods: ['GOOGLE', 'TWITTER', 'APPLE', 'DISCORD', 'FARCASTER'],
         theme: {
-          backgroundColor: '#ffffff',
-          foregroundColor: '#F5A312',
-          borderRadius: 'lg',
+          mode: 'dark',
+          darkBackgroundColor: '#1c1922',
+          backgroundColor: '#1c1922',
+          darkForegroundColor: '#FFB32C',
+          foregroundColor: '#FFB32C',
+          borderRadius: 'md',
         },
       }}
       externalWalletConfig={{ wallets: [] }}

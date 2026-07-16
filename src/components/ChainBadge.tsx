@@ -1,23 +1,39 @@
 import { chainName } from '@/lib/urn'
 
-const DOTS: Record<number, string> = {
-  1: 'bg-ink/70',
-  10: 'bg-red-500',
-  8453: 'bg-blue-600',
-  42161: 'bg-sky-500',
-  11155111: 'bg-ink/40',
-  11155420: 'bg-red-300',
-  84532: 'bg-blue-300',
-  421614: 'bg-sky-300',
+/**
+ * Solid block chain chips (DESIGN.md §Chip mosaic). Every combination is
+ * checked ≥ 4.5:1: ink on #4a4553 = 8.1, white on #b91c1c = 6.5, white on
+ * #274690 = 8.9, white on #1a5db4 = 6.4, white on #6b6577 = 5.6.
+ */
+const CHIP: Record<number, { label: string; className: string }> = {
+  1: { label: 'ETH', className: 'bg-[#4a4553] text-ink' },
+  10: { label: 'OP', className: 'bg-[#b91c1c] text-white' },
+  8453: { label: 'BASE', className: 'bg-navy text-white' },
+  42161: { label: 'ARB', className: 'bg-[#1a5db4] text-white' },
+  11155111: { label: 'SEP', className: 'bg-[#6b6577] text-white' },
+  11155420: { label: 'OP SEP', className: 'bg-[#b91c1c] text-white' },
+  84532: { label: 'BASE SEP', className: 'bg-navy text-white' },
+  421614: { label: 'ARB SEP', className: 'bg-[#1a5db4] text-white' },
 }
 
-export function ChainBadge({ chainId }: { chainId: number }) {
+export function ChainBadge({
+  chainId,
+  full = false,
+}: {
+  chainId: number
+  /** Spell out the full chain name instead of the short code. */
+  full?: boolean
+}) {
+  const chip = CHIP[chainId] ?? {
+    label: `#${chainId}`,
+    className: 'bg-[#4a4553] text-ink',
+  }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-white px-2.5 py-0.5 text-xs font-medium text-ink/70">
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${DOTS[chainId] ?? 'bg-ink/40'}`}
-      />
-      {chainName(chainId)}
+    <span
+      className={`chip ${chip.className}`}
+      title={chainName(chainId)}
+    >
+      {full ? chainName(chainId) : chip.label}
     </span>
   )
 }

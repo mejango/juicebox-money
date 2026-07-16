@@ -19,6 +19,15 @@ export function formatDate(timestamp: number): string {
   })
 }
 
+/** Compact relative time for activity rows: "7m", "3h", "2d". */
+export function timeAgo(timestamp: number): string {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp)
+  if (seconds < 60) return 'now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
+}
+
 export function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`
 }

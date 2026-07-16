@@ -23,16 +23,16 @@ function Row({
     body = (
       <>
         <p className="text-sm">
-          <span className="font-mono text-ink/60">
+          <span className="text-dim">
             {truncateAddress(event.payEvent.beneficiary)}
           </span>{' '}
           paid{' '}
-          <span className="font-semibold">
+          <span className="font-bold text-juice">
             {formatTokenAmount(event.payEvent.amount, decimals)} {symbol}
           </span>
         </p>
         {event.payEvent.memo ? (
-          <p className="mt-1 truncate text-sm italic text-ink/50">
+          <p className="mt-1 truncate text-sm italic text-dim">
             “{event.payEvent.memo}”
           </p>
         ) : null}
@@ -41,11 +41,11 @@ function Row({
   } else if (event.cashOutTokensEvent) {
     body = (
       <p className="text-sm">
-        <span className="font-mono text-ink/60">
+        <span className="text-dim">
           {truncateAddress(event.cashOutTokensEvent.beneficiary)}
         </span>{' '}
         cashed out for{' '}
-        <span className="font-semibold">
+        <span className="font-bold text-lime">
           {formatTokenAmount(event.cashOutTokensEvent.reclaimAmount, decimals)}{' '}
           {symbol}
         </span>
@@ -58,13 +58,13 @@ function Row({
   return (
     <li className="flex items-start justify-between gap-4 py-3.5">
       <div className="min-w-0">{body}</div>
-      <div className="shrink-0 text-right text-xs text-ink/40">
+      <div className="shrink-0 text-right text-xs text-dim">
         {link ? (
           <a
             href={link}
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-ink/70 hover:underline"
+            className="hover:text-ink hover:underline"
           >
             {formatDate(event.timestamp)}
           </a>
@@ -89,14 +89,14 @@ export function ActivityList({
 
   if (visible.length === 0) {
     return (
-      <p className="rounded-2xl border border-dashed border-ink/15 bg-white p-6 text-sm text-ink/50">
+      <p className="rounded-md border-2 border-dashed border-frame p-6 text-sm text-dim">
         No activity yet — be the first to pay this project.
       </p>
     )
   }
 
   return (
-    <ul className="divide-y divide-ink/5 rounded-2xl border border-ink/10 bg-white px-5 py-1">
+    <ul className="panel divide-y divide-frame/60 px-5 py-1">
       {visible.map(e => (
         <Row key={e.id} event={e} decimals={decimals} symbol={symbol} />
       ))}

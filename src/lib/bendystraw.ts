@@ -175,6 +175,57 @@ export async function getProjectActivity(
   return data.activityEvents.items
 }
 
+export type BsFreshActivityEvent = {
+  id: string
+  chainId: number
+  projectId: number
+  timestamp: number
+  txHash: string
+  from: string
+  project: {
+    name: string | null
+    tokenSymbol: string | null
+    decimals: number | null
+  } | null
+  payEvent: { amount: string; beneficiary: string } | null
+  cashOutTokensEvent: {
+    cashOutCount: string
+    reclaimAmount: string
+    beneficiary: string
+  } | null
+}
+
+/**
+ * The "Fresh activity" rail: latest pay/cash-out events across ALL V6
+ * projects, in one query — the nested `project` field carries the name.
+ */
+export async function getRecentActivity(
+  limit = 12,
+): Promise<BsFreshActivityEvent[]> {
+  const data = await bendystraw<{
+    activityEvents: { items: BsFreshActivityEvent[] }
+  }>(
+    `query($limit: Int!) {
+      activityEvents(
+        where: { version: 6, type_in: [payEvent, cashOutTokensEvent] }
+        orderBy: "timestamp"
+        orderDirection: "desc"
+        limit: $limit
+      ) {
+        items {
+          id chainId projectId timestamp txHash from
+          project { name tokenSymbol decimals }
+          payEvent { amount beneficiary }
+          cashOutTokensEvent { cashOutCount reclaimAmount beneficiary }
+        }
+      }
+    }`,
+    { limit },
+    { revalidate: 15 },
+  )
+  return data.activityEvents.items
+}
+
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
 ): Promise<BsProject[]> {

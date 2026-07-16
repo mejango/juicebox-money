@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    color-scheme: light;
+    color-scheme: dark;
   }
 
   html {
@@ -12,35 +12,147 @@
   }
 
   body {
-    @apply bg-cream text-ink;
+    @apply bg-bg font-mono text-ink;
+    /* Subtle juice radial glow, top-right — the room's neon sign. */
+    background-image: radial-gradient(
+      42rem 42rem at 85% -8%,
+      rgb(255 179 44 / 0.06),
+      transparent 70%
+    );
+    background-repeat: no-repeat;
   }
 
   ::selection {
-    @apply bg-juice-400/40;
+    @apply bg-juice text-bg;
+  }
+
+  /* Focus is always visible, always cyan. */
+  :focus-visible {
+    outline: 2px solid theme('colors.jcyan');
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* --- Panels: hard-edged framed regions (DESIGN.md §Panels) --- */
+  .panel {
+    @apply rounded-md border-2 border-frame bg-panel;
+  }
+
+  .panel-juice {
+    @apply rounded-md border-2 border-juice bg-panel;
+  }
+
+  /* --- Primary CTA: solid juice block, printed-sticker shadow --- */
+  .btn-juice {
+    @apply inline-flex items-center justify-center bg-juice font-pixel uppercase tracking-wider text-bg;
+    border-radius: 4px;
+    box-shadow: 3px 3px 0 0 rgb(227 145 23 / 0.45);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .btn-juice:hover:not(:disabled) {
+    transform: translate(1px, 1px);
+    box-shadow: 1px 1px 0 0 rgb(227 145 23 / 0.45);
+  }
+
+  .btn-juice:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* --- Secondary: pixel-outline button (silkscreened hardware key) --- */
+  .btn-pixel {
+    @apply inline-flex items-center justify-center border-2 border-ink/40 bg-transparent font-pixel uppercase tracking-wider text-ink;
+    border-radius: 4px;
+    transition:
+      border-color 120ms ease,
+      color 120ms ease,
+      background-color 120ms ease;
+  }
+
+  .btn-pixel:hover:not(:disabled) {
+    @apply border-juice text-juice;
+  }
+
+  .btn-pixel:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* --- Chips: tiny solid blocks, like keyboard keys --- */
+  .chip {
+    @apply inline-flex items-center px-1.5 py-0.5 font-pixel text-[10px] uppercase leading-none tracking-wide;
+    border-radius: 3px;
+  }
+
+  /* --- Silkscreen label: tiny uppercase dim label over values --- */
+  .silk-label {
+    @apply block font-pixel text-[10px] uppercase tracking-widest text-dim;
+  }
+
+  /* --- Inputs: dark wells, cyan focus --- */
+  .input-well {
+    @apply w-full rounded border-2 border-frame bg-well text-ink outline-none placeholder:text-dim/50;
+    transition: border-color 120ms ease;
+  }
+
+  .input-well:focus,
+  .input-well:focus-within {
+    border-color: theme('colors.jcyan');
+    outline: none;
   }
 }
 
 @layer utilities {
-  /* Hand-drawn-ish underline swash for hero words. */
-  .juice-underline {
-    background-image: linear-gradient(
-      to top,
-      theme('colors.juice.400 / 55%') 0%,
-      theme('colors.juice.400 / 55%') 38%,
-      transparent 38%
+  /* The one expressive moment per page: skewed, rough-edged juice highlight
+     behind key headline words (DESIGN.md §Elektron synthesis). */
+  .juice-mark {
+    position: relative;
+    display: inline-block;
+    color: theme('colors.bg');
+    padding: 0 0.18em;
+  }
+
+  .juice-mark::before {
+    content: '';
+    position: absolute;
+    inset: 0.02em -0.12em -0.04em -0.1em;
+    background: theme('colors.juice.DEFAULT');
+    transform: rotate(-1.5deg) skewX(-4deg);
+    clip-path: polygon(
+      1% 8%,
+      99% 0%,
+      100% 62%,
+      98% 96%,
+      55% 100%,
+      2% 94%,
+      0% 55%
     );
+    z-index: -1;
+  }
+
+  /* Pixel blip: loading-bar stub above section headlines. */
+  .pixel-blip {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: theme('colors.juice.DEFAULT');
+    box-shadow:
+      10px 0 0 theme('colors.juice.DEFAULT'),
+      20px 0 0 theme('colors.frame'),
+      30px 0 0 theme('colors.frame');
   }
 
   .card-lift {
     transition:
       transform 150ms ease,
-      box-shadow 150ms ease,
       border-color 150ms ease;
   }
 
   .card-lift:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 24px -12px rgb(32 30 26 / 0.18);
+    transform: translate(1px, 1px);
+    border-color: theme('colors.juice.DEFAULT');
   }
 
   /* One-shot confetti burst for the launch success view. */
@@ -49,7 +161,7 @@
     top: 0;
     width: 8px;
     height: 13px;
-    border-radius: 2px;
+    border-radius: 1px;
     opacity: 0;
     animation: confetti-fall 1.4s cubic-bezier(0.25, 0.6, 0.45, 1) forwards;
   }
@@ -62,6 +174,21 @@
   }
   100% {
     transform: translateY(150px) rotate(520deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-juice,
+  .btn-juice:hover:not(:disabled),
+  .card-lift,
+  .card-lift:hover {
+    transition: none;
+    transform: none;
+  }
+
+  .confetti-piece {
+    animation: none;
     opacity: 0;
   }
 }

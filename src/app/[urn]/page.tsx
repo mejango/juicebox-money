@@ -114,7 +114,7 @@ function ExternalLink({ href, label }: { href: string; label: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex min-h-[36px] items-center rounded-full border border-ink/15 bg-white px-3.5 text-sm font-medium text-ink/70 transition-colors hover:border-juice-500 hover:text-ink"
+      className="btn-pixel min-h-[36px] px-3.5 text-[11px]"
     >
       {label}
     </a>
@@ -178,21 +178,21 @@ export default async function ProjectPage({
           name={project.name}
           logoUri={project.logoUri}
           size={88}
-          className="rounded-2xl"
+          className="rounded-md"
         />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+            <h1 className="font-display text-3xl font-extrabold tracking-[-0.03em] sm:text-4xl">
               {name}
             </h1>
-            <ChainBadge chainId={project.chainId} />
+            <ChainBadge chainId={project.chainId} full />
           </div>
           {project.projectTagline ? (
-            <p className="mt-1.5 text-lg text-ink/60">
+            <p className="mt-1.5 text-base text-dim sm:text-lg">
               {project.projectTagline}
             </p>
           ) : null}
-          <p className="mt-2 text-sm text-ink/40">
+          <p className="mt-2 text-sm text-dim/80">
             {project.owner ? (
               <>
                 Owned by{' '}
@@ -201,12 +201,12 @@ export default async function ProjectPage({
                     href={`https://${etherscan}/address/${project.owner}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-mono hover:text-ink/70 hover:underline"
+                    className="hover:text-ink hover:underline"
                   >
                     {truncateAddress(project.owner)}
                   </a>
                 ) : (
-                  <span className="font-mono">
+                  <span>
                     {truncateAddress(project.owner)}
                   </span>
                 )}
@@ -221,12 +221,12 @@ export default async function ProjectPage({
       {/* Chain selector */}
       {chains.length > 1 ? (
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          <span className="text-sm text-ink/50">Also on:</span>
+          <span className="silk-label">Also on</span>
           {chains.map(p =>
             p.chainId === project.chainId ? (
               <span
                 key={p.chainId}
-                className="rounded-full bg-ink px-3.5 py-1.5 text-sm font-semibold text-white"
+                className="chip !px-3 !py-1.5 bg-juice !text-[11px] text-bg"
               >
                 {chainName(p.chainId)}
               </span>
@@ -234,7 +234,7 @@ export default async function ProjectPage({
               <Link
                 key={p.chainId}
                 href={`/${toUrn(p.chainId, p.projectId)}`}
-                className="rounded-full border border-ink/15 bg-white px-3.5 py-1.5 text-sm font-medium text-ink/70 transition-colors hover:border-juice-500 hover:text-ink"
+                className="chip !px-3 !py-1.5 bg-frame !text-[11px] text-ink transition-colors hover:bg-panel2"
               >
                 {chainName(p.chainId)}
               </Link>
@@ -248,14 +248,12 @@ export default async function ProjectPage({
         {stats.map(([label, value]) => (
           <div
             key={label}
-            className="rounded-2xl border border-ink/10 bg-white px-4 py-3.5"
+            className="panel px-4 py-3.5"
           >
-            <dd className="text-xl font-extrabold tracking-tight sm:text-2xl">
+            <dt className="silk-label">{label}</dt>
+            <dd className="mt-1 text-xl font-extrabold tracking-tight text-juice sm:text-2xl">
               {value}
             </dd>
-            <dt className="mt-0.5 text-xs font-medium uppercase tracking-wide text-ink/40">
-              {label}
-            </dt>
           </div>
         ))}
       </dl>
@@ -277,11 +275,11 @@ export default async function ProjectPage({
         <div className="order-2 min-w-0 lg:order-1 lg:col-span-2">
           {description.length > 0 || infoUri || twitter || discord ? (
             <section>
-              <h2 className="mb-3 text-xl font-extrabold tracking-tight">
+              <h2 className="mb-3 font-display text-xl font-extrabold tracking-[-0.02em]">
                 About
               </h2>
               {description.length > 0 ? (
-                <div className="space-y-3 text-[15px] leading-relaxed text-ink/80">
+                <div className="panel space-y-3 p-5 text-sm leading-relaxed text-ink/90">
                   {description.map((p, i) => (
                     <p key={i}>{p}</p>
                   ))}
@@ -308,7 +306,7 @@ export default async function ProjectPage({
                 : ''
             }
           >
-            <h2 className="mb-3 text-xl font-extrabold tracking-tight">
+            <h2 className="mb-3 font-display text-xl font-extrabold tracking-[-0.02em]">
               Activity
             </h2>
             <ActivityList

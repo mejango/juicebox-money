@@ -1,10 +1,23 @@
 import type { Metadata, Viewport } from 'next'
+import localFont from 'next/font/local'
 import Link from 'next/link'
 import '@getpara/react-sdk-lite/styles.css'
 import './globals.css'
 import { SearchBox } from '@/components/SearchBox'
 import { WalletButton } from '@/components/WalletButton'
 import { ParaHost, Providers } from '@/providers/Providers'
+
+// Voice 3 — the Silkscreen bitmap face (OFL, license in src/fonts).
+// Buttons, badges, and tiny labels ONLY.
+const silkscreen = localFont({
+  src: [
+    { path: '../fonts/silkscreen-400.woff2', weight: '400', style: 'normal' },
+    { path: '../fonts/silkscreen-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-pixel',
+  display: 'swap',
+  fallback: ['ui-monospace', 'Menlo', 'monospace'],
+})
 
 export const metadata: Metadata = {
   title: {
@@ -16,7 +29,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#FFB32C',
+  themeColor: '#141217',
 }
 
 function JuiceboxMark() {
@@ -28,19 +41,19 @@ function JuiceboxMark() {
         y="7"
         width="13"
         height="14"
-        rx="2.5"
-        className="fill-juice-400"
+        rx="1.5"
+        className="fill-juice"
       />
-      <rect x="4" y="7" width="13" height="5" rx="2.5" className="fill-juice-500" />
+      <rect x="4" y="7" width="13" height="5" rx="1.5" className="fill-juice-600" />
       <path
         d="M14 8 L19 2.5"
-        stroke="#201E1A"
+        stroke="#F2EFE6"
         strokeWidth="2"
         strokeLinecap="round"
         fill="none"
       />
-      <circle cx="8.5" cy="15.5" r="1.3" fill="#201E1A" />
-      <circle cx="12.5" cy="15.5" r="1.3" fill="#201E1A" />
+      <circle cx="8.5" cy="15.5" r="1.3" fill="#141217" />
+      <circle cx="12.5" cy="15.5" r="1.3" fill="#141217" />
     </svg>
   )
 }
@@ -51,14 +64,14 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={silkscreen.variable}>
       <body className="flex min-h-screen flex-col">
         <Providers>
-          <header className="sticky top-0 z-40 border-b border-ink/10 bg-cream/90 backdrop-blur">
+          <header className="sticky top-0 z-40 border-b-2 border-frame bg-bg/90 backdrop-blur">
             <nav className="relative mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
               <Link
                 href="/"
-                className="flex shrink-0 items-center gap-2 text-lg font-extrabold tracking-tight"
+                className="flex shrink-0 items-center gap-2 font-display text-lg font-extrabold tracking-tight text-ink"
               >
                 <JuiceboxMark />
                 Juicebox
@@ -67,7 +80,7 @@ export default function RootLayout({
               {/* Desktop-only nav item; mobile keeps it in the hero. */}
               <Link
                 href="/create"
-                className="hidden shrink-0 text-sm font-semibold text-ink/70 transition-colors hover:text-ink md:inline"
+                className="hidden shrink-0 font-pixel text-xs uppercase tracking-wider text-dim transition-colors hover:text-juice md:inline"
               >
                 Start a project
               </Link>
@@ -79,9 +92,9 @@ export default function RootLayout({
 
           <main className="flex-1">{children}</main>
 
-          <footer className="border-t border-ink/10">
-            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-ink/60 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <p className="flex items-center gap-2 font-semibold text-ink/80">
+          <footer className="border-t-2 border-frame">
+            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-dim sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <p className="flex items-center gap-2 font-display font-bold text-ink">
                 <JuiceboxMark />
                 Juicebox
               </p>
@@ -90,7 +103,7 @@ export default function RootLayout({
                   href="https://docs.juicebox.money"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="hover:text-ink"
+                  className="font-pixel text-xs uppercase tracking-wider hover:text-juice"
                 >
                   Docs
                 </a>
@@ -98,7 +111,7 @@ export default function RootLayout({
                   href="https://github.com/Bananapus"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="hover:text-ink"
+                  className="font-pixel text-xs uppercase tracking-wider hover:text-juice"
                 >
                   GitHub
                 </a>

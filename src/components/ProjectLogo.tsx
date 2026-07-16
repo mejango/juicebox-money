@@ -1,13 +1,14 @@
 import Image from 'next/image'
 import { ipfsUrl } from '@/lib/format'
 
+// Palette tiles with checked contrast: dark bg text on the bright ones,
+// white on navy (8.9:1).
 const TILES = [
-  'bg-juice-400 text-ink',
-  'bg-emerald-500 text-white',
-  'bg-sky-500 text-white',
-  'bg-rose-400 text-white',
-  'bg-violet-500 text-white',
-  'bg-teal-500 text-white',
+  'bg-juice text-bg',
+  'bg-lime text-bg',
+  'bg-jcyan text-bg',
+  'bg-magenta text-bg',
+  'bg-navy text-white',
 ]
 
 /** Project logo image, or a colored initial tile when there's no usable logo. */
@@ -34,7 +35,7 @@ export function ProjectLogo({
         alt=""
         width={size}
         height={size}
-        className={`shrink-0 rounded-xl border border-ink/10 bg-white object-cover ${className}`}
+        className={`shrink-0 rounded border-2 border-frame bg-panel2 object-cover ${className}`}
         style={{ width: size, height: size }}
       />
     )
@@ -48,8 +49,8 @@ export function ProjectLogo({
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded-xl font-bold ${tile} ${className}`}
-      style={{ width: size, height: size, fontSize: size * 0.42 }}
+      className={`flex shrink-0 items-center justify-center rounded font-pixel font-bold ${tile} ${className}`}
+      style={{ width: size, height: size, fontSize: size * 0.38 }}
     >
       {label[0].toUpperCase()}
     </span>

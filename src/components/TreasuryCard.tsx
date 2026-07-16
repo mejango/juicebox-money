@@ -65,18 +65,18 @@ export function TreasuryCard({
   const [tab, setTab] = useState<Tab>('pay')
 
   const tabClass = (active: boolean) =>
-    `min-h-[40px] rounded-xl text-sm transition-colors ${
+    `min-h-[40px] rounded-[3px] font-pixel text-xs uppercase tracking-wider transition-colors ${
       active
-        ? 'bg-white font-bold text-ink shadow-sm'
-        : 'font-semibold text-ink/50 hover:text-ink'
+        ? 'bg-juice text-bg'
+        : 'text-dim hover:text-ink'
     }`
 
   return (
-    <div className="rounded-3xl border border-ink/10 bg-white p-6 shadow-sm">
+    <div className="panel-juice p-6">
       <div
         role="tablist"
         aria-label="Treasury actions"
-        className="grid grid-cols-2 gap-1 rounded-2xl bg-ink/5 p-1"
+        className="grid grid-cols-2 gap-1 rounded border-2 border-frame bg-well p-1"
       >
         <button
           role="tab"
@@ -243,10 +243,10 @@ function PayPanel({
   if (success) {
     return (
       <div className="flex flex-col items-center py-4 text-center">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
+        <span className="flex h-14 w-14 items-center justify-center rounded border-2 border-lime">
           <svg
             viewBox="0 0 24 24"
-            className="h-7 w-7 text-emerald-600"
+            className="h-7 w-7 text-lime"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.5"
@@ -257,8 +257,8 @@ function PayPanel({
             <path d="m5 13 4 4L19 7" />
           </svg>
         </span>
-        <h3 className="mt-4 text-lg font-bold">Payment sent!</h3>
-        <p className="mt-1 text-sm text-ink/60">
+        <h3 className="mt-4 font-display text-lg font-bold">Payment sent!</h3>
+        <p className="mt-1 text-sm text-dim">
           Thanks for supporting {projectName}.
         </p>
         <div className="mt-5 flex gap-3 text-sm font-semibold">
@@ -267,12 +267,12 @@ function PayPanel({
               href={txUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-juice-600 underline underline-offset-2 hover:text-juice-500"
+              className="text-juice underline underline-offset-2 hover:text-juice-500"
             >
               View transaction
             </a>
           ) : null}
-          <button onClick={reset} className="text-ink/60 hover:text-ink">
+          <button onClick={reset} className="text-dim hover:text-ink">
             Pay again
           </button>
         </div>
@@ -282,10 +282,10 @@ function PayPanel({
 
   return (
     <div>
-      <h3 className="text-lg font-bold">Support this project</h3>
+      <h3 className="font-display text-lg font-bold">Support this project</h3>
       <label className="mt-4 block">
-        <span className="text-sm font-medium text-ink/60">Amount</span>
-        <div className="mt-1.5 flex items-center rounded-2xl border border-ink/15 bg-cream/60 px-4 transition-colors focus-within:border-juice-500 focus-within:ring-2 focus-within:ring-juice-400/30">
+        <span className="silk-label">Amount</span>
+        <div className="input-well mt-1.5 flex items-center px-4">
           <input
             type="text"
             inputMode="decimal"
@@ -294,15 +294,15 @@ function PayPanel({
             onChange={e => setAmount(e.target.value)}
             placeholder="0.01"
             aria-label={`Amount in ${nativeSymbol}`}
-            className="min-h-[52px] w-full bg-transparent text-xl font-semibold outline-none placeholder:text-ink/30"
+            className="min-h-[52px] w-full bg-transparent text-xl font-semibold outline-none placeholder:text-dim/50"
           />
-          <span className="ml-2 shrink-0 font-semibold text-ink/50">
+          <span className="ml-2 shrink-0 font-semibold text-dim">
             {nativeSymbol}
           </span>
         </div>
       </label>
 
-      <div className="mt-2 min-h-[20px] text-sm text-ink/50" aria-live="polite">
+      <div className="mt-2 min-h-[20px] text-sm text-dim" aria-live="polite">
         {amountWei > 0n && preview
           ? `You'll get ~${formatTokenAmount(preview.beneficiaryTokenCount, 18, 2)} tokens`
           : amountWei > 0n && previewLoading
@@ -312,19 +312,19 @@ function PayPanel({
 
       {showMemo ? (
         <label className="mt-2 block">
-          <span className="text-sm font-medium text-ink/60">Note</span>
+          <span className="silk-label">Note</span>
           <input
             type="text"
             value={memo}
             onChange={e => setMemo(e.target.value.slice(0, 256))}
             placeholder="Say something nice (onchain, public)"
-            className="mt-1.5 min-h-[44px] w-full rounded-2xl border border-ink/15 bg-cream/60 px-4 text-sm outline-none transition-colors placeholder:text-ink/30 focus:border-juice-500 focus:ring-2 focus:ring-juice-400/30"
+            className="input-well mt-1.5 min-h-[44px] px-4 text-sm"
           />
         </label>
       ) : (
         <button
           onClick={() => setShowMemo(true)}
-          className="mt-1 text-sm font-medium text-ink/50 hover:text-ink"
+          className="mt-1 font-pixel text-[11px] uppercase tracking-wider text-dim hover:text-ink"
         >
           + Add a note
         </button>
@@ -333,7 +333,7 @@ function PayPanel({
       <button
         onClick={pay}
         disabled={sending || mining || (isConnected && amountWei <= 0n)}
-        className="mt-5 min-h-[52px] w-full rounded-2xl bg-juice-500 text-base font-bold text-ink transition-colors hover:bg-juice-600 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-juice mt-5 min-h-[52px] w-full text-sm"
       >
         {sending
           ? 'Confirm in your wallet…'
@@ -347,7 +347,7 @@ function PayPanel({
       </button>
 
       {mining && txUrl ? (
-        <p className="mt-3 text-center text-sm text-ink/50">
+        <p className="mt-3 text-center text-sm text-dim">
           Waiting for confirmation —{' '}
           <a
             href={txUrl}
@@ -360,7 +360,7 @@ function PayPanel({
         </p>
       ) : null}
       {errorMsg ? (
-        <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-3 rounded border-2 border-red-400/40 bg-well px-3 py-2 text-sm text-red-300">
           {errorMsg}
         </p>
       ) : null}
@@ -585,10 +585,10 @@ function CashOutPanel({
   if (success) {
     return (
       <div className="flex flex-col items-center py-4 text-center">
-        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100">
+        <span className="flex h-14 w-14 items-center justify-center rounded border-2 border-lime">
           <svg
             viewBox="0 0 24 24"
-            className="h-7 w-7 text-emerald-600"
+            className="h-7 w-7 text-lime"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.5"
@@ -599,8 +599,8 @@ function CashOutPanel({
             <path d="m5 13 4 4L19 7" />
           </svg>
         </span>
-        <h3 className="mt-4 text-lg font-bold">Cashed out!</h3>
-        <p className="mt-1 text-sm text-ink/60">
+        <h3 className="mt-4 font-display text-lg font-bold">Cashed out!</h3>
+        <p className="mt-1 text-sm text-dim">
           Your share of {projectName}&apos;s treasury is on its way.
         </p>
         <div className="mt-5 flex gap-3 text-sm font-semibold">
@@ -609,12 +609,12 @@ function CashOutPanel({
               href={txUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-juice-600 underline underline-offset-2 hover:text-juice-500"
+              className="text-juice underline underline-offset-2 hover:text-juice-500"
             >
               View transaction
             </a>
           ) : null}
-          <button onClick={reset} className="text-ink/60 hover:text-ink">
+          <button onClick={reset} className="text-dim hover:text-ink">
             Cash out again
           </button>
         </div>
@@ -624,9 +624,9 @@ function CashOutPanel({
 
   return (
     <div>
-      <h3 className="text-lg font-bold">Cash out your tokens</h3>
+      <h3 className="font-display text-lg font-bold">Cash out your tokens</h3>
 
-      <div className="mt-2 min-h-[20px] text-sm text-ink/60" aria-live="polite">
+      <div className="mt-2 min-h-[20px] text-sm text-dim" aria-live="polite">
         {!isConnected ? (
           'Sign in to see your balance.'
         ) : zeroBalance ? (
@@ -634,7 +634,7 @@ function CashOutPanel({
             You don&apos;t hold this project&apos;s tokens yet —{' '}
             <button
               onClick={onGoToPay}
-              className="font-semibold text-juice-600 underline underline-offset-2 hover:text-juice-500"
+              className="font-semibold text-juice underline underline-offset-2 hover:text-juice-500"
             >
               pay to get some
             </button>
@@ -645,7 +645,7 @@ function CashOutPanel({
             You hold {formatTokenAmount(balance, 18)} {holdingsSymbol}
             <button
               onClick={setMax}
-              className="rounded-full border border-ink/15 px-2 py-0.5 text-xs font-bold text-ink/60 transition-colors hover:border-juice-500 hover:text-ink"
+              className="btn-pixel px-2 py-0.5 text-[10px]"
             >
               MAX
             </button>
@@ -656,11 +656,11 @@ function CashOutPanel({
       </div>
 
       <label className="mt-3 block">
-        <span className="text-sm font-medium text-ink/60">
+        <span className="silk-label">
           Amount to cash out
         </span>
         <div
-          className={`mt-1.5 flex items-center rounded-2xl border border-ink/15 bg-cream/60 px-4 transition-colors focus-within:border-juice-500 focus-within:ring-2 focus-within:ring-juice-400/30 ${
+          className={`input-well mt-1.5 flex items-center px-4 ${
             zeroBalance ? 'opacity-50' : ''
           }`}
         >
@@ -673,17 +673,17 @@ function CashOutPanel({
             placeholder="0"
             disabled={zeroBalance}
             aria-label={`Amount of ${holdingsSymbol} to cash out`}
-            className="min-h-[52px] w-full bg-transparent text-xl font-semibold outline-none placeholder:text-ink/30 disabled:cursor-not-allowed"
+            className="min-h-[52px] w-full bg-transparent text-xl font-semibold outline-none placeholder:text-dim/50 disabled:cursor-not-allowed"
           />
-          <span className="ml-2 shrink-0 font-semibold text-ink/50">
+          <span className="ml-2 shrink-0 font-semibold text-dim">
             {holdingsSymbol}
           </span>
         </div>
       </label>
 
-      <div className="mt-2 min-h-[20px] text-sm text-ink/50" aria-live="polite">
+      <div className="mt-2 min-h-[20px] text-sm text-dim" aria-live="polite">
         {exceedsBalance ? (
-          <span className="text-red-600">
+          <span className="text-red-400">
             That&apos;s more than you hold.
           </span>
         ) : nothingToReclaim ? (
@@ -708,7 +708,7 @@ function CashOutPanel({
               !quote ||
               quote.reclaimAmountAfterFee <= 0n))
         }
-        className="mt-5 min-h-[52px] w-full rounded-2xl bg-juice-500 text-base font-bold text-ink transition-colors hover:bg-juice-600 disabled:cursor-not-allowed disabled:opacity-50"
+        className="btn-juice mt-5 min-h-[52px] w-full text-sm"
       >
         {sending
           ? 'Confirm in your wallet…'
@@ -726,7 +726,7 @@ function CashOutPanel({
       cashOutCount > 0n &&
       quote &&
       quote.reclaimAmountAfterFee > 0n ? (
-        <p className="mt-3 text-center text-xs text-ink/40">
+        <p className="mt-3 text-center text-xs text-dim/80">
           You&apos;ll receive at least{' '}
           {formatTokenAmount(minReclaimedFloor(quote), receiveDecimals)}{' '}
           {receiveSymbol}, or the transaction reverts.
@@ -734,7 +734,7 @@ function CashOutPanel({
       ) : null}
 
       {mining && txUrl ? (
-        <p className="mt-3 text-center text-sm text-ink/50">
+        <p className="mt-3 text-center text-sm text-dim">
           Waiting for confirmation —{' '}
           <a
             href={txUrl}
@@ -747,7 +747,7 @@ function CashOutPanel({
         </p>
       ) : null}
       {errorMsg ? (
-        <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-3 rounded border-2 border-red-400/40 bg-well px-3 py-2 text-sm text-red-300">
           {errorMsg}
         </p>
       ) : null}
