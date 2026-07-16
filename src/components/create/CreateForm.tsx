@@ -52,6 +52,7 @@ import {
   SubSection,
 } from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
+import { ChainIcon } from '@/components/ChainIcon'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 import {
@@ -173,6 +174,14 @@ export function CreateForm() {
   } | null>(null)
   /** Issuance denomination; null = follow accounting. */
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
+  const [allowAnyToken, setAllowAnyToken] = useState(true)
+  const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
+  const [ownerPerChainOpen, setOwnerPerChainOpen] = useState(false)
+  const [approvalCustom, setApprovalCustom] = useState('')
+  const [approvalPerChain, setApprovalPerChain] = useState<
+    Record<number, string>
+  >({})
+  const [customChainError, setCustomChainError] = useState<string | null>(null)
   const [selected, setSelected] = useState<number[]>(
     SUPPORTED_CHAINS.map(chain => chain.id),
   )
@@ -263,28 +272,58 @@ export function CreateForm() {
         ? 6
         : 18
 
-  // Resolve the custom token's decimals + symbol on the first selected
-  // chain (it must exist at the same address on every chain).
+  // Verify the custom token on EVERY selected chain: it must exist at the
+  // same address with matching decimals everywhere (website/ parity).
   useEffect(() => {
     setCustomMeta(null)
+    setCustomChainError(null)
     const address = resolvedAddress(customAddress)
-    if (!customOn || !address) return
+    if (!customOn || !address || selected.length === 0) return
     let stale = false
     const t = setTimeout(async () => {
-      try {
-        const client = getPublicClient(config, {
-          chainId: (selected[0] ?? SUPPORTED_CHAINS[0].id) as SupportedChainId,
-        }) as PublicClient
-        const [decimals, symbol] = await Promise.all([
-          client.readContract({ address, abi: erc20Abi, functionName: 'decimals' }),
-          client
-            .readContract({ address, abi: erc20Abi, functionName: 'symbol' })
-            .catch(() => 'TOKEN'),
-        ])
-        if (!stale) setCustomMeta({ decimals, symbol })
-      } catch {
-        if (!stale) setCustomMeta(null)
+      const results = await Promise.all(
+        selected.map(async chainId => {
+          try {
+            const client = getPublicClient(config, {
+              chainId: chainId as SupportedChainId,
+            }) as PublicClient
+            const [decimals, symbol] = await Promise.all([
+              client.readContract({
+                address,
+                abi: erc20Abi,
+                functionName: 'decimals',
+              }),
+              client
+                .readContract({ address, abi: erc20Abi, functionName: 'symbol' })
+                .catch(() => 'TOKEN'),
+            ])
+            return { chainId, decimals, symbol }
+          } catch {
+            return { chainId, decimals: null, symbol: null }
+          }
+        }),
+      )
+      if (stale) return
+      const missing = results.filter(r => r.decimals === null)
+      if (missing.length > 0) {
+        setCustomChainError(
+          `No token found on ${missing
+            .map(r => chainName(r.chainId))
+            .join(', ')} — it must exist at this address on every selected chain.`,
+        )
+        return
       }
+      const decimalsSet = new Set(results.map(r => r.decimals))
+      if (decimalsSet.size > 1) {
+        setCustomChainError(
+          'The token at this address differs between chains (mismatched decimals).',
+        )
+        return
+      }
+      setCustomMeta({
+        decimals: results[0].decimals as number,
+        symbol: (results[0].symbol as string) || 'TOKEN',
+      })
     }, 400)
     return () => {
       stale = true
@@ -379,7 +418,17 @@ export function CreateForm() {
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0
-  const ownerOk = owner.trim() === '' || resolvedAddress(owner) !== null
+  const ownerOk =
+    (owner.trim() === '' || resolvedAddress(owner) !== null) &&
+    Object.values(ownerPerChain).every(
+      v => v.trim() === '' || resolvedAddress(v) !== null,
+    )
+  const approvalOk =
+    approvalDeadline !== 'custom' ||
+    (resolvedAddress(approvalCustom) !== null &&
+      Object.values(approvalPerChain).every(
+        v => v.trim() === '' || resolvedAddress(v) !== null,
+      ))
   const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
   const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor))
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
@@ -394,6 +443,7 @@ export function CreateForm() {
     nameOk &&
     tosAccepted &&
     accountingOk &&
+    approvalOk &&
     ownerOk &&
     tickerOk &&
     selected.length > 0 &&
@@ -631,6 +681,16 @@ export function CreateForm() {
           chainId,
           {
             issuanceBase,
+            allowAnyToken: flavor === 'revnet' ? true : allowAnyToken,
+            owner: resolvedAddress(
+              ownerPerChain[chainId]?.trim() || owner,
+            ),
+            approvalCustomAddress:
+              approvalDeadline === 'custom'
+                ? resolvedAddress(
+                    approvalPerChain[chainId]?.trim() || approvalCustom,
+                  )
+                : null,
             accounting: {
               tokens: accepts,
               custom:
@@ -642,7 +702,9 @@ export function CreateForm() {
                   : null,
             },
             flavor,
-            operator: resolvedAddress(owner),
+            operator: resolvedAddress(
+              ownerPerChain[chainId]?.trim() || owner,
+            ),
             ticker: ticker.trim(),
             stages: planStages,
             afterMode,
@@ -823,7 +885,7 @@ export function CreateForm() {
         )
         const request = buildLaunchRequest({
           chainId: chainId as JBChainId,
-          owner: resolvedAddress(owner) ?? address!,
+          owner: pinned.plans[chainId].owner ?? address!,
           projectUri: pinned.projectUri,
           creationFee,
           plan: pinned.plans[chainId],
@@ -919,6 +981,10 @@ export function CreateForm() {
     tags,
     links,
     owner,
+    ownerPerChain,
+    allowAnyToken,
+    approvalCustom,
+    approvalPerChain,
     accepts,
     customAddress: customOn ? customAddress : '',
     issuanceBase,
@@ -948,6 +1014,10 @@ export function CreateForm() {
       instagram: draft.links.instagram ?? '',
     })
     setOwner(draft.owner)
+    setOwnerPerChain(draft.ownerPerChain)
+    setAllowAnyToken(draft.allowAnyToken)
+    setApprovalCustom(draft.approvalCustom)
+    setApprovalPerChain(draft.approvalPerChain)
     setAccepts(draft.accepts)
     setCustomOn(draft.customAddress !== '')
     setCustomAddress(draft.customAddress)
@@ -1033,6 +1103,10 @@ export function CreateForm() {
     tags,
     links,
     owner,
+    ownerPerChain,
+    allowAnyToken,
+    approvalCustom,
+    approvalPerChain,
     accepts,
     customOn,
     customAddress,
@@ -1316,11 +1390,16 @@ export function CreateForm() {
               />
               {customMeta ? (
                 <p className="mt-1.5 text-xs text-smoke-700">
-                  ${customMeta.symbol} · {customMeta.decimals} decimals
+                  ${customMeta.symbol} · {customMeta.decimals} decimals ·
+                  verified on {selected.map(id => chainName(id)).join(', ')}
+                </p>
+              ) : customChainError ? (
+                <p className="mt-1.5 text-xs text-red-600">
+                  {customChainError}
                 </p>
               ) : resolvedAddress(customAddress) ? (
                 <p className="mt-1.5 text-xs text-smoke-500">
-                  Checking the token…
+                  Checking the token on every selected chain…
                 </p>
               ) : null}
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
@@ -1329,6 +1408,17 @@ export function CreateForm() {
                 in this token itself, so no price feed is needed. You can add
                 a feed later to price in ETH or USD instead.
               </p>
+            </div>
+          ) : null}
+          {flavor !== 'revnet' ? (
+            <div className="mt-3">
+              <CheckRow
+                checked={allowAnyToken}
+                onToggle={() => !busy && setAllowAnyToken(a => !a)}
+                disabled={busy}
+                title="Let payers pay in any token"
+                blurb="Payments in other tokens auto-swap into your accounting token as they come in. Uncheck to require payment in your accounting token only."
+              />
             </div>
           ) : null}
         </div>
@@ -1386,6 +1476,46 @@ export function CreateForm() {
             ariaLabel={flavor === 'revnet' ? 'Operator' : 'Owner'}
             className="mt-2"
           />
+          {selected.length > 1 ? (
+            <div className="mt-2">
+              <button
+                onClick={() => setOwnerPerChainOpen(o => !o)}
+                disabled={busy}
+                aria-expanded={ownerPerChainOpen}
+                className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+              >
+                {ownerPerChainOpen
+                  ? 'Same on every chain'
+                  : `Set per chain — if the ${flavor === 'revnet' ? 'operator' : 'owner'} differs by chain`}
+              </button>
+              {ownerPerChainOpen ? (
+                <div className="mt-2 space-y-2">
+                  {selected.map(chainId => (
+                    <div key={chainId} className="flex items-start gap-2">
+                      <span className="mt-3 flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
+                        <ChainIcon chainId={chainId} size={14} />
+                        {chainName(chainId)}
+                      </span>
+                      <AddressField
+                        value={ownerPerChain[chainId] ?? ''}
+                        onChange={v =>
+                          setOwnerPerChain(prev => ({ ...prev, [chainId]: v }))
+                        }
+                        disabled={busy}
+                        placeholder={owner.trim() || 'default'}
+                        ariaLabel={`${flavor === 'revnet' ? 'Operator' : 'Owner'} on ${chainName(chainId)}`}
+                        className="flex-1"
+                        compact
+                      />
+                    </div>
+                  ))}
+                  <p className="text-[11px] leading-relaxed text-smoke-500">
+                    Empty fields use the default above.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -1825,8 +1955,54 @@ export function CreateForm() {
                 <option value="3days">3 days</option>
                 <option value="7days">7 days</option>
                 <option value="none">No notice</option>
+                <option value="custom">Custom contract…</option>
               </select>
-              {approvalDeadline !== 'none' ? (
+              {approvalDeadline === 'custom' ? (
+                <div className="mt-3">
+                  <p className="mb-2 text-xs leading-relaxed text-smoke-700">
+                    A JBRulesetApprovalHook contract that approves or rejects
+                    queued changes. It must be deployed on every selected
+                    chain.
+                  </p>
+                  <AddressField
+                    value={approvalCustom}
+                    onChange={setApprovalCustom}
+                    disabled={busy}
+                    placeholder="0x… approval hook"
+                    ariaLabel="Custom approval hook"
+                  />
+                  {selected.length > 1 ? (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-[11px] text-smoke-500">
+                        Different address on some chains? Set per chain
+                        (empty = the address above):
+                      </p>
+                      {selected.map(chainId => (
+                        <div key={chainId} className="flex items-start gap-2">
+                          <span className="mt-3 flex w-28 shrink-0 items-center gap-1.5 text-xs text-smoke-700">
+                            <ChainIcon chainId={chainId} size={14} />
+                            {chainName(chainId)}
+                          </span>
+                          <AddressField
+                            value={approvalPerChain[chainId] ?? ''}
+                            onChange={v =>
+                              setApprovalPerChain(prev => ({
+                                ...prev,
+                                [chainId]: v,
+                              }))
+                            }
+                            disabled={busy}
+                            placeholder="default"
+                            ariaLabel={`Approval hook on ${chainName(chainId)}`}
+                            className="flex-1"
+                            compact
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : approvalDeadline !== 'none' ? (
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                   Queued changes take effect{' '}
                   {
@@ -1835,7 +2011,7 @@ export function CreateForm() {
                       '1day': '1 day',
                       '3days': '3 days',
                       '7days': '7 days',
-                    }[approvalDeadline]
+                    }[approvalDeadline as '3hours' | '1day' | '3days' | '7days']
                   }{' '}
                   after they&apos;re proposed.
                 </p>
@@ -2102,11 +2278,13 @@ export function CreateForm() {
               <dd className="font-medium text-ink">
                 {approvalDeadline === 'none'
                   ? 'Immediate'
-                  : `${
-                      { '3hours': '3 hours', '1day': '1 day', '3days': '3 days', '7days': '7 days' }[
-                        approvalDeadline
-                      ]
-                    } notice`}
+                  : approvalDeadline === 'custom'
+                    ? 'Custom approval contract'
+                    : `${
+                        { '3hours': '3 hours', '1day': '1 day', '3days': '3 days', '7days': '7 days' }[
+                          approvalDeadline
+                        ]
+                      } notice`}
               </dd>
             </div>
           ) : null}

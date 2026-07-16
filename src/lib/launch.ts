@@ -79,10 +79,16 @@ export const FOREVER_SECONDS = 4_294_967_295
 
 /** The approval condition queued ruleset edits must clear (shared across
  *  every stage, matching website/). 'none' = no condition (address(0)). */
-export type ApprovalDeadline = 'none' | '3hours' | '1day' | '3days' | '7days'
+export type ApprovalDeadline =
+  | 'none'
+  | '3hours'
+  | '1day'
+  | '3days'
+  | '7days'
+  | 'custom'
 
 const DEADLINE_CONTRACT: Record<
-  Exclude<ApprovalDeadline, 'none'>,
+  Exclude<ApprovalDeadline, 'none' | 'custom'>,
   'JBDeadline3Hours' | 'JBDeadline1Day' | 'JBDeadline3Days' | 'JBDeadline7Days'
 > = {
   '3hours': 'JBDeadline3Hours',
@@ -170,6 +176,12 @@ export type LaunchPlan = {
    *  stage is open-ended (duration 0) or forever. */
   afterMode: 'wait' | 'terminal' | 'cycle'
   approvalDeadline: ApprovalDeadline
+  /** Resolved custom approval-hook address for THIS chain ('custom'). */
+  approvalCustomAddress: Address | null
+  /** Include the any-token swap-router terminal (project flavor). */
+  allowAnyToken: boolean
+  /** Owner (project) for this chain; null = connected wallet at send. */
+  owner: Address | null
   /** The 721 store collection. Always deployed — even with zero items — so
    *  every project can stock its store later without a ruleset change. */
   store: {
@@ -237,6 +249,9 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   stages: [DEFAULT_STAGE],
   afterMode: 'wait',
   approvalDeadline: '1day',
+  approvalCustomAddress: null,
+  allowAnyToken: true,
+  owner: null,
 }
 
 /**
@@ -409,7 +424,9 @@ export function buildLaunchRequest(args: {
   const approvalHook =
     plan.approvalDeadline === 'none' || lastForever
       ? zeroAddress
-      : v6Address(DEADLINE_CONTRACT[plan.approvalDeadline], chainId)
+      : plan.approvalDeadline === 'custom'
+        ? (plan.approvalCustomAddress ?? zeroAddress)
+        : v6Address(DEADLINE_CONTRACT[plan.approvalDeadline], chainId)
 
   const rulesetConfigurations = stages.map((stage, i) =>
     buildRulesetConfiguration({
@@ -484,10 +501,16 @@ export function buildLaunchRequest(args: {
     }),
   )
 
-  const terminalConfigurations = buildTerminalConfigurations({
-    chainId,
-    accountingContexts: contexts,
-  })
+  // The router-registry terminal makes the project accept ANY token via
+  // swap routing; without it, payers must pay in the accounting token(s).
+  const terminalConfigurations = plan.allowAnyToken
+    ? buildTerminalConfigurations({ chainId, accountingContexts: contexts })
+    : [
+        {
+          terminal: v6Address('JBMultiTerminal', chainId),
+          accountingContextsToAccept: contexts,
+        },
+      ]
 
   return {
     chainId,

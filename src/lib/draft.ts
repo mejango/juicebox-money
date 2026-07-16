@@ -23,6 +23,10 @@ export type CreateDraft = {
   tags: string[]
   links: Record<string, string>
   owner: string
+  ownerPerChain: Record<number, string>
+  allowAnyToken: boolean
+  approvalCustom: string
+  approvalPerChain: Record<number, string>
   accepts: TreasuryCurrency[]
   customAddress: string
   issuanceBase: 'eth' | 'usd' | null
@@ -51,6 +55,18 @@ export function draftFileName(name: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'project'
   return `${slug}.jb`
+}
+
+function sanitizeChainMap(source: unknown): Record<number, string> {
+  const target: Record<number, string> = {}
+  if (source && typeof source === 'object' && !Array.isArray(source)) {
+    for (const [k, v] of Object.entries(source).slice(0, 16)) {
+      const id = Number(k)
+      if (Number.isInteger(id) && typeof v === 'string')
+        target[id] = v.slice(0, 64)
+    }
+  }
+  return target
 }
 
 const str = (v: unknown, max: number): string =>
@@ -209,6 +225,10 @@ export function parseDraft(text: string): CreateDraft {
       .slice(0, 3),
     links,
     owner: str(d.owner, 64),
+    ownerPerChain: sanitizeChainMap(d.ownerPerChain),
+    allowAnyToken: d.allowAnyToken === undefined ? true : bool(d.allowAnyToken),
+    approvalCustom: str(d.approvalCustom, 64),
+    approvalPerChain: sanitizeChainMap(d.approvalPerChain),
     accepts: (Array.isArray(d.accepts) ? d.accepts : ['eth'])
       .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
       .slice(0, 2).length
