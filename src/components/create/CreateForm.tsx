@@ -30,6 +30,7 @@ import {
   stageDurationSeconds,
   stageOk,
   stageSummary,
+  stageSummaryParts,
   type DraftStage,
 } from './StageRulesEditor'
 import { CheckIcon, SubSection } from './ui'
@@ -1264,7 +1265,11 @@ export function CreateForm() {
             >
               <dt className="shrink-0 text-smoke-700">Ruleset #{i + 1}</dt>
               <dd className="text-right font-medium text-ink">
-                {stageSummary(stage, i, unitLabel)}
+                {stageSummaryParts(stage, i, unitLabel).map(part => (
+                  <span key={part} className="block">
+                    {part}
+                  </span>
+                ))}
               </dd>
             </div>
           ))}
@@ -1308,7 +1313,7 @@ export function CreateForm() {
               className="flex items-center justify-between gap-3"
             >
               <dt className="text-smoke-700">
-                Creation fee · {chainName(chainId)}
+                Creation fee on {chainName(chainId)}
               </dt>
               <dd className="font-medium tabular-nums text-ink">
                 {fees?.[chainId] !== undefined && fees?.[chainId] !== null

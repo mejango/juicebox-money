@@ -134,12 +134,12 @@ export function stageOk(stage: DraftStage, isFirst: boolean): boolean {
   )
 }
 
-/** Header summary for a stage card (website/'s stageSummaryRaw). */
-export function stageSummary(
+/** Summary parts for a stage (website/'s stageSummaryRaw). */
+export function stageSummaryParts(
   stage: DraftStage,
   index: number,
   unitLabel: string,
-): string {
+): string[] {
   const parts: string[] = []
   if (index === 0) {
     parts.push(
@@ -169,10 +169,19 @@ export function stageSummary(
   }
   if (Number(stage.reservedPct) > 0)
     parts.push(`${Number(stage.reservedPct)}% reserved`)
-  if (Number(stage.cutPct) > 0) parts.push(`−${Number(stage.cutPct)}%/cycle`)
+  if (Number(stage.cutPct) > 0) parts.push(`-${Number(stage.cutPct)}%/cycle`)
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   if (stage.cashOuts && !routedAll) parts.push('cash outs on')
-  return parts.join(' · ')
+  return parts
+}
+
+/** One-line stage card summary. */
+export function stageSummary(
+  stage: DraftStage,
+  index: number,
+  unitLabel: string,
+): string {
+  return stageSummaryParts(stage, index, unitLabel).join(' | ')
 }
 
 const CASH_OUT_TAXES = [
@@ -218,7 +227,7 @@ export function StageRulesEditor({
         ? 'Scheduled'
         : 'At launch'
       : `After Ruleset #${index}`
-  } · ${
+  } | ${
     duration === 0
       ? 'flexible'
       : duration === FOREVER_SECONDS
@@ -231,8 +240,8 @@ export function StageRulesEditor({
         stage.issuanceRate.trim() === '' && !isFirst
           ? 'Keeps rate'
           : `${Number(stage.issuanceRate || '0').toLocaleString('en-US')} per ${unitLabel}`
-      }${reservedOn ? ` · ${Number(stage.reservedPct)}% reserved` : ''}${
-        Number(stage.cutPct) > 0 ? ` · −${Number(stage.cutPct)}%/cycle` : ''
+      }${reservedOn ? ` | ${Number(stage.reservedPct)}% reserved` : ''}${
+        Number(stage.cutPct) > 0 ? ` | -${Number(stage.cutPct)}%/cycle` : ''
       }`
     : '—'
 
@@ -249,12 +258,12 @@ export function StageRulesEditor({
           : stage.routedMode === 'all'
             ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`
             : `Routing ${splitsTotal(stage.payoutSplits, 'amount').toLocaleString('en-US')} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? '' : 's'}`) +
-    (stage.payouts !== 'none' && stage.holdFees ? ' · fees held' : '')
+    (stage.payouts !== 'none' && stage.holdFees ? ' | fees held' : '')
 
   const cashOutsSummary = routedAll
     ? 'Off — all funds routed'
     : stage.cashOuts
-      ? `On · ${stage.cashOutTax === 0 ? 'no tax' : `${stage.cashOutTax / 100}% tax`}`
+      ? `On | ${stage.cashOutTax === 0 ? 'no tax' : `${stage.cashOutTax / 100}% tax`}`
       : 'Off'
 
   return (

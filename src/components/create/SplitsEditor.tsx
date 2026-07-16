@@ -277,13 +277,13 @@ export function SplitsEditor({
               {total > 100
                 ? `${total}% — over 100%`
                 : total < 100
-                  ? `${total}% allocated · remaining ${bucketLabel} ${remainderNote}`
+                  ? `${total}% allocated | remaining ${bucketLabel} ${remainderNote}`
                   : '100% allocated'}
             </span>
           ) : (
             <span className="text-xs tabular-nums text-smoke-700">
               {total > 0
-                ? `${total.toLocaleString('en-US')} ${amountLabel} total · the rest stays in the project`
+                ? `${total.toLocaleString('en-US')} ${amountLabel} total | the rest stays in the project`
                 : ''}
             </span>
           )
