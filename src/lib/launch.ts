@@ -13,6 +13,7 @@ import {
   buildRulesetConfiguration,
   buildRulesetMetadata,
   buildTerminalConfigurations,
+  tokenCurrencyId,
   v6Address,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
@@ -141,8 +142,15 @@ export type StageRules = {
   issuanceCutFrequency: number
 }
 
+/** What the treasury holds: standard tokens (ETH and/or USDC), or one
+ *  custom ERC-20 (exclusive — priced in itself, no feeds needed). */
+export type AccountingConfig = {
+  tokens: TreasuryCurrency[]
+  custom: { address: Address; decimals: number } | null
+}
+
 export type LaunchPlan = {
-  currency: TreasuryCurrency
+  accounting: AccountingConfig
   /** 'project' launches via the 721 project deployer with owner-changeable
    *  rules; 'revnet' deploys fixed-forever stages via REVDeployer. */
   flavor: 'project' | 'revnet'
@@ -163,8 +171,17 @@ export type LaunchPlan = {
   store: {
     name: string
     symbol: string
-    /** Tier pricing currency — independent of the accounting context. */
-    currency: 'eth' | 'usd'
+    /** Tier pricing currency — 'token' = the custom accounting token. */
+    currency: 'eth' | 'usd' | 'token'
+    /** Collection flags (website/'s store config). */
+    preventOverspending: boolean
+    noNewTiersWithReserves: boolean
+    noNewTiersWithVotes: boolean
+    noNewTiersWithOwnerMinting: boolean
+    issueTokensForSplits: boolean
+    /** Let items cash out for surplus (mutually exclusive with token cash
+     *  outs — the UI enforces it). */
+    itemsRedeem: boolean
     items: StoreItem[]
   }
 }
@@ -193,8 +210,22 @@ export const DEFAULT_STAGE: StageRules = {
   issuanceCutFrequency: 0,
 }
 
+export const DEFAULT_ACCOUNTING: AccountingConfig = {
+  tokens: ['eth'],
+  custom: null,
+}
+
+export const DEFAULT_STORE_FLAGS = {
+  preventOverspending: false,
+  noNewTiersWithReserves: false,
+  noNewTiersWithVotes: false,
+  noNewTiersWithOwnerMinting: false,
+  issueTokensForSplits: false,
+  itemsRedeem: false,
+}
+
 export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
-  currency: 'eth',
+  accounting: DEFAULT_ACCOUNTING,
   flavor: 'project',
   operator: null,
   ticker: '',
@@ -271,9 +302,28 @@ export function buildLaunchRequest(args: {
   salt: `0x${string}`
 }) {
   const { chainId, plan } = args
-  const isUsd = plan.currency === 'usdc'
-  const token = treasuryToken(plan.currency, chainId)
-  const context = buildAccountingContext(token, isUsd ? 6 : 18)
+  const { accounting } = plan
+  // Custom tokens are exclusive and price everything in themselves (their
+  // token-keyed currency id) so no feed is needed; otherwise ETH and/or
+  // USDC contexts, with the base currency following ETH when present.
+  const contexts = accounting.custom
+    ? [
+        buildAccountingContext(
+          accounting.custom.address,
+          accounting.custom.decimals,
+        ),
+      ]
+    : accounting.tokens.map(t =>
+        buildAccountingContext(
+          treasuryToken(t, chainId),
+          t === 'usdc' ? 6 : 18,
+        ),
+      )
+  const baseCurrency = accounting.custom
+    ? tokenCurrencyId(accounting.custom.address)
+    : accounting.tokens.includes('eth')
+      ? BASE_CURRENCY_ETH
+      : BASE_CURRENCY_USD
 
   if (plan.flavor === 'revnet') {
     // Fixed-forever stages via REVDeployer (website/ parity). Stage starts
@@ -317,12 +367,12 @@ export function buildLaunchRequest(args: {
           uri: args.projectUri,
           salt: args.salt,
         },
-        baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+        baseCurrency,
         operator,
         scopeCashOutsToLocalBalances: false,
         stageConfigurations,
       },
-      accountingContexts: [context],
+      accountingContexts: contexts,
       // Independent per-chain deploys — no suckers wired at launch.
       suckerConfig: { deployerConfigurations: [], salt: args.salt },
       creationFee: args.creationFee,
@@ -332,6 +382,7 @@ export function buildLaunchRequest(args: {
               baseline721HookConfiguration: build721HookConfig(
                 plan.store,
                 args.projectUri,
+                accounting,
               ),
               salt: args.salt,
               preventOperatorAdjustingTiers: false,
@@ -364,7 +415,7 @@ export function buildLaunchRequest(args: {
       weightCutPercent: stage.weightCutPercent,
       approvalHook,
       metadata: buildRulesetMetadata({
-        baseCurrency: isUsd ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
+        baseCurrency,
         reservedPercent: stage.reservedPercent,
         // Routing ALL funds (unlimited payout limit) leaves no surplus for
         // cash outs — keep them formally disabled in that mode. Fixed-amount
@@ -382,7 +433,10 @@ export function buildLaunchRequest(args: {
         allowTerminalMigration: stage.allowTerminalMigration,
         allowSetCustomToken: stage.allowSetCustomToken,
         allowAddAccountingContext: stage.allowAddAccountingContext,
-        allowAddPriceFeed: stage.allowAddPriceFeed,
+        // Custom-token projects price in the token itself; adding a feed
+        // later is how the owner unlocks ETH/USD pricing — keep it allowed.
+        allowAddPriceFeed: stage.allowAddPriceFeed || accounting.custom !== null,
+        useDataHookForCashOut: plan.store.itemsRedeem,
       }),
       splitGroups: [
         ...(stage.reservedPercent > 0 && stage.reservedSplits.length > 0
@@ -394,37 +448,39 @@ export function buildLaunchRequest(args: {
             ]
           : []),
         ...(stage.payouts === 'routed' && stage.payoutSplits.length > 0
-          ? [{ groupId: BigInt(token), splits: toJbSplits(stage.payoutSplits) }]
+          ? contexts.map(ctx => ({
+              groupId: BigInt(ctx.token),
+              splits: toJbSplits(stage.payoutSplits),
+            }))
           : []),
       ],
+      // One fund-access group per accounting context (website/ parity).
       fundAccessLimitGroups:
         stage.payouts === 'none'
           ? []
-          : [
-              {
-                terminal: v6Address('JBMultiTerminal', chainId),
-                token,
-                payoutLimits:
-                  stage.payouts === 'routed'
-                    ? [
-                        {
-                          amount: stage.payoutLimitAmount ?? UNLIMITED_PAYOUT,
-                          currency: context.currency,
-                        },
-                      ]
-                    : [],
-                surplusAllowances:
-                  stage.payouts === 'flexible'
-                    ? [{ amount: UNLIMITED_PAYOUT, currency: context.currency }]
-                    : [],
-              },
-            ],
+          : contexts.map(ctx => ({
+              terminal: v6Address('JBMultiTerminal', chainId),
+              token: ctx.token,
+              payoutLimits:
+                stage.payouts === 'routed'
+                  ? [
+                      {
+                        amount: stage.payoutLimitAmount ?? UNLIMITED_PAYOUT,
+                        currency: ctx.currency,
+                      },
+                    ]
+                  : [],
+              surplusAllowances:
+                stage.payouts === 'flexible'
+                  ? [{ amount: UNLIMITED_PAYOUT, currency: ctx.currency }]
+                  : [],
+            })),
     }),
   )
 
   const terminalConfigurations = buildTerminalConfigurations({
     chainId,
-    accountingContexts: [context],
+    accountingContexts: contexts,
   })
 
   return {
@@ -434,7 +490,7 @@ export function buildLaunchRequest(args: {
     functionName: 'launchProjectFor' as const,
     args: [
       args.owner,
-      build721HookConfig(args.plan.store, args.projectUri),
+      build721HookConfig(args.plan.store, args.projectUri, accounting),
       {
         projectUri: args.projectUri,
         rulesetConfigurations,
@@ -449,8 +505,22 @@ export function buildLaunchRequest(args: {
 }
 
 /** The tiered-721 hook config shared by both deploy flavors. */
-function build721HookConfig(store: LaunchPlan['store'], projectUri: string) {
-  const usdPricing = store.currency === 'usd'
+function build721HookConfig(
+  store: LaunchPlan['store'],
+  projectUri: string,
+  accounting: AccountingConfig,
+) {
+  // Tier pricing: a standard currency, or the custom accounting token
+  // itself (token-keyed id, its own decimals — no feed needed).
+  const pricing =
+    store.currency === 'token' && accounting.custom
+      ? {
+          currency: tokenCurrencyId(accounting.custom.address),
+          decimals: accounting.custom.decimals,
+        }
+      : store.currency === 'usd'
+        ? { currency: BASE_CURRENCY_USD, decimals: 6 }
+        : { currency: BASE_CURRENCY_ETH, decimals: 18 }
   const tiers = store.items.map(item => ({
     price: item.price,
     initialSupply: item.supply ?? TIER_UNLIMITED_SUPPLY,
@@ -481,17 +551,15 @@ function build721HookConfig(store: LaunchPlan['store'], projectUri: string) {
     contractUri: projectUri,
     tiersConfig: {
       tiers,
-      // Tier prices are in a standard currency (never token-keyed):
-      // ETH prices in 18 decimals, USD prices in 6 (1 USDC pays $1).
-      currency: usdPricing ? BASE_CURRENCY_USD : BASE_CURRENCY_ETH,
-      decimals: usdPricing ? 6 : 18,
+      currency: pricing.currency,
+      decimals: pricing.decimals,
     },
     flags: {
-      noNewTiersWithReserves: false,
-      noNewTiersWithVotes: false,
-      noNewTiersWithOwnerMinting: false,
-      preventOverspending: false,
-      issueTokensForSplits: false,
+      noNewTiersWithReserves: store.noNewTiersWithReserves,
+      noNewTiersWithVotes: store.noNewTiersWithVotes,
+      noNewTiersWithOwnerMinting: store.noNewTiersWithOwnerMinting,
+      preventOverspending: store.preventOverspending,
+      issueTokensForSplits: store.issueTokensForSplits,
     },
   }
 }

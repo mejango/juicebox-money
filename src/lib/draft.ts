@@ -22,12 +22,23 @@ export type CreateDraft = {
   payNotice: string
   links: Record<string, string>
   owner: string
-  currency: TreasuryCurrency
+  accepts: TreasuryCurrency[]
+  customAddress: string
   chains: number[]
   stages: DraftStage[]
   afterMode: 'wait' | 'terminal' | 'cycle'
   approvalDeadline: ApprovalDeadline
-  storeCurrency: 'eth' | 'usd' | null
+  storeCurrency: 'eth' | 'usd' | 'token' | null
+  storeConfig: {
+    collectionName: string
+    collectionSymbol: string
+    preventOverspending: boolean
+    noNewTiersWithReserves: boolean
+    noNewTiersWithVotes: boolean
+    noNewTiersWithOwnerMinting: boolean
+    issueTokensForSplits: boolean
+    itemsRedeem: boolean
+  }
   items: Omit<DraftItem, 'mediaFile' | 'mediaPreview'>[]
 }
 
@@ -189,7 +200,14 @@ export function parseDraft(text: string): CreateDraft {
     payNotice: str(d.payNotice, 1000),
     links,
     owner: str(d.owner, 64),
-    currency: d.currency === 'usdc' ? 'usdc' : 'eth',
+    accepts: (Array.isArray(d.accepts) ? d.accepts : ['eth'])
+      .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
+      .slice(0, 2).length
+      ? (Array.isArray(d.accepts) ? d.accepts : ['eth'])
+          .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
+          .slice(0, 2)
+      : ['eth'],
+    customAddress: str(d.customAddress, 64),
     chains: (Array.isArray(d.chains) ? d.chains : [])
       .filter(c => Number.isInteger(c))
       .slice(0, 16) as number[],
@@ -203,7 +221,26 @@ export function parseDraft(text: string): CreateDraft {
       ? (d.approvalDeadline as ApprovalDeadline)
       : '1day',
     storeCurrency:
-      d.storeCurrency === 'usd' ? 'usd' : d.storeCurrency === 'eth' ? 'eth' : null,
+      d.storeCurrency === 'usd'
+        ? 'usd'
+        : d.storeCurrency === 'eth'
+          ? 'eth'
+          : d.storeCurrency === 'token'
+            ? 'token'
+            : null,
+    storeConfig: (() => {
+      const c = (d.storeConfig ?? {}) as Record<string, unknown>
+      return {
+        collectionName: str(c.collectionName, 100),
+        collectionSymbol: str(c.collectionSymbol, 11),
+        preventOverspending: bool(c.preventOverspending),
+        noNewTiersWithReserves: bool(c.noNewTiersWithReserves),
+        noNewTiersWithVotes: bool(c.noNewTiersWithVotes),
+        noNewTiersWithOwnerMinting: bool(c.noNewTiersWithOwnerMinting),
+        issueTokensForSplits: bool(c.issueTokensForSplits),
+        itemsRedeem: bool(c.itemsRedeem),
+      }
+    })(),
     items: (Array.isArray(d.items) ? d.items : [])
       .slice(0, 100)
       .map(sanitizeItem),

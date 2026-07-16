@@ -268,7 +268,7 @@ export function StageRulesEditor({
   isFirst: boolean
   isLast: boolean
   index: number
-  unitLabel: 'ETH' | 'USD'
+  unitLabel: string
   disabled: boolean
   /** Selected launch chains (enables per-chain recipient overrides). */
   chainIds: number[]

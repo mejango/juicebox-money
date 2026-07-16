@@ -19,6 +19,7 @@ import {
   type CreateDraft,
 } from '@/lib/draft'
 import {
+  DEFAULT_STORE_FLAGS,
   FOREVER_SECONDS,
   buildLaunchRequest,
   projectIdFromReceipt,
@@ -29,6 +30,7 @@ import {
   type StoreItem,
   type TreasuryCurrency,
 } from '@/lib/launch'
+import { erc20Abi } from 'viem'
 import { splitOk, type DraftSplit } from './SplitsEditor'
 import { AddressField } from './AddressField'
 import {
@@ -40,7 +42,14 @@ import {
   stageSummaryParts,
   type DraftStage,
 } from './StageRulesEditor'
-import { AddButton, CheckIcon, OptionRow, Piped, SubSection } from './ui'
+import {
+  AddButton,
+  CheckIcon,
+  CheckRow,
+  OptionRow,
+  Piped,
+  SubSection,
+} from './ui'
 import { chainChipClass } from '@/components/ChainBadge'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -143,7 +152,14 @@ export function CreateForm() {
   })
   const setLink = (key: keyof typeof links, value: string) =>
     setLinks(prev => ({ ...prev, [key]: value.slice(0, 300) }))
-  const [currency, setCurrency] = useState<TreasuryCurrency>('eth')
+  /** Standard accounting tokens (multi-select), or one custom ERC-20. */
+  const [accepts, setAccepts] = useState<TreasuryCurrency[]>(['eth'])
+  const [customOn, setCustomOn] = useState(false)
+  const [customAddress, setCustomAddress] = useState('')
+  const [customMeta, setCustomMeta] = useState<{
+    decimals: number
+    symbol: string
+  } | null>(null)
   const [selected, setSelected] = useState<number[]>(
     SUPPORTED_CHAINS.map(chain => chain.id),
   )
@@ -180,9 +196,15 @@ export function CreateForm() {
   // --- 3: Store ---
   const [items, setItems] = useState<DraftItem[]>([])
   /** null = follow the accounting context picked in Flavor. */
-  const [storeCurrency, setStoreCurrency] = useState<'eth' | 'usd' | null>(
-    null,
-  )
+  const [storeCurrency, setStoreCurrency] = useState<
+    'eth' | 'usd' | 'token' | null
+  >(null)
+  const [storeConfigOpen, setStoreConfigOpen] = useState(false)
+  const [storeConfig, setStoreConfig] = useState({
+    collectionName: '',
+    collectionSymbol: '',
+    ...DEFAULT_STORE_FLAGS,
+  })
 
   // --- Launch state ---
   const [phase, setPhase] = useState<
@@ -203,10 +225,57 @@ export function CreateForm() {
   } | null>(null)
 
   const busy = phase !== 'form'
-  const isUsd = currency === 'usdc'
-  const unitLabel = isUsd ? 'USD' : 'ETH'
-  const effectiveStoreCurrency = storeCurrency ?? (isUsd ? 'usd' : 'eth')
+  const customActive = customOn && customMeta !== null
+  const unitLabel = customActive
+    ? customMeta.symbol || 'TOKEN'
+    : accepts.includes('eth')
+      ? 'ETH'
+      : 'USD'
+  const effectiveStoreCurrency =
+    storeCurrency ??
+    (customOn ? 'token' : accepts.includes('eth') ? 'eth' : 'usd')
   const storeUsd = effectiveStoreCurrency === 'usd'
+  const accountingDecimals = customActive
+    ? customMeta.decimals
+    : accepts.includes('eth')
+      ? 18
+      : 6
+  const storePriceDecimals =
+    effectiveStoreCurrency === 'token'
+      ? (customMeta?.decimals ?? 18)
+      : storeUsd
+        ? 6
+        : 18
+
+  // Resolve the custom token's decimals + symbol on the first selected
+  // chain (it must exist at the same address on every chain).
+  useEffect(() => {
+    setCustomMeta(null)
+    const address = resolvedAddress(customAddress)
+    if (!customOn || !address) return
+    let stale = false
+    const t = setTimeout(async () => {
+      try {
+        const client = getPublicClient(config, {
+          chainId: (selected[0] ?? SUPPORTED_CHAINS[0].id) as SupportedChainId,
+        }) as PublicClient
+        const [decimals, symbol] = await Promise.all([
+          client.readContract({ address, abi: erc20Abi, functionName: 'decimals' }),
+          client
+            .readContract({ address, abi: erc20Abi, functionName: 'symbol' })
+            .catch(() => 'TOKEN'),
+        ])
+        if (!stale) setCustomMeta({ decimals, symbol })
+      } catch {
+        if (!stale) setCustomMeta(null)
+      }
+    }, 400)
+    return () => {
+      stale = true
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customOn, customAddress, selected.join(',')])
 
   useEffect(
     () => () => {
@@ -290,6 +359,12 @@ export function CreateForm() {
   }, [fees, selected])
 
   const nameOk = name.trim().length > 0
+  const anyCashOuts = stages.some(
+    s => s.cashOuts || (flavor === 'revnet' && s.cashOutTax < 10_000),
+  )
+  const accountingOk = customOn
+    ? resolvedAddress(customAddress) !== null && customMeta !== null
+    : accepts.length > 0
   const ownerOk = owner.trim() === '' || resolvedAddress(owner) !== null
   const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
   const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor))
@@ -303,6 +378,7 @@ export function CreateForm() {
   const itemsOk = items.every(itemOk)
   const canLaunch =
     nameOk &&
+    accountingOk &&
     ownerOk &&
     tickerOk &&
     selected.length > 0 &&
@@ -366,7 +442,7 @@ export function CreateForm() {
       return { splits: toSplitConfigs(stage.payoutSplits, chainId), limit: null }
     }
     const valid = stage.payoutSplits.filter(s => splitOk(s, 'amount'))
-    const values = valid.map(row => parseUnits(row.value, isUsd ? 6 : 18))
+    const values = valid.map(row => parseUnits(row.value, accountingDecimals))
     const total = values.reduce((a, b) => a + b, 0n)
     if (total === 0n) return { splits: [], limit: null }
     const percents = values.map(v => Number((v * 1_000_000_000n) / total))
@@ -525,7 +601,16 @@ export function CreateForm() {
         return [
           chainId,
           {
-            currency,
+            accounting: {
+              tokens: accepts,
+              custom:
+                customOn && customMeta && resolvedAddress(customAddress)
+                  ? {
+                      address: resolvedAddress(customAddress)!,
+                      decimals: customMeta.decimals,
+                    }
+                  : null,
+            },
             flavor,
             operator: resolvedAddress(owner),
             ticker: ticker.trim(),
@@ -624,7 +709,7 @@ export function CreateForm() {
       }
       // parseUnits rounds sub-precision input to 0 — refuse accidental
       // free items (e.g. a 0.0000001 USD price against 6 decimals).
-      const price = parseUnits(item.price, storeUsd ? 6 : 18)
+      const price = parseUnits(item.price, storePriceDecimals)
       if (price === 0n) {
         throw new Error(
           `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
@@ -668,9 +753,18 @@ export function CreateForm() {
     // The store collection deploys with every launch (even empty) so the
     // project can stock it later without a ruleset change.
     const store: LaunchPlan['store'] = {
-      name: name.trim(),
-      symbol: ticker.trim() || deriveSymbol(name),
+      name: storeConfig.collectionName.trim() || name.trim(),
+      symbol:
+        storeConfig.collectionSymbol.trim() ||
+        ticker.trim() ||
+        deriveSymbol(name),
       currency: effectiveStoreCurrency,
+      preventOverspending: storeConfig.preventOverspending,
+      noNewTiersWithReserves: storeConfig.noNewTiersWithReserves,
+      noNewTiersWithVotes: storeConfig.noNewTiersWithVotes,
+      noNewTiersWithOwnerMinting: storeConfig.noNewTiersWithOwnerMinting,
+      issueTokensForSplits: storeConfig.issueTokensForSplits,
+      itemsRedeem: storeConfig.itemsRedeem && !anyCashOuts,
       items: pinned,
     }
     return { projectUri, store, salt: randomSalt() }
@@ -793,12 +887,14 @@ export function CreateForm() {
     payNotice,
     links,
     owner,
-    currency,
+    accepts,
+    customAddress: customOn ? customAddress : '',
     chains: selected,
     stages,
     afterMode,
     approvalDeadline,
     storeCurrency,
+    storeConfig,
     items: items.map(({ mediaFile, mediaPreview, ...rest }) => rest),
   })
 
@@ -818,7 +914,9 @@ export function CreateForm() {
       instagram: draft.links.instagram ?? '',
     })
     setOwner(draft.owner)
-    setCurrency(draft.currency)
+    setAccepts(draft.accepts)
+    setCustomOn(draft.customAddress !== '')
+    setCustomAddress(draft.customAddress)
     const validChains = draft.chains.filter(id =>
       SUPPORTED_CHAINS.some(chain => chain.id === id),
     )
@@ -831,6 +929,7 @@ export function CreateForm() {
     setAfterMode(draft.afterMode)
     setApprovalDeadline(draft.approvalDeadline)
     setStoreCurrency(draft.storeCurrency)
+    setStoreConfig(draft.storeConfig)
     setItems(
       draft.items.map(item => ({
         ...item,
@@ -898,12 +997,15 @@ export function CreateForm() {
     payNotice,
     links,
     owner,
-    currency,
+    accepts,
+    customOn,
+    customAddress,
     selected,
     stages,
     afterMode,
     approvalDeadline,
     storeCurrency,
+    storeConfig,
     items,
     busy,
   ])
@@ -1072,30 +1174,34 @@ export function CreateForm() {
           </h2>
         </div>
 
-        <div className="mt-5 space-y-2">
-          <OptionRow
-            checked={flavor === 'project'}
-            onSelect={() => !busy && setFlavor('project')}
-            disabled={busy}
-            title="Project"
-            blurb="You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything."
-          />
-          <OptionRow
-            checked={flavor === 'revnet'}
-            onSelect={() => {
+        <div className="mt-5">
+          <span className="field-label">Flavor</span>
+          <select
+            value={flavor}
+            onChange={e => {
               if (busy) return
-              setFlavor('revnet')
-              // Revnets default to a 10% cash-out tax.
-              setStages(prev =>
-                prev.map(s =>
-                  s.cashOutTax === 0 ? { ...s, cashOutTax: 1000 } : s,
-                ),
-              )
+              const next = e.target.value as 'project' | 'revnet'
+              setFlavor(next)
+              if (next === 'revnet') {
+                // Revnets default to a 10% cash-out tax.
+                setStages(prev =>
+                  prev.map(s =>
+                    s.cashOutTax === 0 ? { ...s, cashOutTax: 1000 } : s,
+                  ),
+                )
+              }
             }}
             disabled={busy}
-            title="Revnet"
-            blurb="Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability."
-          />
+            className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
+          >
+            <option value="project">Custom project</option>
+            <option value="revnet">Revnet</option>
+          </select>
+          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+            {flavor === 'revnet'
+              ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
+              : 'You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything.'}
+          </p>
         </div>
 
         <div className="mt-6">
@@ -1131,26 +1237,35 @@ export function CreateForm() {
         </div>
 
         <div className="mt-6">
-          <span className="field-label">
-            {flavor === 'revnet' ? 'Accounting' : 'Treasury'}
-          </span>
+          <span className="field-label">Accounting</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            {flavor === 'revnet'
-              ? 'The reserve asset that backs the value of your token. Cannot be changed later.'
-              : 'The token your project holds and accounts in. Payments in other tokens convert automatically.'}
+            The token(s) that make up your{' '}
+            {flavor === 'revnet' ? 'revnet' : 'project'}&apos;s balance. Other
+            payment tokens auto-swap as they&apos;re paid in. Accounting
+            tokens cannot be removed later.
           </p>
-          <div className="mt-2.5 flex gap-2">
+          <div className="mt-2.5 flex flex-wrap gap-2">
             {(
               [
                 ['eth', 'ETH'],
                 ['usdc', 'USDC'],
               ] as const
             ).map(([value, label]) => {
-              const active = currency === value
+              const active = !customOn && accepts.includes(value)
               return (
                 <button
                   key={value}
-                  onClick={() => !busy && setCurrency(value)}
+                  onClick={() => {
+                    if (busy) return
+                    setCustomOn(false)
+                    setAccepts(prev =>
+                      prev.includes(value)
+                        ? prev.length > 1
+                          ? prev.filter(v => v !== value)
+                          : prev
+                        : [...prev, value],
+                    )
+                  }}
                   disabled={busy}
                   aria-pressed={active}
                   className={
@@ -1164,7 +1279,46 @@ export function CreateForm() {
                 </button>
               )
             })}
+            <button
+              onClick={() => !busy && setCustomOn(on => !on)}
+              disabled={busy}
+              aria-pressed={customOn}
+              className={
+                customOn
+                  ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
+                  : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+              }
+            >
+              {customOn ? <CheckIcon className="h-4 w-4" /> : null}
+              Custom
+            </button>
           </div>
+          {customOn ? (
+            <div className="mt-3">
+              <AddressField
+                value={customAddress}
+                onChange={setCustomAddress}
+                disabled={busy}
+                placeholder="0x… (ERC-20 token address)"
+                ariaLabel="Custom accounting token"
+              />
+              {customMeta ? (
+                <p className="mt-1.5 text-xs text-smoke-700">
+                  ${customMeta.symbol} · {customMeta.decimals} decimals
+                </p>
+              ) : resolvedAddress(customAddress) ? (
+                <p className="mt-1.5 text-xs text-smoke-500">
+                  Checking the token…
+                </p>
+              ) : null}
+              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                Must be deployed at the same address on every selected chain.
+                Everything — issuance, payouts, store prices — is denominated
+                in this token itself, so no price feed is needed. You can add
+                a feed later to price in ETH or USD instead.
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-6">
@@ -1629,12 +1783,18 @@ export function CreateForm() {
             The currency your items are priced in — buyers can still pay
             with anything.
           </p>
-          <div className="mt-2.5 flex gap-2">
+          <div className="mt-2.5 flex flex-wrap gap-2">
             {(
-              [
-                ['eth', 'ETH'],
-                ['usd', 'USD'],
-              ] as const
+              customOn
+                ? ([
+                    ['token', `$${customMeta?.symbol ?? 'TOKEN'}`],
+                    ['eth', 'ETH'],
+                    ['usd', 'USD'],
+                  ] as const)
+                : ([
+                    ['eth', 'ETH'],
+                    ['usd', 'USD'],
+                  ] as const)
             ).map(([value, label]) => {
               const active = effectiveStoreCurrency === value
               return (
@@ -1656,6 +1816,128 @@ export function CreateForm() {
             })}
           </div>
         </div>
+        {customOn && effectiveStoreCurrency !== 'token' ? (
+          <p className="mt-2 text-xs leading-relaxed text-peel-600">
+            Pricing in ETH or USD with a custom accounting token needs a
+            price feed added after launch.
+          </p>
+        ) : null}
+
+        <div className="mt-5">
+          <button
+            onClick={() => setStoreConfigOpen(o => !o)}
+            aria-expanded={storeConfigOpen}
+            className="text-sm font-medium text-bluebs-600 hover:text-bluebs-700"
+          >
+            Store config {storeConfigOpen ? '▾' : '▸'}
+          </button>
+          {storeConfigOpen ? (
+            <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4">
+              <p className="text-xs leading-relaxed text-smoke-700">
+                You can set or change most of these any time after launch.
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-xs text-smoke-700">Collection name</span>
+                  <input
+                    type="text"
+                    value={storeConfig.collectionName}
+                    onChange={e =>
+                      setStoreConfig(c => ({
+                        ...c,
+                        collectionName: e.target.value.slice(0, 100),
+                      }))
+                    }
+                    disabled={busy}
+                    placeholder={name.trim() || 'Collection name'}
+                    className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs text-smoke-700">Collection symbol</span>
+                  <input
+                    type="text"
+                    value={storeConfig.collectionSymbol}
+                    onChange={e =>
+                      setStoreConfig(c => ({
+                        ...c,
+                        collectionSymbol: e.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]/g, '')
+                          .slice(0, 11),
+                      }))
+                    }
+                    disabled={busy}
+                    placeholder={ticker.trim() || deriveSymbol(name)}
+                    className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                  />
+                </label>
+              </div>
+              <div className="space-y-2">
+                {(
+                  [
+                    [
+                      'preventOverspending',
+                      'Require exact payment',
+                      'Buyers must pay exactly the item price — no overpaying for extra credit.',
+                    ],
+                    [
+                      'noNewTiersWithReserves',
+                      'Lock reserved items after launch',
+                      'New items added later can never set aside reserved inventory.',
+                    ],
+                    [
+                      'noNewTiersWithVotes',
+                      'Lock voting items after launch',
+                      'New items added later can never carry custom voting power.',
+                    ],
+                    [
+                      'noNewTiersWithOwnerMinting',
+                      'Lock owner minting after launch',
+                      'New items added later can never let the owner mint for free.',
+                    ],
+                    [
+                      'issueTokensForSplits',
+                      'Give split recipients project tokens',
+                      'Sale-split recipients get project tokens along with their share of the funds.',
+                    ],
+                  ] as const
+                ).map(([key, title, blurb]) => (
+                  <CheckRow
+                    key={key}
+                    checked={storeConfig[key]}
+                    onToggle={() =>
+                      setStoreConfig(c => ({ ...c, [key]: !c[key] }))
+                    }
+                    disabled={busy}
+                    title={title}
+                    blurb={blurb}
+                  />
+                ))}
+                {anyCashOuts ? (
+                  <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
+                    Items can&apos;t cash out for surplus while token cash
+                    outs are on — tokens and items can&apos;t both redeem.
+                  </p>
+                ) : (
+                  <CheckRow
+                    checked={storeConfig.itemsRedeem}
+                    onToggle={() =>
+                      setStoreConfig(c => ({
+                        ...c,
+                        itemsRedeem: !c.itemsRedeem,
+                      }))
+                    }
+                    disabled={busy}
+                    title="Give items cash out access to surplus"
+                    blurb="Item holders can redeem their items for a share of the project's surplus."
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
         <StoreEditor
           items={items}
           onChange={setItems}
@@ -1697,8 +1979,12 @@ export function CreateForm() {
               {flavor === 'revnet' ? 'Accounting' : 'Treasury'}
             </dt>
             <dd className="font-medium text-ink">
-              {isUsd ? 'USDC' : 'ETH'} on{' '}
-              {selected.map(id => chainName(id)).join(', ') || '—'}
+              {customOn
+                ? `$${customMeta?.symbol ?? 'TOKEN'}`
+                : accepts
+                    .map(t => (t === 'eth' ? 'ETH' : 'USDC'))
+                    .join(' + ')}{' '}
+              on {selected.map(id => chainName(id)).join(', ') || '—'}
             </dd>
           </div>
           {stages.map((stage, i) => (
