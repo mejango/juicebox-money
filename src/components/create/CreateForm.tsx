@@ -1290,7 +1290,7 @@ export function CreateForm() {
               }
             >
               {customOn ? <CheckIcon className="h-4 w-4" /> : null}
-              Custom
+              Custom token
             </button>
           </div>
           {customOn ? (
