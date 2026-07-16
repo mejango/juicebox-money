@@ -1123,18 +1123,18 @@ export function CreateForm() {
                   disabled={busy}
                   className="input-well select-caret min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
                 >
-                  <option value="wait">Pause</option>
-                  <option value="terminal">Continue</option>
-                  <option value="cycle">Repeat</option>
-                  <option value="custom">Queue another ruleset…</option>
+                  <option value="wait">Wait</option>
+                  <option value="terminal">Terminate</option>
+                  <option value="cycle">Cycle</option>
+                  <option value="custom">Custom…</option>
                 </select>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {afterMode === 'wait'
-                  ? 'Payments and issuance stop until you queue more rules.'
+                  ? 'The project idles — payments and issuance pause until you queue more rules.'
                   : afterMode === 'terminal'
-                    ? 'The same terms continue, forever.'
-                    : 'This ruleset repeats, cycle after cycle.'}
+                    ? 'These terms are locked in forever — they can never be changed again.'
+                    : 'The ruleset restarts each time it ends. Any issuance cut applies each cycle, and you can still queue changes.'}
               </p>
             </div>
           ) : null}
@@ -1247,10 +1247,10 @@ export function CreateForm() {
               <dt className="text-smoke-700">Afterwards</dt>
               <dd className="font-medium text-ink">
                 {afterMode === 'wait'
-                  ? 'Pause until new rules'
+                  ? 'Wait for new rules'
                   : afterMode === 'terminal'
-                    ? 'Same terms forever'
-                    : 'Repeats each cycle'}
+                    ? 'Terminate — locked forever'
+                    : 'Cycle — repeats'}
               </dd>
             </div>
           ) : null}
