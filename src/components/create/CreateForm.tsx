@@ -256,7 +256,10 @@ export function CreateForm() {
   const [cashOuts, setCashOuts] = useState(false)
   const [cashOutTax, setCashOutTax] = useState(0)
   const [ownerMinting, setOwnerMinting] = useState(false)
-  const [openSection, setOpenSection] = useState<Record<string, boolean>>({})
+  // Step 1's Basics starts open; everything else starts collapsed.
+  const [openSection, setOpenSection] = useState<Record<string, boolean>>({
+    basics: true,
+  })
   const toggleSection = (key: string) =>
     setOpenSection(prev => ({ ...prev, [key]: !prev[key] }))
 
@@ -708,6 +711,8 @@ export function CreateForm() {
   }, [doneUnindexed.join(',')])
 
   // ---- Questionnaire summaries (shown on collapsed subsections) ----
+  const linkCount = Object.values(links).filter(v => v.trim()).length
+  const linksSummary = linkCount > 0 ? `${linkCount} added` : 'None'
   const taxLabel = cashOutTax === 0 ? 'no tax' : `${cashOutTax / 100}% tax`
   const validPayoutSplits = payoutSplits.filter(s =>
     splitOk(s, payoutsMode),
@@ -853,239 +858,268 @@ export function CreateForm() {
           </h2>
         </div>
 
-        <label className="mt-5 block">
-          <span className="field-label">
-            Project name <span className="text-peel-500">*</span>
-          </span>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value.slice(0, 100))}
-            disabled={busy}
-            placeholder="My juicy project"
-            className="input-well mt-1.5 min-h-[52px] px-4 text-lg font-medium placeholder:font-normal disabled:opacity-60"
-          />
-        </label>
+        <div className="mt-5">
+          <SubSection
+            label="Basics"
+            summary={name.trim() || '—'}
+            open={!!openSection.basics}
+            onToggle={() => toggleSection('basics')}
+          >
+            <label className="block">
+              <span className="field-label">
+                Project name <span className="text-peel-500">*</span>
+              </span>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value.slice(0, 100))}
+                disabled={busy}
+                placeholder="My juicy project"
+                className="input-well mt-1.5 min-h-[52px] px-4 text-lg font-medium placeholder:font-normal disabled:opacity-60"
+              />
+            </label>
 
-        <label className="mt-4 block">
-          <span className="flex items-baseline justify-between">
-            <span className="field-label">Tagline</span>
-            <span className="text-xs text-smoke-500">{tagline.length}/100</span>
-          </span>
-          <input
-            type="text"
-            value={tagline}
-            onChange={e => setTagline(e.target.value.slice(0, 100))}
-            disabled={busy}
-            placeholder="One line about your project (optional)"
-            className="input-well mt-1.5 min-h-[48px] px-4 text-sm disabled:opacity-60"
-          />
-        </label>
+            <label className="mt-4 block">
+              <span className="flex items-baseline justify-between">
+                <span className="field-label">Tagline</span>
+                <span className="text-xs text-smoke-500">{tagline.length}/100</span>
+              </span>
+              <input
+                type="text"
+                value={tagline}
+                onChange={e => setTagline(e.target.value.slice(0, 100))}
+                disabled={busy}
+                placeholder="One line about your project (optional)"
+                className="input-well mt-1.5 min-h-[48px] px-4 text-sm disabled:opacity-60"
+              />
+            </label>
 
-        <label className="mt-4 block">
-          <span className="field-label">Description</span>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value.slice(0, 5000))}
-            disabled={busy}
-            rows={4}
-            placeholder="Tell supporters what you're building and why it matters (optional)"
-            className="input-well mt-1.5 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
-          />
-        </label>
+            <label className="mt-4 block">
+              <span className="field-label">Description</span>
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value.slice(0, 5000))}
+                disabled={busy}
+                rows={4}
+                placeholder="Tell supporters what you're building and why it matters (optional)"
+                className="input-well mt-1.5 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
+              />
+            </label>
 
-        <div className="mt-4">
-          <span className="field-label">Logo</span>
-          <div className="mt-1.5 flex items-center gap-4">
-            {logoPreview ? (
+            <div className="mt-4">
+              <span className="field-label">Logo</span>
+              <div className="mt-1.5 flex items-center gap-4">
+                {logoPreview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logoPreview}
+                    alt="Logo preview"
+                    className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
+                  />
+                ) : (
+                  <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
+                    🧃
+                  </span>
+                )}
+                <div>
+                  <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
+                    {logoFile ? 'Change image' : 'Upload image'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      disabled={busy}
+                      className="sr-only"
+                      onChange={e => onLogoChange(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  {logoFile ? (
+                    <button
+                      onClick={() => onLogoChange(null)}
+                      disabled={busy}
+                      className="ml-3 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                  <p className="mt-1.5 text-xs text-smoke-700">
+                    Square works best. Up to 1MB — optional.
+                  </p>
+                  {logoError ? (
+                    <p className="mt-1 text-xs text-red-600">{logoError}</p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </SubSection>
+
+          <SubSection
+            label="Cover image"
+            summary={coverFile ? 'Added' : 'None'}
+            open={!!openSection.cover}
+            onToggle={() => toggleSection('cover')}
+          >
+            {coverPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={logoPreview}
-                alt="Logo preview"
-                className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
+                src={coverPreview}
+                alt="Cover preview"
+                className="h-24 w-full rounded-lg border border-smoke-200 object-cover"
               />
-            ) : (
-              <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
-                🧃
-              </span>
-            )}
-            <div>
+            ) : null}
+            <div className="mt-2 flex items-center gap-3">
               <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-                {logoFile ? 'Change image' : 'Upload image'}
+                {coverFile ? 'Change image' : 'Upload image'}
                 <input
                   type="file"
                   accept="image/*"
                   disabled={busy}
                   className="sr-only"
-                  onChange={e => onLogoChange(e.target.files?.[0] ?? null)}
+                  onChange={e => onCoverChange(e.target.files?.[0] ?? null)}
                 />
               </label>
-              {logoFile ? (
+              {coverFile ? (
                 <button
-                  onClick={() => onLogoChange(null)}
+                  onClick={() => onCoverChange(null)}
                   disabled={busy}
-                  className="ml-3 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
+                  className="text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
                 >
                   Remove
                 </button>
               ) : null}
-              <p className="mt-1.5 text-xs text-smoke-700">
-                Square works best. Up to 1MB — optional.
+              <p className="text-xs text-smoke-700">
+                Banner across your project page. Wide works best — optional.
               </p>
-              {logoError ? (
-                <p className="mt-1 text-xs text-red-600">{logoError}</p>
-              ) : null}
             </div>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <span className="field-label">Cover image</span>
-          {coverPreview ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={coverPreview}
-              alt="Cover preview"
-              className="mt-1.5 h-24 w-full rounded-lg border border-smoke-200 object-cover"
-            />
-          ) : null}
-          <div className="mt-2 flex items-center gap-3">
-            <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-              {coverFile ? 'Change image' : 'Upload image'}
-              <input
-                type="file"
-                accept="image/*"
-                disabled={busy}
-                className="sr-only"
-                onChange={e => onCoverChange(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            {coverFile ? (
-              <button
-                onClick={() => onCoverChange(null)}
-                disabled={busy}
-                className="text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink"
-              >
-                Remove
-              </button>
+            {coverError ? (
+              <p className="mt-1 text-xs text-red-600">{coverError}</p>
             ) : null}
-            <p className="text-xs text-smoke-700">
-              Banner across your project page. Wide works best — optional.
+          </SubSection>
+
+          <SubSection
+            label="Links"
+            summary={linksSummary}
+            open={!!openSection.links}
+            onToggle={() => toggleSection('links')}
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(
+                [
+                  ['infoUri', 'Website', 'https://…'],
+                  ['twitter', 'X handle', '@handle'],
+                  ['discord', 'Discord', 'https://discord.gg/…'],
+                  ['telegram', 'Telegram', 'https://t.me/…'],
+                  ['whatsapp', 'WhatsApp', 'https://wa.me/…'],
+                  ['instagram', 'Instagram', '@handle'],
+                ] as const
+              ).map(([key, label, placeholder]) => (
+                <label key={key} className="block">
+                  <span className="text-xs text-smoke-700">{label}</span>
+                  <input
+                    type="text"
+                    value={links[key]}
+                    onChange={e => setLink(key, e.target.value)}
+                    disabled={busy}
+                    placeholder={placeholder}
+                    className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                  />
+                </label>
+              ))}
+            </div>
+          </SubSection>
+
+          <SubSection
+            label="Payment notice"
+            summary={payNotice.trim() ? 'Added' : 'None'}
+            open={!!openSection.notice}
+            onToggle={() => toggleSection('notice')}
+          >
+            <p className="text-xs leading-relaxed text-smoke-700">
+              Shown to supporters as they check out — a disclaimer, shipping
+              note, or anything they should know before paying.
             </p>
-          </div>
-          {coverError ? (
-            <p className="mt-1 text-xs text-red-600">{coverError}</p>
-          ) : null}
-        </div>
+            <textarea
+              value={payNotice}
+              onChange={e => setPayNotice(e.target.value.slice(0, 1000))}
+              disabled={busy}
+              rows={2}
+              placeholder="Optional"
+              className="input-well mt-2 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
+            />
+          </SubSection>
 
-        <div className="mt-6">
-          <span className="field-label">Links</span>
-          <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {(
-              [
-                ['infoUri', 'Website', 'https://…'],
-                ['twitter', 'X handle', '@handle'],
-                ['discord', 'Discord', 'https://discord.gg/…'],
-                ['telegram', 'Telegram', 'https://t.me/…'],
-                ['whatsapp', 'WhatsApp', 'https://wa.me/…'],
-                ['instagram', 'Instagram', '@handle'],
-              ] as const
-            ).map(([key, label, placeholder]) => (
-              <label key={key} className="block">
-                <span className="text-xs text-smoke-700">{label}</span>
-                <input
-                  type="text"
-                  value={links[key]}
-                  onChange={e => setLink(key, e.target.value)}
-                  disabled={busy}
-                  placeholder={placeholder}
-                  className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-                />
-              </label>
-            ))}
-          </div>
-        </div>
+          <SubSection
+            label="Treasury"
+            summary={isUsd ? 'USDC' : 'ETH'}
+            open={!!openSection.treasury}
+            onToggle={() => toggleSection('treasury')}
+          >
+            <p className="text-xs leading-relaxed text-smoke-700">
+              The token your project holds and accounts in. Payments in other
+              tokens convert automatically.
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              {(
+                [
+                  ['eth', 'ETH'],
+                  ['usdc', 'USDC'],
+                ] as const
+              ).map(([value, label]) => {
+                const active = currency === value
+                return (
+                  <button
+                    key={value}
+                    onClick={() => !busy && setCurrency(value)}
+                    disabled={busy}
+                    aria-pressed={active}
+                    className={
+                      active
+                        ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
+                        : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                    }
+                  >
+                    {active ? <CheckIcon className="h-4 w-4" /> : null}
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </SubSection>
 
-        <div className="mt-6">
-          <span className="field-label">Payment notice</span>
-          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            Shown to supporters as they check out — a disclaimer, shipping
-            note, or anything they should know before paying.
-          </p>
-          <textarea
-            value={payNotice}
-            onChange={e => setPayNotice(e.target.value.slice(0, 1000))}
-            disabled={busy}
-            rows={2}
-            placeholder="Optional"
-            className="input-well mt-2 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
-          />
-        </div>
-
-        <div className="mt-6">
-          <span className="field-label">Treasury</span>
-          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            The token your project holds and accounts in. Payments in other
-            tokens convert automatically.
-          </p>
-          <div className="mt-2.5 flex gap-2">
-            {(
-              [
-                ['eth', 'ETH'],
-                ['usdc', 'USDC'],
-              ] as const
-            ).map(([value, label]) => {
-              const active = currency === value
-              return (
-                <button
-                  key={value}
-                  onClick={() => !busy && setCurrency(value)}
-                  disabled={busy}
-                  aria-pressed={active}
-                  className={
-                    active
-                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                      : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                  }
-                >
-                  {active ? <CheckIcon className="h-4 w-4" /> : null}
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <span className="field-label">Chains</span>
-          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            Your project gets the same ID space on every chain you pick.
-            You&apos;ll confirm one transaction per chain.
-          </p>
-          <div className="mt-2.5 flex flex-wrap gap-2">
-            {SUPPORTED_CHAINS.map(chain => {
-              const active = selected.includes(chain.id)
-              return (
-                <button
-                  key={chain.id}
-                  onClick={() => toggleChain(chain.id)}
-                  disabled={busy}
-                  aria-pressed={active}
-                  className={
-                    active
-                      ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
-                      : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-                  }
-                >
-                  {active ? <CheckIcon className="h-4 w-4" /> : null}
-                  {chainName(chain.id)}
-                </button>
-              )
-            })}
-          </div>
-          {selected.length === 0 ? (
-            <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
-          ) : null}
+          <SubSection
+            label="Chains"
+            summary={selected.map(id => chainName(id)).join(', ') || 'Pick one'}
+            open={!!openSection.chains}
+            onToggle={() => toggleSection('chains')}
+          >
+            <p className="text-xs leading-relaxed text-smoke-700">
+              Your project gets the same ID space on every chain you pick.
+              You&apos;ll confirm one transaction per chain.
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {SUPPORTED_CHAINS.map(chain => {
+                const active = selected.includes(chain.id)
+                return (
+                  <button
+                    key={chain.id}
+                    onClick={() => toggleChain(chain.id)}
+                    disabled={busy}
+                    aria-pressed={active}
+                    className={
+                      active
+                        ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
+                        : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                    }
+                  >
+                    {active ? <CheckIcon className="h-4 w-4" /> : null}
+                    {chainName(chain.id)}
+                  </button>
+                )
+              })}
+            </div>
+            {selected.length === 0 ? (
+              <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
+            ) : null}
+          </SubSection>
         </div>
       </section>
 
