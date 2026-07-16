@@ -760,7 +760,6 @@ export function StageRulesEditor({
         summary={
           [
             stage.ownerMinting ? 'mints tokens' : '',
-            stage.pauseCreditTransfers ? 'credits paused' : '',
             Object.values(stage.powers).some(Boolean) ? 'superpowers' : '',
           ]
             .filter(Boolean)
@@ -776,18 +775,6 @@ export function StageRulesEditor({
           title="Owner can mint tokens any time"
           blurb="Mint any amount without payment. Supporters can see this power on your project, so leave it off unless you need it."
         />
-        <div className="mt-2">
-          <CheckRow
-            checked={stage.pauseCreditTransfers}
-            onToggle={() =>
-              set({ pauseCreditTransfers: !stage.pauseCreditTransfers })
-            }
-            disabled={disabled}
-            title="Pause credit transfers"
-            blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
-          />
-        </div>
-
         <div className="mt-5 border-t border-smoke-200 pt-4">
           <span className="field-label">Superpowers</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
@@ -846,6 +833,26 @@ export function StageRulesEditor({
           </div>
         </div>
       </SubSection>
+      )}
+
+      {/* Extras */}
+      {isRevnet ? null : (
+        <SubSection
+          label="Extras"
+          summary={stage.pauseCreditTransfers ? 'Credits paused' : 'None'}
+          open={!!stage.open.extras}
+          onToggle={() => toggleOpen('extras')}
+        >
+          <CheckRow
+            checked={stage.pauseCreditTransfers}
+            onToggle={() =>
+              set({ pauseCreditTransfers: !stage.pauseCreditTransfers })
+            }
+            disabled={disabled}
+            title="Pause credit transfers"
+            blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
+          />
+        </SubSection>
       )}
     </div>
   )
