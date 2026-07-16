@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { isAddress } from 'viem'
-import { truncateAddress } from '@/lib/format'
 import { looksLikeEns, lookupEnsAddress, lookupEnsName } from '@/lib/ens'
 
 type Note = { kind: 'ok' | 'bad'; text: string; copy?: string }
@@ -24,7 +23,7 @@ function ResolutionNote({ note }: { note: Note }) {
   }
   if (!note.copy) {
     return (
-      <p className="mt-0.5 truncate pl-1 text-[11px] text-melon-600">
+      <p className="mt-0.5 truncate pl-1 text-[11px] text-smoke-500">
         {note.text}
       </p>
     )
@@ -36,7 +35,7 @@ function ResolutionNote({ note }: { note: Note }) {
         setCopied(true)
       }}
       title={`Copy ${note.copy}`}
-      className="mt-0.5 block max-w-full truncate pl-1 text-left text-[11px] text-melon-600 hover:text-melon-700 hover:underline"
+      className="mt-0.5 block max-w-full truncate pl-1 text-left text-[11px] text-smoke-500 hover:text-ink hover:underline"
     >
       {copied ? 'Copied!' : note.text}
     </button>
@@ -82,11 +81,7 @@ export function AddressField({
         if (stale) return
         setNote(
           address
-            ? {
-                kind: 'ok',
-                text: `→ ${truncateAddress(address)}`,
-                copy: address,
-              }
+            ? { kind: 'ok', text: `→ ${address}`, copy: address }
             : { kind: 'bad', text: 'Name not found' },
         )
       } else {
