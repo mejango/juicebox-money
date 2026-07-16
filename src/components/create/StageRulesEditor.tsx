@@ -918,7 +918,7 @@ export function StageRulesEditor({
                   Capped
                 </ChipButton>
                 {stage.surplusCapOn ? (
-                  <>
+                  <span className="flex items-center gap-2">
                     <input
                       type="text"
                       inputMode="decimal"
@@ -932,10 +932,10 @@ export function StageRulesEditor({
                         Number(stage.surplusAmount) > 0 ? '' : '!border-red-400'
                       }`}
                     />
-                    <span className="text-xs text-smoke-700">
+                    <span className="whitespace-nowrap text-xs text-smoke-700">
                       {unitLabel} max, until rules change
                     </span>
-                  </>
+                  </span>
                 ) : null}
               </div>
             ) : null}
@@ -952,23 +952,25 @@ export function StageRulesEditor({
               Read about fees {stage.open.fees ? '▾' : '▸'}
             </button>
             {stage.open.fees ? (
-              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                Funds leaving the project — payouts and withdrawals — pay a
-                small fee to the Juicebox protocol. Paying it makes you a
-                part-owner of Juicebox itself, earning a cut of everyone
-                else&apos;s fees. Money moving between Juicebox projects never
-                pays a fee.
-              </p>
+              <>
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  Funds leaving the project — payouts and withdrawals — pay a
+                  small fee to the Juicebox protocol. Paying it makes you a
+                  part-owner of Juicebox itself, earning a cut of everyone
+                  else&apos;s fees. Money moving between Juicebox projects
+                  never pays a fee.
+                </p>
+                <div className="mt-2.5">
+                  <CheckRow
+                    checked={stage.holdFees}
+                    onToggle={() => set({ holdFees: !stage.holdFees })}
+                    disabled={disabled}
+                    title="Hold fees in the project"
+                    blurb="Keep the fee amount in your project instead of paying it right away. Useful if you might put funds back into your Juicebox later — issuing refunds, say — since returned funds unlock the held fee."
+                  />
+                </div>
+              </>
             ) : null}
-            <div className="mt-2.5">
-              <CheckRow
-                checked={stage.holdFees}
-                onToggle={() => set({ holdFees: !stage.holdFees })}
-                disabled={disabled}
-                title="Hold fees in the project"
-                blurb="Keep the fee amount in your project instead of paying it right away. Useful if you might put funds back into your Juicebox later — issuing refunds, say — since returned funds unlock the held fee."
-              />
-            </div>
           </div>
         ) : null}
       </SubSection>
