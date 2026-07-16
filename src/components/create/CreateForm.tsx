@@ -568,6 +568,9 @@ export function CreateForm() {
     const routed =
       stage.payouts === 'routed' ? buildRoutedSplits(stage, chainId) : null
     const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
+    const surplusOn =
+      stage.payouts === 'flexible' ||
+      (stage.payouts === 'routed' && !routedAll && stage.routedSurplusOn)
     const reservedOn =
       Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
     return {
@@ -596,6 +599,11 @@ export function CreateForm() {
       payouts: stage.payouts,
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
+      surplusAllowanceOn: surplusOn,
+      surplusAllowanceAmount:
+        surplusOn && stage.surplusCapOn
+          ? parseUnits(stage.surplusAmount || '0', accountingDecimals)
+          : null,
       holdFees: stage.payouts !== 'none' && stage.holdFees,
       cashOutTaxRate: stage.cashOuts && !routedAll ? stageCashOutTax(stage) : null,
       allowOwnerMinting: stage.ownerMinting,
@@ -649,6 +657,8 @@ export function CreateForm() {
       payouts: 'none',
       payoutSplits: [],
       payoutLimitAmount: null,
+      surplusAllowanceOn: false,
+      surplusAllowanceAmount: null,
       holdFees: false,
       // Revnets can't disable cash outs entirely — 'off' is the maximum
       // allowed 99.99% tax.

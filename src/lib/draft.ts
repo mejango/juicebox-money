@@ -140,6 +140,9 @@ function sanitizeStage(raw: unknown): DraftStage {
       .slice(0, 100)
       .map(sanitizeSplit),
     holdFees: bool(s.holdFees),
+    surplusCapOn: bool(s.surplusCapOn),
+    surplusAmount: numStr(s.surplusAmount, 20),
+    routedSurplusOn: bool(s.routedSurplusOn),
     cashOuts: bool(s.cashOuts),
     cashOutTax:
       typeof s.cashOutTax === 'number' &&

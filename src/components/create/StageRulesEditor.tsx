@@ -40,6 +40,11 @@ export type DraftStage = {
   routedMode: 'all' | 'amounts'
   payoutSplits: DraftSplit[]
   holdFees: boolean
+  /** Flexible: cap owner withdrawals; Routed(amounts): optional owner
+   *  surplus access. */
+  surplusCapOn: boolean
+  surplusAmount: string
+  routedSurplusOn: boolean
   cashOuts: boolean
   cashOutTax: number
   /** Custom tax %: overrides cashOutTax when on. */
@@ -82,6 +87,9 @@ export function newDraftStage(
     routedMode: 'all',
     payoutSplits: [],
     holdFees: false,
+    surplusCapOn: false,
+    surplusAmount: '',
+    routedSurplusOn: false,
     cashOuts: flavor === 'revnet',
     cashOutTax: flavor === 'revnet' ? 1000 : 0,
     taxCustomOn: false,
@@ -202,7 +210,9 @@ export function stageOk(
         (payoutsMode !== 'percent' ||
           splitsTotal(stage.payoutSplits, 'percent') <= 100))) &&
     (stage.durationValue !== 'custom' || stageDurationSeconds(stage) > 0) &&
-    (!stage.cashOuts || stageTaxOk(stage))
+    (!stage.cashOuts || stageTaxOk(stage)) &&
+    (!stage.surplusCapOn ||
+      (Number(stage.surplusAmount) > 0 && numOk(stage.surplusAmount)))
   )
 }
 
@@ -361,7 +371,7 @@ export function StageRulesEditor({
     (stage.payouts === 'none'
       ? 'Funds stay in the project'
       : stage.payouts === 'flexible'
-        ? 'Flexible withdrawals'
+        ? `Flexible withdrawals${stage.surplusCapOn ? ' (capped)' : ''}`
         : validPayoutSplits === 0
           ? 'Routing all funds to you'
           : stage.routedMode === 'all'
@@ -723,6 +733,62 @@ export function StageRulesEditor({
               <p className="mt-2 text-xs text-smoke-700">
                 No recipients yet — payouts go to you, the owner.
               </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {stage.payouts === 'flexible' ||
+        (stage.payouts === 'routed' && stage.routedMode === 'amounts') ? (
+          <div className="mt-3">
+            {stage.payouts === 'routed' ? (
+              <CheckRow
+                checked={stage.routedSurplusOn}
+                onToggle={() =>
+                  set({ routedSurplusOn: !stage.routedSurplusOn })
+                }
+                disabled={disabled}
+                title="Owner can also withdraw surplus"
+                blurb="Beyond the routed amounts, you can pull from whatever surplus remains."
+              />
+            ) : null}
+            {stage.payouts === 'flexible' || stage.routedSurplusOn ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-smoke-700">Withdrawals:</span>
+                <ChipButton
+                  active={!stage.surplusCapOn}
+                  onClick={() => set({ surplusCapOn: false })}
+                  disabled={disabled}
+                >
+                  Unlimited
+                </ChipButton>
+                <ChipButton
+                  active={stage.surplusCapOn}
+                  onClick={() => set({ surplusCapOn: true })}
+                  disabled={disabled}
+                >
+                  Capped
+                </ChipButton>
+                {stage.surplusCapOn ? (
+                  <>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={stage.surplusAmount}
+                      onChange={e =>
+                        set({ surplusAmount: e.target.value.slice(0, 20) })
+                      }
+                      disabled={disabled}
+                      placeholder="1.0"
+                      className={`input-well min-h-[40px] w-28 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                        Number(stage.surplusAmount) > 0 ? '' : '!border-red-400'
+                      }`}
+                    />
+                    <span className="text-xs text-smoke-700">
+                      {unitLabel} max, until rules change
+                    </span>
+                  </>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : null}

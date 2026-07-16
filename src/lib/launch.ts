@@ -138,6 +138,11 @@ export type StageRules = {
    *  limit ⇒ no surplus, cash outs off). A fixed amount (in the accounting
    *  token's units) caps total payouts — the rest stays as surplus. */
   payoutLimitAmount: bigint | null
+  /** Owner surplus access: on for 'flexible'; optional alongside
+   *  fixed-amount routed payouts. */
+  surplusAllowanceOn: boolean
+  /** Cap on owner surplus withdrawals (accounting units); null = unlimited. */
+  surplusAllowanceAmount: bigint | null
   /** Hold payout/allowance fees in the project instead of processing them,
    *  so they can be unlocked if the funds come back. */
   holdFees: boolean
@@ -223,6 +228,8 @@ export const DEFAULT_STAGE: StageRules = {
   payouts: 'none',
   payoutSplits: [],
   payoutLimitAmount: null,
+  surplusAllowanceOn: false,
+  surplusAllowanceAmount: null,
   holdFees: false,
   cashOutTaxRate: null,
   allowOwnerMinting: false,
@@ -504,10 +511,14 @@ export function buildLaunchRequest(args: {
                       },
                     ]
                   : [],
-              surplusAllowances:
-                stage.payouts === 'flexible'
-                  ? [{ amount: UNLIMITED_PAYOUT, currency: ctx.currency }]
-                  : [],
+              surplusAllowances: stage.surplusAllowanceOn
+                ? [
+                    {
+                      amount: stage.surplusAllowanceAmount ?? UNLIMITED_PAYOUT,
+                      currency: ctx.currency,
+                    },
+                  ]
+                : [],
             })),
     }),
   )
