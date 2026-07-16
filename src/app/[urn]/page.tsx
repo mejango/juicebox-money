@@ -256,15 +256,23 @@ export default async function ProjectPage({
       {/* Content + pay card */}
       <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
         <aside className="order-1 lg:order-2 lg:col-span-1">
-          <div className="lg:sticky lg:top-24">
-            <TreasuryCard
-              chainId={urn.chainId}
-              projectId={project.projectId}
-              projectName={name}
-              accountingToken={project.token}
-              accountingTokenSymbol={project.tokenSymbol}
+          <TreasuryCard
+            chainId={urn.chainId}
+            projectId={project.projectId}
+            projectName={name}
+            accountingToken={project.token}
+            accountingTokenSymbol={project.tokenSymbol}
+          />
+          <section className="mt-8">
+            <h2 className="mb-3 font-agrandir text-xl font-medium">
+              Activity
+            </h2>
+            <ActivityList
+              events={activity}
+              decimals={decimals}
+              symbol={symbol}
             />
-          </div>
+          </section>
         </aside>
 
         <div className="order-2 min-w-0 lg:order-1 lg:col-span-2">
@@ -310,22 +318,6 @@ export default async function ProjectPage({
             </section>
           ) : null}
 
-          <section
-            className={
-              description.length > 0 || infoUri || twitter || discord
-                ? 'mt-10'
-                : ''
-            }
-          >
-            <h2 className="mb-3 font-agrandir text-xl font-medium">
-              Activity
-            </h2>
-            <ActivityList
-              events={activity}
-              decimals={decimals}
-              symbol={symbol}
-            />
-          </section>
         </div>
       </div>
     </div>

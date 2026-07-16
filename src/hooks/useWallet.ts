@@ -45,8 +45,12 @@ export function useWallet() {
   return {
     isConnected,
     address: address as Address | undefined,
-    /** Wallet connectors the user can pick from (excludes the Para bridge). */
-    connectors: connectors.filter(c => c.id !== 'para'),
+    /** Wallet connectors the user can pick from (excludes the Para bridge).
+     *  Configured connectors and EIP-6963 browser discovery can both surface
+     *  the same wallet — dedupe by display name, keeping the first. */
+    connectors: connectors
+      .filter(c => c.id !== 'para')
+      .filter((c, i, arr) => arr.findIndex(x => x.name === c.name) === i),
     /** Connect a specific external wallet connector. */
     connectWith: (connectorId: string) => {
       const connector = connectors.find(c => c.id === connectorId)
