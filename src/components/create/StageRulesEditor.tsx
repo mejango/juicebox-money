@@ -584,6 +584,7 @@ export function StageRulesEditor({
               remainderNote="go to payers"
               chainIds={chainIds}
               addLabel="Add split"
+              allocatedLabel="split limit"
             />
           </div>
         ) : (

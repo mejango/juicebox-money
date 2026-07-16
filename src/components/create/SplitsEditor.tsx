@@ -100,6 +100,7 @@ export function SplitsEditor({
   remainderNote = 'go to you',
   chainIds,
   addLabel = 'Add a recipient',
+  allocatedLabel = 'allocated',
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -114,6 +115,8 @@ export function SplitsEditor({
   /** Selected launch chains; >1 enables per-chain recipient overrides. */
   chainIds?: number[]
   addLabel?: string
+  /** Word after the total percent, e.g. 'allocated' or 'split limit'. */
+  allocatedLabel?: string
 }) {
   const update = (id: string, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
@@ -309,10 +312,10 @@ export function SplitsEditor({
                 `${total}% — over 100%`
               ) : total < 100 ? (
                 <Piped
-                  text={`${total}% allocated | remaining ${bucketLabel} ${remainderNote}`}
+                  text={`${total}% ${allocatedLabel} | remaining ${bucketLabel} ${remainderNote}`}
                 />
               ) : (
-                '100% allocated'
+                `100% ${allocatedLabel}`
               )}
             </span>
           ) : (
