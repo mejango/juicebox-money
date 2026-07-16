@@ -307,9 +307,11 @@ export function CreateForm() {
     const override = row.perChain[chainId]?.trim() || ''
     if (row.kind === 'project') {
       const id = (override || row.projectId).trim().replace('#', '')
+      const beneficiary =
+        row.perChainBeneficiary[chainId]?.trim() || row.beneficiary
       return {
         projectId: BigInt(id),
-        beneficiary: resolvedAddress(row.beneficiary)!,
+        beneficiary: resolvedAddress(beneficiary)!,
       }
     }
     return {

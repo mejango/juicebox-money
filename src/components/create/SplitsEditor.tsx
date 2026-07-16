@@ -31,6 +31,8 @@ export type DraftSplit = {
   beneficiary: string
   /** Per-chain overrides of the identity field (address or project id). */
   perChain: Record<number, string>
+  /** Per-chain overrides of the token beneficiary ('project' kind). */
+  perChainBeneficiary: Record<number, string>
   perChainOpen: boolean
 }
 
@@ -45,6 +47,7 @@ export function newDraftSplit(): DraftSplit {
     projectId: '',
     beneficiary: '',
     perChain: {},
+    perChainBeneficiary: {},
     perChainOpen: false,
   }
 }
@@ -71,10 +74,14 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
       overrides.every(v => resolvedAddress(v) !== null)
     )
   }
+  const beneficiaryOverrides = Object.values(split.perChainBeneficiary).filter(
+    v => v.trim() !== '',
+  )
   return (
     projectIdOk(split.projectId) &&
     resolvedAddress(split.beneficiary) !== null &&
-    overrides.every(projectIdOk)
+    overrides.every(projectIdOk) &&
+    beneficiaryOverrides.every(v => resolvedAddress(v) !== null)
   )
 }
 
@@ -146,6 +153,7 @@ export function SplitsEditor({
                       update(split.id, {
                         kind: e.target.value as DraftSplit['kind'],
                         perChain: {},
+                        perChainBeneficiary: {},
                       })
                     }
                     disabled={disabled}
@@ -239,17 +247,37 @@ export function SplitsEditor({
                               compact
                             />
                           ) : (
-                            <ProjectIdField
-                              value={split.perChain[chainId] ?? ''}
-                              onChange={v =>
-                                update(split.id, {
-                                  perChain: { ...split.perChain, [chainId]: v },
-                                })
-                              }
-                              disabled={disabled}
-                              chainId={chainId}
-                              className="w-28"
-                            />
+                            <>
+                              <ProjectIdField
+                                value={split.perChain[chainId] ?? ''}
+                                onChange={v =>
+                                  update(split.id, {
+                                    perChain: { ...split.perChain, [chainId]: v },
+                                  })
+                                }
+                                disabled={disabled}
+                                chainId={chainId}
+                                className="w-24 shrink-0"
+                              />
+                              <AddressField
+                                value={split.perChainBeneficiary[chainId] ?? ''}
+                                onChange={v =>
+                                  update(split.id, {
+                                    perChainBeneficiary: {
+                                      ...split.perChainBeneficiary,
+                                      [chainId]: v,
+                                    },
+                                  })
+                                }
+                                disabled={disabled}
+                                placeholder={
+                                  split.beneficiary.trim() || 'beneficiary'
+                                }
+                                ariaLabel={`Beneficiary on ${chainName(chainId)}`}
+                                className="flex-1"
+                                compact
+                              />
+                            </>
                           )}
                         </div>
                       ))}
