@@ -350,3 +350,37 @@ export function parseDraft(text: string): CreateDraft {
       .map(sanitizeItem),
   }
 }
+
+/** The recursive key/type structure of a value — ids and other values are
+ *  ignored so sanitizer-regenerated ids don't false-positive. */
+function shapeOf(value: unknown): unknown {
+  if (Array.isArray(value)) return value.length ? [shapeOf(value[0])] : []
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map(key => [key, shapeOf((value as Record<string, unknown>)[key])]),
+    )
+  }
+  return typeof value
+}
+
+/** Dev-only: warn when a built draft doesn't survive its own sanitizer —
+ *  i.e. a field was added to the wizard state but not whitelisted in
+ *  parseDraft, so it would silently drop from .jb export/import. */
+export function warnOnDraftDrift(draft: CreateDraft) {
+  if (process.env.NODE_ENV === 'production') return
+  try {
+    const cycled = parseDraft(JSON.stringify(draft))
+    const before = JSON.stringify(shapeOf(draft))
+    const after = JSON.stringify(shapeOf(cycled))
+    if (before !== after) {
+      console.warn(
+        '.jb draft drift: a wizard field does not round-trip through parseDraft. Add it to the whitelist.',
+        { built: draft, roundTripped: cycled },
+      )
+    }
+  } catch (error) {
+    console.warn('.jb draft drift: the built draft fails parseDraft.', error)
+  }
+}

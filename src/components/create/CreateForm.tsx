@@ -22,6 +22,7 @@ import {
   DRAFT_KEY,
   draftFileName,
   parseDraft,
+  warnOnDraftDrift,
   type CreateDraft,
 } from '@/lib/draft'
 import {
@@ -1198,7 +1199,9 @@ export function CreateForm() {
     if (!hydratedRef.current || busy) return
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(buildDraft()))
+        const draft = buildDraft()
+        warnOnDraftDrift(draft)
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
       } catch {
         // Storage full/unavailable — drafts just won't persist.
       }
