@@ -6,7 +6,9 @@ export const runtime = 'nodejs'
 /**
  * Pin a project-metadata JSON. Fields are whitelisted and length-capped, so
  * the pinned object is always small and exactly the shape project pages
- * expect: { name, projectTagline?, description?, logoUri? }.
+ * expect: { name, projectTagline?, description?, logoUri?, infoUri?,
+ * twitter?, discord? }. The link fields exist so owner edits can carry a
+ * project's existing links forward instead of dropping them.
  */
 export async function POST(req: NextRequest) {
   let body: unknown
@@ -19,10 +21,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected a JSON object' }, { status: 400 })
   }
 
-  const { name, projectTagline, description, logoUri } = body as Record<
-    string,
-    unknown
-  >
+  const { name, projectTagline, description, logoUri, infoUri, twitter, discord } =
+    body as Record<string, unknown>
 
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
     return NextResponse.json(
@@ -53,6 +53,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid logoUri' }, { status: 400 })
     }
     metadata.logoUri = logoUri
+  }
+
+  // Plain length-capped strings; project pages sanitize on render
+  // (https-only URLs, handle-shaped twitter).
+  const links: [string, unknown, number][] = [
+    ['infoUri', infoUri, 300],
+    ['twitter', twitter, 100],
+    ['discord', discord, 300],
+  ]
+  for (const [key, value, max] of links) {
+    if (value === undefined) continue
+    if (typeof value !== 'string' || value.length > max) {
+      return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
+    }
+    if (value.trim()) metadata[key] = value.trim()
   }
 
   try {

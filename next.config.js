@@ -10,6 +10,9 @@ const securityHeaders = [
 ]
 
 module.exports = {
+  // Verification builds set NEXT_DIST_DIR so they never clobber the dev
+  // server's .next; unset means the normal default.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   reactStrictMode: true,
   poweredByHeader: false,
   webpack: (config, { webpack }) => {

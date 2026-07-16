@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation'
 import { cache } from 'react'
 import { ActivityList } from '@/components/ActivityList'
 import { ChainBadge } from '@/components/ChainBadge'
+import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import {
@@ -27,7 +28,10 @@ import { chainName, parseUrn, toUrn } from '@/lib/urn'
 const getProjectCached = cache(getProject)
 
 type ProjectMetadata = {
+  name?: string
+  projectTagline?: string
   description?: string
+  logoUri?: string
   infoUri?: string
   twitter?: string
   discord?: string
@@ -273,6 +277,22 @@ export default async function ProjectPage({
         </aside>
 
         <div className="order-2 min-w-0 lg:order-1 lg:col-span-2">
+          {/* Renders only for the project's on-chain owner (client-gated). */}
+          <OwnerPanel
+            chainId={urn.chainId}
+            projectId={project.projectId}
+            initial={{
+              // Prefer the pinned metadata (the truth setUriOf points at);
+              // bendystraw mirrors it but can lag.
+              name: metadata?.name ?? name,
+              tagline: metadata?.projectTagline ?? project.projectTagline ?? '',
+              description: metadata?.description ?? '',
+              logoUri: metadata?.logoUri ?? project.logoUri ?? null,
+              infoUri: metadata?.infoUri,
+              twitter: metadata?.twitter,
+              discord: metadata?.discord,
+            }}
+          />
           {description.length > 0 || infoUri || twitter || discord ? (
             <section>
               <h2 className="mb-3 font-display text-xl font-extrabold tracking-[-0.02em]">
