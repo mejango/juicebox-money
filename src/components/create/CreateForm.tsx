@@ -4,7 +4,7 @@ import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { BaseError, parseUnits, type Address, type PublicClient } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
@@ -81,6 +81,8 @@ const STEP_TILES = [
   'bg-grape-400 text-ink',
   'bg-melon-400 text-ink',
 ]
+
+const WIZARD_STEPS = ['Project', 'Rules', 'Store', 'Launch']
 
 function StepBadge({ n }: { n: number }) {
   return (
@@ -242,6 +244,13 @@ export function CreateForm() {
   const [openSection, setOpenSection] = useState<Record<string, boolean>>({})
   const toggleSection = (key: string) =>
     setOpenSection(prev => ({ ...prev, [key]: !prev[key] }))
+
+  // --- Wizard step (all sections stay mounted; inactive ones hide) ---
+  const [step, setStep] = useState(0)
+  const goToStep = (i: number) => {
+    setStep(i)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   // --- 3: Store ---
   const [items, setItems] = useState<DraftItem[]>([])
@@ -664,8 +673,49 @@ export function CreateForm() {
         you can change the rules any time.
       </p>
 
+      {/* Horizontal stepper */}
+      <nav aria-label="Create steps" className="mt-8 flex items-center gap-1.5">
+        {WIZARD_STEPS.map((label, i) => (
+          <Fragment key={label}>
+            {i > 0 ? (
+              <span
+                aria-hidden
+                className={`h-0.5 min-w-3 flex-1 rounded-full ${
+                  i <= step ? 'bg-ink' : 'bg-smoke-300'
+                }`}
+              />
+            ) : null}
+            <button
+              onClick={() => !busy && goToStep(i)}
+              disabled={busy}
+              aria-current={step === i ? 'step' : undefined}
+              className="flex shrink-0 items-center gap-2 disabled:opacity-60"
+            >
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full font-agrandir text-sm font-medium ${
+                  step === i
+                    ? STEP_TILES[i]
+                    : i < step
+                      ? 'bg-ink text-bone'
+                      : 'border-2 border-smoke-300 bg-white text-smoke-500'
+                }`}
+              >
+                {i < step ? <CheckIcon className="h-3.5 w-3.5" /> : i + 1}
+              </span>
+              <span
+                className={`text-sm font-medium ${
+                  step === i ? 'text-ink' : 'hidden text-smoke-500 sm:inline'
+                }`}
+              >
+                {label}
+              </span>
+            </button>
+          </Fragment>
+        ))}
+      </nav>
+
       {/* 1 — Identity + treasury + chains */}
-      <section className="card mt-10 p-6 sm:p-7">
+      <section className={step === 0 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={1} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -827,7 +877,7 @@ export function CreateForm() {
       </section>
 
       {/* 2 — Rules questionnaire */}
-      <section className="card mt-5 p-6 sm:p-7">
+      <section className={step === 1 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -1075,7 +1125,7 @@ export function CreateForm() {
       </section>
 
       {/* 3 — Store */}
-      <section className="card mt-5 p-6 sm:p-7">
+      <section className={step === 2 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={3} />
           <h2 className="font-agrandir text-xl font-medium">Stock your store</h2>
@@ -1094,7 +1144,7 @@ export function CreateForm() {
       </section>
 
       {/* 4 — Review & launch */}
-      <section className="card mt-5 p-6 sm:p-7">
+      <section className={step === 3 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
         <div className="flex items-center gap-3">
           <StepBadge n={4} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -1265,6 +1315,28 @@ export function CreateForm() {
           </ul>
         ) : null}
       </section>
+
+      {/* Back / Next wizard footer */}
+      <div className="mt-6 flex items-center justify-between">
+        <button
+          onClick={() => goToStep(step - 1)}
+          disabled={busy}
+          className={`btn-secondary min-h-[44px] px-6 text-sm ${
+            step === 0 ? 'invisible' : ''
+          }`}
+        >
+          ← Back
+        </button>
+        {step < WIZARD_STEPS.length - 1 ? (
+          <button
+            onClick={() => goToStep(step + 1)}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-6 text-sm"
+          >
+            Next →
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 }
