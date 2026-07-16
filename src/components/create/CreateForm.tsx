@@ -524,8 +524,20 @@ export function CreateForm() {
     chainId: number,
   ): StageRules => {
     const cutOn = stage.cutOn && Number(stage.cutPct) > 0
-    const reservedOn =
-      Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
+    // Revnet splits: each row is a % of new issuance; splitPercent is their
+    // sum and the bucket shares are the rows normalized to exactly 1e9.
+    const rows = stage.reservedSplits.filter(s => splitOk(s, 'percent'))
+    const rowTotal = rows.reduce((sum, r) => sum + Number(r.value), 0)
+    const splitsPct = Math.min(100, rowTotal)
+    let revnetSplits: SplitConfig[] = []
+    if (rowTotal > 0) {
+      const rel = rows.map(r => Math.floor((Number(r.value) / rowTotal) * 1e9))
+      rel[rel.length - 1] = 1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0)
+      revnetSplits = rows.map((r, i) => ({
+        percent: rel[i],
+        ...toRecipient(r, chainId),
+      }))
+    }
     return {
       duration: 0,
       mustStartAtOrAfter: start,
@@ -535,8 +547,8 @@ export function CreateForm() {
           ? 0n
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: cutOn ? Math.round(Number(stage.cutPct) * 1e7) : 0,
-      reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
-      reservedSplits: reservedOn ? toSplitConfigs(stage.reservedSplits, chainId) : [],
+      reservedPercent: Math.round(splitsPct * 100),
+      reservedSplits: revnetSplits,
       payouts: 'none',
       payoutSplits: [],
       payoutLimitAmount: null,

@@ -99,6 +99,7 @@ export function SplitsEditor({
   amountLabel = '',
   remainderNote = 'go to you',
   chainIds,
+  addLabel = 'Add a recipient',
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -112,6 +113,7 @@ export function SplitsEditor({
   remainderNote?: string
   /** Selected launch chains; >1 enables per-chain recipient overrides. */
   chainIds?: number[]
+  addLabel?: string
 }) {
   const update = (id: string, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
@@ -296,7 +298,7 @@ export function SplitsEditor({
           onClick={() => onChange([...splits, newDraftSplit()])}
           disabled={disabled}
         >
-          Add a recipient
+          {addLabel}
         </AddButton>
         {splits.length > 0 ? (
           mode === 'percent' ? (

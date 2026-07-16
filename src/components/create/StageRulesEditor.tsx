@@ -162,7 +162,9 @@ export function stageOk(
         splitsTotal(stage.reservedSplits, 'percent') <= 100))
   if (flavor === 'revnet') {
     return (
-      common &&
+      stageIssuanceOk(stage, isFirst) &&
+      stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
+      splitsTotal(stage.reservedSplits, 'percent') <= 100 &&
       (!stage.cutOn ||
         (Number(stage.cutPct) > 0 &&
           numOk(stage.cutPct, 100) &&
@@ -218,12 +220,12 @@ export function stageSummaryParts(
   } else {
     parts.push('no issuance')
   }
-  if (Number(stage.reservedPct) > 0)
-    parts.push(
-      flavor === 'revnet'
-        ? `${Number(stage.reservedPct)}% to splits`
-        : `${Number(stage.reservedPct)}% reserved`,
-    )
+  if (flavor === 'revnet') {
+    const splitsPct = splitsTotal(stage.reservedSplits, 'percent')
+    if (splitsPct > 0) parts.push(`${splitsPct}% to splits`)
+  } else if (Number(stage.reservedPct) > 0) {
+    parts.push(`${Number(stage.reservedPct)}% reserved`)
+  }
   if (
     Number(stage.cutPct) > 0 &&
     (flavor !== 'revnet' || stage.cutOn)
@@ -566,42 +568,60 @@ export function StageRulesEditor({
             </span>
           </div>
         ) : null}
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <input
-            type="text"
-            inputMode="decimal"
-            value={stage.reservedPct}
-            onChange={e => set({ reservedPct: e.target.value.slice(0, 5) })}
-            disabled={disabled}
-            className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-              stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)
-                ? ''
-                : '!border-red-400'
-            }`}
-          />
-          <span className="text-sm text-smoke-700">
-            {isRevnet
-              ? `% of new ${tokenLabel} to splits`
-              : `% of new ${tokenLabel} reserved`}
-          </span>
-        </div>
-        {reservedOn ? (
+        {isRevnet ? (
           <div className="mt-4">
-            <p className="text-xs leading-relaxed text-smoke-700">
-              {isRevnet
-                ? 'Where should split tokens go? Any remainder goes to the operator.'
-                : 'Where should reserved tokens go? Leave empty to keep them all for yourself.'}
-            </p>
+            {stage.reservedSplits.length > 0 ? (
+              <p className="text-xs leading-relaxed text-smoke-700">
+                Each split takes a share of newly issued {tokenLabel}; the
+                rest go to the payer.
+              </p>
+            ) : null}
             <SplitsEditor
               splits={stage.reservedSplits}
               onChange={reservedSplits => set({ reservedSplits })}
               disabled={disabled}
-              bucketLabel={isRevnet ? 'split tokens' : 'reserved tokens'}
-              remainderNote={isRevnet ? 'go to the operator' : 'go to you'}
+              bucketLabel={`new ${tokenLabel}`}
+              remainderNote="go to payers"
               chainIds={chainIds}
+              addLabel="Add split"
             />
           </div>
-        ) : null}
+        ) : (
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={stage.reservedPct}
+                onChange={e => set({ reservedPct: e.target.value.slice(0, 5) })}
+                disabled={disabled}
+                className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                  stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)
+                    ? ''
+                    : '!border-red-400'
+                }`}
+              />
+              <span className="text-sm text-smoke-700">
+                % of new {tokenLabel} reserved
+              </span>
+            </div>
+            {reservedOn ? (
+              <div className="mt-4">
+                <p className="text-xs leading-relaxed text-smoke-700">
+                  Where should reserved tokens go? Leave empty to keep them
+                  all for yourself.
+                </p>
+                <SplitsEditor
+                  splits={stage.reservedSplits}
+                  onChange={reservedSplits => set({ reservedSplits })}
+                  disabled={disabled}
+                  bucketLabel="reserved tokens"
+                  chainIds={chainIds}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
       </SubSection>
 
       {/* Payouts (owner-managed money never applies to revnets) */}
