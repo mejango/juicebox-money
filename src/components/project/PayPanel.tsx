@@ -863,24 +863,23 @@ function TextSelect({
   disabled?: boolean
   ariaLabel: string
 }) {
+  // A native <select> sizes to its WIDEST option, which would leave a gap
+  // between a short label and the caret. So show the current label + caret as
+  // tight visible text and overlay a transparent, full-cover select for the
+  // real (native) dropdown.
+  const current = options.find(o => o.value === value)?.label ?? ''
   return (
-    <span className="relative inline-flex items-center">
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        className="cursor-pointer appearance-none bg-transparent pr-4 font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4 outline-none disabled:cursor-default disabled:opacity-60"
-      >
-        {options.map(o => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+    <span
+      className={`relative inline-flex items-center gap-1 ${
+        disabled ? 'opacity-60' : ''
+      }`}
+    >
+      <span className="font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4">
+        {current}
+      </span>
       <svg
         viewBox="0 0 24 24"
-        className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-smoke-500"
+        className="h-3.5 w-3.5 shrink-0 text-smoke-500"
         fill="none"
         stroke="currentColor"
         strokeWidth="2.5"
@@ -890,6 +889,19 @@ function TextSelect({
       >
         <path d="m6 9 6 6 6-6" />
       </svg>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
     </span>
   )
 }
