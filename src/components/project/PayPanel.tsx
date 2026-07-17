@@ -4,12 +4,15 @@ import {
   JB_CHAINS,
   JBCoreContracts,
   JBOmnichainDeployerContracts,
+  JBRouterTerminalContracts,
   NATIVE_TOKEN,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
   jbContractAddress,
+  jbDirectoryAbi,
   jbMultiTerminalAbi,
   jbOmnichainDeployerAbi,
+  jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -22,7 +25,7 @@ import {
   previewPay,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
   formatUnits,
@@ -45,6 +48,92 @@ type PayContext = {
   decimals: number
   currency: number
   symbol: string
+  /** True when this token is NOT accepted directly and is paid through the
+   *  JBRouterTerminalRegistry, which swaps it into the project's accounting
+   *  token. False for the project's own directly-accepted accounting tokens. */
+  viaRouter: boolean
+}
+
+type PaySurface = {
+  contexts: PayContext[]
+  rulesetStart: number
+  pausePay: boolean
+  /** The project's payment terminals (JBDirectory.terminalsOf) — the surface a
+   *  pay is fail-closed against: the target terminal MUST appear here. */
+  terminals: Address[]
+  /** Listed terminals this form doesn't recognize — a non-blocking note. */
+  unknown: Address[]
+}
+
+// Canonical Circle USDC per chain (lowercased to skip viem checksum
+// validation). Offered as a swap-via-router pay currency on projects that have
+// the router terminal — website/ USDC_BY_CHAIN parity.
+const USDC_BY_CHAIN: Record<number, Address> = {
+  1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+  8453: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  42161: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
+  84532: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+  11155111: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238',
+  11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7',
+  421614: '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d',
+}
+
+const ROUTER_PROBE_BENEFICIARY: Address =
+  '0x0000000000000000000000000000000000000001'
+
+/** The accounting-context currency id of a token: `uint32(uint160(token))`.
+ *  Used for router candidates (direct tokens carry the context's own currency). */
+function tokenCurrencyId(token: Address): number {
+  return Number(BigInt(token) & 0xffffffffn)
+}
+
+/** A stable identity for a pay token — a token can appear both directly AND
+ *  via-router, so the key must include the route. */
+function payTokenKey(t: Pick<PayContext, 'token' | 'viaRouter'>): string {
+  return `${t.token.toLowerCase()}:${t.viaRouter}`
+}
+
+// Whether the router registry can actually route a pay of `token` into
+// `projectId` right now (direct forward, swap, or cash-out loop). A listed
+// router with no pool/feed path reverts at pay time — offering ETH/USDC there
+// is a trap, not a convenience — so a dead route previews an all-zero ruleset
+// (ruleset.id == 0). Cached (as a promise) per (chain, project, token), exactly
+// like website/ _payRouteCache. Fail-soft: any error resolves false.
+const _payRouteCache = new Map<string, Promise<boolean>>()
+function routerPayRouteWorks(
+  client: PublicClient,
+  chainId: number,
+  projectId: number,
+  registry: Address,
+  token: Address,
+  decimals: number,
+): Promise<boolean> {
+  const key = `${chainId}:${projectId}:${token.toLowerCase()}`
+  let cached = _payRouteCache.get(key)
+  if (!cached) {
+    cached = client
+      .readContract({
+        address: registry,
+        abi: jbRouterTerminalRegistryAbi,
+        functionName: 'previewPayFor',
+        args: [
+          BigInt(projectId),
+          token,
+          10n ** BigInt(decimals),
+          ROUTER_PROBE_BENEFICIARY,
+          '0x',
+        ],
+      })
+      .then(out => {
+        // previewPayFor returns [ruleset, ...]; a dead route yields ruleset.id == 0.
+        const ruleset = (out as readonly [{ id: number }, ...unknown[]])[0]
+        return Number(ruleset?.id ?? 0) !== 0
+      })
+      .catch(() => false)
+    _payRouteCache.set(key, cached)
+  }
+  return cached
 }
 
 type ShopInfo = {
@@ -109,6 +198,14 @@ export function PayPanel({
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [tokenIndex, setTokenIndex] = useState(0)
+  // True once the user explicitly picks a pay token. Until then the selection
+  // auto-defaults to the project's first accounting token (list[0]) so an
+  // ETH/USDC router option never shadows a USDC/ETH project's real token — the
+  // documented fund-loss desync. (website/ chooseRefinedPayToken parity.)
+  const [tokenTouched, setTokenTouched] = useState(false)
+  // The (address+route) identity of the user's pick, so a background refetch or
+  // chain switch remaps the index to the same token rather than clobbering it.
+  const selectedKeyRef = useRef<string | null>(null)
   const [memo, setMemo] = useState('')
   const [cart, setCart] = useState<Record<number, number>>({})
 
@@ -121,26 +218,57 @@ export function PayPanel({
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
   // ---- The project's payment surface: accepted tokens + live ruleset ----
-  const { data: surface, isError: surfaceError } = useQuery({
+  // Direct tokens = the project's accounting contexts (viaRouter:false). When
+  // the project also lists the router terminal, native ETH and/or USDC that
+  // it does NOT accept directly are offered as swap-via-router options — but
+  // ONLY when `routerPayRouteWorks` confirms the router can route them (else a
+  // dead route reverts at pay time). Built atomically so the token list is
+  // never a partial/desynced snapshot.
+  const { data: surface, isError: surfaceError } = useQuery<PaySurface>({
     queryKey: ['paySurface', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
-    queryFn: async () => {
-      const args = { chainId, projectId: BigInt(projectId) }
-      const [contexts, ruleset] = await Promise.all([
-        getAccountingContexts(publicClient!, args),
-        getCurrentRuleset(publicClient!, args).catch(() => null),
+    queryFn: async (): Promise<PaySurface> => {
+      const client = publicClient!
+      const pid = BigInt(projectId)
+      const args = { chainId, projectId: pid }
+      const directory =
+        jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId]
+      const multiTerminal =
+        jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chainId]
+      const routerRegistry = jbContractAddress['6'][
+        JBRouterTerminalContracts.JBRouterTerminalRegistry
+      ]?.[chainId] as Address | undefined
+      const directRouter = (
+        jbContractAddress['6'][JBRouterTerminalContracts.JBRouterTerminal] as
+          | Record<number, Address>
+          | undefined
+      )?.[chainId]
+
+      const [contexts, ruleset, terminalsRaw] = await Promise.all([
+        getAccountingContexts(client, args),
+        getCurrentRuleset(client, args).catch(() => null),
+        client
+          .readContract({
+            address: directory,
+            abi: jbDirectoryAbi,
+            functionName: 'terminalsOf',
+            args: [pid],
+          })
+          .catch(() => [] as readonly Address[]),
       ])
-      const withSymbols: PayContext[] = await Promise.all(
+
+      const direct: PayContext[] = await Promise.all(
         contexts.map(async ctx => ({
           token: ctx.token,
           decimals: ctx.decimals,
           currency: ctx.currency,
+          viaRouter: false,
           symbol:
             ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
               ? nativeSymbol
-              : await publicClient!
+              : await client
                   .readContract({
                     address: ctx.token,
                     abi: erc20Abi,
@@ -149,10 +277,69 @@ export function PayPanel({
                   .catch(() => 'TOKEN'),
         })),
       )
+
+      const terminals = (terminalsRaw ?? []).filter(Boolean) as Address[]
+      const sameAddr = (a?: Address, b?: Address) =>
+        !!a && !!b && a.toLowerCase() === b.toLowerCase()
+      const hasRouter = terminals.some(
+        t => sameAddr(t, routerRegistry) || sameAddr(t, directRouter),
+      )
+      const known = new Set(
+        [multiTerminal, routerRegistry, directRouter]
+          .filter(Boolean)
+          .map(a => (a as Address).toLowerCase()),
+      )
+      const unknown = terminals.filter(t => !known.has(t.toLowerCase()))
+
+      // Router candidates: ETH/USDC that aren't already accepted directly,
+      // each gated by an actual previewPayFor route probe.
+      const has = (a: Address) =>
+        direct.some(t => t.token.toLowerCase() === a.toLowerCase())
+      let routable: PayContext[] = []
+      if (hasRouter && routerRegistry) {
+        const candidates: PayContext[] = []
+        if (!has(NATIVE_TOKEN)) {
+          candidates.push({
+            token: NATIVE_TOKEN,
+            decimals: 18,
+            currency: tokenCurrencyId(NATIVE_TOKEN),
+            symbol: nativeSymbol,
+            viaRouter: true,
+          })
+        }
+        const usdc = USDC_BY_CHAIN[chainId]
+        if (usdc && !has(usdc)) {
+          candidates.push({
+            token: usdc,
+            decimals: 6,
+            currency: tokenCurrencyId(usdc),
+            symbol: 'USDC',
+            viaRouter: true,
+          })
+        }
+        const gated = await Promise.all(
+          candidates.map(async c =>
+            (await routerPayRouteWorks(
+              client,
+              chainId,
+              projectId,
+              routerRegistry,
+              c.token,
+              c.decimals,
+            ))
+              ? c
+              : null,
+          ),
+        )
+        routable = gated.filter((c): c is PayContext => c !== null)
+      }
+
       return {
-        contexts: withSymbols,
+        contexts: [...direct, ...routable],
         rulesetStart: ruleset ? ruleset.ruleset.start : 0,
         pausePay: ruleset ? ruleset.metadata.pausePay : false,
+        terminals,
+        unknown,
       }
     },
   })
@@ -187,6 +374,29 @@ export function PayPanel({
   const decimals = context?.decimals ?? 18
   const isNative =
     context?.token.toLowerCase() === NATIVE_TOKEN.toLowerCase() || !context
+
+  // Keep the index in lock-step with the token list as it (re)resolves. If the
+  // user hasn't touched the selector, always default to list[0] (the real
+  // accounting token). If they have, re-find their exact pick (address+route);
+  // if it's gone, fall back to list[0] and forget the touch.
+  useEffect(() => {
+    const list = surface?.contexts
+    if (!list || list.length === 0) return
+    if (!tokenTouched) {
+      if (tokenIndex !== 0) setTokenIndex(0)
+      return
+    }
+    const key = selectedKeyRef.current
+    const idx = key ? list.findIndex(t => payTokenKey(t) === key) : -1
+    if (idx >= 0) {
+      if (idx !== tokenIndex) setTokenIndex(idx)
+    } else {
+      selectedKeyRef.current = null
+      setTokenTouched(false)
+      setTokenIndex(0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [surface, tokenTouched])
 
   const startsAt = surface?.rulesetStart ?? 0
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
@@ -385,9 +595,19 @@ export function PayPanel({
       : undefined
 
   // ---- Terminal + preview ----
-  const terminalAddress = context
-    ? jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chainId]
-    : undefined
+  // viaRouter tokens are paid through the JBRouterTerminalRegistry (which swaps
+  // them into the project's accounting token); direct tokens go to the
+  // JBMultiTerminal. Preview, allowance, approval, and pay all target this.
+  const multiTerminal =
+    jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chainId]
+  const routerRegistry = jbContractAddress['6'][
+    JBRouterTerminalContracts.JBRouterTerminalRegistry
+  ]?.[chainId] as Address | undefined
+  const terminalAddress = !context
+    ? undefined
+    : context.viaRouter
+      ? routerRegistry
+      : multiTerminal
 
   const {
     data: preview,
@@ -399,6 +619,8 @@ export function PayPanel({
       chainId,
       projectId,
       context?.token,
+      context?.viaRouter,
+      terminalAddress,
       amountRaw.toString(),
       metadata ?? '0x',
     ],
@@ -430,9 +652,21 @@ export function PayPanel({
   // verified zero stays zero.
   const minReturned = ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n
 
-  // ---- ERC-20 allowance (direct pays approve the terminal) ----
+  // ---- ERC-20 allowance ----
+  // Direct pays approve the JBMultiTerminal; swap-via-router ERC-20 pays approve
+  // the JBRouterTerminalRegistry. The registry's _transferFrom checks a plain
+  // ERC-20 allowance FIRST (JBRouterTerminalRegistry.sol) and pulls via
+  // safeTransferFrom when it covers the amount — so a single simulated
+  // approve(terminal, amount), identical to the direct path, satisfies it. No
+  // Permit2 signature is needed, so nothing bypasses useSafeTx.
   const { data: allowance, refetch: refetchAllowance } = useQuery({
-    queryKey: ['payAllowance', chainId, context?.token, address],
+    queryKey: [
+      'payAllowance',
+      chainId,
+      context?.token,
+      terminalAddress,
+      address,
+    ],
     enabled:
       !!publicClient && !!context && !isNative && !!address && amountRaw > 0n,
     staleTime: 15_000,
@@ -445,6 +679,19 @@ export function PayPanel({
       }),
   })
   const needsApproval = !isNative && (allowance ?? 0n) < amountRaw
+
+  // ---- Terminal-surface safety (website/ renderTerminalNotice parity) ----
+  // Fail closed: the target terminal MUST be listed among the project's
+  // terminals (JBDirectory.terminalsOf), or paying is blocked. Listed
+  // terminals we don't recognize are a non-blocking note (surface.unknown).
+  const surfaceTerminals = surface?.terminals ?? []
+  const terminalListed =
+    !terminalAddress ||
+    surfaceTerminals.some(t => t.toLowerCase() === terminalAddress.toLowerCase())
+  const terminalBlocked = !!surface && !!terminalAddress && !terminalListed
+  // Add-to-balance has no on-chain minimum-output field, so a router swap can't
+  // be bounded — refuse it (website/ 6439 parity), only direct tokens top up.
+  const addBalanceViaRouter = mode === 'addbalance' && !!context?.viaRouter
 
   useEffect(() => {
     if (approveTx.phase === 'success') void refetchAllowance()
@@ -464,6 +711,9 @@ export function PayPanel({
       return
     }
     if (!context || !terminalAddress || amountRaw <= 0n || busy) return
+    // Fail-closed guards: never send to an unlisted terminal, and never try to
+    // top up a balance with a router swap (no min-output bound).
+    if (terminalBlocked || addBalanceViaRouter) return
     if (needsApproval) {
       void approveTx.send({
         chainId,
@@ -590,6 +840,8 @@ export function PayPanel({
               onChange={v => {
                 setChainId(Number(v) as JBChainId)
                 setTokenIndex(0)
+                setTokenTouched(false)
+                selectedKeyRef.current = null
                 setCart({})
                 setAmount('')
                 setDebouncedAmount('')
@@ -718,7 +970,13 @@ export function PayPanel({
               // selected context (website/ fund-loss fix).
               value={tokenIndex}
               onChange={e => {
-                setTokenIndex(Number(e.target.value))
+                const i = Number(e.target.value)
+                setTokenIndex(i)
+                // Remember the explicit pick so a refetch/chain-switch remaps to
+                // this exact token instead of snapping back to list[0].
+                const picked = contexts[i]
+                if (picked) selectedKeyRef.current = payTokenKey(picked)
+                setTokenTouched(true)
                 setCart({})
               }}
               disabled={busy}
@@ -742,6 +1000,8 @@ export function PayPanel({
               busy ||
               notStarted ||
               surfaceError ||
+              terminalBlocked ||
+              addBalanceViaRouter ||
               (surface?.pausePay && mode === 'pay') ||
               (isConnected &&
                 (amountRaw <= 0n || (mode === 'pay' && !previewReady)))
@@ -826,6 +1086,29 @@ export function PayPanel({
       {surface?.pausePay && mode === 'pay' ? (
         <p className="mt-3 text-sm text-smoke-700">
           Payments are paused under the current rules.
+        </p>
+      ) : null}
+      {addBalanceViaRouter ? (
+        <p className="mt-3 text-sm text-smoke-700">
+          Add to balance only supports tokens the project accepts directly —
+          switch to a direct token, or use Pay to route this one.
+        </p>
+      ) : null}
+      {terminalBlocked ? (
+        <p className="mt-3 text-sm text-red-600">
+          This project doesn&apos;t list the{' '}
+          {context?.viaRouter ? 'router' : 'direct'} payment terminal on{' '}
+          {chainName(chainId)}. Review the project contracts before paying.
+        </p>
+      ) : null}
+      {!terminalBlocked && surface?.unknown && surface.unknown.length > 0 ? (
+        <p className="mt-3 text-xs leading-relaxed text-smoke-700">
+          This project also lists unknown payment terminal
+          {surface.unknown.length > 1 ? 's' : ''}:{' '}
+          {surface.unknown
+            .map(a => `${a.slice(0, 6)}…${a.slice(-4)}`)
+            .join(', ')}
+          . This form only sends to a recognized Juicebox terminal.
         </p>
       ) : null}
       {(approveTx.error ?? tx.error) ? (
