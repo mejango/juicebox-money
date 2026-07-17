@@ -1421,7 +1421,8 @@ export function CreateForm() {
             Your {flavor === 'revnet' ? 'revnet' : 'project'} lives on every
             chain you pick. You&apos;ll confirm one transaction per chain.
           </p>
-          <div className="mt-2.5 flex flex-wrap gap-2">
+          <div className="mt-2.5 flex items-center gap-2">
+            <span className="text-sm text-smoke-700">On</span>
             {SUPPORTED_CHAINS.map(chain => {
               const active = selected.includes(chain.id)
               return (
@@ -1430,14 +1431,16 @@ export function CreateForm() {
                   onClick={() => toggleChain(chain.id)}
                   disabled={busy}
                   aria-pressed={active}
+                  aria-label={chainName(chain.id)}
+                  title={chainName(chain.id)}
                   className={
                     active
-                      ? `inline-flex min-h-[44px] items-center gap-2 rounded-full px-5 text-sm font-medium ring-1 ring-ink transition-colors disabled:opacity-60 ${chainChipClass(chain.id)}`
-                      : 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                      ? 'flex h-11 w-11 items-center justify-center rounded-full ring-1 ring-ink transition-all disabled:opacity-60 ' +
+                        chainChipClass(chain.id)
+                      : 'flex h-11 w-11 items-center justify-center rounded-full opacity-35 grayscale transition-all hover:opacity-70 disabled:opacity-30'
                   }
                 >
-                  {active ? <CheckIcon className="h-4 w-4" /> : null}
-                  {chainName(chain.id)}
+                  <ChainIcon chainId={chain.id} size={26} />
                 </button>
               )
             })}

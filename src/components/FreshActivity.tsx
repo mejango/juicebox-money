@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { formatTokenAmount, timeAgo, truncateAddress } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
-import { ChainBadge } from './ChainBadge'
+import { ChainIcon } from './ChainIcon'
 
 const POLL_MS = 15_000
 
@@ -107,7 +107,6 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
           {line}
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1.5">
-          <ChainBadge chainId={event.chainId} />
           <span
             className="text-xs text-smoke-500"
             // Relative times drift between server render and hydration.
@@ -115,6 +114,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
           >
             {timeAgo(event.timestamp)}
           </span>
+          <ChainIcon chainId={event.chainId} size={16} />
         </span>
       </Link>
     </li>

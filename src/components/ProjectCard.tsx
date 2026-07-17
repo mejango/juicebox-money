@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { TrendingCard } from '@/lib/trending'
 import { formatTokenAmount } from '@/lib/format'
-import { ChainBadge } from './ChainBadge'
+import { ChainIcon } from './ChainIcon'
 import { ProjectLogo } from './ProjectLogo'
 
 /**
@@ -22,8 +22,14 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
             {card.name}
           </h3>
         </div>
+        <div className="mt-3 flex items-center gap-1.5 text-sm text-smoke-700">
+          <span>On</span>
+          {card.chainIds.map(chainId => (
+            <ChainIcon key={chainId} chainId={chainId} size={18} />
+          ))}
+        </div>
         {card.tagline ? (
-          <p className="mt-3 text-sm leading-relaxed text-smoke-700">
+          <p className="mt-2.5 text-sm leading-relaxed text-smoke-700">
             {card.tagline}
           </p>
         ) : null}
@@ -41,15 +47,10 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
             {card.paymentsCount.toLocaleString('en-US')}
           </span>
         </span>
-        <span className="ml-auto flex flex-wrap justify-end gap-1">
-          {card.version < 6 ? (
-            <span className="chip bg-smoke-100 text-smoke-700">
-              V{card.version}
-            </span>
-          ) : null}
-          {card.chainIds.map(chainId => (
-            <ChainBadge key={chainId} chainId={chainId} />
-          ))}
+        <span className="ml-auto">
+          <span className="chip bg-smoke-100 text-smoke-700">
+            V{card.version}
+          </span>
         </span>
       </div>
     </>
