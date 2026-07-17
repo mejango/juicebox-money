@@ -10,8 +10,10 @@ import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
+import { OwnersTab } from '@/components/project/OwnersTab'
 import { ProjectTabs } from '@/components/project/Tabs'
 import { RulesetsTab } from '@/components/project/RulesetsTab'
+import { ShopTab } from '@/components/project/ShopTab'
 import { TermsTab } from '@/components/project/TermsTab'
 import {
   BsActivityEvent,
@@ -366,6 +368,28 @@ export default async function ProjectPage({
                     },
                   ]
                 : []),
+              {
+                label: isRevnet ? 'Owners' : 'Tokens',
+                content: (
+                  <OwnersTab
+                    chainId={urn.chainId}
+                    projectId={project.projectId}
+                    isRevnet={isRevnet}
+                    suckerGroupId={project.suckerGroupId}
+                    chains={chainPairs}
+                  />
+                ),
+              },
+              {
+                label: 'Shop',
+                content: (
+                  <ShopTab
+                    chainId={urn.chainId}
+                    projectId={project.projectId}
+                    isRevnet={isRevnet}
+                  />
+                ),
+              },
               {
                 label: isRevnet ? 'Operator' : 'Owner',
                 content: (

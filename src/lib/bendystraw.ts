@@ -259,6 +259,58 @@ export async function getRevnetOperator(
   }
 }
 
+export type BsParticipant = {
+  address: string
+  balance: string
+  chainId: number
+}
+
+/**
+ * A project's token holders, largest balances first (website/ parity:
+ * BENDYSTRAW_PARTICIPANTS queries). Queried by sucker group when one exists
+ * so an omnichain holder's per-chain rows all come back — callers aggregate
+ * by address — and by chain + project otherwise. Balances are 18-decimal
+ * fixed-point strings.
+ */
+export async function getParticipants(
+  args:
+    | { suckerGroupId: string; chainId?: undefined; projectId?: undefined }
+    | { suckerGroupId?: undefined; chainId: number; projectId: number },
+  limit = 20,
+): Promise<{ items: BsParticipant[]; totalCount: number }> {
+  const fields = 'items { address balance chainId } totalCount'
+  const data = args.suckerGroupId
+    ? await bendystraw<{
+        participants: { items: BsParticipant[]; totalCount: number }
+      }>(
+        `query($suckerGroupId: String!, $limit: Int!) {
+          participants(
+            where: { suckerGroupId: $suckerGroupId, version: 6, balance_gt: "0" }
+            orderBy: "balance"
+            orderDirection: "desc"
+            limit: $limit
+          ) { ${fields} }
+        }`,
+        { suckerGroupId: args.suckerGroupId, limit },
+        { revalidate: 60 },
+      )
+    : await bendystraw<{
+        participants: { items: BsParticipant[]; totalCount: number }
+      }>(
+        `query($chainIds: [Int!], $projectId: Int!, $limit: Int!) {
+          participants(
+            where: { chainId_in: $chainIds, projectId: $projectId, version: 6, balance_gt: "0" }
+            orderBy: "balance"
+            orderDirection: "desc"
+            limit: $limit
+          ) { ${fields} }
+        }`,
+        { chainIds: [args.chainId], projectId: args.projectId, limit },
+        { revalidate: 60 },
+      )
+  return data.participants
+}
+
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
 ): Promise<BsProject[]> {
