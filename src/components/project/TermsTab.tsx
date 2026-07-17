@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query'
 import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { IssuanceLadder } from './IssuanceLadder'
 
 const NATIVE = '0x000000000000000000000000000000000000eeee'
 
@@ -225,6 +226,16 @@ export function TermsTab({
             <p>Stage 1 starts {formatDate(stages[0].ruleset.start)}.</p>
           ) : null}
         </div>
+        <IssuanceLadder
+          stages={stages.map(s => ({
+            start: s.ruleset.start,
+            duration: s.ruleset.duration,
+            weight: s.ruleset.weight,
+            weightCutPercent: s.ruleset.weightCutPercent,
+          }))}
+          symbol={sym}
+          baseSymbol={base}
+        />
       </div>
 
       <div className="card p-5">

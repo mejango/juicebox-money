@@ -327,3 +327,42 @@ export async function getSuckerGroupProjects(
   )
   return data.suckerGroup?.projects.items ?? []
 }
+
+export type BsPermissionHolder = {
+  /** The account that granted the permissions (usually the project owner). */
+  account: string
+  /** The operator holding the permissions. */
+  operator: string
+  /** JBPermissionIds the operator holds (see JBPermissionIdsV6). */
+  permissions: number[]
+}
+
+/**
+ * Every operator holding live permissions for a project (same table
+ * getRevnetOperator reads, without the revnet filter). Revoked rows
+ * (empty permission sets) are dropped.
+ */
+export async function getPermissionHolders(
+  chainId: number,
+  projectId: number,
+): Promise<BsPermissionHolder[]> {
+  try {
+    const data = await bendystraw<{
+      permissionHolders: { items: BsPermissionHolder[] }
+    }>(
+      `query($chainId: Int!, $projectId: Int!) {
+        permissionHolders(
+          where: { chainId: $chainId, projectId: $projectId, version: 6 }
+          limit: 100
+        ) { items { account operator permissions } }
+      }`,
+      { chainId, projectId },
+      { revalidate: 60 },
+    )
+    return (data.permissionHolders?.items ?? []).filter(
+      row => (row.permissions?.length ?? 0) > 0,
+    )
+  } catch {
+    return []
+  }
+}

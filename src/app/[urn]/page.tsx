@@ -8,6 +8,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { BackOfficeTab } from '@/components/project/BackOfficeTab'
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
@@ -436,6 +437,13 @@ export default async function ProjectPage({
                         connects their wallet.
                       </p>
                     )}
+                    <BackOfficeTab
+                      chainId={urn.chainId}
+                      projectId={project.projectId}
+                      isRevnet={isRevnet}
+                      owner={project.owner}
+                      operator={operator}
+                    />
                     {/* Renders only for the on-chain owner (client-gated). */}
                     <OwnerPanel
                       chainId={urn.chainId}
