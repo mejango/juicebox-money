@@ -57,17 +57,19 @@ is already in PROJECT_FIELDS, currently unused).
 - [x] Tokens/Owners tab: Accounts (You/All bars), Reserved/Splits + claim &
       distribute txs (5f23489). Settlement/Market subtabs still pending.
 - [x] Shop tab read-only (5f23489); +Add items CTA pending (write flow)
-- [ ] Extras tab (.jb export, payer deploy)
+- [x] Extras tab (.jb export, payer deploy) — 703ab26
 - [ ] Pay-card upgrade to spec (mode select, currency control, shop strip,
       preview semantics, router, direct swap) — do CAREFULLY, fund-loss traps
 - [ ] Cash-out modal upgrade (fee layering, routes, delay lock)
-- [ ] Owner/Operator back-office (account, edits, powers, permissions,
-      buyback/router, transfer)
+- [~] Owner/Operator back-office: account/transfer + permissions +
+      deploy/rename ERC-20 DONE (a13806a); still pending: Powers card
+      (mint/feeds/terminals/controller/migrate/setToken), buyback/router
+      card, Safe queue
 - [ ] Revnet: loans, auto-issuance; multichain: bridges/movement, gossip
 - [ ] GRAPHS (port all, jbm style = CashOutCurve-like hoverable SVGs):
-      (1) revnet price chart on Overview — issuance ceiling ladder + cash-out
-      floor + AMM price legend; (2) Terms projected-issuance ladder with
-      1Y/5Y/10Y/All range; (3) holders distribution — DONE as bars (5f23489);
+      (1) revnet price chart on Overview — component READY (a13806a), wire
+      with floor/AMM reads; (2) Terms projected-issuance ladder — DONE
+      (a13806a); (3) holders distribution — DONE as bars (5f23489);
       (4) Market subtab LP composition bar + liquidity-by-price depth chart
       (with Market subtab)
 - [ ] Queue ruleset + edit splits txs
