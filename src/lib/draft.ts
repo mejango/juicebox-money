@@ -31,6 +31,7 @@ export type CreateDraft = {
   customAddress: string
   issuanceBase: 'eth' | 'usd' | null
   linkChains: boolean
+  bridge: 'ccip' | 'native' | 'both'
   chains: number[]
   stages: DraftStage[]
   afterMode: 'wait' | 'terminal' | 'cycle'
@@ -288,6 +289,7 @@ export function parseDraft(text: string): CreateDraft {
     issuanceBase:
       d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
     linkChains: d.linkChains === undefined ? true : bool(d.linkChains),
+    bridge: d.bridge === 'native' || d.bridge === 'both' ? d.bridge : 'ccip',
     chains: (Array.isArray(d.chains) ? d.chains : [])
       .filter(c => Number.isInteger(c))
       .slice(0, 16) as number[],

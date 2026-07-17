@@ -6,6 +6,7 @@ import {
   jbOmnichainDeployerAbi,
   parseSuckerDeployerConfig,
   type JBChainId,
+  type JBSuckerBridge,
 } from '@bananapus/nana-sdk-core'
 import {
   BASE_CURRENCY_ETH,
@@ -237,8 +238,13 @@ export type LaunchPlan = {
   owner: Address | null
   /** Every chain this launch targets (sucker config needs the full set). */
   chains: number[]
-  /** Link the chains with CCIP suckers so tokens/treasury bridge. */
+  /** Link the chains with suckers so tokens/treasury bridge. */
   linkChains: boolean
+  /** Bridge infrastructure for the suckers: 'ccip' connects any pair and
+   *  carries any mapped asset; 'native' is Ethereum↔L2 rollup bridges (ETH
+   *  only — the SDK throws on other pairs/assets); 'both' deploys one of
+   *  each per pair, falling back to CCIP alone where native can't serve. */
+  bridge: JBSuckerBridge
   /** The 721 store collection. Always deployed — even with zero items — so
    *  every project can stock its store later without a ruleset change. */
   store: {
@@ -325,6 +331,7 @@ export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
   owner: null,
   chains: [],
   linkChains: true,
+  bridge: 'ccip',
 }
 
 /**
@@ -653,6 +660,26 @@ export function buildLaunchRequest(args: {
   } as const
 }
 
+/** Whether 'native' bridging can serve this selection. Native bridges only
+ *  connect Ethereum with an L2 (so every pair must include the L1 — i.e.
+ *  exactly two chains, one of them Ethereum) and only carry ETH (USDC
+ *  mappings silently drop; custom/USDC-only accounting throws in the SDK).
+ *  'both' needs no check — it falls back to CCIP per pair and per asset. */
+export function nativeBridgeViable(
+  chains: number[],
+  tokens: string[],
+  customToken: boolean,
+): boolean {
+  const l1s = [1, 11155111]
+  return (
+    chains.length === 2 &&
+    chains.some(id => l1s.includes(id)) &&
+    !customToken &&
+    tokens.length === 1 &&
+    tokens[0] === 'eth'
+  )
+}
+
 /** Sucker deployment config for one chain: CCIP deployer + token mappings
  *  per remote chain, sharing ONE salt so the suckers pair. Unlinked (or
  *  single-chain) launches pass empty configurations. Custom-token
@@ -679,7 +706,7 @@ function suckerConfigFor(
     chainId,
     plan.chains as JBChainId[],
     assets,
-    { version: 6 },
+    { version: 6, bridge: plan.bridge },
   )
   return {
     // version 6 always yields the peer'd shape; the SDK type is a v5|v6

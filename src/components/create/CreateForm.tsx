@@ -30,6 +30,7 @@ import {
   FOREVER_SECONDS,
   LP_SPLIT_HOOK,
   buildLaunchRequest,
+  nativeBridgeViable,
   projectIdFromReceipt,
   type ApprovalDeadline,
   type LaunchPlan,
@@ -182,6 +183,7 @@ export function CreateForm() {
   } | null>(null)
   /** Issuance denomination; null = follow accounting. */
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
+  const [bridge, setBridge] = useState<LaunchPlan['bridge']>('ccip')
   const [allowAnyToken, setAllowAnyToken] = useState(true)
   /** Link selected chains with CCIP suckers (multichain launches). */
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
@@ -453,6 +455,10 @@ export function CreateForm() {
           (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
         )
   const itemsOk = items.every(itemOk)
+  const bridgeOk =
+    bridge !== 'native' ||
+    selected.length < 2 ||
+    nativeBridgeViable(selected, accepts, customOn)
   const canLaunch =
     nameOk &&
     tosAccepted &&
@@ -460,6 +466,7 @@ export function CreateForm() {
     approvalOk &&
     ownerOk &&
     tickerOk &&
+    bridgeOk &&
     selected.length > 0 &&
     stagesOk &&
     badStage === -1 &&
@@ -765,6 +772,7 @@ export function CreateForm() {
           {
             chains: selected,
             linkChains: true,
+            bridge,
             issuanceBase,
             allowAnyToken: flavor === 'revnet' ? true : allowAnyToken,
             owner: resolvedAddress(
@@ -1099,6 +1107,7 @@ export function CreateForm() {
     customAddress: customOn ? customAddress : '',
     issuanceBase,
     linkChains: true,
+    bridge,
     chains: selected,
     stages,
     afterMode,
@@ -1134,6 +1143,7 @@ export function CreateForm() {
     setCustomOn(draft.customAddress !== '')
     setCustomAddress(draft.customAddress)
     setIssuanceBase(draft.issuanceBase)
+    setBridge(draft.bridge)
     const validChains = draft.chains.filter(id =>
       SUPPORTED_CHAINS.some(chain => chain.id === id),
     )
@@ -1226,6 +1236,7 @@ export function CreateForm() {
     customOn,
     customAddress,
     issuanceBase,
+    bridge,
     selected,
     stages,
     afterMode,
@@ -1437,11 +1448,45 @@ export function CreateForm() {
             <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
           ) : null}
           {selected.length > 1 ? (
-            <p className="mt-3 text-xs leading-relaxed text-smoke-700">
-              {customOn
-                ? 'The chains are linked — your token can move between them via Chainlink CCIP. (Custom accounting tokens themselves don’t bridge — only your project token does.)'
-                : 'The chains are linked — your token and treasury can move between them via Chainlink CCIP.'}
-            </p>
+            <div className="mt-3">
+              <div className="flex items-center gap-3">
+                <span className="whitespace-nowrap text-sm text-smoke-700">
+                  Linked by
+                </span>
+                <select
+                  value={bridge}
+                  onChange={e =>
+                    !busy && setBridge(e.target.value as LaunchPlan['bridge'])
+                  }
+                  disabled={busy}
+                  aria-label="Bridge infrastructure"
+                  className="select-caret input-well min-h-[44px] !w-auto pl-3.5 pr-8 text-sm disabled:opacity-60"
+                >
+                  <option value="ccip">CCIP</option>
+                  <option value="native">Native bridges</option>
+                  <option value="both">Native and CCIP</option>
+                </select>
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+                {bridge === 'ccip'
+                  ? 'Your token' +
+                    (customOn ? '' : ' and treasury') +
+                    ' can move between the chains via Chainlink CCIP.' +
+                    (customOn
+                      ? ' (Custom accounting tokens themselves don’t bridge — only your project token does.)'
+                      : '')
+                  : bridge === 'native'
+                    ? 'Ethereum’s own rollup bridges — the strongest guarantees. They only connect Ethereum with one L2, only carry ETH, and moves back to Ethereum wait out a ~7-day challenge period.'
+                    : 'Each pair of chains gets a native bridge and a CCIP bridge for redundancy. Anything the native bridges can’t carry — L2-to-L2 pairs, USDC, custom tokens — rides CCIP.'}
+              </p>
+              {!bridgeOk ? (
+                <p className="mt-1.5 text-sm text-red-600">
+                  Native bridges only connect Ethereum with one L2 and only
+                  carry ETH — pick exactly Ethereum plus one L2 with ETH
+                  accounting, or choose CCIP or Native and CCIP.
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
 
