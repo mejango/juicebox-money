@@ -98,11 +98,6 @@ export function ExtrasTab({
 }) {
   return (
     <div className="space-y-5">
-      <CopyProjectCard
-        isRevnet={isRevnet}
-        profile={profile}
-        chains={chains.map(([id]) => id)}
-      />
       <PayerAddressCard
         chainId={chainId}
         projectId={projectId}

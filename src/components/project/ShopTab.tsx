@@ -283,17 +283,21 @@ export function ShopTab({
   const collectionName = collectionMeta?.[0]?.result
   const collectionSymbol = collectionMeta?.[1]?.result
 
+  const addItemsButton = (
+    <button
+      type="button"
+      onClick={() => setAddItemsOpen(true)}
+      className="text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+    >
+      + Add items
+    </button>
+  )
+
   return (
     <div className="space-y-5">
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setAddItemsOpen(true)}
-          className="min-h-[40px] text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
-        >
-          + Add items
-        </button>
-      </div>
+      {shop.tiers.length > 0 ? (
+        <div className="flex justify-end">{addItemsButton}</div>
+      ) : null}
 
       {isConnected && (credits ?? 0n) > 0n ? (
         <p className="callout callout-info text-sm">
@@ -307,10 +311,11 @@ export function ShopTab({
       ) : null}
 
       {shop.tiers.length === 0 ? (
-        <div className="card p-5">
+        <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
           <p className="text-sm leading-relaxed text-smoke-700">
             No items in the store yet.
           </p>
+          {addItemsButton}
         </div>
       ) : (
         <>

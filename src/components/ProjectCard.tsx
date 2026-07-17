@@ -34,7 +34,7 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
           </p>
         ) : null}
       </div>
-      <div className="mt-auto flex flex-wrap items-end gap-x-5 gap-y-2">
+      <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
         <span className="min-w-0">
           <span className="field-label">Raised</span>
           <span className="text-sm font-bold text-ink">
