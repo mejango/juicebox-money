@@ -78,16 +78,13 @@ is already in PROJECT_FIELDS, currently unused).
       (4) Market subtab LP composition bar + liquidity-by-price depth chart
       (with Market subtab) — PENDING. Graphs 1-3 DONE (issuance ladder,
       price ceiling c4ec8b1, holders bars).
-- [ ] Queue ruleset + edit splits txs — subagent DIED (Fable credits out),
-      files never written. Spec ready; re-dispatch when credits refresh.
-- [ ] Powers card (mint/feeds/terminals/controller/migrate/setToken) +
-      buyback/router card — subagent DIED, never written.
-- [ ] Revnet loans (borrow 2-step/repay) + auto-issuance — subagent DIED.
-- [ ] Settlement: composition/bridges/move(prepare/toRemote/claim)/sync —
-      subagent DIED.
-- [ ] Market subtab (AMM/LP cards + LP charts) — not started.
-- [ ] Wire OwnersTab subtabs to add Settlement/Market/Loans/AutoIssuance once
-      those sections exist.
+- [x] Queue ruleset + edit splits — DONE, wired into Rulesets (2b5f4b8).
+- [x] Powers card + buyback/router — DONE, wired into back-office (2b5f4b8).
+- [x] Revnet loans + auto-issuance — DONE, Owners subtabs (2b5f4b8).
+- [x] Settlement composition/bridges/move/sync — DONE (2b5f4b8). CLAIM is
+      fail-closed: no merkle-proof source in SDK/bendystraw (documented gap).
+- [~] Market subtab (AMM price + LP charts) — building (agent).
+- [x] OwnersTab subtabs wired (Settlement/Loans/AutoIssuance); Market pending.
 - [ ] Final adversarial audit (custom + revnet) + production build.
 - [ ] Reorganize TreasuryCard to website/'s pay-card functionality
 - [ ] ALL project-page transactions from website/ ship complete + safe:
