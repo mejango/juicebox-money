@@ -8,6 +8,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { OwnersTab } from '@/components/project/OwnersTab'
@@ -387,6 +388,32 @@ export default async function ProjectPage({
                     chainId={urn.chainId}
                     projectId={project.projectId}
                     isRevnet={isRevnet}
+                  />
+                ),
+              },
+              {
+                label: 'Extras',
+                content: (
+                  <ExtrasTab
+                    chainId={urn.chainId}
+                    projectId={project.projectId}
+                    isRevnet={isRevnet}
+                    profile={{
+                      name: metadata?.name ?? name,
+                      tagline:
+                        metadata?.projectTagline ??
+                        project.projectTagline ??
+                        '',
+                      description: metadata?.description ?? '',
+                      logoUri: metadata?.logoUri ?? project.logoUri ?? null,
+                      infoUri: metadata?.infoUri,
+                      twitter: metadata?.twitter,
+                      discord: metadata?.discord,
+                      telegram: metadata?.telegram,
+                      whatsapp: metadata?.whatsapp,
+                      instagram: metadata?.instagram,
+                    }}
+                    chains={chainPairs}
                   />
                 ),
               },
