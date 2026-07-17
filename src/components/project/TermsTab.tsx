@@ -2,7 +2,10 @@
 
 import {
   JB_CHAINS,
+  JBCoreContracts,
   USD_CURRENCY_ID,
+  jbContractAddress,
+  jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -12,7 +15,7 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, type PublicClient } from 'viem'
+import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
 
@@ -70,7 +73,6 @@ export function TermsTab({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-  const sym = tokenSymbol || 'tokens'
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['termsTab', chainId, projectId],
@@ -79,12 +81,28 @@ export function TermsTab({
     retry: 1,
     queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) }
-      const [all, current, contexts] = await Promise.all([
+      const [all, current, contexts, projectSymbol] = await Promise.all([
         getAllRulesets(publicClient!, { ...args, size: 50n }),
         getCurrentRuleset(publicClient!, args).catch(() => null),
         getAccountingContexts(publicClient!, args).catch(
           () => [] as const,
         ),
+        // The revnet's OWN token symbol (bendystraw's tokenSymbol is the
+        // accounting token — "ETH per ETH" would be nonsense).
+        (async () => {
+          const token = (await publicClient!.readContract({
+            abi: jbTokensAbi,
+            address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+            functionName: 'tokenOf',
+            args: [BigInt(projectId)],
+          })) as `0x${string}`
+          if (!token || token === zeroAddress) return null
+          return (await publicClient!.readContract({
+            address: token,
+            abi: erc20Abi,
+            functionName: 'symbol',
+          })) as string
+        })().catch(() => null),
       ])
       // The base currency can be token-keyed (uint32(uint160(token)), e.g. a
       // USDC-based revnet) — resolve those to the token's symbol.
@@ -103,9 +121,11 @@ export function TermsTab({
                   .catch(() => truncateAddress(ctx.token)),
         })),
       )
-      return { all, current, contextSymbols }
+      return { all, current, contextSymbols, projectSymbol }
     },
   })
+
+  const sym = data?.projectSymbol || tokenSymbol || 'tokens'
 
   if (isLoading) {
     return (

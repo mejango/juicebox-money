@@ -11,6 +11,8 @@ import { ProjectLogo } from '@/components/ProjectLogo'
 import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { ProjectTabs } from '@/components/project/Tabs'
+import { RulesetsTab } from '@/components/project/RulesetsTab'
+import { TermsTab } from '@/components/project/TermsTab'
 import {
   BsActivityEvent,
   BsProject,
@@ -331,6 +333,26 @@ export default async function ProjectPage({
                   />
                 ),
               },
+              isRevnet
+                ? {
+                    label: 'Terms',
+                    content: (
+                      <TermsTab
+                        chainId={urn.chainId}
+                        projectId={project.projectId}
+                        tokenSymbol=""
+                      />
+                    ),
+                  }
+                : {
+                    label: 'Rulesets',
+                    content: (
+                      <RulesetsTab
+                        chainId={urn.chainId}
+                        projectId={project.projectId}
+                      />
+                    ),
+                  },
               ...(!isRevnet
                 ? [
                     {
