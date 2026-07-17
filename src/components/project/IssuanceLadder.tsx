@@ -5,7 +5,7 @@ import {
   CHART_RANGES,
   buildStepPoints,
   chartDateLabel,
-  formatRate,
+  formatPrice,
   rateAtTime,
   resolveStages,
   timeBounds,
@@ -13,11 +13,10 @@ import {
 } from './chartUtils'
 
 /**
- * Projected issuance rate (tokens per base unit) as a step-down ladder:
- * within a stage the rate cuts by weightCutPercent every `duration` seconds;
- * each stage boundary switches to that stage's own weight (or inherits the
- * previous stage's decayed rate when its weight is 0). Pure SVG — no
- * libraries. Hover to inspect any point in time.
+ * Projected issuance price (base units per token) as a rising ladder. The
+ * protocol schedule stores an issuance rate, so the plotted value is its
+ * reciprocal: price = 1 / rate. As issuance is cut, each token costs more.
+ * Pure SVG — no libraries. Hover to inspect any point in time.
  */
 
 // Plot area gutters inside a 320×180 viewBox.
@@ -44,10 +43,19 @@ export function IssuanceLadder({
   const resolved = useMemo(() => resolveStages(stages), [stages])
   const { t0, t1 } = timeBounds(resolved, now, years)
   const points = useMemo(
-    () => buildStepPoints(resolved, t0, t1),
+    () =>
+      buildStepPoints(resolved, t0, t1).map(
+        ([t, rate]) => [t, rate > 0 ? 1 / rate : null] as [
+          number,
+          number | null,
+        ],
+      ),
     [resolved, t0, t1],
   )
-  const maxV = points.reduce((m, [, v]) => (v > m ? v : m), 0)
+  const maxV = points.reduce(
+    (m, [, price]) => (price !== null && price > m ? price : m),
+    0,
+  )
 
   if (resolved.length === 0 || maxV <= 0) {
     return (
@@ -58,14 +66,22 @@ export function IssuanceLadder({
   }
 
   const X = (t: number) => PL + ((VW - PL - PR) * (t - t0)) / (t1 - t0)
-  const Y = (v: number) => PT + (VH - PT - PB) * (1 - v / maxV)
+  const Y = (price: number) =>
+    PT +
+    (VH - PT - PB) *
+      (1 - Math.max(0, Math.min(1, price / maxV)))
 
   const path = points
-    .map(([t, v]) => `${X(t).toFixed(1)},${Y(v).toFixed(1)}`)
+    // No issuance has an infinite price; pin it to the top of the finite
+    // issuance-price range, matching website/'s chart.
+    .map(([t, price]) =>
+      `${X(t).toFixed(1)},${Y(price ?? maxV).toFixed(1)}`,
+    )
     .join(' ')
 
   const t = Math.min(t1, Math.max(t0, hoverT ?? Math.min(now, t1)))
-  const v = rateAtTime(resolved, t)
+  const rate = rateAtTime(resolved, t)
+  const price = rate > 0 ? 1 / rate : null
   const span = t1 - t0
   const nowX = X(Math.min(now, t1))
 
@@ -79,7 +95,9 @@ export function IssuanceLadder({
   return (
     <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-smoke-500">Projected issuance</span>
+        <span className="text-xs text-smoke-500">
+          Projected issuance price
+        </span>
         <div className="flex gap-1">
           {CHART_RANGES.map(r => (
             <button
@@ -101,7 +119,7 @@ export function IssuanceLadder({
         viewBox={`0 0 ${VW} ${VH}`}
         className="mt-2 h-auto w-full cursor-crosshair touch-none"
         role="img"
-        aria-label={`Projected ${symbol} issuance per ${baseSymbol} over time`}
+        aria-label={`Projected ${symbol} issuance price in ${baseSymbol} over time`}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHoverT(null)}
       >
@@ -160,22 +178,22 @@ export function IssuanceLadder({
           strokeLinejoin="round"
         />
         {/* Crosshair guides while hovering */}
-        {hoverT !== null ? (
+        {hoverT !== null && price !== null ? (
           <>
             <line
               x1={X(t)}
               y1={VH - PB}
               x2={X(t)}
-              y2={Y(v)}
+              y2={Y(price)}
               stroke="#9C9580"
               strokeWidth="1"
               strokeDasharray="2 2"
             />
             <line
               x1={PL}
-              y1={Y(v)}
+              y1={Y(price)}
               x2={X(t)}
-              y2={Y(v)}
+              y2={Y(price)}
               stroke="#9C9580"
               strokeWidth="1"
               strokeDasharray="2 2"
@@ -183,10 +201,17 @@ export function IssuanceLadder({
           </>
         ) : null}
         {/* The inspected point */}
-        <circle cx={X(t)} cy={Y(v)} r="3.5" fill="#F5A312" stroke="#1A1A1A" strokeWidth="1" />
+        <circle
+          cx={X(t)}
+          cy={Y(price ?? maxV)}
+          r="3.5"
+          fill="#F5A312"
+          stroke="#1A1A1A"
+          strokeWidth="1"
+        />
         {/* Scale + date labels */}
-        <text x={VW - PR} y={PT + 7} textAnchor="end" fontSize="7" fill="#9C9580">
-          {formatRate(maxV)} {symbol}
+        <text x={PL + 3} y={PT + 7} fontSize="7" fill="#9C9580">
+          {formatPrice(maxV)} {baseSymbol}
         </text>
         <text x={PL} y={VH - 6} fontSize="7.5" fill="#9C9580">
           {chartDateLabel(t0, span)}
@@ -198,10 +223,16 @@ export function IssuanceLadder({
       <p className="mt-2 text-xs leading-relaxed text-smoke-700" aria-live="polite">
         <span className="font-medium text-ink">{chartDateLabel(t, span)}</span>
         {' — '}
-        <span className="font-medium text-ink">
-          {formatRate(v)} {symbol}
-        </span>{' '}
-        per {baseSymbol}
+        {price !== null ? (
+          <>
+            <span className="font-medium text-ink">
+              {formatPrice(price)} {baseSymbol}
+            </span>{' '}
+            per {symbol}
+          </>
+        ) : (
+          'no issuance'
+        )}
       </p>
     </div>
   )

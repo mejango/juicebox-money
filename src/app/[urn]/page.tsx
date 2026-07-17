@@ -303,6 +303,7 @@ export default async function ProjectPage({
             chainId={urn.chainId}
             projectId={project.projectId}
             projectName={name}
+            isRevnet={isRevnet}
             accountingToken={project.token}
             accountingTokenSymbol={project.tokenSymbol}
             payDisclosure={metadata?.payDisclosure}
@@ -313,8 +314,8 @@ export default async function ProjectPage({
             </h2>
             <ActivityList
               events={activity}
-              decimals={decimals}
-              symbol={symbol}
+              chainId={urn.chainId}
+              projectId={project.projectId}
             />
           </section>
         </aside>

@@ -244,10 +244,13 @@ export function TermsTab({
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="text-left text-xs uppercase tracking-wide text-smoke-500">
-                <th className="pb-2 pr-4 font-medium">Stage</th>
+                <th className="pb-2 pl-3 pr-4 font-medium">Stage</th>
                 <th className="pb-2 pr-4 font-medium">Period</th>
                 <th className="pb-2 pr-4 font-medium">
-                  Issuance ({sym} per {base})
+                  Issuance
+                  <span className="block whitespace-nowrap">
+                    ({sym} per {base})
+                  </span>
                 </th>
                 <th className="pb-2 pr-4 font-medium">Split limit</th>
                 <th className="pb-2 font-medium">Cash out tax</th>
@@ -266,7 +269,7 @@ export function TermsTab({
                       isActive ? 'bg-split-50' : ''
                     }`}
                   >
-                    <td className="py-2.5 pr-4">
+                    <td className="py-2.5 pl-3 pr-4">
                       <span className="font-medium text-ink">{i + 1}</span>
                       {isActive ? (
                         <span className="ml-2 rounded-full bg-split-100 px-2 py-0.5 text-[10px] font-medium text-ink">
@@ -275,12 +278,17 @@ export function TermsTab({
                       ) : null}
                     </td>
                     <td className="py-2.5 pr-4">
-                      <span className="text-ink">
-                        {formatDate(r.start)} →{' '}
-                        {nextStart ? formatDate(nextStart) : 'onward'}
+                      <span className="block whitespace-nowrap text-ink">
+                        <span className="text-smoke-500">Start:</span>{' '}
+                        {formatDate(r.start)}
+                      </span>
+                      <span className="block whitespace-nowrap text-ink">
+                        <span className="text-smoke-500">End:</span>{' '}
+                        {nextStart ? formatDate(nextStart) : 'never'}
                       </span>
                       {nextStart ? (
                         <span className="block text-xs text-smoke-500">
+                          Duration:{' '}
                           {Math.round((nextStart - r.start) / 86400)} days
                         </span>
                       ) : null}

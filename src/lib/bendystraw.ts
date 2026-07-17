@@ -137,6 +137,7 @@ export type BsActivityEvent = {
   txHash: string
   payEvent: {
     amount: string
+    amountUsd: string | null
     beneficiary: string
     memo: string | null
     newlyIssuedTokenCount: string
@@ -144,6 +145,7 @@ export type BsActivityEvent = {
   cashOutTokensEvent: {
     cashOutCount: string
     reclaimAmount: string
+    reclaimAmountUsd: string | null
     beneficiary: string
   } | null
 }
@@ -164,8 +166,12 @@ export async function getProjectActivity(
       ) {
         items {
           id chainId projectId timestamp txHash
-          payEvent { amount beneficiary memo newlyIssuedTokenCount }
-          cashOutTokensEvent { cashOutCount reclaimAmount beneficiary }
+          payEvent {
+            amount amountUsd beneficiary memo newlyIssuedTokenCount
+          }
+          cashOutTokensEvent {
+            cashOutCount reclaimAmount reclaimAmountUsd beneficiary
+          }
         }
       }
     }`,
