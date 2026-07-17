@@ -49,9 +49,21 @@ Directive: functionally identical to website/'s tabs + pay card — the only
 difference is copy/prioritization targeted at mainstream users. Use the SDK
 (nana-sdk-core v6 helpers) where possible. Revnet-aware (bendystraw isRevnet
 is already in PROJECT_FIELDS, currently unused).
-- [ ] Research: website/ tab inventory (agent), pay card inventory (agent)
-- [ ] Plan concrete tab set + component layout from reports
-- [ ] Implement tabs (server components where possible, islands for reads)
+- [x] Research: specs committed in tasks/b11-specs/ (tabs, paycard, transactions)
+- [x] Foundation: ProjectTabs/SubTabs + useSafeTx (simulate-first) — f32c771
+- [x] Page restructure: revnet-aware header + Overview + Owner/Operator shell — d9029d6
+- [x] Funds tab + sendPayoutsOf/useAllowanceOf (bdc9aed)
+- [x] Rulesets (custom) + Terms (revnet) read-only tabs (3e0804c)
+- [ ] Tokens/Owners tab: Accounts (You/All), Settlement, Reserved/Splits subtabs
+- [ ] Shop tab (tiers display; buys via pay card)
+- [ ] Extras tab (.jb export, payer deploy)
+- [ ] Pay-card upgrade to spec (mode select, currency control, shop strip,
+      preview semantics, router, direct swap) — do CAREFULLY, fund-loss traps
+- [ ] Cash-out modal upgrade (fee layering, routes, delay lock)
+- [ ] Owner/Operator back-office (account, edits, powers, permissions,
+      buyback/router, transfer)
+- [ ] Revnet: loans, auto-issuance; multichain: bridges/movement, gossip
+- [ ] Queue ruleset + edit splits txs
 - [ ] Reorganize TreasuryCard to website/'s pay-card functionality
 - [ ] ALL project-page transactions from website/ ship complete + safe:
       owner (metadata, queue rulesets, payouts, allowance, splits, mint,
