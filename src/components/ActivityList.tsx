@@ -7,10 +7,11 @@ import {
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { erc20Abi, formatUnits, zeroAddress } from 'viem'
+import { erc20Abi, zeroAddress } from 'viem'
 import { useReadContract } from 'wagmi'
 import { BsActivityEvent } from '@/lib/bendystraw'
 import {
+  formatCompactTokenAmount,
   formatDate,
   timeAgo,
   truncateAddress,
@@ -48,37 +49,6 @@ function identityGradient(seed: string): string {
   return `linear-gradient(135deg, ${a}, ${b})`
 }
 
-/** Compact project-token counts, matching website/'s activity rows. */
-function formatProjectTokens(raw: string): string {
-  const value = Number(formatUnits(BigInt(raw), 18))
-  if (Number.isFinite(value)) {
-    if (value >= 1_000_000_000) {
-      return `${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, '')}b`
-    }
-    if (value >= 1_000_000) {
-      return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`
-    }
-    if (value >= 1_000) {
-      return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k`
-    }
-    if (value >= 1) {
-      if (value === Math.round(value)) {
-        return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
-      }
-      return value.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })
-    }
-    if (value >= 0.0001) {
-      return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
-    }
-    if (value > 0) return value.toPrecision(2)
-    return '0'
-  }
-  return '—'
-}
-
 function Row({
   event,
   tokenUnit,
@@ -95,7 +65,7 @@ function Row({
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
-  const tokenCount = formatProjectTokens(rawTokenCount)
+  const tokenCount = formatCompactTokenAmount(rawTokenCount)
   const issuedTokens = BigInt(rawTokenCount) > 0n
   const relativeTime = timeAgo(event.timestamp)
 

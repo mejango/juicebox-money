@@ -198,6 +198,7 @@ export type BsFreshActivityEvent = {
     amount: string
     amountUsd: string | null
     beneficiary: string
+    newlyIssuedTokenCount: string
   } | null
   cashOutTokensEvent: {
     cashOutCount: string
@@ -227,7 +228,7 @@ export async function getRecentActivity(
         items {
           id chainId projectId timestamp txHash from
           project { name logoUri tokenSymbol decimals }
-          payEvent { amount amountUsd beneficiary }
+          payEvent { amount amountUsd beneficiary newlyIssuedTokenCount }
           cashOutTokensEvent {
             cashOutCount reclaimAmount reclaimAmountUsd beneficiary
           }

@@ -11,6 +11,45 @@ export function formatTokenAmount(
   return value.toLocaleString('en-US', { maximumFractionDigits: maxDigits })
 }
 
+/** Compact 18-decimal project-token counts for activity feeds. */
+export function formatCompactTokenAmount(raw: bigint | string): string {
+  try {
+    const value = Number(formatUnits(BigInt(raw), 18))
+    if (!Number.isFinite(value)) return '—'
+    if (value >= 1_000_000_000) {
+      return `${(value / 1_000_000_000)
+        .toFixed(value >= 10_000_000_000 ? 0 : 1)
+        .replace(/\.0$/, '')}b`
+    }
+    if (value >= 1_000_000) {
+      return `${(value / 1_000_000)
+        .toFixed(value >= 10_000_000 ? 0 : 1)
+        .replace(/\.0$/, '')}m`
+    }
+    if (value >= 1_000) {
+      return `${(value / 1_000)
+        .toFixed(value >= 10_000 ? 0 : 1)
+        .replace(/\.0$/, '')}k`
+    }
+    if (value >= 1) {
+      if (value === Math.round(value)) {
+        return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+      }
+      return value.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    }
+    if (value >= 0.0001) {
+      return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+    }
+    if (value > 0) return value.toPrecision(2)
+    return '0'
+  } catch {
+    return '—'
+  }
+}
+
 export function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString('en-US', {
     month: 'short',

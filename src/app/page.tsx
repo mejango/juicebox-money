@@ -67,9 +67,6 @@ export default async function HomePage() {
               Fresh activity
             </h2>
             <div className="card overflow-hidden">
-              <p className="field-label border-b border-smoke-200 px-4 py-2.5">
-                Live · all projects
-              </p>
               <FreshActivity initialEvents={activity} />
             </div>
           </aside>

@@ -110,7 +110,6 @@ export function PayPanel({
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [tokenIndex, setTokenIndex] = useState(0)
   const [memo, setMemo] = useState('')
-  const [showMemo, setShowMemo] = useState(false)
   const [cart, setCart] = useState<Record<number, number>>({})
 
   useEffect(() => {
@@ -520,7 +519,6 @@ export function PayPanel({
     setAmount('')
     setDebouncedAmount('')
     setMemo('')
-    setShowMemo(false)
     setCart({})
   }
 
@@ -770,25 +768,16 @@ export function PayPanel({
         ) : null}
       </div>
 
-      {/* Add a note */}
-      {showMemo ? (
-        <input
-          type="text"
-          value={memo}
-          onChange={e => setMemo(e.target.value.slice(0, 256))}
-          disabled={busy}
-          placeholder="Add a note (optional)"
-          className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-        />
-      ) : (
-        <button
-          onClick={() => setShowMemo(true)}
-          disabled={busy}
-          className="mt-3 text-sm font-medium text-bluebs-600 hover:text-bluebs-700"
-        >
-          + Add a note
-        </button>
-      )}
+      {/* Note — always present, optional */}
+      <input
+        type="text"
+        value={memo}
+        onChange={e => setMemo(e.target.value.slice(0, 256))}
+        disabled={busy}
+        placeholder="Add a note (optional)"
+        aria-label="Note"
+        className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+      />
 
       {/* You get — only once an amount mints a non-zero token count */}
       {mode === 'pay' &&
