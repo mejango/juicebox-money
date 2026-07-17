@@ -254,11 +254,11 @@ function YouCard({
       {!connected ? (
         <div className="mt-2">
           <p className="text-sm leading-relaxed text-smoke-700">
-            Connect to see your position.
+            Sign in to see your position.
           </p>
           <button
             onClick={openSignIn}
-            className="btn-secondary mt-3 min-h-[40px] px-4 text-sm"
+            className="btn-primary mt-3 min-h-[40px] px-4 text-sm"
           >
             Sign in
           </button>

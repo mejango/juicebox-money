@@ -228,19 +228,21 @@ export default async function ProjectPage({
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
-            {isRevnet ? (
-              <>
-                <span className="font-medium text-ink">Revnet</span>
-                <span
-                  aria-hidden
-                  className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
-                />
-              </>
-            ) : null}
+            <span>
+              <span className="text-smoke-500">Type:</span>{' '}
+              <span className="font-medium text-ink">
+                {isRevnet ? 'Revnet' : 'Project'}
+              </span>
+            </span>
+            <span aria-hidden className="mx-2.5 text-smoke-300">
+              |
+            </span>
             {authority ? (
               <>
                 <span>
-                  {isRevnet ? 'Operated by' : 'Owned by'}{' '}
+                  <span className="text-smoke-500">
+                    {isRevnet ? 'Operator:' : 'Owner:'}
+                  </span>{' '}
                   {etherscan ? (
                     <a
                       href={`https://${etherscan}/address/${authority}`}
@@ -254,19 +256,20 @@ export default async function ProjectPage({
                     <span>{truncateAddress(authority)}</span>
                   )}
                 </span>
-                <span
-                  aria-hidden
-                  className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
-                />
+                <span aria-hidden className="mx-2.5 text-smoke-300">
+                  |
+                </span>
               </>
             ) : null}
-            <span>Since {formatDate(project.createdAt)}</span>
-            <span
-              aria-hidden
-              className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
-            />
+            <span>
+              <span className="text-smoke-500">Created:</span>{' '}
+              {formatDate(project.createdAt)}
+            </span>
+            <span aria-hidden className="mx-2.5 text-smoke-300">
+              |
+            </span>
             <span className="inline-flex items-center gap-1.5">
-              <span>on</span>
+              <span className="text-smoke-500">On:</span>
               {(chains.length > 1 ? chains : [project]).map(p => (
                 <Link
                   key={p.chainId}
