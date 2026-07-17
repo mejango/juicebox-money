@@ -473,7 +473,7 @@ function PayerAddressCard({
           <button
             onClick={review ? handleConfirm : handleReview}
             disabled={busy}
-            className="btn-primary mt-4 min-h-[44px] w-full text-sm"
+            className="btn-primary mt-4 min-h-[44px] px-5 text-sm"
           >
             {tx.phase === 'simulating'
               ? 'Double-checking the transaction…'
