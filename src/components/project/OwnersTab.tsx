@@ -36,6 +36,7 @@ import {
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
+import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { LoansSection } from '@/components/project/LoansSection'
 import { MarketSection } from '@/components/project/MarketSection'
 import { SettlementSection } from '@/components/project/SettlementSection'
@@ -1157,6 +1158,16 @@ function ReservedCard({
           </div>
         </div>
       )}
+
+      {isRevnet && isCurrentStage && rulesetId > 0 ? (
+        <EditSplitsFlow
+          chainId={chainId}
+          projectId={projectId}
+          groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
+          title="Splits"
+          rulesetId={BigInt(rulesetId)}
+        />
+      ) : null}
     </div>
   )
 }

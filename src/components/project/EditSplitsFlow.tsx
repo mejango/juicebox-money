@@ -12,7 +12,9 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  JBPermissionIdsV6,
   RESERVED_TOKEN_SPLIT_GROUP_ID,
+  hasPermissions,
   type JBSplit,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -178,6 +180,8 @@ export function EditSplitsFlow({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
+  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+
   const { data: owner } = useReadContract({
     abi: jbProjectsAbi,
     address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
@@ -194,16 +198,36 @@ export function EditSplitsFlow({
     !!owner &&
     owner.toLowerCase() === address.toLowerCase()
 
+  // A revnet's owner is the REVOwner contract, so the human editing splits is
+  // an operator holding SET_SPLIT_GROUPS granted FROM the owner (matching the
+  // contract's _requirePermissionFrom(owner, …) check) — not the owner NFT.
+  const { data: canOperate } = useQuery({
+    queryKey: ['editSplitsPerm', chainId, projectId, address, owner],
+    enabled:
+      mounted && isConnected && !!address && !!owner && !isOwner && !!publicClient,
+    staleTime: 60_000,
+    queryFn: () =>
+      hasPermissions(publicClient!, {
+        chainId,
+        operator: address!,
+        account: owner!,
+        projectId: BigInt(projectId),
+        permissionIds: [JBPermissionIdsV6.SET_SPLIT_GROUPS],
+      }),
+  })
+
+  const canEdit = isOwner || canOperate === true
+
   const { data: controller } = useReadContract({
     abi: jbDirectoryAbi,
     address: jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId],
     functionName: 'controllerOf',
     args: [BigInt(projectId)],
     chainId,
-    query: { enabled: isOwner, staleTime: 60_000 },
+    query: { enabled: canEdit, staleTime: 60_000 },
   })
 
-  if (!isOwner || !isKnownController(chainId, controller)) return null
+  if (!canEdit || !isKnownController(chainId, controller)) return null
 
   return (
     <EditSplitsModal

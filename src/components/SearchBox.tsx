@@ -28,7 +28,7 @@ function MagnifierIcon({ className }: { className?: string }) {
   )
 }
 
-export function SearchBox() {
+export function SearchBox({ expanded = false }: { expanded?: boolean }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Result[]>([])
@@ -147,27 +147,29 @@ export function SearchBox() {
     </div>
   )
 
-  return (
-    <div ref={boxRef} className="flex flex-1 justify-center sm:px-4">
-      {/* Desktop / tablet: always-visible input. */}
-      <div className="hidden w-full max-w-md sm:block">{input}</div>
-
-      {/* Mobile: icon toggles a full-width row under the header. */}
-      <div className="ml-auto sm:hidden">
-        <button
-          onClick={() => setMobileOpen(o => !o)}
-          aria-label="Search"
-          aria-expanded={mobileOpen}
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-smoke-300 bg-white text-smoke-700"
-        >
-          <MagnifierIcon className="h-5 w-5" />
-        </button>
-        {mobileOpen ? (
-          <div className="absolute inset-x-0 top-full border-b border-smoke-200 bg-bone px-4 py-3">
-            {input}
-          </div>
-        ) : null}
+  if (expanded) {
+    return (
+      <div ref={boxRef} className="relative w-full">
+        {input}
       </div>
+    )
+  }
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        onClick={() => setMobileOpen(o => !o)}
+        aria-label="Search projects"
+        aria-expanded={mobileOpen}
+        className="icon-button"
+      >
+        <MagnifierIcon className="h-6 w-6" />
+      </button>
+      {mobileOpen ? (
+        <div className="card absolute right-0 top-full z-50 mt-2 w-[min(24rem,calc(100vw-2rem))] p-3 shadow-lg">
+          {input}
+        </div>
+      ) : null}
     </div>
   )
 }
