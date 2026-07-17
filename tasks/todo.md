@@ -54,8 +54,9 @@ is already in PROJECT_FIELDS, currently unused).
 - [x] Page restructure: revnet-aware header + Overview + Owner/Operator shell — d9029d6
 - [x] Funds tab + sendPayoutsOf/useAllowanceOf (bdc9aed)
 - [x] Rulesets (custom) + Terms (revnet) read-only tabs (3e0804c)
-- [ ] Tokens/Owners tab: Accounts (You/All), Settlement, Reserved/Splits subtabs
-- [ ] Shop tab (tiers display; buys via pay card)
+- [x] Tokens/Owners tab: Accounts (You/All bars), Reserved/Splits + claim &
+      distribute txs (5f23489). Settlement/Market subtabs still pending.
+- [x] Shop tab read-only (5f23489); +Add items CTA pending (write flow)
 - [ ] Extras tab (.jb export, payer deploy)
 - [ ] Pay-card upgrade to spec (mode select, currency control, shop strip,
       preview semantics, router, direct swap) — do CAREFULLY, fund-loss traps
