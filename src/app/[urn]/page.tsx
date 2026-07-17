@@ -304,8 +304,7 @@ export default async function ProjectPage({
             projectId={project.projectId}
             projectName={name}
             isRevnet={isRevnet}
-            accountingToken={project.token}
-            accountingTokenSymbol={project.tokenSymbol}
+            chains={chainPairs}
             payDisclosure={metadata?.payDisclosure}
           />
           <section className="mt-8">
@@ -392,6 +391,7 @@ export default async function ProjectPage({
                     chainId={urn.chainId}
                     projectId={project.projectId}
                     isRevnet={isRevnet}
+                    chains={chainPairs}
                   />
                 ),
               },

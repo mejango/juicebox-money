@@ -25,12 +25,19 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
+import { getPublicClient } from 'wagmi/actions'
+import {
+  AddShopItemsModal,
+  type ShopWriteTarget,
+} from '@/components/project/AddShopItemsModal'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, ipfsUrl, truncateAddress } from '@/lib/format'
+import { wagmiConfig } from '@/providers/Providers'
 
 /**
- * Shop tab (website/ parity: renderShopSection) — a READ-ONLY storefront of
- * the project's 721 tiers. Buying happens in the Pay card, not here.
+ * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
+ * plus the owner/operator flow for adding new items. Buying happens in the
+ * Pay card, not here.
  *
  * Hook resolution mirrors website/'s readShopHook: revnets read
  * REVOwner.tiered721HookOf (via the SDK); custom projects read the current
@@ -82,10 +89,13 @@ export function ShopTab({
   chainId,
   projectId,
   isRevnet,
+  chains = [[chainId, projectId]],
 }: {
   chainId: JBChainId
   projectId: number
   isRevnet: boolean
+  /** [chain id, project id] for every linked deployment. */
+  chains?: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address } = useWallet()
@@ -94,6 +104,7 @@ export function ShopTab({
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
   const [category, setCategory] = useState<number | null>(null)
+  const [addItemsOpen, setAddItemsOpen] = useState(false)
 
   const {
     data: shop,
@@ -179,6 +190,62 @@ export function ShopTab({
       : shop.tiers.filter(tier => tier.category === category)
   }, [shop, category])
 
+  // Resolve each linked collection only when the operator opens the editor.
+  // Per-chain failures stay local so one flaky RPC does not hide the chains
+  // that are ready to receive items.
+  const {
+    data: writeTargets,
+    isLoading: writeTargetsLoading,
+  } = useQuery({
+    queryKey: ['shop721WriteTargets', chains, isRevnet],
+    enabled: addItemsOpen && !!shop,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: async (): Promise<ShopWriteTarget[]> =>
+      Promise.all(
+        chains.map(async ([targetChainId, targetProjectId]) => {
+          const targetId = targetChainId as JBChainId
+          try {
+            if (targetId === chainId && targetProjectId === projectId) {
+              return {
+                chainId: targetId,
+                projectId: targetProjectId,
+                hook: shop!.hook,
+                pricing: shop!.pricing,
+              }
+            }
+            const client = getPublicClient(wagmiConfig, {
+              chainId: targetId,
+            }) as PublicClient | undefined
+            if (!client) throw new Error('RPC unavailable')
+            const targetChain = JB_CHAINS[targetId]
+            const resolved = await readShop(
+              client,
+              targetId,
+              targetProjectId,
+              isRevnet,
+              targetChain?.nativeTokenSymbol ?? 'ETH',
+            )
+            return {
+              chainId: targetId,
+              projectId: targetProjectId,
+              hook: resolved?.hook ?? null,
+              pricing: resolved?.pricing ?? null,
+              error: resolved ? undefined : 'No store on this chain',
+            }
+          } catch {
+            return {
+              chainId: targetId,
+              projectId: targetProjectId,
+              hook: null,
+              pricing: null,
+              error: 'Could not read this store',
+            }
+          }
+        }),
+      ),
+  })
+
   if (isLoading) {
     return (
       <div className="card p-5">
@@ -218,9 +285,15 @@ export function ShopTab({
 
   return (
     <div className="space-y-5">
-      <p className="text-sm leading-relaxed text-smoke-700">
-        Buy from the Pay box — every purchase supports the project.
-      </p>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setAddItemsOpen(true)}
+          className="min-h-[40px] text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+        >
+          + Add items
+        </button>
+      </div>
 
       {isConnected && (credits ?? 0n) > 0n ? (
         <p className="callout callout-info text-sm">
@@ -237,7 +310,6 @@ export function ShopTab({
         <div className="card p-5">
           <p className="text-sm leading-relaxed text-smoke-700">
             No items in the store yet.
-            {isRevnet ? ' The operator can add some.' : ''}
           </p>
         </div>
       ) : (
@@ -309,6 +381,54 @@ export function ShopTab({
             </dd>
           </div>
         </dl>
+      </div>
+
+      {addItemsOpen && writeTargetsLoading ? (
+        <ShopEditorLoading onClose={() => setAddItemsOpen(false)} />
+      ) : null}
+      {addItemsOpen && !writeTargetsLoading && writeTargets ? (
+        <AddShopItemsModal
+          targets={writeTargets}
+          activePricing={shop.pricing}
+          existingCategories={categories}
+          isRevnet={isRevnet}
+          onClose={() => setAddItemsOpen(false)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function ShopEditorLoading({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-start justify-center bg-slate-950/55 px-3 py-10"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="loading-shop-editor-title"
+    >
+      <div className="card w-full max-w-lg p-6 shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2
+              id="loading-shop-editor-title"
+              className="font-agrandir text-xl font-medium text-ink"
+            >
+              Add items for sale
+            </h2>
+            <p className="mt-2 text-sm text-smoke-700">
+              Reading the collection on each chain…
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-xl text-smoke-700 hover:bg-smoke-75"
+          >
+            ×
+          </button>
+        </div>
       </div>
     </div>
   )

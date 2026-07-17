@@ -2246,6 +2246,7 @@ export function CreateForm() {
             return id
           }}
           chainIds={selected}
+          isRevnet={flavor === 'revnet'}
         />
 
         <div className="mt-5">

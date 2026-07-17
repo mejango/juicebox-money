@@ -6,13 +6,14 @@ export const runtime = 'nodejs'
 /** Store-item media: any common media type, larger cap than logos. */
 const MAX_BYTES = 25 * 1024 * 1024
 
-function typeAllowed(type: string): boolean {
+function typeAllowed(type: string, name: string): boolean {
   return (
     type.startsWith('image/') ||
     type.startsWith('video/') ||
     type.startsWith('audio/') ||
     type === 'application/pdf' ||
-    type === 'text/plain'
+    type.startsWith('text/') ||
+    /\.(md|markdown|txt)$/i.test(name)
   )
 }
 
@@ -36,9 +37,10 @@ export async function POST(req: NextRequest) {
   if (file.size === 0 || file.size > MAX_BYTES) {
     return NextResponse.json({ error: 'File must be 1 byte – 25MB' }, { status: 413 })
   }
-  if (!typeAllowed(file.type)) {
+  const fileName = 'name' in file && typeof file.name === 'string' ? file.name : ''
+  if (!typeAllowed(file.type, fileName)) {
     return NextResponse.json(
-      { error: 'Images, video, audio, PDF, or plain text only' },
+      { error: 'Images, video, audio, PDF, or text only' },
       { status: 415 },
     )
   }

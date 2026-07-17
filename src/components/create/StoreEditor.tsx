@@ -136,13 +136,15 @@ export function itemOk(item: DraftItem): boolean {
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024
 
-function mediaAllowed(type: string): boolean {
+function mediaAllowed(file: File): boolean {
+  const type = file.type
   return (
     type.startsWith('image/') ||
     type.startsWith('video/') ||
     type.startsWith('audio/') ||
     type === 'application/pdf' ||
-    type === 'text/plain'
+    type.startsWith('text/') ||
+    /\.(md|markdown|txt)$/i.test(file.name)
   )
 }
 
@@ -161,6 +163,7 @@ export function StoreEditor({
   categories,
   onAddCategory,
   chainIds,
+  isRevnet = false,
 }: {
   items: DraftItem[]
   onChange: (items: DraftItem[]) => void
@@ -169,6 +172,8 @@ export function StoreEditor({
   categories: StoreCategory[]
   onAddCategory: (name: string) => number
   chainIds: number[]
+  /** Revnet items cannot opt into ruleset-controlled transfer pauses. */
+  isRevnet?: boolean
 }) {
   const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(items.map(item => (item.id === id ? { ...item, ...patch } : item)))
@@ -183,7 +188,7 @@ export function StoreEditor({
   const onMediaChange = (id: string, file: File | null) => {
     const item = items.find(i => i.id === id)
     if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
-    if (!file || !mediaAllowed(file.type) || file.size > MAX_MEDIA_BYTES) {
+    if (!file || !mediaAllowed(file) || file.size > MAX_MEDIA_BYTES) {
       update(id, { mediaFile: null, mediaPreview: null })
       return
     }
@@ -241,7 +246,7 @@ export function StoreEditor({
                 {item.mediaFile ? 'Change media' : 'Upload media'}
                 <input
                   type="file"
-                  accept="image/*,video/*,audio/*,application/pdf,text/plain"
+                  accept="image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown"
                   disabled={disabled}
                   className="sr-only"
                   onChange={e => onMediaChange(item.id, e.target.files?.[0] ?? null)}
@@ -403,6 +408,29 @@ export function StoreEditor({
               </div>
 
               <div>
+                <span className="field-label">Split sales</span>
+                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                  Route a share of each sale of this item to other accounts or
+                  projects.
+                </p>
+                <SplitsEditor
+                  splits={item.splits}
+                  onChange={splits => update(item.id, { splits })}
+                  disabled={disabled}
+                  bucketLabel="sale proceeds"
+                  remainderNote="stay with the project"
+                  chainIds={chainIds}
+                />
+                {item.splits.length > 0 && item.allowCredits ? (
+                  <p className="mt-2 rounded-lg bg-split-50 px-3 py-2 text-[11px] leading-relaxed text-split-800">
+                    Shop credit purchases may bring in no new payment to
+                    divide. Turn off credit purchases below if every sale
+                    must honor this split.
+                  </p>
+                ) : null}
+              </div>
+
+              <div>
                 <span className="field-label">Discount</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Launch the item at a discount off its price — you can end
@@ -461,21 +489,6 @@ export function StoreEditor({
               </div>
 
               <div>
-                <span className="field-label">Split sales</span>
-                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Route a share of each sale of this item to other accounts or
-                  projects.
-                </p>
-                <SplitsEditor
-                  splits={item.splits}
-                  onChange={splits => update(item.id, { splits })}
-                  disabled={disabled}
-                  bucketLabel="sale proceeds"
-                  remainderNote="stay with the project"
-                />
-              </div>
-
-              <div>
                 <span className="field-label">Voting power</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Give each of this item a custom number of governance votes.
@@ -509,11 +522,15 @@ export function StoreEditor({
                       'Owner can mint for free',
                       'The project owner (or revnet operator) can mint this item without paying.',
                     ],
-                    [
-                      'transfersPausable',
-                      'Transfers pausable',
-                      'Rulesets can pause transfers of this item.',
-                    ],
+                    ...(isRevnet
+                      ? []
+                      : ([
+                          [
+                            'transfersPausable',
+                            'Transfers pausable',
+                            'Rulesets can pause transfers of this item.',
+                          ],
+                        ] as const)),
                     [
                       'cantBeRemoved',
                       'Permanent',

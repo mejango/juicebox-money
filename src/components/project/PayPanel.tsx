@@ -18,6 +18,7 @@ import {
   getAccountingContexts,
   getCurrentRuleset,
   getRevnetTiered721Hook,
+  getTokenAddress,
   previewPay,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -35,6 +36,7 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, ipfsUrl } from '@/lib/format'
+import { chainName } from '@/lib/urn'
 
 const TIER_UNLIMITED_SUPPLY = 999_999_999
 
@@ -76,19 +78,29 @@ function effectivePrice(price: bigint, discountPercent: number): bigint {
  * previewed minimum, and simulate-first sends.
  */
 export function PayPanel({
-  chainId,
-  projectId,
+  chainId: initialChainId,
+  projectId: initialProjectId,
   projectName,
   isRevnet,
+  chains,
   payDisclosure,
 }: {
   chainId: JBChainId
   projectId: number
   projectName: string
   isRevnet: boolean
+  /** [chainId, projectId] pairs across the sucker group (chain selector). */
+  chains: [number, number][]
   payDisclosure?: string
 }) {
   const { isConnected, address, openSignIn } = useWallet()
+
+  // The chain being paid — a project lives on every linked chain, and the
+  // payer picks which one. projectId can differ per chain (sucker groups).
+  const [chainId, setChainId] = useState<JBChainId>(initialChainId)
+  const projectId =
+    chains.find(([c]) => c === chainId)?.[1] ?? initialProjectId
+
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const tx = useSafeTx(chainId)
   const approveTx = useSafeTx(chainId)
@@ -145,6 +157,28 @@ export function PayPanel({
       }
     },
   })
+
+  // The project's OWN token symbol ("You get X MARKEE") — resolved on-chain,
+  // NOT bendystraw's accounting symbol.
+  const { data: projectSymbol } = useQuery({
+    queryKey: ['payProjectSymbol', chainId, projectId],
+    enabled: !!publicClient,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async (): Promise<string | null> => {
+      const token = await getTokenAddress(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+      })
+      if (!token) return null
+      return (await publicClient!.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'symbol',
+      })) as string
+    },
+  })
+  const projectTokenLabel = projectSymbol || 'tokens'
 
   const contexts = surface?.contexts ?? []
   const context = contexts[Math.min(tokenIndex, contexts.length - 1)] as
@@ -538,40 +572,37 @@ export function PayPanel({
 
   return (
     <div>
-      <h3 className="font-agrandir text-lg font-medium">
-        Support this project
-      </h3>
-
-      {/* Mode + token row */}
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      {/* Mode on chain */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-smoke-700">
         <select
           value={mode}
           onChange={e => setMode(e.target.value as 'pay' | 'addbalance')}
           disabled={busy}
           aria-label="Payment mode"
-          className="select-caret input-well min-h-[40px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
+          className="select-caret input-well min-h-[38px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
         >
           <option value="pay">Pay</option>
           <option value="addbalance">Add to balance</option>
         </select>
-        {contexts.length > 1 ? (
+        {chains.length > 1 ? (
           <>
-            <span className="text-sm text-smoke-700">with</span>
+            <span>on</span>
             <select
-              // Valued by INDEX, not address — the option must stay in
-              // lock-step with the selected context (website/ parity).
-              value={tokenIndex}
+              value={chainId}
               onChange={e => {
-                setTokenIndex(Number(e.target.value))
+                setChainId(Number(e.target.value) as JBChainId)
+                setTokenIndex(0)
                 setCart({})
+                setAmount('')
+                setDebouncedAmount('')
               }}
               disabled={busy}
-              aria-label="Payment token"
-              className="select-caret input-well min-h-[40px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
+              aria-label="Chain"
+              className="select-caret input-well min-h-[38px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
             >
-              {contexts.map((ctx, i) => (
-                <option key={`${ctx.token}-${i}`} value={i}>
-                  {ctx.symbol}
+              {chains.map(([cid]) => (
+                <option key={cid} value={cid}>
+                  {chainName(cid)}
                 </option>
               ))}
             </select>
@@ -672,66 +703,77 @@ export function PayPanel({
         </div>
       ) : null}
 
-      {/* Amount */}
-      <label className="mt-4 block">
-        <span className="field-label">Amount</span>
-        <span className="input-well mt-1.5 flex min-h-[52px] items-center gap-2 px-4">
+      {/* Amount + token + pay, inline (website/ parity) */}
+      <div className="mt-3">
+        <div className="input-well flex items-stretch overflow-hidden !p-0">
           <input
             type="text"
             inputMode="decimal"
             value={amount}
             onChange={e => setAmount(e.target.value)}
             disabled={busy}
-            placeholder="0.01"
-            className="min-w-0 flex-1 bg-transparent text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
+            placeholder="0.00"
+            aria-label="Amount"
+            className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
-          <span className="shrink-0 text-sm font-medium text-smoke-700">
-            {symbol}
-          </span>
-        </span>
-      </label>
-
-      {/* Preview */}
-      {mode === 'pay' && amountRaw > 0n ? (
-        <div className="mt-2.5 text-sm text-smoke-700">
-          {previewLoading ? (
-            <p>Checking what you&apos;ll get…</p>
-          ) : previewError ? (
-            <p className="text-red-600">
-              Couldn&apos;t verify what this payment returns — paying is
-              disabled until the preview works.
-            </p>
-          ) : preview ? (
-            <>
-              {preview.beneficiaryTokenCount > 0n ? (
-                <p>
-                  You get{' '}
-                  <span className="font-bold text-ink">
-                    {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{' '}
-                    tokens
-                  </span>{' '}
-                  — guaranteed, or the payment reverts.
-                </p>
-              ) : cartCount > 0 ? null : (
-                <p>This payment mints no tokens right now.</p>
-              )}
-              {preview.reservedTokenCount > 0n ? (
-                <p className="mt-0.5 text-xs">
-                  Splits get{' '}
-                  {formatTokenAmount(preview.reservedTokenCount, 18)} tokens.
-                </p>
-              ) : null}
-              {cartCount > 0 ? (
-                <p className="mt-0.5 text-xs">
-                  + {cartCount} item{cartCount === 1 ? '' : 's'} from the shop.
-                </p>
-              ) : null}
-            </>
-          ) : null}
+          {contexts.length > 1 ? (
+            <select
+              // Valued by INDEX, not address — a token can appear direct and
+              // via-router, so the option must stay in lock-step with the
+              // selected context (website/ fund-loss fix).
+              value={tokenIndex}
+              onChange={e => {
+                setTokenIndex(Number(e.target.value))
+                setCart({})
+              }}
+              disabled={busy}
+              aria-label="Payment token"
+              className="select-caret !w-auto shrink-0 border-0 bg-transparent pl-2 pr-7 text-sm font-medium text-smoke-700 focus:outline-none disabled:opacity-60"
+            >
+              {contexts.map((ctx, i) => (
+                <option key={`${ctx.token}-${i}`} value={i}>
+                  {ctx.symbol}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="flex shrink-0 items-center pr-3 text-sm font-medium text-smoke-700">
+              {symbol}
+            </span>
+          )}
+          <button
+            onClick={submit}
+            disabled={
+              busy ||
+              notStarted ||
+              surfaceError ||
+              (surface?.pausePay && mode === 'pay') ||
+              (isConnected &&
+                (amountRaw <= 0n || (mode === 'pay' && !previewReady)))
+            }
+            className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
+          >
+            {notStarted
+              ? 'Soon'
+              : !isConnected
+                ? 'Sign in'
+                : busy
+                  ? '…'
+                  : needsApproval
+                    ? 'Approve'
+                    : mode === 'pay'
+                      ? 'Pay'
+                      : 'Add'}
+          </button>
         </div>
-      ) : null}
+        {notStarted ? (
+          <p className="mt-1.5 text-xs text-smoke-700">
+            Starts in {formatStartCountdown(startsAt - now)}.
+          </p>
+        ) : null}
+      </div>
 
-      {/* Memo */}
+      {/* Add a note */}
       {showMemo ? (
         <input
           type="text"
@@ -745,18 +787,50 @@ export function PayPanel({
         <button
           onClick={() => setShowMemo(true)}
           disabled={busy}
-          className="mt-3 text-xs font-medium text-bluebs-600 hover:text-bluebs-700"
+          className="mt-3 text-sm font-medium text-bluebs-600 hover:text-bluebs-700"
         >
           + Add a note
         </button>
       )}
+
+      {/* You get — only once an amount mints a non-zero token count */}
+      {mode === 'pay' &&
+      amountRaw > 0n &&
+      !previewLoading &&
+      !previewError &&
+      preview &&
+      preview.beneficiaryTokenCount > 0n ? (
+        <div className="mt-4">
+          <p className="text-xs text-smoke-500">You get</p>
+          <p className="font-agrandir text-xl font-medium text-ink">
+            {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{' '}
+            {projectTokenLabel}
+          </p>
+          {preview.reservedTokenCount > 0n ? (
+            <p className="mt-0.5 text-xs text-smoke-500">
+              Splits get {formatTokenAmount(preview.reservedTokenCount, 18)}{' '}
+              {projectTokenLabel}
+            </p>
+          ) : null}
+          {cartCount > 0 ? (
+            <p className="mt-0.5 text-xs text-smoke-500">
+              + {cartCount} item{cartCount === 1 ? '' : 's'} from the shop.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {mode === 'pay' && amountRaw > 0n && previewError ? (
+        <p className="mt-2 text-sm text-red-600">
+          Couldn&apos;t verify what this payment returns — paying is disabled
+          until the preview works.
+        </p>
+      ) : null}
 
       {payDisclosure ? (
         <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
           {payDisclosure}
         </p>
       ) : null}
-
       {surfaceError ? (
         <p className="mt-3 text-sm text-red-600">
           Couldn&apos;t verify this project&apos;s accepted tokens — payments
@@ -773,35 +847,6 @@ export function PayPanel({
           {approveTx.error ?? tx.error}
         </p>
       ) : null}
-
-      <button
-        onClick={submit}
-        disabled={
-          busy ||
-          notStarted ||
-          surfaceError ||
-          (surface?.pausePay && mode === 'pay') ||
-          (isConnected &&
-            (amountRaw <= 0n || (mode === 'pay' && !previewReady)))
-        }
-        className="btn-primary mt-4 min-h-[48px] w-full text-sm disabled:opacity-60"
-      >
-        {notStarted
-          ? `Starts in ${formatStartCountdown(startsAt - now)}`
-          : !isConnected
-            ? 'Sign in to pay'
-            : busy
-              ? approveTx.phase === 'signing' || tx.phase === 'signing'
-                ? 'Confirm in your wallet…'
-                : approveTx.phase === 'pending' || tx.phase === 'pending'
-                  ? 'Sending…'
-                  : 'Double-checking…'
-              : needsApproval
-                ? `Allow ${symbol} — step 1 of 2`
-                : mode === 'pay'
-                  ? 'Pay'
-                  : 'Add to balance'}
-      </button>
     </div>
   )
 }

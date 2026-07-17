@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected a JSON object' }, { status: 400 })
   }
 
-  const { name, description, image, animation_url, mediaType } =
+  const { name, description, image, animation_url, mediaType, categoryName } =
     body as Record<string, unknown>
 
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
@@ -59,6 +59,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid mediaType' }, { status: 400 })
     }
     metadata.mediaType = mediaType
+  }
+  if (categoryName !== undefined) {
+    if (
+      typeof categoryName !== 'string' ||
+      !categoryName.trim() ||
+      categoryName.trim().length > 40
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid categoryName' },
+        { status: 400 },
+      )
+    }
+    metadata.categoryName = categoryName.trim()
   }
 
   try {
