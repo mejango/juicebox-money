@@ -190,6 +190,113 @@ export function tickLowerOf(info: bigint): number {
   return signExtend24((info >> 8n) & 0xffffffn)
 }
 
+// --------------------------------------------------------- mint (add LP) math --
+// Everything below is an EXACT port of website/src/discover.js's mint helpers
+// (lpLiqForAmount0/1, lpGetLiquidityForAmounts, lpAlignDown/Up ~lines 20713-20730
+// and lpCounterpart / lpDefaultRange ~lines 20544-20580). The bigint Q64.96 math
+// must stay byte-for-byte identical to what the pool expects, so it lives here
+// beside getAmountsForLiquidity (its inverse) rather than in React.
+
+function liqForAmount0(sa: bigint, sb: bigint, amount0: bigint): bigint {
+  const [x, y] = sortPair(sa, sb)
+  const inter = (x * y) / Q96
+  return (amount0 * inter) / (y - x)
+}
+
+function liqForAmount1(sa: bigint, sb: bigint, amount1: bigint): bigint {
+  const [x, y] = sortPair(sa, sb)
+  return (amount1 * Q96) / (y - x)
+}
+
+/** Liquidity L a deposit of (amount0, amount1) supports over [sa, sb] at the
+ *  current sqrt price sp — EXACT port of website lpGetLiquidityForAmounts. The
+ *  inverse of getAmountsForLiquidity; both must round the same way. */
+export function getLiquidityForAmounts(
+  sp: bigint,
+  sa: bigint,
+  sb: bigint,
+  amount0: bigint,
+  amount1: bigint,
+): bigint {
+  const [x, y] = sortPair(sa, sb)
+  if (sp <= x) return liqForAmount0(x, y, amount0)
+  if (sp < y) {
+    const l0 = liqForAmount0(sp, y, amount0)
+    const l1 = liqForAmount1(x, sp, amount1)
+    return l0 < l1 ? l0 : l1
+  }
+  return liqForAmount1(x, y, amount1)
+}
+
+/** Align a tick down to the nearest multiple of the spacing (website lpAlignDown). */
+export function alignDown(tick: number, spacing: number): number {
+  let r = tick % spacing
+  if (r !== 0 && tick < 0) r += spacing
+  return tick - r
+}
+
+/** Align a tick up to the nearest multiple of the spacing (website lpAlignUp). */
+export function alignUp(tick: number, spacing: number): number {
+  return alignDown(tick + spacing - 1, spacing)
+}
+
+/**
+ * Concentrated-liquidity deposit counterpart (float math, for the input
+ * auto-fill only — never for the on-chain amounts). Given one side's amount,
+ * the current price p and range [pa, pb] (all pair-per-token), return the other
+ * side's amount. EXACT port of website lpCounterpart. driverIsPair=true → input
+ * is the pair token, returns project-token amount; false → the reverse. Outside
+ * the range the position is single-sided: returns 0 for the un-needed side, or
+ * null when the requested side can't fund the position.
+ */
+export function lpCounterpart(
+  amount: number,
+  driverIsPair: boolean,
+  p: number,
+  pa: number,
+  pb: number,
+): number | null {
+  if (!(amount > 0) || !(p > 0) || !(pa > 0) || !(pb > pa)) return null
+  const sp = Math.sqrt(p)
+  const sa = Math.sqrt(pa)
+  const sb = Math.sqrt(pb)
+  if (p <= pa) return driverIsPair ? null : 0 // all project token: no pair side
+  if (p >= pb) return driverIsPair ? 0 : null // all pair: no project-token side
+  if (driverIsPair) {
+    const L = amount / (sp - sa)
+    return L * (1 / sp - 1 / sb) // project-token amount
+  }
+  const Lx = amount / (1 / sp - 1 / sb)
+  return Lx * (sp - sa) // pair amount
+}
+
+/**
+ * Default LP price range — EXACT port of website lpDefaultRange. Prefers the
+ * economic [cash-out floor, issuance ceiling] corridor when it contains spot;
+ * otherwise widens around the live pool price so the default position is
+ * genuinely two-sided. All values are pair/base token per project token.
+ */
+export function lpDefaultRange(
+  poolPrice: number,
+  floor: number,
+  ceiling: number,
+): { min: number; max: number; economic: boolean } {
+  let p = Number(poolPrice)
+  let f = Number(floor)
+  let c = Number(ceiling)
+  p = isFinite(p) && p > 0 ? p : 0
+  f = isFinite(f) && f > 0 ? f : 0
+  c = isFinite(c) && c > 0 ? c : 0
+  const economic = p > 0 && f > 0 && c > f && f < p && p < c
+  let min = economic ? f : p > 0 ? p / 2 : c > 0 ? c / 10 : 0
+  let max = economic ? c : p > 0 ? p * 2 : c
+  if (p > 0 && (!(min > 0) || min >= p)) min = p / 2
+  if (p > 0 && !(max > p)) max = p * 2
+  if (!(min > 0) && max > 0) min = max / 10
+  if (!(max > min)) max = min > 0 ? min * 10 : 0
+  return { min, max, economic }
+}
+
 // V4 PoolManager event topics — website LP_INITIALIZE_TOPIC / LP_MODIFY_LIQUIDITY_TOPIC
 // (~lines 20785-20786). Both index the pool id in topic1.
 export const INITIALIZE_TOPIC = toEventSelector(

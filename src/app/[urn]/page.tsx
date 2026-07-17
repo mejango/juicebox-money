@@ -334,6 +334,7 @@ export default async function ProjectPage({
                     isRevnet={isRevnet}
                     authority={authority ?? null}
                     chains={chainPairs}
+                    suckerGroupId={project.suckerGroupId}
                     etherscanHost={etherscan}
                   />
                 ),

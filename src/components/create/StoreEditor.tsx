@@ -273,20 +273,78 @@ export function StoreEditor({
                     }`}
                   />
                 </label>
-                <label className="min-w-0 flex-1">
-                  <span className="field-label">Quantity</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={item.supply}
-                    onChange={e => update(item.id, { supply: e.target.value.slice(0, 9) })}
-                    disabled={disabled}
-                    placeholder="Unlimited"
-                    className={`input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
-                      !itemSupplyOk(item.supply) ? '!border-red-400' : ''
-                    }`}
-                  />
-                </label>
+                <div className="min-w-0 flex-1">
+                  <label>
+                    <span className="field-label">
+                      Quantity{' '}
+                      <span className="font-normal text-smoke-500">
+                        (on each chain)
+                      </span>
+                    </span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={item.supply}
+                      onChange={e =>
+                        update(item.id, {
+                          supply: e.target.value.slice(0, 9),
+                        })
+                      }
+                      disabled={disabled}
+                      placeholder="Unlimited"
+                      className={`input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
+                        !itemSupplyOk(item.supply) ? '!border-red-400' : ''
+                      }`}
+                    />
+                  </label>
+                  {chainIds.length > 1 ? (
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          update(item.id, {
+                            perChainSupplyOpen: !item.perChainSupplyOpen,
+                          })
+                        }
+                        disabled={disabled}
+                        aria-expanded={item.perChainSupplyOpen}
+                        className="whitespace-nowrap text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+                      >
+                        {item.perChainSupplyOpen
+                          ? 'Use same quantity on all chains'
+                          : 'Set per chain'}
+                      </button>
+                      {item.perChainSupplyOpen ? (
+                        <div className="mt-2 space-y-2">
+                          {chainIds.map(chainId => (
+                            <div key={chainId} className="flex items-center gap-2">
+                              <span className="mt-1 flex w-9 shrink-0 items-center justify-center">
+                                <ChainIcon chainId={chainId} size={28} />
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={item.perChainSupply[chainId] ?? ''}
+                                onChange={e =>
+                                  update(item.id, {
+                                    perChainSupply: {
+                                      ...item.perChainSupply,
+                                      [chainId]: e.target.value.slice(0, 9),
+                                    },
+                                  })
+                                }
+                                disabled={disabled}
+                                placeholder={item.supply.trim() || 'Unlimited'}
+                                aria-label={`Quantity on ${chainName(chainId)}`}
+                                className="input-well min-h-[40px] w-28 px-2.5 text-xs tabular-nums disabled:opacity-60"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -484,56 +542,6 @@ export function StoreEditor({
                 ))}
               </div>
 
-              {chainIds.length > 1 ? (
-                <div>
-                  <button
-                    onClick={() =>
-                      update(item.id, {
-                        perChainSupplyOpen: !item.perChainSupplyOpen,
-                      })
-                    }
-                    disabled={disabled}
-                    aria-expanded={item.perChainSupplyOpen}
-                    className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
-                  >
-                    {item.perChainSupplyOpen
-                      ? 'Same quantity on every chain'
-                      : 'Set quantity per chain'}
-                  </button>
-                  {item.perChainSupplyOpen ? (
-                    <div className="mt-2 space-y-2">
-                      {chainIds.map(chainId => (
-                        <div key={chainId} className="flex items-center gap-2">
-                          <span className="mt-1 flex w-9 shrink-0 items-center justify-center">
-                            <ChainIcon chainId={chainId} size={28} />
-                          </span>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            value={item.perChainSupply[chainId] ?? ''}
-                            onChange={e =>
-                              update(item.id, {
-                                perChainSupply: {
-                                  ...item.perChainSupply,
-                                  [chainId]: e.target.value.slice(0, 9),
-                                },
-                              })
-                            }
-                            disabled={disabled}
-                            placeholder={item.supply.trim() || 'Unlimited'}
-                            aria-label={`Quantity on ${chainName(chainId)}`}
-                            className="input-well min-h-[40px] w-28 px-2.5 text-xs tabular-nums disabled:opacity-60"
-                          />
-                        </div>
-                      ))}
-                      <p className="text-[11px] leading-relaxed text-smoke-500">
-                        Empty = the default quantity; type &quot;unlimited&quot;
-                        for no cap on a chain.
-                      </p>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>

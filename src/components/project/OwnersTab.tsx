@@ -18,6 +18,7 @@ import {
   buildClaimTokensTx,
   getAccountingContexts,
   getAllRulesets,
+  getBorrowableAmount,
   getCreditBalance,
   getCurrentRuleset,
   getTokenAddress,
@@ -35,10 +36,14 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
+import { CashOutPanel } from '@/components/project/CashOutFlow'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
+import { GetLoanFlow } from '@/components/project/GetLoanFlow'
 import { LoansSection } from '@/components/project/LoansSection'
 import { MarketSection } from '@/components/project/MarketSection'
+import { MoveCard } from '@/components/project/MoveFlow'
 import { SettlementSection } from '@/components/project/SettlementSection'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
@@ -92,7 +97,12 @@ export function OwnersTab({
             label: 'Accounts',
             content: (
               <div className="space-y-5">
-                <YouCard chains={chains} />
+                <YouCard
+                  chainId={chainId}
+                  projectId={projectId}
+                  isRevnet={isRevnet}
+                  chains={chains}
+                />
                 <AllHoldersCard
                   chainId={chainId}
                   projectId={projectId}
@@ -165,8 +175,30 @@ export function OwnersTab({
 
 // -------------------------------------------------------------- YOU card --
 
-function YouCard({ chains }: { chains: [number, number][] }) {
+type YouAction = 'cashOut' | 'loan' | 'move' | 'liquidity'
+
+/**
+ * The Accounts (YOU) card (website/ parity: renderYouCard + opsActionsRow):
+ * the connected holder's per-chain position (balance, cash-out value, and — for
+ * revnets — max loan), plus every token-holder action in one place: Cash out,
+ * Get a loan (revnet), and Move between chains (multichain). Each action opens
+ * its flow inline. Every write runs through useSafeTx (simulate-first).
+ */
+function YouCard({
+  chainId,
+  projectId,
+  isRevnet,
+  chains,
+}: {
+  chainId: JBChainId
+  projectId: number
+  isRevnet: boolean
+  chains: [number, number][]
+}) {
   const { isConnected, address, openSignIn } = useWallet()
+  const primaryClient = usePublicClient({
+    chainId: chains[0]?.[0] as JBChainId,
+  }) as PublicClient | undefined
 
   // Wallet state only exists client-side; keep SSR + first client render
   // identical so hydration always matches (OwnerPanel pattern).
@@ -174,6 +206,47 @@ function YouCard({ chains }: { chains: [number, number][] }) {
   useEffect(() => setMounted(true), [])
 
   const connected = mounted && isConnected && !!address
+
+  const [action, setAction] = useState<YouAction | null>(null)
+
+  // The project's OWN token symbol, resolved on-chain (NOT bendystraw's
+  // accounting symbol). Omnichain ERC-20s share one address/symbol, so resolve
+  // it once on the primary chain (AutoIssuanceSection pattern).
+  const { data: ownSymbol } = useQuery({
+    queryKey: ['youOwnSymbol', chains[0]?.join(':')],
+    enabled: !!primaryClient && chains.length > 0,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async (): Promise<string | null> => {
+      const token = await getTokenAddress(primaryClient!, {
+        chainId: chains[0][0] as JBChainId,
+        projectId: BigInt(chains[0][1]),
+      })
+      if (!token) return null
+      return (await primaryClient!.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'symbol',
+      })) as string
+    },
+  })
+  const collateralSymbol = ownSymbol || 'tokens'
+
+  const multiChain = chains.length > 1
+
+  const actionBtn = (id: YouAction, label: string) => (
+    <button
+      onClick={() => setAction(a => (a === id ? null : id))}
+      className={`min-h-[40px] rounded-lg px-4 text-sm font-medium transition-colors ${
+        action === id
+          ? 'bg-bluebs-25 text-bluebs-700'
+          : 'btn-secondary'
+      }`}
+      aria-pressed={action === id}
+    >
+      {label}
+    </button>
+  )
 
   return (
     <div className="card p-5">
@@ -191,16 +264,52 @@ function YouCard({ chains }: { chains: [number, number][] }) {
           </button>
         </div>
       ) : (
-        <div className="mt-3 divide-y divide-smoke-100">
-          {chains.map(([cid, pid]) => (
-            <YourChainRow
-              key={cid}
-              chainId={cid as JBChainId}
-              projectId={pid}
-              holder={address!}
-            />
-          ))}
-        </div>
+        <>
+          <div className="mt-3 divide-y divide-smoke-100">
+            {chains.map(([cid, pid]) => (
+              <YourChainRow
+                key={cid}
+                chainId={cid as JBChainId}
+                projectId={pid}
+                holder={address!}
+                isRevnet={isRevnet}
+              />
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {actionBtn('cashOut', 'Cash out')}
+            {isRevnet ? actionBtn('loan', 'Get a loan') : null}
+            {multiChain ? actionBtn('move', 'Move between chains') : null}
+            {actionBtn('liquidity', 'Add market liquidity')}
+          </div>
+
+          {action ? (
+            <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+              {action === 'cashOut' ? (
+                <CashOutPanel chainId={chainId} projectId={projectId} />
+              ) : action === 'loan' ? (
+                <GetLoanFlow
+                  chainId={chainId}
+                  projectId={projectId}
+                  collateralSymbol={collateralSymbol}
+                />
+              ) : action === 'move' ? (
+                <MoveCard
+                  chainId={chainId}
+                  projectId={projectId}
+                  chains={chains}
+                />
+              ) : (
+                <AddLiquidityFlow
+                  chainId={chainId}
+                  projectId={projectId}
+                  tokenSymbol={collateralSymbol}
+                />
+              )}
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   )
@@ -219,16 +328,22 @@ type Position = {
   cashOutValue: bigint | null
   cashOutDecimals: number
   cashOutSymbol: string
+  /** Currently-borrowable amount against the full balance (revnet only), in the
+   *  accounting token's decimals; null when not a revnet or unreadable. 0 while
+   *  the revnet's cash-out delay is active. */
+  maxLoan: bigint | null
 }
 
 function YourChainRow({
   chainId,
   projectId,
   holder,
+  isRevnet,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
+  isRevnet: boolean
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
@@ -238,7 +353,7 @@ function YourChainRow({
     isError,
     refetch,
   } = useQuery({
-    queryKey: ['yourPosition', chainId, projectId, holder],
+    queryKey: ['yourPosition', chainId, projectId, holder, isRevnet],
     enabled: !!publicClient,
     staleTime: 30_000,
     retry: 1,
@@ -320,6 +435,23 @@ function YourChainRow({
             : 0n
       }
 
+      // Max loan: what the full balance can currently borrow against via
+      // REVLoans, in the primary accounting token's terms. Revnet-only —
+      // custom projects have no REVLoans, so it stays null ("—"). 0 while the
+      // revnet's cash-out delay locks loans.
+      let maxLoan: bigint | null = null
+      if (isRevnet && primary && balance > 0n) {
+        maxLoan = await getBorrowableAmount(client, {
+          chainId,
+          revnetId: BigInt(projectId),
+          collateralCount: balance,
+          decimals: BigInt(primary.decimals),
+          currency: BigInt(primary.currency),
+        })
+          .then(r => r.borrowableNow)
+          .catch(() => null)
+      }
+
       return {
         balance,
         credits,
@@ -328,6 +460,7 @@ function YourChainRow({
         cashOutValue,
         cashOutDecimals,
         cashOutSymbol,
+        maxLoan,
       }
     },
   })
@@ -369,6 +502,25 @@ function YourChainRow({
                     position.cashOutDecimals,
                   )}{' '}
                   {position.cashOutSymbol}
+                </p>
+              ) : null}
+              {isRevnet ? (
+                <p className="mt-0.5 text-xs text-smoke-700">
+                  Max loan:{' '}
+                  {position.maxLoan === null ? (
+                    '—'
+                  ) : position.maxLoan > 0n ? (
+                    <>
+                      ~
+                      {formatTokenAmount(
+                        position.maxLoan,
+                        position.cashOutDecimals,
+                      )}{' '}
+                      {position.cashOutSymbol}
+                    </>
+                  ) : (
+                    'Locked'
+                  )}
                 </p>
               ) : null}
             </>

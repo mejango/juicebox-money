@@ -61,7 +61,7 @@ export function OptionRow({
       onClick={onSelect}
       disabled={disabled}
       aria-checked={checked}
-      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-grey-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg border border-smoke-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-bluebs-200 hover:bg-grey-50 focus-visible:border-bluebs-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
         className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
@@ -101,7 +101,7 @@ export function CheckRow({
       onClick={onToggle}
       disabled={disabled}
       aria-checked={checked}
-      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-grey-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg border border-smoke-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-bluebs-200 hover:bg-grey-50 focus-visible:border-bluebs-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
         className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${

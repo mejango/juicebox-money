@@ -12,20 +12,20 @@ import {
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
- * per token), a rising ladder as the rate cuts. Optional flat reference lines
- * mark the cash-out floor and the AMM price — arbitrage keeps the market
- * between the two ladders. The vertical scale is anchored to the issuance
- * schedule (website/ parity); live-only reference values are points at Now,
- * never lines projected into the past or future. Values outside the issuance
- * scale pin to the chart edge while their exact values stay in the legend.
- * Linear scale — no log toggle, matching website/.
+ * per token), a rising ladder as the rate cuts. Indexed cash-out and AMM
+ * observations are drawn only over the historical window and terminate at
+ * live values at Now. The vertical scale is anchored to the issuance schedule
+ * (website/ parity); values outside it pin to the chart edge while their exact
+ * values stay in the legend. Linear scale — no log toggle, matching website/.
  */
 
 type ReferenceLine = { value: number; label: string } | null
+export type PricePoint = { timestamp: number; value: number }
 
-const ISSUANCE_COLOR = '#6EC4C4'
-const CASH_OUT_COLOR = '#C43550'
-const AMM_COLOR = '#B8602E'
+const ISSUANCE_COLOR = '#5777EB'
+const NOW_COLOR = '#F5A312'
+const CASH_OUT_COLOR = '#C85F9A'
+const AMM_COLOR = '#BD4513'
 const DAY = 86_400
 
 const PRICE_RANGES = [
@@ -44,6 +44,50 @@ const PL = 12
 const PR = 12
 const PT = 16
 const PB = 22
+
+function visibleSeries(
+  points: PricePoint[],
+  live: number | null,
+  t0: number,
+  t1: number,
+): PricePoint[] {
+  const sorted = points
+    .filter(
+      point =>
+        Number.isFinite(point.timestamp) &&
+        Number.isFinite(point.value) &&
+        point.value > 0 &&
+        point.timestamp <= t1,
+    )
+    .sort((a, b) => a.timestamp - b.timestamp)
+
+  const before = sorted.filter(point => point.timestamp < t0).at(-1)
+  const visible = sorted.filter(
+    point => point.timestamp >= t0 && point.timestamp <= t1,
+  )
+  const out = before
+    ? [{ timestamp: t0, value: before.value }, ...visible]
+    : visible
+
+  if (live && live > 0) {
+    const last = out.at(-1)
+    if (last?.timestamp === t1) {
+      out[out.length - 1] = { timestamp: t1, value: live }
+    }
+    else out.push({ timestamp: t1, value: live })
+  }
+  return out
+}
+
+function asStepSeries(points: PricePoint[]): PricePoint[] {
+  if (points.length < 2) return points
+  const stepped: PricePoint[] = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    stepped.push({ timestamp: points[i].timestamp, value: points[i - 1].value })
+    stepped.push(points[i])
+  }
+  return stepped
+}
 
 function PriceSummary({
   label,
@@ -87,12 +131,16 @@ export function PriceChart({
   baseSymbol,
   floorPrice,
   ammPrice,
+  floorHistory = [],
+  ammHistory = [],
 }: {
   stages: ChartStage[]
   symbol: string
   baseSymbol: string
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
+  floorHistory?: PricePoint[]
+  ammHistory?: PricePoint[]
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
   const [hoverT, setHoverT] = useState<number | null>(null)
@@ -117,6 +165,18 @@ export function PriceChart({
   const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
   const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
   const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
+  const floorSeries = visibleSeries(
+    floorHistory,
+    floor?.value ?? null,
+    t0,
+    t1,
+  )
+  const ammSeries = visibleSeries(
+    ammHistory,
+    amm?.value ?? null,
+    t0,
+    t1,
+  )
 
   if (resolved.length === 0 || maxV <= 0) {
     return (
@@ -132,6 +192,16 @@ export function PriceChart({
 
   const path = points
     .map(([t, v]) => `${X(t).toFixed(1)},${Y(v ?? maxV).toFixed(1)}`)
+    .join(' ')
+  const floorPath = asStepSeries(floorSeries)
+    .map(point =>
+      `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
+    )
+    .join(' ')
+  const ammPath = ammSeries
+    .map(point =>
+      `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
+    )
     .join(' ')
 
   const t = Math.min(t1, Math.max(t0, hoverT ?? Math.min(now, t1)))
@@ -222,13 +292,34 @@ export function PriceChart({
             </g>
           ) : null,
         )}
+        {/* Observed histories stop at the live value at Now. */}
+        {floorSeries.length > 1 ? (
+          <polyline
+            points={floorPath}
+            fill="none"
+            stroke={CASH_OUT_COLOR}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : null}
+        {ammSeries.length > 1 ? (
+          <polyline
+            points={ammPath}
+            fill="none"
+            stroke={AMM_COLOR}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : null}
         {/* Now marker */}
         <line
           x1={nowX}
           y1={PT}
           x2={nowX}
           y2={VH - PB}
-          stroke={ISSUANCE_COLOR}
+          stroke={NOW_COLOR}
           strokeWidth="1"
           strokeDasharray="4 3"
         />
@@ -278,11 +369,11 @@ export function PriceChart({
           cx={X(t)}
           cy={Y(price ?? maxV)}
           r="3.5"
-          fill={ISSUANCE_COLOR}
+          fill={NOW_COLOR}
           stroke="#1A1A1A"
           strokeWidth="1"
         />
-        {/* Floor and AMM are live observations, so they exist only at Now. */}
+        {/* Exact live observations at Now. */}
         {floor ? (
           <circle
             cx={nowX}

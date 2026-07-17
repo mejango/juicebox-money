@@ -18,6 +18,7 @@ import {
   getCurrentRuleset,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import {
   erc20Abi,
   zeroAddress,
@@ -26,9 +27,13 @@ import {
 } from 'viem'
 import { getPublicClient } from 'wagmi/actions'
 import { useConfig, usePublicClient } from 'wagmi'
-import { PriceChart } from '@/components/project/PriceChart'
+import {
+  PriceChart,
+  type PricePoint,
+} from '@/components/project/PriceChart'
 import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
+import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import { cashOutPriceFromTotals } from '@/lib/cashOut'
 
 const NATIVE = '0x000000000000000000000000000000000000eeee'
@@ -42,10 +47,12 @@ export function RevnetPriceCard({
   chainId,
   projectId,
   chains,
+  suckerGroupId,
 }: {
   chainId: JBChainId
   projectId: number
   chains: [number, number][]
+  suckerGroupId: string | null
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
@@ -226,9 +233,94 @@ export function RevnetPriceCard({
       return {
         floor,
         amm: market?.status === 'pool' ? market.price : null,
+        poolId: market?.status === 'pool' ? market.poolId : null,
+        pairDecimals:
+          market?.status === 'pool' ? market.pair.decimals : null,
       }
     },
   })
+
+  const { data: history } = useQuery({
+    queryKey: ['revnetPriceHistory', suckerGroupId],
+    enabled: !!suckerGroupId,
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: async (): Promise<BsRevnetPriceHistory> => {
+      const response = await fetch(
+        `/api/price-history?suckerGroupId=${encodeURIComponent(suckerGroupId!)}`,
+      )
+      if (!response.ok) throw new Error('Price history is unavailable.')
+      return response.json() as Promise<BsRevnetPriceHistory>
+    },
+  })
+
+  const floorHistory = useMemo<PricePoint[]>(() => {
+    const decimals = data?.contexts[0]?.decimals
+    if (
+      decimals === undefined ||
+      !references?.floor ||
+      !history?.moments.length ||
+      !data?.all.length
+    ) {
+      return []
+    }
+
+    const taxSchedule = [...data.all].sort(
+      (a, b) => a.ruleset.start - b.ruleset.start,
+    )
+    return history.moments.flatMap(moment => {
+      const timestamp = Number(moment.timestamp)
+      let tax = taxSchedule[0]?.metadata.cashOutTaxRate ?? 0
+      for (const ruleset of taxSchedule) {
+        if (ruleset.ruleset.start > timestamp) break
+        tax = ruleset.metadata.cashOutTaxRate
+      }
+      try {
+        const value = cashOutPriceFromTotals({
+          balance: BigInt(moment.balance),
+          tokenSupply: BigInt(moment.tokenSupply),
+          cashOutTaxRate: tax,
+          balanceDecimals: decimals,
+        })
+        return value ? [{ timestamp, value }] : []
+      } catch {
+        return []
+      }
+    })
+  }, [data, history?.moments, references?.floor])
+
+  const ammHistory = useMemo<PricePoint[]>(() => {
+    if (
+      !references?.poolId ||
+      references.pairDecimals === null ||
+      !history?.swaps.length
+    ) {
+      return []
+    }
+
+    const poolId = references.poolId.toLowerCase()
+    const pairScale = 10 ** references.pairDecimals
+    return history.swaps.flatMap(swap => {
+      if (
+        swap.chainId !== chainId ||
+        swap.direction === 'mint' ||
+        swap.poolId.toLowerCase() !== poolId
+      ) {
+        return []
+      }
+      try {
+        const terminalAmount =
+          Number(BigInt(swap.terminalTokenAmount)) / pairScale
+        const projectAmount = Number(BigInt(swap.projectTokenAmount)) / 1e18
+        const value = terminalAmount / projectAmount
+        return Number.isFinite(value) && value > 0
+          ? [{ timestamp: Number(swap.timestamp), value }]
+          : []
+      } catch {
+        return []
+      }
+    })
+  }, [chainId, history?.swaps, references?.pairDecimals, references?.poolId])
 
   const stages: ChartStage[] = (data?.all ?? []).map(s => ({
     start: s.ruleset.start,
@@ -254,14 +346,16 @@ export function RevnetPriceCard({
     <div className="card p-5">
       <span className="field-label">Token price over time</span>
       <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-        Issuance history ends at Now. The current cash-out floor and market
-        price are marked at the right edge.
+        Issuance, cash-out, and market history end at Now. Live prices are
+        marked at the right edge; nothing is projected into the future.
       </p>
       <div className="mt-3">
         <PriceChart
           stages={stages}
           symbol={data?.projectSymbol || 'tokens'}
           baseSymbol={baseSymbol}
+          floorHistory={floorHistory}
+          ammHistory={ammHistory}
           floorPrice={
             references?.floor
               ? { value: references.floor, label: 'Cash out price' }

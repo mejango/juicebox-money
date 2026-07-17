@@ -781,27 +781,20 @@ function payoutLimitFor(
     : stage.payoutLimitAmount
 }
 
-/** The tiered-721 hook config shared by both deploy flavors. */
-function build721HookConfig(
-  store: LaunchPlan['store'],
-  projectUri: string,
-  accounting: AccountingConfig,
+/**
+ * Encode already-pinned store items for JB721TiersHook.adjustTiers.
+ *
+ * This is deliberately shared by project launch and the live Shop editor so
+ * stocking an existing collection cannot drift from the tier encoding used
+ * when that collection was deployed.
+ */
+export function build721TierConfigs(
+  items: StoreItem[],
   chainId: JBChainId,
 ) {
-  // Tier pricing: a standard currency, or the custom accounting token
-  // itself (token-keyed id, its own decimals — no feed needed).
-  const pricing =
-    store.currency === 'token' && accounting.custom
-      ? {
-          currency: tokenCurrencyId(accounting.custom.address),
-          decimals: accounting.custom.decimals,
-        }
-      : store.currency === 'usd'
-        ? { currency: BASE_CURRENCY_USD, decimals: 6 }
-        : { currency: BASE_CURRENCY_ETH, decimals: 18 }
   // Tiers must be sorted by category ascending; per-chain supply overrides
   // pick this chain's number (null = unlimited here).
-  const tiers = [...store.items]
+  return [...items]
     .sort((a, b) => a.category - b.category)
     .map(item => {
       const supply =
@@ -831,6 +824,27 @@ function build721HookConfig(
         splits: toJbSplits(item.splits),
       }
     })
+}
+
+/** The tiered-721 hook config shared by both deploy flavors. */
+function build721HookConfig(
+  store: LaunchPlan['store'],
+  projectUri: string,
+  accounting: AccountingConfig,
+  chainId: JBChainId,
+) {
+  // Tier pricing: a standard currency, or the custom accounting token
+  // itself (token-keyed id, its own decimals — no feed needed).
+  const pricing =
+    store.currency === 'token' && accounting.custom
+      ? {
+          currency: tokenCurrencyId(accounting.custom.address),
+          decimals: accounting.custom.decimals,
+        }
+      : store.currency === 'usd'
+        ? { currency: BASE_CURRENCY_USD, decimals: 6 }
+        : { currency: BASE_CURRENCY_ETH, decimals: 18 }
+  const tiers = build721TierConfigs(store.items, chainId)
   return {
     name: store.name,
     symbol: store.symbol,

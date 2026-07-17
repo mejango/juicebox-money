@@ -19,6 +19,7 @@ export function OverviewTab({
   isRevnet,
   authority,
   chains,
+  suckerGroupId,
   etherscanHost,
 }: {
   chainId: JBChainId
@@ -30,6 +31,7 @@ export function OverviewTab({
   authority: string | null
   /** Per-chain deployments: [chainId, projectId]. */
   chains: [number, number][]
+  suckerGroupId: string | null
   etherscanHost?: string
 }) {
   const links = socialLinks.filter(([, href]) => href)
@@ -40,6 +42,7 @@ export function OverviewTab({
           chainId={chainId}
           projectId={projectId}
           chains={chains}
+          suckerGroupId={suckerGroupId}
         />
       ) : null}
       {description.length > 0 || links.length > 0 ? (

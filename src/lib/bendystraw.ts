@@ -365,6 +365,97 @@ export async function getSuckerGroupProjects(
   return data.suckerGroup?.projects.items ?? []
 }
 
+export type BsPriceMoment = {
+  timestamp: number
+  balance: string
+  tokenSupply: string
+}
+
+export type BsSwapEvent = {
+  timestamp: number
+  direction: string
+  terminalTokenAmount: string
+  projectTokenAmount: string
+  poolId: string
+  chainId: number
+}
+
+export type BsRevnetPriceHistory = {
+  moments: BsPriceMoment[]
+  swaps: BsSwapEvent[]
+}
+
+async function getPagedItems<T>(
+  query: string,
+  field: string,
+  variables: Record<string, unknown>,
+): Promise<T[]> {
+  const limit = 1_000
+  const max = 3_000
+  const items: T[] = []
+
+  while (items.length < max) {
+    const data = await bendystraw<
+      Record<string, { items: T[]; totalCount: number }>
+    >(query, { ...variables, limit, offset: items.length }, { revalidate: 30 })
+    const page = data[field]
+    if (!page?.items.length) break
+    items.push(...page.items)
+    if (items.length >= page.totalCount || page.items.length < limit) break
+  }
+
+  return items.slice(0, max)
+}
+
+/**
+ * Real indexed cash-out inputs and AMM swaps for a revnet. Consumers derive
+ * prices using the project's own decimals/rulesets and filter swaps to the
+ * currently resolved pool; no values are projected beyond the last event.
+ */
+export async function getRevnetPriceHistory(
+  suckerGroupId: string,
+): Promise<BsRevnetPriceHistory> {
+  const [moments, swaps] = await Promise.all([
+    getPagedItems<BsPriceMoment>(
+      `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+        suckerGroupMoments(
+          where: { suckerGroupId: $suckerGroupId, version: 6 }
+          orderBy: "timestamp"
+          orderDirection: "asc"
+          limit: $limit
+          offset: $offset
+        ) {
+          items { timestamp balance tokenSupply }
+          totalCount
+        }
+      }`,
+      'suckerGroupMoments',
+      { suckerGroupId },
+    ),
+    getPagedItems<BsSwapEvent>(
+      `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+        swapEvents(
+          where: { suckerGroupId: $suckerGroupId, version: 6 }
+          orderBy: "timestamp"
+          orderDirection: "asc"
+          limit: $limit
+          offset: $offset
+        ) {
+          items {
+            timestamp direction terminalTokenAmount projectTokenAmount
+            poolId chainId
+          }
+          totalCount
+        }
+      }`,
+      'swapEvents',
+      { suckerGroupId },
+    ),
+  ])
+
+  return { moments, swaps }
+}
+
 export type BsPermissionHolder = {
   /** The account that granted the permissions (usually the project owner). */
   account: string
