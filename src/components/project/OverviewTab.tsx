@@ -1,10 +1,82 @@
 import Link from 'next/link'
-import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { ChainIcon } from '@/components/ChainIcon'
 import { RevnetPriceCard } from '@/components/project/RevnetPriceCard'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { truncateAddress } from '@/lib/format'
 import { chainName, toUrn } from '@/lib/urn'
+
+/** The owner/operator address, linked to its own chain's explorer. */
+function AuthorityLink({
+  chainId,
+  address,
+}: {
+  chainId: number
+  address: string
+}) {
+  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  return host ? (
+    <a
+      href={`https://${host}/address/${address}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-ink hover:underline"
+    >
+      {truncateAddress(address)}
+    </a>
+  ) : (
+    <span className="text-ink">{truncateAddress(address)}</span>
+  )
+}
+
+/**
+ * The owner/operator row(s). One row when every chain agrees; a per-chain
+ * breakdown when they differ (a project's owner — or a revnet's operator —
+ * can be set independently on each chain).
+ */
+function AuthorityRows({
+  label,
+  authorities,
+}: {
+  label: string
+  authorities: [number, string | null][]
+  etherscanHost?: string
+}) {
+  const known = authorities.filter(([, a]) => !!a) as [number, string][]
+  if (known.length === 0) return null
+
+  const uniform = known.every(
+    ([, a]) => a.toLowerCase() === known[0][1].toLowerCase(),
+  )
+
+  if (uniform) {
+    return (
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <dt className="text-smoke-700">{label}</dt>
+        <dd>
+          <AuthorityLink chainId={known[0][0]} address={known[0][1]} />
+        </dd>
+      </div>
+    )
+  }
+
+  return (
+    <div className="pt-1">
+      <dt className="text-smoke-700">{label} — differs by chain</dt>
+      <dd className="mt-1 space-y-1">
+        {known.map(([id, a]) => (
+          <div key={id} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-smoke-500">
+              <ChainIcon chainId={id} size={14} />
+              {chainName(id)}
+            </span>
+            <AuthorityLink chainId={id} address={a} />
+          </div>
+        ))}
+      </dd>
+    </div>
+  )
+}
 
 /**
  * Overview tab (website/ parity: About card + Other info panel), leading
@@ -18,6 +90,7 @@ export function OverviewTab({
   socialLinks,
   isRevnet,
   authority,
+  authorities,
   chains,
   suckerGroupId,
   etherscanHost,
@@ -29,6 +102,8 @@ export function OverviewTab({
   isRevnet: boolean
   /** Owner (custom) or operator (revnet) address; null hides the row. */
   authority: string | null
+  /** The authority per chain — [chainId, address|null]. Can differ. */
+  authorities: [number, string | null][]
   /** Per-chain deployments: [chainId, projectId]. */
   chains: [number, number][]
   suckerGroupId: string | null
@@ -100,29 +175,11 @@ export function OverviewTab({
                 </dd>
               </div>
             ))}
-            {authority ? (
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <dt className="text-smoke-700">
-                  {isRevnet ? 'Operator' : 'Owner'}
-                </dt>
-                <dd>
-                  {etherscanHost ? (
-                    <a
-                      href={`https://${etherscanHost}/address/${authority}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-ink hover:underline"
-                    >
-                      {truncateAddress(authority)}
-                    </a>
-                  ) : (
-                    <span className="text-ink">
-                      {truncateAddress(authority)}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            ) : null}
+            <AuthorityRows
+              label={isRevnet ? 'Operator' : 'Owner'}
+              authorities={authorities}
+              etherscanHost={etherscanHost}
+            />
           </dl>
         </div>
       </div>

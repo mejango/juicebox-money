@@ -193,6 +193,22 @@ export default async function ProjectPage({
     chains.length > 0 ? chains : [project]
   ).map(p => [p.chainId, p.projectId])
 
+  // The owner (custom) / operator (revnet) can DIFFER per chain, so resolve
+  // it for every deployment — custom owners come from bendystraw per sibling,
+  // revnet operators from the per-chain permissionHolders query.
+  const siblingList = chains.length > 0 ? chains : [project]
+  const authorities: [number, string | null][] = isRevnet
+    ? await Promise.all(
+        siblingList.map(
+          async p =>
+            [p.chainId, await getRevnetOperator(p.chainId, p.projectId)] as [
+              number,
+              string | null,
+            ],
+        ),
+      )
+    : siblingList.map(p => [p.chainId, p.owner] as [number, string | null])
+
   const stats: [string, string][] = [
     [`${symbol} raised`, formatTokenAmount(project.volume, decimals)],
     [`${symbol} in treasury`, formatTokenAmount(project.balance, decimals)],
@@ -335,6 +351,7 @@ export default async function ProjectPage({
                     socialLinks={socialLinks}
                     isRevnet={isRevnet}
                     authority={authority ?? null}
+                    authorities={authorities}
                     chains={chainPairs}
                     suckerGroupId={project.suckerGroupId}
                     etherscanHost={etherscan}
