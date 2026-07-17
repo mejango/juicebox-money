@@ -3,88 +3,135 @@
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildAutoIssueTx,
+  getAllRulesets,
   getAmountToAutoIssue,
+  getTokenAddress,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import type { Address, PublicClient } from 'viem'
+import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { ChainIcon } from '@/components/ChainIcon'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BsAutoIssuanceEvent } from '@/lib/loans-queries'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { chainName } from '@/lib/urn'
 
-/** A candidate auto-issuance, deduped by (stageId, beneficiary). */
-type Candidate = {
+/** One auto-issuance allocation on a specific chain, deduped by
+ *  (chain, stageId, beneficiary). */
+type Row = {
+  chainId: JBChainId
+  projectId: number
   stageId: string
+  /** 1-based stage number on that chain, or null if the stage is unknown. */
+  stageNumber: number | null
+  /** Unix seconds the stage starts (unlock), or null. */
+  stageStart: number | null
   beneficiary: string
-  /** The stored amount from the indexer, 18-dec fixed point. */
+  /** Stored amount from the indexer, 18-dec fixed point. */
   storedCount: bigint
-  /** Whether the indexer has seen this one already distributed. */
+  /** Whether the indexer has seen this one distributed. */
   everIssued: boolean
 }
 
 /**
- * The Auto Issuance subtab (revnet only, website/ parity): a revnet mints
- * pre-configured token amounts to beneficiaries when a stage starts. Anyone
- * can trigger the mint (REVOwner.autoIssueFor, tx #21) once it's available —
- * this table enumerates the candidates from the indexer and gates each
- * Distribute button on the authoritative on-chain remaining amount.
+ * The Auto Issuance subtab (revnet only, website/ parity: renderAutoIssuance).
+ * A revnet mints preset token amounts to beneficiaries when a stage starts;
+ * anyone can trigger the mint (REVOwner.autoIssueFor). This enumerates every
+ * allocation across ALL chains and stages, matches each to its stage for the
+ * unlock date, and gates each Distribute on the authoritative on-chain
+ * remaining amount.
  */
 export function AutoIssuanceSection({
-  chainId,
-  projectId,
+  chains,
+  tokenSymbol = 'tokens',
 }: {
-  chainId: JBChainId
-  projectId: number
+  /** [chainId, projectId] pairs across the sucker group. */
+  chains: [number, number][]
+  tokenSymbol?: string
 }) {
-  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
+  const primaryClient = usePublicClient({
+    chainId: chains[0]?.[0] as JBChainId,
+  }) as PublicClient | undefined
+
+  // The project's OWN token symbol (the passed prop is bendystraw's ACCOUNTING
+  // symbol, e.g. "ETH" — the amounts are project tokens, e.g. MARKEE). Same
+  // everywhere (omnichain ERC-20), so resolve it once on the primary chain.
+  const { data: resolvedSym } = useQuery({
+    queryKey: ['autoIssueSymbol', chains[0]?.join(':')],
+    enabled: !!primaryClient && chains.length > 0,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async (): Promise<string | null> => {
+      const token = await getTokenAddress(primaryClient!, {
+        chainId: chains[0][0] as JBChainId,
+        projectId: BigInt(chains[0][1]),
+      })
+      if (!token) return null
+      return (await primaryClient!.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'symbol',
+      })) as string
+    },
+  })
+  const sym = resolvedSym || (tokenSymbol !== 'tokens' ? tokenSymbol : '')
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['autoIssuances', chainId, projectId],
+    queryKey: ['autoIssuancesAll', chains.map(c => c.join(':')).join(',')],
     staleTime: 60_000,
     retry: 1,
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/auto-issuances?chainId=${chainId}&projectId=${projectId}`,
+    queryFn: async (): Promise<Row[]> => {
+      const perChain = await Promise.all(
+        chains.map(async ([cid, pid]) => {
+          const res = await fetch(
+            `/api/auto-issuances?chainId=${cid}&projectId=${pid}`,
+          )
+          if (!res.ok) throw new Error('Auto-issuance data unavailable')
+          const json = (await res.json()) as {
+            stored: BsAutoIssuanceEvent[]
+            issued: BsAutoIssuanceEvent[]
+          }
+          return { cid: cid as JBChainId, pid, ...json }
+        }),
       )
-      if (!res.ok) throw new Error('Auto-issuance data unavailable')
-      return (await res.json()) as {
-        stored: BsAutoIssuanceEvent[]
-        issued: BsAutoIssuanceEvent[]
+
+      const rows: Row[] = []
+      for (const { cid, pid, stored, issued } of perChain) {
+        const issuedKeys = new Set(
+          issued.map(e => `${e.stageId}:${e.beneficiary.toLowerCase()}`),
+        )
+        // Newest-first: the first stored row per key carries the latest amount.
+        const seen = new Set<string>()
+        for (const e of stored) {
+          const k = `${e.stageId}:${e.beneficiary.toLowerCase()}`
+          if (seen.has(k)) continue
+          seen.add(k)
+          let storedCount = 0n
+          try {
+            storedCount = BigInt(e.count)
+          } catch {
+            storedCount = 0n
+          }
+          if (storedCount === 0n) continue
+          rows.push({
+            chainId: cid,
+            projectId: pid,
+            stageId: e.stageId,
+            stageNumber: null,
+            stageStart: null,
+            beneficiary: e.beneficiary,
+            storedCount,
+            everIssued: issuedKeys.has(k),
+          })
+        }
       }
+      return rows
     },
   })
 
-  const key = (stageId: string, beneficiary: string) =>
-    `${stageId}:${beneficiary.toLowerCase()}`
-
-  // One candidate per (stage, beneficiary). Events come back newest-first, so
-  // the first stored row for a key carries the latest configured amount.
-  const candidates: Candidate[] = (() => {
-    if (!data) return []
-    const issuedKeys = new Set(
-      data.issued.map(e => key(e.stageId, e.beneficiary)),
-    )
-    const byKey = new Map<string, Candidate>()
-    for (const e of data.stored) {
-      const k = key(e.stageId, e.beneficiary)
-      if (byKey.has(k)) continue
-      let storedCount = 0n
-      try {
-        storedCount = BigInt(e.count)
-      } catch {
-        storedCount = 0n
-      }
-      byKey.set(k, {
-        stageId: e.stageId,
-        beneficiary: e.beneficiary,
-        storedCount,
-        everIssued: issuedKeys.has(k),
-      })
-    }
-    return [...byKey.values()]
-  })()
+  const rows = data ?? []
 
   return (
     <div className="card p-5">
@@ -101,29 +148,30 @@ export function AutoIssuanceSection({
         <p className="mt-3 text-sm text-smoke-700">
           Auto-issuance data is unavailable right now.
         </p>
-      ) : candidates.length === 0 ? (
+      ) : rows.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          This revnet has no auto-issuances on {JB_CHAINS[chainId]?.name ?? 'this chain'}.
+          This revnet has no auto-issuances configured.
         </p>
       ) : (
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="text-left text-xs text-smoke-500">
+                <th className="pb-1.5 font-normal">Chain</th>
                 <th className="pb-1.5 font-normal">Stage</th>
-                <th className="pb-1.5 font-normal">Beneficiary</th>
-                <th className="pb-1.5 text-right font-normal">Amount</th>
-                <th className="pb-1.5 text-right font-normal">Status</th>
+                <th className="pb-1.5 font-normal">Account</th>
+                <th className="pb-1.5 text-right font-normal">
+                  Amount{sym ? ` (${sym})` : ''}
+                </th>
+                <th className="pb-1.5 text-right font-normal">Unlock date</th>
+                <th className="pb-1.5 text-right font-normal">Distribute</th>
               </tr>
             </thead>
             <tbody className="text-ink">
-              {candidates.map(c => (
-                <CandidateRow
-                  key={`${c.stageId}:${c.beneficiary}`}
-                  chainId={chainId}
-                  projectId={projectId}
-                  candidate={c}
-                  etherscanHost={etherscanHost}
+              {rows.map(row => (
+                <AutoIssueRow
+                  key={`${row.chainId}:${row.stageId}:${row.beneficiary}`}
+                  row={row}
                   onDistributed={refetch}
                 />
               ))}
@@ -135,28 +183,47 @@ export function AutoIssuanceSection({
   )
 }
 
-function CandidateRow({
-  chainId,
-  projectId,
-  candidate,
-  etherscanHost,
+function AutoIssueRow({
+  row,
   onDistributed,
 }: {
-  chainId: JBChainId
-  projectId: number
-  candidate: Candidate
-  etherscanHost?: string
+  row: Row
   onDistributed: () => void
 }) {
+  const { chainId, projectId } = row
+  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+
+  // The stage this allocation belongs to (for the stage number + unlock date),
+  // matched by stored stageId against the chain's queued rulesets.
+  const { data: stage } = useQuery({
+    queryKey: ['autoIssueStage', chainId, projectId, row.stageId],
+    enabled: !!publicClient,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const all = await getAllRulesets(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+        size: 50n,
+      })
+      const sorted = [...all].sort((a, b) => a.ruleset.start - b.ruleset.start)
+      const idx = sorted.findIndex(
+        s => String(s.ruleset.id) === String(row.stageId),
+      )
+      return idx >= 0
+        ? { number: idx + 1, start: sorted[idx].ruleset.start }
+        : null
+    },
+  })
 
   const { data: remaining, refetch } = useQuery({
     queryKey: [
       'autoIssueAmount',
       chainId,
       projectId,
-      candidate.stageId,
-      candidate.beneficiary,
+      row.stageId,
+      row.beneficiary,
     ],
     enabled: !!publicClient,
     staleTime: 30_000,
@@ -165,70 +232,72 @@ function CandidateRow({
       getAmountToAutoIssue(publicClient!, {
         chainId,
         revnetId: BigInt(projectId),
-        stageId: BigInt(candidate.stageId),
-        beneficiary: candidate.beneficiary as Address,
+        stageId: BigInt(row.stageId),
+        beneficiary: row.beneficiary as Address,
       }),
   })
 
   const available = (remaining ?? 0n) > 0n
   const status = available
     ? 'Available'
-    : candidate.everIssued
+    : row.everIssued
       ? 'Distributed'
       : 'Not yet available'
 
   return (
-    <>
-      <tr className="border-t border-smoke-100">
-        <td className="py-1.5 pr-3">#{candidate.stageId}</td>
-        <td className="py-1.5 pr-3">
-          {etherscanHost ? (
-            <a
-              href={`https://${etherscanHost}/address/${candidate.beneficiary}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-ink hover:underline"
-            >
-              {truncateAddress(candidate.beneficiary)}
-            </a>
-          ) : (
-            truncateAddress(candidate.beneficiary)
-          )}
-        </td>
-        <td className="py-1.5 text-right">
-          {formatTokenAmount(available ? remaining! : candidate.storedCount)}
-        </td>
-        <td className="py-1.5 text-right">
+    <tr className="border-t border-smoke-100 align-top">
+      <td className="py-2 pr-3">
+        <span className="flex items-center gap-1.5 whitespace-nowrap">
+          <ChainIcon chainId={chainId} size={16} />
+          {chainName(chainId)}
+        </span>
+      </td>
+      <td className="py-2 pr-3 whitespace-nowrap">
+        {stage ? `Stage ${stage.number}` : `#${row.stageId}`}
+      </td>
+      <td className="py-2 pr-3">
+        {etherscanHost ? (
+          <a
+            href={`https://${etherscanHost}/address/${row.beneficiary}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-ink hover:underline"
+          >
+            {truncateAddress(row.beneficiary)}
+          </a>
+        ) : (
+          truncateAddress(row.beneficiary)
+        )}
+      </td>
+      <td className="py-2 text-right tabular-nums">
+        {formatTokenAmount(available ? remaining! : row.storedCount)}
+      </td>
+      <td className="py-2 text-right whitespace-nowrap text-smoke-700">
+        {stage?.start ? formatDate(stage.start) : '—'}
+      </td>
+      <td className="py-2 text-right">
+        {available ? (
+          <DistributeFlow
+            chainId={chainId}
+            projectId={projectId}
+            stageId={row.stageId}
+            beneficiary={row.beneficiary as Address}
+            onDone={() => {
+              refetch()
+              onDistributed()
+            }}
+          />
+        ) : (
           <span
             className={
-              available
-                ? 'text-ink'
-                : status === 'Distributed'
-                  ? 'text-smoke-500'
-                  : 'text-smoke-700'
+              status === 'Distributed' ? 'text-smoke-500' : 'text-smoke-700'
             }
           >
             {status}
           </span>
-        </td>
-      </tr>
-      {available ? (
-        <tr>
-          <td colSpan={4} className="pb-2">
-            <DistributeFlow
-              chainId={chainId}
-              projectId={projectId}
-              stageId={candidate.stageId}
-              beneficiary={candidate.beneficiary as Address}
-              onDone={() => {
-                refetch()
-                onDistributed()
-              }}
-            />
-          </td>
-        </tr>
-      ) : null}
-    </>
+        )}
+      </td>
+    </tr>
   )
 }
 
@@ -309,60 +378,40 @@ function DistributeFlow({
   }
 
   if (tx.phase === 'success') {
-    return (
-      <div className="callout callout-success text-xs">
-        Distributed — the tokens were minted to the beneficiary.
-        {txUrl ? (
-          <>
-            {' '}
-            <a
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-            >
-              View transaction
-            </a>
-          </>
-        ) : null}
-      </div>
-    )
+    return <span className="text-xs text-emerald-600">Distributed</span>
   }
 
   return (
-    <div>
+    <div className="flex flex-col items-end gap-0.5">
       <button
         onClick={handleDistribute}
         disabled={busy}
-        className="btn-secondary min-h-[36px] px-4 text-xs"
+        className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-50"
       >
         {checking
-          ? 'Checking what can be distributed…'
+          ? 'Checking…'
           : tx.phase === 'simulating'
-            ? 'Double-checking the transaction…'
+            ? 'Double-checking…'
             : tx.phase === 'signing'
-              ? 'Confirm in your wallet…'
+              ? 'Confirm in wallet…'
               : tx.phase === 'pending'
                 ? 'Distributing…'
                 : 'Distribute'}
       </button>
       {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
+        <a
+          href={txUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-smoke-500 underline underline-offset-2"
+        >
+          view transaction
+        </a>
       ) : null}
       {flowError || tx.error ? (
-        <p className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
+        <span className="max-w-[180px] text-[11px] leading-tight text-red-600">
           {flowError ?? tx.error}
-        </p>
+        </span>
       ) : null}
     </div>
   )

@@ -65,6 +65,7 @@ export function resolveStages(stages: ChartStage[]): ResolvedStage[] {
 
 /** Issuance rate (tokens per base unit) at time t across the schedule. */
 export function rateAtTime(resolved: ResolvedStage[], t: number): number {
+  if (resolved.length === 0 || t < resolved[0].start) return 0
   let active = resolved[0]
   for (const s of resolved) {
     if (s.start <= t) active = s

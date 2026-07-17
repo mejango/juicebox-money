@@ -150,8 +150,8 @@ export function OwnersTab({
                   label: 'Auto issuance',
                   content: (
                     <AutoIssuanceSection
-                      chainId={chainId}
-                      projectId={projectId}
+                      chains={chains}
+                      tokenSymbol={tokenSymbol}
                     />
                   ),
                 },

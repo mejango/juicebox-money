@@ -7,7 +7,7 @@ import {
   type JBAccountingContext,
   type V6CashOutTxRequest,
 } from '@bananapus/nana-sdk-core/v6'
-import type { Address, PublicClient } from 'viem'
+import { formatUnits, type Address, type PublicClient } from 'viem'
 
 /**
  * Pure cash-out plumbing shared by the TreasuryCard client island and the
@@ -62,6 +62,42 @@ export function getContextCashOutQuote(
     decimals: BigInt(context.decimals),
     currency: BigInt(context.currency),
   })
+}
+
+/**
+ * The current per-token cash-out price from an omnichain revnet's aggregate
+ * surplus and token supply. This is the exact integer form used by the cash
+ * out curve for one 18-decimal project token:
+ *
+ * balance × share × ((1 - tax) + tax × share)
+ *
+ * Keeping the calculation in bigint avoids the zero returned by an onchain
+ * one-token quote when a very small result rounds down inside the store.
+ */
+export function cashOutPriceFromTotals({
+  balance,
+  tokenSupply,
+  cashOutTaxRate,
+  balanceDecimals,
+}: {
+  balance: bigint
+  tokenSupply: bigint
+  /** Basis points, out of 10,000. */
+  cashOutTaxRate: number
+  balanceDecimals: number
+}): number | null {
+  if (balance <= 0n || tokenSupply <= 0n) return null
+
+  const oneToken = 10n ** 18n
+  const tax = BigInt(Math.max(0, Math.min(10_000, cashOutTaxRate)))
+  const factor = (10_000n - tax) * tokenSupply + tax * oneToken
+  const rawPrice =
+    (balance * oneToken * factor) /
+    (tokenSupply * tokenSupply * 10_000n)
+  if (rawPrice <= 0n) return null
+
+  const value = Number(formatUnits(rawPrice, balanceDecimals))
+  return Number.isFinite(value) && value > 0 ? value : null
 }
 
 /** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */

@@ -2,13 +2,11 @@
 
 import { useMemo, useState } from 'react'
 import {
-  CHART_RANGES,
   buildStepPoints,
   chartDateLabel,
   formatPrice,
   rateAtTime,
   resolveStages,
-  timeBounds,
   type ChartStage,
 } from './chartUtils'
 
@@ -17,10 +15,10 @@ import {
  * per token), a rising ladder as the rate cuts. Optional flat reference lines
  * mark the cash-out floor and the AMM price — arbitrage keeps the market
  * between the two ladders. The vertical scale is anchored to the issuance
- * schedule (website/ parity); reference values outside it pin to the chart
- * edge while their exact values stay in the legend. Linear scale — no log
- * toggle, matching website/. Zero-issuance regions (price → ∞) clamp to the
- * top of the finite range.
+ * schedule (website/ parity); live-only reference values are points at Now,
+ * never lines projected into the past or future. Values outside the issuance
+ * scale pin to the chart edge while their exact values stay in the legend.
+ * Linear scale — no log toggle, matching website/.
  */
 
 type ReferenceLine = { value: number; label: string } | null
@@ -28,6 +26,16 @@ type ReferenceLine = { value: number; label: string } | null
 const ISSUANCE_COLOR = '#6EC4C4'
 const CASH_OUT_COLOR = '#C43550'
 const AMM_COLOR = '#B8602E'
+const DAY = 86_400
+
+const PRICE_RANGES = [
+  { label: '1D', seconds: DAY },
+  { label: '7D', seconds: 7 * DAY },
+  { label: '30D', seconds: 30 * DAY },
+  { label: '3M', seconds: 91 * DAY },
+  { label: '1Y', seconds: 365 * DAY },
+  { label: 'All', seconds: 0 },
+] as const
 
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320
@@ -86,12 +94,16 @@ export function PriceChart({
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
 }) {
-  const [years, setYears] = useState(1)
+  const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
   const [hoverT, setHoverT] = useState<number | null>(null)
 
   const now = useMemo(() => Math.floor(Date.now() / 1000), [])
   const resolved = useMemo(() => resolveStages(stages), [stages])
-  const { t0, t1 } = timeBounds(resolved, now, years)
+  const firstStart = Math.min(resolved[0]?.start ?? now, now)
+  const requestedStart =
+    rangeSeconds === 0 ? firstStart : now - rangeSeconds
+  const t0 = Math.min(now - 1, Math.max(firstStart, requestedStart))
+  const t1 = now
   // Price points: invert the rate steps; rate 0 → null (no mint price).
   const points = useMemo(
     () =>
@@ -126,7 +138,7 @@ export function PriceChart({
   const rate = rateAtTime(resolved, t)
   const price = rate > 0 ? 1 / rate : null
   const span = t1 - t0
-  const nowX = X(Math.min(now, t1))
+  const nowX = X(now)
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -162,15 +174,15 @@ export function PriceChart({
       </div>
       <div className="mt-3 flex items-center justify-between gap-2">
         <span className="text-xs text-smoke-500">Price</span>
-        <div className="flex gap-1">
-          {CHART_RANGES.map(r => (
+        <div className="flex flex-wrap justify-end gap-1">
+          {PRICE_RANGES.map(r => (
             <button
               key={r.label}
               type="button"
-              onClick={() => setYears(r.years)}
-              aria-pressed={years === r.years}
+              onClick={() => setRangeSeconds(r.seconds)}
+              aria-pressed={rangeSeconds === r.seconds}
               className={`min-h-[32px] rounded-lg border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none ${
-                years === r.years
+                rangeSeconds === r.seconds
                   ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
                   : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
               }`}
@@ -184,7 +196,7 @@ export function PriceChart({
         viewBox={`0 0 ${VW} ${VH}`}
         className="mt-2 h-auto w-full cursor-crosshair touch-none"
         role="img"
-        aria-label={`${symbol} issuance ceiling, cash-out floor, and AMM price in ${baseSymbol} over time`}
+        aria-label={`${symbol} issuance ceiling history through Now, with the current cash-out floor and AMM price in ${baseSymbol}`}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHoverT(null)}
       >
@@ -210,52 +222,25 @@ export function PriceChart({
             </g>
           ) : null,
         )}
-        {/* Reference lines sit behind the issuance ceiling */}
-        {floor ? (
-          <line
-            x1={PL}
-            y1={Y(floor.value)}
-            x2={VW - PR}
-            y2={Y(floor.value)}
-            stroke={CASH_OUT_COLOR}
-            strokeWidth="1.5"
-            strokeDasharray="5 4"
-          />
-        ) : null}
-        {amm ? (
-          <line
-            x1={PL}
-            y1={Y(amm.value)}
-            x2={VW - PR}
-            y2={Y(amm.value)}
-            stroke={AMM_COLOR}
-            strokeWidth="1.5"
-            strokeDasharray="5 4"
-          />
-        ) : null}
         {/* Now marker */}
-        {now < t1 ? (
-          <>
-            <line
-              x1={nowX}
-              y1={PT}
-              x2={nowX}
-              y2={VH - PB}
-              stroke="#F5A312"
-              strokeWidth="1"
-              strokeDasharray="4 3"
-            />
-            <text
-              x={nowX > VW - PR - 24 ? nowX - 3 : nowX + 3}
-              y={PT - 4}
-              fontSize="7"
-              fill="#575344"
-              textAnchor={nowX > VW - PR - 24 ? 'end' : 'start'}
-            >
-              Now
-            </text>
-          </>
-        ) : null}
+        <line
+          x1={nowX}
+          y1={PT}
+          x2={nowX}
+          y2={VH - PB}
+          stroke={ISSUANCE_COLOR}
+          strokeWidth="1"
+          strokeDasharray="4 3"
+        />
+        <text
+          x={nowX - 3}
+          y={PT - 4}
+          fontSize="7"
+          fill="#575344"
+          textAnchor="end"
+        >
+          Now
+        </text>
         {/* The price ceiling ladder */}
         <polyline
           points={path}
@@ -293,10 +278,31 @@ export function PriceChart({
           cx={X(t)}
           cy={Y(price ?? maxV)}
           r="3.5"
-          fill="#F5A312"
+          fill={ISSUANCE_COLOR}
           stroke="#1A1A1A"
           strokeWidth="1"
         />
+        {/* Floor and AMM are live observations, so they exist only at Now. */}
+        {floor ? (
+          <circle
+            cx={nowX}
+            cy={Y(floor.value)}
+            r="2.5"
+            fill={CASH_OUT_COLOR}
+            stroke="white"
+            strokeWidth="1"
+          />
+        ) : null}
+        {amm ? (
+          <circle
+            cx={nowX}
+            cy={Y(amm.value)}
+            r="2.5"
+            fill={AMM_COLOR}
+            stroke="white"
+            strokeWidth="1"
+          />
+        ) : null}
         {/* Scale + date labels */}
         <text x={PL + 3} y={PT + 7} fontSize="7" fill="#9C9580">
           {formatPrice(maxV)} {baseSymbol}

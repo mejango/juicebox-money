@@ -36,7 +36,11 @@ export function OverviewTab({
   return (
     <div className="space-y-5">
       {isRevnet ? (
-        <RevnetPriceCard chainId={chainId} projectId={projectId} />
+        <RevnetPriceCard
+          chainId={chainId}
+          projectId={projectId}
+          chains={chains}
+        />
       ) : null}
       {description.length > 0 || links.length > 0 ? (
         <section>

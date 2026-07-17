@@ -1423,7 +1423,7 @@ export function CreateForm() {
           </select>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
             {flavor === 'simple'
-              ? 'Launch with flexible defaults, then choose payouts, cash outs, and other lasting preferences in a later ruleset.'
+              ? 'Launch with flexible defaults that you can adjust at any time.'
               : flavor === 'revnet'
                 ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
                 : 'You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything.'}
@@ -2185,36 +2185,37 @@ export function CreateForm() {
             The currency your items are priced in — buyers can still pay
             with anything.
           </p>
-          <div className="mt-2.5 flex flex-wrap gap-2">
+          <div
+            role="radiogroup"
+            aria-label="Pricing currency"
+            className="mt-2.5 grid max-w-lg gap-1 sm:grid-cols-3"
+          >
             {(
               customOn
                 ? ([
-                    ['token', `$${customMeta?.symbol ?? 'TOKEN'}`],
-                    ['eth', 'ETH'],
-                    ['usd', 'USD'],
+                    [
+                      'token',
+                      `$${customMeta?.symbol ?? 'TOKEN'}`,
+                      'Project token',
+                    ],
+                    ['eth', 'ETH', 'Ether'],
+                    ['usd', 'USD', 'US dollars'],
                   ] as const)
                 : ([
-                    ['eth', 'ETH'],
-                    ['usd', 'USD'],
+                    ['eth', 'ETH', 'Ether'],
+                    ['usd', 'USD', 'US dollars'],
                   ] as const)
-            ).map(([value, label]) => {
+            ).map(([value, label, description]) => {
               const active = effectiveStoreCurrency === value
               return (
-                <button
+                <OptionRow
                   key={value}
-                  type="button"
-                  onClick={() => !busy && setStoreCurrency(value)}
+                  checked={active}
+                  onSelect={() => !busy && setStoreCurrency(value)}
                   disabled={busy}
-                  aria-pressed={active}
-                  className={
-                    active
-                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-bluebs-500 bg-bluebs-25 px-4 text-sm font-medium text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
-                      : 'inline-flex min-h-[44px] items-center rounded-lg border border-grey-300 bg-white px-4 text-sm font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
-                  }
-                >
-                  {active ? <CheckIcon className="h-4 w-4" /> : null}
-                  {label}
-                </button>
+                  title={label}
+                  blurb={description}
+                />
               )
             })}
           </div>

@@ -3,40 +3,52 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
+  NATIVE_TOKEN,
   USD_CURRENCY_ID,
   jbContractAddress,
+  jbControllerAbi,
+  jbDirectoryAbi,
+  jbTerminalStoreAbi,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
   getAccountingContexts,
   getAllRulesets,
+  getCurrentRuleset,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, formatUnits, zeroAddress, type PublicClient } from 'viem'
-import { usePublicClient } from 'wagmi'
+import {
+  erc20Abi,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from 'viem'
+import { getPublicClient } from 'wagmi/actions'
+import { useConfig, usePublicClient } from 'wagmi'
 import { PriceChart } from '@/components/project/PriceChart'
 import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
-import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
+import { cashOutPriceFromTotals } from '@/lib/cashOut'
 
 const NATIVE = '0x000000000000000000000000000000000000eeee'
-const ONE_TOKEN = 10n ** 18n
-
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
  * issuance price ceiling over time. Fetches the stages client-side (the
- * Overview is a server component), then reads the live one-token cash-out
- * floor and Uniswap V4 AMM price as reference lines.
+ * Overview is a server component), then reads the live omnichain cash-out
+ * floor and Uniswap V4 AMM price as current reference points.
  */
 export function RevnetPriceCard({
   chainId,
   projectId,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
+  chains: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const config = useConfig()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
 
   const { data } = useQuery({
@@ -86,7 +98,7 @@ export function RevnetPriceCard({
   })
 
   const { data: references } = useQuery({
-    queryKey: ['revnetPriceReferences', chainId, projectId],
+    queryKey: ['revnetPriceReferences', chainId, projectId, chains],
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
@@ -96,22 +108,119 @@ export function RevnetPriceCard({
           () => null,
         ),
         (async () => {
-          const context = await getCashOutContext(publicClient!, {
-            chainId,
-            projectId: BigInt(projectId),
-          })
-          if (!context) return null
-          const quote = await getContextCashOutQuote(publicClient!, {
-            chainId,
-            projectId: BigInt(projectId),
-            cashOutCount: ONE_TOKEN,
-            context,
-          })
-          const value = Number(
-            formatUnits(quote.reclaimAmount, context.decimals),
+          const rows = await Promise.all(
+            chains.map(async ([rawChainId, rawProjectId]) => {
+              const rowChainId = rawChainId as JBChainId
+              const client = getPublicClient(config, {
+                chainId: rowChainId,
+              }) as PublicClient | undefined
+              if (!client) throw new Error(`Unsupported chain ${rawChainId}`)
+
+              const directory = jbContractAddress['6'][
+                JBCoreContracts.JBDirectory
+              ][rowChainId] as Address | undefined
+              const store = jbContractAddress['6'][
+                JBCoreContracts.JBTerminalStore
+              ][rowChainId] as Address | undefined
+              if (!directory || !store) {
+                throw new Error(`V6 contracts unavailable on ${rawChainId}`)
+              }
+
+              const pid = BigInt(rawProjectId)
+              const [contexts, currentRuleset, controller] = await Promise.all([
+                getAccountingContexts(client, {
+                  chainId: rowChainId,
+                  projectId: pid,
+                }),
+                getCurrentRuleset(client, {
+                  chainId: rowChainId,
+                  projectId: pid,
+                }),
+                client.readContract({
+                  address: directory,
+                  abi: jbDirectoryAbi,
+                  functionName: 'controllerOf',
+                  args: [pid],
+                }),
+              ])
+              const context = contexts[0]
+              if (!context) {
+                throw new Error(`No accounting context on ${rawChainId}`)
+              }
+
+              const [supply, balance, contextSymbol] = await Promise.all([
+                client.readContract({
+                  address: controller,
+                  abi: jbControllerAbi,
+                  functionName: 'totalTokenSupplyWithReservedTokensOf',
+                  args: [pid],
+                }),
+                client.readContract({
+                  address: store,
+                  abi: jbTerminalStoreAbi,
+                  functionName: 'currentSurplusOf',
+                  args: [
+                    pid,
+                    [],
+                    [],
+                    BigInt(context.decimals),
+                    BigInt(context.currency),
+                  ],
+                }),
+                context.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+                  ? Promise.resolve(
+                      JB_CHAINS[rowChainId]?.nativeTokenSymbol ?? 'ETH',
+                    )
+                  : client.readContract({
+                      address: context.token,
+                      abi: erc20Abi,
+                      functionName: 'symbol',
+                    }),
+              ])
+
+              return {
+                chainId: rowChainId,
+                supply,
+                balance,
+                decimals: context.decimals,
+                contextSymbol,
+                isNative:
+                  context.token.toLowerCase() ===
+                  NATIVE_TOKEN.toLowerCase(),
+                cashOutTaxRate: currentRuleset.metadata.cashOutTaxRate,
+                scopeLocal:
+                  currentRuleset.metadata.scopeCashOutsToLocalBalances,
+              }
+            }),
           )
-          return Number.isFinite(value) && value > 0 ? value : null
-        })().catch(() => null),
+
+          const current = rows.find(row => row.chainId === chainId) ?? rows[0]
+          if (!current) return null
+          const pricedRows = current.scopeLocal ? [current] : rows
+          const homogeneous = pricedRows.every(
+            row =>
+              row.decimals === current.decimals &&
+              row.contextSymbol === current.contextSymbol &&
+              row.isNative === current.isNative &&
+              row.cashOutTaxRate === current.cashOutTaxRate,
+          )
+          if (!homogeneous) return null
+
+          return cashOutPriceFromTotals({
+            balance: pricedRows.reduce((sum, row) => sum + row.balance, 0n),
+            tokenSupply: pricedRows.reduce(
+              (sum, row) => sum + row.supply,
+              0n,
+            ),
+            cashOutTaxRate: current.cashOutTaxRate,
+            balanceDecimals: current.decimals,
+          })
+        })().catch(error => {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Unable to resolve omnichain cash-out price', error)
+          }
+          return null
+        }),
       ])
 
       return {
@@ -145,8 +254,8 @@ export function RevnetPriceCard({
     <div className="card p-5">
       <span className="field-label">Token price over time</span>
       <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-        Issuance sets the ceiling and cash outs set the floor. The market trades
-        between them as issuance changes over time.
+        Issuance history ends at Now. The current cash-out floor and market
+        price are marked at the right edge.
       </p>
       <div className="mt-3">
         <PriceChart
