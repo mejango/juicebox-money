@@ -274,10 +274,9 @@ export function SettlementSection({
   return (
     <div className="space-y-5" data-flavor={isRevnet ? 'revnet' : 'custom'}>
       <CompositionCard chains={chains} />
-      <BridgesCard chains={chains} />
-      <MoveCard chainId={chainId} projectId={projectId} chains={chains} />
-      <QueuedMovementsCard chainId={chainId} projectId={projectId} />
       <GossipCard chainId={chainId} projectId={projectId} chains={chains} />
+      <BridgesCard chains={chains} />
+      <QueuedMovementsCard chainId={chainId} projectId={projectId} />
     </div>
   )
 }

@@ -690,8 +690,8 @@ function GossipBlock({
           {/* Shared column geometry so every "X knows" block lines up. */}
           <colgroup>
             <col className="w-[150px]" />
-            <col className="w-[120px]" />
-            <col className="w-[104px]" />
+            <col className="w-[110px]" />
+            <col className="w-[84px]" />
             <col />
             <col className="w-[92px]" />
             <col className="w-[92px]" />
@@ -902,7 +902,7 @@ function GossipRow({
             <button
               onClick={sync}
               disabled={busy || pending}
-              className="btn-secondary min-h-[32px] px-3 text-xs"
+              className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-50"
               title={
                 pending
                   ? 'Sync in flight — arrives in a few minutes'
