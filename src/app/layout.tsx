@@ -1,11 +1,9 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
-import Image from 'next/image'
-import Link from 'next/link'
 import '@getpara/react-sdk-lite/styles.css'
 import './globals.css'
-import { SearchBox } from '@/components/SearchBox'
-import { WalletButton } from '@/components/WalletButton'
+import { SiteFooter } from '@/components/SiteFooter'
+import { SiteNavigation } from '@/components/SiteNavigation'
 import { ParaHost, Providers } from '@/providers/Providers'
 
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
@@ -85,62 +83,12 @@ export default function RootLayout({
       <body className="flex min-h-screen flex-col">
         <Providers>
           <header className="sticky top-0 z-40 border-b border-smoke-200 bg-bone/90 backdrop-blur">
-            <nav className="relative mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-              <Link href="/" className="flex shrink-0 items-center">
-                <Image
-                  src="/brand/logo-full.svg"
-                  alt="Juicebox"
-                  width={124}
-                  height={28}
-                  priority
-                  className="h-7 w-auto"
-                />
-              </Link>
-              <SearchBox />
-              {/* Desktop-only nav item; mobile keeps it in the hero. */}
-              <Link
-                href="/create"
-                className="hidden shrink-0 text-sm font-medium text-smoke-700 transition-colors hover:text-ink md:inline"
-              >
-                Start a project
-              </Link>
-              <div className="shrink-0">
-                <WalletButton />
-              </div>
-            </nav>
+            <SiteNavigation />
           </header>
 
           <main className="flex-1">{children}</main>
 
-          <footer className="border-t border-smoke-200">
-            <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-8 text-sm text-smoke-700 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <Image
-                src="/brand/logo-full.svg"
-                alt="Juicebox"
-                width={106}
-                height={24}
-                className="h-6 w-auto"
-              />
-              <div className="flex gap-6">
-                <a
-                  href="https://docs.juicebox.money"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium hover:text-ink"
-                >
-                  Docs
-                </a>
-                <a
-                  href="https://github.com/Bananapus"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium hover:text-ink"
-                >
-                  GitHub
-                </a>
-              </div>
-            </div>
-          </footer>
+          <SiteFooter />
 
           {/* Para's auth modal host — renders no app content (see Providers). */}
           <ParaHost />

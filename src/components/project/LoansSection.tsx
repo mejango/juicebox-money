@@ -444,7 +444,7 @@ function GetLoanCard({
           This revnet doesn’t accept a token to borrow on this chain.
         </p>
       ) : delayActive ? (
-        <p className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <p className="callout callout-warning mt-3 text-xs">
           Loans are locked until this revnet’s cash-out delay passes
           {cashOutDelay ? ` (${formatDate(Number(cashOutDelay))})` : ''}.
         </p>
@@ -547,7 +547,7 @@ function GetLoanCard({
           </label>
 
           {review ? (
-            <div className="rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+            <div className="callout callout-info text-xs">
               <p>
                 Borrowing ~{formatTokenAmount(review.quote, meta.decimals)}{' '}
                 {meta.symbol} against {formatTokenAmount(review.collateral)}{' '}

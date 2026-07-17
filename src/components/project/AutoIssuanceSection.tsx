@@ -310,7 +310,7 @@ function DistributeFlow({
 
   if (tx.phase === 'success') {
     return (
-      <div className="rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+      <div className="callout callout-success text-xs">
         Distributed — the tokens were minted to the beneficiary.
         {txUrl ? (
           <>

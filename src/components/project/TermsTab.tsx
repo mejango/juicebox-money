@@ -266,13 +266,13 @@ export function TermsTab({
                   <tr
                     key={r.id}
                     className={`border-t border-smoke-200 align-top ${
-                      isActive ? 'bg-split-50' : ''
+                      isActive ? 'bg-bluebs-25' : ''
                     }`}
                   >
                     <td className="py-2.5 pl-3 pr-4">
                       <span className="font-medium text-ink">{i + 1}</span>
                       {isActive ? (
-                        <span className="ml-2 rounded-full bg-split-100 px-2 py-0.5 text-[10px] font-medium text-ink">
+                        <span className="ml-2 rounded-full bg-bluebs-100 px-2 py-0.5 text-[10px] font-medium text-bluebs-700">
                           Active
                         </span>
                       ) : null}

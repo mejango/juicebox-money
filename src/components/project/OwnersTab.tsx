@@ -510,7 +510,7 @@ function ClaimFlow({
 
   if (tx.phase === 'success') {
     return (
-      <div className="mt-2 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+      <div className="callout callout-success mt-2 text-xs">
         Claimed — the tokens are in your wallet as ERC-20.
         {txUrl ? (
           <>
@@ -532,7 +532,7 @@ function ClaimFlow({
   return (
     <div className="mt-2">
       {review ? (
-        <div className="rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info text-xs">
           {formatTokenAmount(review.amount)} credits will become ERC-20 tokens
           in your wallet. Nothing else changes — same balance, now movable.
         </div>
@@ -1137,8 +1137,8 @@ function ReservedCard({
         </p>
       ) : (
         <div className="mt-4 overflow-x-auto">
-          <div className="min-w-[720px]">
-            <div className="grid grid-cols-[minmax(220px,1.35fr)_minmax(200px,1fr)_minmax(180px,1fr)] gap-4 border-y border-smoke-200 px-3 py-2 text-xs text-smoke-500">
+          <div className="min-w-[600px]">
+            <div className="grid grid-cols-[minmax(150px,0.75fr)_minmax(190px,1fr)_minmax(180px,0.9fr)] gap-4 border-y border-smoke-200 px-3 py-2 text-xs text-smoke-500">
               <span>Account</span>
               <span>Percentage</span>
               <span>Pending splits</span>
@@ -1258,7 +1258,7 @@ function ChainSplitsBlock({
           return (
             <div
               key={`${split.beneficiary}-${split.projectId}-${index}`}
-              className="grid grid-cols-[minmax(220px,1.35fr)_minmax(200px,1fr)_minmax(180px,1fr)] items-center gap-4 border-b border-smoke-100 px-3 py-3 text-sm last:border-b-0"
+              className="grid grid-cols-[minmax(150px,0.75fr)_minmax(190px,1fr)_minmax(180px,0.9fr)] items-center gap-4 border-b border-smoke-100 px-3 py-3 text-sm last:border-b-0"
             >
               <span>
                 <SplitRecipient split={split} chainId={chainId} />
@@ -1357,7 +1357,7 @@ function DistributeFlow({
 
   if (tx.phase === 'success' && !compact) {
     return (
-      <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+      <div className="callout callout-success mt-3 text-xs">
         Distributed — the reserved tokens went to the recipients.
         {txUrl ? (
           <>

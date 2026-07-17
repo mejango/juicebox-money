@@ -106,7 +106,7 @@ export function IssuanceLadder({
               onClick={() => setYears(r.years)}
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
                 years === r.years
-                  ? 'bg-split-100 text-ink ring-1 ring-ink'
+                  ? 'bg-bluebs-25 text-bluebs-700 ring-1 ring-bluebs-500'
                   : 'text-smoke-500 hover:text-ink'
               }`}
             >

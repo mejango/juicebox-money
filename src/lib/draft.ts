@@ -14,7 +14,7 @@ export const DRAFT_KEY = 'jbm-create-draft'
 
 export type CreateDraft = {
   v: 1
-  flavor: 'project' | 'revnet'
+  flavor: 'simple' | 'project' | 'revnet'
   name: string
   ticker: string
   tagline: string
@@ -262,7 +262,12 @@ export function parseDraft(text: string): CreateDraft {
   stages[0].expanded = true
   return {
     v: 1,
-    flavor: d.flavor === 'revnet' ? 'revnet' : 'project',
+    flavor:
+      d.flavor === 'simple'
+        ? 'simple'
+        : d.flavor === 'revnet'
+          ? 'revnet'
+          : 'project',
     name: str(d.name, 100),
     ticker: str(d.ticker, 11).toUpperCase().replace(/[^A-Z0-9]/g, ''),
     tagline: str(d.tagline, 100),

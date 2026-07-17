@@ -30,6 +30,7 @@ import {
   FOREVER_SECONDS,
   LP_SPLIT_HOOK,
   buildLaunchRequest,
+  createSimpleProjectStage,
   nativeBridgeViable,
   projectIdFromReceipt,
   type ApprovalDeadline,
@@ -60,7 +61,7 @@ import {
   Piped,
   SubSection,
 } from './ui'
-import { chainChipClass } from '@/components/ChainBadge'
+import { MultiChainSelect } from '@/components/ChainSelect'
 import { ChainIcon } from '@/components/ChainIcon'
 import { chainName, toUrn } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -198,7 +199,7 @@ export function CreateForm() {
   )
 
   // --- 0: Flavor ---
-  const [flavor, setFlavor] = useState<'project' | 'revnet'>('project')
+  const [flavor, setFlavor] = useState<CreateDraft['flavor']>('simple')
   /** Project owner (or revnet operator). Empty = the connected wallet. */
   const [owner, setOwner] = useState('')
   const [ticker, setTicker] = useState('')
@@ -430,7 +431,9 @@ export function CreateForm() {
   }, [fees, selected])
 
   const nameOk = name.trim().length > 0
-  const anyCashOuts = stages.some(s => s.cashOuts)
+  const isSimpleProject = flavor === 'simple'
+  const rulesFlavor = flavor === 'revnet' ? 'revnet' : 'project'
+  const anyCashOuts = !isSimpleProject && stages.some(s => s.cashOuts)
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0
@@ -440,16 +443,19 @@ export function CreateForm() {
       v => v.trim() === '' || resolvedAddress(v) !== null,
     )
   const approvalOk =
+    isSimpleProject ||
     approvalDeadline !== 'custom' ||
     (resolvedAddress(approvalCustom) !== null &&
       Object.values(approvalPerChain).every(
         v => v.trim() === '' || resolvedAddress(v) !== null,
       ))
   const tickerOk = flavor !== 'revnet' || /^[A-Z0-9]{1,11}$/.test(ticker.trim())
-  const stagesOk = stages.every((s, i) => stageOk(s, i === 0, flavor, multiToken))
+  const stagesOk =
+    isSimpleProject ||
+    stages.every((s, i) => stageOk(s, i === 0, rulesFlavor, multiToken))
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage =
-    flavor === 'revnet'
+    flavor === 'revnet' || isSimpleProject
       ? -1
       : stages.findIndex(
           (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
@@ -762,6 +768,8 @@ export function CreateForm() {
             if (i > 0) start = revnetStageStart(start, stages[i - 1], stage)
             planStages.push(toRevnetStageRules(stage, i, start, chainId))
           })
+        } else if (isSimpleProject) {
+          planStages = [createSimpleProjectStage()]
         } else {
           planStages = stages.map((stage, i) =>
             toStageRules(stage, i, deployStart, chainId),
@@ -779,7 +787,7 @@ export function CreateForm() {
               ownerPerChain[chainId]?.trim() || owner,
             ),
             approvalCustomAddress:
-              approvalDeadline === 'custom'
+              !isSimpleProject && approvalDeadline === 'custom'
                 ? resolvedAddress(
                     approvalPerChain[chainId]?.trim() || approvalCustom,
                   )
@@ -794,14 +802,14 @@ export function CreateForm() {
                     }
                   : null,
             },
-            flavor,
+            flavor: flavor === 'revnet' ? 'revnet' : 'project',
             operator: resolvedAddress(
               ownerPerChain[chainId]?.trim() || owner,
             ),
             ticker: ticker.trim(),
             stages: planStages,
-            afterMode,
-            approvalDeadline,
+            afterMode: isSimpleProject ? 'wait' : afterMode,
+            approvalDeadline: isSimpleProject ? 'none' : approvalDeadline,
             store,
           },
         ]
@@ -1246,13 +1254,17 @@ export function CreateForm() {
     busy,
   ])
 
-  const wizardSteps = [
-    'Flavor',
-    'Basics',
-    flavor === 'revnet' ? 'Stages' : 'Rules',
-    'Store',
-    'Launch',
-  ]
+  const wizardSteps = isSimpleProject
+    ? ['Flavor', 'Basics', 'Store', 'Launch']
+    : [
+        'Flavor',
+        'Basics',
+        flavor === 'revnet' ? 'Stages' : 'Rules',
+        'Store',
+        'Launch',
+      ]
+  const storeStep = isSimpleProject ? 2 : 3
+  const launchStep = isSimpleProject ? 3 : 4
 
   // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter(v => v.trim()).length
@@ -1334,7 +1346,7 @@ export function CreateForm() {
       </p>
 
       {/* Horizontal stepper */}
-      <nav aria-label="Create steps" className="mt-8 flex items-center gap-1.5">
+      <nav aria-label="Create steps" className="mt-8 flex min-w-0 items-center gap-1.5">
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
@@ -1349,10 +1361,10 @@ export function CreateForm() {
               onClick={() => !busy && goToStep(i)}
               disabled={busy}
               aria-current={step === i ? 'step' : undefined}
-              className="flex shrink-0 items-center gap-2 disabled:opacity-60"
+              className="flex min-w-0 shrink-0 items-center gap-2 disabled:opacity-60"
             >
               <span
-                className={`flex h-8 w-8 items-center justify-center rounded-full font-agrandir text-sm font-medium ${
+                className={`flex h-7 w-7 items-center justify-center rounded-full font-agrandir text-xs font-medium sm:h-8 sm:w-8 sm:text-sm ${
                   step === i
                     ? STEP_TILES[i]
                     : i < step
@@ -1363,8 +1375,8 @@ export function CreateForm() {
                 {i < step ? <CheckIcon className="h-3.5 w-3.5" /> : i + 1}
               </span>
               <span
-                className={`text-sm font-medium ${
-                  step === i ? 'text-ink' : 'hidden text-smoke-500 sm:inline'
+                className={`hidden text-sm font-medium sm:inline ${
+                  step === i ? 'text-ink' : 'text-smoke-500'
                 }`}
               >
                 {label}
@@ -1389,7 +1401,7 @@ export function CreateForm() {
             value={flavor}
             onChange={e => {
               if (busy) return
-              const next = e.target.value as 'project' | 'revnet'
+              const next = e.target.value as CreateDraft['flavor']
               setFlavor(next)
               if (next === 'revnet') {
                 // Revnets default to cash outs on with a 10% tax.
@@ -1405,13 +1417,16 @@ export function CreateForm() {
             disabled={busy}
             className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
           >
+            <option value="simple">Simple project</option>
             <option value="project">Custom project</option>
             <option value="revnet">Revnet</option>
           </select>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            {flavor === 'revnet'
-              ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
-              : 'You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything.'}
+            {flavor === 'simple'
+              ? 'Launch with flexible defaults, then choose payouts, cash outs, and other lasting preferences in a later ruleset.'
+              : flavor === 'revnet'
+                ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
+                : 'You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything.'}
           </p>
         </div>
 
@@ -1421,30 +1436,13 @@ export function CreateForm() {
             Your {flavor === 'revnet' ? 'revnet' : 'project'} lives on every
             chain you pick. You&apos;ll confirm one transaction per chain.
           </p>
-          <div className="mt-2.5 flex items-center gap-2">
-            <span className="text-sm text-smoke-700">On</span>
-            {SUPPORTED_CHAINS.map(chain => {
-              const active = selected.includes(chain.id)
-              return (
-                <button
-                  key={chain.id}
-                  onClick={() => toggleChain(chain.id)}
-                  disabled={busy}
-                  aria-pressed={active}
-                  aria-label={chainName(chain.id)}
-                  title={chainName(chain.id)}
-                  className={
-                    active
-                      ? 'flex h-11 w-11 items-center justify-center rounded-full ring-1 ring-ink transition-all disabled:opacity-60 ' +
-                        chainChipClass(chain.id)
-                      : 'flex h-11 w-11 items-center justify-center rounded-full opacity-35 grayscale transition-all hover:opacity-70 disabled:opacity-30'
-                  }
-                >
-                  <ChainIcon chainId={chain.id} size={26} />
-                </button>
-              )
-            })}
-          </div>
+          <MultiChainSelect
+            options={SUPPORTED_CHAINS.map(chain => chain.id)}
+            values={selected}
+            onToggle={toggleChain}
+            disabled={busy}
+            className="mt-2.5"
+          />
           {selected.length === 0 ? (
             <p className="mt-3 text-sm text-red-600">Pick at least one chain.</p>
           ) : null}
@@ -1513,7 +1511,7 @@ export function CreateForm() {
             payment tokens auto-swap as they&apos;re paid in. Accounting
             tokens cannot be removed later.
           </p>
-          <div className="mt-2.5 flex flex-wrap gap-2">
+          <div className="mt-2.5 grid gap-1 sm:grid-cols-3">
             {(
               [
                 ['eth', 'ETH'],
@@ -1522,9 +1520,10 @@ export function CreateForm() {
             ).map(([value, label]) => {
               const active = !customOn && accepts.includes(value)
               return (
-                <button
+                <CheckRow
                   key={value}
-                  onClick={() => {
+                  checked={active}
+                  onToggle={() => {
                     if (busy) return
                     setCustomOn(false)
                     setAccepts(prev =>
@@ -1536,31 +1535,20 @@ export function CreateForm() {
                     )
                   }}
                   disabled={busy}
-                  aria-pressed={active}
-                  className={
-                    active
-                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                      : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                  title={label}
+                  blurb={
+                    value === 'eth' ? 'Native currency' : 'Stable accounting'
                   }
-                >
-                  {active ? <CheckIcon className="h-4 w-4" /> : null}
-                  {label}
-                </button>
+                />
               )
             })}
-            <button
-              onClick={() => !busy && setCustomOn(on => !on)}
+            <CheckRow
+              checked={customOn}
+              onToggle={() => !busy && setCustomOn(on => !on)}
               disabled={busy}
-              aria-pressed={customOn}
-              className={
-                customOn
-                  ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                  : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
-              }
-            >
-              {customOn ? <CheckIcon className="h-4 w-4" /> : null}
-              Custom token
-            </button>
+              title="Custom token"
+              blurb="Any ERC-20"
+            />
           </div>
           {customOn ? (
             <div className="mt-3">
@@ -1891,8 +1879,8 @@ export function CreateForm() {
                     aria-pressed={active}
                     className={
                       active
-                        ? 'inline-flex min-h-[32px] items-center rounded-full bg-split-100 px-3 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-                        : 'inline-flex min-h-[32px] items-center rounded-full border border-smoke-300 bg-white px-3 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-40'
+                        ? 'inline-flex min-h-[32px] items-center rounded-full border border-bluebs-500 bg-bluebs-25 px-3 text-xs font-medium text-bluebs-600 disabled:opacity-60'
+                        : 'inline-flex min-h-[32px] items-center rounded-full border border-grey-300 bg-white px-3 text-xs font-medium text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-40'
                     }
                   >
                     {tag}
@@ -1925,7 +1913,13 @@ export function CreateForm() {
       </section>
 
       {/* 2 — Rules: one card per queued ruleset (stage) */}
-      <section className={step === 2 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section
+        className={
+          !isSimpleProject && step === 2
+            ? 'card mt-6 p-6 sm:p-7'
+            : 'hidden'
+        }
+      >
         <div className="flex items-center gap-3">
           <StepBadge n={3} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -1963,7 +1957,9 @@ export function CreateForm() {
                     {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
                   </span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                    <Piped text={stageSummary(stage, i, unitLabel, flavor)} />
+                    <Piped
+                      text={stageSummary(stage, i, unitLabel, rulesFlavor)}
+                    />
                   </span>
                 </button>
                 {i > 0 ? (
@@ -2007,7 +2003,7 @@ export function CreateForm() {
                     }
                     disabled={busy}
                     chainIds={selected}
-                    flavor={flavor}
+                    flavor={rulesFlavor}
                     tokenLabel={tokenLabel}
                     multiToken={multiToken}
                   />
@@ -2170,9 +2166,11 @@ export function CreateForm() {
       </section>
 
       {/* 3 — Store */}
-      <section className={step === 3 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section
+        className={step === storeStep ? 'card mt-6 p-6 sm:p-7' : 'hidden'}
+      >
         <div className="flex items-center gap-3">
-          <StepBadge n={4} />
+          <StepBadge n={storeStep + 1} />
           <h2 className="font-agrandir text-xl font-medium">Stock your store</h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
@@ -2208,8 +2206,8 @@ export function CreateForm() {
                   aria-pressed={active}
                   className={
                     active
-                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full bg-split-100 px-5 text-sm font-medium text-ink ring-1 ring-ink transition-colors disabled:opacity-60'
-                      : 'inline-flex min-h-[44px] items-center rounded-full border border-smoke-300 bg-white px-5 text-sm font-medium text-smoke-700 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-bluebs-500 bg-bluebs-25 px-5 text-sm font-medium text-bluebs-600 transition-colors disabled:opacity-60'
+                      : 'inline-flex min-h-[44px] items-center rounded-full border border-grey-300 bg-white px-5 text-sm font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-60'
                   }
                 >
                   {active ? <CheckIcon className="h-4 w-4" /> : null}
@@ -2390,9 +2388,11 @@ export function CreateForm() {
       </section>
 
       {/* 4 — Review & launch */}
-      <section className={step === 4 ? 'card mt-6 p-6 sm:p-7' : 'hidden'}>
+      <section
+        className={step === launchStep ? 'card mt-6 p-6 sm:p-7' : 'hidden'}
+      >
         <div className="flex items-center gap-3">
-          <StepBadge n={5} />
+          <StepBadge n={launchStep + 1} />
           <h2 className="font-agrandir text-xl font-medium">
             Review &amp; launch
           </h2>
@@ -2412,9 +2412,11 @@ export function CreateForm() {
           <div className="flex items-center justify-between gap-3">
             <dt className="text-smoke-700">Launching</dt>
             <dd className="font-medium text-ink">
-              {flavor === 'revnet'
-                ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ''}`
-                : 'Project'}
+              {flavor === 'simple'
+                ? 'Simple project'
+                : flavor === 'revnet'
+                  ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ''}`
+                  : 'Project'}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -2428,21 +2430,38 @@ export function CreateForm() {
               on {selected.map(id => chainName(id)).join(', ') || '—'}
             </dd>
           </div>
-          {stages.map((stage, i) => (
-            <div key={stage.id}>
-              <dt className="text-smoke-700">
-                {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
-              </dt>
+          {isSimpleProject ? (
+            <div>
+              <dt className="text-smoke-700">Rules</dt>
               <dd className="mt-1">
                 <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
-                  {stageSummaryParts(stage, i, unitLabel, flavor).map(part => (
-                    <li key={part}>{part}</li>
-                  ))}
+                  <li>Starts at launch and lasts until changed</li>
+                  <li>Issues 10,000 tokens per {unitLabel} paid</li>
+                  <li>Unlimited owner withdrawals; cash outs off</li>
+                  <li>All owner controls stay editable</li>
+                  <li>Later rule changes can take effect immediately</li>
                 </ul>
               </dd>
             </div>
-          ))}
-          {flavor !== 'revnet' && afterApplies ? (
+          ) : (
+            stages.map((stage, i) => (
+              <div key={stage.id}>
+                <dt className="text-smoke-700">
+                  {flavor === 'revnet' ? 'Stage' : 'Ruleset'} #{i + 1}
+                </dt>
+                <dd className="mt-1">
+                  <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
+                    {stageSummaryParts(stage, i, unitLabel, rulesFlavor).map(
+                      part => (
+                        <li key={part}>{part}</li>
+                      ),
+                    )}
+                  </ul>
+                </dd>
+              </div>
+            ))
+          )}
+          {!isSimpleProject && flavor !== 'revnet' && afterApplies ? (
             <div className="flex items-center justify-between gap-3">
               <dt className="text-smoke-700">Afterwards</dt>
               <dd className="font-medium text-ink">
@@ -2454,7 +2473,7 @@ export function CreateForm() {
               </dd>
             </div>
           ) : null}
-          {flavor !== 'revnet' && deadlineApplies ? (
+          {!isSimpleProject && flavor !== 'revnet' && deadlineApplies ? (
             <div className="flex items-center justify-between gap-3">
               <dt className="text-smoke-700">Rule changes</dt>
               <dd className="font-medium text-ink">
@@ -2573,7 +2592,7 @@ export function CreateForm() {
                   ) : s.phase === 'pending' ? (
                     <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
                   ) : (
-                    <span className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-smoke-200 border-t-split-500" />
+                    <span className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-smoke-200 border-t-bluebs-500" />
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-ink">

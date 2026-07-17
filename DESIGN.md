@@ -46,34 +46,63 @@ continues it faithfully. It replaces all prior experimental themes.
 - **Ink** (text): Grey-900/950 family on Bone; secondary text Smoke-700 or
   Grey-600.
 
-## Components (the guideline language)
-1. **Pill buttons & labels** — the brand's signature: rounded-lg/xl bone or
-   white fill, thin (1.5px) near-black border, SMALL black offset shadow
-   (~2px 2px 0, no blur), Agrandir label. Primary action variant: Split-400
-   fill, black text, same border+shadow. Keep the shadow SMALL and precise —
-   refined stationery, not stickers. Hover: fill shifts one scale stop;
-   active: shadow collapses 1px.
+## Product UI components
+
+The brand palette and the product-control palette have different jobs. Bone
+stays the page canvas; fruit colors keep the broader site expressive. Inside
+interactive components, **Bluebs is the consistent action, focus, and selected
+state**. Split is reserved for brand punctuation, illustrations, and warning
+surfaces—not the default submit-button color.
+
+1. **Buttons**: rounded-lg, Beatrice Medium, and at least 44px high for primary
+   touch actions. Primary uses Bluebs-500 with white text; hover is Bluebs-600.
+   Secondary uses white, a Grey-300 border, and Ink text. Tertiary uses a pale
+   Bluebs surface and Bluebs text; ghost/link buttons remove the frame. Shadows
+   are soft and restrained. Disabled states lower contrast without relying on
+   opacity alone.
 2. **Cards/panels**: white or Bone surface, 1px Smoke-200/300 border,
    rounded-xl, generous padding. No heavy frames.
-3. **Chips/badges**: soft tints of the fruit scales (e.g. Melon-100 bg with
+3. **Inputs and textareas**: sentence-case labels, white wells, 1px Grey-300
+   border, and a Bluebs focus border with a soft Bluebs-50 halo. Hint text uses
+   Grey-500. Errors pair Error-500 borders with Error-600 copy and an
+   Error-100 focus halo. Disabled fields use a quiet Grey surface.
+4. **Choice controls**: checkboxes, radios, toggles, segmented controls, and
+   selected menu rows use Bluebs. Keep the selected state visible through both
+   color and a mark (check, dot, or switch position). Chain selectors use a
+   compact icon/name/caret trigger; their list rows show the chain icon and a
+   Bluebs check/surface when selected.
+5. **Chips/badges**: soft tints of the fruit scales (e.g. Melon-100 bg with
    Melon-700 text; chain badges use per-chain tints) with rounded-full shape,
-   Beatrice 12-14px. Version chips: Smoke-100 bg / Smoke-700 text.
-4. **Icons**: fun, playful & modern line icons in colored circular tiles
-   (Split/Crush/Grape/Bluebs/Peel/Melon 400s) — inline SVG, 1.5px strokes.
-5. **Amount coloring**: data stays legible on light — ETH amounts Ink bold,
-   positive/receive values Melon-700, project-token amounts Bluebs-600.
-6. **Logo**: /public/brand/logo-full.svg (main) in the nav; logo-icon.svg
-   (bolt carton) for favicon/compact contexts.
-7. **Activity rail**: stays a signature element — white panel, Beatrice rows,
-   Bluebs links, relative times in Smoke-500; calm on light.
-8. **Inputs**: white wells, 1.5px Smoke-300 border, focus border Bluebs-500;
-   Beatrice.
+   Beatrice 12-14px. Bluebs marks interactive/selected chips. Version chips use
+   Smoke-100 bg / Smoke-700 text.
+6. **Callouts**: neutral, info, warning, error, and success bars use Grey,
+   Bluebs, Split, Error, and Melon respectively. Pair the tint with an icon and
+   accessible text; color alone never carries the meaning.
+7. **Navigation**: the full logo, Explore, Resources, and Create a project are
+   visible on desktop. Search is an icon-triggered field and the account action
+   is last. Mobile collapses to a 44px hamburger and a full-width menu rather
+   than squeezing desktop links.
+8. **Footer**: Slate-900 is allowed as a contained component on the otherwise
+   light site. It includes the inverted logo, resource columns, copyright, and
+   social links; columns stack on mobile.
+9. **Icons**: playful modern line icons, usually 1.5–1.8px strokes. Icon-only
+   actions have accessible names and 44px targets.
+10. **Amount coloring**: data stays legible on light—ETH amounts Ink bold,
+    positive/receive values Melon-700, project-token amounts Bluebs-600.
+11. **Logo**: `/public/brand/logo-full.svg` (main) in navigation/footer;
+    `logo-icon.svg` (bolt carton) for favicon/compact contexts.
+12. **Activity rail**: white panel, Beatrice rows, Bluebs links, relative times
+    in Smoke-500; calm on light.
+
+The guide contains dark-theme component examples, but this site intentionally
+ships the existing Bone light theme only. Do not add a theme toggle until a
+complete dark token and QA pass exists.
 
 ## Rules
 - Responsive mobile/tablet/desktop; touch targets ≥44px.
 - Contrast ≥4.5:1 for text (fruit tints as backgrounds only with their 700+
-  text stops; Split-400 with black text passes).
+  text stops).
 - Lean: self-hosted brand fonts + logo SVGs are the only assets; no icon
   libraries; CSS-only effects; reduced-motion respected.
-- The playfulness budget: color tiles, chips, pill shadows, friendly copy.
+- The playfulness budget: color tiles, chips, friendly copy, and fruit accents.
   Never: skewed marks, confetti, pixel fonts, chunky sticker shadows.

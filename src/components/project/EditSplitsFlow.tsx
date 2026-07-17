@@ -448,7 +448,7 @@ function EditSplitsModal({
       ) : (
         <div className="mt-3">
           {lockedRows.length > 0 ? (
-            <div className="mb-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+            <div className="callout callout-warning mb-3 text-xs">
               <p className="font-medium">
                 Locked recipients (kept as-is until their lock passes):
               </p>

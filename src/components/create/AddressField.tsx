@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { isAddress } from 'viem'
 import { looksLikeEns, lookupEnsAddress, lookupEnsName } from '@/lib/ens'
 
 type Note = { kind: 'ok' | 'bad'; text: string; copy?: string }
 
-function ResolutionNote({ note }: { note: Note }) {
+function ResolutionNote({ note, id }: { note: Note; id: string }) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
@@ -16,20 +16,21 @@ function ResolutionNote({ note }: { note: Note }) {
 
   if (note.kind === 'bad') {
     return (
-      <p className="mt-0.5 truncate pl-1 text-[11px] text-red-600">
+      <p id={id} className="field-error mt-0.5 truncate pl-1 text-[11px]">
         {note.text}
       </p>
     )
   }
   if (!note.copy) {
     return (
-      <p className="mt-0.5 truncate pl-1 text-[11px] text-smoke-500">
+      <p id={id} className="field-hint mt-0.5 truncate pl-1 text-[11px]">
         {note.text}
       </p>
     )
   }
   return (
     <button
+      id={id}
       onClick={() => {
         void navigator.clipboard.writeText(note.copy!)
         setCopied(true)
@@ -66,6 +67,7 @@ export function AddressField({
   compact?: boolean
 }) {
   const [note, setNote] = useState<Note | null>(null)
+  const noteId = useId()
 
   useEffect(() => {
     const v = value.trim()
@@ -103,11 +105,13 @@ export function AddressField({
         disabled={disabled}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        aria-invalid={note?.kind === 'bad'}
+        aria-describedby={note ? noteId : undefined}
         className={`input-well w-full font-mono text-xs disabled:opacity-60 ${
           compact ? 'min-h-[40px] px-3' : 'min-h-[44px] px-3'
         } ${note?.kind === 'bad' ? '!border-red-400' : ''}`}
       />
-      {note ? <ResolutionNote note={note} /> : null}
+      {note ? <ResolutionNote note={note} id={noteId} /> : null}
     </div>
   )
 }
@@ -130,6 +134,7 @@ export function ProjectIdField({
   className?: string
 }) {
   const [note, setNote] = useState<Note | null>(null)
+  const noteId = useId()
 
   useEffect(() => {
     const id = Number(value.trim().replace('#', ''))
@@ -178,11 +183,13 @@ export function ProjectIdField({
         disabled={disabled}
         placeholder="#12"
         aria-label="Project id"
+        aria-invalid={note?.kind === 'bad'}
+        aria-describedby={note ? noteId : undefined}
         className={`input-well min-h-[44px] w-full px-3 text-sm tabular-nums disabled:opacity-60 ${
           note?.kind === 'bad' ? '!border-red-400' : ''
         }`}
       />
-      {note ? <ResolutionNote note={note} /> : null}
+      {note ? <ResolutionNote note={note} id={noteId} /> : null}
     </div>
   )
 }

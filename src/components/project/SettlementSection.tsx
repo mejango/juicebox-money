@@ -35,7 +35,9 @@ import {
 } from 'viem'
 import { getPublicClient } from 'wagmi/actions'
 import { useConfig } from 'wagmi'
+import { ChainSelect } from '@/components/ChainSelect'
 import { ChainIcon } from '@/components/ChainIcon'
+import { GossipCard } from '@/components/project/GossipCard'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BridgeMovement } from '@/lib/suckers-queries'
@@ -275,7 +277,7 @@ export function SettlementSection({
       <BridgesCard chains={chains} />
       <MoveCard chainId={chainId} projectId={projectId} chains={chains} />
       <QueuedMovementsCard chainId={chainId} projectId={projectId} />
-      <SyncCard chainId={chainId} projectId={projectId} />
+      <GossipCard chainId={chainId} projectId={projectId} chains={chains} />
     </div>
   )
 }
@@ -696,44 +698,36 @@ function MoveCard({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-smoke-700">
-            <span>From</span>
-            <select
-              value={from}
-              onChange={e => {
-                setFrom(Number(e.target.value))
-                setTo(null)
-                setAmount('')
-              }}
-              className="input-well min-h-[40px] px-3 text-sm"
-            >
-              {chains.map(([cid]) => (
-                <option key={cid} value={cid}>
-                  {chainName(cid)}
-                </option>
-              ))}
-            </select>
-            <span>to</span>
-            <select
-              value={to ?? ''}
-              onChange={e => setTo(Number(e.target.value))}
-              disabled={dests.length === 0}
-              className="input-well min-h-[40px] px-3 text-sm"
-            >
-              {dests.length === 0 ? (
-                <option value="">No linked chains</option>
-              ) : (
-                dests.map(d => (
-                  <option key={d.chainId} value={d.chainId}>
-                    {chainName(d.chainId)}
-                  </option>
-                ))
-              )}
-            </select>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
+            <label className="block min-w-0">
+              <span className="field-label">From</span>
+              <ChainSelect
+                options={chains.map(([cid]) => cid)}
+                value={from}
+                onChange={chainId => {
+                  setFrom(chainId)
+                  setTo(null)
+                  setAmount('')
+                }}
+                className="mt-1.5"
+              />
+            </label>
+            <span className="hidden pb-4 text-sm text-grey-500 sm:inline">to</span>
+            <label className="block min-w-0">
+              <span className="field-label">To</span>
+              <ChainSelect
+                options={dests.map(d => d.chainId)}
+                value={to}
+                onChange={setTo}
+                disabled={dests.length === 0}
+                placeholder="No linked chains"
+                className="mt-1.5"
+              />
+            </label>
           </div>
 
           {src && !src.token ? (
-            <p className="rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+            <p className="callout callout-warning text-xs">
               You don&apos;t have any ERC-20 {' '}
               tokens on {chainName(from)}. If you hold credits, claim them as
               ERC-20 in the Accounts tab first — credits can&apos;t bridge.
@@ -1084,7 +1078,7 @@ function MoveFlow({
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
       {review ? (
-        <div className="mb-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info mb-3 text-xs">
           <p>
             Moving {formatTokenAmount(review.amount)} tokens to {chainName(to)}.
           </p>
@@ -1154,7 +1148,7 @@ function MoveFlow({
       ) : null}
 
       {step === 4 ? (
-        <div className="rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info text-xs">
           Bridging to {chainName(to)}. Once it lands, claim it from Queued
           movements below.
           {txUrl ? (
@@ -1515,167 +1509,3 @@ function ClaimButton({ destChainId }: { destChainId: number }) {
 }
 
 // ------------------------------------------------------------------- sync --
-
-function SyncCard({
-  chainId,
-  projectId,
-}: {
-  chainId: JBChainId
-  projectId: number
-}) {
-  const config = useConfig()
-
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['settlement-sync-peers', chainId, projectId],
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const client = getPublicClient(config, { chainId }) as
-        | PublicClient
-        | undefined
-      if (!client) throw new Error(`Unsupported chain ${chainId}`)
-      const pairs = await getV6SuckerPairs(client, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      // "Sync from [peer]" pushes the PEER's accounting snapshot to us, so it
-      // runs syncAccountingData on the PEER's sucker, on the peer's chain.
-      return pairs.map(p => ({
-        peerChainId: Number(p.remoteChainId),
-        peerSucker: p.remote,
-      }))
-    },
-  })
-
-  return (
-    <div className="card p-5">
-      <span className="field-label">Sync accounting</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Pull another chain&apos;s latest supply and balance snapshot over the
-        bridge. Anyone can trigger a sync.
-      </p>
-      {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
-      ) : isError ? (
-        <p className="mt-3 text-sm text-smoke-700">
-          Couldn&apos;t read the linked chains right now.
-        </p>
-      ) : !data || data.length === 0 ? (
-        <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          No linked chains to sync from.
-        </p>
-      ) : (
-        <div className="mt-3 space-y-3">
-          {data.map(peer => (
-            <SyncRow
-              key={peer.peerChainId}
-              peerChainId={peer.peerChainId}
-              peerSucker={peer.peerSucker}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SyncRow({
-  peerChainId,
-  peerSucker,
-}: {
-  peerChainId: number
-  peerSucker: Address
-}) {
-  const config = useConfig()
-  const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(peerChainId)
-  const [checking, setChecking] = useState(false)
-  const [flowError, setFlowError] = useState<string | null>(null)
-
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
-
-  const chainMeta = JB_CHAINS[peerChainId as JBChainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
-
-  const sync = async () => {
-    if (busy) return
-    if (!isConnected || !address) {
-      openSignIn()
-      return
-    }
-    setFlowError(null)
-    setChecking(true)
-    try {
-      const client = getPublicClient(config, {
-        chainId: peerChainId as JBChainId,
-      }) as PublicClient | undefined
-      if (!client) throw new Error(`Unsupported chain ${peerChainId}.`)
-      const infra = await classifyInfra(client, peerSucker)
-      const value = await findSyncValue(client, peerSucker, infra, address)
-      if (value === null) {
-        throw new Error('The bridge fee could not be determined yet — try again shortly.')
-      }
-      await tx.send({
-        chainId: peerChainId,
-        address: peerSucker,
-        abi: SUCKER_EXTRA_ABI as unknown as Abi,
-        functionName: 'syncAccountingData',
-        args: [],
-        value,
-      })
-    } catch (e) {
-      setFlowError(e instanceof Error ? e.message : 'Could not sync.')
-    } finally {
-      setChecking(false)
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-smoke-100 pt-3 first:border-0 first:pt-0">
-      <span className="flex items-center gap-2 text-sm text-smoke-700">
-        <ChainIcon chainId={peerChainId} size={16} />
-        {chainName(peerChainId)}
-      </span>
-      <div className="text-right">
-        <button
-          onClick={sync}
-          disabled={busy}
-          className="btn-secondary min-h-[36px] px-4 text-xs"
-        >
-          {checking
-            ? 'Reading bridge fee…'
-            : tx.phase === 'simulating'
-              ? 'Double-checking…'
-              : tx.phase === 'signing'
-                ? 'Confirm in your wallet…'
-                : tx.phase === 'pending'
-                  ? 'Syncing…'
-                  : tx.phase === 'success'
-                    ? 'Synced'
-                    : `Sync from ${chainName(peerChainId)}`}
-        </button>
-        {tx.phase === 'pending' && txUrl ? (
-          <p className="mt-1 text-xs text-smoke-700">
-            <a
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline underline-offset-2"
-            >
-              view transaction
-            </a>
-          </p>
-        ) : null}
-        {flowError || tx.error ? (
-          <p className="mt-1 text-xs text-red-700">{flowError ?? tx.error}</p>
-        ) : null}
-      </div>
-    </div>
-  )
-}

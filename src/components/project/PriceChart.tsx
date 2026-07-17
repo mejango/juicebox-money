@@ -25,6 +25,10 @@ import {
 
 type ReferenceLine = { value: number; label: string } | null
 
+const ISSUANCE_COLOR = '#6EC4C4'
+const CASH_OUT_COLOR = '#C43550'
+const AMM_COLOR = '#B8602E'
+
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320
 const VH = 180
@@ -32,6 +36,42 @@ const PL = 12
 const PR = 12
 const PT = 16
 const PB = 22
+
+function PriceSummary({
+  label,
+  color,
+  value,
+  baseSymbol,
+  symbol,
+}: {
+  label: string
+  color: string
+  value: number | null
+  baseSymbol: string
+  symbol: string
+}) {
+  return (
+    <div className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2">
+      <div className="flex items-center gap-2 text-[11px] font-medium text-ink">
+        <span
+          aria-hidden="true"
+          className="h-2 w-2 shrink-0 rounded-full"
+          style={{ backgroundColor: color }}
+        />
+        <span>{label}</span>
+      </div>
+      <p className="mt-0.5 truncate text-[11px] text-smoke-700">
+        {value && value > 0 ? (
+          <>
+            {formatPrice(value)} {baseSymbol}/{symbol}
+          </>
+        ) : (
+          '—'
+        )}
+      </p>
+    </div>
+  )
+}
 
 export function PriceChart({
   stages,
@@ -61,6 +101,10 @@ export function PriceChart({
     [resolved, t0, t1],
   )
   const maxV = points.reduce((m, [, v]) => (v !== null && v > m ? v : m), 0)
+  const issuanceNowRate = rateAtTime(resolved, now)
+  const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
+  const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
+  const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
 
   if (resolved.length === 0 || maxV <= 0) {
     return (
@@ -84,9 +128,6 @@ export function PriceChart({
   const span = t1 - t0
   const nowX = X(Math.min(now, t1))
 
-  const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
-  const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
-
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const viewX = ((e.clientX - rect.left) / rect.width) * VW
@@ -96,7 +137,30 @@ export function PriceChart({
 
   return (
     <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <PriceSummary
+          label="Issuance price"
+          color={ISSUANCE_COLOR}
+          value={issuanceNow}
+          baseSymbol={baseSymbol}
+          symbol={symbol}
+        />
+        <PriceSummary
+          label="Cash out price"
+          color={CASH_OUT_COLOR}
+          value={floor?.value ?? null}
+          baseSymbol={baseSymbol}
+          symbol={symbol}
+        />
+        <PriceSummary
+          label="AMM price"
+          color={AMM_COLOR}
+          value={amm?.value ?? null}
+          baseSymbol={baseSymbol}
+          symbol={symbol}
+        />
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
         <span className="text-xs text-smoke-500">Price</span>
         <div className="flex gap-1">
           {CHART_RANGES.map(r => (
@@ -106,7 +170,7 @@ export function PriceChart({
               onClick={() => setYears(r.years)}
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
                 years === r.years
-                  ? 'bg-split-100 text-ink ring-1 ring-ink'
+                  ? 'bg-bluebs-25 text-bluebs-700 ring-1 ring-bluebs-500'
                   : 'text-smoke-500 hover:text-ink'
               }`}
             >
@@ -119,7 +183,7 @@ export function PriceChart({
         viewBox={`0 0 ${VW} ${VH}`}
         className="mt-2 h-auto w-full cursor-crosshair touch-none"
         role="img"
-        aria-label={`${symbol} issuance price ceiling in ${baseSymbol} over time`}
+        aria-label={`${symbol} issuance ceiling, cash-out floor, and AMM price in ${baseSymbol} over time`}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHoverT(null)}
       >
@@ -152,7 +216,7 @@ export function PriceChart({
             y1={Y(floor.value)}
             x2={VW - PR}
             y2={Y(floor.value)}
-            stroke="#E0561B"
+            stroke={CASH_OUT_COLOR}
             strokeWidth="1.5"
             strokeDasharray="5 4"
           />
@@ -163,7 +227,7 @@ export function PriceChart({
             y1={Y(amm.value)}
             x2={VW - PR}
             y2={Y(amm.value)}
-            stroke="#4FA270"
+            stroke={AMM_COLOR}
             strokeWidth="1.5"
             strokeDasharray="5 4"
           />
@@ -195,7 +259,7 @@ export function PriceChart({
         <polyline
           points={path}
           fill="none"
-          stroke="#5777EB"
+          stroke={ISSUANCE_COLOR}
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -243,37 +307,6 @@ export function PriceChart({
           {chartDateLabel(t1, span)}
         </text>
       </svg>
-      {/* Legend */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-smoke-700">
-        <span className="flex items-center gap-1.5">
-          <svg width="14" height="6" aria-hidden="true">
-            <line x1="0" y1="3" x2="14" y2="3" stroke="#5777EB" strokeWidth="2" />
-          </svg>
-          Issuance price
-        </span>
-        {floor ? (
-          <span className="flex items-center gap-1.5">
-            <svg width="14" height="6" aria-hidden="true">
-              <line x1="0" y1="3" x2="14" y2="3" stroke="#E0561B" strokeWidth="2" strokeDasharray="3 2" />
-            </svg>
-            {floor.label}
-            <span className="font-medium text-ink">
-              {formatPrice(floor.value)} {baseSymbol}
-            </span>
-          </span>
-        ) : null}
-        {amm ? (
-          <span className="flex items-center gap-1.5">
-            <svg width="14" height="6" aria-hidden="true">
-              <line x1="0" y1="3" x2="14" y2="3" stroke="#4FA270" strokeWidth="2" strokeDasharray="3 2" />
-            </svg>
-            {amm.label}
-            <span className="font-medium text-ink">
-              {formatPrice(amm.value)} {baseSymbol}
-            </span>
-          </span>
-        ) : null}
-      </div>
       <p className="mt-2 text-xs leading-relaxed text-smoke-700" aria-live="polite">
         <span className="font-medium text-ink">{chartDateLabel(t, span)}</span>
         {' — '}

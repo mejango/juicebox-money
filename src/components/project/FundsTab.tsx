@@ -438,7 +438,7 @@ function TokenFundsCard({
       </dl>
 
       {!hasPayoutLimit ? (
-        <p className="mt-4 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <p className="callout callout-warning mt-4 text-xs">
           Nothing can be paid out under the current rules — funds stay in the
           project.
         </p>
@@ -1041,7 +1041,7 @@ function FundsTxFlow({
       </p>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info mt-3 text-xs">
           <p>
             {kind === 'payouts' ? (
               <>

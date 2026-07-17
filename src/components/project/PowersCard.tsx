@@ -832,7 +832,7 @@ function PowerFlow({
       </div>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info mt-3 text-xs">
           <p className="font-semibold">Review</p>
           <dl className="mt-1 space-y-0.5">
             {review.display.map(d => (

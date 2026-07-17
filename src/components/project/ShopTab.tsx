@@ -223,7 +223,7 @@ export function ShopTab({
       </p>
 
       {isConnected && (credits ?? 0n) > 0n ? (
-        <p className="rounded-lg bg-split-50 px-3.5 py-2.5 text-sm text-smoke-900">
+        <p className="callout callout-info text-sm">
           Your shop credit:{' '}
           <span className="font-medium">
             {formatTokenAmount(credits!, shop.pricing.decimals)}{' '}

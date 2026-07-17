@@ -56,21 +56,19 @@ export function OptionRow({
 }) {
   return (
     <button
+      type="button"
+      role="radio"
       onClick={onSelect}
       disabled={disabled}
-      aria-pressed={checked}
-      className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-        checked
-          ? 'border-ink bg-white'
-          : 'border-smoke-200 bg-white hover:border-smoke-400'
-      }`}
+      aria-checked={checked}
+      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-grey-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
-          checked ? 'border-ink bg-ink' : 'border-smoke-300'
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
+          checked ? 'border-bluebs-500' : 'border-grey-300'
         }`}
       >
-        {checked ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
+        {checked ? <span className="h-2 w-2 rounded-full bg-bluebs-500" /> : null}
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{title}</span>
@@ -98,21 +96,21 @@ export function CheckRow({
 }) {
   return (
     <button
+      type="button"
+      role="checkbox"
       onClick={onToggle}
       disabled={disabled}
-      aria-pressed={checked}
-      className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3.5 text-left transition-colors disabled:opacity-60 ${
-        checked
-          ? 'border-ink bg-white'
-          : 'border-smoke-200 bg-white hover:border-smoke-400'
-      }`}
+      aria-checked={checked}
+      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-grey-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-          checked ? 'border-ink bg-ink' : 'border-smoke-300'
+        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
+          checked
+            ? 'border-bluebs-500 bg-bluebs-500'
+            : 'border-grey-300 bg-white'
         }`}
       >
-        {checked ? <CheckIcon className="h-3 w-3 text-bone" /> : null}
+        {checked ? <CheckIcon className="h-3 w-3 text-white" /> : null}
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{title}</span>
@@ -138,7 +136,7 @@ export function AddButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="group inline-flex min-h-[40px] items-center gap-2 rounded-full border border-dashed border-smoke-400 bg-white py-1.5 pl-1.5 pr-4 text-xs font-medium text-smoke-700 transition-colors hover:border-bluebs-500 hover:text-bluebs-700 disabled:opacity-60"
+      className="group inline-flex min-h-[40px] items-center gap-2 rounded-full border border-dashed border-grey-400 bg-white py-1.5 pl-1.5 pr-4 text-xs font-medium text-grey-700 transition-colors hover:border-bluebs-500 hover:text-bluebs-700 disabled:opacity-60"
     >
       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-bluebs-100 font-agrandir text-sm text-bluebs-700 transition-colors group-hover:bg-bluebs-500 group-hover:text-white">
         +
@@ -167,8 +165,8 @@ export function ChipButton({
       aria-pressed={active}
       className={
         active
-          ? 'inline-flex min-h-[40px] items-center rounded-full bg-split-100 px-4 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-          : 'inline-flex min-h-[40px] items-center rounded-full border border-smoke-300 bg-white px-4 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-60'
+          ? 'inline-flex min-h-[40px] items-center rounded-full border border-bluebs-500 bg-bluebs-25 px-4 text-xs font-medium text-bluebs-600 disabled:opacity-60'
+          : 'inline-flex min-h-[40px] items-center rounded-full border border-grey-300 bg-white px-4 text-xs font-medium text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-60'
       }
     >
       {children}
@@ -191,7 +189,7 @@ export function SubSection({
   children: React.ReactNode
 }) {
   return (
-    <div className="mt-3 rounded-xl border border-smoke-200 bg-white">
+    <div className="mt-3 rounded-xl border border-grey-200 bg-white">
       <button
         onClick={onToggle}
         aria-expanded={open}

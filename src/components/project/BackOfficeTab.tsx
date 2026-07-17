@@ -528,7 +528,7 @@ function TransferOwnershipFlow({
       </label>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-warning mt-3 text-xs">
           <p>
             Project #{projectId} moves from{' '}
             <span className="font-mono">{truncateAddress(review.from)}</span> to{' '}
@@ -735,7 +735,7 @@ function SetOperatorFlow({
       </p>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-warning mt-3 text-xs">
           {review.relinquish ? (
             <p>
               The operator role is given up — no account will hold the powers
@@ -1138,7 +1138,7 @@ function EditPermissionsFlow({
       </div>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-warning mt-3 text-xs">
           <p className="font-semibold">
             Saving replaces everything{' '}
             <span className="font-mono">
@@ -1416,7 +1416,7 @@ function DeployTokenFlow({
       </div>
 
       {review ? (
-        <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-info mt-3 text-xs">
           <p>
             Deploys <span className="font-medium">{review.name}</span> (
             {review.symbol}). Existing balances carry over — nothing changes
@@ -1619,7 +1619,7 @@ function RenameTokenFlow({
           </div>
 
           {review ? (
-            <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
+            <div className="callout callout-info mt-3 text-xs">
               <p>
                 The token becomes{' '}
                 <span className="font-medium">{review.name}</span> (

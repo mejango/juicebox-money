@@ -73,7 +73,7 @@ export function TreasuryCard({
   const tabClass = (active: boolean) =>
     `min-h-[40px] rounded-lg font-agrandir text-sm font-medium transition-colors ${
       active
-        ? 'bg-split-100 text-ink'
+        ? 'bg-bluebs-25 text-bluebs-700'
         : 'text-smoke-700 hover:text-ink'
     }`
 

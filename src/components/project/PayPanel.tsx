@@ -604,7 +604,7 @@ export function PayPanel({
                     key={tier.id}
                     className={`w-24 shrink-0 rounded-lg border p-2 text-center ${
                       qty > 0
-                        ? 'border-ink bg-split-50'
+                        ? 'border-bluebs-500 bg-bluebs-25'
                         : 'border-smoke-200 bg-white'
                     } ${soldOut ? 'opacity-40' : ''}`}
                   >

@@ -22,7 +22,7 @@ export default async function HomePage() {
       {/* Hero band — restrained: statement, one line, two buttons. */}
       <section className="border-b border-smoke-200">
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-24">
-          <h1 className="max-w-3xl font-agrandir-wide text-5xl font-bold leading-[1.08] sm:text-6xl lg:text-7xl">
+          <h1 className="max-w-3xl font-agrandir-wide text-4xl font-bold leading-[1.08] sm:text-6xl lg:text-7xl">
             Fund your thing<span className="text-split-500">.</span>
           </h1>
           <p className="mt-6 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">

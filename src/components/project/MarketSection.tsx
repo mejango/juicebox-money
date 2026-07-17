@@ -151,7 +151,7 @@ type PairToken = {
   isNative: boolean
 }
 
-type MarketResult =
+export type MarketResult =
   | { status: 'none' }
   | { status: 'nopool' }
   | {
@@ -174,7 +174,7 @@ type MarketResult =
  * buyback pool at all, `nopool` when a hook is set but the pool isn't
  * price-initialized. Throws only on an unexpected RPC failure.
  */
-async function resolveMarket(
+export async function resolveMarket(
   client: PublicClient,
   chainId: JBChainId,
   projectId: number,

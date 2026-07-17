@@ -710,7 +710,7 @@ function RulesetEditor({
       </div>
 
       {review ? (
-        <div className="mt-4 rounded-lg bg-split-50 px-3.5 py-3 text-xs leading-relaxed text-smoke-900">
+        <div className="callout callout-warning mt-4 text-xs">
           <p className="font-medium">These rules change at the next cycle:</p>
           <ul className="mt-1.5 space-y-1">
             {changes.map(c => (

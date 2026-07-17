@@ -15,6 +15,11 @@
     @apply bg-bone font-sans text-ink;
   }
 
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: theme('colors.bluebs.500');
+  }
+
   ::selection {
     @apply bg-split-200 text-ink;
   }
@@ -32,53 +37,73 @@
     @apply rounded-xl border border-smoke-200 bg-white;
   }
 
-  /* --- Primary pill button: Split fill, thin near-black border, the
-         brand's SMALL offset shadow (DESIGN.md §Pill buttons) --- */
+  /* Controls use Bluebs; Split remains the page-level brand/warning accent. */
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-split-400 font-agrandir font-medium text-ink;
-    border: 1.5px solid #201e1a;
-    box-shadow: 2px 2px 0 #000;
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-500 font-sans font-medium text-white;
+    box-shadow: 0 6px 10px rgb(0 0 0 / 0.08);
     transition:
-      background-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 120ms ease;
+      background-color 100ms linear,
+      box-shadow 100ms linear,
+      transform 100ms linear;
   }
 
   .btn-primary:hover:not(:disabled) {
-    @apply bg-split-300;
+    @apply bg-bluebs-600;
+    box-shadow: 0 8px 12px rgb(0 0 0 / 0.12);
   }
 
   .btn-primary:active:not(:disabled) {
-    box-shadow: 1px 1px 0 #000;
-    transform: translate(1px, 1px);
+    box-shadow: 0 2px 5px rgb(0 0 0 / 0.1);
+    transform: translateY(1px);
   }
 
   .btn-primary:disabled {
-    @apply cursor-not-allowed opacity-50;
+    @apply cursor-not-allowed bg-bluebs-200 text-white shadow-none;
   }
 
-  /* --- Secondary pill: white fill, same border + shadow --- */
+  /* Secondary controls stay quiet on top of Bone and white surfaces. */
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-xl bg-white font-agrandir font-medium text-ink;
-    border: 1.5px solid #201e1a;
-    box-shadow: 2px 2px 0 #000;
+    @apply inline-flex items-center justify-center rounded-lg border border-grey-300 bg-white font-sans font-medium text-grey-900;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
     transition:
-      background-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 120ms ease;
+      color 100ms linear,
+      border-color 100ms linear,
+      background-color 100ms linear,
+      box-shadow 100ms linear,
+      transform 100ms linear;
   }
 
   .btn-secondary:hover:not(:disabled) {
-    @apply bg-bone;
+    @apply border-bluebs-500 bg-bluebs-25 text-bluebs-600;
   }
 
   .btn-secondary:active:not(:disabled) {
-    box-shadow: 1px 1px 0 #000;
-    transform: translate(1px, 1px);
+    box-shadow: none;
+    transform: translateY(1px);
   }
 
   .btn-secondary:disabled {
-    @apply cursor-not-allowed opacity-50;
+    @apply cursor-not-allowed border-grey-200 text-grey-300 shadow-none;
+  }
+
+  .btn-tertiary {
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-25 font-sans font-medium text-bluebs-600;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-transparent font-sans font-medium text-grey-900 hover:bg-grey-50;
+  }
+
+  .btn-link {
+    @apply inline-flex items-center justify-center bg-transparent font-sans font-medium text-bluebs-600 hover:text-bluebs-500;
+  }
+
+  .icon-button {
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg text-grey-900 transition-colors hover:bg-grey-50 hover:text-bluebs-600;
+  }
+
+  .nav-link {
+    @apply inline-flex min-h-[44px] items-center rounded-lg px-3 text-sm font-medium text-grey-900 transition-colors hover:bg-grey-50 hover:text-bluebs-600;
   }
 
   /* --- Chips: soft fruit tints, rounded-full, Beatrice --- */
@@ -97,22 +122,81 @@
     cursor: pointer;
   }
 
-  /* --- Field label: small Smoke uppercase label over values --- */
+  /* Form labels in the component guide are sentence case, not overlines. */
   .field-label {
-    @apply block text-xs uppercase tracking-wide text-smoke-700;
+    @apply block text-sm font-medium text-grey-700;
   }
 
-  /* --- Inputs: white wells, Smoke border, Bluebs focus --- */
+  .field-hint {
+    @apply mt-1 block text-xs leading-relaxed text-grey-500;
+  }
+
+  .field-error {
+    @apply mt-1 block text-xs leading-relaxed text-error-600;
+  }
+
+  /* Inputs: one-pixel neutral stroke plus the guide's soft Bluebs focus halo. */
   .input-well {
-    @apply w-full rounded-lg bg-white text-ink outline-none placeholder:text-smoke-500;
-    border: 1.5px solid theme('colors.smoke.300');
-    transition: border-color 120ms ease;
+    @apply w-full rounded-lg border border-grey-300 bg-white text-grey-900 outline-none placeholder:text-grey-400;
+    transition:
+      border-color 100ms linear,
+      box-shadow 100ms linear;
   }
 
   .input-well:focus,
   .input-well:focus-within {
-    border-color: theme('colors.bluebs.500');
+    border-color: theme('colors.bluebs.400');
+    box-shadow: 0 0 0 2px theme('colors.bluebs.50');
     outline: none;
+  }
+
+  .input-well:disabled {
+    @apply cursor-not-allowed bg-grey-25 text-grey-400;
+  }
+
+  .input-well[aria-invalid='true'] {
+    border-color: theme('colors.error.500');
+  }
+
+  .input-well[aria-invalid='true']:focus,
+  .input-well[aria-invalid='true']:focus-within {
+    box-shadow: 0 0 0 2px theme('colors.error.100');
+  }
+
+  .callout {
+    @apply rounded-lg py-2.5 pl-10 pr-3.5 text-sm leading-relaxed;
+    background-position: 0.875rem 0.75rem;
+    background-repeat: no-repeat;
+    background-size: 1rem 1rem;
+  }
+
+  .callout-neutral {
+    @apply bg-grey-100 text-grey-600;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%23525252' stroke-width='1.8'%3E%3Ccircle cx='10' cy='10' r='7.5'/%3E%3Cpath d='M10 9v5M10 6.2v.1' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+
+  .callout-info {
+    @apply bg-bluebs-25 text-bluebs-700;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%233A52A6' stroke-width='1.8'%3E%3Ccircle cx='10' cy='10' r='7.5'/%3E%3Cpath d='M10 9v5M10 6.2v.1' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+
+  .callout-warning {
+    @apply bg-split-50 text-split-800;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%23824100' stroke-width='1.8' stroke-linejoin='round'%3E%3Cpath d='M9.99 2.5 18 16.5H2l7.99-14Z'/%3E%3Cpath d='M10 7v4M10 14v.1' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+
+  .callout-error {
+    @apply bg-error-50 text-error-700;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%23D92D20' stroke-width='1.8'%3E%3Ccircle cx='10' cy='10' r='7.5'/%3E%3Cpath d='M10 6v5M10 14v.1' stroke-linecap='round'/%3E%3C/svg%3E");
+  }
+
+  .callout-success {
+    @apply bg-melon-50 text-melon-700;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 20 20' xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%233D7955' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10' cy='10' r='7.5'/%3E%3Cpath d='m6.5 10 2.2 2.2 4.8-5'/%3E%3C/svg%3E");
+  }
+
+  .menu-item {
+    @apply flex min-h-[44px] w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-grey-900 transition-colors hover:bg-grey-50 disabled:text-grey-300;
   }
 }
 

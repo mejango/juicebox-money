@@ -299,6 +299,27 @@ export const DEFAULT_STAGE: StageRules = {
   issuanceCutFrequency: 0,
 }
 
+/**
+ * Rules used by the create flow's "Simple project" flavor. The first
+ * ruleset stays open-ended and leaves every owner-managed project control
+ * available, so the owner can launch now and express durable preferences in
+ * a later ruleset.
+ */
+export function createSimpleProjectStage(): StageRules {
+  return {
+    ...DEFAULT_STAGE,
+    payouts: 'flexible',
+    surplusAllowanceOn: true,
+    allowOwnerMinting: true,
+    allowSetTerminals: true,
+    allowSetController: true,
+    allowTerminalMigration: true,
+    allowSetCustomToken: true,
+    allowAddAccountingContext: true,
+    allowAddPriceFeed: true,
+  }
+}
+
 export const DEFAULT_ACCOUNTING: AccountingConfig = {
   tokens: ['eth'],
   custom: null,
