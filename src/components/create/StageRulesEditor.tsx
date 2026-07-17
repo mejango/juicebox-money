@@ -556,9 +556,12 @@ export function StageRulesEditor({
         onToggle={() => toggleOpen('tokens')}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Every {isRevnet ? 'revnet' : 'project'} has its own token. Supporters
-          get newly issued {tokenLabel} when they pay — their record of support
-          and their share of the {isRevnet ? 'revnet' : 'project'}.
+          Every {isRevnet ? 'revnet' : 'project'} has its own token — when
+          people pay, they receive newly issued {tokenLabel}. Depending on the
+          rules below, {tokenLabel} can be cashed out to reclaim funds from the{' '}
+          {isRevnet ? 'revnet' : 'project'} (useful for refunds or sharing),
+          and can power things like governance or community access. You can
+          also reserve a cut of new {tokenLabel} for recipients you choose.
           {!isFirst
             ? ' Leave the rate empty to keep the previous ruleset’s rate.'
             : ''}
