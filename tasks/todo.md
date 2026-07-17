@@ -64,6 +64,12 @@ is already in PROJECT_FIELDS, currently unused).
 - [ ] Owner/Operator back-office (account, edits, powers, permissions,
       buyback/router, transfer)
 - [ ] Revnet: loans, auto-issuance; multichain: bridges/movement, gossip
+- [ ] GRAPHS (port all, jbm style = CashOutCurve-like hoverable SVGs):
+      (1) revnet price chart on Overview — issuance ceiling ladder + cash-out
+      floor + AMM price legend; (2) Terms projected-issuance ladder with
+      1Y/5Y/10Y/All range; (3) holders distribution — DONE as bars (5f23489);
+      (4) Market subtab LP composition bar + liquidity-by-price depth chart
+      (with Market subtab)
 - [ ] Queue ruleset + edit splits txs
 - [ ] Reorganize TreasuryCard to website/'s pay-card functionality
 - [ ] ALL project-page transactions from website/ ship complete + safe:
