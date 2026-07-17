@@ -8,6 +8,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { ProjectTabs } from '@/components/project/Tabs'
 import {
@@ -330,6 +331,19 @@ export default async function ProjectPage({
                   />
                 ),
               },
+              ...(!isRevnet
+                ? [
+                    {
+                      label: 'Funds',
+                      content: (
+                        <FundsTab
+                          chainId={urn.chainId}
+                          projectId={project.projectId}
+                        />
+                      ),
+                    },
+                  ]
+                : []),
               {
                 label: isRevnet ? 'Operator' : 'Owner',
                 content: (
