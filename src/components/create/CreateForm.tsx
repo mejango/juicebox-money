@@ -184,6 +184,7 @@ export function CreateForm() {
   /** Issuance denomination; null = follow accounting. */
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
   const [bridge, setBridge] = useState<LaunchPlan['bridge']>('ccip')
+  const [bridgeOpen, setBridgeOpen] = useState(false)
   /** Link selected chains with CCIP suckers (multichain launches). */
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
   const [ownerPerChainOpen, setOwnerPerChainOpen] = useState(false)
@@ -1446,30 +1447,49 @@ export function CreateForm() {
           ) : null}
           {selected.length > 1 ? (
             <div className="mt-3">
-              <div className="flex items-center gap-3">
-                <span className="whitespace-nowrap text-sm text-smoke-700">
-                  Linked by
-                </span>
-                <select
-                  value={bridge}
-                  onChange={e =>
-                    !busy && setBridge(e.target.value as LaunchPlan['bridge'])
-                  }
+              <p className="text-xs leading-relaxed text-smoke-700">
+                Your {flavor === 'revnet' ? 'revnet' : 'project'} will exist on{' '}
+                {selected.length} chains,{' '}
+                <button
+                  onClick={() => !busy && setBridgeOpen(o => !o)}
                   disabled={busy}
-                  aria-label="Bridge infrastructure"
-                  className="select-caret input-well min-h-[44px] !w-auto pl-3.5 pr-8 text-sm disabled:opacity-60"
+                  aria-expanded={bridgeOpen || bridge !== 'ccip'}
+                  className="font-medium text-ink underline underline-offset-2 hover:text-smoke-700 disabled:opacity-60"
                 >
-                  <option value="ccip">CCIP</option>
-                  <option value="native">Native bridges</option>
-                  <option value="both">Native and CCIP</option>
-                </select>
-              </div>
-              {bridge !== 'ccip' ? (
-                <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
-                  {bridge === 'native'
-                    ? 'Ethereum’s own rollup bridges — strongest guarantees. Ethereum + one L2 only, ETH only, and moves back to Ethereum take ~7 days.'
-                    : 'Both bridges on every pair of chains — whatever the native bridges can’t carry rides CCIP.'}
-                </p>
+                  linked
+                </button>{' '}
+                so your token{customOn ? '' : ' and treasury'} can move between
+                them.
+              </p>
+              {bridgeOpen || bridge !== 'ccip' ? (
+                <div className="mt-3">
+                  <div className="flex items-center gap-3">
+                    <span className="whitespace-nowrap text-sm text-smoke-700">
+                      Connect chains via
+                    </span>
+                    <select
+                      value={bridge}
+                      onChange={e =>
+                        !busy &&
+                        setBridge(e.target.value as LaunchPlan['bridge'])
+                      }
+                      disabled={busy}
+                      aria-label="Bridge infrastructure"
+                      className="select-caret input-well min-h-[44px] !w-auto pl-3.5 pr-8 text-sm disabled:opacity-60"
+                    >
+                      <option value="ccip">CCIP</option>
+                      <option value="native">Native bridges</option>
+                      <option value="both">Native and CCIP</option>
+                    </select>
+                  </div>
+                  {bridge !== 'ccip' ? (
+                    <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+                      {bridge === 'native'
+                        ? 'Ethereum’s own rollup bridges — strongest guarantees. Ethereum + one L2 only, ETH only, and moves back to Ethereum take ~7 days.'
+                        : 'Both bridges on every pair of chains — whatever the native bridges can’t carry rides CCIP.'}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
               {!bridgeOk ? (
                 <p className="mt-1.5 text-sm text-red-600">
