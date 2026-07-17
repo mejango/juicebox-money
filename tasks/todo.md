@@ -33,13 +33,13 @@ Order minimizes rework. Commit per batch; Sepolia sims per encoding change.
 - [ ] P20 network toggle: SKIPPED as architecture — jbm is env-scoped per
       network (bendystraw + wagmi config baked per deployment); flag for
       user sign-off
-- [ ] B10 native-bridge suckers — WAITING ON SDK: juice-sdk-v4@91c2361
-      (user flagged 2026-07-16, about to land) adds
-      bridge: 'ccip' (default) | 'native' | 'both' to
-      parseSuckerDeployerConfig. Once jbm bumps the SDK, consider website's
-      bridge selector. Rules: 'native'+USDC accounting throws ('both'
-      auto-keeps USDC on CCIP); native = Ethereum↔L2 pairs only, so L2↔L2
-      selections fall back to CCIP. Current no-bridge-arg call is
-      unaffected by the bump (defaults to ccip).
+- [x] B10 native-bridge suckers — DONE (nana-sdk-core 1.2.0, jbm 9ada54d):
+      "Linked by" selector (CCIP / Native bridges / Native and CCIP) under
+      the chain chips; plan.bridge → parseSuckerDeployerConfig. 'native'
+      gated by nativeBridgeViable (exactly Ethereum + one L2, ETH-only
+      accounting — the SDK throws on other pairs and silently drops USDC
+      mappings otherwise); 'both' always safe (falls back to CCIP per
+      pair/asset). Sim shapes linked-native-bridge-project +
+      linked-both-bridges-project PASS on Sepolia.
 
 Watch: website/ baseline a1ef87b (see memory jb-jbm-website-parity-watch).
