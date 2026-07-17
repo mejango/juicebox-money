@@ -1865,6 +1865,7 @@ export function CreateForm() {
                 return (
                   <button
                     key={tag}
+                    type="button"
                     onClick={() => {
                       if (busy) return
                       setTags(prev =>
@@ -1879,8 +1880,8 @@ export function CreateForm() {
                     aria-pressed={active}
                     className={
                       active
-                        ? 'inline-flex min-h-[32px] items-center rounded-full border border-bluebs-500 bg-bluebs-25 px-3 text-xs font-medium text-bluebs-600 disabled:opacity-60'
-                        : 'inline-flex min-h-[32px] items-center rounded-full border border-grey-300 bg-white px-3 text-xs font-medium text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-40'
+                        ? 'inline-flex min-h-[40px] items-center rounded-lg border border-bluebs-500 bg-bluebs-25 px-3.5 text-xs font-medium text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
+                        : 'inline-flex min-h-[40px] items-center rounded-lg border border-grey-300 bg-white px-3.5 text-xs font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
                     }
                   >
                     {tag}
@@ -2201,13 +2202,14 @@ export function CreateForm() {
               return (
                 <button
                   key={value}
+                  type="button"
                   onClick={() => !busy && setStoreCurrency(value)}
                   disabled={busy}
                   aria-pressed={active}
                   className={
                     active
-                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-full border border-bluebs-500 bg-bluebs-25 px-5 text-sm font-medium text-bluebs-600 transition-colors disabled:opacity-60'
-                      : 'inline-flex min-h-[44px] items-center rounded-full border border-grey-300 bg-white px-5 text-sm font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-60'
+                      ? 'inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-bluebs-500 bg-bluebs-25 px-4 text-sm font-medium text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
+                      : 'inline-flex min-h-[44px] items-center rounded-lg border border-grey-300 bg-white px-4 text-sm font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
                   }
                 >
                   {active ? <CheckIcon className="h-4 w-4" /> : null}

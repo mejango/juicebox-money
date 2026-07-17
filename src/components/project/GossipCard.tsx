@@ -686,7 +686,16 @@ function GossipBlock({
         {chainName(A)} knows
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[680px] table-fixed text-sm">
+          {/* Shared column geometry so every "X knows" block lines up. */}
+          <colgroup>
+            <col className="w-[150px]" />
+            <col className="w-[120px]" />
+            <col className="w-[104px]" />
+            <col />
+            <col className="w-[92px]" />
+            <col className="w-[92px]" />
+          </colgroup>
           <thead>
             <tr className="text-left text-xs text-smoke-500">
               <th className="pb-1.5 font-normal">Chain</th>
@@ -882,7 +891,9 @@ function GossipRow({
             Syncing…
           </span>
         ) : (
-          <span className={STATUS_COLOR[staleness.level]}>{staleness.label}</span>
+          <span className={`whitespace-nowrap ${STATUS_COLOR[staleness.level]}`}>
+            {staleness.label}
+          </span>
         )}
       </td>
       <td className="py-1.5 pr-3">
@@ -926,9 +937,13 @@ function GossipRow({
           </div>
         ) : null}
       </td>
-      <td className="py-1.5 text-right">{formatTokenAmount(peer.supply)}</td>
-      <td className="py-1.5 text-right">{balanceStr}</td>
-      <td className="py-1.5 text-right text-smoke-700">
+      <td className="whitespace-nowrap py-1.5 text-right tabular-nums">
+        {formatTokenAmount(peer.supply)}
+      </td>
+      <td className="whitespace-nowrap py-1.5 text-right tabular-nums">
+        {balanceStr}
+      </td>
+      <td className="whitespace-nowrap py-1.5 text-right text-smoke-700">
         {snapshotAge(peer.snapshot)}
       </td>
     </tr>

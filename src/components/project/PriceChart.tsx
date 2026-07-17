@@ -168,10 +168,11 @@ export function PriceChart({
               key={r.label}
               type="button"
               onClick={() => setYears(r.years)}
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+              aria-pressed={years === r.years}
+              className={`min-h-[32px] rounded-lg border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none ${
                 years === r.years
-                  ? 'bg-bluebs-25 text-bluebs-700 ring-1 ring-bluebs-500'
-                  : 'text-smoke-500 hover:text-ink'
+                  ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
+                  : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
               }`}
             >
               {r.label}

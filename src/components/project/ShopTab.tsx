@@ -248,12 +248,13 @@ export function ShopTab({
                 cat => (
                   <button
                     key={cat.id ?? 'all'}
+                    type="button"
                     onClick={() => setCategory(cat.id)}
                     aria-pressed={category === cat.id}
-                    className={`min-h-[32px] rounded-full border px-3 text-xs font-medium transition-colors ${
+                    className={`min-h-[40px] rounded-lg border px-3.5 text-xs font-medium transition-colors focus-visible:outline-none ${
                       category === cat.id
-                        ? 'border-ink bg-ink text-bone'
-                        : 'border-smoke-200 text-smoke-700 hover:text-ink'
+                        ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
+                        : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
                     }`}
                   >
                     {cat.name}

@@ -146,7 +146,7 @@ export function AddButton({
   )
 }
 
-/** Small pill chip toggle (tax rates, modes, currencies). */
+/** Compact rectangular toggle (tax rates, modes, currencies). */
 export function ChipButton({
   active,
   onClick,
@@ -160,13 +160,14 @@ export function ChipButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
       className={
         active
-          ? 'inline-flex min-h-[40px] items-center rounded-full border border-bluebs-500 bg-bluebs-25 px-4 text-xs font-medium text-bluebs-600 disabled:opacity-60'
-          : 'inline-flex min-h-[40px] items-center rounded-full border border-grey-300 bg-white px-4 text-xs font-medium text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600 disabled:opacity-60'
+          ? 'inline-flex min-h-[40px] items-center rounded-lg border border-bluebs-500 bg-bluebs-25 px-3.5 text-xs font-medium text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
+          : 'inline-flex min-h-[40px] items-center rounded-lg border border-grey-300 bg-white px-3.5 text-xs font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
       }
     >
       {children}
