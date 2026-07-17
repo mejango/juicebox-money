@@ -572,40 +572,37 @@ export function PayPanel({
 
   return (
     <div>
-      {/* Mode on chain */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-smoke-700">
-        <select
+      {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700">
+        <TextSelect
           value={mode}
-          onChange={e => setMode(e.target.value as 'pay' | 'addbalance')}
+          onChange={v => setMode(v as 'pay' | 'addbalance')}
           disabled={busy}
-          aria-label="Payment mode"
-          className="select-caret input-well min-h-[38px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
-        >
-          <option value="pay">Pay</option>
-          <option value="addbalance">Add to balance</option>
-        </select>
+          ariaLabel="Payment mode"
+          options={[
+            { value: 'pay', label: 'Pay' },
+            { value: 'addbalance', label: 'Add to balance' },
+          ]}
+        />
         {chains.length > 1 ? (
           <>
             <span>on</span>
-            <select
-              value={chainId}
-              onChange={e => {
-                setChainId(Number(e.target.value) as JBChainId)
+            <TextSelect
+              value={String(chainId)}
+              onChange={v => {
+                setChainId(Number(v) as JBChainId)
                 setTokenIndex(0)
                 setCart({})
                 setAmount('')
                 setDebouncedAmount('')
               }}
               disabled={busy}
-              aria-label="Chain"
-              className="select-caret input-well min-h-[38px] !w-auto pl-3 pr-7 text-sm disabled:opacity-60"
-            >
-              {chains.map(([cid]) => (
-                <option key={cid} value={cid}>
-                  {chainName(cid)}
-                </option>
-              ))}
-            </select>
+              ariaLabel="Chain"
+              options={chains.map(([cid]) => ({
+                value: String(cid),
+                label: chainName(cid),
+              }))}
+            />
           </>
         ) : null}
       </div>
@@ -848,6 +845,52 @@ export function PayPanel({
         </p>
       ) : null}
     </div>
+  )
+}
+
+/** A subtle underlined-text dropdown (website/ parity: sizeSelectToText) —
+ *  a native select styled as bold underlined text with a caret. */
+function TextSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+  ariaLabel,
+}: {
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+  disabled?: boolean
+  ariaLabel: string
+}) {
+  return (
+    <span className="relative inline-flex items-center">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className="cursor-pointer appearance-none bg-transparent pr-4 font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4 outline-none disabled:cursor-default disabled:opacity-60"
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        viewBox="0 0 24 24"
+        className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-smoke-500"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
   )
 }
 

@@ -358,7 +358,7 @@ export function AddShopItemsModal({
         if (event.target === event.currentTarget) close()
       }}
     >
-      <div className="card w-full max-w-3xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
+      <div className="card w-full max-w-2xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
         <div className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
           <div>
             <h2
