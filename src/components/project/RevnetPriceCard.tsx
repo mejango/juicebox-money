@@ -343,31 +343,20 @@ export function RevnetPriceCard({
             ?.symbol ?? nativeSymbol)
 
   return (
-    <div className="card p-5">
-      <span className="field-label">Token price over time</span>
-      <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-        Issuance, cash-out, and market history end at Now. Live prices are
-        marked at the right edge; nothing is projected into the future.
-      </p>
-      <div className="mt-3">
-        <PriceChart
-          stages={stages}
-          symbol={data?.projectSymbol || 'tokens'}
-          baseSymbol={baseSymbol}
-          floorHistory={floorHistory}
-          ammHistory={ammHistory}
-          floorPrice={
-            references?.floor
-              ? { value: references.floor, label: 'Cash out price' }
-              : null
-          }
-          ammPrice={
-            references?.amm
-              ? { value: references.amm, label: 'AMM price' }
-              : null
-          }
-        />
-      </div>
-    </div>
+    <PriceChart
+      stages={stages}
+      symbol={data?.projectSymbol || 'tokens'}
+      baseSymbol={baseSymbol}
+      floorHistory={floorHistory}
+      ammHistory={ammHistory}
+      floorPrice={
+        references?.floor
+          ? { value: references.floor, label: 'Cash out price' }
+          : null
+      }
+      ammPrice={
+        references?.amm ? { value: references.amm, label: 'AMM price' } : null
+      }
+    />
   )
 }
