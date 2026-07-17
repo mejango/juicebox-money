@@ -58,9 +58,14 @@ is already in PROJECT_FIELDS, currently unused).
       distribute txs (5f23489). Settlement/Market subtabs still pending.
 - [x] Shop tab read-only (5f23489); +Add items CTA pending (write flow)
 - [x] Extras tab (.jb export, payer deploy) — 703ab26
-- [ ] Pay-card upgrade to spec (mode select, currency control, shop strip,
-      preview semantics, router, direct swap) — do CAREFULLY, fund-loss traps
-- [ ] Cash-out modal upgrade (fee layering, routes, delay lock)
+- [x] Pay-card upgrade (488b37a): mode select, index-valued multi-token
+      selector from live contexts, 721 shop strip→metadata, verified-preview
+      min, ERC-20 approve step, start-gate. STILL TODO: router-swap pay
+      (ETH/USDC via JBRouterTerminalRegistry + Permit2) and direct-AMM-swap
+      bypass — deferred, current card only offers directly-accepted tokens.
+- [ ] Cash-out upgrade (fee layering, buyback/direct-sell routes, revnet
+      delay lock) — existing CashOutPanel works for treasury route; upgrade
+      pending
 - [~] Owner/Operator back-office: account/transfer + permissions +
       deploy/rename ERC-20 DONE (a13806a); still pending: Powers card
       (mint/feeds/terminals/controller/migrate/setToken), buyback/router
@@ -71,8 +76,19 @@ is already in PROJECT_FIELDS, currently unused).
       with floor/AMM reads; (2) Terms projected-issuance ladder — DONE
       (a13806a); (3) holders distribution — DONE as bars (5f23489);
       (4) Market subtab LP composition bar + liquidity-by-price depth chart
-      (with Market subtab)
-- [ ] Queue ruleset + edit splits txs
+      (with Market subtab) — PENDING. Graphs 1-3 DONE (issuance ladder,
+      price ceiling c4ec8b1, holders bars).
+- [ ] Queue ruleset + edit splits txs — subagent DIED (Fable credits out),
+      files never written. Spec ready; re-dispatch when credits refresh.
+- [ ] Powers card (mint/feeds/terminals/controller/migrate/setToken) +
+      buyback/router card — subagent DIED, never written.
+- [ ] Revnet loans (borrow 2-step/repay) + auto-issuance — subagent DIED.
+- [ ] Settlement: composition/bridges/move(prepare/toRemote/claim)/sync —
+      subagent DIED.
+- [ ] Market subtab (AMM/LP cards + LP charts) — not started.
+- [ ] Wire OwnersTab subtabs to add Settlement/Market/Loans/AutoIssuance once
+      those sections exist.
+- [ ] Final adversarial audit (custom + revnet) + production build.
 - [ ] Reorganize TreasuryCard to website/'s pay-card functionality
 - [ ] ALL project-page transactions from website/ ship complete + safe:
       owner (metadata, queue rulesets, payouts, allowance, splits, mint,
