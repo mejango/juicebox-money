@@ -556,7 +556,9 @@ export function StageRulesEditor({
         onToggle={() => toggleOpen('tokens')}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Supporters get newly issued {tokenLabel} when they pay.
+          Every {isRevnet ? 'revnet' : 'project'} has its own token. Supporters
+          get newly issued {tokenLabel} when they pay — their record of support
+          and their share of the {isRevnet ? 'revnet' : 'project'}.
           {!isFirst
             ? ' Leave the rate empty to keep the previous ruleset’s rate.'
             : ''}

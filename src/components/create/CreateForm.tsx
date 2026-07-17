@@ -184,7 +184,6 @@ export function CreateForm() {
   /** Issuance denomination; null = follow accounting. */
   const [issuanceBase, setIssuanceBase] = useState<'eth' | 'usd' | null>(null)
   const [bridge, setBridge] = useState<LaunchPlan['bridge']>('ccip')
-  const [allowAnyToken, setAllowAnyToken] = useState(true)
   /** Link selected chains with CCIP suckers (multichain launches). */
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>({})
   const [ownerPerChainOpen, setOwnerPerChainOpen] = useState(false)
@@ -774,7 +773,7 @@ export function CreateForm() {
             linkChains: true,
             bridge,
             issuanceBase,
-            allowAnyToken: flavor === 'revnet' ? true : allowAnyToken,
+            allowAnyToken: true,
             owner: resolvedAddress(
               ownerPerChain[chainId]?.trim() || owner,
             ),
@@ -1100,7 +1099,7 @@ export function CreateForm() {
     links,
     owner,
     ownerPerChain,
-    allowAnyToken,
+    allowAnyToken: true,
     approvalCustom,
     approvalPerChain,
     accepts,
@@ -1136,7 +1135,6 @@ export function CreateForm() {
     })
     setOwner(draft.owner)
     setOwnerPerChain(draft.ownerPerChain)
-    setAllowAnyToken(draft.allowAnyToken)
     setApprovalCustom(draft.approvalCustom)
     setApprovalPerChain(draft.approvalPerChain)
     setAccepts(draft.accepts)
@@ -1229,7 +1227,6 @@ export function CreateForm() {
     links,
     owner,
     ownerPerChain,
-    allowAnyToken,
     approvalCustom,
     approvalPerChain,
     accepts,
@@ -1467,18 +1464,13 @@ export function CreateForm() {
                   <option value="both">Native and CCIP</option>
                 </select>
               </div>
-              <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
-                {bridge === 'ccip'
-                  ? 'Your token' +
-                    (customOn ? '' : ' and treasury') +
-                    ' can move between the chains via Chainlink CCIP.' +
-                    (customOn
-                      ? ' (Custom accounting tokens themselves don’t bridge — only your project token does.)'
-                      : '')
-                  : bridge === 'native'
-                    ? 'Ethereum’s own rollup bridges — the strongest guarantees. They only connect Ethereum with one L2, only carry ETH, and moves back to Ethereum wait out a ~7-day challenge period.'
-                    : 'Each pair of chains gets a native bridge and a CCIP bridge for redundancy. Anything the native bridges can’t carry — L2-to-L2 pairs, USDC, custom tokens — rides CCIP.'}
-              </p>
+              {bridge !== 'ccip' ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+                  {bridge === 'native'
+                    ? 'Ethereum’s own rollup bridges — strongest guarantees. Ethereum + one L2 only, ETH only, and moves back to Ethereum take ~7 days.'
+                    : 'Both bridges on every pair of chains — whatever the native bridges can’t carry rides CCIP.'}
+                </p>
+              ) : null}
               {!bridgeOk ? (
                 <p className="mt-1.5 text-sm text-red-600">
                   Native bridges only connect Ethereum with one L2 and only
@@ -1576,17 +1568,6 @@ export function CreateForm() {
                 in this token itself, so no price feed is needed. You can add
                 a feed later to price in ETH or USD instead.
               </p>
-            </div>
-          ) : null}
-          {flavor !== 'revnet' ? (
-            <div className="mt-3">
-              <CheckRow
-                checked={allowAnyToken}
-                onToggle={() => !busy && setAllowAnyToken(a => !a)}
-                disabled={busy}
-                title="Let payers pay in any token"
-                blurb="Payments in other tokens auto-swap into your accounting token as they come in. Uncheck to require payment in your accounting token only."
-              />
             </div>
           ) : null}
         </div>
@@ -1709,42 +1690,6 @@ export function CreateForm() {
                 </div>
               </div>
             ) : null}
-
-            <div className="mt-4">
-              <span className="field-label">Tags</span>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Pick up to 3 so supporters can find you.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {TAG_OPTIONS.map(tag => {
-                  const active = tags.includes(tag)
-                  return (
-                    <button
-                      key={tag}
-                      onClick={() => {
-                        if (busy) return
-                        setTags(prev =>
-                          prev.includes(tag)
-                            ? prev.filter(t => t !== tag)
-                            : prev.length < 3
-                              ? [...prev, tag]
-                              : prev,
-                        )
-                      }}
-                      disabled={busy || (!active && tags.length >= 3)}
-                      aria-pressed={active}
-                      className={
-                        active
-                          ? 'inline-flex min-h-[32px] items-center rounded-full bg-split-100 px-3 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
-                          : 'inline-flex min-h-[32px] items-center rounded-full border border-smoke-300 bg-white px-3 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-40'
-                      }
-                    >
-                      {tag}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
 
             <label className="mt-4 block">
               <span className="flex items-baseline justify-between">
@@ -1891,6 +1836,46 @@ export function CreateForm() {
                   />
                 </label>
               ))}
+            </div>
+          </SubSection>
+
+          <SubSection
+            label="Tags"
+            summary={tags.length > 0 ? tags.join(', ') : 'None'}
+            open={!!openSection.tags}
+            onToggle={() => toggleSection('tags')}
+          >
+            <p className="text-xs leading-relaxed text-smoke-700">
+              Pick up to 3 so supporters can find you.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {TAG_OPTIONS.map(tag => {
+                const active = tags.includes(tag)
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => {
+                      if (busy) return
+                      setTags(prev =>
+                        prev.includes(tag)
+                          ? prev.filter(t => t !== tag)
+                          : prev.length < 3
+                            ? [...prev, tag]
+                            : prev,
+                      )
+                    }}
+                    disabled={busy || (!active && tags.length >= 3)}
+                    aria-pressed={active}
+                    className={
+                      active
+                        ? 'inline-flex min-h-[32px] items-center rounded-full bg-split-100 px-3 text-xs font-medium text-ink ring-1 ring-ink disabled:opacity-60'
+                        : 'inline-flex min-h-[32px] items-center rounded-full border border-smoke-300 bg-white px-3 text-xs font-medium text-smoke-700 hover:border-smoke-400 hover:text-ink disabled:opacity-40'
+                    }
+                  >
+                    {tag}
+                  </button>
+                )
+              })}
             </div>
           </SubSection>
 
