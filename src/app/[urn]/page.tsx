@@ -8,11 +8,14 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { OverviewTab } from '@/components/project/OverviewTab'
+import { ProjectTabs } from '@/components/project/Tabs'
 import {
   BsActivityEvent,
   BsProject,
   getProject,
   getProjectActivity,
+  getRevnetOperator,
   getSuckerGroupProjects,
 } from '@/lib/bendystraw'
 import {
@@ -117,19 +120,6 @@ export async function generateMetadata({
   }
 }
 
-function ExternalLink({ href, label }: { href: string; label: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="btn-secondary min-h-[36px] px-3.5 text-xs"
-    >
-      {label}
-    </a>
-  )
-}
-
 export default async function ProjectPage({
   params,
 }: {
@@ -141,7 +131,8 @@ export default async function ProjectPage({
   const project = await getProjectCached(urn.chainId, urn.projectId)
   if (!project) notFound()
 
-  const [metadata, activity, siblings] = await Promise.all([
+  const isRevnet = !!project.isRevnet
+  const [metadata, activity, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
     project.suckerGroupId
       ? getProjectActivity(project.suckerGroupId, 40).catch(
@@ -153,6 +144,9 @@ export default async function ProjectPage({
           () => [] as BsProject[],
         )
       : Promise.resolve([] as BsProject[]),
+    isRevnet
+      ? getRevnetOperator(urn.chainId, urn.projectId)
+      : Promise.resolve(null),
   ])
 
   const name = project.name ?? `Project ${project.projectId}`
@@ -186,7 +180,11 @@ export default async function ProjectPage({
     ['WhatsApp', whatsapp],
     ['Instagram', instagram],
   ]
-  const hasLinks = socialLinks.some(([, href]) => href)
+
+  const authority = isRevnet ? operator : project.owner
+  const chainPairs: [number, number][] = (
+    chains.length > 0 ? chains : [project]
+  ).map(p => [p.chainId, p.projectId])
 
   const stats: [string, string][] = [
     [`${symbol} raised`, formatTokenAmount(project.volume, decimals)],
@@ -223,21 +221,30 @@ export default async function ProjectPage({
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
-            {project.owner ? (
+            {isRevnet ? (
+              <>
+                <span className="font-medium text-ink">Revnet</span>
+                <span
+                  aria-hidden
+                  className="mx-2.5 inline-block h-3.5 w-px rounded-full bg-smoke-300"
+                />
+              </>
+            ) : null}
+            {authority ? (
               <>
                 <span>
-                  Owned by{' '}
+                  {isRevnet ? 'Operated by' : 'Owned by'}{' '}
                   {etherscan ? (
                     <a
-                      href={`https://${etherscan}/address/${project.owner}`}
+                      href={`https://${etherscan}/address/${authority}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="hover:text-ink hover:underline"
                     >
-                      {truncateAddress(project.owner)}
+                      {truncateAddress(authority)}
                     </a>
                   ) : (
-                    <span>{truncateAddress(project.owner)}</span>
+                    <span>{truncateAddress(authority)}</span>
                   )}
                 </span>
                 <span
@@ -306,51 +313,71 @@ export default async function ProjectPage({
         </aside>
 
         <div className="order-2 min-w-0 lg:order-1 lg:col-span-2">
-          {/* Renders only for the project's on-chain owner (client-gated). */}
-          <OwnerPanel
-            chainId={urn.chainId}
-            projectId={project.projectId}
-            initial={{
-              // Prefer the pinned metadata (the truth setUriOf points at);
-              // bendystraw mirrors it but can lag.
-              name: metadata?.name ?? name,
-              tagline: metadata?.projectTagline ?? project.projectTagline ?? '',
-              description: metadata?.description ?? '',
-              logoUri: metadata?.logoUri ?? project.logoUri ?? null,
-              infoUri: metadata?.infoUri,
-              twitter: metadata?.twitter,
-              discord: metadata?.discord,
-              telegram: metadata?.telegram,
-              whatsapp: metadata?.whatsapp,
-              instagram: metadata?.instagram,
-              coverImageUri: metadata?.coverImageUri,
-              payDisclosure: metadata?.payDisclosure,
-            }}
+          <ProjectTabs
+            tabs={[
+              {
+                label: 'Overview',
+                content: (
+                  <OverviewTab
+                    chainId={urn.chainId}
+                    projectId={project.projectId}
+                    description={description}
+                    socialLinks={socialLinks}
+                    isRevnet={isRevnet}
+                    authority={authority ?? null}
+                    chains={chainPairs}
+                    etherscanHost={etherscan}
+                  />
+                ),
+              },
+              {
+                label: isRevnet ? 'Operator' : 'Owner',
+                content: (
+                  <div>
+                    {isRevnet ? (
+                      <p className="mb-5 text-sm leading-relaxed text-smoke-700">
+                        Revnets have no owner — the rules are locked in at
+                        launch. An operator manages the few controls revnets
+                        leave open
+                        {authority
+                          ? `: ${truncateAddress(authority)}`
+                          : '.'}
+                      </p>
+                    ) : (
+                      <p className="mb-5 text-sm leading-relaxed text-smoke-700">
+                        The owner&apos;s tools appear here when the owner
+                        connects their wallet.
+                      </p>
+                    )}
+                    {/* Renders only for the on-chain owner (client-gated). */}
+                    <OwnerPanel
+                      chainId={urn.chainId}
+                      projectId={project.projectId}
+                      initial={{
+                        // Prefer the pinned metadata (the truth setUriOf
+                        // points at); bendystraw mirrors it but can lag.
+                        name: metadata?.name ?? name,
+                        tagline:
+                          metadata?.projectTagline ??
+                          project.projectTagline ??
+                          '',
+                        description: metadata?.description ?? '',
+                        logoUri: metadata?.logoUri ?? project.logoUri ?? null,
+                        infoUri: metadata?.infoUri,
+                        twitter: metadata?.twitter,
+                        discord: metadata?.discord,
+                        telegram: metadata?.telegram,
+                        whatsapp: metadata?.whatsapp,
+                        instagram: metadata?.instagram,
+                        coverImageUri: metadata?.coverImageUri,
+                        payDisclosure: metadata?.payDisclosure,
+                      }}
+                    />
+                  </div>
+                ),
+              },
+            ]}
           />
-          {description.length > 0 || hasLinks ? (
-            <section>
-              <h2 className="mb-3 font-agrandir text-xl font-medium">
-                About
-              </h2>
-              {description.length > 0 ? (
-                <div className="card space-y-3 p-5 text-sm leading-relaxed text-ink/90">
-                  {description.map((p, i) => (
-                    <p key={i}>{p}</p>
-                  ))}
-                </div>
-              ) : null}
-              {hasLinks ? (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {socialLinks.map(([label, href]) =>
-                    href ? (
-                      <ExternalLink key={label} href={href} label={label} />
-                    ) : null,
-                  )}
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
         </div>
       </div>
     </div>

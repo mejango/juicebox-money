@@ -226,6 +226,39 @@ export async function getRecentActivity(
   return data.activityEvents.items
 }
 
+/**
+ * A revnet's operator (website/ parity): the permissionHolders row flagged
+ * isRevnetOperator, preferring one that still holds permissions. Null when
+ * the indexer has nothing — callers hide the operator rather than fabricate.
+ */
+export async function getRevnetOperator(
+  chainId: number,
+  projectId: number,
+): Promise<string | null> {
+  try {
+    const data = await bendystraw<{
+      permissionHolders: {
+        items: { operator: string; permissions: number[] }[]
+      }
+    }>(
+      `query($chainId: Int!, $projectId: Int!) {
+        permissionHolders(
+          where: { chainId: $chainId, projectId: $projectId, version: 6, isRevnetOperator: true }
+          limit: 10
+        ) { items { operator permissions } }
+      }`,
+      { chainId, projectId },
+      { revalidate: 60 },
+    )
+    const rows = data.permissionHolders?.items ?? []
+    const live = rows.filter(r => r.permissions?.length > 0)
+    const pick = live[0] ?? rows[0]
+    return pick?.operator ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
 ): Promise<BsProject[]> {
