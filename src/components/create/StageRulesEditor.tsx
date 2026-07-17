@@ -266,19 +266,26 @@ export function stageSummaryParts(
   if (flavor !== 'revnet')
     parts.push(
       duration === 0
-        ? 'lasts until changed'
+        ? 'Lasts until changed'
         : duration === FOREVER_SECONDS
-          ? 'lasts forever'
-          : `lasts ${secondsLabel(duration)}`,
+          ? 'Lasts forever'
+          : `Lasts ${secondsLabel(duration)}`,
     )
+  const cutClause =
+    Number(stage.cutPct) > 0 && (flavor !== 'revnet' || stage.cutOn)
+      ? flavor === 'revnet'
+        ? `-${Number(stage.cutPct)}% every ${Number(stage.cutFreqDays) || '?'} days`
+        : `-${Number(stage.cutPct)}% per cycle`
+      : ''
   if (stage.issuanceRate.trim() === '' && index > 0) {
-    parts.push('keeps issuance')
+    parts.push('Keeps issuance' + (cutClause ? `, ${cutClause}` : ''))
   } else if (Number(stage.issuanceRate) > 0) {
     parts.push(
-      `issues ${Number(stage.issuanceRate).toLocaleString('en-US')}/${unitLabel}`,
+      `Issues ${Number(stage.issuanceRate).toLocaleString('en-US')} per ${unitLabel}` +
+        (cutClause ? `, ${cutClause}` : ''),
     )
   } else {
-    parts.push('no issuance')
+    parts.push('No issuance')
   }
   if (flavor === 'revnet') {
     const splitsPct = splitsTotal(stage.reservedSplits, 'percent')
@@ -286,24 +293,15 @@ export function stageSummaryParts(
   } else if (Number(stage.reservedPct) > 0) {
     parts.push(`${Number(stage.reservedPct)}% reserved`)
   }
-  if (
-    Number(stage.cutPct) > 0 &&
-    (flavor !== 'revnet' || stage.cutOn)
-  )
-    parts.push(
-      flavor === 'revnet'
-        ? `-${Number(stage.cutPct)}%/${Number(stage.cutFreqDays) || '?'}d`
-        : `-${Number(stage.cutPct)}%/cycle`,
-    )
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   if (flavor === 'revnet') {
     parts.push(
       stage.cashOuts
         ? `${stageCashOutTax(stage) / 100}% cash out tax`
-        : 'cash outs off',
+        : 'Cash outs off',
     )
   } else if (stage.cashOuts && !routedAll) {
-    parts.push('cash outs on')
+    parts.push('Cash outs on')
   }
   return parts
 }
@@ -396,7 +394,7 @@ export function StageRulesEditor({
           ? 'Keeps rate'
           : `${Number(stage.issuanceRate || '0').toLocaleString('en-US')} per ${unitLabel}`
       }${reservedOn ? ` | ${Number(stage.reservedPct)}% reserved` : ''}${
-        Number(stage.cutPct) > 0 ? ` | -${Number(stage.cutPct)}%/cycle` : ''
+        Number(stage.cutPct) > 0 ? ` | -${Number(stage.cutPct)}% per cycle` : ''
       }`
     : '—'
 

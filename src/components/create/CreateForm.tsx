@@ -1328,7 +1328,7 @@ export function CreateForm() {
       <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-5xl">
         Start a project<span className="text-split-500">.</span>
       </h1>
-      <p className="mt-3 max-w-lg text-base leading-relaxed text-smoke-700 sm:text-lg">
+      <p className="mt-3 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">
         Give it a name, answer a few questions, and launch. Live in minutes —
         rules stay flexible unless you lock&nbsp;them&nbsp;in.
       </p>
@@ -2223,6 +2223,27 @@ export function CreateForm() {
           </p>
         ) : null}
 
+        <StoreEditor
+          items={items}
+          onChange={setItems}
+          currencyLabel={
+            effectiveStoreCurrency === 'token'
+              ? (customMeta?.symbol ?? 'TOKEN')
+              : storeUsd
+                ? 'USD'
+                : 'ETH'
+          }
+          disabled={busy}
+          categories={storeCategories}
+          onAddCategory={name => {
+            const id =
+              storeCategories.reduce((max, c) => Math.max(max, c.id), 0) + 1
+            setStoreCategories(prev => [...prev, { id, name: name.slice(0, 40) }])
+            return id
+          }}
+          chainIds={selected}
+        />
+
         <div className="mt-5">
           <button
             onClick={() => setStoreConfigOpen(o => !o)}
@@ -2298,8 +2319,8 @@ export function CreateForm() {
                     ],
                     [
                       'issueTokensForSplits',
-                      'Give split recipients project tokens',
-                      'Sale-split recipients get project tokens along with their share of the funds.',
+                      'Full token credit on split sales',
+                      'Buyers get project tokens for their entire payment, even the portion an item routes to splits. When off, tokens are only issued for what stays in the project.',
                     ],
                   ] as const
                 ).map(([key, title, blurb]) => (
@@ -2363,27 +2384,6 @@ export function CreateForm() {
             </div>
           ) : null}
         </div>
-
-        <StoreEditor
-          items={items}
-          onChange={setItems}
-          currencyLabel={
-            effectiveStoreCurrency === 'token'
-              ? (customMeta?.symbol ?? 'TOKEN')
-              : storeUsd
-                ? 'USD'
-                : 'ETH'
-          }
-          disabled={busy}
-          categories={storeCategories}
-          onAddCategory={name => {
-            const id =
-              storeCategories.reduce((max, c) => Math.max(max, c.id), 0) + 1
-            setStoreCategories(prev => [...prev, { id, name: name.slice(0, 40) }])
-            return id
-          }}
-          chainIds={selected}
-        />
       </section>
 
       {/* 4 — Review & launch */}
