@@ -380,6 +380,7 @@ export default async function ProjectPage({
                     isRevnet={isRevnet}
                     suckerGroupId={project.suckerGroupId}
                     chains={chainPairs}
+                    tokenSymbol={project.tokenSymbol ?? 'tokens'}
                   />
                 ),
               },

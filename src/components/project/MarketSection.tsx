@@ -15,7 +15,10 @@ import {
   jbOmnichainDeployerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
+import {
+  getAccountingContexts,
+  getTokenAddress,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
@@ -639,7 +642,28 @@ export function MarketSection({
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
-  const sym = tokenSymbol || 'tokens'
+
+  // The project's OWN token symbol — the passed-in prop is the bendystraw
+  // accounting-token symbol (e.g. "ETH"), which is NOT the project token.
+  const { data: resolvedSym } = useQuery({
+    queryKey: ['marketProjectSymbol', chainId, projectId],
+    enabled: !!publicClient,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async (): Promise<string | null> => {
+      const token = await getTokenAddress(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+      })
+      if (!token) return null
+      return (await publicClient!.readContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: 'symbol',
+      })) as string
+    },
+  })
+  const sym = resolvedSym || tokenSymbol || 'tokens'
 
   const {
     data: market,

@@ -16,7 +16,6 @@ import {
   truncateAddress,
 } from '@/lib/format'
 import { ActivityMeta } from './ActivityMeta'
-import { ChainIcon } from './ChainIcon'
 
 const IDENT_COLORS = [
   '#1A8A8A',

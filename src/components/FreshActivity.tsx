@@ -3,9 +3,10 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { BsFreshActivityEvent } from '@/lib/bendystraw'
-import { formatTokenAmount, timeAgo, truncateAddress } from '@/lib/format'
+import { timeAgo, truncateAddress } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
-import { ChainIcon } from './ChainIcon'
+import { ActivityMeta } from './ActivityMeta'
+import { ProjectLogo } from './ProjectLogo'
 
 const POLL_MS = 15_000
 
@@ -62,61 +63,55 @@ export function FreshActivity({
 
 function Row({ event }: { event: BsFreshActivityEvent }) {
   const name = event.project?.name ?? `Project ${event.projectId}`
-  const decimals = event.project?.decimals ?? 18
-  const symbol = event.project?.tokenSymbol ?? 'ETH'
   const who = truncateAddress(event.from)
+  const href = `/${toUrn(event.chainId, event.projectId)}`
+  const pay = event.payEvent
+  const cashOut = event.cashOutTokensEvent
 
-  let line: React.ReactNode = null
-  if (event.payEvent) {
-    line = (
-      <>
-        <span className="text-smoke-700">{who}</span> paid{' '}
-        <span className="font-bold text-ink">
-          {formatTokenAmount(event.payEvent.amount, decimals)} {symbol}
-        </span>{' '}
-        <span aria-hidden className="text-smoke-500">
-          →
-        </span>{' '}
-        <span className="font-medium text-bluebs-600">{name}</span>
-      </>
-    )
-  } else if (event.cashOutTokensEvent) {
-    line = (
-      <>
-        <span className="text-smoke-700">{who}</span> cashed out{' '}
-        <span className="font-bold text-bluebs-600">
-          {formatTokenAmount(event.cashOutTokensEvent.cashOutCount, 18)} tokens
-        </span>{' '}
-        <span aria-hidden className="text-smoke-500">
-          →
-        </span>{' '}
-        <span className="font-medium text-bluebs-600">{name}</span>
-      </>
-    )
-  } else {
-    return null
-  }
+  if (!pay && !cashOut) return null
+
+  const isPay = !!pay
+  const relativeTime = timeAgo(event.timestamp)
 
   return (
-    <li>
-      <Link
-        href={`/${toUrn(event.chainId, event.projectId)}`}
-        className="flex items-start justify-between gap-3 px-4 py-3 transition-colors hover:bg-smoke-25"
-      >
-        <span className="min-w-0 break-words text-[13px] leading-relaxed">
-          {line}
-        </span>
-        <span className="flex shrink-0 flex-col items-end gap-1.5">
-          <span
-            className="text-xs text-smoke-500"
-            // Relative times drift between server render and hydration.
-            suppressHydrationWarning
-          >
-            {timeAgo(event.timestamp)}
-          </span>
-          <ChainIcon chainId={event.chainId} size={16} />
-        </span>
-      </Link>
+    <li className="px-4 py-4 transition-colors hover:bg-smoke-25">
+      <div className="flex items-start gap-3">
+        <Link href={href} aria-label={`Open ${name}`} className="shrink-0">
+          <ProjectLogo
+            name={name}
+            logoUri={event.project?.logoUri ?? null}
+            size={46}
+          />
+        </Link>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <Link
+              href={href}
+              className="min-w-0 truncate text-sm font-medium text-bluebs-600 hover:underline"
+            >
+              {name}
+            </Link>
+            <ActivityMeta
+              chainId={event.chainId}
+              txHash={event.txHash}
+              amountUsd={pay?.amountUsd ?? cashOut?.reclaimAmountUsd}
+              direction={isPay ? 'in' : 'out'}
+            />
+          </div>
+          <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
+            <span className="text-smoke-700">{who}</span>{' '}
+            {isPay ? 'paid' : 'cashed out'}
+          </p>
+          <p className="mt-1 text-xs text-smoke-500">
+            <span
+              // Relative times drift between server render and hydration.
+              suppressHydrationWarning
+            >
+              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+            </span>
+          </p>
+        </div>
+      </div>
     </li>
   )
 }

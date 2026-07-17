@@ -37,6 +37,7 @@ import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
 import { LoansSection } from '@/components/project/LoansSection'
+import { MarketSection } from '@/components/project/MarketSection'
 import { SettlementSection } from '@/components/project/SettlementSection'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
@@ -62,6 +63,7 @@ export function OwnersTab({
   isRevnet,
   suckerGroupId,
   chains,
+  tokenSymbol = 'tokens',
 }: {
   chainId: JBChainId
   projectId: number
@@ -69,6 +71,8 @@ export function OwnersTab({
   suckerGroupId: string | null
   /** [chainId, projectId] pairs across the sucker group (incl. this chain). */
   chains: [number, number][]
+  /** The project's own token symbol, for the Market card display. */
+  tokenSymbol?: string
 }) {
   const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
 
@@ -105,6 +109,16 @@ export function OwnersTab({
                 projectId={projectId}
                 isRevnet={isRevnet}
                 chains={chains}
+              />
+            ),
+          },
+          {
+            label: 'Market',
+            content: (
+              <MarketSection
+                chainId={chainId}
+                projectId={projectId}
+                tokenSymbol={tokenSymbol}
               />
             ),
           },
