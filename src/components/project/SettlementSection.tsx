@@ -777,6 +777,7 @@ function MoveCard({
               from={from as JBChainId}
               fromPid={fromPid}
               to={to as number}
+              toPid={chains.find(([cid]) => cid === to)?.[1] ?? (to as number)}
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}
@@ -796,6 +797,7 @@ function MoveFlow({
   from,
   fromPid,
   to,
+  toPid,
   sucker,
   projectToken,
   amount,
@@ -805,6 +807,7 @@ function MoveFlow({
   from: JBChainId
   fromPid: number
   to: number
+  toPid: number
   sucker: Address
   projectToken: Address
   amount: bigint
@@ -919,10 +922,13 @@ function MoveFlow({
         | PublicClient
         | undefined
       if (!destClient) throw new Error(`Unsupported destination chain ${to}.`)
-      const destPid = BigInt(fromPid) // sucker groups share the project token identity; verify below
+      // The project's id on the destination chain — a sucker group can have
+      // DIFFERENT project ids per chain, so this must be the dest chain's own
+      // id, not the source's, or the accounting-context check verifies the
+      // wrong project.
       const destContexts = await getAccountingContexts(destClient, {
         chainId: to as JBChainId,
-        projectId: destPid,
+        projectId: BigInt(toPid),
       }).catch(() => [])
       const mappedRemote = unpackAddress(mapping.addr).toLowerCase()
       const destMatch = destContexts.some(

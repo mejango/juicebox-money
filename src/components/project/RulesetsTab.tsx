@@ -265,21 +265,25 @@ function formatLimits(
   if (!limits.length) return 'None'
   return limits
     .map(limit => {
+      const isTokenKeyed =
+        limit.currency === ctx.currency ||
+        limit.currency === tokenCurrencyId(ctx.token)
       const symbol =
         limit.currency === 1
           ? 'ETH'
           : limit.currency === USD_CURRENCY_ID(6)
             ? 'USD'
-            : limit.currency === ctx.currency ||
-                limit.currency === tokenCurrencyId(ctx.token)
+            : isTokenKeyed
               ? ctx.symbol
               : `currency ${limit.currency}`
-      // JBCurrencyAmount always uses the accounting token's fixed-point
-      // decimals, even when its unit is another currency (a USD limit on a
-      // 6-decimal USDC context).
+      // A limit in the token's OWN currency uses the token's decimals; a
+      // limit in a base currency (ETH/USD) is 18-dec fixed point (JB's price
+      // fidelity), NOT the token's decimals — else a USD limit on 6-dec USDC
+      // reads 1e12× too large.
+      const dec = isTokenKeyed ? ctx.decimals : 18
       return limit.amount >= UNLIMITED_FLOOR
         ? `Unlimited ${symbol}`
-        : `${formatTokenAmount(limit.amount, ctx.decimals)} ${symbol}`
+        : `${formatTokenAmount(limit.amount, dec)} ${symbol}`
     })
     .join(' + ')
 }

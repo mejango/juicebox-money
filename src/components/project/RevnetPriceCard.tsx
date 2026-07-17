@@ -3,6 +3,7 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
+  USD_CURRENCY_ID,
   jbContractAddress,
   jbTokensAbi,
   type JBChainId,
@@ -60,7 +61,24 @@ export function RevnetPriceCard({
           })) as string
         })().catch(() => null),
       ])
-      return { all, contexts, projectSymbol }
+      // Resolve token-keyed base currencies (uint32(uint160(token))) to their
+      // real symbols so a DAI/USDC-based revnet isn't mislabeled.
+      const contextSymbols = await Promise.all(
+        contexts.map(async ctx => ({
+          currency: ctx.currency,
+          symbol:
+            ctx.token.toLowerCase() === NATIVE
+              ? nativeSymbol
+              : await publicClient!
+                  .readContract({
+                    address: ctx.token,
+                    abi: erc20Abi,
+                    functionName: 'symbol',
+                  })
+                  .catch(() => null),
+        })),
+      )
+      return { all, contexts, contextSymbols, projectSymbol }
     },
   })
 
@@ -73,16 +91,16 @@ export function RevnetPriceCard({
 
   if (stages.length === 0 || stages.every(s => s.weight === 0n)) return null
 
-  // The base currency: native → the chain's symbol, token-keyed → that
-  // token's symbol (USDC-based revnets).
+  // The base currency: 1 → native, 2 → USD, else token-keyed → that token's
+  // resolved symbol (a DAI/USDC-based revnet).
   const baseCurrency = data?.all?.[0]?.metadata.baseCurrency ?? 1
-  const ctxMatch = data?.contexts.find(c => c.currency === baseCurrency)
   const baseSymbol =
     baseCurrency === 1
       ? nativeSymbol
-      : ctxMatch && ctxMatch.token.toLowerCase() !== NATIVE
-        ? 'USDC'
-        : nativeSymbol
+      : baseCurrency === USD_CURRENCY_ID(6)
+        ? 'USD'
+        : (data?.contextSymbols.find(c => c.currency === baseCurrency)
+            ?.symbol ?? nativeSymbol)
 
   return (
     <div className="card p-5">

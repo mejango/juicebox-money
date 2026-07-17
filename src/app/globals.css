@@ -5,114 +5,226 @@
 @layer base {
   :root {
     color-scheme: light;
+
+    --color-page: 255 255 255;
+    --color-surface: 255 255 255;
+    --color-ink: 20 20 20;
+
+    --color-smoke-25: 254 253 251;
+    --color-smoke-50: 251 249 246;
+    --color-smoke-75: 245 244 239;
+    --color-smoke-100: 239 236 230;
+    --color-smoke-200: 231 227 220;
+    --color-smoke-300: 212 209 199;
+    --color-smoke-400: 192 187 173;
+    --color-smoke-500: 156 149 128;
+    --color-smoke-600: 133 124 99;
+    --color-smoke-700: 87 83 68;
+    --color-smoke-800: 63 58 46;
+    --color-smoke-900: 53 48 38;
+
+    --color-bluebs-25: 238 241 253;
+    --color-bluebs-50: 227 233 255;
+    --color-bluebs-100: 207 217 250;
+    --color-bluebs-200: 187 200 246;
+    --color-bluebs-300: 154 174 245;
+    --color-bluebs-400: 116 142 237;
+    --color-bluebs-500: 87 119 235;
+    --color-bluebs-600: 72 100 200;
+    --color-bluebs-700: 58 82 166;
+    --color-bluebs-800: 35 53 117;
+    --color-bluebs-900: 21 34 84;
+    --color-bluebs-950: 17 23 45;
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --color-page: 22 20 29;
+    --color-surface: 26 24 31;
+    --color-ink: 225 224 232;
+
+    --color-smoke-25: 26 24 31;
+    --color-smoke-50: 32 30 41;
+    --color-smoke-75: 32 30 41;
+    --color-smoke-100: 45 41 58;
+    --color-smoke-200: 57 52 78;
+    --color-smoke-300: 73 67 97;
+    --color-smoke-400: 95 92 122;
+    --color-smoke-500: 162 159 183;
+    --color-smoke-600: 162 159 183;
+    --color-smoke-700: 225 224 232;
+    --color-smoke-800: 225 224 232;
+    --color-smoke-900: 225 224 232;
+
+    --color-bluebs-25: 17 23 45;
+    --color-bluebs-50: 17 23 45;
+    --color-bluebs-100: 21 34 84;
+    --color-bluebs-200: 35 53 117;
+    --color-bluebs-300: 154 174 245;
+    --color-bluebs-400: 116 142 237;
+    --color-bluebs-500: 87 119 235;
+    --color-bluebs-600: 116 142 237;
+    --color-bluebs-700: 154 174 245;
+    --color-bluebs-800: 187 200 246;
+    --color-bluebs-900: 207 217 250;
+    --color-bluebs-950: 227 233 255;
   }
 
   html {
-    @apply antialiased;
+    @apply bg-page antialiased;
+    min-width: 320px;
   }
 
   body {
-    @apply bg-bone font-sans text-ink;
+    @apply bg-page font-sans text-ink;
+    overflow-x: clip;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: rgb(var(--color-bluebs-500));
   }
 
   ::selection {
-    @apply bg-split-200 text-ink;
+    @apply bg-bluebs-200 text-ink;
   }
 
-  /* Focus is always visible, always Bluebs. */
   :focus-visible {
-    outline: 2px solid theme('colors.bluebs.500');
+    outline: 2px solid rgb(var(--color-bluebs-500));
     outline-offset: 2px;
+  }
+
+  /* A few feature components predate the semantic surface token. Keep them
+     theme-aware until they migrate to bg-surface. */
+  .dark .bg-white {
+    background-color: rgb(var(--color-surface));
   }
 }
 
 @layer components {
-  /* --- Cards: white surfaces, thin Smoke border (DESIGN.md §Cards) --- */
   .card {
-    @apply rounded-xl border border-smoke-200 bg-white;
+    @apply rounded-xl border border-smoke-200 bg-surface;
   }
 
-  /* --- Primary pill button: Split fill, thin near-black border, the
-         brand's SMALL offset shadow (DESIGN.md §Pill buttons) --- */
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-split-400 font-agrandir font-medium text-ink;
-    border: 1.5px solid #201e1a;
-    box-shadow: 2px 2px 0 #000;
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-500 font-sans font-medium text-white;
+    box-shadow: 0 6px 10px rgb(0 0 0 / 0.08);
     transition:
-      background-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 120ms ease;
+      background-color 100ms linear,
+      box-shadow 100ms linear,
+      transform 100ms linear;
   }
 
   .btn-primary:hover:not(:disabled) {
-    @apply bg-split-300;
+    @apply bg-bluebs-600;
+    box-shadow: 0 8px 12px rgb(0 0 0 / 0.12);
   }
 
   .btn-primary:active:not(:disabled) {
-    box-shadow: 1px 1px 0 #000;
-    transform: translate(1px, 1px);
+    box-shadow: 0 2px 5px rgb(0 0 0 / 0.1);
+    transform: translateY(1px);
   }
 
   .btn-primary:disabled {
-    @apply cursor-not-allowed opacity-50;
+    @apply cursor-not-allowed bg-smoke-200 text-smoke-500;
+    box-shadow: none;
   }
 
-  /* --- Secondary pill: white fill, same border + shadow --- */
   .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-xl bg-white font-agrandir font-medium text-ink;
-    border: 1.5px solid #201e1a;
-    box-shadow: 2px 2px 0 #000;
+    @apply inline-flex items-center justify-center rounded-lg border border-smoke-300 bg-surface font-sans font-medium text-ink;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
     transition:
-      background-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 120ms ease;
+      color 100ms linear,
+      border-color 100ms linear,
+      background-color 100ms linear,
+      box-shadow 100ms linear,
+      transform 100ms linear;
   }
 
   .btn-secondary:hover:not(:disabled) {
-    @apply bg-bone;
+    @apply border-bluebs-500 bg-bluebs-25 text-bluebs-600;
   }
 
   .btn-secondary:active:not(:disabled) {
-    box-shadow: 1px 1px 0 #000;
-    transform: translate(1px, 1px);
+    box-shadow: none;
+    transform: translateY(1px);
   }
 
   .btn-secondary:disabled {
-    @apply cursor-not-allowed opacity-50;
+    @apply cursor-not-allowed border-smoke-200 text-smoke-400;
+    box-shadow: none;
   }
 
-  /* --- Chips: soft fruit tints, rounded-full, Beatrice --- */
+  .btn-tertiary {
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-25 font-medium text-bluebs-600;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-transparent font-medium text-ink hover:bg-smoke-50;
+  }
+
+  .icon-button {
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-lg text-ink transition-colors hover:bg-smoke-50 hover:text-bluebs-600;
+  }
+
+  .nav-link {
+    @apply inline-flex min-h-[44px] items-center text-sm font-medium text-ink transition-colors hover:text-bluebs-600;
+  }
+
   .chip {
     @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium leading-none;
   }
 
-  /* --- Native selects: kill the browser caret, draw our own (Smoke-500)
-         so spacing is consistent — pair with pr-9 --- */
   .select-caret {
     appearance: none;
     -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239C9580' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23737373' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     cursor: pointer;
   }
 
-  /* --- Field label: small Smoke uppercase label over values --- */
   .field-label {
-    @apply block text-xs uppercase tracking-wide text-smoke-700;
+    @apply block text-[13px] font-medium text-smoke-700;
   }
 
-  /* --- Inputs: white wells, Smoke border, Bluebs focus --- */
   .input-well {
-    @apply w-full rounded-lg bg-white text-ink outline-none placeholder:text-smoke-500;
-    border: 1.5px solid theme('colors.smoke.300');
-    transition: border-color 120ms ease;
+    @apply w-full rounded-lg bg-smoke-50 text-ink outline-none placeholder:text-smoke-500;
+    border: 1px solid rgb(var(--color-smoke-300));
+    transition:
+      background-color 100ms linear,
+      border-color 100ms linear,
+      box-shadow 100ms linear;
+  }
+
+  .input-well:hover:not(:disabled) {
+    border-color: rgb(var(--color-smoke-400));
   }
 
   .input-well:focus,
   .input-well:focus-within {
-    border-color: theme('colors.bluebs.500');
+    @apply bg-surface;
+    border-color: rgb(var(--color-bluebs-400));
+    box-shadow: 0 0 0 2px rgb(var(--color-bluebs-50));
     outline: none;
+  }
+
+  .input-well[aria-invalid='true'] {
+    @apply border-red-500;
+    box-shadow: 0 0 0 2px rgb(254 226 226);
   }
 }
 
@@ -120,16 +232,32 @@
   .card-lift {
     transition:
       border-color 150ms ease,
-      box-shadow 150ms ease;
+      box-shadow 150ms ease,
+      transform 150ms ease;
   }
 
   .card-lift:hover {
-    border-color: theme('colors.smoke.400');
-    box-shadow: 0 4px 12px rgb(32 30 26 / 0.06);
+    @apply border-smoke-300;
+    box-shadow: 0 6px 16px rgb(0 0 0 / 0.06);
+    transform: translateY(-1px);
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+
   .btn-primary,
   .btn-secondary,
   .card-lift,

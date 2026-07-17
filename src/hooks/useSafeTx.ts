@@ -88,7 +88,9 @@ export function useSafeTx(chainId: number) {
         })
         // Simulation is the safety gate: the exact call, args, and value
         // must succeed against live state before a signature is requested.
-        await publicClient.simulateContract({
+        // We then sign the SIMULATED request itself, so what's broadcast is
+        // exactly what was validated (viem resolves gas/nonce from it too).
+        const { request: simulated } = await publicClient.simulateContract({
           address: request.address,
           abi: request.abi,
           functionName: request.functionName,
@@ -97,14 +99,7 @@ export function useSafeTx(chainId: number) {
           account: address,
         })
         setPhase('signing')
-        const txHash = await writeContractAsync({
-          chainId: request.chainId,
-          address: request.address,
-          abi: request.abi,
-          functionName: request.functionName,
-          args: request.args as unknown[],
-          value: request.value,
-        })
+        const txHash = await writeContractAsync(simulated)
         setHash(txHash)
         setPhase('pending')
         return txHash

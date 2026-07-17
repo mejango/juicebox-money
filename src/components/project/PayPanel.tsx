@@ -391,7 +391,11 @@ export function PayPanel({
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
   const previewReady = mode === 'addbalance' || (!!preview && !previewError)
-  const minReturned = preview?.beneficiaryTokenCount ?? 0n
+  // Floor the guaranteed minimum at 99% of the preview (website parity): a
+  // buyback-routed or USD-issuance pay legitimately drifts between preview
+  // and inclusion, and an exact min would make ordinary pays revert. A
+  // verified zero stays zero.
+  const minReturned = ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n
 
   // ---- ERC-20 allowance (direct pays approve the terminal) ----
   const { data: allowance, refetch: refetchAllowance } = useQuery({
