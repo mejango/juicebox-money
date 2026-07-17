@@ -53,6 +53,11 @@ is already in PROJECT_FIELDS, currently unused).
 - [ ] Plan concrete tab set + component layout from reports
 - [ ] Implement tabs (server components where possible, islands for reads)
 - [ ] Reorganize TreasuryCard to website/'s pay-card functionality
+- [ ] ALL project-page transactions from website/ ship complete + safe:
+      owner (metadata, queue rulesets, payouts, allowance, splits, mint,
+      deploy ERC20, permissions), holder (claim, transfer credits, burn,
+      cash out, revnet loans), 721 shop buys, sucker chain moves. Every tx:
+      simulation before send, displayed min == sent param, confirm step.
 - [ ] Revnet awareness everywhere (vocabulary, operator, stages, loans,
       auto-issuance, cash-out delay)
 - [ ] Full adversarial audit (agents): custom project + revnet coverage,
