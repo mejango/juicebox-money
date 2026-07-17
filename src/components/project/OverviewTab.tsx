@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { ChainIcon } from '@/components/ChainIcon'
+import { RevnetPriceCard } from '@/components/project/RevnetPriceCard'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { truncateAddress } from '@/lib/format'
 import { chainName, toUrn } from '@/lib/urn'
@@ -34,6 +35,9 @@ export function OverviewTab({
   const links = socialLinks.filter(([, href]) => href)
   return (
     <div className="space-y-5">
+      {isRevnet ? (
+        <RevnetPriceCard chainId={chainId} projectId={projectId} />
+      ) : null}
       {description.length > 0 || links.length > 0 ? (
         <section>
           <h2 className="mb-3 font-agrandir text-xl font-medium">About</h2>
