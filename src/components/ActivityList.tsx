@@ -15,6 +15,7 @@ import {
   timeAgo,
   truncateAddress,
 } from '@/lib/format'
+import { ActivityMeta } from './ActivityMeta'
 import { ChainIcon } from './ChainIcon'
 
 const IDENT_COLORS = [
@@ -46,22 +47,6 @@ function identityGradient(seed: string): string {
   const a = IDENT_COLORS[Math.abs(hash) % IDENT_COLORS.length]
   const b = IDENT_COLORS[Math.abs(hash >> 3) % IDENT_COLORS.length]
   return `linear-gradient(135deg, ${a}, ${b})`
-}
-
-/** Bendystraw stores amountUsd/reclaimAmountUsd as 18-decimal USD. */
-function formatIndexedUsd(raw: string | null | undefined): string | null {
-  if (!raw) return null
-  try {
-    const usd = Number(BigInt(raw) / 1_000_000_000_000n) / 1_000_000
-    if (!Number.isFinite(usd) || usd <= 0) return null
-    if (usd < 0.01) return '<$0.01'
-    return `$${usd.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`
-  } catch {
-    return null
-  }
 }
 
 /** Compact project-token counts, matching website/'s activity rows. */
@@ -110,9 +95,6 @@ function Row({
   const actor = pay?.beneficiary ?? cashOut?.beneficiary ?? ''
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
-  const usd = formatIndexedUsd(
-    pay?.amountUsd ?? cashOut?.reclaimAmountUsd,
-  )
   const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
   const tokenCount = formatProjectTokens(rawTokenCount)
   const issuedTokens = BigInt(rawTokenCount) > 0n
@@ -156,31 +138,12 @@ function Row({
               {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
             </span>
           )}
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            {usd ? <span>{usd}</span> : null}
-            <span
-              className={`border px-1.5 text-[10px] font-medium leading-4 ${
-                isPay
-                  ? 'border-bluebs-500 text-bluebs-600'
-                  : 'border-peel-500 text-peel-600'
-              }`}
-            >
-              {isPay ? 'in' : 'out'}
-            </span>
-            {link ? (
-              <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`View transaction on ${JB_CHAINS[event.chainId as JBChainId]?.name ?? 'chain explorer'}`}
-                className="inline-flex transition-opacity hover:opacity-70"
-              >
-                <ChainIcon chainId={event.chainId} size={18} />
-              </a>
-            ) : (
-              <ChainIcon chainId={event.chainId} size={18} />
-            )}
-          </span>
+          <ActivityMeta
+            chainId={event.chainId}
+            txHash={event.txHash}
+            amountUsd={pay?.amountUsd ?? cashOut?.reclaimAmountUsd}
+            direction={isPay ? 'in' : 'out'}
+          />
         </div>
         <p className="mt-1 break-words text-sm leading-relaxed text-ink">
           {actorNode}{' '}

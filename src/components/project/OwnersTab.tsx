@@ -17,27 +17,33 @@ import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
   buildClaimTokensTx,
   getAccountingContexts,
+  getAllRulesets,
   getCreditBalance,
   getCurrentRuleset,
   getTokenAddress,
+  type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
+  formatUnits,
   zeroAddress,
   type Address,
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
+import { LoansSection } from '@/components/project/LoansSection'
+import { SettlementSection } from '@/components/project/SettlementSection'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BsParticipant } from '@/lib/bendystraw'
-import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { chainName, toUrn } from '@/lib/urn'
 
@@ -73,6 +79,7 @@ export function OwnersTab({
         projectId={projectId}
         chainIds={chains.map(([cid]) => cid)}
         etherscanHost={etherscanHost}
+        compact
       />
       <SubTabs
         tabs={[
@@ -98,10 +105,43 @@ export function OwnersTab({
                 projectId={projectId}
                 isRevnet={isRevnet}
                 chains={chains}
-                etherscanHost={etherscanHost}
               />
             ),
           },
+          ...(chains.length > 1
+            ? [
+                {
+                  label: 'Settlement',
+                  content: (
+                    <SettlementSection
+                      chainId={chainId}
+                      projectId={projectId}
+                      chains={chains}
+                      isRevnet={isRevnet}
+                    />
+                  ),
+                },
+              ]
+            : []),
+          ...(isRevnet
+            ? [
+                {
+                  label: 'Loans',
+                  content: (
+                    <LoansSection chainId={chainId} projectId={projectId} />
+                  ),
+                },
+                {
+                  label: 'Auto issuance',
+                  content: (
+                    <AutoIssuanceSection
+                      chainId={chainId}
+                      projectId={projectId}
+                    />
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     </div>
@@ -523,6 +563,156 @@ function ClaimFlow({
 
 // -------------------------------------------------------------- ALL card --
 
+type AggregatedHolder = {
+  address: string
+  balance: bigint
+  volumeUsd: bigint
+  chains: number[]
+}
+
+function polarPoint(cx: number, cy: number, radius: number, angle: number) {
+  return {
+    x: (cx + Math.cos(angle) * radius).toFixed(3),
+    y: (cy + Math.sin(angle) * radius).toFixed(3),
+  }
+}
+
+function donutSlicePath(start: number, end: number): string {
+  const cx = 120
+  const cy = 112
+  const outer = 92
+  const inner = 54
+  const largeArc = end - start > Math.PI ? 1 : 0
+  const p1 = polarPoint(cx, cy, outer, start)
+  const p2 = polarPoint(cx, cy, outer, end)
+  const p3 = polarPoint(cx, cy, inner, end)
+  const p4 = polarPoint(cx, cy, inner, start)
+  return [
+    `M ${p1.x} ${p1.y}`,
+    `A ${outer} ${outer} 0 ${largeArc} 1 ${p2.x} ${p2.y}`,
+    `L ${p3.x} ${p3.y}`,
+    `A ${inner} ${inner} 0 ${largeArc} 0 ${p4.x} ${p4.y}`,
+    'Z',
+  ].join(' ')
+}
+
+function holderPercent(balance: bigint, total: bigint): number {
+  return total > 0n
+    ? Number((balance * 1_000_000n) / total) / 10_000
+    : 0
+}
+
+function holderPercentLabel(balance: bigint, total: bigint): string {
+  const pct = holderPercent(balance, total)
+  if (pct >= 10) return `${pct.toFixed(2)}%`
+  if (pct >= 1) return `${pct.toFixed(3)}%`
+  if (pct >= 0.01) return `${pct.toFixed(4)}%`
+  return '<0.01%'
+}
+
+function compactTokenTotal(raw: bigint): string {
+  const value = Number(formatUnits(raw, 18))
+  if (!Number.isFinite(value)) return '—'
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, '')}b`
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k`
+  }
+  return formatTokenAmount(raw)
+}
+
+function indexedPaidLabel(raw: bigint): string {
+  if (raw <= 0n) return '—'
+  const usd = Number(raw / 1_000_000_000_000n) / 1_000_000
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  return `$${usd.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
+}
+
+function OwnersDonut({
+  holders,
+  total,
+  countLabel,
+  tokenUnit,
+}: {
+  holders: AggregatedHolder[]
+  total: bigint
+  countLabel: string
+  tokenUnit: string
+}) {
+  const drawable = holders.filter(holder => holder.balance > 0n).reverse()
+  const slices: { holder: AggregatedHolder; path: string }[] = []
+  let angle = 0
+
+  if (drawable.length === 1) {
+    slices.push({
+      holder: drawable[0],
+      path: donutSlicePath(0, Math.PI * 2 - 0.001),
+    })
+  } else {
+    for (const holder of drawable) {
+      const share = Number(
+        (holder.balance * 1_000_000_000_000n) / total,
+      ) / 1_000_000_000_000
+      if (!Number.isFinite(share) || share <= 0) continue
+      const next = angle + share * Math.PI * 2
+      slices.push({ holder, path: donutSlicePath(angle, next) })
+      angle = next
+    }
+  }
+
+  return (
+    <div className="min-w-0 text-center">
+      <svg
+        viewBox="0 0 240 218"
+        role="img"
+        aria-label={`${tokenUnit} owner distribution`}
+        className="mx-auto block w-full max-w-[280px]"
+      >
+        {slices.map(({ holder, path }) => (
+          <path
+            key={holder.address}
+            d={path}
+            className="fill-crush-300 transition-colors hover:fill-crush-400"
+            stroke="white"
+            strokeWidth="0.8"
+          >
+            <title>
+              {truncateAddress(holder.address)} —{' '}
+              {holderPercentLabel(holder.balance, total)}
+            </title>
+          </path>
+        ))}
+        <text
+          x="120"
+          y="108"
+          textAnchor="middle"
+          className="fill-ink font-agrandir text-[28px] font-medium"
+        >
+          {countLabel}
+        </text>
+        <text
+          x="120"
+          y="132"
+          textAnchor="middle"
+          className="fill-smoke-500 text-[11px] uppercase tracking-wide"
+        >
+          owners
+        </text>
+      </svg>
+      <p className="mt-1 text-xs text-smoke-500">
+        {compactTokenTotal(total)} {tokenUnit}
+      </p>
+    </div>
+  )
+}
+
 function AllHoldersCard({
   chainId,
   projectId,
@@ -534,6 +724,25 @@ function AllHoldersCard({
   suckerGroupId: string | null
   etherscanHost?: string
 }) {
+  const { data: projectTokenAddress } = useReadContract({
+    abi: jbTokensAbi,
+    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    functionName: 'tokenOf',
+    args: [BigInt(projectId)],
+    chainId,
+    query: { staleTime: 60_000 },
+  })
+  const tokenDeployed =
+    !!projectTokenAddress && projectTokenAddress !== zeroAddress
+  const { data: projectTokenSymbol } = useReadContract({
+    abi: erc20Abi,
+    address: projectTokenAddress as Address,
+    functionName: 'symbol',
+    chainId,
+    query: { enabled: tokenDeployed, staleTime: 60_000 },
+  })
+  const tokenUnit = projectTokenSymbol ? String(projectTokenSymbol) : 'tokens'
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ['participants', suckerGroupId ?? `${chainId}:${projectId}`],
     staleTime: 60_000,
@@ -554,13 +763,33 @@ function AllHoldersCard({
   // One row per holder: an omnichain holder shows up once per chain in the
   // indexer, so fold the rows together by address before ranking.
   const holders = useMemo(() => {
-    const byAddress = new Map<string, bigint>()
+    const byAddress = new Map<
+      string,
+      {
+        address: string
+        balance: bigint
+        volumeUsd: bigint
+        chains: Set<number>
+      }
+    >()
     for (const p of data?.items ?? []) {
       const key = p.address.toLowerCase()
-      byAddress.set(key, (byAddress.get(key) ?? 0n) + BigInt(p.balance))
+      const holder = byAddress.get(key) ?? {
+        address: p.address,
+        balance: 0n,
+        volumeUsd: 0n,
+        chains: new Set<number>(),
+      }
+      holder.balance += BigInt(p.balance)
+      holder.volumeUsd += BigInt(p.volumeUsd || '0')
+      holder.chains.add(p.chainId)
+      byAddress.set(key, holder)
     }
-    return [...byAddress.entries()]
-      .map(([address, balance]) => ({ address, balance }))
+    return [...byAddress.values()]
+      .map(holder => ({
+        ...holder,
+        chains: [...holder.chains].sort((a, b) => a - b),
+      }))
       .sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0))
   }, [data])
 
@@ -569,16 +798,18 @@ function AllHoldersCard({
   // All rows fetched = the aggregated count is the real holder count;
   // truncated = we only know it's at least that many.
   const exact = !!data && data.totalCount <= data.items.length
-  const holderCountLine = exact
-    ? `${holders.length} ${holders.length === 1 ? 'holder' : 'holders'}`
-    : `${holders.length}+ holders`
-
-  const percentOf = (balance: bigint) =>
-    total > 0n ? Number((balance * 10_000n) / total) / 100 : 0
+  const holderCount = exact ? String(holders.length) : `${holders.length}+`
+  const holderCountLine = `${holderCount} ${
+    holders.length === 1 && exact ? 'holder' : 'holders'
+  }`
 
   return (
     <div className="card p-5">
-      <span className="field-label">All holders</span>
+      <span className="field-label">All</span>
+      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+        Token owners paid in, received splits, received auto-issuance, or got
+        them second-hand.
+      </p>
       {isLoading ? (
         <p className="mt-2 text-sm text-smoke-500">Loading…</p>
       ) : isError ? (
@@ -591,42 +822,64 @@ function AllHoldersCard({
         </p>
       ) : (
         <>
-          <div className="mt-3 space-y-2">
-            {top.map(holder => {
-              const pct = percentOf(holder.balance)
-              return (
-                <div
-                  key={holder.address}
-                  className="flex items-center gap-3 text-sm"
-                >
-                  <span className="w-28 shrink-0">
-                    {etherscanHost ? (
-                      <a
-                        href={`https://${etherscanHost}/address/${holder.address}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-ink hover:underline"
-                      >
-                        {truncateAddress(holder.address)}
-                      </a>
-                    ) : (
-                      <span className="text-ink">
-                        {truncateAddress(holder.address)}
-                      </span>
-                    )}
-                  </span>
-                  <span className="h-2 flex-1 overflow-hidden rounded-full bg-smoke-100">
-                    <span
-                      className="block h-full rounded-full bg-melon-500"
-                      style={{ width: `${Math.max(pct, 0.5)}%` }}
-                    />
-                  </span>
-                  <span className="w-14 shrink-0 text-right text-xs text-smoke-700">
-                    {pct.toFixed(pct >= 10 ? 0 : 1)}%
-                  </span>
+          <div className="mt-4 grid items-start gap-6 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]">
+            <OwnersDonut
+              holders={holders}
+              total={total}
+              countLabel={holderCount}
+              tokenUnit={tokenUnit}
+            />
+            <div className="min-w-0 overflow-x-auto rounded-xl border border-smoke-200">
+              <div className="min-w-[520px]">
+                <div className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] gap-3 bg-smoke-75 px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-smoke-500">
+                  <span>Account</span>
+                  <span>Share</span>
+                  <span>Chains</span>
+                  <span>Paid</span>
                 </div>
-              )
-            })}
+                <div className="divide-y divide-smoke-100">
+                  {top.map(holder => (
+                    <div
+                      key={holder.address}
+                      className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] items-center gap-3 px-4 py-3 text-sm"
+                    >
+                      <span className="min-w-0">
+                        {etherscanHost ? (
+                          <a
+                            href={`https://${etherscanHost}/address/${holder.address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-ink hover:underline"
+                          >
+                            {truncateAddress(holder.address)}
+                          </a>
+                        ) : (
+                          <span className="text-ink">
+                            {truncateAddress(holder.address)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-medium text-ink">
+                        {holderPercentLabel(holder.balance, total)}
+                      </span>
+                      <span className="flex items-center pl-1">
+                        {holder.chains.map((id, index) => (
+                          <ChainIcon
+                            key={id}
+                            chainId={id}
+                            size={16}
+                            className={index > 0 ? '-ml-1' : ''}
+                          />
+                        ))}
+                      </span>
+                      <span className="text-smoke-700">
+                        {indexedPaidLabel(holder.volumeUsd)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
           <p className="mt-3 text-xs text-smoke-700">
             {holderCountLine}
@@ -652,9 +905,49 @@ type SplitRow = {
   hook: Address
 }
 
-function formatSplitPercent(percent: number): string {
-  const pct = (percent / SPLITS_TOTAL_PERCENT) * 100
+function formatPercent(pct: number): string {
   return `${pct.toFixed(2).replace(/\.?0+$/, '')}%`
+}
+
+/** A split's percentage of all issuance, not merely of the reserved group. */
+function effectiveSplitPercent(
+  splitPercent: number,
+  reservedPercent: number,
+): number {
+  return (reservedPercent / 100) * (splitPercent / SPLITS_TOTAL_PERCENT)
+}
+
+function SplitRecipient({
+  split,
+  chainId,
+}: {
+  split: SplitRow
+  chainId: JBChainId
+}) {
+  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
+
+  if (split.hook !== zeroAddress) {
+    return (
+      <span>
+        {linkedAddress(split.hook, etherscanHost)}
+        <span className="ml-1.5 text-xs text-smoke-500">hook</span>
+      </span>
+    )
+  }
+  if (split.projectId > 0n) {
+    return (
+      <Link
+        href={`/${toUrn(chainId, Number(split.projectId))}`}
+        className="text-ink hover:underline"
+      >
+        Project #{split.projectId.toString()}
+      </Link>
+    )
+  }
+  if (split.beneficiary.toLowerCase() === BURN_ADDRESS) {
+    return <span className="text-ink">Burn</span>
+  }
+  return linkedAddress(split.beneficiary, etherscanHost)
 }
 
 /**
@@ -667,19 +960,207 @@ function ReservedCard({
   projectId,
   isRevnet,
   chains,
-  etherscanHost,
 }: {
   chainId: JBChainId
   projectId: number
   isRevnet: boolean
   chains: [number, number][]
-  etherscanHost?: string
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
   const splitsAddress = jbContractAddress['6'][JBCoreContracts.JBSplits][
     chainId
   ] as Address
+
+  const {
+    data: stageData,
+    isLoading: rulesetLoading,
+    isError: rulesetError,
+  } = useQuery({
+    queryKey: ['splitStages', chainId, projectId],
+    enabled: !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const args = { chainId, projectId: BigInt(projectId) }
+      const [all, current] = await Promise.all([
+        getAllRulesets(publicClient!, { ...args, size: 50n }),
+        getCurrentRuleset(publicClient!, args).catch(() => null),
+      ])
+      return { all, current }
+    },
+  })
+
+  const stages: readonly JBRulesetWithMetadata[] = useMemo(
+    () =>
+      (stageData?.all ?? [])
+        .slice()
+        .sort((a, b) => a.ruleset.start - b.ruleset.start),
+    [stageData?.all],
+  )
+
+  const now = Math.floor(Date.now() / 1000)
+  let currentStageIndex = stages.findIndex(
+    stage => stage.ruleset.id === stageData?.current?.ruleset.id,
+  )
+  if (currentStageIndex < 0) {
+    currentStageIndex = 0
+    stages.forEach((stage, index) => {
+      if (stage.ruleset.start <= now) currentStageIndex = index
+    })
+  }
+
+  const [chosenStageIndex, setChosenStageIndex] = useState<number | null>(null)
+  const activeStageIndex = stages.length
+    ? Math.min(
+        Math.max(chosenStageIndex ?? currentStageIndex, 0),
+        stages.length - 1,
+      )
+    : 0
+  const activeStage = stages[activeStageIndex]
+  const rulesetId = activeStage?.ruleset.id ?? 0
+  const isCurrentStage = activeStageIndex === currentStageIndex
+
+  const {
+    data: splits,
+    isLoading: splitsLoading,
+    isError: splitsError,
+  } = useReadContract({
+    abi: jbSplitsAbi,
+    address: splitsAddress,
+    functionName: 'splitsOf',
+    args: [BigInt(projectId), BigInt(rulesetId), RESERVED_TOKEN_SPLIT_GROUP_ID],
+    chainId,
+    query: { enabled: rulesetId > 0, staleTime: 60_000 },
+  })
+
+  const rows = (splits ?? []) as readonly SplitRow[]
+
+  if (rulesetLoading) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">
+          {isRevnet ? 'Splits' : 'Reserved tokens'}
+        </span>
+        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+      </div>
+    )
+  }
+
+  if (rulesetError || stages.length === 0) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">
+          {isRevnet ? 'Splits' : 'Reserved tokens'}
+        </span>
+        <p className="mt-2 text-sm text-smoke-700">
+          {rulesetError
+            ? 'Couldn’t read the split stages right now.'
+            : 'No stages found onchain.'}
+        </p>
+      </div>
+    )
+  }
+
+  const reservedPercent = activeStage.metadata.reservedPercent
+
+  return (
+    <div className="card p-5">
+      <span className="field-label">
+        {isRevnet ? 'Splits' : 'Reserved tokens'}
+      </span>
+      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+        A share of every batch of new tokens is set aside for the recipients
+        below.
+      </p>
+
+      {isRevnet ? (
+        <div className="mt-5 flex flex-wrap gap-5" aria-label="Split stage">
+          {stages.map((stage, index) => (
+            <button
+              key={stage.ruleset.id}
+              type="button"
+              onClick={() => setChosenStageIndex(index)}
+              className={`inline-flex min-h-[34px] items-center gap-2 border-b-2 px-0.5 pb-1 text-sm font-medium transition-colors ${
+                activeStageIndex === index
+                  ? 'border-ink text-ink'
+                  : 'border-transparent text-smoke-500 hover:text-ink'
+              }`}
+            >
+              Stage {index + 1}
+              {index === currentStageIndex ? (
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-melon-600"
+                  title="Current stage"
+                  aria-label="Current stage"
+                />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <p className="mt-3 text-sm text-smoke-700">
+        {isRevnet ? 'The split limit for this stage is ' : 'Reserved rate: '}
+        <span className="font-medium text-ink">
+          {formatPercent(reservedPercent / 100)}
+        </span>{' '}
+        of issuance.
+      </p>
+
+      {splitsLoading ? (
+        <p className="mt-4 text-sm text-smoke-500">Loading splits…</p>
+      ) : splitsError ? (
+        <p className="mt-4 text-sm text-smoke-700">
+          Couldn’t read splits for this stage.
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="mt-4 text-sm text-smoke-700">
+          {isRevnet
+            ? 'No splits are configured for this stage — split tokens go to the revnet owner.'
+            : 'No reserved recipients are configured — reserved tokens go to the project owner.'}
+        </p>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <div className="min-w-[720px]">
+            <div className="grid grid-cols-[minmax(220px,1.35fr)_minmax(200px,1fr)_minmax(180px,1fr)] gap-4 border-y border-smoke-200 px-3 py-2 text-xs text-smoke-500">
+              <span>Account</span>
+              <span>Percentage</span>
+              <span>Pending splits</span>
+            </div>
+            <div className="space-y-5 pt-5">
+              {chains.map(([cid, pid]) => (
+                <ChainSplitsBlock
+                  key={`${rulesetId}:${cid}`}
+                  chainId={cid as JBChainId}
+                  projectId={pid}
+                  rows={rows}
+                  reservedPercent={reservedPercent}
+                  isCurrentStage={isCurrentStage}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** One inline chain table, with that chain's pending balance and action. */
+function ChainSplitsBlock({
+  chainId,
+  projectId,
+  rows,
+  reservedPercent,
+  isCurrentStage,
+}: {
+  chainId: JBChainId
+  projectId: number
+  rows: readonly SplitRow[]
+  reservedPercent: number
+  isCurrentStage: boolean
+}) {
   const directoryAddress = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId
   ] as Address
@@ -687,20 +1168,6 @@ function ReservedCard({
     chainId
   ] as Address
 
-  const { data: rulesetData, isLoading: rulesetLoading } = useQuery({
-    queryKey: ['currentRuleset', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      getCurrentRuleset(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      }),
-  })
-
-  // The controller (read, never assumed) plus the project's own ERC-20 for
-  // labeling the pending amount.
   const { data: base } = useReadContracts({
     contracts: [
       {
@@ -733,19 +1200,9 @@ function ReservedCard({
   })
   const symbol = tokenDeployed ? (tokenSymbol ?? 'tokens') : 'tokens'
 
-  const rulesetId = rulesetData?.ruleset.id ?? 0
-
-  const { data: splits, isLoading: splitsLoading } = useReadContract({
-    abi: jbSplitsAbi,
-    address: splitsAddress,
-    functionName: 'splitsOf',
-    args: [BigInt(projectId), BigInt(rulesetId), RESERVED_TOKEN_SPLIT_GROUP_ID],
-    chainId,
-    query: { enabled: rulesetId > 0, staleTime: 60_000 },
-  })
-
   const {
     data: pending,
+    isLoading: pendingLoading,
     refetch: refetchPending,
   } = useReadContract({
     abi: jbControllerAbi,
@@ -756,138 +1213,65 @@ function ReservedCard({
     query: { enabled: !!controller, staleTime: 30_000 },
   })
 
-  const rows = (splits ?? []) as readonly SplitRow[]
-  const totalPercent = rows.reduce((sum, split) => sum + split.percent, 0)
-  const leftoverPercent = Math.max(0, SPLITS_TOTAL_PERCENT - totalPercent)
-
-  const recipientCell = (split: SplitRow) => {
-    if (split.hook !== zeroAddress) {
-      return (
-        <span>
-          {linkedAddress(split.hook, etherscanHost)}
-          <span className="ml-1.5 text-xs text-smoke-500">hook</span>
-        </span>
-      )
-    }
-    if (split.projectId > 0n) {
-      return (
-        <Link
-          href={`/${toUrn(chainId, Number(split.projectId))}`}
-          className="text-ink hover:underline"
-        >
-          Project #{split.projectId.toString()}
-        </Link>
-      )
-    }
-    if (split.beneficiary.toLowerCase() === BURN_ADDRESS) {
-      return <span className="text-ink">Burn</span>
-    }
-    return linkedAddress(split.beneficiary, etherscanHost)
-  }
-
-  if (rulesetLoading || splitsLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">
-          {isRevnet ? 'Splits' : 'Reserved tokens'}
-        </span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
-  }
+  const availablePending = isCurrentStage ? pending : 0n
 
   return (
-    <div className="card p-5">
-      <span className="field-label">
-        {isRevnet ? 'Splits' : 'Reserved tokens'}
-      </span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        A share of every batch of new tokens is set aside for the recipients
-        below.
-      </p>
-
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-smoke-500">
-              <th className="pb-1.5 font-normal">Recipient</th>
-              <th className="pb-1.5 text-right font-normal">Share</th>
-              <th className="pb-1.5 text-right font-normal">Locked until</th>
-            </tr>
-          </thead>
-          <tbody className="text-ink">
-            {rows.map((split, i) => (
-              <tr key={i} className="border-t border-smoke-100">
-                <td className="py-1.5 pr-3">{recipientCell(split)}</td>
-                <td className="py-1.5 text-right">
-                  {formatSplitPercent(split.percent)}
-                </td>
-                <td className="py-1.5 text-right">
-                  {split.lockedUntil > 0 ? (
-                    formatDate(split.lockedUntil)
-                  ) : (
-                    <span className="text-smoke-500">Not locked</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {leftoverPercent > 0 ? (
-              <tr className="border-t border-smoke-100">
-                <td className="py-1.5 pr-3 text-smoke-700">
-                  {isRevnet
-                    ? "The revnet's operator split pool (the rest)"
-                    : 'Project owner (the rest)'}
-                </td>
-                <td className="py-1.5 text-right">
-                  {formatSplitPercent(leftoverPercent)}
-                </td>
-                <td className="py-1.5 text-right">
-                  <span className="text-smoke-500">Not locked</span>
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+    <section>
+      <div className="flex items-center gap-2 text-sm font-medium text-smoke-700">
+        <ChainIcon chainId={chainId} size={18} />
+        <span>{chainName(chainId)}</span>
       </div>
+      <div className="mt-2 overflow-hidden rounded-xl border border-smoke-200">
+        {rows.map((split, index) => {
+          const fraction = split.percent / SPLITS_TOTAL_PERCENT
+          const recipientPending =
+            availablePending && availablePending > 0n
+              ? (availablePending * BigInt(split.percent)) /
+                BigInt(SPLITS_TOTAL_PERCENT)
+              : 0n
 
-      <div className="mt-4 flex items-baseline justify-between gap-3 text-sm">
-        <span className="text-smoke-700">Waiting to be distributed</span>
-        <span className="font-medium text-ink">
-          {pending !== undefined
-            ? `${formatTokenAmount(pending)} ${symbol}`
-            : '—'}
-        </span>
-      </div>
-
-      <DistributeFlow
-        chainId={chainId}
-        projectId={projectId}
-        controller={controller}
-        pending={pending}
-        symbol={symbol}
-        onDone={refetchPending}
-      />
-
-      {chains.length > 1 ? (
-        <p className="mt-3 text-xs leading-relaxed text-smoke-700">
-          Each chain distributes separately:{' '}
-          {chains
-            .filter(([cid]) => cid !== chainId)
-            .map(([cid, pid], i, arr) => (
-              <span key={cid}>
-                <Link
-                  href={`/${toUrn(cid, pid)}#${isRevnet ? 'owners' : 'tokens'}`}
-                  className="underline underline-offset-2 hover:text-ink"
-                >
-                  {chainName(cid)}
-                </Link>
-                {i < arr.length - 1 ? ', ' : ''}
+          return (
+            <div
+              key={`${split.beneficiary}-${split.projectId}-${index}`}
+              className="grid grid-cols-[minmax(220px,1.35fr)_minmax(200px,1fr)_minmax(180px,1fr)] items-center gap-4 border-b border-smoke-100 px-3 py-3 text-sm last:border-b-0"
+            >
+              <span>
+                <SplitRecipient split={split} chainId={chainId} />
               </span>
-            ))}
-          .
-        </p>
-      ) : null}
-    </div>
+              <span>
+                <strong className="font-medium text-ink">
+                  {formatPercent(
+                    effectiveSplitPercent(split.percent, reservedPercent),
+                  )}
+                </strong>
+                <span className="text-smoke-500">
+                  {' '}
+                  ({formatPercent(fraction * 100)} of limit)
+                </span>
+              </span>
+              <span className="text-ink">
+                {pendingLoading && isCurrentStage
+                  ? 'Loading…'
+                  : recipientPending > 0n
+                    ? `${formatTokenAmount(recipientPending)} ${symbol}`
+                    : '—'}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex justify-end">
+        <DistributeFlow
+          chainId={chainId}
+          projectId={projectId}
+          controller={controller}
+          pending={availablePending}
+          symbol={symbol}
+          onDone={() => void refetchPending()}
+          compact
+        />
+      </div>
+    </section>
   )
 }
 
@@ -903,6 +1287,7 @@ function DistributeFlow({
   pending,
   symbol,
   onDone,
+  compact = false,
 }: {
   chainId: JBChainId
   projectId: number
@@ -910,6 +1295,7 @@ function DistributeFlow({
   pending: bigint | undefined
   symbol: string
   onDone: () => void
+  compact?: boolean
 }) {
   const { isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
@@ -944,7 +1330,7 @@ function DistributeFlow({
     })
   }
 
-  if (tx.phase === 'success') {
+  if (tx.phase === 'success' && !compact) {
     return (
       <div className="mt-3 rounded-lg bg-split-50 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-900">
         Distributed — the reserved tokens went to the recipients.
@@ -966,30 +1352,52 @@ function DistributeFlow({
   }
 
   return (
-    <div className="mt-3">
+    <div className={compact ? 'mt-2 flex flex-col items-end' : 'mt-3'}>
       <button
         onClick={handleDistribute}
         disabled={busy || !controller || !pending || pending <= 0n}
         className="btn-secondary min-h-[40px] px-4 text-sm"
       >
-        {tx.phase === 'simulating'
+        {tx.phase === 'success'
+          ? 'Distributed'
+          : tx.phase === 'simulating'
           ? 'Double-checking the transaction…'
           : tx.phase === 'signing'
             ? 'Confirm in your wallet…'
             : tx.phase === 'pending'
               ? 'Distributing…'
-              : 'Distribute now'}
+              : compact
+                ? 'Distribute'
+                : 'Distribute now'}
       </button>
-      {!pending || pending <= 0n ? (
+      {!compact && (!pending || pending <= 0n) ? (
         <p className="mt-1.5 text-xs text-smoke-700">
           Nothing to distribute right now.
         </p>
-      ) : (
+      ) : !compact ? (
         <p className="mt-1.5 text-xs text-smoke-700">
           Anyone can send this — it moves the{' '}
-          {formatTokenAmount(pending)} {symbol} above to the recipients.
+          {formatTokenAmount(pending ?? 0n)} {symbol} above to the recipients.
         </p>
-      )}
+      ) : null}
+      {compact && tx.phase === 'success' ? (
+        <p className="mt-1.5 text-xs text-smoke-700">
+          Pending splits distributed.
+          {txUrl ? (
+            <>
+              {' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                View transaction
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {tx.phase === 'pending' && txUrl ? (
         <p className="mt-1.5 text-xs text-smoke-700">
           Waiting for confirmation —{' '}

@@ -99,7 +99,7 @@ export function SubTabs({ tabs }: { tabs: TabDef[] }) {
     <div>
       <div
         role="tablist"
-        className="scrollbar-none flex gap-1.5 overflow-x-auto"
+        className="scrollbar-none flex gap-6 overflow-x-auto border-b border-smoke-200"
       >
         {tabs.map((tab, i) => (
           <button
@@ -107,10 +107,10 @@ export function SubTabs({ tabs }: { tabs: TabDef[] }) {
             role="tab"
             aria-selected={active === i}
             onClick={() => activate(i)}
-            className={`min-h-[36px] shrink-0 whitespace-nowrap rounded-full px-3.5 text-xs font-medium transition-colors ${
+            className={`min-h-[40px] shrink-0 whitespace-nowrap border-b-2 px-1 font-agrandir text-sm font-medium transition-colors ${
               active === i
-                ? 'bg-split-100 text-ink ring-1 ring-ink'
-                : 'border border-smoke-300 bg-white text-smoke-700 hover:border-smoke-400 hover:text-ink'
+                ? 'border-ink text-ink'
+                : 'border-transparent text-smoke-500 hover:text-ink'
             }`}
           >
             {tab.label}

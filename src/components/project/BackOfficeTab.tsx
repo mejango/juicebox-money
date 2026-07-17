@@ -30,6 +30,8 @@ import {
 import { usePublicClient, useReadContract } from 'wagmi'
 import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
+import { BuybackRouterCard } from '@/components/project/BuybackRouterCard'
+import { PowersCard } from '@/components/project/PowersCard'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { getPermissionHolders, type BsPermissionHolder } from '@/lib/bendystraw'
@@ -132,6 +134,15 @@ export function BackOfficeTab({
       {!isRevnet ? (
         <TokenCard chainId={chainId} projectId={projectId} isOwner={isOwner} />
       ) : null}
+      {!isRevnet ? (
+        <PowersCard chainId={chainId} projectId={projectId} />
+      ) : null}
+      <BuybackRouterCard
+        chainId={chainId}
+        projectId={projectId}
+        isRevnet={isRevnet}
+        authority={authority}
+      />
     </div>
   )
 }

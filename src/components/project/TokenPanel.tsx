@@ -21,12 +21,15 @@ export function TokenPanel({
   projectId,
   chainIds,
   etherscanHost,
+  compact = false,
 }: {
   chainId: JBChainId
   projectId: number
   /** Every chain the project exists on (same token address everywhere). */
   chainIds: number[]
   etherscanHost?: string
+  /** Condense token metadata into one wrapping line above a larger panel. */
+  compact?: boolean
 }) {
   const { data: tokenAddress, isLoading } = useReadContract({
     abi: jbTokensAbi,
@@ -62,6 +65,68 @@ export function TokenPanel({
       <div className="card p-5">
         <span className="field-label">Token</span>
         <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+      </div>
+    )
+  }
+
+  if (compact) {
+    return (
+      <div className="card px-5 py-4">
+        <span className="field-label">Token</span>
+        {deployed ? (
+          <dl className="mt-3 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+              <dt className="text-xs text-smoke-500">Name</dt>
+              <dd className="font-medium text-ink">
+                {meta?.[0]?.result ?? '—'}
+              </dd>
+            </div>
+            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+              <dt className="text-xs text-smoke-500">Symbol</dt>
+              <dd className="font-medium text-ink">
+                {meta?.[1]?.result ? `$${meta[1].result}` : '—'}
+              </dd>
+            </div>
+            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+              <dt className="text-xs text-smoke-500">Type</dt>
+              <dd className="text-ink">ERC-20</dd>
+            </div>
+            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+              <dt className="text-xs text-smoke-500">Address</dt>
+              <dd>
+                {etherscanHost ? (
+                  <a
+                    href={`https://${etherscanHost}/address/${tokenAddress}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-ink hover:underline"
+                  >
+                    {truncateAddress(tokenAddress!)}
+                  </a>
+                ) : (
+                  <span className="text-ink">
+                    {truncateAddress(tokenAddress!)}
+                  </span>
+                )}
+              </dd>
+            </div>
+            {chainIds.length > 1 ? (
+              <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <dt className="text-xs text-smoke-500">On</dt>
+                <dd className="flex items-center gap-1">
+                  {chainIds.map(id => (
+                    <ChainIcon key={id} chainId={id} size={16} />
+                  ))}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : (
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            No ERC-20 yet — supporters hold token credits that can claim the
+            ERC-20 once it&apos;s deployed.
+          </p>
+        )}
       </div>
     )
   }

@@ -22,6 +22,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
+import { QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
 
 /** Fund-access amounts at/above this are stored as "no limit". */
@@ -612,8 +614,15 @@ export function RulesetsTab({
         )
     : []
 
+  const isCurrent = selected.tag === 'Current'
+
   return (
     <div className="space-y-5">
+      <QueueRulesetFlow
+        chainId={chainId}
+        projectId={projectId}
+        isRevnet={false}
+      />
       <div className="card p-6">
         <div className="flex items-center justify-center gap-4">
           <ArrowButton
@@ -723,6 +732,16 @@ export function RulesetsTab({
                     {fundsFailed ? 'Couldn’t verify payout splits.' : 'Loading…'}
                   </p>
                 )}
+                {isCurrent && rulesetId > 0 ? (
+                  <EditSplitsFlow
+                    chainId={chainId}
+                    projectId={projectId}
+                    groupId={payoutSplitGroupId(ctx.token)}
+                    token={ctx.token}
+                    title={`${ctx.symbol} payout splits`}
+                    rulesetId={BigInt(rulesetId)}
+                  />
+                ) : null}
               </div>
             )
           })}
@@ -738,6 +757,15 @@ export function RulesetsTab({
                   : 'Loading…'}
               </p>
             )}
+            {isCurrent && rulesetId > 0 ? (
+              <EditSplitsFlow
+                chainId={chainId}
+                projectId={projectId}
+                groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
+                title="Reserved token recipients"
+                rulesetId={BigInt(rulesetId)}
+              />
+            ) : null}
           </div>
         </div>
       ) : null}

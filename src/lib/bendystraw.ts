@@ -190,13 +190,19 @@ export type BsFreshActivityEvent = {
   from: string
   project: {
     name: string | null
+    logoUri: string | null
     tokenSymbol: string | null
     decimals: number | null
   } | null
-  payEvent: { amount: string; beneficiary: string } | null
+  payEvent: {
+    amount: string
+    amountUsd: string | null
+    beneficiary: string
+  } | null
   cashOutTokensEvent: {
     cashOutCount: string
     reclaimAmount: string
+    reclaimAmountUsd: string | null
     beneficiary: string
   } | null
 }
@@ -220,9 +226,11 @@ export async function getRecentActivity(
       ) {
         items {
           id chainId projectId timestamp txHash from
-          project { name tokenSymbol decimals }
-          payEvent { amount beneficiary }
-          cashOutTokensEvent { cashOutCount reclaimAmount beneficiary }
+          project { name logoUri tokenSymbol decimals }
+          payEvent { amount amountUsd beneficiary }
+          cashOutTokensEvent {
+            cashOutCount reclaimAmount reclaimAmountUsd beneficiary
+          }
         }
       }
     }`,
@@ -269,6 +277,7 @@ export type BsParticipant = {
   address: string
   balance: string
   chainId: number
+  volumeUsd: string
 }
 
 /**
@@ -282,39 +291,61 @@ export async function getParticipants(
   args:
     | { suckerGroupId: string; chainId?: undefined; projectId?: undefined }
     | { suckerGroupId?: undefined; chainId: number; projectId: number },
-  limit = 20,
+  limit = 1000,
 ): Promise<{ items: BsParticipant[]; totalCount: number }> {
-  const fields = 'items { address balance chainId } totalCount'
-  const data = args.suckerGroupId
-    ? await bendystraw<{
-        participants: { items: BsParticipant[]; totalCount: number }
-      }>(
-        `query($suckerGroupId: String!, $limit: Int!) {
-          participants(
-            where: { suckerGroupId: $suckerGroupId, version: 6, balance_gt: "0" }
-            orderBy: "balance"
-            orderDirection: "desc"
-            limit: $limit
-          ) { ${fields} }
-        }`,
-        { suckerGroupId: args.suckerGroupId, limit },
-        { revalidate: 60 },
-      )
-    : await bendystraw<{
-        participants: { items: BsParticipant[]; totalCount: number }
-      }>(
-        `query($chainIds: [Int!], $projectId: Int!, $limit: Int!) {
-          participants(
-            where: { chainId_in: $chainIds, projectId: $projectId, version: 6, balance_gt: "0" }
-            orderBy: "balance"
-            orderDirection: "desc"
-            limit: $limit
-          ) { ${fields} }
-        }`,
-        { chainIds: [args.chainId], projectId: args.projectId, limit },
-        { revalidate: 60 },
-      )
-  return data.participants
+  const max = Math.max(1, Math.min(1000, limit))
+  const pageSize = 250
+  const items: BsParticipant[] = []
+  let totalCount = 0
+  let offset = 0
+
+  while (items.length < max) {
+    const pageLimit = Math.min(pageSize, max - items.length)
+    const data = args.suckerGroupId
+      ? await bendystraw<{
+          participants: { items: BsParticipant[]; totalCount: number }
+        }>(
+          `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+            participants(
+              where: { suckerGroupId: $suckerGroupId, version: 6, balance_gt: "0" }
+              orderBy: "balance"
+              orderDirection: "desc"
+              limit: $limit
+              offset: $offset
+            ) { items { address balance chainId volumeUsd } totalCount }
+          }`,
+          { suckerGroupId: args.suckerGroupId, limit: pageLimit, offset },
+          { revalidate: 60 },
+        )
+      : await bendystraw<{
+          participants: { items: BsParticipant[]; totalCount: number }
+        }>(
+          `query($chainIds: [Int!], $projectId: Int!, $limit: Int!, $offset: Int!) {
+            participants(
+              where: { chainId_in: $chainIds, projectId: $projectId, version: 6, balance_gt: "0" }
+              orderBy: "balance"
+              orderDirection: "desc"
+              limit: $limit
+              offset: $offset
+            ) { items { address balance chainId volumeUsd } totalCount }
+          }`,
+          {
+            chainIds: [args.chainId],
+            projectId: args.projectId,
+            limit: pageLimit,
+            offset,
+          },
+          { revalidate: 60 },
+        )
+
+    const page = data.participants.items ?? []
+    totalCount = data.participants.totalCount ?? totalCount
+    items.push(...page)
+    if (page.length === 0 || items.length >= totalCount) break
+    offset += page.length
+  }
+
+  return { items, totalCount: totalCount || items.length }
 }
 
 export async function getSuckerGroupProjects(
