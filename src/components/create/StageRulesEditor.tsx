@@ -808,7 +808,13 @@ export function StageRulesEditor({
         open={!!stage.open.payouts}
         onToggle={() => toggleOpen('payouts')}
       >
-        <div className="space-y-2">
+        <p className="text-xs leading-relaxed text-smoke-700">
+          Anyone can pay your project. Payouts route incoming funds to wallets
+          or other Juicebox projects — whatever isn&apos;t paid out stays in
+          the project, backing cash outs and available under future rules.
+          Payout amounts reset each ruleset.
+        </p>
+        <div className="mt-3 space-y-2">
           <OptionRow
             checked={stage.payouts === 'none'}
             onSelect={() => set({ payouts: 'none' })}
