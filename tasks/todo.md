@@ -43,3 +43,18 @@ Order minimizes rework. Commit per batch; Sepolia sims per encoding change.
       linked-both-bridges-project PASS on Sepolia.
 
 Watch: website/ baseline a1ef87b (see memory jb-jbm-website-parity-watch).
+
+## B11: Project-page tabs + pay-card parity with website/ (2026-07-16)
+Directive: functionally identical to website/'s tabs + pay card — the only
+difference is copy/prioritization targeted at mainstream users. Use the SDK
+(nana-sdk-core v6 helpers) where possible. Revnet-aware (bendystraw isRevnet
+is already in PROJECT_FIELDS, currently unused).
+- [ ] Research: website/ tab inventory (agent), pay card inventory (agent)
+- [ ] Plan concrete tab set + component layout from reports
+- [ ] Implement tabs (server components where possible, islands for reads)
+- [ ] Reorganize TreasuryCard to website/'s pay-card functionality
+- [ ] Revnet awareness everywhere (vocabulary, operator, stages, loans,
+      auto-issuance, cash-out delay)
+- [ ] Full adversarial audit (agents): custom project + revnet coverage,
+      math correctness, gating correctness
+- [ ] Sims/typecheck/build + browser verification on real projects
