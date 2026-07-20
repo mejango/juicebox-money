@@ -420,9 +420,9 @@ export function StageRulesEditor({
   unitChoice,
   disabled,
   chainIds,
-  flavor = 'project',
-  tokenLabel = 'tokens',
-  multiToken = false,
+  flavor,
+  tokenLabel,
+  multiToken,
 }: {
   stage: DraftStage
   onChange: (stage: DraftStage) => void
@@ -438,11 +438,11 @@ export function StageRulesEditor({
   disabled: boolean
   /** Selected launch chains (enables per-chain recipient overrides). */
   chainIds: number[]
-  flavor?: 'project' | 'revnet'
+  flavor: 'project' | 'revnet'
   /** "$TICK" when a ticker is set, else "tokens". */
-  tokenLabel?: string
+  tokenLabel: string
   /** ETH+USDC accounting: payouts configure per token. */
-  multiToken?: boolean
+  multiToken: boolean
 }) {
   const isRevnet = flavor === 'revnet'
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch })
@@ -1106,79 +1106,21 @@ export function StageRulesEditor({
       >
         {isRevnet ? (
           <>
-            <div className="space-y-2">
-              <OptionRow
-                checked={!stage.cashOuts}
-                onSelect={() => set({ cashOuts: false })}
-                disabled={disabled}
-                title="Off"
-                blurb="Tokens are for support and standing — cashing out returns almost nothing."
-              />
-              <OptionRow
-                checked={stage.cashOuts}
-                onSelect={() => set({ cashOuts: true })}
-                disabled={disabled}
-                title="On"
-                blurb={`Holders can cash out ${tokenLabel} any time for their share of the treasury.`}
-              />
-            </div>
-            {stage.cashOuts ? (
-              <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {CASH_OUT_TAXES.map(tax => (
-                    <ChipButton
-                      key={tax.rate}
-                      active={!stage.taxCustomOn && stage.cashOutTax === tax.rate}
-                      onClick={() =>
-                        set({ cashOutTax: tax.rate, taxCustomOn: false })
-                      }
-                      disabled={disabled}
-                    >
-                      {tax.label}
-                    </ChipButton>
-                  ))}
-                  <ChipButton
-                    active={stage.taxCustomOn}
-                    onClick={() => set({ taxCustomOn: true })}
-                    disabled={disabled}
-                  >
-                    Custom…
-                  </ChipButton>
-                </div>
-                {stage.taxCustomOn ? (
-                  <div className="mt-2 flex items-center gap-2.5">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={stage.taxCustomPct}
-                      onChange={e =>
-                        set({ taxCustomPct: e.target.value.slice(0, 5) })
-                      }
-                      disabled={disabled}
-                      placeholder="15"
-                      className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                        stageTaxOk(stage) ? '' : '!border-red-400'
-                      }`}
-                    />
-                    <span className="text-sm text-smoke-700">
-                      % tax (up to 99.99)
-                    </span>
-                  </div>
-                ) : null}
-                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                  A tax leaves part of each cash out behind for holders who
-                  stay.
-                </p>
-                <CashOutCurve rate={stageCashOutTax(stage)} />
-              </>
-            ) : (
+            <TaxPicker
+              stage={stage}
+              set={set}
+              disabled={disabled}
+              offBlurb="Tokens are for support and standing — cashing out returns almost nothing."
+              onBlurb={`Holders can cash out ${tokenLabel} any time for their share of the treasury.`}
+            />
+            {!stage.cashOuts ? (
               <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
                 Revnets can&apos;t fully disable cash outs — Off applies the
                 maximum 99.99% tax, so partial cash outs return next to
                 nothing while cashing out every token still claims the full
                 treasury.
               </p>
-            )}
+            ) : null}
           </>
         ) : routedAll ? (
           <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
@@ -1187,74 +1129,13 @@ export function StageRulesEditor({
             surplus.
           </p>
         ) : (
-          <>
-            <div className="space-y-2">
-              <OptionRow
-                checked={!stage.cashOuts}
-                onSelect={() => set({ cashOuts: false })}
-                disabled={disabled}
-                title="Off"
-                blurb="Tokens are for support and standing — holders can't pull funds out."
-              />
-              <OptionRow
-                checked={stage.cashOuts}
-                onSelect={() => set({ cashOuts: true })}
-                disabled={disabled}
-                title="On"
-                blurb={`Holders can cash out ${tokenLabel} any time for their share of the surplus.`}
-              />
-            </div>
-            {stage.cashOuts ? (
-              <>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {CASH_OUT_TAXES.map(tax => (
-                    <ChipButton
-                      key={tax.rate}
-                      active={!stage.taxCustomOn && stage.cashOutTax === tax.rate}
-                      onClick={() =>
-                        set({ cashOutTax: tax.rate, taxCustomOn: false })
-                      }
-                      disabled={disabled}
-                    >
-                      {tax.label}
-                    </ChipButton>
-                  ))}
-                  <ChipButton
-                    active={stage.taxCustomOn}
-                    onClick={() => set({ taxCustomOn: true })}
-                    disabled={disabled}
-                  >
-                    Custom…
-                  </ChipButton>
-                </div>
-                {stage.taxCustomOn ? (
-                  <div className="mt-2 flex items-center gap-2.5">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={stage.taxCustomPct}
-                      onChange={e =>
-                        set({ taxCustomPct: e.target.value.slice(0, 5) })
-                      }
-                      disabled={disabled}
-                      placeholder="15"
-                      className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                        stageTaxOk(stage) ? '' : '!border-red-400'
-                      }`}
-                    />
-                    <span className="text-sm text-smoke-700">
-                      % tax (up to 99.99)
-                    </span>
-                  </div>
-                ) : null}
-                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                  A tax leaves part of each cash out behind for holders who
-                  stay.
-                </p>
-                <CashOutCurve rate={stageCashOutTax(stage)} />
-              </>
-            ) : null}
-          </>
+          <TaxPicker
+            stage={stage}
+            set={set}
+            disabled={disabled}
+            offBlurb="Tokens are for support and standing — holders can't pull funds out."
+            onBlurb={`Holders can cash out ${tokenLabel} any time for their share of the surplus.`}
+          />
         )}
       </SubSection>
 

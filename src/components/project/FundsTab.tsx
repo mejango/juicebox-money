@@ -24,23 +24,30 @@ import {
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  erc20Abi,
   formatUnits,
   parseUnits,
-  zeroAddress,
+  type Abi,
   type Address,
   type PublicClient,
 } from 'viem'
 import { useConfig, usePublicClient, useReadContract } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
-import { chainName, toUrn } from '@/lib/urn'
+import { FlowError, shortError } from '@/lib/errors'
+import {
+  USD_SCALE,
+  fmtPct,
+  formatTokenAmount,
+  formatUsd18,
+} from '@/lib/format'
+import { tokenSymbol } from '@/lib/token-symbol'
+import { chainName } from '@/lib/urn'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -73,21 +80,11 @@ function currencyLabel(
 }
 
 function formatPercent(percent: number): string {
-  const pct = (percent / SPLITS_TOTAL_PERCENT) * 100
-  return `${pct.toFixed(2).replace(/\.?0+$/, '')}%`
+  return fmtPct((percent / SPLITS_TOTAL_PERCENT) * 100)
 }
 
 function bigintMin(a: bigint, b: bigint): bigint {
   return a < b ? a : b
-}
-
-type Split = {
-  percent: number
-  projectId: bigint
-  beneficiary: Address
-  preferAddToBalance: boolean
-  lockedUntil: number
-  hook: Address
 }
 
 type FundsKindDescriptor = {
@@ -133,33 +130,6 @@ type FundsKind = FundsKindDescriptor & {
   fullyPriced: boolean
 }
 
-const USD_SCALE = 10n ** 18n
-
-function formatUsd18(value: bigint): string {
-  if (value > 0n && value < USD_SCALE / 100n) return '<$0.01'
-  const cents = (value * 100n + USD_SCALE / 2n) / USD_SCALE
-  const dollars = cents / 100n
-  const remainder = (cents % 100n).toString().padStart(2, '0')
-  return `$${dollars.toLocaleString('en-US')}.${remainder}`
-}
-
-async function symbolOf(
-  client: PublicClient,
-  chainId: JBChainId,
-  ctx: JBAccountingContext,
-): Promise<string> {
-  if (ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) {
-    return JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-  }
-  return client
-    .readContract({
-      address: ctx.token,
-      abi: erc20Abi,
-      functionName: 'symbol',
-    })
-    .catch(() => truncateAddress(ctx.token))
-}
-
 async function readChainFunds(
   config: ReturnType<typeof useConfig>,
   pair: readonly [number, number],
@@ -198,7 +168,10 @@ async function readChainFunds(
       getCurrentRuleset(client, { chainId, projectId: pid }),
     ])
     const candidates = await Promise.all(
-      contexts.map(async ctx => ({ ctx, symbol: await symbolOf(client, chainId, ctx) })),
+      contexts.map(async ctx => ({
+        ctx,
+        symbol: await tokenSymbol(client, ctx.token, { chainId }),
+      })),
     )
     const match = candidates.find(({ ctx, symbol }) => {
       const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
@@ -436,7 +409,7 @@ export function FundsTab({
       })
       const descriptors = await Promise.all(
         homeContexts.map(async ctx => {
-          const symbol = await symbolOf(homeClient, chainId, ctx)
+          const symbol = await tokenSymbol(homeClient, ctx.token, { chainId })
           const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
           return {
             key: native ? 'native' : `${symbol.toLowerCase()}:${ctx.decimals}`,
@@ -672,7 +645,6 @@ export function FundsTab({
                 tokenSymbol={home.tokenSymbol}
                 balance={home.balance}
                 etherscanHost={home.etherscanHost}
-                showHeading={false}
               />
             ) : (
               <p className="mt-1 text-sm text-ink">
@@ -763,22 +735,14 @@ function PayoutsTable({
   tokenSymbol,
   balance,
   etherscanHost,
-  showHeading = true,
 }: {
   chainId: JBChainId
-  splits: readonly {
-    percent: number
-    projectId: bigint
-    beneficiary: Address
-    lockedUntil: number
-    hook: Address
-  }[]
+  splits: readonly Split[]
   activeLine: LimitLine | undefined
   ctx: JBAccountingContext
   tokenSymbol: string
   balance: bigint
   etherscanHost?: string
-  showHeading?: boolean
 }) {
   // Each recipient's share of what can still be paid out this cycle.
   const distributable = activeLine
@@ -799,32 +763,8 @@ function PayoutsTable({
   const shareOf = (percent: number) =>
     (distributable * BigInt(percent)) / BigInt(SPLITS_TOTAL_PERCENT)
 
-  const recipient = (split: {
-    projectId: bigint
-    beneficiary: Address
-    hook: Address
-  }) => {
-    if (split.hook !== zeroAddress) {
-      return addressCell(split.hook, etherscanHost, 'hook')
-    }
-    if (split.projectId > 0n) {
-      return (
-        <Link
-          href={`/${toUrn(chainId, Number(split.projectId))}`}
-          className="text-ink hover:underline"
-        >
-          Project #{split.projectId.toString()}
-        </Link>
-      )
-    }
-    return addressCell(split.beneficiary, etherscanHost)
-  }
-
   return (
     <div className="mt-4">
-      {showHeading ? (
-        <span className="field-label">Where payouts go</span>
-      ) : null}
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -837,7 +777,13 @@ function PayoutsTable({
           <tbody className="text-ink">
             {splits.map((split, i) => (
               <tr key={i} className="border-t border-smoke-100">
-                <td className="py-1.5 pr-3">{recipient(split)}</td>
+                <td className="py-1.5 pr-3">
+                  <SplitRecipient
+                    split={split}
+                    chainId={chainId}
+                    host={etherscanHost}
+                  />
+                </td>
                 <td className="py-1.5 text-right">
                   {formatPercent(split.percent)}
                 </td>
@@ -865,31 +811,6 @@ function PayoutsTable({
         </table>
       </div>
     </div>
-  )
-}
-
-function addressCell(
-  address: Address,
-  etherscanHost?: string,
-  note?: string,
-) {
-  const label = truncateAddress(address)
-  return (
-    <span>
-      {etherscanHost ? (
-        <a
-          href={`https://${etherscanHost}/address/${address}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-ink hover:underline"
-        >
-          {label}
-        </a>
-      ) : (
-        label
-      )}
-      {note ? <span className="ml-1.5 text-xs text-smoke-500">{note}</span> : null}
-    </span>
   )
 }
 
@@ -959,11 +880,7 @@ function FundsTxFlow({
     ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
     : null
 
-  const busy =
-    quoting ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = quoting || tx.busy
 
   // Refresh the card's numbers once the transaction lands.
   useEffect(() => {
@@ -1075,55 +992,10 @@ function FundsTxFlow({
         )
       }
 
-      // Quote: simulate the exact call with min = 0. The simulated return
-      // value (amountPaidOut / netAmountPaidOut) is the quote, in the
-      // token's decimals.
-      const sim =
-        kind === 'payouts'
-          ? await publicClient.simulateContract({
-              address: terminal,
-              abi: jbMultiTerminalAbi,
-              functionName: 'sendPayoutsOf',
-              args: [
-                BigInt(projectId),
-                ctx.token,
-                parsedAmount,
-                BigInt(line.currency),
-                0n,
-              ],
-              account: address,
-            })
-          : await publicClient.simulateContract({
-              address: terminal,
-              abi: jbMultiTerminalAbi,
-              functionName: 'useAllowanceOf',
-              args: [
-                BigInt(projectId),
-                ctx.token,
-                parsedAmount,
-                BigInt(line.currency),
-                0n,
-                address,
-                address,
-                '',
-              ],
-              account: address,
-            })
-      const quote = sim.result
-      if (quote <= 0n) {
-        throw new FlowError(
-          'Nothing would be paid out for that amount — try a different one.',
-        )
-      }
-
-      // The min the transaction enforces: for payouts in the token's own
-      // currency the quote is exact (no price conversion), so demand it
-      // exactly; anywhere a price feed is involved (other currencies, and
-      // the allowance flow per spec) allow 1% of drift.
-      const min =
-        kind === 'payouts' && tokenKeyed ? quote : (quote * 99n) / 100n
-
-      const args =
+      // The exact call args for a given min-out: the quote simulates with 0,
+      // and the reviewed transaction reuses the same builder with the
+      // enforced min, so the two can never drift.
+      const argsWithMin = (min: bigint): readonly unknown[] =>
         kind === 'payouts'
           ? [
               BigInt(projectId),
@@ -1142,21 +1014,41 @@ function FundsTxFlow({
               address,
               '',
             ]
+
+      // Quote: simulate the exact call with min = 0. The simulated return
+      // value (amountPaidOut / netAmountPaidOut) is the quote, in the
+      // token's decimals.
+      const sim = await publicClient.simulateContract({
+        address: terminal,
+        abi: jbMultiTerminalAbi as Abi,
+        functionName:
+          kind === 'payouts' ? 'sendPayoutsOf' : 'useAllowanceOf',
+        args: argsWithMin(0n),
+        account: address,
+      })
+      const quote = sim.result as bigint
+      if (quote <= 0n) {
+        throw new FlowError(
+          'Nothing would be paid out for that amount — try a different one.',
+        )
+      }
+
+      // The min the transaction enforces: for payouts in the token's own
+      // currency the quote is exact (no price conversion), so demand it
+      // exactly; anywhere a price feed is involved (other currencies, and
+      // the allowance flow per spec) allow 1% of drift.
+      const min =
+        kind === 'payouts' && tokenKeyed ? quote : (quote * 99n) / 100n
+
       setReview({
         functionName: kind === 'payouts' ? 'sendPayoutsOf' : 'useAllowanceOf',
-        args,
+        args: argsWithMin(min),
         quote,
         min,
         account: address,
       })
     } catch (e) {
-      setFlowError(
-        e instanceof FlowError
-          ? e.message
-          : e instanceof Error
-            ? shortSimulationError(e)
-            : 'Something went wrong.',
-      )
+      setFlowError(e instanceof FlowError ? e.message : shortError(e))
     } finally {
       setQuoting(false)
     }
@@ -1341,17 +1233,14 @@ function FundsTxFlow({
       >
         {quoting
           ? 'Checking what you can send…'
-          : tx.phase === 'simulating'
-            ? 'Double-checking the transaction…'
-            : tx.phase === 'signing'
-              ? 'Confirm in your wallet…'
-              : tx.phase === 'pending'
-                ? 'Sending…'
-                : !isConnected
-                  ? 'Sign in to continue'
-                  : review
-                    ? `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
-                    : 'Review'}
+          : txPhaseLabel(tx.phase, {
+              pending: 'Sending…',
+              idle: !isConnected
+                ? 'Sign in to continue'
+                : review
+                  ? `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
+                  : 'Review',
+            })}
       </button>
 
       {tx.phase === 'pending' && txUrl ? (
@@ -1368,24 +1257,10 @@ function FundsTxFlow({
         </p>
       ) : null}
 
-      {flowError || tx.error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {flowError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+      />
     </div>
   )
-}
-
-/** A validation failure with copy that's already user-ready. */
-class FlowError extends Error {}
-
-/** Trim a raw simulation error down to its useful first line. */
-function shortSimulationError(e: Error): string {
-  const message =
-    'shortMessage' in e && typeof e.shortMessage === 'string'
-      ? e.shortMessage
-      : e.message
-  if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
-  return message.split('\n')[0]
 }

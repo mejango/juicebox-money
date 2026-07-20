@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
+import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { chainName } from '@/lib/urn'
 import { ChainIcon } from './ChainIcon'
 
@@ -43,16 +44,7 @@ function SelectedMark() {
 function useChainMenu() {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    return () => document.removeEventListener('pointerdown', close)
-  }, [open])
-
+  useOutsideClose(rootRef, () => setOpen(false), open)
   return { open, setOpen, rootRef }
 }
 
@@ -61,13 +53,11 @@ function MenuRow({
   selected,
   onSelect,
   disabled,
-  multiple = false,
 }: {
   chainId: number
   selected: boolean
   onSelect: () => void
   disabled: boolean
-  multiple?: boolean
 }) {
   const name = chainName(chainId)
   return (
@@ -75,9 +65,7 @@ function MenuRow({
       type="button"
       role="option"
       aria-selected={selected}
-      aria-label={
-        multiple ? `${selected ? 'Remove' : 'Add'} ${name}` : `Select ${name}`
-      }
+      aria-label={`Select ${name}`}
       onClick={onSelect}
       disabled={disabled}
       className={`flex min-h-[56px] w-full items-center gap-3 px-4 text-left text-base transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${

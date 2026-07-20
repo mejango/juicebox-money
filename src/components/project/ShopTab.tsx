@@ -19,12 +19,7 @@ import {
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  erc20Abi,
-  zeroAddress,
-  type Address,
-  type PublicClient,
-} from 'viem'
+import { zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -38,6 +33,7 @@ import {
 } from '@/components/project/RedeemShopItemsModal'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
+import { QuantityStepper } from '@/components/ui/QuantityStepper'
 import { useWallet } from '@/hooks/useWallet'
 import type {
   BsOwnedShopItem,
@@ -50,6 +46,13 @@ import {
   timeAgo,
   truncateAddress,
 } from '@/lib/format'
+import { bytes32ToCidV0 } from '@/lib/ipfs-cid'
+import {
+  TIER_UNLIMITED_SUPPLY,
+  parseTierMetadataJson,
+  pickTierMetadata,
+} from '@/lib/tier-metadata'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 
@@ -62,10 +65,6 @@ import { wagmiConfig } from '@/providers/Providers'
  * getProject721Shop helper, so Pay and Shop use the same revnet, custom, and
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
-
-/** Initial supply at/above this sentinel means unlimited inventory
- *  (website/ parity: TIER_UNLIMITED_SUPPLY in nft721-build.js). */
-const TIER_UNLIMITED_SUPPLY = 999_999_999
 
 type ShopTier = {
   id: number
@@ -234,82 +233,47 @@ export function ShopTab({
     staleTime: 30_000,
     retry: false,
     queryFn: async (): Promise<ShopWriteTarget[]> =>
-      Promise.all(
-        chains.map(async ([targetChainId, targetProjectId]) => {
-          const targetId = targetChainId as JBChainId
-          try {
-            if (targetId === chainId && targetProjectId === projectId) {
-              return {
-                chainId: targetId,
-                projectId: targetProjectId,
-                hook: shop!.hook,
-                pricing: shop!.pricing,
-              }
-            }
-            const client = getPublicClient(wagmiConfig, {
-              chainId: targetId,
-            }) as PublicClient | undefined
-            if (!client) throw new Error('RPC unavailable')
-            const targetChain = JB_CHAINS[targetId]
-            const resolved = await readShop(
-              client,
-              targetId,
-              targetProjectId,
-              isRevnet,
-              targetChain?.nativeTokenSymbol ?? 'ETH',
-            )
-            return {
-              chainId: targetId,
-              projectId: targetProjectId,
-              hook: resolved?.hook ?? null,
-              pricing: resolved?.pricing ?? null,
-              error: resolved ? undefined : 'No store on this chain',
-            }
-          } catch {
-            return {
-              chainId: targetId,
-              projectId: targetProjectId,
-              hook: null,
-              pricing: null,
-              error: 'Could not read this store',
-            }
-          }
-        }),
-      ),
+      (
+        await resolveLinkedShops(
+          chains,
+          { chainId, projectId, shop: shop! },
+          isRevnet,
+        )
+      ).map(resolved => ({
+        chainId: resolved.chainId,
+        projectId: resolved.projectId,
+        hook: resolved.shop?.hook ?? null,
+        pricing: resolved.shop?.pricing ?? null,
+        error:
+          resolved.failure === 'unreadable'
+            ? 'Could not read this store'
+            : resolved.failure === 'no-shop'
+              ? 'No store on this chain'
+              : undefined,
+      })),
   })
 
-  if (isLoading) {
+  if (isLoading || isError || !shop) {
     return (
       <div className="card p-5">
         <span className="field-label">Shop</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Shop</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Couldn&apos;t load the store right now — try again in a moment.
+        <p
+          className={
+            isLoading
+              ? 'mt-2 text-sm text-smoke-500'
+              : 'mt-2 text-sm leading-relaxed text-smoke-700'
+          }
+        >
+          {isLoading
+            ? 'Loading…'
+            : isError
+              ? "Couldn't load the store right now — try again in a moment."
+              : `No store yet.${
+                  isRevnet
+                    ? ' The operator can add items for supporters to buy.'
+                    : ''
+                }`}
         </p>
-      </div>
-    )
-  }
-
-  if (!shop) {
-    return (
-      <div className="card p-5">
-        <div>
-          <span className="field-label">Shop</span>
-          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-            No store yet.
-            {isRevnet
-              ? ' The operator can add items for supporters to buy.'
-            : ''}
-          </p>
-        </div>
       </div>
     )
   }
@@ -500,6 +464,67 @@ type LinkedShop = {
   shop: Shop
 }
 
+type ResolvedLinkedShop = {
+  chainId: JBChainId
+  projectId: number
+  shop: Shop | null
+  failure?: 'no-shop' | 'unreadable'
+}
+
+/**
+ * Resolve the shop on every linked deployment, reusing the already-loaded
+ * primary shop for the current chain. Per-chain failures stay local — one
+ * flaky RPC never hides the chains that resolved.
+ */
+async function resolveLinkedShops(
+  chains: [number, number][],
+  primary: { chainId: JBChainId; projectId: number; shop: Shop },
+  isRevnet: boolean,
+): Promise<ResolvedLinkedShop[]> {
+  return Promise.all(
+    chains.map(async ([targetChainId, targetProjectId]) => {
+      const targetId = targetChainId as JBChainId
+      try {
+        if (
+          targetId === primary.chainId &&
+          targetProjectId === primary.projectId
+        ) {
+          return {
+            chainId: targetId,
+            projectId: targetProjectId,
+            shop: primary.shop,
+          }
+        }
+        const client = getPublicClient(wagmiConfig, {
+          chainId: targetId,
+        }) as PublicClient | undefined
+        if (!client) throw new Error('RPC unavailable')
+        const targetChain = JB_CHAINS[targetId]
+        const shop = await readShop(
+          client,
+          targetId,
+          targetProjectId,
+          isRevnet,
+          targetChain?.nativeTokenSymbol ?? 'ETH',
+        )
+        return {
+          chainId: targetId,
+          projectId: targetProjectId,
+          shop,
+          failure: shop ? undefined : ('no-shop' as const),
+        }
+      } catch {
+        return {
+          chainId: targetId,
+          projectId: targetProjectId,
+          shop: null,
+          failure: 'unreadable' as const,
+        }
+      }
+    }),
+  )
+}
+
 function projectsParam(chains: [number, number][]): string {
   return chains.map(([cid, pid]) => `${cid}:${pid}`).join(',')
 }
@@ -579,36 +604,24 @@ function ShopCustomers({
     enabled: connected && (owned.data?.items.length ?? 0) > 0,
     staleTime: 30_000,
     retry: false,
-    queryFn: async (): Promise<LinkedShop[]> => {
-      const resolved = await Promise.all(
-        chains.map(async ([targetChainId, targetProjectId]) => {
-          const targetId = targetChainId as JBChainId
-          if (targetId === chainId && targetProjectId === projectId) {
-            return { chainId: targetId, projectId: targetProjectId, shop: primaryShop }
-          }
-          try {
-            const client = getPublicClient(wagmiConfig, {
-              chainId: targetId,
-            }) as PublicClient | undefined
-            if (!client) return null
-            const targetChain = JB_CHAINS[targetId]
-            const shop = await readShop(
-              client,
-              targetId,
-              targetProjectId,
-              isRevnet,
-              targetChain?.nativeTokenSymbol ?? 'ETH',
-            )
-            return shop
-              ? { chainId: targetId, projectId: targetProjectId, shop }
-              : null
-          } catch {
-            return null
-          }
-        }),
-      )
-      return resolved.filter((value): value is LinkedShop => value !== null)
-    },
+    queryFn: async (): Promise<LinkedShop[]> =>
+      (
+        await resolveLinkedShops(
+          chains,
+          { chainId, projectId, shop: primaryShop },
+          isRevnet,
+        )
+      ).flatMap(resolved =>
+        resolved.shop
+          ? [
+              {
+                chainId: resolved.chainId,
+                projectId: resolved.projectId,
+                shop: resolved.shop,
+              },
+            ]
+          : [],
+      ),
   })
 
   const redeemCandidatesKey = useMemo(() => {
@@ -820,7 +833,9 @@ function CustomerAllCard({
   const byCustomer = new Map<string, BsShopPurchase[]>()
   for (const purchase of data.items) {
     const key = purchase.beneficiary.toLowerCase()
-    byCustomer.set(key, [...(byCustomer.get(key) ?? []), purchase])
+    let got = byCustomer.get(key)
+    if (!got) byCustomer.set(key, (got = []))
+    got.push(purchase)
   }
   const customers = [...byCustomer.entries()].sort(
     (a, b) => b[1].length - a[1].length,
@@ -1194,6 +1209,41 @@ function StoreMediaPreview({
   )
 }
 
+/**
+ * The cart-facing view of a tier both the card and the detail modal derive:
+ * supply/discount state, the registered cart item, and its live quantity.
+ */
+function useTierCartItem(tier: ShopTier, media: TierMedia | undefined) {
+  const { quantityOf, setQuantity, registerItem } = useShopCart()
+  const quantity = quantityOf(tier.id)
+  const unlimited = tier.initial >= TIER_UNLIMITED_SUPPLY
+  const soldOut = !unlimited && tier.remaining <= 0
+  const cap = unlimited ? 99 : tier.remaining
+  const discounted = tier.discountPercent > 0
+  const effective = effectiveTierPrice(tier.price, tier.discountPercent)
+  const item = useMemo(
+    () => ({
+      tierId: tier.id,
+      name: media?.name ?? `Item #${tier.id}`,
+      image: media?.image,
+    }),
+    [tier.id, media?.name, media?.image],
+  )
+
+  useEffect(() => registerItem(item), [item, registerItem])
+
+  return {
+    quantity,
+    setQuantity,
+    unlimited,
+    soldOut,
+    cap,
+    discounted,
+    effective,
+    item,
+  }
+}
+
 function TierCard({
   tier,
   media,
@@ -1205,23 +1255,16 @@ function TierCard({
   pricing: Shop['pricing']
   onOpen: () => void
 }) {
-  const unlimited = tier.initial >= TIER_UNLIMITED_SUPPLY
-  const soldOut = !unlimited && tier.remaining <= 0
-  const discounted = tier.discountPercent > 0
-  const effective = effectiveTierPrice(tier.price, tier.discountPercent)
-  const { quantityOf, setQuantity, registerItem } = useShopCart()
-  const quantity = quantityOf(tier.id)
-  const cap = unlimited ? 99 : tier.remaining
-  const item = useMemo(
-    () => ({
-      tierId: tier.id,
-      name: media?.name ?? `Item #${tier.id}`,
-      image: media?.image,
-    }),
-    [tier.id, media?.name, media?.image],
-  )
-
-  useEffect(() => registerItem(item), [item, registerItem])
+  const {
+    quantity,
+    setQuantity,
+    unlimited,
+    soldOut,
+    cap,
+    discounted,
+    effective,
+    item,
+  } = useTierCartItem(tier, media)
 
   return (
     <div
@@ -1288,31 +1331,14 @@ function TierCard({
                 ? 'Unlimited'
                 : `${tier.remaining.toLocaleString('en-US')} left`}
           </p>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setQuantity(tier.id, quantity - 1, item)}
-              disabled={quantity <= 0}
-              aria-label={`Remove one ${item.name}`}
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-smoke-300 text-sm text-smoke-700 disabled:opacity-35"
-            >
-              −
-            </button>
-            <span className="min-w-4 text-center text-xs tabular-nums text-ink">
-              {quantity}
-            </span>
-            <button
-              type="button"
-              onClick={() =>
-                setQuantity(tier.id, Math.min(cap, quantity + 1), item)
-              }
-              disabled={soldOut || quantity >= cap}
-              aria-label={`Add one ${item.name}`}
-              className="flex h-7 w-7 items-center justify-center rounded-full border border-smoke-300 text-sm text-smoke-700 disabled:opacity-35"
-            >
-              +
-            </button>
-          </div>
+          <QuantityStepper
+            quantity={quantity}
+            itemName={item.name}
+            onRemove={() => setQuantity(tier.id, quantity - 1, item)}
+            onAdd={() => setQuantity(tier.id, Math.min(cap, quantity + 1), item)}
+            disabledRemove={quantity <= 0}
+            disabledAdd={soldOut || quantity >= cap}
+          />
         </div>
 
         {tier.reserveFrequency > 0 || tier.votingUnits > 0n ? (
@@ -1349,24 +1375,18 @@ function TierDetailModal({
   pricing: Shop['pricing']
   onClose: () => void
 }) {
-  const { quantityOf, setQuantity, registerItem } = useShopCart()
-  const quantity = quantityOf(tier.id)
-  const unlimited = tier.initial >= TIER_UNLIMITED_SUPPLY
-  const soldOut = !unlimited && tier.remaining <= 0
-  const cap = unlimited ? 99 : tier.remaining
-  const discounted = tier.discountPercent > 0
-  const effective = effectiveTierPrice(tier.price, tier.discountPercent)
-  const item = useMemo(
-    () => ({
-      tierId: tier.id,
-      name: media?.name ?? `Item #${tier.id}`,
-      image: media?.image,
-    }),
-    [tier.id, media?.name, media?.image],
-  )
+  const {
+    quantity,
+    setQuantity,
+    unlimited,
+    soldOut,
+    cap,
+    discounted,
+    effective,
+    item,
+  } = useTierCartItem(tier, media)
 
   useEffect(() => {
-    registerItem(item)
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
     }
@@ -1377,7 +1397,7 @@ function TierDetailModal({
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [item, registerItem, onClose])
+  }, [onClose])
 
   const supply = useQuery({
     queryKey: ['shopTierSupply', chains, isRevnet, tier.id],
@@ -1570,16 +1590,15 @@ function DetailFact({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** Strip markup/entities from resolver descriptions. Client-only: it's only
+ *  reached once tier media resolves in the browser, so DOMParser is safe. */
 function plainText(value: string): string {
-  return value
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .trim()
+  return (
+    new DOMParser().parseFromString(
+      value.replace(/<br\s*\/?>/gi, '\n'),
+      'text/html',
+    ).body.textContent ?? ''
+  ).trim()
 }
 
 /** Shopper-facing "X% off" — discountPercent is out of 200. */
@@ -1673,13 +1692,7 @@ async function readShop(
     }).catch(() => [])
     const match = contexts.find(ctx => ctx.currency === currency)
     if (match) {
-      symbol = await client
-        .readContract({
-          address: match.token,
-          abi: erc20Abi,
-          functionName: 'symbol',
-        })
-        .catch(() => truncateAddress(match.token))
+      symbol = await tokenSymbol(client, match.token, { chainId })
     }
   }
 
@@ -1702,19 +1715,6 @@ async function readShop(
     cashOutEnabled,
     pricing: { currency, decimals, symbol },
     tiers,
-  }
-}
-
-/** Parse a data:application/json;base64 URI into its JSON object. */
-function parseDataJson(uri: string): Record<string, unknown> | null {
-  const match = /^data:application\/json;base64,(.*)$/.exec(uri)
-  if (!match) return null
-  try {
-    // decodeURIComponent(escape(...)) round-trips UTF-8 through atob.
-    const json = JSON.parse(decodeURIComponent(escape(atob(match[1]))))
-    return json && typeof json === 'object' ? json : null
-  } catch {
-    return null
   }
 }
 
@@ -1754,17 +1754,21 @@ function mediaAssetUrl(value: unknown): string | undefined {
 /** Resolve a tier's display metadata: the resolver's data URI first, then
  *  the tier's IPFS JSON. Best-effort — {} on any failure. */
 async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
-  const pick = (json: Record<string, unknown>): TierMedia => ({
-    name: str(json.productName) ?? str(json.name),
-    description: str(json.productDescription) ?? str(json.description),
-    image: mediaImageUrl(json.image ?? json.imageUri),
-    animationUrl: mediaAssetUrl(json.animation_url ?? json.animationUrl),
-    mediaType:
-      str(json.mediaType) ?? str(json.animationType) ?? str(json.mimeType),
-    categoryName: str(json.categoryName),
-  })
+  const pick = (json: Record<string, unknown>): TierMedia => {
+    const meta = pickTierMetadata(json)
+    return {
+      name: meta.name,
+      description: meta.description,
+      image: mediaImageUrl(meta.image),
+      animationUrl: mediaAssetUrl(meta.animationUrl),
+      mediaType: meta.mediaType,
+      categoryName: meta.categoryName,
+    }
+  }
 
-  const resolved = tier.resolvedUri ? parseDataJson(tier.resolvedUri) : null
+  const resolved = tier.resolvedUri
+    ? parseTierMetadataJson(tier.resolvedUri)
+    : null
   if (resolved && Object.keys(resolved).length > 0) return pick(resolved)
 
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
@@ -1784,50 +1788,4 @@ async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   } catch {
     return {}
   }
-}
-
-function str(value: unknown): string | undefined {
-  return typeof value === 'string' && value ? value : undefined
-}
-
-// ---- bytes32 → CIDv0 (the reverse of src/lib/ipfs-cid.ts) ----
-// The 721 hook stores only the sha2-256 digest onchain; the CIDv0 is
-// multihash 0x12 0x20 + digest, base58-encoded.
-
-const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-function base58Encode(bytes: Uint8Array): string {
-  const digits = [0]
-  for (const byte of bytes) {
-    let carry = byte
-    for (let i = 0; i < digits.length; i++) {
-      carry += digits[i] * 256
-      digits[i] = carry % 58
-      carry = Math.floor(carry / 58)
-    }
-    while (carry > 0) {
-      digits.push(carry % 58)
-      carry = Math.floor(carry / 58)
-    }
-  }
-  for (const byte of bytes) {
-    if (byte !== 0) break
-    digits.push(0)
-  }
-  return digits
-    .reverse()
-    .map(digit => B58[digit])
-    .join('')
-}
-
-function bytes32ToCidV0(hex: `0x${string}`): string | null {
-  const clean = hex.slice(2)
-  if (!/^[0-9a-fA-F]{64}$/.test(clean) || /^0+$/.test(clean)) return null
-  const bytes = new Uint8Array(34)
-  bytes[0] = 0x12 // sha2-256
-  bytes[1] = 0x20 // 32 bytes
-  for (let i = 0; i < 32; i++) {
-    bytes[i + 2] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
-  }
-  return base58Encode(bytes)
 }

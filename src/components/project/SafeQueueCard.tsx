@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toFunctionSelector, type Address, type Hex } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
+import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import {
   clearRelayrPendingSession,
@@ -162,7 +163,6 @@ export function SafeQueueCard({
   )
   const [pendingSession, setPendingSession] =
     useState<RelayrPendingSession | null>(null)
-  const refreshRef = useRef<() => Promise<unknown>>(async () => undefined)
   const resumedScopeRef = useRef<string | null>(null)
 
   const query = useQuery({
@@ -232,13 +232,7 @@ export function SafeQueueCard({
     return rows
   }, [query.data])
 
-  const refresh = async () => {
-    await query.refetch()
-  }
-
-  useEffect(() => {
-    refreshRef.current = refresh
-  })
+  const refetchQueues = query.refetch
 
   const recoverPaidBundle = useCallback(
     async (session: RelayrPendingSession) => {
@@ -265,7 +259,7 @@ export function SafeQueueCard({
           `Executed ${session.itemCount} Safe transaction${session.itemCount === 1 ? '' : 's'}.`,
         )
         setBatchReview(null)
-        await refreshRef.current()
+        await refetchQueues()
       } catch (recoveryError) {
         if (!relayrErrorIsUncertain(recoveryError)) {
           clearRelayrPendingSession(pendingScope)
@@ -280,7 +274,7 @@ export function SafeQueueCard({
         setBusy(null)
       }
     },
-    [pendingScope],
+    [pendingScope, refetchQueues],
   )
 
   useEffect(() => {
@@ -300,7 +294,7 @@ export function SafeQueueCard({
     try {
       await confirmSafeTx(chain.chainId, safe, tx, address)
       setNotice(`Signed transaction #${tx.nonce} on ${chain.name}.`)
-      await refresh()
+      await refetchQueues()
     } catch (signError) {
       setError(signError instanceof Error ? signError.message : 'Could not sign.')
     } finally {
@@ -316,7 +310,7 @@ export function SafeQueueCard({
     try {
       await executeSafeTx(chain.chainId, safe, tx)
       setNotice(`Executed transaction #${tx.nonce} on ${chain.name}.`)
-      await refresh()
+      await refetchQueues()
     } catch (executeError) {
       setError(
         executeError instanceof Error ? executeError.message : 'Could not execute.',
@@ -441,7 +435,7 @@ export function SafeQueueCard({
       setPendingSession(null)
       setNotice(`Executed ${batchReview.rows.length} Safe transactions.`)
       setBatchReview(null)
-      await refresh()
+      await refetchQueues()
     } catch (batchError) {
       if (paidSession && !relayrErrorIsUncertain(batchError)) {
         clearRelayrPendingSession(pendingScope)
@@ -768,11 +762,7 @@ export function SafeQueueCard({
       )}
 
       {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
-      {error ? (
-        <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      ) : null}
+      <TxError error={error} />
     </section>
   )
 }

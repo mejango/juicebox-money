@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { parseChainProject } from '@/lib/api-params'
 import { getParticipants } from '@/lib/bendystraw'
 
 export const dynamic = 'force-dynamic'
@@ -7,19 +8,13 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const suckerGroupId = searchParams.get('suckerGroupId')
-  const chainId = Number(searchParams.get('chainId'))
-  const projectId = Number(searchParams.get('projectId'))
+  const { chainId, projectId, ok } = parseChainProject(searchParams)
 
   try {
     if (suckerGroupId) {
       return NextResponse.json(await getParticipants({ suckerGroupId }))
     }
-    if (
-      Number.isInteger(chainId) &&
-      chainId > 0 &&
-      Number.isInteger(projectId) &&
-      projectId > 0
-    ) {
+    if (ok) {
       return NextResponse.json(await getParticipants({ chainId, projectId }))
     }
     return NextResponse.json(

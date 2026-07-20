@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { parseChainProject } from '@/lib/api-params'
 import { getProject } from '@/lib/bendystraw'
 
 /** Resolve a project id to its name (for the create flow's split rows). */
 export async function GET(req: NextRequest) {
-  const chainId = Number(req.nextUrl.searchParams.get('chainId'))
-  const projectId = Number(req.nextUrl.searchParams.get('projectId'))
-  if (
-    !Number.isInteger(chainId) ||
-    !Number.isInteger(projectId) ||
-    projectId < 1
-  ) {
+  const { chainId, projectId, ok } = parseChainProject(req.nextUrl.searchParams, {
+    anyChainId: true,
+  })
+  if (!ok) {
     return NextResponse.json({ error: 'Bad params' }, { status: 400 })
   }
   try {

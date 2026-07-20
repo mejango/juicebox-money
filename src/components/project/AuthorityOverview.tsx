@@ -1,6 +1,5 @@
 'use client'
 
-import { getPublicClient } from '@wagmi/core'
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -13,23 +12,26 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import {
-  encodeFunctionData,
-  zeroAddress,
-  type Address,
-  type PublicClient,
-} from 'viem'
+import { encodeFunctionData, zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { AddressLink } from '@/components/ui/AddressLink'
+import { ChainPicker } from '@/components/ui/ChainPicker'
+import { ErrorNote } from '@/components/ui/TxError'
+import {
+  clientFor,
+  readAuthorityOf,
+  runAuthorityCalls,
+  toggleInSet,
+  type AuthorityCall,
+} from '@/lib/authority'
 import {
   getPermissionHoldersAcrossDeployments,
   type BsPermissionHolder,
 } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
-import { truncateAddress } from '@/lib/format'
 import {
   decodePermissionBitmap,
   permissionDefinition,
@@ -41,7 +43,7 @@ import {
   fetchSafeInfo,
   type SafeInfo,
 } from '@/lib/safe'
-import { wagmiConfig } from '@/providers/Providers'
+import { chainName } from '@/lib/urn'
 
 export type AuthorityDeployment = {
   chainId: JBChainId
@@ -64,36 +66,6 @@ type AuthorityGroup = {
   rows: AuthorityRow[]
 }
 
-function clientFor(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
-function explorerAddress(chainId: JBChainId, address: Address): string | null {
-  const host = JB_CHAINS[chainId]?.etherscanHostname
-  return host ? `https://${host}/address/${address}` : null
-}
-
-function AddressLink({ chainId, address }: { chainId: JBChainId; address: Address }) {
-  const href = explorerAddress(chainId, address)
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={address}
-      className="font-mono text-sm text-ink hover:underline"
-    >
-      {truncateAddress(address)}
-    </a>
-  ) : (
-    <span className="font-mono text-sm text-ink" title={address}>
-      {truncateAddress(address)}
-    </span>
-  )
-}
-
 async function readAuthorityRows(
   deployments: AuthorityDeployment[],
   isRevnet: boolean,
@@ -101,19 +73,9 @@ async function readAuthorityRows(
   return Promise.all(
     deployments.map(async deployment => {
       const client = clientFor(deployment.chainId)
-      let authority = deployment.indexedAuthority
-      if (!isRevnet) {
-        authority = (await client
-          .readContract({
-            address: jbContractAddress['6'][JBCoreContracts.JBProjects][
-              deployment.chainId
-            ],
-            abi: jbProjectsAbi,
-            functionName: 'ownerOf',
-            args: [BigInt(deployment.projectId)],
-          })
-          .catch(() => deployment.indexedAuthority)) as Address | null
-      }
+      const authority = await readAuthorityOf(client, deployment, {
+        indexedOnly: isRevnet,
+      })
 
       let safe: SafeInfo | null = null
       let accountType: AuthorityRow['accountType'] = 'Unknown'
@@ -127,7 +89,7 @@ async function readAuthorityRows(
       }
       return {
         ...deployment,
-        name: JB_CHAINS[deployment.chainId]?.name ?? `Chain ${deployment.chainId}`,
+        name: chainName(deployment.chainId),
         authority,
         safe,
         accountType,
@@ -301,8 +263,10 @@ export function AuthorityOverview({
                     <dd>
                       {group.authority ? (
                         <AddressLink
-                          chainId={group.rows[0].chainId}
                           address={group.authority}
+                          chainId={group.rows[0].chainId}
+                          className="font-mono text-sm text-ink"
+                          title={group.authority}
                         />
                       ) : (
                         <span className="text-smoke-500">Unknown</span>
@@ -326,8 +290,10 @@ export function AuthorityOverview({
                           {group.safe.owners.map(owner => (
                             <AddressLink
                               key={owner}
-                              chainId={group.rows[0].chainId}
                               address={owner}
+                              chainId={group.rows[0].chainId}
+                              className="font-mono text-sm text-ink"
+                              title={owner}
                             />
                           ))}
                         </dd>
@@ -599,11 +565,7 @@ function TransferAuthorityFlow({
             : 'Transfer ownership'}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorNote message={error} /> : null}
     </div>
   )
 }
@@ -653,7 +615,12 @@ function PermissionsAcrossChains({
           {grants.map(grant => (
             <div key={grant.operator} className="py-4 first:pt-0 last:pb-0">
               <div className="flex flex-wrap items-center gap-2">
-                <AddressLink chainId={chainIds[0]} address={grant.operator} />
+                <AddressLink
+                  address={grant.operator}
+                  chainId={chainIds[0]}
+                  className="font-mono text-sm text-ink"
+                  title={grant.operator}
+                />
                 {grant.isRevnetOperator ? (
                   <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
                     Operator
@@ -867,34 +834,20 @@ function PermissionEditor({
         </div>
       </label>
 
-      <div className="mt-4">
-        <span className="field-label">Set on</span>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {deployments.map(deployment => (
-            <label
-              key={deployment.chainId}
-              className="flex cursor-pointer items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm"
-            >
-              <input
-                type="checkbox"
-                checked={selectedChains.has(deployment.chainId)}
-                onChange={() =>
-                  setSelectedChains(current => {
-                    const next = new Set(current)
-                    if (next.has(deployment.chainId)) next.delete(deployment.chainId)
-                    else next.add(deployment.chainId)
-                    return next
-                  })
-                }
-                disabled={busy}
-                className="accent-bluebs-600"
-              />
-              <ChainIcon chainId={deployment.chainId} size={18} />
-              {JB_CHAINS[deployment.chainId]?.name ?? deployment.chainId}
-            </label>
-          ))}
-        </div>
-      </div>
+      <ChainPicker
+        className="mt-4"
+        label="Set on"
+        rows={deployments.map(deployment => ({
+          chainId: deployment.chainId,
+          name: JB_CHAINS[deployment.chainId]?.name ?? deployment.chainId,
+        }))}
+        selected={selectedChains}
+        onChange={setSelectedChains}
+        disabled={busy}
+        rowClassName={() =>
+          'flex cursor-pointer items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm'
+        }
+      />
 
       <div className="mt-4">
         <span className="field-label">All V6 permissions</span>
@@ -908,12 +861,7 @@ function PermissionEditor({
               key={permission.id}
               checked={selected.has(permission.id)}
               onToggle={() =>
-                setSelected(current => {
-                  const next = new Set(current)
-                  if (next.has(permission.id)) next.delete(permission.id)
-                  else next.add(permission.id)
-                  return next
-                })
+                setSelected(current => toggleInSet(current, permission.id))
               }
               disabled={busy}
               title={`${permission.label} #${permission.id}`}
@@ -946,11 +894,7 @@ function PermissionEditor({
         {busy ? status ?? 'Preparing…' : grant ? 'Update permissions' : 'Add operator'}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorNote message={error} /> : null}
     </div>
   )
 }

@@ -35,8 +35,8 @@ import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import { cashOutPriceFromTotals } from '@/lib/cashOut'
+import { tokenSymbol } from '@/lib/token-symbol'
 
-const NATIVE = '0x000000000000000000000000000000000000eeee'
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
  * issuance price ceiling over time. Fetches the stages client-side (the
@@ -88,16 +88,7 @@ export function RevnetPriceCard({
       const contextSymbols = await Promise.all(
         contexts.map(async ctx => ({
           currency: ctx.currency,
-          symbol:
-            ctx.token.toLowerCase() === NATIVE
-              ? nativeSymbol
-              : await publicClient!
-                  .readContract({
-                    address: ctx.token,
-                    abi: erc20Abi,
-                    functionName: 'symbol',
-                  })
-                  .catch(() => null),
+          symbol: await tokenSymbol(publicClient!, ctx.token, { nativeSymbol }),
         })),
       )
       return { all, contexts, contextSymbols, projectSymbol }

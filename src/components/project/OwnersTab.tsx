@@ -3,7 +3,6 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
   jbControllerAbi,
@@ -25,16 +24,9 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import {
-  erc20Abi,
-  formatUnits,
-  zeroAddress,
-  type Address,
-  type PublicClient,
-} from 'viem'
-import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
+import { erc20Abi, type Address, type PublicClient } from 'viem'
+import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
@@ -45,17 +37,27 @@ import { LoansSection } from '@/components/project/LoansSection'
 import { MarketSection } from '@/components/project/MarketSection'
 import { MoveCard } from '@/components/project/MoveFlow'
 import { SettlementSection } from '@/components/project/SettlementSection'
+import {
+  SplitRecipient,
+  type Split as SplitRow,
+} from '@/components/project/SplitRecipient'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { AddressLink } from '@/components/ui/AddressLink'
+import { TxError } from '@/components/ui/TxError'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BsParticipant } from '@/lib/bendystraw'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import {
+  compactTokenTotal,
+  fmtPct,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
-import { chainName, toUrn } from '@/lib/urn'
-
-/** The reserved-split sentinel that burns the tokens instead of sending them. */
-const BURN_ADDRESS = '0x000000000000000000000000000000000000dead'
+import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
+import { chainName } from '@/lib/urn'
 
 /**
  * The Owners (revnet) / Tokens (custom) tab (website/ parity:
@@ -196,9 +198,6 @@ function YouCard({
   chains: [number, number][]
 }) {
   const { isConnected, address, openSignIn } = useWallet()
-  const primaryClient = usePublicClient({
-    chainId: chains[0]?.[0] as JBChainId,
-  }) as PublicClient | undefined
 
   // Wallet state only exists client-side; keep SSR + first client render
   // identical so hydration always matches (OwnerPanel pattern).
@@ -211,26 +210,12 @@ function YouCard({
 
   // The project's OWN token symbol, resolved on-chain (NOT bendystraw's
   // accounting symbol). Omnichain ERC-20s share one address/symbol, so resolve
-  // it once on the primary chain (AutoIssuanceSection pattern).
-  const { data: ownSymbol } = useQuery({
-    queryKey: ['youOwnSymbol', chains[0]?.join(':')],
-    enabled: !!primaryClient && chains.length > 0,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<string | null> => {
-      const token = await getTokenAddress(primaryClient!, {
-        chainId: chains[0][0] as JBChainId,
-        projectId: BigInt(chains[0][1]),
-      })
-      if (!token) return null
-      return (await primaryClient!.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })) as string
-    },
-  })
-  const collateralSymbol = ownSymbol || 'tokens'
+  // it once on the primary chain.
+  const { data: ownToken } = useProjectTokenSymbol(
+    (chains[0]?.[0] ?? chainId) as JBChainId,
+    chains[0]?.[1] ?? projectId,
+  )
+  const collateralSymbol = ownToken?.symbol || 'tokens'
 
   const multiChain = chains.length > 1
 
@@ -422,17 +407,9 @@ function YourChainRow({
       let cashOutDecimals = 18
       if (primary) {
         cashOutDecimals = primary.decimals
-        const isNative =
-          primary.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-        cashOutSymbol = isNative
-          ? (JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH')
-          : await client
-              .readContract({
-                abi: erc20Abi,
-                address: primary.token,
-                functionName: 'symbol',
-              })
-              .catch(() => truncateAddress(primary.token))
+        cashOutSymbol = await readTokenSymbol(client, primary.token, {
+          chainId,
+        })
         cashOutValue =
           balance > 0n
             ? ((await client.readContract({
@@ -611,11 +588,7 @@ function ClaimFlow({
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedClaim | null>(null)
 
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = checking || tx.busy
 
   const chainMeta = JB_CHAINS[chainId]
   const txUrl = tx.hash
@@ -722,15 +695,10 @@ function ClaimFlow({
       >
         {checking
           ? 'Checking your credits…'
-          : tx.phase === 'simulating'
-            ? 'Double-checking the transaction…'
-            : tx.phase === 'signing'
-              ? 'Confirm in your wallet…'
-              : tx.phase === 'pending'
-                ? 'Claiming…'
-                : review
-                  ? 'Confirm claim'
-                  : 'Claim as ERC-20'}
+          : txPhaseLabel(tx.phase, {
+              pending: 'Claiming…',
+              idle: review ? 'Confirm claim' : 'Claim as ERC-20',
+            })}
       </button>
       {tx.phase === 'pending' && txUrl ? (
         <p className="mt-1.5 text-xs text-smoke-700">
@@ -745,11 +713,10 @@ function ClaimFlow({
           </a>
         </p>
       ) : null}
-      {flowError || tx.error ? (
-        <p className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {flowError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+      />
     </div>
   )
 }
@@ -801,21 +768,6 @@ function holderPercentLabel(balance: bigint, total: bigint): string {
   if (pct >= 1) return `${pct.toFixed(3)}%`
   if (pct >= 0.01) return `${pct.toFixed(4)}%`
   return '<0.01%'
-}
-
-function compactTokenTotal(raw: bigint): string {
-  const value = Number(formatUnits(raw, 18))
-  if (!Number.isFinite(value)) return '—'
-  if (value >= 1_000_000_000) {
-    return `${(value / 1_000_000_000).toFixed(value >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, '')}b`
-  }
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}m`
-  }
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k`
-  }
-  return formatTokenAmount(raw)
 }
 
 function indexedPaidLabel(raw: bigint): string {
@@ -917,24 +869,8 @@ function AllHoldersCard({
   suckerGroupId: string | null
   etherscanHost?: string
 }) {
-  const { data: projectTokenAddress } = useReadContract({
-    abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
-    functionName: 'tokenOf',
-    args: [BigInt(projectId)],
-    chainId,
-    query: { staleTime: 60_000 },
-  })
-  const tokenDeployed =
-    !!projectTokenAddress && projectTokenAddress !== zeroAddress
-  const { data: projectTokenSymbol } = useReadContract({
-    abi: erc20Abi,
-    address: projectTokenAddress as Address,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: tokenDeployed, staleTime: 60_000 },
-  })
-  const tokenUnit = projectTokenSymbol ? String(projectTokenSymbol) : 'tokens'
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const tokenUnit = projectToken?.symbol || 'tokens'
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['participants', suckerGroupId ?? `${chainId}:${projectId}`],
@@ -1039,20 +975,10 @@ function AllHoldersCard({
                       className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] items-center gap-3 px-4 py-3 text-sm"
                     >
                       <span className="min-w-0">
-                        {etherscanHost ? (
-                          <a
-                            href={`https://${etherscanHost}/address/${holder.address}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-ink hover:underline"
-                          >
-                            {truncateAddress(holder.address)}
-                          </a>
-                        ) : (
-                          <span className="text-ink">
-                            {truncateAddress(holder.address)}
-                          </span>
-                        )}
+                        <AddressLink
+                          address={holder.address}
+                          host={etherscanHost}
+                        />
                       </span>
                       <span className="font-medium text-ink">
                         {holderPercentLabel(holder.balance, total)}
@@ -1090,59 +1016,12 @@ function AllHoldersCard({
 
 // --------------------------------------------- Reserved / Splits subtab --
 
-/** The JBSplits.splitsOf tuple shape (FundsTab pattern). */
-type SplitRow = {
-  percent: number
-  projectId: bigint
-  beneficiary: Address
-  preferAddToBalance: boolean
-  lockedUntil: number
-  hook: Address
-}
-
-function formatPercent(pct: number): string {
-  return `${pct.toFixed(2).replace(/\.?0+$/, '')}%`
-}
-
 /** A split's percentage of all issuance, not merely of the reserved group. */
 function effectiveSplitPercent(
   splitPercent: number,
   reservedPercent: number,
 ): number {
   return (reservedPercent / 100) * (splitPercent / SPLITS_TOTAL_PERCENT)
-}
-
-function SplitRecipient({
-  split,
-  chainId,
-}: {
-  split: SplitRow
-  chainId: JBChainId
-}) {
-  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
-
-  if (split.hook !== zeroAddress) {
-    return (
-      <span>
-        {linkedAddress(split.hook, etherscanHost)}
-        <span className="ml-1.5 text-xs text-smoke-500">hook</span>
-      </span>
-    )
-  }
-  if (split.projectId > 0n) {
-    return (
-      <Link
-        href={`/${toUrn(chainId, Number(split.projectId))}`}
-        className="text-ink hover:underline"
-      >
-        Project #{split.projectId.toString()}
-      </Link>
-    )
-  }
-  if (split.beneficiary.toLowerCase() === BURN_ADDRESS) {
-    return <span className="text-ink">Burn</span>
-  }
-  return linkedAddress(split.beneficiary, etherscanHost)
 }
 
 /**
@@ -1199,10 +1078,11 @@ function ReservedCard({
     stage => stage.ruleset.id === stageData?.current?.ruleset.id,
   )
   if (currentStageIndex < 0) {
-    currentStageIndex = 0
-    stages.forEach((stage, index) => {
-      if (stage.ruleset.start <= now) currentStageIndex = index
-    })
+    // Fall back to the latest stage that has already started.
+    currentStageIndex = Math.max(
+      0,
+      stages.findLastIndex(stage => stage.ruleset.start <= now),
+    )
   }
 
   const [chosenStageIndex, setChosenStageIndex] = useState<number | null>(null)
@@ -1299,7 +1179,7 @@ function ReservedCard({
       <p className="mt-3 text-sm text-smoke-700">
         {isRevnet ? 'The split limit for this stage is ' : 'Reserved rate: '}
         <span className="font-medium text-ink">
-          {formatPercent(reservedPercent / 100)}
+          {fmtPct(reservedPercent / 100)}
         </span>{' '}
         of issuance.
       </p>
@@ -1371,41 +1251,18 @@ function ChainSplitsBlock({
   const directoryAddress = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId
   ] as Address
-  const tokensAddress = jbContractAddress['6'][JBCoreContracts.JBTokens][
-    chainId
-  ] as Address
 
-  const { data: base } = useReadContracts({
-    contracts: [
-      {
-        abi: jbDirectoryAbi,
-        address: directoryAddress,
-        functionName: 'controllerOf',
-        args: [BigInt(projectId)],
-        chainId,
-      },
-      {
-        abi: jbTokensAbi,
-        address: tokensAddress,
-        functionName: 'tokenOf',
-        args: [BigInt(projectId)],
-        chainId,
-      },
-    ],
+  const { data: controller } = useReadContract({
+    abi: jbDirectoryAbi,
+    address: directoryAddress,
+    functionName: 'controllerOf',
+    args: [BigInt(projectId)],
+    chainId,
     query: { staleTime: 60_000 },
   })
-  const controller = base?.[0]?.result as Address | undefined
-  const token = base?.[1]?.result as Address | undefined
-  const tokenDeployed = !!token && token !== zeroAddress
 
-  const { data: tokenSymbol } = useReadContract({
-    abi: erc20Abi,
-    address: token,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: tokenDeployed, staleTime: 5 * 60_000 },
-  })
-  const symbol = tokenDeployed ? (tokenSymbol ?? 'tokens') : 'tokens'
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const symbol = projectToken?.symbol || 'tokens'
 
   const {
     data: pending,
@@ -1443,17 +1300,17 @@ function ChainSplitsBlock({
               className="grid grid-cols-[minmax(150px,0.75fr)_minmax(190px,1fr)_minmax(180px,0.9fr)] items-center gap-4 border-b border-smoke-100 px-3 py-3 text-sm last:border-b-0"
             >
               <span>
-                <SplitRecipient split={split} chainId={chainId} />
+                <SplitRecipient split={split} chainId={chainId} showBurn />
               </span>
               <span>
                 <strong className="font-medium text-ink">
-                  {formatPercent(
+                  {fmtPct(
                     effectiveSplitPercent(split.percent, reservedPercent),
                   )}
                 </strong>
                 <span className="text-smoke-500">
                   {' '}
-                  ({formatPercent(fraction * 100)} of limit)
+                  ({fmtPct(fraction * 100)} of limit)
                 </span>
               </span>
               <span className="text-ink">
@@ -1473,9 +1330,7 @@ function ChainSplitsBlock({
           projectId={projectId}
           controller={controller}
           pending={availablePending}
-          symbol={symbol}
           onDone={() => void refetchPending()}
-          compact
         />
       </div>
     </section>
@@ -1492,25 +1347,18 @@ function DistributeFlow({
   projectId,
   controller,
   pending,
-  symbol,
   onDone,
-  compact = false,
 }: {
   chainId: JBChainId
   projectId: number
   controller: Address | undefined
   pending: bigint | undefined
-  symbol: string
   onDone: () => void
-  compact?: boolean
 }) {
   const { isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
 
-  const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = tx.busy
 
   const chainMeta = JB_CHAINS[chainId]
   const txUrl = tx.hash
@@ -1537,29 +1385,8 @@ function DistributeFlow({
     })
   }
 
-  if (tx.phase === 'success' && !compact) {
-    return (
-      <div className="callout callout-success mt-3 text-xs">
-        Distributed — the reserved tokens went to the recipients.
-        {txUrl ? (
-          <>
-            {' '}
-            <a
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-            >
-              View transaction
-            </a>
-          </>
-        ) : null}
-      </div>
-    )
-  }
-
   return (
-    <div className={compact ? 'mt-2 flex flex-col items-end' : 'mt-3'}>
+    <div className="mt-2 flex flex-col items-end">
       <button
         onClick={handleDistribute}
         disabled={busy || !controller || !pending || pending <= 0n}
@@ -1567,27 +1394,12 @@ function DistributeFlow({
       >
         {tx.phase === 'success'
           ? 'Distributed'
-          : tx.phase === 'simulating'
-          ? 'Double-checking the transaction…'
-          : tx.phase === 'signing'
-            ? 'Confirm in your wallet…'
-            : tx.phase === 'pending'
-              ? 'Distributing…'
-              : compact
-                ? 'Distribute'
-                : 'Distribute now'}
+          : txPhaseLabel(tx.phase, {
+              pending: 'Distributing…',
+              idle: 'Distribute',
+            })}
       </button>
-      {!compact && (!pending || pending <= 0n) ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Nothing to distribute right now.
-        </p>
-      ) : !compact ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Anyone can send this — it moves the{' '}
-          {formatTokenAmount(pending ?? 0n)} {symbol} above to the recipients.
-        </p>
-      ) : null}
-      {compact && tx.phase === 'success' ? (
+      {tx.phase === 'success' ? (
         <p className="mt-1.5 text-xs text-smoke-700">
           Pending splits distributed.
           {txUrl ? (
@@ -1618,27 +1430,10 @@ function DistributeFlow({
           </a>
         </p>
       ) : null}
-      {tx.error ? (
-        <p className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={tx.error}
+        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+      />
     </div>
-  )
-}
-
-function linkedAddress(address: Address, etherscanHost?: string) {
-  const label = truncateAddress(address)
-  return etherscanHost ? (
-    <a
-      href={`https://${etherscanHost}/address/${address}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-ink hover:underline"
-    >
-      {label}
-    </a>
-  ) : (
-    <span className="text-ink">{label}</span>
   )
 }

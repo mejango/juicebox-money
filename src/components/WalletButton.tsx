@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useWallet } from '@/hooks/useWallet'
 import { truncateAddress } from '@/lib/format'
 
@@ -15,14 +16,7 @@ export function WalletButton() {
   // server so hydration always matches.
   useEffect(() => setMounted(true), [])
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const close = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    return () => document.removeEventListener('pointerdown', close)
-  }, [menuOpen])
+  useOutsideClose(menuRef, () => setMenuOpen(false), menuOpen)
 
   const connected = mounted && isConnected && !!address
 

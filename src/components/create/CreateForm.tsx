@@ -9,7 +9,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import congratsIllustration from '@/assets/illustrations/congrats.png'
 import createIllustration from '@/assets/illustrations/create.png'
 import {
-  BaseError,
   parseUnits,
   zeroAddress,
   type Address,
@@ -18,8 +17,10 @@ import {
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
+import { friendlyError } from '@/lib/errors'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
+import { randomSalt } from '@/lib/manage'
 import { resolvedAddress } from '@/lib/ens'
 import {
   DRAFT_KEY,
@@ -60,6 +61,8 @@ import {
   AddButton,
   CheckIcon,
   CheckRow,
+  Chevron,
+  ChipButton,
   OptionRow,
   Piped,
   SubSection,
@@ -83,24 +86,44 @@ type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]['id']
 
 const MAX_LOGO_BYTES = 1024 * 1024
 
+/**
+ * Logo/cover file-input handler: revoke the old preview, validate, and swap
+ * in the new file. `label` names the image kind in the too-big error.
+ */
+const makeImageHandler =
+  (
+    preview: string | null,
+    setFile: (file: File | null) => void,
+    setPreview: (preview: string | null) => void,
+    setError: (error: string | null) => void,
+    label: string,
+  ) =>
+  (file: File | null) => {
+    setError(null)
+    if (preview) URL.revokeObjectURL(preview)
+    if (!file) {
+      setFile(null)
+      setPreview(null)
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setError('Please pick an image file.')
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setError(`${label} must be under 1MB.`)
+      return
+    }
+    setFile(file)
+    setPreview(URL.createObjectURL(file))
+  }
+
 type ChainStatus = {
   phase: 'pending' | 'signing' | 'confirming' | 'done' | 'failed'
   txHash?: `0x${string}`
   projectId?: number
   error?: string
   indexed?: boolean
-}
-
-function friendlyError(e: unknown): string {
-  const message =
-    e instanceof BaseError
-      ? e.shortMessage
-      : e instanceof Error
-        ? e.message
-        : 'Something went wrong.'
-  return /reject|denied|cancel/i.test(message)
-    ? 'You cancelled in your wallet.'
-    : message
 }
 
 function deriveSymbol(name: string): string {
@@ -113,10 +136,15 @@ function deriveSymbol(name: string): string {
   return symbol || 'ITEMS'
 }
 
-function randomSalt(): `0x${string}` {
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  return `0x${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`
+/** Human labels for the fixed approval-deadline choices. */
+const APPROVAL_LABELS: Record<
+  Exclude<ApprovalDeadline, 'none' | 'custom'>,
+  string
+> = {
+  '3hours': '3 hours',
+  '1day': '1 day',
+  '3days': '3 days',
+  '7days': '7 days',
 }
 
 const TAG_OPTIONS = [
@@ -297,6 +325,12 @@ export function CreateForm() {
       : storeUsd
         ? 6
         : 18
+  const storeCurrencyLabel =
+    effectiveStoreCurrency === 'token'
+      ? (customMeta?.symbol ?? 'TOKEN')
+      : storeUsd
+        ? 'USD'
+        : 'ETH'
 
   // Verify the custom token on EVERY selected chain: it must exist at the
   // same address with matching decimals everywhere (website/ parity).
@@ -366,45 +400,20 @@ export function CreateForm() {
     [logoPreview, coverPreview],
   )
 
-  const onLogoChange = (file: File | null) => {
-    setLogoError(null)
-    if (logoPreview) URL.revokeObjectURL(logoPreview)
-    if (!file) {
-      setLogoFile(null)
-      setLogoPreview(null)
-      return
-    }
-    if (!file.type.startsWith('image/')) {
-      setLogoError('Please pick an image file.')
-      return
-    }
-    if (file.size > MAX_LOGO_BYTES) {
-      setLogoError('Logos must be under 1MB.')
-      return
-    }
-    setLogoFile(file)
-    setLogoPreview(URL.createObjectURL(file))
-  }
-
-  const onCoverChange = (file: File | null) => {
-    setCoverError(null)
-    if (coverPreview) URL.revokeObjectURL(coverPreview)
-    if (!file) {
-      setCoverFile(null)
-      setCoverPreview(null)
-      return
-    }
-    if (!file.type.startsWith('image/')) {
-      setCoverError('Please pick an image file.')
-      return
-    }
-    if (file.size > MAX_LOGO_BYTES) {
-      setCoverError('Cover images must be under 1MB.')
-      return
-    }
-    setCoverFile(file)
-    setCoverPreview(URL.createObjectURL(file))
-  }
+  const onLogoChange = makeImageHandler(
+    logoPreview,
+    setLogoFile,
+    setLogoPreview,
+    setLogoError,
+    'Logos',
+  )
+  const onCoverChange = makeImageHandler(
+    coverPreview,
+    setCoverFile,
+    setCoverPreview,
+    setCoverError,
+    'Cover images',
+  )
 
   // Live creation fees, read per chain through the app's wagmi clients.
   const { data: fees } = useQuery({
@@ -1897,11 +1906,10 @@ export function CreateForm() {
               {TAG_OPTIONS.map(tag => {
                 const active = tags.includes(tag)
                 return (
-                  <button
+                  <ChipButton
                     key={tag}
-                    type="button"
-                    onClick={() => {
-                      if (busy) return
+                    active={active}
+                    onClick={() =>
                       setTags(prev =>
                         prev.includes(tag)
                           ? prev.filter(t => t !== tag)
@@ -1909,17 +1917,11 @@ export function CreateForm() {
                             ? [...prev, tag]
                             : prev,
                       )
-                    }}
-                    disabled={busy || (!active && tags.length >= 3)}
-                    aria-pressed={active}
-                    className={
-                      active
-                        ? 'inline-flex min-h-[40px] items-center rounded-lg border border-bluebs-500 bg-bluebs-25 px-3.5 text-xs font-medium text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)] transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
-                        : 'inline-flex min-h-[40px] items-center rounded-lg border border-grey-300 bg-white px-3.5 text-xs font-medium text-grey-700 transition-colors hover:border-bluebs-300 hover:text-bluebs-600 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40'
                     }
+                    disabled={busy || (!active && tags.length >= 3)}
                   >
                     {tag}
-                  </button>
+                  </ChipButton>
                 )
               })}
             </div>
@@ -2009,18 +2011,7 @@ export function CreateForm() {
                     Remove
                   </button>
                 ) : null}
-                <svg
-                  viewBox="0 0 24 24"
-                  className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${stage.expanded ? 'rotate-180' : ''}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
+                <Chevron open={stage.expanded} />
               </div>
               {stage.expanded ? (
                 <div className="px-4 pb-4">
@@ -2179,12 +2170,9 @@ export function CreateForm() {
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                   Queued changes take effect{' '}
                   {
-                    {
-                      '3hours': '3 hours',
-                      '1day': '1 day',
-                      '3days': '3 days',
-                      '7days': '7 days',
-                    }[approvalDeadline as '3hours' | '1day' | '3days' | '7days']
+                    APPROVAL_LABELS[
+                      approvalDeadline as keyof typeof APPROVAL_LABELS
+                    ]
                   }{' '}
                   after they&apos;re proposed.
                 </p>
@@ -2225,20 +2213,19 @@ export function CreateForm() {
             className="mt-2.5 grid max-w-lg gap-1 sm:grid-cols-3"
           >
             {(
-              customOn
-                ? ([
-                    [
-                      'token',
-                      `$${customMeta?.symbol ?? 'TOKEN'}`,
-                      'Project token',
-                    ],
-                    ['eth', 'ETH', 'Ether'],
-                    ['usd', 'USD', 'US dollars'],
-                  ] as const)
-                : ([
-                    ['eth', 'ETH', 'Ether'],
-                    ['usd', 'USD', 'US dollars'],
-                  ] as const)
+              [
+                ...(customOn
+                  ? ([
+                      [
+                        'token',
+                        `$${customMeta?.symbol ?? 'TOKEN'}`,
+                        'Project token',
+                      ],
+                    ] as const)
+                  : []),
+                ['eth', 'ETH', 'Ether'],
+                ['usd', 'USD', 'US dollars'],
+              ] as const
             ).map(([value, label, description]) => {
               const active = effectiveStoreCurrency === value
               return (
@@ -2264,13 +2251,7 @@ export function CreateForm() {
         <StoreEditor
           items={items}
           onChange={setItems}
-          currencyLabel={
-            effectiveStoreCurrency === 'token'
-              ? (customMeta?.symbol ?? 'TOKEN')
-              : storeUsd
-                ? 'USD'
-                : 'ETH'
-          }
+          currencyLabel={storeCurrencyLabel}
           disabled={busy}
           categories={storeCategories}
           onAddCategory={name => {
@@ -2519,11 +2500,7 @@ export function CreateForm() {
                   ? 'Immediate'
                   : approvalDeadline === 'custom'
                     ? 'Custom approval contract'
-                    : `${
-                        { '3hours': '3 hours', '1day': '1 day', '3days': '3 days', '7days': '7 days' }[
-                          approvalDeadline
-                        ]
-                      } notice`}
+                    : `${APPROVAL_LABELS[approvalDeadline]} notice`}
               </dd>
             </div>
           ) : null}

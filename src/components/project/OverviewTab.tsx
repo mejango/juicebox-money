@@ -40,7 +40,6 @@ function AuthorityRows({
 }: {
   label: string
   authorities: [number, string | null][]
-  etherscanHost?: string
 }) {
   const known = authorities.filter(([, a]) => !!a) as [number, string][]
   if (known.length === 0) return null
@@ -178,7 +177,6 @@ export function OverviewTab({
             <AuthorityRows
               label={isRevnet ? 'Operator' : 'Owner'}
               authorities={authorities}
-              etherscanHost={etherscanHost}
             />
           </dl>
         </div>

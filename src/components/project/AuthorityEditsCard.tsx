@@ -1,14 +1,10 @@
 'use client'
 
-import { getPublicClient } from '@wagmi/core'
 import {
-  JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
-  jbProjectsAbi,
-  type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -19,14 +15,21 @@ import {
   zeroAddress,
   zeroHash,
   type Address,
-  type PublicClient,
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { ChainPicker } from '@/components/ui/ChainPicker'
+import { ErrorNote } from '@/components/ui/TxError'
+import {
+  clientFor,
+  readAuthorityOf,
+  runAuthorityCalls,
+  safeOutcomeMessage,
+  type AuthorityCall,
+} from '@/lib/authority'
 import { ipfsUrl, truncateAddress } from '@/lib/format'
 import { TOKEN_SYMBOL_RE } from '@/lib/manage'
-import { wagmiConfig } from '@/providers/Providers'
+import { chainName } from '@/lib/urn'
 
 const MAX_LOGO_BYTES = 1024 * 1024
 
@@ -56,30 +59,14 @@ type EditChainState = AuthorityDeployment & {
   error: string | null
 }
 
-function clientFor(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
 async function readEditState(
   deployment: AuthorityDeployment,
   isRevnet: boolean,
 ): Promise<EditChainState> {
   const client = clientFor(deployment.chainId)
-  let authority = deployment.indexedAuthority
-  if (!isRevnet) {
-    authority = (await client
-      .readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
-          deployment.chainId
-        ],
-        abi: jbProjectsAbi,
-        functionName: 'ownerOf',
-        args: [BigInt(deployment.projectId)],
-      })
-      .catch(() => deployment.indexedAuthority)) as Address | null
-  }
+  const authority = await readAuthorityOf(client, deployment, {
+    indexedOnly: isRevnet,
+  })
 
   const controller = (await client
     .readContract({
@@ -122,7 +109,7 @@ async function readEditState(
 
   return {
     ...deployment,
-    name: JB_CHAINS[deployment.chainId]?.name ?? `Chain ${deployment.chainId}`,
+    name: chainName(deployment.chainId),
     authority,
     controller: controller && controller !== zeroAddress ? controller : null,
     uri: typeof uri === 'string' && uri ? uri : null,
@@ -141,19 +128,15 @@ function valuesDiffer(values: (string | null)[]): boolean {
   return new Set(values.map(value => value?.toLowerCase() ?? 'unset')).size > 1
 }
 
+/** The Edits-card outcome copy: executed counts shown, plural instruction. */
 function outcomeMessage(
   result: Awaited<ReturnType<typeof runAuthorityCalls>>,
   completed: string,
 ): string {
-  const queued = result.safeResults.filter(row => row.status === 'queued').length
-  const waiting = result.safeResults.filter(row => row.status === 'waiting').length
-  const executed = result.safeResults.filter(row => row.status === 'executed').length
-  if (queued || waiting) {
-    return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
-      waiting ? ` · ${waiting} awaiting more approvals` : ''
-    }${executed ? ` · ${executed} executed` : ''}. Complete queued actions in Pending multisig transactions.`
-  }
-  return completed
+  return safeOutcomeMessage(result, completed, {
+    showExecuted: true,
+    instruction: 'Complete queued actions in Pending multisig transactions.',
+  })
 }
 
 export function AuthorityEditsCard({
@@ -359,7 +342,8 @@ function truncateUri(uri: string): string {
   return `${uri.slice(0, 14)}…${uri.slice(-10)}`
 }
 
-function ChainPicker({
+/** The shared ChainPicker fed by this card's per-chain read state. */
+function EditChainPicker({
   rows,
   selected,
   onChange,
@@ -371,35 +355,18 @@ function ChainPicker({
   disabled: boolean
 }) {
   return (
-    <div>
-      <span className="field-label">Apply on</span>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {rows.map(row => (
-          <label
-            key={row.chainId}
-            className={`flex items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm ${
-              row.error ? 'opacity-50' : 'cursor-pointer'
-            }`}
-            title={row.error ?? undefined}
-          >
-            <input
-              type="checkbox"
-              checked={selected.has(row.chainId)}
-              onChange={() => {
-                const next = new Set(selected)
-                if (next.has(row.chainId)) next.delete(row.chainId)
-                else next.add(row.chainId)
-                onChange(next)
-              }}
-              disabled={disabled || !!row.error}
-              className="accent-bluebs-600"
-            />
-            <ChainIcon chainId={row.chainId} size={18} />
-            {row.name}
-          </label>
-        ))}
-      </div>
-    </div>
+    <ChainPicker
+      label="Apply on"
+      rows={rows.map(row => ({
+        chainId: row.chainId,
+        name: row.name,
+        disabled: !!row.error,
+        title: row.error ?? undefined,
+      }))}
+      selected={selected}
+      onChange={onChange}
+      disabled={disabled}
+    />
   )
 }
 
@@ -584,7 +551,7 @@ function MetadataEditor({
       </div>
 
       <div className="mt-4">
-        <ChainPicker
+        <EditChainPicker
           rows={rows}
           selected={selected}
           onChange={next => {
@@ -836,7 +803,7 @@ function TokenEditor({
       </div>
 
       <div className="mt-4">
-        <ChainPicker
+        <EditChainPicker
           rows={rows}
           selected={selected}
           onChange={next => {
@@ -939,13 +906,5 @@ function TextField({
         className="input-well mt-1.5 min-h-[42px] w-full px-3 text-sm disabled:opacity-60"
       />
     </label>
-  )
-}
-
-function ErrorNote({ message }: { message: string }) {
-  return (
-    <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-      {message}
-    </p>
   )
 }

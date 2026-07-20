@@ -1,11 +1,6 @@
 'use client'
 
-import {
-  getAccount,
-  getPublicClient,
-  getWalletClient,
-  switchChain,
-} from '@wagmi/core'
+import { getAccount } from '@wagmi/core'
 import {
   encodeFunctionData,
   getAddress,
@@ -19,6 +14,10 @@ import {
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import type { RelayrEntry } from '@/lib/relayr'
+import {
+  connectedWallet as connectedWalletCore,
+  publicClient,
+} from '@/lib/wallet-core'
 import {
   requireContractTransactionReview,
   requireTransactionReview,
@@ -240,22 +239,11 @@ function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   })
 }
 
-function publicClient(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
-async function connectedWallet(chainId: JBChainId, expected?: Address) {
-  const before = getAccount(wagmiConfig)
-  if (!before.address) throw new Error('Connect a wallet first.')
-  if (before.chainId !== chainId) await switchChain(wagmiConfig, { chainId })
-  const wallet = await getWalletClient(wagmiConfig, { chainId })
-  const account = getAccount(wagmiConfig).address
-  if (!account || (expected && account.toLowerCase() !== expected.toLowerCase())) {
-    throw new Error('Connected account changed. Review the Safe transaction again.')
-  }
-  return { wallet, account }
+function connectedWallet(chainId: JBChainId, expected?: Address) {
+  return connectedWalletCore(chainId, {
+    expected,
+    changedError: 'Connected account changed. Review the Safe transaction again.',
+  })
 }
 
 export function hasSafeService(chainId: number): boolean {

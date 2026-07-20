@@ -2,7 +2,13 @@
 
 import { getAccount, getPublicClient } from '@wagmi/core'
 import type { Address, Hex, PublicClient } from 'viem'
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import {
+  JB_CHAINS,
+  JBCoreContracts,
+  jbContractAddress,
+  jbProjectsAbi,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   loadRelayrPendingSession,
@@ -31,6 +37,77 @@ export type AuthorityProgress = {
 export type AuthorityResult = {
   relayrGroups: number
   safeResults: SafeCallResult[]
+}
+
+/** A configured public client for the chain — throws instead of returning
+ *  undefined so callers can read immediately. */
+export function clientFor(chainId: JBChainId): PublicClient {
+  const client = getPublicClient(wagmiConfig, { chainId })
+  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
+  return client as PublicClient
+}
+
+/**
+ * The account authorized to act for a project on one chain: the live
+ * JBProjects ownerOf, falling back to the indexed authority when the read
+ * fails. Pass `indexedOnly` (revnets) to trust the indexed operator without
+ * an owner read — revnet project NFTs are held by REVOwner, not the operator.
+ */
+export async function readAuthorityOf(
+  client: PublicClient,
+  deployment: {
+    chainId: JBChainId
+    projectId: number
+    indexedAuthority: Address | null
+  },
+  { indexedOnly = false }: { indexedOnly?: boolean } = {},
+): Promise<Address | null> {
+  if (indexedOnly) return deployment.indexedAuthority
+  return (await client
+    .readContract({
+      address: jbContractAddress['6'][JBCoreContracts.JBProjects][
+        deployment.chainId
+      ],
+      abi: jbProjectsAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(deployment.projectId)],
+    })
+    .catch(() => deployment.indexedAuthority)) as Address | null
+}
+
+/**
+ * The status line shown after `runAuthorityCalls`: the caller's `completed`
+ * message, unless any call went through a Safe — then a queued/waiting
+ * summary pointing at the Pending multisig transactions card. `showExecuted`
+ * appends the already-executed count and `instruction` overrides the default
+ * closing sentence.
+ */
+export function safeOutcomeMessage(
+  result: AuthorityResult,
+  completed: string,
+  options: { showExecuted?: boolean; instruction?: string } = {},
+): string {
+  const queued = result.safeResults.filter(row => row.status === 'queued').length
+  const waiting = result.safeResults.filter(row => row.status === 'waiting').length
+  const executed = options.showExecuted
+    ? result.safeResults.filter(row => row.status === 'executed').length
+    : 0
+  if (queued || waiting) {
+    return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
+      waiting ? ` · ${waiting} awaiting more approvals` : ''
+    }${executed ? ` · ${executed} executed` : ''}. ${
+      options.instruction ?? 'Complete it in Pending multisig transactions.'
+    }`
+  }
+  return completed
+}
+
+/** A copy of the set with `value` toggled in or out. */
+export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
 }
 
 /**

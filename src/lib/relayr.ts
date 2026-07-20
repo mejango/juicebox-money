@@ -1,11 +1,6 @@
 'use client'
 
-import {
-  getAccount,
-  getPublicClient,
-  getWalletClient,
-  switchChain,
-} from '@wagmi/core'
+import { getAccount } from '@wagmi/core'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
@@ -20,10 +15,13 @@ import {
   stringToHex,
   type Address,
   type Hex,
-  type PublicClient,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
+import {
+  connectedWallet as connectedWalletCore,
+  publicClient,
+} from '@/lib/wallet-core'
 
 const RELAYR_API = 'https://api.relayr.ba5ed.com'
 const RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:'
@@ -164,17 +162,16 @@ async function relayrFetch(
   init: RequestInit | undefined,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    return await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(Math.max(1, timeoutMs)),
+    })
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
       throw new RelayrHttpTimeoutError('Relayr did not respond in time.')
     }
     throw error
-  } finally {
-    clearTimeout(timer)
   }
 }
 
@@ -288,22 +285,11 @@ const FORWARD_REQUEST_TYPES = {
   ],
 } as const
 
-function publicClient(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
-async function connectedWallet(chainId: JBChainId) {
-  const before = getAccount(wagmiConfig)
-  if (!before.address) throw new Error('Connect a wallet first.')
-  if (before.chainId !== chainId) await switchChain(wagmiConfig, { chainId })
-  const wallet = await getWalletClient(wagmiConfig, { chainId })
-  const after = getAccount(wagmiConfig)
-  if (!after.address || after.address.toLowerCase() !== before.address.toLowerCase()) {
-    throw new Error('Connected account changed. Review the cross-chain request again.')
-  }
-  return { wallet, account: after.address }
+function connectedWallet(chainId: JBChainId) {
+  return connectedWalletCore(chainId, {
+    requireUnchanged: true,
+    changedError: 'Connected account changed. Review the cross-chain request again.',
+  })
 }
 
 /** Sign one EIP-2771 request for a Relayr destination transaction. */

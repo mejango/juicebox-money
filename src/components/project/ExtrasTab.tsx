@@ -5,7 +5,8 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { parseEventLogs, zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
@@ -23,16 +24,11 @@ import { chainName, toUrn } from '@/lib/urn'
 // deploy-all-v6/deployments/<chain>/JBProjectPayerDeployer.json) —
 // @bananapus/nana-sdk-core@1.2.0 does not ship this contract. The deployer
 // is a singleton at the same address on every supported chain.
-const PROJECT_PAYER_DEPLOYER_ADDRESS: Partial<Record<number, Address>> = {
-  1: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  10: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  8453: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  42161: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  84532: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  421614: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  11155111: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-  11155420: '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517',
-}
+const PROJECT_PAYER_DEPLOYER: Address =
+  '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517'
+const PROJECT_PAYER_CHAINS = new Set<number>([
+  1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420,
+])
 
 const PROJECT_PAYER_DEPLOYER_ABI = [
   {
@@ -67,27 +63,6 @@ const PROJECT_PAYER_DEPLOYER_ABI = [
   },
 ] as const
 
-export function ExtrasTab({
-  chainId,
-  projectId,
-  chains,
-}: {
-  chainId: JBChainId
-  projectId: number
-  /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
-  chains: [number, number][]
-}) {
-  return (
-    <div className="space-y-5">
-      <PayerAddressCard
-        chainId={chainId}
-        projectId={projectId}
-        chains={chains}
-      />
-    </div>
-  )
-}
-
 /** A reviewed, ready-to-send deploy: the exact args are frozen here so what
  *  the user confirms is what's sent. */
 type ReviewedDeploy = {
@@ -108,14 +83,14 @@ type ReviewedDeploy = {
  * an opt-in editable mode owned by the connected wallet, and metadata is
  * always 0x. Deploys are permissionless.
  */
-function PayerAddressCard({
+export function ExtrasTab({
   chainId,
   projectId,
   chains,
 }: {
   chainId: JBChainId
   projectId: number
-  /** Per-chain deployments: [chainId, projectId]. */
+  /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
   chains: [number, number][]
 }) {
   const { isConnected, address, openSignIn } = useWallet()
@@ -128,17 +103,16 @@ function PayerAddressCard({
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedDeploy | null>(null)
 
-  const deployer = PROJECT_PAYER_DEPLOYER_ADDRESS[chainId]
+  const deployer = PROJECT_PAYER_CHAINS.has(chainId)
+    ? PROJECT_PAYER_DEPLOYER
+    : undefined
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
   const txUrl = tx.hash
     ? `https://${etherscanHost}/tx/${tx.hash}`
     : null
 
-  const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = tx.busy
 
   // Editing any input invalidates the reviewed args.
   const invalidate = () => {
@@ -378,17 +352,14 @@ function PayerAddressCard({
             disabled={busy}
             className="btn-primary mt-4 min-h-[44px] px-5 text-sm"
           >
-            {tx.phase === 'simulating'
-              ? 'Double-checking the transaction…'
-              : tx.phase === 'signing'
-                ? 'Confirm in your wallet…'
-                : tx.phase === 'pending'
-                  ? 'Deploying…'
-                  : !isConnected
-                    ? 'Sign in to continue'
-                    : review
-                      ? 'Confirm deploy'
-                      : 'Review deploy'}
+            {txPhaseLabel(tx.phase, {
+              pending: 'Deploying…',
+              idle: !isConnected
+                ? 'Sign in to continue'
+                : review
+                  ? 'Confirm deploy'
+                  : 'Review deploy',
+            })}
           </button>
 
           {tx.phase === 'pending' && txUrl ? (
@@ -405,11 +376,10 @@ function PayerAddressCard({
             </p>
           ) : null}
 
-          {flowError || tx.error ? (
-            <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {flowError ?? tx.error}
-            </p>
-          ) : null}
+          <TxError
+            error={flowError ?? tx.error}
+            className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+          />
         </>
       )}
 

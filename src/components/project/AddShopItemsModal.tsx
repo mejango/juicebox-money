@@ -10,10 +10,11 @@ import {
 import { isRevnetOperator } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BaseError, type Address, type PublicClient } from 'viem'
+import { type Address, type PublicClient } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import {
   TransactionProgressImage,
   usePreloadTransactionAnimation,
@@ -26,6 +27,7 @@ import {
   type StoreCategory,
 } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
+import { shortError } from '@/lib/errors'
 import { build721TierConfigs } from '@/lib/launch'
 import {
   pinStoreItemDrafts,
@@ -234,7 +236,7 @@ export function AddShopItemsModal({
       })
       setPhase('review')
     } catch (error) {
-      setMessage(shortError(error))
+      setMessage(shortError(error, 'Could not add the items.'))
       setPhase('form')
     }
   }
@@ -378,7 +380,7 @@ export function AddShopItemsModal({
       )
       setPhase('done')
     } catch (error) {
-      const errorMessage = shortError(error)
+      const errorMessage = shortError(error, 'Could not add the items.')
       if (activeTarget) {
         const current = statusesRef.current[activeTarget.chainId]
         if (current?.phase !== 'failed') {
@@ -507,26 +509,21 @@ export function AddShopItemsModal({
                         ? 'Different pricing currency'
                         : 'Store unavailable')
                     return (
-                      <button
+                      <ChainPillButton
                         key={target.chainId}
-                        type="button"
-                        aria-pressed={checked}
-                        aria-label={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
+                        chainId={target.chainId}
+                        selected={checked}
+                        ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
                         onClick={() => toggleChain(target.chainId)}
                         disabled={!compatible || busy}
                         title={compatible ? undefined : unavailableReason}
-                        className={`inline-flex min-h-[48px] items-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 ${
-                          checked
-                            ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
-                            : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
-                        }`}
+                        size="lg"
                       >
-                        <ChainIcon chainId={target.chainId} size={26} />
                         <span>{chainName(target.chainId)}</span>
                         {!compatible ? (
                           <span className="sr-only"> — {unavailableReason}</span>
                         ) : null}
-                      </button>
+                      </ChainPillButton>
                     )
                   })}
                 </div>
@@ -754,14 +751,4 @@ function chainStatusLabel(status: ChainStatus['phase']) {
   if (status === 'done') return 'Added'
   if (status === 'failed') return 'Needs retry'
   return 'Ready'
-}
-
-function shortError(error: unknown): string {
-  if (error instanceof BaseError) {
-    const message = error.shortMessage || error.message
-    if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
-    return message.split('\n')[0]
-  }
-  if (error instanceof Error) return error.message.split('\n')[0]
-  return 'Could not add the items.'
 }

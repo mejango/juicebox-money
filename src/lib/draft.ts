@@ -84,22 +84,6 @@ const numStr = (v: unknown, max = 20): string =>
 
 function sanitizeSplit(raw: unknown): DraftSplit {
   const s = (raw ?? {}) as Record<string, unknown>
-  const perChain: Record<number, string> = {}
-  const perChainBeneficiary: Record<number, string> = {}
-  const perChainAmount: Record<number, string> = {}
-  for (const [source, target] of [
-    [s.perChain, perChain],
-    [s.perChainBeneficiary, perChainBeneficiary],
-    [s.perChainAmount, perChainAmount],
-  ] as const) {
-    if (source && typeof source === 'object' && !Array.isArray(source)) {
-      for (const [k, v] of Object.entries(source).slice(0, 16)) {
-        const id = Number(k)
-        if (Number.isInteger(id) && typeof v === 'string')
-          target[id] = v.slice(0, 64)
-      }
-    }
-  }
   return {
     id: crypto.randomUUID(),
     value: numStr(s.value, 10),
@@ -108,9 +92,9 @@ function sanitizeSplit(raw: unknown): DraftSplit {
     recipient: str(s.recipient, 64),
     projectId: numStr(s.projectId, 11),
     beneficiary: str(s.beneficiary, 64),
-    perChain,
-    perChainBeneficiary,
-    perChainAmount,
+    perChain: sanitizeChainMap(s.perChain),
+    perChainBeneficiary: sanitizeChainMap(s.perChainBeneficiary),
+    perChainAmount: sanitizeChainMap(s.perChainAmount),
     perChainOpen: false,
     hookKind: s.hookKind === 'custom' ? 'custom' : 'fundmarket',
     hookAddress: str(s.hookAddress, 64),
@@ -283,13 +267,12 @@ export function parseDraft(text: string): CreateDraft {
     allowAnyToken: d.allowAnyToken === undefined ? true : bool(d.allowAnyToken),
     approvalCustom: str(d.approvalCustom, 64),
     approvalPerChain: sanitizeChainMap(d.approvalPerChain),
-    accepts: (Array.isArray(d.accepts) ? d.accepts : ['eth'])
-      .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
-      .slice(0, 2).length
-      ? (Array.isArray(d.accepts) ? d.accepts : ['eth'])
-          .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
-          .slice(0, 2)
-      : ['eth'],
+    accepts: ((): TreasuryCurrency[] => {
+      const accepts = (Array.isArray(d.accepts) ? d.accepts : ['eth'])
+        .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
+        .slice(0, 2)
+      return accepts.length ? accepts : ['eth']
+    })(),
     customAddress: str(d.customAddress, 64),
     issuanceBase:
       d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,

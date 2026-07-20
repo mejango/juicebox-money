@@ -23,7 +23,6 @@ import {
   getAccountingContexts,
   getCurrentRuleset,
   getProject721Shop,
-  getTokenAddress,
   previewPay,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -38,13 +37,19 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useShopCart } from '@/components/project/ShopCartProvider'
+import { QuantityStepper } from '@/components/ui/QuantityStepper'
 import { formatTokenAmount, ipfsUrl } from '@/lib/format'
+import {
+  TIER_UNLIMITED_SUPPLY,
+  parseTierMetadataJson,
+  pickTierMetadata,
+} from '@/lib/tier-metadata'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-
-const TIER_UNLIMITED_SUPPLY = 999_999_999
 
 type PayContext = {
   token: Address
@@ -285,16 +290,7 @@ export function PayPanel({
           decimals: ctx.decimals,
           currency: ctx.currency,
           viaRouter: false,
-          symbol:
-            ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-              ? nativeSymbol
-              : await client
-                  .readContract({
-                    address: ctx.token,
-                    abi: erc20Abi,
-                    functionName: 'symbol',
-                  })
-                  .catch(() => 'TOKEN'),
+          symbol: await tokenSymbol(client, ctx.token, { nativeSymbol }),
         })),
       )
 
@@ -366,25 +362,8 @@ export function PayPanel({
 
   // The project's OWN token symbol ("You get X MARKEE") — resolved on-chain,
   // NOT bendystraw's accounting symbol.
-  const { data: projectSymbol } = useQuery({
-    queryKey: ['payProjectSymbol', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<string | null> => {
-      const token = await getTokenAddress(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!token) return null
-      return (await publicClient!.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })) as string
-    },
-  })
-  const projectTokenLabel = projectSymbol || 'tokens'
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const projectTokenLabel = projectToken?.symbol || 'tokens'
 
   const contexts = surface?.contexts ?? []
   const context = contexts[Math.min(tokenIndex, contexts.length - 1)] as
@@ -469,35 +448,17 @@ export function PayPanel({
         pricingCurrency: resolved.pricing.currency,
         pricingDecimals: resolved.pricing.decimals,
         tiers: resolved.tiers.map(t => {
-          let name: string | null = null
-          let description: string | null = null
-          let image: string | null = null
-          try {
-            const uri = t.resolvedUri
-            if (uri?.startsWith('data:application/json')) {
-              const json = JSON.parse(
-                uri.includes('base64,')
-                  ? decodeURIComponent(escape(atob(uri.split('base64,')[1])))
-                  : decodeURIComponent(uri.split(',').slice(1).join(',')),
-              ) as {
-                name?: string
-                productName?: string
-                description?: string
-                productDescription?: string
-                image?: string
-                imageUri?: string
-              }
-              name = json.productName ?? json.name ?? null
-              description =
-                json.productDescription ?? json.description ?? null
-              const rawImage = json.image ?? json.imageUri
-              image = rawImage?.startsWith('ipfs://')
-                ? ipfsUrl(rawImage)
-                : (rawImage ?? null)
-            }
-          } catch {
-            // Metadata is cosmetic — a tier without it still sells.
-          }
+          // Metadata is cosmetic — a tier without it still sells.
+          const json = t.resolvedUri
+            ? parseTierMetadataJson(t.resolvedUri)
+            : null
+          const meta = json ? pickTierMetadata(json) : null
+          const name = meta?.name ?? null
+          const description = meta?.description ?? null
+          const rawImage = meta?.image
+          const image = rawImage?.startsWith('ipfs://')
+            ? ipfsUrl(rawImage)
+            : (rawImage ?? null)
           return {
             id: t.id,
             price: t.price,
@@ -1137,31 +1098,17 @@ export function PayPanel({
                         {shopPricingSymbol}
                       </button>
                     ) : (
-                      <div className="flex items-center justify-center gap-1.5 px-2 pb-2">
-                        <button
-                          type="button"
-                          onClick={() => setQuantity(tier.id, qty - 1, item)}
-                          disabled={busy || qty === 0}
-                          aria-label={`Remove one ${item.name}`}
-                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
-                        >
-                          −
-                        </button>
-                        <span className="min-w-[1ch] text-xs tabular-nums">
-                          {qty}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setQuantity(tier.id, Math.min(cap, qty + 1), item)
-                          }
-                          disabled={busy || qty >= cap}
-                          aria-label={`Add one ${item.name}`}
-                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
-                        >
-                          +
-                        </button>
-                      </div>
+                      <QuantityStepper
+                        size="sm"
+                        quantity={qty}
+                        itemName={item.name}
+                        onRemove={() => setQuantity(tier.id, qty - 1, item)}
+                        onAdd={() =>
+                          setQuantity(tier.id, Math.min(cap, qty + 1), item)
+                        }
+                        disabledRemove={busy || qty === 0}
+                        disabledAdd={busy || qty >= cap}
+                      />
                     )}
                   </div>
                 )
@@ -1231,56 +1178,33 @@ export function PayPanel({
             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
           {contexts.length > 1 ? (
-            <span
-              className={`relative flex shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700 ${
-                busy ? 'opacity-60' : ''
-              }`}
-            >
-              <span>{context?.symbol ?? symbol}</span>
-              <svg
-                viewBox="0 0 24 24"
-                className="h-3.5 w-3.5 shrink-0 text-smoke-500"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-              <select
-                // Valued by INDEX, not address — a token can appear direct and
-                // via-router, so the option must stay in lock-step with the
-                // selected context (website/ fund-loss fix).
-                value={tokenIndex}
-                onChange={e => {
-                  const i = Number(e.target.value)
-                  setTokenIndex(i)
-                  // Remember the explicit pick so a refetch/chain-switch remaps
-                  // to this exact token instead of snapping back to list[0].
-                  const picked = contexts[i]
-                  if (picked) selectedKeyRef.current = payTokenKey(picked)
-                  setTokenTouched(true)
-                }}
-                disabled={busy}
-                aria-label="Payment token"
-                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-              >
-                {contexts.map((ctx, i) => (
-                  <option
-                    key={`${ctx.token}-${i}`}
-                    value={i}
-                    disabled={
-                      cartCount > 0 &&
-                      !shopRoutes?.[payTokenKey(ctx)]?.supported
-                    }
-                  >
-                    {ctx.symbol}
-                  </option>
-                ))}
-              </select>
-            </span>
+            // Valued by INDEX, not address — a token can appear direct and
+            // via-router, so the option must stay in lock-step with the
+            // selected context (website/ fund-loss fix).
+            <TextSelect
+              value={String(tokenIndex)}
+              onChange={value => {
+                const i = Number(value)
+                setTokenIndex(i)
+                // Remember the explicit pick so a refetch/chain-switch remaps
+                // to this exact token instead of snapping back to list[0].
+                const picked = contexts[i]
+                if (picked) selectedKeyRef.current = payTokenKey(picked)
+                setTokenTouched(true)
+              }}
+              disabled={busy}
+              ariaLabel="Payment token"
+              className="relative flex shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700"
+              labelClassName=""
+              selectClassName="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+              options={contexts.map((ctx, i) => ({
+                value: String(i),
+                label: ctx.symbol,
+                disabled:
+                  cartCount > 0 &&
+                  !shopRoutes?.[payTokenKey(ctx)]?.supported,
+              }))}
+            />
           ) : (
             <span className="flex shrink-0 items-center pr-3 text-sm font-medium text-smoke-700">
               {symbol}
@@ -1543,19 +1467,27 @@ export function PayPanel({
 }
 
 /** A subtle underlined-text dropdown (website/ parity: sizeSelectToText) —
- *  a native select styled as bold underlined text with a caret. */
+ *  a native select styled as bold underlined text with a caret. The class
+ *  overrides let the pay-token selector restyle the same structure (plain
+ *  label, not-allowed disabled cursor) without duplicating the overlay. */
 function TextSelect({
   value,
   onChange,
   options,
   disabled,
   ariaLabel,
+  className = 'relative inline-flex items-center gap-1',
+  labelClassName = 'font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4',
+  selectClassName = 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default',
 }: {
   value: string
   onChange: (value: string) => void
-  options: { value: string; label: string }[]
+  options: { value: string; label: string; disabled?: boolean }[]
   disabled?: boolean
   ariaLabel: string
+  className?: string
+  labelClassName?: string
+  selectClassName?: string
 }) {
   // A native <select> sizes to its WIDEST option, which would leave a gap
   // between a short label and the caret. So show the current label + caret as
@@ -1563,14 +1495,8 @@ function TextSelect({
   // real (native) dropdown.
   const current = options.find(o => o.value === value)?.label ?? ''
   return (
-    <span
-      className={`relative inline-flex items-center gap-1 ${
-        disabled ? 'opacity-60' : ''
-      }`}
-    >
-      <span className="font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4">
-        {current}
-      </span>
+    <span className={`${className} ${disabled ? 'opacity-60' : ''}`}>
+      <span className={labelClassName || undefined}>{current}</span>
       <svg
         viewBox="0 0 24 24"
         className="h-3.5 w-3.5 shrink-0 text-smoke-500"
@@ -1588,10 +1514,10 @@ function TextSelect({
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
         aria-label={ariaLabel}
-        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default"
+        className={selectClassName}
       >
         {options.map(o => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} disabled={o.disabled}>
             {o.label}
           </option>
         ))}

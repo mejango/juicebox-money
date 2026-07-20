@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   NATIVE_TOKEN,
   jbContractAddress,
@@ -36,9 +35,11 @@ import {
   SUCKER_EXTRA_ABI,
   type Infra,
 } from '@/components/project/SettlementSection'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx, type TxPhase } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 
 /** The frozen, reviewed prepare: what the user confirms is exactly what's
@@ -320,16 +321,9 @@ function MoveFlow({
   const [needsApproval, setNeedsApproval] = useState(false)
   const advancedFor = useRef<number>(-1)
 
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = checking || tx.busy
 
-  const chainMeta = JB_CHAINS[from]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? etherscanTxUrl(from, tx.hash) : null
 
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
@@ -449,11 +443,7 @@ function MoveFlow({
       const gross = preview[1] ?? 0n
       const minReclaimed = gross > 0n ? (gross * 99n) / 100n : 0n
 
-      const backingSymbol = isNative
-        ? (JB_CHAINS[from]?.nativeTokenSymbol ?? 'ETH')
-        : await client
-            .readContract({ abi: erc20Abi, address: token, functionName: 'symbol' })
-            .catch(() => truncateAddress(token))
+      const backingSymbol = await tokenSymbol(client, token, { chainId: from })
 
       // Does the sucker already have enough allowance for the project token?
       const allowance = (await client.readContract({
@@ -485,17 +475,19 @@ function MoveFlow({
     }
   }
 
-  const accountChanged = () =>
-    address?.toLowerCase() !== review?.account.toLowerCase()
+  /** Every send step's gate: when the connected account changed since the
+   *  review was frozen, drop back to review instead of sending. */
+  const guardAccount = (): boolean => {
+    if (address?.toLowerCase() === review?.account.toLowerCase()) return true
+    setReview(null)
+    setStep(0)
+    setFlowError('Your connected account changed — review the move again.')
+    return false
+  }
 
   const sendApprove = () => {
     if (!review || busy) return
-    if (accountChanged()) {
-      setReview(null)
-      setStep(0)
-      setFlowError('Your connected account changed — review the move again.')
-      return
-    }
+    if (!guardAccount()) return
     tx.send({
       chainId: from,
       address: review.projectToken,
@@ -507,12 +499,7 @@ function MoveFlow({
 
   const sendPrepare = () => {
     if (!review || busy) return
-    if (accountChanged()) {
-      setReview(null)
-      setStep(0)
-      setFlowError('Your connected account changed — review the move again.')
-      return
-    }
+    if (!guardAccount()) return
     const request = buildBridgePrepareTx({
       chainId: from,
       sucker: review.sucker,
@@ -526,12 +513,7 @@ function MoveFlow({
 
   const sendToRemote = async () => {
     if (!review || busy) return
-    if (accountChanged()) {
-      setReview(null)
-      setStep(0)
-      setFlowError('Your connected account changed — review the move again.')
-      return
-    }
+    if (!guardAccount()) return
     setFlowError(null)
     setChecking(true)
     try {
@@ -681,11 +663,10 @@ function MoveFlow({
         </p>
       ) : null}
 
-      {flowError || tx.error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {flowError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+      />
     </div>
   )
 }
@@ -699,7 +680,7 @@ function StepButton({
   note,
 }: {
   label: string
-  phase: string
+  phase: TxPhase
   busy: boolean
   onClick: () => void
   idleText: string
@@ -713,13 +694,7 @@ function StepButton({
         disabled={busy}
         className="btn-primary min-h-[44px] w-full text-sm"
       >
-        {phase === 'simulating'
-          ? 'Double-checking the transaction…'
-          : phase === 'signing'
-            ? 'Confirm in your wallet…'
-            : phase === 'pending'
-              ? 'Submitting…'
-              : idleText}
+        {txPhaseLabel(phase, { pending: 'Submitting…', idle: idleText })}
       </button>
       <p className="mt-1.5 text-xs text-smoke-700">{note}</p>
     </div>

@@ -1,16 +1,9 @@
 'use client'
 
-import {
-  JB_CHAINS,
-  JBCoreContracts,
-  jbContractAddress,
-  jbTokensAbi,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import Image from 'next/image'
-import { erc20Abi, zeroAddress } from 'viem'
-import { useReadContract } from 'wagmi'
 import quietIllustration from '@/assets/illustrations/quiet.png'
+import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { BsActivityEvent } from '@/lib/bendystraw'
 import {
   formatCompactTokenAmount,
@@ -51,6 +44,28 @@ function identityGradient(seed: string): string {
   return `linear-gradient(135deg, ${a}, ${b})`
 }
 
+/** An activity row's actor: an explorer link when one resolves, else plain text. */
+export function ActorLink({
+  href,
+  actor,
+}: {
+  href: string | null
+  actor: string
+}) {
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-smoke-700 hover:text-ink hover:underline"
+    >
+      {truncateAddress(actor)}
+    </a>
+  ) : (
+    <span className="text-smoke-700">{truncateAddress(actor)}</span>
+  )
+}
+
 function Row({
   event,
   tokenUnit,
@@ -71,18 +86,7 @@ function Row({
   const issuedTokens = BigInt(rawTokenCount) > 0n
   const relativeTime = timeAgo(event.timestamp)
 
-  const actorNode = actorLink ? (
-    <a
-      href={actorLink}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-smoke-700 hover:text-ink hover:underline"
-    >
-      {truncateAddress(actor)}
-    </a>
-  ) : (
-    <span className="text-smoke-700">{truncateAddress(actor)}</span>
-  )
+  const actorNode = <ActorLink href={actorLink} actor={actor} />
 
   return (
     <li className="flex gap-3 py-3.5">
@@ -158,28 +162,7 @@ export function ActivityList({
   projectId: number
 }) {
   const visible = events.filter(e => e.payEvent || e.cashOutTokensEvent)
-
-  const { data: tokenAddress } = useReadContract({
-    abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
-    functionName: 'tokenOf',
-    args: [BigInt(projectId)],
-    chainId,
-    query: { staleTime: 60_000 },
-  })
-  const deployed = !!tokenAddress && tokenAddress !== zeroAddress
-  const { data: projectTokenSymbol } = useReadContract({
-    abi: erc20Abi,
-    address: tokenAddress as `0x${string}`,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: deployed, staleTime: 60_000 },
-  })
-  const tokenUnit = projectTokenSymbol
-    ? String(projectTokenSymbol)
-    : tokenAddress === zeroAddress
-      ? 'token credits'
-      : 'tokens'
+  const tokenUnit = useProjectTokenUnit(chainId, projectId)
 
   if (visible.length === 0) {
     return (

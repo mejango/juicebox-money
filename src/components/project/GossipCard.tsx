@@ -248,7 +248,12 @@ function gossipStaleness(
   }
   const snap = foldBalances(snapBalances, viewChainId)
   const liveMap = foldBalances(live.balances, liveChainId)
-  if (JSON.stringify(customKeys(snap)) !== JSON.stringify(customKeys(liveMap))) {
+  const snapCustom = customKeys(snap)
+  const liveCustom = customKeys(liveMap)
+  if (
+    snapCustom.length !== liveCustom.length ||
+    !snapCustom.every((key, index) => key === liveCustom[index])
+  ) {
     return { level: 'unknown', label: 'Unverified', pct: 0 }
   }
   let worst = rel(snapSupply, live.supply)
@@ -789,11 +794,7 @@ function GossipRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caughtUp])
 
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = checking || tx.busy
 
   const chainMeta = JB_CHAINS[peer.peerChainId as JBChainId]
   const txUrl = tx.hash
@@ -809,17 +810,12 @@ function GossipRow({
         staleness.level !== 'unknown' &&
         !redundant))
 
-  // Mark in-flight the moment the tx enters the mempool; clear on failure.
+  // Mark in-flight the moment the tx enters the mempool; clear on failure;
+  // re-mark and refetch once it lands.
   useEffect(() => {
     if (tx.phase === 'pending') onSyncSent(key)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase])
-  useEffect(() => {
-    if (tx.phase === 'error') onSyncCleared(key)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase])
-  useEffect(() => {
-    if (tx.phase === 'success') {
+    else if (tx.phase === 'error') onSyncCleared(key)
+    else if (tx.phase === 'success') {
       onSyncSent(key)
       onSynced()
     }

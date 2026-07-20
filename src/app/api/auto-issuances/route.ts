@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { parseChainProject } from '@/lib/api-params'
 import { getAutoIssuances } from '@/lib/loans-queries'
 
 export const dynamic = 'force-dynamic'
@@ -7,15 +8,9 @@ export const dynamic = 'force-dynamic'
  *  chain (auto-issuances and their Distribute tx are per-chain). */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const projectId = Number(searchParams.get('projectId'))
-  const chainId = Number(searchParams.get('chainId'))
+  const { chainId, projectId, ok } = parseChainProject(searchParams)
 
-  if (
-    !Number.isInteger(projectId) ||
-    projectId <= 0 ||
-    !Number.isInteger(chainId) ||
-    chainId <= 0
-  ) {
+  if (!ok) {
     return NextResponse.json(
       { error: 'projectId and chainId required' },
       { status: 400 },

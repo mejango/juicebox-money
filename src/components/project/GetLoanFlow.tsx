@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbTokensAbi,
@@ -28,10 +27,11 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
-import { formatDate, formatTokenAmount } from '@/lib/format'
+import { TxError } from '@/components/ui/TxError'
+import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 
 const BURN_TOKENS = JBPermissionIdsV6.BURN_TOKENS
 
@@ -168,15 +168,7 @@ export function GetLoanFlow({
   })
   const borrowableNow = borrowable?.borrowableNow
 
-  const chainMeta = JB_CHAINS[chainId]
-  const busy =
-    quoting ||
-    permTx.phase === 'simulating' ||
-    permTx.phase === 'signing' ||
-    permTx.phase === 'pending' ||
-    borrowTx.phase === 'simulating' ||
-    borrowTx.phase === 'signing' ||
-    borrowTx.phase === 'pending'
+  const busy = quoting || permTx.busy || borrowTx.busy
 
   const resetInputs = () => {
     setReview(null)
@@ -315,7 +307,7 @@ export function GetLoanFlow({
   }
 
   const borrowTxUrl = borrowTx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${borrowTx.hash}`
+    ? etherscanTxUrl(chainId, borrowTx.hash)
     : null
 
   if (borrowTx.phase === 'success') {
@@ -500,24 +492,21 @@ export function GetLoanFlow({
                 ? 'Step 1 of 2 — approve in your wallet…'
                 : permTx.phase === 'pending'
                   ? 'Step 1 of 2 — approving…'
-                  : borrowTx.phase === 'simulating'
-                    ? 'Double-checking the transaction…'
-                    : borrowTx.phase === 'signing'
-                      ? 'Confirm the loan in your wallet…'
-                      : borrowTx.phase === 'pending'
-                        ? 'Opening your loan…'
-                        : !isConnected
-                          ? 'Sign in to continue'
-                          : review
-                            ? 'Confirm loan'
-                            : 'Review'}
+                  : txPhaseLabel(borrowTx.phase, {
+                      idle: !isConnected
+                        ? 'Sign in to continue'
+                        : review
+                          ? 'Confirm loan'
+                          : 'Review',
+                      pending: 'Opening your loan…',
+                      confirm: 'Confirm the loan in your wallet…',
+                    })}
           </button>
 
-          {flowError || permTx.error || borrowTx.error ? (
-            <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {flowError ?? permTx.error ?? borrowTx.error}
-            </p>
-          ) : null}
+          <TxError
+            error={flowError ?? permTx.error ?? borrowTx.error}
+            className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+          />
         </div>
       )}
     </div>

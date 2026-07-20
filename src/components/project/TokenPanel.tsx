@@ -6,6 +6,7 @@ import {
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import type { ReactNode } from 'react'
 import { erc20Abi, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -69,91 +70,35 @@ export function TokenPanel({
     )
   }
 
-  if (compact) {
-    return (
-      <div className="card px-5 py-4">
-        <span className="field-label">Token</span>
-        {deployed ? (
-          <dl className="mt-3 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-              <dt className="text-xs text-smoke-500">Name</dt>
-              <dd className="font-medium text-ink">
-                {meta?.[0]?.result ?? '—'}
-              </dd>
-            </div>
-            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-              <dt className="text-xs text-smoke-500">Symbol</dt>
-              <dd className="font-medium text-ink">
-                {meta?.[1]?.result ? `$${meta[1].result}` : '—'}
-              </dd>
-            </div>
-            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-              <dt className="text-xs text-smoke-500">Type</dt>
-              <dd className="text-ink">ERC-20</dd>
-            </div>
-            <div className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-              <dt className="text-xs text-smoke-500">Address</dt>
-              <dd>
-                {etherscanHost ? (
-                  <a
-                    href={`https://${etherscanHost}/address/${tokenAddress}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-ink hover:underline"
-                  >
-                    {truncateAddress(tokenAddress!)}
-                  </a>
-                ) : (
-                  <span className="text-ink">
-                    {truncateAddress(tokenAddress!)}
-                  </span>
-                )}
-              </dd>
-            </div>
-            {chainIds.length > 1 ? (
-              <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                <dt className="text-xs text-smoke-500">On</dt>
-                <dd className="flex items-center gap-1">
-                  {chainIds.map(id => (
-                    <ChainIcon key={id} chainId={id} size={16} />
-                  ))}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        ) : (
-          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-            No ERC-20 yet — supporters hold token credits that can claim the
-            ERC-20 once it&apos;s deployed.
-          </p>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="card p-5">
-      <span className="field-label">Token</span>
-      {deployed ? (
-        <dl className="mt-2 space-y-1.5 text-sm">
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-smoke-700">Name</dt>
-            <dd className="font-medium text-ink">
-              {meta?.[0]?.result ?? '—'}
-            </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-smoke-700">Symbol</dt>
+  // One row list for both variants; a row can align items-center instead of
+  // items-baseline per variant (the full Address row centers, compact's
+  // doesn't).
+  const rows: {
+    label: string
+    centerCompact?: boolean
+    centerFull?: boolean
+    dd: ReactNode
+  }[] = deployed
+    ? [
+        {
+          label: 'Name',
+          dd: (
+            <dd className="font-medium text-ink">{meta?.[0]?.result ?? '—'}</dd>
+          ),
+        },
+        {
+          label: 'Symbol',
+          dd: (
             <dd className="font-medium text-ink">
               {meta?.[1]?.result ? `$${meta[1].result}` : '—'}
             </dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-smoke-700">Type</dt>
-            <dd className="text-ink">ERC-20</dd>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Address</dt>
+          ),
+        },
+        { label: 'Type', dd: <dd className="text-ink">ERC-20</dd> },
+        {
+          label: 'Address',
+          centerFull: true,
+          dd: (
             <dd>
               {etherscanHost ? (
                 <a
@@ -170,17 +115,56 @@ export function TokenPanel({
                 </span>
               )}
             </dd>
-          </div>
-          {chainIds.length > 1 ? (
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-smoke-700">On</dt>
-              <dd className="flex items-center gap-1">
-                {chainIds.map(id => (
-                  <ChainIcon key={id} chainId={id} size={16} />
-                ))}
-              </dd>
-            </div>
-          ) : null}
+          ),
+        },
+        ...(chainIds.length > 1
+          ? [
+              {
+                label: 'On',
+                centerCompact: true,
+                centerFull: true,
+                dd: (
+                  <dd className="flex items-center gap-1">
+                    {chainIds.map(id => (
+                      <ChainIcon key={id} chainId={id} size={16} />
+                    ))}
+                  </dd>
+                ),
+              },
+            ]
+          : []),
+      ]
+    : []
+
+  return (
+    <div className={compact ? 'card px-5 py-4' : 'card p-5'}>
+      <span className="field-label">Token</span>
+      {deployed ? (
+        <dl
+          className={
+            compact
+              ? 'mt-3 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-sm'
+              : 'mt-2 space-y-1.5 text-sm'
+          }
+        >
+          {rows.map(row => {
+            const center = compact ? row.centerCompact : row.centerFull
+            return (
+              <div
+                key={row.label}
+                className={
+                  compact
+                    ? `inline-flex ${center ? 'items-center' : 'items-baseline'} gap-1.5 whitespace-nowrap`
+                    : `flex ${center ? 'items-center' : 'items-baseline'} justify-between gap-3`
+                }
+              >
+                <dt className={compact ? 'text-xs text-smoke-500' : 'text-smoke-700'}>
+                  {row.label}
+                </dt>
+                {row.dd}
+              </div>
+            )
+          })}
         </dl>
       ) : (
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">

@@ -1,15 +1,11 @@
 'use client'
 
-import { getPublicClient } from '@wagmi/core'
 import {
-  JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
-  jbProjectsAbi,
-  type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getCurrentRuleset } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -19,11 +15,12 @@ import {
   parseUnits,
   type Abi,
   type Address,
-  type PublicClient,
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
-import { AddressField } from '@/components/create/AddressField'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
+import { ChainPicker } from '@/components/ui/ChainPicker'
+import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
+import { ErrorNote } from '@/components/ui/TxError'
 import {
   POWERS,
   type FlowField,
@@ -32,10 +29,16 @@ import {
   type ResolvedValues,
 } from '@/lib/projectPowers'
 import { useWallet } from '@/hooks/useWallet'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import {
+  clientFor,
+  readAuthorityOf,
+  runAuthorityCalls,
+  safeOutcomeMessage,
+  type AuthorityCall,
+} from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
-import { wagmiConfig } from '@/providers/Providers'
+import { chainName } from '@/lib/urn'
 
 type PowerChainState = AuthorityDeployment & {
   name: string
@@ -45,27 +48,12 @@ type PowerChainState = AuthorityDeployment & {
   error: string | null
 }
 
-function clientFor(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
 async function readPowerState(
   deployment: AuthorityDeployment,
 ): Promise<PowerChainState> {
   const client = clientFor(deployment.chainId)
   const [authority, controller, ruleset] = await Promise.all([
-    client
-      .readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
-          deployment.chainId
-        ],
-        abi: jbProjectsAbi,
-        functionName: 'ownerOf',
-        args: [BigInt(deployment.projectId)],
-      })
-      .catch(() => deployment.indexedAuthority),
+    readAuthorityOf(client, deployment),
     client
       .readContract({
         address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
@@ -83,8 +71,8 @@ async function readPowerState(
   ])
   return {
     ...deployment,
-    name: JB_CHAINS[deployment.chainId]?.name ?? `Chain ${deployment.chainId}`,
-    authority: (authority as Address | null) ?? null,
+    name: chainName(deployment.chainId),
+    authority,
     controller: (controller as Address | null) ?? null,
     metadata: ruleset?.metadata ?? null,
     error:
@@ -96,21 +84,6 @@ async function readPowerState(
 
 function flagState(row: PowerChainState, flag: PowerFlag): boolean {
   return row.metadata?.[flag] === true
-}
-
-function outcomeMessage(
-  result: Awaited<ReturnType<typeof runAuthorityCalls>>,
-  power: PowerDescriptor,
-  chains: number,
-): string {
-  const queued = result.safeResults.filter(row => row.status === 'queued').length
-  const waiting = result.safeResults.filter(row => row.status === 'waiting').length
-  if (queued || waiting) {
-    return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
-      waiting ? ` · ${waiting} awaiting more approvals` : ''
-    }. Complete it in Pending multisig transactions.`
-  }
-  return `${power.label} completed on ${chains} chain${chains === 1 ? '' : 's'}.`
 }
 
 export function AuthorityPowersCard({
@@ -468,7 +441,14 @@ function PowerActionForm({
         calls: review.calls,
         onProgress: progress => setStatus(progress.message),
       })
-      setStatus(outcomeMessage(result, power, review.calls.length))
+      setStatus(
+        safeOutcomeMessage(
+          result,
+          `${power.label} completed on ${review.calls.length} chain${
+            review.calls.length === 1 ? '' : 's'
+          }.`,
+        ),
+      )
       onDone()
     } catch (submitError) {
       setError(
@@ -495,49 +475,32 @@ function PowerActionForm({
         </button>
       </div>
 
-      <div className="mt-4">
-        <span className="field-label">Run on</span>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {rows.map(row => {
-            const enabled = flagState(row, power.flag) && !row.error
-            return (
-              <label
-                key={row.chainId}
-                className={`flex items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm ${
-                  enabled ? 'cursor-pointer' : 'opacity-50'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(row.chainId)}
-                  onChange={() =>
-                    setSelected(current => {
-                      const next = new Set(current)
-                      if (next.has(row.chainId)) next.delete(row.chainId)
-                      else next.add(row.chainId)
-                      return next
-                    })
-                  }
-                  disabled={busy || !enabled}
-                  className="accent-bluebs-600"
-                />
-                <ChainIcon chainId={row.chainId} size={18} />
-                {row.name}
-                {!flagState(row, power.flag) ? (
-                  <span className="text-xs text-smoke-500">disabled</span>
-                ) : null}
-              </label>
-            )
-          })}
-        </div>
-      </div>
+      <ChainPicker
+        className="mt-4"
+        label="Run on"
+        rows={rows.map(row => ({
+          chainId: row.chainId,
+          name: (
+            <>
+              {row.name}
+              {!flagState(row, power.flag) ? (
+                <span className="text-xs text-smoke-500">disabled</span>
+              ) : null}
+            </>
+          ),
+          disabled: !(flagState(row, power.flag) && !row.error),
+        }))}
+        selected={selected}
+        onChange={setSelected}
+        disabled={busy}
+      />
 
       <div className="mt-4 space-y-4">
         {power.fields.map(field =>
           field.kind === 'address' ? (
             <PerChainAddressField
               key={field.name}
-              field={field}
+              fieldLabel={field.label}
               rows={enabledRows}
               selected={selected}
               values={addresses[field.name] ?? {}}
@@ -545,6 +508,8 @@ function PowerActionForm({
                 setAddresses(current => ({ ...current, [field.name]: values }))
               }
               disabled={busy}
+              placeholder={field.placeholder}
+              help={field.help}
             />
           ) : field.kind === 'bool' ? (
             <label key={field.name} className="flex items-start gap-2.5">
@@ -650,78 +615,7 @@ function PowerActionForm({
             : `Review ${power.actionLabel.toLowerCase()}`}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
-function PerChainAddressField({
-  field,
-  rows,
-  selected,
-  values,
-  onChange,
-  disabled,
-}: {
-  field: FlowField
-  rows: PowerChainState[]
-  selected: Set<number>
-  values: Record<number, string>
-  onChange: (values: Record<number, string>) => void
-  disabled: boolean
-}) {
-  const copyFirst = () => {
-    const first = rows.find(row => selected.has(row.chainId))
-    if (!first) return
-    const value = values[first.chainId] ?? ''
-    onChange(Object.fromEntries(rows.map(row => [row.chainId, value])))
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="field-label">{field.label} per chain</span>
-        {rows.length > 1 ? (
-          <button
-            type="button"
-            onClick={copyFirst}
-            disabled={disabled}
-            className="text-xs text-bluebs-600 hover:underline"
-          >
-            Use first selected value on all
-          </button>
-        ) : null}
-      </div>
-      <div className="mt-2 space-y-2">
-        {rows.map(row => (
-          <div
-            key={row.chainId}
-            className={`grid items-start gap-2 sm:grid-cols-[9rem_1fr] ${
-              selected.has(row.chainId) ? '' : 'opacity-50'
-            }`}
-          >
-            <span className="flex min-h-[40px] items-center gap-2 text-sm text-smoke-700">
-              <ChainIcon chainId={row.chainId} size={18} />
-              {row.name}
-            </span>
-            <AddressField
-              value={values[row.chainId] ?? ''}
-              onChange={value => onChange({ ...values, [row.chainId]: value })}
-              disabled={disabled || !selected.has(row.chainId)}
-              compact
-              placeholder={field.placeholder}
-              ariaLabel={`${field.label} on ${row.name}`}
-            />
-          </div>
-        ))}
-      </div>
-      {field.help ? (
-        <p className="mt-1 text-xs text-smoke-500">{field.help}</p>
-      ) : null}
+      {error ? <ErrorNote message={error} /> : null}
     </div>
   )
 }

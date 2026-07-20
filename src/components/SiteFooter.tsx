@@ -8,6 +8,32 @@ type FooterLink = {
   external?: boolean
 }
 
+/** The single source for social links — the Socials column and the bottom
+ *  icon row both derive from it. */
+const SOCIALS = [
+  {
+    label: 'GitHub',
+    href: 'https://github.com/Bananapus',
+    icon: <GitHubIcon />,
+  },
+  {
+    label: 'Discord',
+    href: 'https://discord.com/invite/wFTh4QnDzk',
+    icon: <DiscordIcon />,
+  },
+  {
+    label: 'Twitter',
+    href: 'https://twitter.com/juiceboxETH',
+    icon: <TwitterIcon />,
+  },
+]
+
+const socialLink = (label: string): FooterLink => ({
+  label,
+  href: SOCIALS.find(social => social.label === label)!.href,
+  external: true,
+})
+
 const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: 'Juicebox',
@@ -34,15 +60,7 @@ const columns: { title: string; links: FooterLink[] }[] = [
   },
   {
     title: 'Socials',
-    links: [
-      {
-        label: 'Discord',
-        href: 'https://discord.com/invite/wFTh4QnDzk',
-        external: true,
-      },
-      { label: 'GitHub', href: 'https://github.com/Bananapus', external: true },
-      { label: 'Twitter', href: 'https://twitter.com/juiceboxETH', external: true },
-    ],
+    links: [socialLink('Discord'), socialLink('GitHub'), socialLink('Twitter')],
   },
   {
     title: 'Legal',
@@ -104,24 +122,6 @@ function TwitterIcon() {
   )
 }
 
-const socialLinks = [
-  {
-    label: 'GitHub',
-    href: 'https://github.com/Bananapus',
-    icon: <GitHubIcon />,
-  },
-  {
-    label: 'Discord',
-    href: 'https://discord.com/invite/wFTh4QnDzk',
-    icon: <DiscordIcon />,
-  },
-  {
-    label: 'Twitter',
-    href: 'https://twitter.com/juiceboxETH',
-    icon: <TwitterIcon />,
-  },
-]
-
 export function SiteFooter() {
   const version = process.env.NEXT_PUBLIC_VERSION
 
@@ -162,7 +162,7 @@ export function SiteFooter() {
           <div className="flex flex-wrap items-center gap-5">
             {version ? <span>Version #{version.slice(0, 7)}</span> : null}
             <div className="flex items-center gap-1">
-              {socialLinks.map(link => (
+              {SOCIALS.map(link => (
                 <a
                   key={link.label}
                   href={link.href}

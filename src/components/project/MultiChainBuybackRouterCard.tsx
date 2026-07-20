@@ -1,9 +1,6 @@
 'use client'
 
-import { getPublicClient } from '@wagmi/core'
 import {
-  JB_CHAINS,
-  JBCoreContracts,
   JBBuybackHookContracts,
   JBRouterTerminalContracts,
   NATIVE_TOKEN,
@@ -11,25 +8,28 @@ import {
   jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
   jbContractAddress,
-  jbProjectsAbi,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import {
-  encodeFunctionData,
-  zeroAddress,
-  type Address,
-  type PublicClient,
-} from 'viem'
+import { encodeFunctionData, zeroAddress, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
-import { AddressField } from '@/components/create/AddressField'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { AddressLink } from '@/components/ui/AddressLink'
+import { ChainPicker } from '@/components/ui/ChainPicker'
+import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
+import { ErrorNote } from '@/components/ui/TxError'
+import {
+  clientFor,
+  readAuthorityOf,
+  runAuthorityCalls,
+  safeOutcomeMessage,
+  type AuthorityCall,
+} from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
-import { wagmiConfig } from '@/providers/Providers'
+import { chainName } from '@/lib/urn'
 
 type BuybackChainState = AuthorityDeployment & {
   name: string
@@ -57,6 +57,8 @@ const ACTIONS: Record<
     title: string
     description: string
     danger: string
+    /** The per-chain address input's noun ("<fieldLabel> per chain"). */
+    fieldLabel: string
     gas: bigint
   }
 > = {
@@ -66,6 +68,7 @@ const ACTIONS: Record<
       'Points the project at the hook that chooses, on every payment, whether to issue tokens or buy them on the AMM.',
     danger:
       'The buyback hook intercepts every payment. A wrong hook can misroute or strand funds.',
+    fieldLabel: 'Buyback hook',
     gas: 200_000n,
   },
   terminal: {
@@ -74,6 +77,7 @@ const ACTIONS: Record<
       'Sets the terminal the swap router forwards into after swapping USDC or another payment token.',
     danger:
       'This changes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
+    fieldLabel: 'Router terminal',
     gas: 200_000n,
   },
   pool: {
@@ -82,18 +86,9 @@ const ACTIONS: Record<
       'Creates and price-initializes the Uniswap v4 pool for a pair token through the project’s configured hook.',
     danger:
       'A wrong initial price lets arbitrageurs extract value. Verify the price, fee, tick spacing, pair token, and every selected chain.',
+    fieldLabel: 'Pair token',
     gas: 500_000n,
   },
-}
-
-function clientFor(chainId: JBChainId): PublicClient {
-  const client = getPublicClient(wagmiConfig, { chainId })
-  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
-  return client as PublicClient
-}
-
-function chainName(chainId: JBChainId): string {
-  return JB_CHAINS[chainId]?.name ?? `Chain ${chainId}`
 }
 
 function contractAddress(
@@ -120,19 +115,9 @@ async function readChainState(
     deployment.chainId,
   )
 
-  let authority = deployment.indexedAuthority
-  if (!isRevnet) {
-    authority = (await client
-      .readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
-          deployment.chainId
-        ],
-        abi: jbProjectsAbi,
-        functionName: 'ownerOf',
-        args: [BigInt(deployment.projectId)],
-      })
-      .catch(() => deployment.indexedAuthority)) as Address | null
-  }
+  const authority = await readAuthorityOf(client, deployment, {
+    indexedOnly: isRevnet,
+  })
 
   const [defaultHook, hook, defaultTerminal, terminal] = await Promise.all([
     buybackRegistry
@@ -239,36 +224,6 @@ async function readChainState(
     poolSummary,
     readError,
   }
-}
-
-function explorerAddress(chainId: JBChainId, address: Address): string | null {
-  const host = JB_CHAINS[chainId]?.etherscanHostname
-  return host ? `https://${host}/address/${address}` : null
-}
-
-function AddressLink({
-  chainId,
-  address,
-}: {
-  chainId: JBChainId
-  address: Address
-}) {
-  const href = explorerAddress(chainId, address)
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={address}
-      className="font-mono text-xs text-ink hover:underline"
-    >
-      {truncateAddress(address)}
-    </a>
-  ) : (
-    <span className="font-mono text-xs text-ink" title={address}>
-      {truncateAddress(address)}
-    </span>
-  )
 }
 
 function stateDiffers(
@@ -423,8 +378,10 @@ function ActionRow({
                     typeof value === 'string' &&
                     value.startsWith('0x') ? (
                     <AddressLink
-                      chainId={row.chainId}
                       address={value as Address}
+                      chainId={row.chainId}
+                      className="font-mono text-xs text-ink"
+                      title={value as Address}
                     />
                   ) : (
                     <p className="text-xs text-smoke-500">Not set</p>
@@ -442,8 +399,10 @@ function ActionRow({
           typeof uniformValue === 'string' &&
           uniformValue.startsWith('0x') ? (
             <AddressLink
-              chainId={availableRows[0].chainId}
               address={uniformValue as Address}
+              chainId={availableRows[0].chainId}
+              className="font-mono text-xs text-ink"
+              title={uniformValue as Address}
             />
           ) : (
             <span className={uniformValue ? 'text-ink' : 'text-smoke-500'}>
@@ -521,17 +480,6 @@ function BuybackActionForm({
     setAck(false)
   }, [selected, addresses, fee, tickSpacing, twapWindow, sqrtPriceX96])
 
-  const useFirstOnAll = () => {
-    const first = available.find(row => selected.has(row.chainId))
-    if (!first) return
-    const value = addresses[first.chainId] ?? ''
-    setAddresses(current =>
-      Object.fromEntries(
-        Object.keys(current).map(chainId => [Number(chainId), value]),
-      ),
-    )
-  }
-
   const buildReview = () => {
     setError(null)
     const chosen = available.filter(row => selected.has(row.chainId))
@@ -579,13 +527,7 @@ function BuybackActionForm({
         const address = resolvedAddress(input)
         if (!address) {
           throw new Error(
-            `${row.name}: enter a valid ${
-              kind === 'hook'
-                ? 'buyback hook'
-                : kind === 'terminal'
-                  ? 'router terminal'
-                  : 'pair token'
-            } address.`,
+            `${row.name}: enter a valid ${action.fieldLabel.toLowerCase()} address.`,
           )
         }
 
@@ -668,16 +610,13 @@ function BuybackActionForm({
         calls: review.calls,
         onProgress: progress => setStatus(progress.message),
       })
-      const queued = result.safeResults.filter(row => row.status === 'queued').length
-      const waiting = result.safeResults.filter(row => row.status === 'waiting').length
       setStatus(
-        queued || waiting
-          ? `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
-              waiting ? ` · ${waiting} awaiting more approvals` : ''
-            }. Complete it in Pending multisig transactions.`
-          : `${action.title} completed on ${review.calls.length} chain${
-              review.calls.length === 1 ? '' : 's'
-            }.`,
+        safeOutcomeMessage(
+          result,
+          `${action.title} completed on ${review.calls.length} chain${
+            review.calls.length === 1 ? '' : 's'
+          }.`,
+        ),
       )
       onDone()
     } catch (submitError) {
@@ -705,98 +644,36 @@ function BuybackActionForm({
         </button>
       </div>
 
-      <div className="mt-4">
-        <span className="field-label">Run on</span>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {rows.map(row => {
-            const isAvailable =
-              kind === 'terminal' ? row.routerAvailable : row.buybackAvailable
-            return (
-              <label
-                key={row.chainId}
-                className={`flex items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm ${
-                  isAvailable ? 'cursor-pointer' : 'opacity-50'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(row.chainId)}
-                  onChange={() =>
-                    setSelected(current => {
-                      const next = new Set(current)
-                      if (next.has(row.chainId)) next.delete(row.chainId)
-                      else next.add(row.chainId)
-                      return next
-                    })
-                  }
-                  disabled={busy || !isAvailable}
-                  className="accent-bluebs-600"
-                />
-                <ChainIcon chainId={row.chainId} size={18} />
-                {row.name}
-              </label>
-            )
-          })}
-        </div>
-      </div>
+      <ChainPicker
+        className="mt-4"
+        label="Run on"
+        rows={rows.map(row => ({
+          chainId: row.chainId,
+          name: row.name,
+          disabled:
+            kind === 'terminal' ? !row.routerAvailable : !row.buybackAvailable,
+        }))}
+        selected={selected}
+        onChange={setSelected}
+        disabled={busy}
+      />
 
-      <div className="mt-4">
-        <div className="flex items-center justify-between gap-3">
-          <span className="field-label">
-            {kind === 'hook'
-              ? 'Buyback hook per chain'
-              : kind === 'terminal'
-                ? 'Router terminal per chain'
-                : 'Pair token per chain'}
-          </span>
-          {available.length > 1 ? (
-            <button
-              type="button"
-              onClick={useFirstOnAll}
-              disabled={busy}
-              className="text-xs text-bluebs-600 hover:underline"
-            >
-              Use first selected value on all
-            </button>
-          ) : null}
-        </div>
-        <div className="mt-2 space-y-2">
-          {available.map(row => (
-            <div
-              key={row.chainId}
-              className={`grid items-start gap-2 sm:grid-cols-[9rem_1fr] ${
-                selected.has(row.chainId) ? '' : 'opacity-50'
-              }`}
-            >
-              <span className="flex min-h-[40px] items-center gap-2 text-sm text-smoke-700">
-                <ChainIcon chainId={row.chainId} size={18} />
-                {row.name}
-              </span>
-              <AddressField
-                value={addresses[row.chainId] ?? ''}
-                onChange={value =>
-                  setAddresses(current => ({ ...current, [row.chainId]: value }))
-                }
-                disabled={busy || !selected.has(row.chainId)}
-                compact
-                ariaLabel={`${
-                  kind === 'hook'
-                    ? 'Buyback hook'
-                    : kind === 'terminal'
-                      ? 'Router terminal'
-                      : 'Pair token'
-                } on ${row.name}`}
-              />
-            </div>
-          ))}
-        </div>
+      <PerChainAddressField
+        className="mt-4"
+        fieldLabel={action.fieldLabel}
+        rows={available}
+        selected={selected}
+        values={addresses}
+        onChange={setAddresses}
+        disabled={busy}
+      >
         {kind === 'pool' ? (
           <p className="mt-2 text-xs leading-relaxed text-smoke-500">
             Use the native-token sentinel for native ETH pools. USDC and other
             pair-token addresses may differ by chain.
           </p>
         ) : null}
-      </div>
+      </PerChainAddressField>
 
       {kind === 'pool' ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -866,11 +743,7 @@ function BuybackActionForm({
         {busy ? status ?? 'Preparing…' : review ? action.title : 'Review changes'}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorNote message={error} /> : null}
     </div>
   )
 }

@@ -12,10 +12,16 @@ import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { TxError } from '@/components/ui/TxError'
 import type { BsAutoIssuanceEvent } from '@/lib/loans-queries'
-import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import {
+  etherscanTxUrl,
+  formatDate,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
 import { chainName } from '@/lib/urn'
 
 /** One auto-issuance allocation on a specific chain, deduped by
@@ -328,16 +334,9 @@ function DistributeFlow({
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
 
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = checking || tx.busy
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null
 
   useEffect(() => {
     if (tx.phase === 'success') onDone()
@@ -393,11 +392,11 @@ function DistributeFlow({
           ? 'Checking…'
           : tx.phase === 'simulating'
             ? 'Double-checking…'
-            : tx.phase === 'signing'
-              ? 'Confirm in wallet…'
-              : tx.phase === 'pending'
-                ? 'Distributing…'
-                : 'Distribute'}
+            : txPhaseLabel(tx.phase, {
+                idle: 'Distribute',
+                pending: 'Distributing…',
+                confirm: 'Confirm in wallet…',
+              })}
       </button>
       {tx.phase === 'pending' && txUrl ? (
         <a
@@ -409,11 +408,10 @@ function DistributeFlow({
           view transaction
         </a>
       ) : null}
-      {flowError || tx.error ? (
-        <span className="max-w-[180px] text-[11px] leading-tight text-red-600">
-          {flowError ?? tx.error}
-        </span>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="max-w-[180px] text-[11px] leading-tight text-red-600"
+      />
     </div>
   )
 }

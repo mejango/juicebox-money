@@ -17,9 +17,15 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { TxError } from '@/components/ui/TxError'
+import {
+  etherscanTxUrl,
+  formatDate,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
 import type { BsLoan } from '@/lib/loans-queries'
 
 export function revLoansAddress(chainId: JBChainId): Address {
@@ -307,30 +313,17 @@ function RepayFlow({
   const [open, setOpen] = useState(false)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
-  const [pendingRepay, setPendingRepay] = useState<{
-    chainId: JBChainId
-    address: Address
-    abi: typeof revLoansAbi
-    functionName: 'repayLoan'
-    args: readonly unknown[]
-    value: bigint
-  } | null>(null)
+  const [pendingRepay, setPendingRepay] = useState<ReturnType<
+    typeof buildRepayLoanTx
+  > | null>(null)
 
   const loans = revLoansAddress(chainId)
   const meta = tokenMeta(contexts, loan.token, chainId)
 
-  const busy =
-    checking ||
-    approveTx.phase === 'simulating' ||
-    approveTx.phase === 'signing' ||
-    approveTx.phase === 'pending' ||
-    repayTx.phase === 'simulating' ||
-    repayTx.phase === 'signing' ||
-    repayTx.phase === 'pending'
+  const busy = checking || approveTx.busy || repayTx.busy
 
-  const chainMeta = JB_CHAINS[chainId]
   const repayTxUrl = repayTx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${repayTx.hash}`
+    ? etherscanTxUrl(chainId, repayTx.hash)
     : null
 
   useEffect(() => {
@@ -475,17 +468,15 @@ function RepayFlow({
               ? 'Approving…'
               : repayTx.phase === 'simulating'
                 ? 'Double-checking…'
-                : repayTx.phase === 'signing'
-                  ? 'Confirm in your wallet…'
-                  : repayTx.phase === 'pending'
-                    ? 'Repaying…'
-                    : 'Confirm repayment'}
+                : txPhaseLabel(repayTx.phase, {
+                    idle: 'Confirm repayment',
+                    pending: 'Repaying…',
+                  })}
       </button>
-      {flowError || approveTx.error || repayTx.error ? (
-        <p className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {flowError ?? approveTx.error ?? repayTx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? approveTx.error ?? repayTx.error}
+        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+      />
     </div>
   )
 }

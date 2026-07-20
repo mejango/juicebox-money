@@ -1,24 +1,14 @@
 'use client'
 
-import {
-  JB_CHAINS,
-  JBCoreContracts,
-  jbContractAddress,
-  jbTokensAbi,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { erc20Abi, zeroAddress } from 'viem'
-import { useReadContract } from 'wagmi'
+import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { BsFreshActivityEvent } from '@/lib/bendystraw'
-import {
-  formatCompactTokenAmount,
-  timeAgo,
-  truncateAddress,
-} from '@/lib/format'
+import { formatCompactTokenAmount, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActivityMeta } from './ActivityMeta'
+import { ActorLink } from './ActivityList'
 import { ProjectLogo } from './ProjectLogo'
 
 const POLL_MS = 15_000
@@ -73,22 +63,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
   const cashOut = event.cashOutTokensEvent
   const chainId = event.chainId as JBChainId
 
-  const { data: tokenAddress } = useReadContract({
-    abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
-    functionName: 'tokenOf',
-    args: [BigInt(event.projectId)],
-    chainId,
-    query: { staleTime: 60_000 },
-  })
-  const deployed = !!tokenAddress && tokenAddress !== zeroAddress
-  const { data: projectTokenSymbol } = useReadContract({
-    abi: erc20Abi,
-    address: tokenAddress as `0x${string}`,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: deployed, staleTime: 60_000 },
-  })
+  const tokenUnit = useProjectTokenUnit(chainId, event.projectId)
 
   if (!pay && !cashOut) return null
 
@@ -99,24 +74,8 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
     : null
   const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
   const tokenCount = formatCompactTokenAmount(rawTokenCount)
-  const tokenUnit = projectTokenSymbol
-    ? String(projectTokenSymbol)
-    : tokenAddress === zeroAddress
-      ? 'token credits'
-      : 'tokens'
   const relativeTime = timeAgo(event.timestamp)
-  const actorNode = actorUrl ? (
-    <a
-      href={actorUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-smoke-700 hover:text-ink hover:underline"
-    >
-      {truncateAddress(actor)}
-    </a>
-  ) : (
-    <span className="text-smoke-700">{truncateAddress(actor)}</span>
-  )
+  const actorNode = <ActorLink href={actorUrl} actor={actor} />
 
   return (
     <li className="px-4 py-4 transition-colors hover:bg-smoke-25">

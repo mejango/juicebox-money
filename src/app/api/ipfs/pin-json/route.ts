@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { pinToIpfs } from '@/lib/ipfs-server'
+import { pinToIpfs, takeString } from '@/lib/ipfs-server'
 
 export const runtime = 'nodejs'
 
@@ -46,18 +46,10 @@ export async function POST(req: NextRequest) {
 
   const metadata: Record<string, string> = { name: name.trim() }
 
-  if (projectTagline !== undefined) {
-    if (typeof projectTagline !== 'string' || projectTagline.length > 200) {
-      return NextResponse.json({ error: 'Invalid projectTagline' }, { status: 400 })
-    }
-    if (projectTagline.trim()) metadata.projectTagline = projectTagline.trim()
-  }
-  if (description !== undefined) {
-    if (typeof description !== 'string' || description.length > 5000) {
-      return NextResponse.json({ error: 'Invalid description' }, { status: 400 })
-    }
-    if (description.trim()) metadata.description = description.trim()
-  }
+  const invalidTagline = takeString(metadata, 'projectTagline', projectTagline, 200)
+  if (invalidTagline) return invalidTagline
+  const invalidDescription = takeString(metadata, 'description', description, 5000)
+  if (invalidDescription) return invalidDescription
   for (const [key, value] of [
     ['logoUri', logoUri],
     ['coverImageUri', coverImageUri],
@@ -84,12 +76,8 @@ export async function POST(req: NextRequest) {
       (metadata as Record<string, unknown>).tags = tags
   }
 
-  if (payDisclosure !== undefined) {
-    if (typeof payDisclosure !== 'string' || payDisclosure.length > 1000) {
-      return NextResponse.json({ error: 'Invalid payDisclosure' }, { status: 400 })
-    }
-    if (payDisclosure.trim()) metadata.payDisclosure = payDisclosure.trim()
-  }
+  const invalidDisclosure = takeString(metadata, 'payDisclosure', payDisclosure, 1000)
+  if (invalidDisclosure) return invalidDisclosure
 
   // Plain length-capped strings; project pages sanitize on render
   // (https-only URLs, handle-shaped twitter/instagram).
@@ -102,11 +90,8 @@ export async function POST(req: NextRequest) {
     ['instagram', instagram, 100],
   ]
   for (const [key, value, max] of links) {
-    if (value === undefined) continue
-    if (typeof value !== 'string' || value.length > max) {
-      return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
-    }
-    if (value.trim()) metadata[key] = value.trim()
+    const invalid = takeString(metadata, key, value, max)
+    if (invalid) return invalid
   }
 
   try {

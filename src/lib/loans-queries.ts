@@ -6,7 +6,7 @@
  * before sending.
  */
 
-import { bendystraw } from '@/lib/bendystraw'
+import { getPagedItems } from '@/lib/bendystraw'
 
 /** One open/closed loan row from the indexer. Amounts are fixed-point strings
  *  in the loan's source-token decimals; percents are out of 1000. */
@@ -52,29 +52,12 @@ export async function getLoans(
   chainId: number,
   limit = 500,
 ): Promise<{ items: BsLoan[]; totalCount: number }> {
-  const max = Math.max(1, Math.min(1000, limit))
-  const pageSize = 250
-  const items: BsLoan[] = []
-  let totalCount = 0
-  let offset = 0
-
-  while (items.length < max) {
-    const pageLimit = Math.min(pageSize, max - items.length)
-    const data = await bendystraw<{
-      loans: { items: BsLoan[]; totalCount: number }
-    }>(
-      LOANS_QUERY,
-      { projectId, chainId, limit: pageLimit, offset },
-      { revalidate: 30 },
-    )
-    const page = data.loans.items ?? []
-    totalCount = data.loans.totalCount ?? totalCount
-    items.push(...page)
-    if (page.length === 0 || items.length >= totalCount) break
-    offset += page.length
-  }
-
-  return { items, totalCount: totalCount || items.length }
+  return getPagedItems<BsLoan>(
+    LOANS_QUERY,
+    'loans',
+    { projectId, chainId },
+    { pageSize: 250, max: Math.max(1, Math.min(1000, limit)) },
+  )
 }
 
 /** An auto-issuance event: `stored` events register a stage's pending mint;
@@ -124,22 +107,12 @@ async function fetchAutoIssuePages(
   projectId: number,
   chainId: number,
 ): Promise<BsAutoIssuanceEvent[]> {
-  const pageSize = 250
-  const max = 1000
-  const items: BsAutoIssuanceEvent[] = []
-  let totalCount = 0
-  let offset = 0
-  while (items.length < max) {
-    const data = await bendystraw<
-      Record<string, { items: BsAutoIssuanceEvent[]; totalCount: number }>
-    >(query, { projectId, chainId, limit: pageSize, offset }, { revalidate: 30 })
-    const result = data[path]
-    const page = result?.items ?? []
-    totalCount = result?.totalCount ?? totalCount
-    items.push(...page)
-    if (page.length === 0 || items.length >= totalCount) break
-    offset += page.length
-  }
+  const { items } = await getPagedItems<BsAutoIssuanceEvent>(
+    query,
+    path,
+    { projectId, chainId },
+    { pageSize: 250, max: 1000 },
+  )
   return items
 }
 

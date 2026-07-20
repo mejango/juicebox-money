@@ -1,6 +1,6 @@
 'use client'
 
-import { JB_CHAINS, jbContractAddress } from '@bananapus/nana-sdk-core'
+import { jbContractAddress } from '@bananapus/nana-sdk-core'
 import {
   type PropsWithChildren,
   useCallback,
@@ -23,27 +23,12 @@ import {
   type TransactionReviewCall,
   type TransactionReviewRequest,
 } from '@/lib/transaction-review'
+import { chainName } from '@/lib/urn'
 
 type PendingReview = {
   id: number
   request: TransactionReviewRequest
   resolve: (approved: boolean) => void
-}
-
-const CHAIN_NAMES: Record<number, string> = {
-  1: 'Ethereum',
-  10: 'Optimism',
-  8453: 'Base',
-  42161: 'Arbitrum',
-  11155111: 'Sepolia',
-  11155420: 'Optimism Sepolia',
-  84532: 'Base Sepolia',
-  421614: 'Arbitrum Sepolia',
-}
-
-function chainName(chainId: number): string {
-  const sdkChain = (JB_CHAINS as Record<number, { name?: string }>)[chainId]
-  return sdkChain?.name ?? CHAIN_NAMES[chainId] ?? `Chain ${chainId}`
 }
 
 function knownContractName(call: TransactionReviewCall): string | null {
@@ -196,11 +181,7 @@ function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
 }
 
 function nativeValue(value = 0n): string {
-  const decimal = formatEther(value)
-  const trimmed = decimal.includes('.')
-    ? decimal.replace(/0+$/, '').replace(/\.$/, '')
-    : decimal
-  return `${trimmed} ETH · ${value.toString()} wei`
+  return `${formatEther(value)} ETH · ${value.toString()} wei`
 }
 
 function PrettyCall({
@@ -299,23 +280,6 @@ function PrettyCall({
   )
 }
 
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-  const area = document.createElement('textarea')
-  area.value = text
-  area.readOnly = true
-  area.style.position = 'fixed'
-  area.style.opacity = '0'
-  document.body.appendChild(area)
-  area.select()
-  const copied = document.execCommand('copy')
-  area.remove()
-  if (!copied) throw new Error('Copy failed')
-}
-
 function ReviewModal({
   pending,
   onFinish,
@@ -369,7 +333,7 @@ function ReviewModal({
 
   const copyPrompt = async () => {
     try {
-      await copyText(buildTransactionReviewPrompt(request))
+      await navigator.clipboard.writeText(buildTransactionReviewPrompt(request))
       setCopyState('copied')
     } catch {
       setCopyState('failed')

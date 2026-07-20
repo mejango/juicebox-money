@@ -134,23 +134,15 @@ const JUICEBOX_FEATURES = [
 const HOMEPAGE_DATA_TIMEOUT_MS = 9_000
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error('Homepage data request timed out')),
-      milliseconds,
-    )
-
-    promise.then(
-      value => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      error => {
-        clearTimeout(timer)
-        reject(error)
-      },
-    )
-  })
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error('Homepage data request timed out')),
+        milliseconds,
+      ),
+    ),
+  ])
 }
 
 function FruitSeparator() {

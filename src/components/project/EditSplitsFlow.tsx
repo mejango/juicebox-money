@@ -31,29 +31,16 @@ import {
   splitOk,
   type DraftSplit,
 } from '@/components/create/SplitsEditor'
+import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
-import { truncateAddress } from '@/lib/format'
+import { billionthsToPct, truncateAddress } from '@/lib/format'
 import { LP_SPLIT_HOOK } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
 import { fetchSafeInfo } from '@/lib/safe'
-
-/** A live split as returned by JBSplits.splitsOf. */
-type RawSplit = {
-  percent: number
-  projectId: bigint
-  beneficiary: Address
-  preferAddToBalance: boolean
-  lockedUntil: number
-  hook: Address
-}
-
-/** 1e9-scaled percent → a trimmed 0-100 string. */
-function billionthsToPct(p: number): string {
-  return String(Number(((p / 1e9) * 100).toFixed(6)))
-}
+import type { RawSplit } from '@/lib/splits-types'
 
 /** A stable string of the on-chain splits, for fingerprint comparison. */
 function fingerprint(splits: readonly RawSplit[]): string {
@@ -72,7 +59,7 @@ function fingerprint(splits: readonly RawSplit[]): string {
 /** One live split → an editable draft row (percents are 0-100 strings). */
 function splitToDraft(sp: RawSplit): DraftSplit {
   const base = newDraftSplit()
-  const value = billionthsToPct(sp.percent)
+  const value = billionthsToPct(sp.percent, 6)
   const lockedUntil =
     sp.lockedUntil > 0
       ? new Date(sp.lockedUntil * 1000).toISOString().slice(0, 16)
@@ -533,14 +520,15 @@ function EditSplitsModal({
                   <li key={i} className="flex justify-between gap-3">
                     <span>{lockedRecipientLabel(s)}</span>
                     <span className="tabular-nums">
-                      {billionthsToPct(s.percent)}%
+                      {billionthsToPct(s.percent, 6)}%
                     </span>
                   </li>
                 ))}
               </ul>
               <p className="mt-1.5 text-smoke-700">
-                They take {billionthsToPct(lockedPercent)}% — you can allocate
-                the remaining {billionthsToPct(SPLITS_TOTAL_PERCENT - lockedPercent)}%.
+                They take {billionthsToPct(lockedPercent, 6)}% — you can
+                allocate the remaining{' '}
+                {billionthsToPct(SPLITS_TOTAL_PERCENT - lockedPercent, 6)}%.
               </p>
             </div>
           ) : null}
@@ -565,7 +553,7 @@ function EditSplitsModal({
           {overAllocated ? (
             <p className="mt-2 text-xs font-medium text-red-600">
               Locked plus new shares add up to{' '}
-              {billionthsToPct(totalPercent)}% — over 100%.
+              {billionthsToPct(totalPercent, 6)}% — over 100%.
             </p>
           ) : null}
 
@@ -581,11 +569,10 @@ function EditSplitsModal({
             <p className="mt-2 text-xs text-smoke-700">{status}</p>
           ) : null}
 
-          {flowError ? (
-            <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {flowError}
-            </p>
-          ) : null}
+          <TxError
+            error={flowError}
+            className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+          />
         </div>
       )}
     </div>

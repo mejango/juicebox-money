@@ -17,8 +17,11 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
-import { formatTokenAmount } from '@/lib/format'
+import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
+import { FlowError, shortError } from '@/lib/errors'
+import { TxError } from '@/components/ui/TxError'
+import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import {
@@ -417,47 +420,11 @@ export function AddLiquidityFlow({
 
   // The project's OWN token — required; if there's no deployed ERC-20 there's
   // no pool to seed. Shared cache key with the Market card.
-  const { data: projectToken } = useQuery({
-    queryKey: ['marketProjectSymbol', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<{ address: Address; symbol: string } | null> => {
-      const token = await getTokenAddress(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!token) return null
-      const symbol = (await publicClient!
-        .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })
-        .catch(() => tokenSymbol)) as string
-      return { address: token, symbol }
-    },
-  })
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const sym = projectToken?.symbol || tokenSymbol || 'tokens'
 
   // Cash-out floor, only used to seed the default range (best-effort).
-  const { data: floor } = useQuery({
-    queryKey: ['marketFloor', chainId, projectId],
-    enabled: !!publicClient && !!pool,
-    staleTime: 60_000,
-    retry: 0,
-    queryFn: async (): Promise<number | null> => {
-      const context = await getCashOutContext(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!context) return null
-      const quote = await getContextCashOutQuote(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        cashOutCount: 10n ** 18n,
-        context,
-      })
-      const value = Number(formatUnits(quote.reclaimAmount, context.decimals))
-      return Number.isFinite(value) && value > 0 ? value : null
-    },
-  })
+  const { data: floor } = useCashOutFloor(chainId, projectId, !!pool)
 
   if (!posm) {
     return (
@@ -610,12 +577,7 @@ function AddLiquidityForm({
   const runningRef = useRef(false)
   const processedRef = useRef<string | null>(null)
 
-  const busy =
-    quoting ||
-    running ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = quoting || running || tx.busy
 
   const invalidatePlan = () => {
     if (planRef.current && !runningRef.current) {
@@ -684,10 +646,6 @@ function AddLiquidityForm({
   )
 
   const chainName = chainMeta?.name ?? `Chain ${chainId}`
-  const txUrl = (hash: string) =>
-    chainMeta?.etherscanHostname
-      ? `https://${chainMeta.etherscanHostname}/tx/${hash}`
-      : null
 
   // ----- review: freeze the exact transaction ------------------------------
   const handleReview = async () => {
@@ -926,7 +884,7 @@ function AddLiquidityForm({
   // ----- render ------------------------------------------------------------
 
   if (done) {
-    const url = mintHash ? txUrl(mintHash) : null
+    const url = mintHash ? etherscanTxUrl(chainId, mintHash) : null
     return (
       <div className="card p-5">
         <span className="field-label">Add market liquidity</span>
@@ -1170,23 +1128,10 @@ function AddLiquidityForm({
         </button>
       ) : null}
 
-      {reviewError || tx.error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {reviewError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={reviewError ?? tx.error}
+        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+      />
     </div>
   )
-}
-
-/** A validation failure with user-ready copy. */
-class FlowError extends Error {}
-
-function shortError(e: Error): string {
-  const message =
-    'shortMessage' in e && typeof e.shortMessage === 'string'
-      ? e.shortMessage
-      : e.message
-  if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
-  return message.split('\n')[0]
 }

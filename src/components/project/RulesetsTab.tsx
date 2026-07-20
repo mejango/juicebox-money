@@ -26,7 +26,17 @@ import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
-import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import {
+  billionthsToPct,
+  fmtPct,
+  formatCountdown,
+  formatDate,
+  formatDuration,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
+import type { RawSplit } from '@/lib/splits-types'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 
@@ -34,22 +44,12 @@ import { wagmiConfig } from '@/providers/Providers'
 const UNLIMITED_FLOOR = 2n ** 200n
 /** Reserved-split sentinel meaning "burn this portion". */
 const BURN_ADDRESS = '0x000000000000000000000000000000000000dead'
-const NATIVE = '0x000000000000000000000000000000000000eeee'
 
 type AccountingContext = {
   token: `0x${string}`
   decimals: number
   currency: number
   symbol: string
-}
-
-type Split = {
-  percent: number
-  projectId: bigint
-  beneficiary: `0x${string}`
-  preferAddToBalance: boolean
-  lockedUntil: number
-  hook: `0x${string}`
 }
 
 type CurrencyAmount = { amount: bigint; currency: number }
@@ -66,45 +66,9 @@ function formatDateTime(sec: number): string {
   })
 }
 
-/** Coarse single-unit duration: "7 days", "3 hours", "90 seconds". */
-function formatDuration(secs: number): string {
-  if (secs >= 86400) {
-    const d = secs / 86400
-    const v = d % 1 === 0 ? String(d) : d.toFixed(1)
-    return `${v} day${d === 1 ? '' : 's'}`
-  }
-  if (secs >= 3600) {
-    const h = secs / 3600
-    const v = h % 1 === 0 ? String(h) : h.toFixed(1)
-    return `${v} hour${h === 1 ? '' : 's'}`
-  }
-  return `${secs} seconds`
-}
-
-/** Compact countdown: "2d 4h", "3h 12m", "45m". */
-function formatCountdown(secs: number): string {
-  if (secs <= 0) return 'now'
-  const d = Math.floor(secs / 86400)
-  if (d >= 1) {
-    const h = Math.floor((secs % 86400) / 3600)
-    return `${d}d${h ? ` ${h}h` : ''}`
-  }
-  const h = Math.floor(secs / 3600)
-  if (h >= 1) {
-    const m = Math.floor((secs % 3600) / 60)
-    return `${h}h${m ? ` ${m}m` : ''}`
-  }
-  return `${Math.max(1, Math.floor(secs / 60))}m`
-}
-
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
-  return `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`
-}
-
-/** Split and weight-cut percents use a 1e9 denominator: 5e8 → "50%". */
-function billionths(p: number): string {
-  return `${((p / 1e9) * 100).toFixed(2).replace(/\.?0+$/, '')}%`
+  return fmtPct(bp / 100)
 }
 
 /** The accounting-context currency id for a token: uint32(uint160(token)). */
@@ -194,7 +158,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
       raw: String(r.weightCutPercent),
       value:
         r.weightCutPercent > 0
-          ? `${billionths(r.weightCutPercent)} each cycle`
+          ? `${billionthsToPct(r.weightCutPercent)} each cycle`
           : 'None',
     },
     {
@@ -440,7 +404,7 @@ function ruleRows(
       label: 'Issuance cut',
       value:
         r.weightCutPercent > 0
-          ? `Rate drops ${billionths(r.weightCutPercent)} each cycle`
+          ? `Rate drops ${billionthsToPct(r.weightCutPercent)} each cycle`
           : 'None',
     },
     {
@@ -624,14 +588,14 @@ function SplitsList({
   splits,
   chainId,
 }: {
-  splits: readonly Split[]
+  splits: readonly RawSplit[]
   chainId: JBChainId
 }) {
   const host = JB_CHAINS[chainId]?.etherscanHostname
   const total = splits.reduce((sum, sp) => sum + sp.percent, 0)
   const leftover = 1e9 - total
 
-  const recipient = (sp: Split): ReactNode => {
+  const recipient = (sp: RawSplit): ReactNode => {
     if (sp.hook !== zeroAddress) return `Hook ${truncateAddress(sp.hook)}`
     if (sp.projectId > 0n) return `Project #${sp.projectId}`
     if (sp.beneficiary.toLowerCase() === BURN_ADDRESS) return 'Burn'
@@ -662,14 +626,14 @@ function SplitsList({
               </span>
             ) : null}
           </dt>
-          <dd className="font-medium text-ink">{billionths(sp.percent)}</dd>
+          <dd className="font-medium text-ink">{billionthsToPct(sp.percent)}</dd>
         </div>
       ))}
       {splits.length === 0 || leftover > 0 ? (
         <div className="flex items-baseline justify-between gap-3">
           <dt className="text-smoke-700">Project owner</dt>
           <dd className="font-medium text-ink">
-            {splits.length === 0 ? '100%' : billionths(leftover)}
+            {splits.length === 0 ? '100%' : billionthsToPct(leftover)}
           </dd>
         </div>
       ) : null}
@@ -747,24 +711,15 @@ export function RulesetsTab({
         projectId: BigInt(projectId),
       }).catch(() => [])
       return Promise.all(
-        raw.map(async ctx => {
-          if (ctx.token.toLowerCase() === NATIVE) {
-            return { ...ctx, symbol: nativeSymbol }
-          }
-          const symbol = await publicClient!
-            .readContract({
-              address: ctx.token,
-              abi: erc20Abi,
-              functionName: 'symbol',
-            })
-            .catch(() => truncateAddress(ctx.token))
-          return { ...ctx, symbol }
-        }),
+        raw.map(async ctx => ({
+          ...ctx,
+          symbol: await tokenSymbol(publicClient!, ctx.token, { nativeSymbol }),
+        })),
       )
     },
   })
 
-  const { data: tokenSymbol } = useQuery({
+  const { data: projectTokenSymbol } = useQuery({
     queryKey: ['rulesetsTabTokenSymbol', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
@@ -782,7 +737,7 @@ export function RulesetsTab({
         .catch(() => null)
     },
   })
-  const sym = tokenSymbol ?? 'tokens'
+  const sym = projectTokenSymbol ?? 'tokens'
 
   const { data: chainRulesets, isLoading: chainRulesetsLoading } = useQuery({
     queryKey: ['rulesetsTabCrossChain', projectChainsKey],

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { parseChainProject } from '@/lib/api-params'
 import { bendystraw } from '@/lib/bendystraw'
 
 export const dynamic = 'force-dynamic'
@@ -9,14 +10,8 @@ export const dynamic = 'force-dynamic'
  * 5s, and caching the pre-index null would stall the "it's live" flip.
  */
 export async function GET(req: NextRequest) {
-  const chainId = Number(req.nextUrl.searchParams.get('chainId'))
-  const projectId = Number(req.nextUrl.searchParams.get('projectId'))
-  if (
-    !Number.isInteger(chainId) ||
-    !Number.isInteger(projectId) ||
-    chainId <= 0 ||
-    projectId <= 0
-  ) {
+  const { chainId, projectId, ok } = parseChainProject(req.nextUrl.searchParams)
+  if (!ok) {
     return NextResponse.json({ found: false }, { status: 400 })
   }
 

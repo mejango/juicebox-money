@@ -265,44 +265,32 @@ export async function getParticipants(
   let totalCount = 0
   let offset = 0
 
+  const [params, where, scope] = args.suckerGroupId
+    ? [
+        '$suckerGroupId: String!',
+        'suckerGroupId: $suckerGroupId',
+        { suckerGroupId: args.suckerGroupId },
+      ]
+    : [
+        '$chainId: Int!, $projectId: Int!',
+        'chainId: $chainId, projectId: $projectId',
+        { chainId: args.chainId, projectId: args.projectId },
+      ]
+  const query = `query(${params}, $limit: Int!, $offset: Int!) {
+    participants(
+      where: { ${where}, version: 6, balance_gt: "0" }
+      orderBy: "balance"
+      orderDirection: "desc"
+      limit: $limit
+      offset: $offset
+    ) { items { address balance chainId volumeUsd } totalCount }
+  }`
+
   while (items.length < max) {
     const pageLimit = Math.min(pageSize, max - items.length)
-    const data = args.suckerGroupId
-      ? await bendystraw<{
-          participants: { items: BsParticipant[]; totalCount: number }
-        }>(
-          `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-            participants(
-              where: { suckerGroupId: $suckerGroupId, version: 6, balance_gt: "0" }
-              orderBy: "balance"
-              orderDirection: "desc"
-              limit: $limit
-              offset: $offset
-            ) { items { address balance chainId volumeUsd } totalCount }
-          }`,
-          { suckerGroupId: args.suckerGroupId, limit: pageLimit, offset },
-          { revalidate: 60 },
-        )
-      : await bendystraw<{
-          participants: { items: BsParticipant[]; totalCount: number }
-        }>(
-          `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
-            participants(
-              where: { chainId: $chainId, projectId: $projectId, version: 6, balance_gt: "0" }
-              orderBy: "balance"
-              orderDirection: "desc"
-              limit: $limit
-              offset: $offset
-            ) { items { address balance chainId volumeUsd } totalCount }
-          }`,
-          {
-            chainId: args.chainId,
-            projectId: args.projectId,
-            limit: pageLimit,
-            offset,
-          },
-          { revalidate: 60 },
-        )
+    const data = await bendystraw<{
+      participants: { items: BsParticipant[]; totalCount: number }
+    }>(query, { ...scope, limit: pageLimit, offset }, { revalidate: 60 })
 
     const page = data.participants.items ?? []
     totalCount = data.participants.totalCount ?? totalCount
@@ -360,15 +348,23 @@ const SHOP_ROWS_PAGE_SIZE = 200
 const SHOP_ROWS_MAX_PER_CHAIN = 1000
 
 /**
- * Store-item purchases across linked deployments. Project IDs are paired to
- * their own chains: linked projects are not assumed to share an ID.
+ * The shared per-chain scaffold for shop-row queries: paginate each
+ * deployment up to the per-chain cap, flag failed chains without losing the
+ * successful ones, then merge and sort newest-first by `sortKey`.
  */
-export async function getShopPurchases(
+async function fetchShopRowsPerChain<Row, Item>(
   projects: ShopProjectRef[],
-): Promise<BsShopRows<BsShopPurchase>> {
+  fetchPage: (
+    project: ShopProjectRef,
+    limit: number,
+    offset: number,
+  ) => Promise<{ items: Row[]; totalCount: number } | undefined>,
+  mapRow: (row: Row, project: ShopProjectRef) => Item[],
+  sortKey: (item: Item) => number,
+): Promise<BsShopRows<Item>> {
   const perChain = await Promise.all(
     projects.map(async project => {
-      const items: BsShopPurchase[] = []
+      const items: Item[] = []
       let totalCount = 0
       let offset = 0
       let failed = false
@@ -379,56 +375,10 @@ export async function getShopPurchases(
             SHOP_ROWS_PAGE_SIZE,
             SHOP_ROWS_MAX_PER_CHAIN - items.length,
           )
-          const data = await bendystraw<{
-            mintNftEvents: {
-              items: BsShopPurchase[]
-              totalCount: number
-            }
-          }>(
-            `query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) {
-              mintNftEvents(
-                where: { projectId: $projectId, chainId: $chainId, version: 6 }
-                orderBy: "timestamp"
-                orderDirection: "desc"
-                limit: $limit
-                offset: $offset
-              ) {
-                totalCount
-                items {
-                  chainId projectId timestamp txHash beneficiary tierId tokenId
-                  totalAmountPaid hook
-                }
-              }
-            }`,
-            { ...project, limit, offset },
-            { revalidate: 15 },
-          )
-          const page = data.mintNftEvents?.items ?? []
-          totalCount = data.mintNftEvents?.totalCount ?? totalCount
-          items.push(
-            ...page.flatMap(row => {
-              // The query constrains this exact pair, but retain that identity
-              // check at the trust boundary. Never reinterpret a missing or
-              // mismatched row as the requested deployment.
-              if (
-                Number(row.chainId) !== project.chainId ||
-                Number(row.projectId) !== project.projectId
-              ) {
-                return []
-              }
-              return [
-                {
-                  ...row,
-                  chainId: project.chainId,
-                  projectId: project.projectId,
-                  timestamp: Number(row.timestamp),
-                  tierId: Number(row.tierId),
-                  tokenId: String(row.tokenId),
-                  totalAmountPaid: String(row.totalAmountPaid),
-                },
-              ]
-            }),
-          )
+          const data = await fetchPage(project, limit, offset)
+          const page = data?.items ?? []
+          totalCount = data?.totalCount ?? totalCount
+          items.push(...page.flatMap(row => mapRow(row, project)))
           offset += page.length
           if (page.length === 0 || items.length >= totalCount) break
         }
@@ -442,7 +392,7 @@ export async function getShopPurchases(
 
   const items = perChain
     .flatMap(result => result.items)
-    .sort((a, b) => b.timestamp - a.timestamp)
+    .sort((a, b) => sortKey(b) - sortKey(a))
   return {
     items,
     totalCount: perChain.reduce((sum, result) => sum + result.totalCount, 0),
@@ -451,6 +401,65 @@ export async function getShopPurchases(
       .filter(result => result.failed)
       .map(result => result.project.chainId),
   }
+}
+
+/**
+ * Store-item purchases across linked deployments. Project IDs are paired to
+ * their own chains: linked projects are not assumed to share an ID.
+ */
+export async function getShopPurchases(
+  projects: ShopProjectRef[],
+): Promise<BsShopRows<BsShopPurchase>> {
+  return fetchShopRowsPerChain<BsShopPurchase, BsShopPurchase>(
+    projects,
+    async (project, limit, offset) => {
+      const data = await bendystraw<{
+        mintNftEvents: { items: BsShopPurchase[]; totalCount: number }
+      }>(
+        `query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) {
+          mintNftEvents(
+            where: { projectId: $projectId, chainId: $chainId, version: 6 }
+            orderBy: "timestamp"
+            orderDirection: "desc"
+            limit: $limit
+            offset: $offset
+          ) {
+            totalCount
+            items {
+              chainId projectId timestamp txHash beneficiary tierId tokenId
+              totalAmountPaid hook
+            }
+          }
+        }`,
+        { ...project, limit, offset },
+        { revalidate: 15 },
+      )
+      return data.mintNftEvents
+    },
+    (row, project) => {
+      // The query constrains this exact pair, but retain that identity
+      // check at the trust boundary. Never reinterpret a missing or
+      // mismatched row as the requested deployment.
+      if (
+        Number(row.chainId) !== project.chainId ||
+        Number(row.projectId) !== project.projectId
+      ) {
+        return []
+      }
+      return [
+        {
+          ...row,
+          chainId: project.chainId,
+          projectId: project.projectId,
+          timestamp: Number(row.timestamp),
+          tierId: Number(row.tierId),
+          tokenId: String(row.tokenId),
+          totalAmountPaid: String(row.totalAmountPaid),
+        },
+      ]
+    },
+    item => item.timestamp,
+  )
 }
 
 /**
@@ -463,93 +472,61 @@ export async function getOwnedShopItems(
   owner: string,
 ): Promise<BsShopRows<BsOwnedShopItem>> {
   const normalizedOwner = owner.toLowerCase()
-  const perChain = await Promise.all(
-    projects.map(async project => {
-      const items: BsOwnedShopItem[] = []
-      let totalCount = 0
-      let offset = 0
-      let failed = false
-
-      try {
-        while (items.length < SHOP_ROWS_MAX_PER_CHAIN) {
-          const limit = Math.min(
-            SHOP_ROWS_PAGE_SIZE,
-            SHOP_ROWS_MAX_PER_CHAIN - items.length,
-          )
-          const data = await bendystraw<{
-            nfts: { items: BsOwnedShopItemRow[]; totalCount: number }
-          }>(
-            `query($projectId: Int!, $chainId: Int!, $owner: String!, $limit: Int!, $offset: Int!) {
-              nfts(
-                where: {
-                  projectId: $projectId
-                  chainId: $chainId
-                  version: 6
-                  owner: $owner
-                }
-                orderBy: "createdAt"
-                orderDirection: "desc"
-                limit: $limit
-                offset: $offset
-              ) {
-                totalCount
-                items {
-                  chainId projectId createdAt mintTx tokenId owner tierId
-                  hook { address }
-                }
-              }
-            }`,
-            { ...project, owner: normalizedOwner, limit, offset },
-            { revalidate: 15 },
-          )
-          const page = data.nfts?.items ?? []
-          totalCount = data.nfts?.totalCount ?? totalCount
-          items.push(
-            ...page.flatMap(row => {
-              const hook = row.hook?.address
-              if (
-                !hook ||
-                Number(row.chainId) !== project.chainId ||
-                Number(row.projectId) !== project.projectId
-              ) {
-                return []
-              }
-              return [
-                {
-                  ...row,
-                  chainId: project.chainId,
-                  projectId: project.projectId,
-                  createdAt: Number(row.createdAt),
-                  hook,
-                  tierId: Number(row.tierId),
-                  tokenId: String(row.tokenId),
-                  owner: String(row.owner).toLowerCase(),
-                },
-              ]
-            }),
-          )
-          offset += page.length
-          if (page.length === 0 || items.length >= totalCount) break
-        }
-      } catch {
-        failed = true
+  return fetchShopRowsPerChain<BsOwnedShopItemRow, BsOwnedShopItem>(
+    projects,
+    async (project, limit, offset) => {
+      const data = await bendystraw<{
+        nfts: { items: BsOwnedShopItemRow[]; totalCount: number }
+      }>(
+        `query($projectId: Int!, $chainId: Int!, $owner: String!, $limit: Int!, $offset: Int!) {
+          nfts(
+            where: {
+              projectId: $projectId
+              chainId: $chainId
+              version: 6
+              owner: $owner
+            }
+            orderBy: "createdAt"
+            orderDirection: "desc"
+            limit: $limit
+            offset: $offset
+          ) {
+            totalCount
+            items {
+              chainId projectId createdAt mintTx tokenId owner tierId
+              hook { address }
+            }
+          }
+        }`,
+        { ...project, owner: normalizedOwner, limit, offset },
+        { revalidate: 15 },
+      )
+      return data.nfts
+    },
+    (row, project) => {
+      const hook = row.hook?.address
+      if (
+        !hook ||
+        Number(row.chainId) !== project.chainId ||
+        Number(row.projectId) !== project.projectId
+      ) {
+        return []
       }
-
-      return { project, items, totalCount, failed }
-    }),
+      return [
+        {
+          ...row,
+          chainId: project.chainId,
+          projectId: project.projectId,
+          createdAt: Number(row.createdAt),
+          hook,
+          tierId: Number(row.tierId),
+          tokenId: String(row.tokenId),
+          owner: String(row.owner).toLowerCase(),
+        },
+      ]
+    },
+    item => item.createdAt,
   )
-
-  const items = perChain
-    .flatMap(result => result.items)
-    .sort((a, b) => b.createdAt - a.createdAt)
-  return {
-    items,
-    totalCount: perChain.reduce((sum, result) => sum + result.totalCount, 0),
-    capped: perChain.some(result => result.totalCount > result.items.length),
-    failedChains: perChain
-      .filter(result => result.failed)
-      .map(result => result.project.chainId),
-  }
 }
 
 export async function getSuckerGroupProjects(
@@ -655,26 +632,38 @@ export type BsRevnetPriceHistory = {
   swaps: BsSwapEvent[]
 }
 
-async function getPagedItems<T>(
+/**
+ * Paginate one `{ items, totalCount }` bendystraw list to completion, up to
+ * `max` rows in `pageSize` pages. The query must accept `$limit`/`$offset`
+ * and expose the list under `field`.
+ */
+export async function getPagedItems<T>(
   query: string,
   field: string,
   variables: Record<string, unknown>,
-): Promise<T[]> {
-  const limit = 1_000
-  const max = 3_000
+  { pageSize = 1_000, max = 3_000 }: { pageSize?: number; max?: number } = {},
+): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
+  let totalCount = 0
 
   while (items.length < max) {
+    const pageLimit = Math.min(pageSize, max - items.length)
     const data = await bendystraw<
       Record<string, { items: T[]; totalCount: number }>
-    >(query, { ...variables, limit, offset: items.length }, { revalidate: 30 })
-    const page = data[field]
-    if (!page?.items.length) break
-    items.push(...page.items)
-    if (items.length >= page.totalCount || page.items.length < limit) break
+    >(
+      query,
+      { ...variables, limit: pageLimit, offset: items.length },
+      { revalidate: 30 },
+    )
+    const page = data[field]?.items ?? []
+    totalCount = data[field]?.totalCount ?? totalCount
+    items.push(...page)
+    if (page.length === 0 || items.length >= totalCount || page.length < pageLimit) {
+      break
+    }
   }
 
-  return items.slice(0, max)
+  return { items, totalCount: totalCount || items.length }
 }
 
 /**
@@ -701,7 +690,7 @@ export async function getRevnetPriceHistory(
       }`,
       'suckerGroupMoments',
       { suckerGroupId },
-    ),
+    ).then(page => page.items),
     getPagedItems<BsSwapEvent>(
       `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
         swapEvents(
@@ -720,7 +709,7 @@ export async function getRevnetPriceHistory(
       }`,
       'swapEvents',
       { suckerGroupId },
-    ),
+    ).then(page => page.items),
   ])
 
   return { moments, swaps }

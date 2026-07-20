@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { BsProject } from '@/lib/bendystraw'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
 import { ProjectLogo } from './ProjectLogo'
@@ -67,16 +68,10 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
   }, [query])
 
   // Close on outside pointer.
-  useEffect(() => {
-    const close = (e: PointerEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) {
-        setOpen(false)
-        setMobileOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', close)
-    return () => document.removeEventListener('pointerdown', close)
-  }, [])
+  useOutsideClose(boxRef, () => {
+    setOpen(false)
+    setMobileOpen(false)
+  })
 
   const go = (path: string) => {
     setOpen(false)

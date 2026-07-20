@@ -13,7 +13,7 @@ import {
   resolvePaymentTerminal,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
   zeroAddress,
@@ -23,14 +23,20 @@ import {
 } from 'viem'
 import { useConfig } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
-import { ChainIcon } from '@/components/ChainIcon'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { ChainPillButton } from '@/components/ui/ChainPillButton'
+import { ModalShell } from '@/components/ui/ModalShell'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import {
   cashOutProtocolFee,
   quotedOutputFloor,
 } from '@/lib/cashOut'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import {
+  etherscanTxUrl,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
 import { chainName } from '@/lib/urn'
 
 export type RedeemableShopItem = {
@@ -109,28 +115,7 @@ export function RedeemShopItemsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChainId, targetItemsKey])
 
-  const busy =
-    preparing ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
-
-  const close = useCallback(() => {
-    if (!busy) onClose()
-  }, [busy, onClose])
-
-  useEffect(() => {
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.body.style.overflow = previous
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [close])
+  const busy = preparing || tx.busy
 
   const selectedItems = useMemo(
     () => target.items.filter(item => selected.has(item.tokenId)),
@@ -383,198 +368,158 @@ export function RedeemShopItemsModal({
     return [...byTier.entries()].sort((a, b) => a[0] - b[0])
   }, [target.items])
 
-  const txUrl = tx.hash
-    ? `https://${JB_CHAINS[selectedChainId]?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? etherscanTxUrl(selectedChainId, tx.hash) : null
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/55 px-3 py-5 sm:px-6 sm:py-10"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="redeem-shop-items-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget) close()
-      }}
+    <ModalShell
+      title="Redeem items"
+      subtitle="Burn selected items for their share of project surplus. A cash-out tax and protocol fee may apply."
+      onClose={onClose}
+      busy={busy}
+      maxWidth="max-w-lg"
     >
-      <div className="card w-full max-w-lg overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
-        <div className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
-          <div>
-            <h2
-              id="redeem-shop-items-title"
-              className="font-agrandir text-xl font-medium text-ink"
-            >
-              Redeem items
-            </h2>
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Burn selected items for their share of project surplus. A
-              cash-out tax and protocol fee may apply.
-            </p>
+      {targets.length > 1 ? (
+        <div>
+          <span className="field-label">Redeem on</span>
+          <div className="mt-2 flex flex-wrap gap-2" role="group">
+            {targets.map(candidate => (
+              <ChainPillButton
+                key={candidate.chainId}
+                chainId={candidate.chainId}
+                selected={candidate.chainId === selectedChainId}
+                onClick={() => setSelectedChainId(candidate.chainId)}
+                disabled={busy}
+              >
+                {chainName(candidate.chainId)}
+              </ChainPillButton>
+            ))}
           </div>
+        </div>
+      ) : null}
+
+      <div className={targets.length > 1 ? 'mt-5' : ''}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="field-label">Your items</span>
           <button
             type="button"
-            onClick={close}
+            onClick={toggleAll}
             disabled={busy}
-            aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xl text-smoke-700 hover:bg-smoke-75 hover:text-ink disabled:opacity-50"
+            className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-40"
           >
-            ×
+            {selectedItems.length === target.items.length
+              ? 'Clear all'
+              : `Select all (${target.items.length})`}
           </button>
         </div>
-
-        <div className="max-h-[calc(100vh-10rem)] overflow-y-auto px-5 py-5 sm:px-6">
-          {targets.length > 1 ? (
-            <div>
-              <span className="field-label">Redeem on</span>
-              <div className="mt-2 flex flex-wrap gap-2" role="group">
-                {targets.map(candidate => (
-                  <button
-                    key={candidate.chainId}
-                    type="button"
-                    aria-pressed={candidate.chainId === selectedChainId}
-                    onClick={() => setSelectedChainId(candidate.chainId)}
-                    disabled={busy}
-                    className={`inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors disabled:opacity-40 ${
-                      candidate.chainId === selectedChainId
-                        ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
-                        : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
-                    }`}
+        <div className="mt-2 max-h-64 overflow-y-auto rounded-xl border border-smoke-200 px-3 py-2">
+          {groups.map(([tierId, items]) => (
+            <div key={tierId} className="py-2 first:pt-0 last:pb-0">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-smoke-500">
+                {names[tierId] ?? `Item #${tierId}`} ({items.length})
+              </p>
+              <div className="mt-1 space-y-1">
+                {items.map(item => (
+                  <label
+                    key={item.tokenId}
+                    className="flex min-h-[36px] cursor-pointer items-center gap-2 rounded-lg px-2 text-sm hover:bg-smoke-50"
                   >
-                    <ChainIcon chainId={candidate.chainId} size={24} />
-                    {chainName(candidate.chainId)}
-                  </button>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(item.tokenId)}
+                      onChange={() => toggle(item.tokenId)}
+                      disabled={busy}
+                      className="h-4 w-4 accent-bluebs-500"
+                    />
+                    <span>Token #{item.tokenId}</span>
+                  </label>
                 ))}
               </div>
             </div>
-          ) : null}
-
-          <div className={targets.length > 1 ? 'mt-5' : ''}>
-            <div className="flex items-center justify-between gap-3">
-              <span className="field-label">Your items</span>
-              <button
-                type="button"
-                onClick={toggleAll}
-                disabled={busy}
-                className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-40"
-              >
-                {selectedItems.length === target.items.length
-                  ? 'Clear all'
-                  : `Select all (${target.items.length})`}
-              </button>
-            </div>
-            <div className="mt-2 max-h-64 overflow-y-auto rounded-xl border border-smoke-200 px-3 py-2">
-              {groups.map(([tierId, items]) => (
-                <div key={tierId} className="py-2 first:pt-0 last:pb-0">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-smoke-500">
-                    {names[tierId] ?? `Item #${tierId}`} ({items.length})
-                  </p>
-                  <div className="mt-1 space-y-1">
-                    {items.map(item => (
-                      <label
-                        key={item.tokenId}
-                        className="flex min-h-[36px] cursor-pointer items-center gap-2 rounded-lg px-2 text-sm hover:bg-smoke-50"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.has(item.tokenId)}
-                          onChange={() => toggle(item.tokenId)}
-                          disabled={busy}
-                          className="h-4 w-4 accent-bluebs-500"
-                        />
-                        <span>Token #{item.tokenId}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div
-            className="mt-4 min-h-[44px] rounded-xl border border-smoke-200 bg-smoke-25 px-3.5 py-3 text-sm text-smoke-700"
-            aria-live="polite"
-          >
-            {selectedTokenIds.length === 0 ? (
-              'Select at least one item.'
-            ) : quoteLoading || preparing ? (
-              'Estimating your redemption…'
-            ) : quoteError ? (
-              <span className="text-red-600">
-                {quoteError instanceof Error
-                  ? quoteError.message
-                  : 'Could not estimate this redemption.'}
-              </span>
-            ) : quote && quote.net > 0n ? (
-              <>
-                You&apos;ll receive approximately{' '}
-                <span className="font-medium text-ink">
-                  {formatTokenAmount(quote.net, quote.decimals)} {quote.symbol}
-                </span>{' '}
-                for {selectedTokenIds.length}{' '}
-                {selectedTokenIds.length === 1 ? 'item' : 'items'}.
-              </>
-            ) : (
-              'There is no surplus available for these items right now.'
-            )}
-          </div>
-
-          {tx.phase === 'success' ? (
-            <div className="mt-4 rounded-xl border border-melon-200 bg-melon-50 p-4 text-sm text-melon-700">
-              Items redeemed successfully.
-              {txUrl ? (
-                <>
-                  {' '}
-                  <a
-                    href={txUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium underline underline-offset-2"
-                  >
-                    View transaction
-                  </a>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {prepareError || tx.error ? (
-            <p className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {prepareError ?? tx.error}
-            </p>
-          ) : null}
-
-          <button
-            type="button"
-            onClick={tx.phase === 'success' ? close : redeem}
-            disabled={
-              tx.phase !== 'success' &&
-              (busy || selectedTokenIds.length === 0 || !quote || quote.net <= 0n)
-            }
-            className="btn-primary mt-5 min-h-[48px] w-full text-sm"
-          >
-            {tx.phase === 'success'
-              ? 'Done'
-              : preparing || tx.phase === 'simulating'
-                ? 'Double-checking the redemption…'
-                : tx.phase === 'signing'
-                  ? 'Confirm in your wallet…'
-                  : tx.phase === 'pending'
-                    ? 'Redeeming items…'
-                    : `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`}
-          </button>
-
-          {quote && quote.net > 0n && tx.phase !== 'success' ? (
-            <p className="mt-3 text-center text-xs text-smoke-700">
-              You&apos;ll receive at least{' '}
-              {formatTokenAmount(
-                quotedOutputFloor(quote.net, 9900n),
-                quote.decimals,
-              )}{' '}
-              {quote.symbol}, or the transaction reverts.
-            </p>
-          ) : null}
+          ))}
         </div>
       </div>
-    </div>
+
+      <div
+        className="mt-4 min-h-[44px] rounded-xl border border-smoke-200 bg-smoke-25 px-3.5 py-3 text-sm text-smoke-700"
+        aria-live="polite"
+      >
+        {selectedTokenIds.length === 0 ? (
+          'Select at least one item.'
+        ) : quoteLoading || preparing ? (
+          'Estimating your redemption…'
+        ) : quoteError ? (
+          <span className="text-red-600">
+            {quoteError instanceof Error
+              ? quoteError.message
+              : 'Could not estimate this redemption.'}
+          </span>
+        ) : quote && quote.net > 0n ? (
+          <>
+            You&apos;ll receive approximately{' '}
+            <span className="font-medium text-ink">
+              {formatTokenAmount(quote.net, quote.decimals)} {quote.symbol}
+            </span>{' '}
+            for {selectedTokenIds.length}{' '}
+            {selectedTokenIds.length === 1 ? 'item' : 'items'}.
+          </>
+        ) : (
+          'There is no surplus available for these items right now.'
+        )}
+      </div>
+
+      {tx.phase === 'success' ? (
+        <div className="mt-4 rounded-xl border border-melon-200 bg-melon-50 p-4 text-sm text-melon-700">
+          Items redeemed successfully.
+          {txUrl ? (
+            <>
+              {' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline underline-offset-2"
+              >
+                View transaction
+              </a>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      <TxError
+        error={prepareError ?? tx.error}
+        className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+      />
+
+      <button
+        type="button"
+        onClick={tx.phase === 'success' ? onClose : redeem}
+        disabled={
+          tx.phase !== 'success' &&
+          (busy || selectedTokenIds.length === 0 || !quote || quote.net <= 0n)
+        }
+        className="btn-primary mt-5 min-h-[48px] w-full text-sm"
+      >
+        {tx.phase === 'success'
+          ? 'Done'
+          : preparing || tx.phase === 'simulating'
+            ? 'Double-checking the redemption…'
+            : txPhaseLabel(tx.phase, {
+                idle: `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`,
+                pending: 'Redeeming items…',
+              })}
+      </button>
+
+      {quote && quote.net > 0n && tx.phase !== 'success' ? (
+        <p className="mt-3 text-center text-xs text-smoke-700">
+          You&apos;ll receive at least{' '}
+          {formatTokenAmount(
+            quotedOutputFloor(quote.net, 9900n),
+            quote.decimals,
+          )}{' '}
+          {quote.symbol}, or the transaction reverts.
+        </p>
+      ) : null}
+    </ModalShell>
   )
 }

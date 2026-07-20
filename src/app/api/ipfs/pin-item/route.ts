@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { pinToIpfs } from '@/lib/ipfs-server'
+import { pinToIpfs, takeString } from '@/lib/ipfs-server'
 
 export const runtime = 'nodejs'
 
@@ -31,12 +31,8 @@ export async function POST(req: NextRequest) {
 
   const metadata: Record<string, string> = { name: name.trim() }
 
-  if (description !== undefined) {
-    if (typeof description !== 'string' || description.length > 1000) {
-      return NextResponse.json({ error: 'Invalid description' }, { status: 400 })
-    }
-    if (description.trim()) metadata.description = description.trim()
-  }
+  const invalidDescription = takeString(metadata, 'description', description, 1000)
+  if (invalidDescription) return invalidDescription
   // Images pin as `image`; other media as `animation_url` (website/ parity).
   for (const [key, value] of [
     ['image', image],

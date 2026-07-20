@@ -1,10 +1,8 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   JBSuckerContracts,
-  NATIVE_TOKEN,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
@@ -22,7 +20,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
   encodeFunctionData,
-  erc20Abi,
   zeroAddress,
   type Abi,
   type Address,
@@ -32,11 +29,19 @@ import { getPublicClient } from 'wagmi/actions'
 import { useConfig } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { GossipCard } from '@/components/project/GossipCard'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BridgeMovement } from '@/lib/suckers-queries'
-import { formatTokenAmount, timeAgo, truncateAddress } from '@/lib/format'
+import { addrOf } from '@/lib/contracts'
+import {
+  etherscanTxUrl,
+  formatTokenAmount,
+  timeAgo,
+  truncateAddress,
+} from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 
 // ------------------------------------------------------------ inline ABIs --
@@ -302,15 +307,9 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
           if (!client) {
             return { chainId: cid, projectId: pid, supply: null, balances: [], supported: false }
           }
-          const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
-            cid as JBChainId
-          ] as Address | undefined
-          const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
-            cid as JBChainId
-          ] as Address | undefined
-          const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
-            cid as JBChainId
-          ] as Address | undefined
+          const directory = addrOf(JBCoreContracts.JBDirectory, cid)
+          const terminal = addrOf(JBCoreContracts.JBMultiTerminal, cid)
+          const store = addrOf(JBCoreContracts.JBTerminalStore, cid)
           if (!directory || !terminal || !store) {
             return { chainId: cid, projectId: pid, supply: null, balances: [], supported: false }
           }
@@ -353,17 +352,9 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
                   args: [terminal, BigInt(pid), ctx.token],
                 })
                 .catch(() => 0n)) as bigint
-              const isNative =
-                ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-              const symbol = isNative
-                ? (JB_CHAINS[cid as JBChainId]?.nativeTokenSymbol ?? 'ETH')
-                : await client
-                    .readContract({
-                      abi: erc20Abi,
-                      address: ctx.token,
-                      functionName: 'symbol',
-                    })
-                    .catch(() => truncateAddress(ctx.token))
+              const symbol = await tokenSymbol(client, ctx.token, {
+                chainId: cid as JBChainId,
+              })
               return { token: ctx.token, symbol, decimals: ctx.decimals, balance }
             }),
           )
@@ -656,17 +647,10 @@ function MovementGroup({
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
 
-  const busy =
-    checking ||
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = checking || tx.busy
 
   const pending = group.rows.filter(r => r.status === 'pending')
-  const chainMeta = JB_CHAINS[group.sourceChainId as JBChainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? etherscanTxUrl(group.sourceChainId, tx.hash) : null
 
   const execute = async () => {
     if (busy) return
@@ -773,13 +757,10 @@ function MovementGroup({
           >
             {checking
               ? 'Reading bridge fee…'
-              : tx.phase === 'simulating'
-                ? 'Double-checking…'
-                : tx.phase === 'signing'
-                  ? 'Confirm in your wallet…'
-                  : tx.phase === 'pending'
-                    ? 'Sending…'
-                    : `Send ${pending.length} queued move${pending.length > 1 ? 's' : ''} to ${chainName(group.destChainId)}`}
+              : txPhaseLabel(tx.phase, {
+                  pending: 'Sending…',
+                  idle: `Send ${pending.length} queued move${pending.length > 1 ? 's' : ''} to ${chainName(group.destChainId)}`,
+                })}
           </button>
           <p className="mt-1.5 text-xs text-smoke-700">
             Anyone can send this — it ships the queued outbox in one bridge
@@ -808,11 +789,10 @@ function MovementGroup({
         </p>
       ) : null}
 
-      {flowError || tx.error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {flowError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+      />
     </div>
   )
 }

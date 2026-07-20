@@ -16,13 +16,73 @@ export function tabSlug(label: string): string {
 }
 
 /**
+ * The shared tab machinery both variants render: the tablist row and the
+ * lazily-mounted panels. A tab's content mounts on first activation and then
+ * stays mounted (hidden) so its reads don't re-fire; each variant passes its
+ * own spacing classes.
+ */
+function TabShell({
+  tabs,
+  active,
+  onSelect,
+  listClassName,
+  buttonClassName,
+  panelClassName,
+  ariaLabel,
+}: {
+  tabs: TabDef[]
+  active: number
+  onSelect: (index: number) => void
+  listClassName: string
+  buttonClassName: string
+  panelClassName: string
+  ariaLabel?: string
+}) {
+  // Every index that has ever been active stays mounted. Adding during
+  // render is safe: it's idempotent and only ever grows the set.
+  const mounted = useRef(new Set<number>())
+  mounted.current.add(active)
+
+  return (
+    <div>
+      <div role="tablist" aria-label={ariaLabel} className={listClassName}>
+        {tabs.map((tab, i) => (
+          <button
+            key={tab.label}
+            type="button"
+            role="tab"
+            aria-selected={active === i}
+            onClick={() => onSelect(i)}
+            className={`${buttonClassName} ${
+              active === i
+                ? 'border-ink text-ink'
+                : 'border-transparent text-smoke-500 hover:text-ink'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className={panelClassName}>
+        {tabs.map((tab, i) =>
+          mounted.current.has(i) ? (
+            <div key={tab.label} hidden={active !== i}>
+              {tab.content}
+            </div>
+          ) : null,
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
  * The project page's tab row + content area (website/ parity). Deep links
  * via the URL hash (#tab or #tab/subtab); lazy-mounts each tab on first
  * view and keeps it mounted after, like website/'s built{} cache.
  */
 export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
   const [active, setActive] = useState(0)
-  const [mounted, setMounted] = useState<Set<number>>(new Set([0]))
   const subtabByParent = useRef<Record<string, string>>({})
 
   // Resolve the initial tab from the URL hash, and follow hash changes
@@ -34,10 +94,7 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
       if (child) subtabByParent.current[tabSlug(slug)] = tabSlug(child)
       else delete subtabByParent.current[tabSlug(slug)]
       const i = tabs.findIndex(t => tabSlug(t.label) === slug)
-      if (i >= 0) {
-        setActive(i)
-        setMounted(prev => (prev.has(i) ? prev : new Set(prev).add(i)))
-      }
+      if (i >= 0) setActive(i)
     }
     apply()
     window.addEventListener('hashchange', apply)
@@ -54,7 +111,6 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
     }
 
     setActive(i)
-    setMounted(prev => (prev.has(i) ? prev : new Set(prev).add(i)))
     // Keep the hash shareable without adding history entries per click.
     const slug = tabSlug(tabs[i].label)
     const child = subtabByParent.current[slug]
@@ -66,39 +122,15 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
   }
 
   return (
-    <div>
-      <div
-        role="tablist"
-        aria-label="Project sections"
-        className="scrollbar-none -mx-1 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1"
-      >
-        {tabs.map((tab, i) => (
-          <button
-            key={tab.label}
-            type="button"
-            role="tab"
-            aria-selected={active === i}
-            onClick={() => activate(i)}
-            className={`min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors ${
-              active === i
-                ? 'border-ink text-ink'
-                : 'border-transparent text-smoke-500 hover:text-ink'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div className="pt-6">
-        {tabs.map((tab, i) =>
-          mounted.has(i) ? (
-            <div key={tab.label} hidden={active !== i}>
-              {tab.content}
-            </div>
-          ) : null,
-        )}
-      </div>
-    </div>
+    <TabShell
+      tabs={tabs}
+      active={active}
+      onSelect={activate}
+      ariaLabel="Project sections"
+      listClassName="scrollbar-none -mx-1 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1"
+      buttonClassName="min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors"
+      panelClassName="pt-6"
+    />
   )
 }
 
@@ -114,7 +146,6 @@ export function SubTabs({
   hashParent?: string
 }) {
   const [active, setActive] = useState(0)
-  const [mounted, setMounted] = useState<Set<number>>(new Set([0]))
 
   useEffect(() => {
     if (!hashParent) return
@@ -126,9 +157,6 @@ export function SubTabs({
         : 0
       if (i < 0) return
       setActive(i)
-      setMounted(previous =>
-        previous.has(i) ? previous : new Set(previous).add(i),
-      )
     }
     apply()
     window.addEventListener('hashchange', apply)
@@ -140,7 +168,6 @@ export function SubTabs({
 
   const activate = (i: number) => {
     setActive(i)
-    setMounted(prev => (prev.has(i) ? prev : new Set(prev).add(i)))
     if (hashParent) {
       window.history.replaceState(
         null,
@@ -151,37 +178,13 @@ export function SubTabs({
   }
 
   return (
-    <div>
-      <div
-        role="tablist"
-        className="scrollbar-none flex gap-6 overflow-x-auto border-b border-smoke-200"
-      >
-        {tabs.map((tab, i) => (
-          <button
-            key={tab.label}
-            type="button"
-            role="tab"
-            aria-selected={active === i}
-            onClick={() => activate(i)}
-            className={`min-h-[40px] shrink-0 whitespace-nowrap border-b-2 px-1 font-agrandir text-sm font-medium transition-colors ${
-              active === i
-                ? 'border-ink text-ink'
-                : 'border-transparent text-smoke-500 hover:text-ink'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div className="pt-4">
-        {tabs.map((tab, i) =>
-          mounted.has(i) ? (
-            <div key={tab.label} hidden={active !== i}>
-              {tab.content}
-            </div>
-          ) : null,
-        )}
-      </div>
-    </div>
+    <TabShell
+      tabs={tabs}
+      active={active}
+      onSelect={activate}
+      listClassName="scrollbar-none flex gap-6 overflow-x-auto border-b border-smoke-200"
+      buttonClassName="min-h-[40px] shrink-0 whitespace-nowrap border-b-2 px-1 font-agrandir text-sm font-medium transition-colors"
+      panelClassName="pt-4"
+    />
   )
 }

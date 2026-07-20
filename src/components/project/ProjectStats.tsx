@@ -1,9 +1,7 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
-  NATIVE_TOKEN,
   USD_CURRENCY_ID,
   jbContractAddress,
   jbPricesAbi,
@@ -13,15 +11,14 @@ import {
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useId, useMemo, type ReactNode } from 'react'
-import { erc20Abi, type Address, type PublicClient } from 'viem'
+import { type Address, type PublicClient } from 'viem'
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import type { BsParticipant } from '@/lib/bendystraw'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatTokenAmount, formatUsd18 } from '@/lib/format'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-
-const USD_SCALE = 10n ** 18n
 
 type TreasuryRow = {
   chainId: number
@@ -47,20 +44,6 @@ async function fetchParticipants(query: string): Promise<ParticipantPage> {
   const response = await fetch(`/api/participants?${query}`)
   if (!response.ok) throw new Error('Holder data unavailable')
   return (await response.json()) as ParticipantPage
-}
-
-function formatUsd18(raw: bigint | string): string {
-  try {
-    const value = typeof raw === 'bigint' ? raw : BigInt(raw)
-    if (value > 0n && value < USD_SCALE / 100n) return '<$0.01'
-
-    const cents = (value * 100n + USD_SCALE / 2n) / USD_SCALE
-    const dollars = cents / 100n
-    const remainder = (cents % 100n).toString().padStart(2, '0')
-    return `$${dollars.toLocaleString('en-US')}.${remainder}`
-  } catch {
-    return '—'
-  }
 }
 
 async function readChainTreasury(
@@ -99,17 +82,7 @@ async function readChainTreasury(
           functionName: 'balanceOf',
           args: [terminal, projectId, context.token],
         })
-        const isNative =
-          context.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-        const symbol = isNative
-          ? (JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH')
-          : await client
-              .readContract({
-                address: context.token,
-                abi: erc20Abi,
-                functionName: 'symbol',
-              })
-              .catch(() => truncateAddress(context.token))
+        const symbol = await tokenSymbol(client, context.token, { chainId })
 
         // JBPrices checks this project's feeds first, then protocol defaults.
         // Asking for 18 decimals gives an exact fixed-point USD price for one

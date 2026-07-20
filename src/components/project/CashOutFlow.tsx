@@ -22,8 +22,9 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { TxError } from '@/components/ui/TxError'
 import {
   buildCashOutRequest,
   getCashOutContext,
@@ -31,7 +32,7 @@ import {
   isNativeToken,
   minReclaimedFloor,
 } from '@/lib/cashOut'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 
 /**
  * The cash-out flow (JBMultiTerminal.cashOutTokensOf), extracted from
@@ -182,19 +183,14 @@ export function CashOutPanel({
     quote !== undefined &&
     quote.reclaimAmountAfterFee <= 0n
 
-  const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const busy = tx.busy
   const success = tx.phase === 'success'
 
   useEffect(() => {
     if (success) refetchBalance()
   }, [success, refetchBalance])
 
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null
 
   const setMax = () => {
     if (balance === undefined || balance <= 0n) return
@@ -372,17 +368,14 @@ export function CashOutPanel({
         }
         className="btn-primary mt-5 min-h-[52px] w-full text-sm"
       >
-        {tx.phase === 'simulating'
-          ? 'Double-checking the transaction…'
-          : tx.phase === 'signing'
-            ? 'Confirm in your wallet…'
-            : tx.phase === 'pending'
-              ? 'Cashing out…'
-              : !isConnected
-                ? 'Sign in to cash out'
-                : cashOutCount > 0n
-                  ? `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
-                  : 'Cash out'}
+        {txPhaseLabel(tx.phase, {
+          pending: 'Cashing out…',
+          idle: !isConnected
+            ? 'Sign in to cash out'
+            : cashOutCount > 0n
+              ? `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
+              : 'Cash out',
+        })}
       </button>
 
       {!exceedsBalance &&
@@ -410,11 +403,7 @@ export function CashOutPanel({
           </a>
         </p>
       ) : null}
-      {errorMsg || tx.error ? (
-        <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {errorMsg ?? tx.error}
-        </p>
-      ) : null}
+      <TxError error={errorMsg ?? tx.error} />
     </div>
   )
 }
