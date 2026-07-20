@@ -92,11 +92,11 @@ const JUICEBOX_FEATURES = [
     art: 'wide',
   },
   {
-    title: 'Liquidity without selling',
+    title: 'A Shop built into your project',
     description:
-      'When enabled, let supporters borrow against project tokens instead of giving up their position.',
-    illustration: loansIllustration,
-    art: 'tall',
+      'Use your shop to offer digital items and let every purchase flow directly into your project.',
+    illustration: shopIllustration,
+    art: 'square',
   },
   {
     title: 'Incentives on schedule',
@@ -107,11 +107,11 @@ const JUICEBOX_FEATURES = [
     wide: true,
   },
   {
-    title: 'A Shop built into your project',
+    title: 'Liquidity without selling',
     description:
-      'Use your shop to offer digital items and let every purchase flow directly into your project.',
-    illustration: shopIllustration,
-    art: 'square',
+      'When enabled, let supporters borrow against project tokens instead of giving up their position.',
+    illustration: loansIllustration,
+    art: 'tall',
   },
   {
     title: 'Payments that fit anywhere',
