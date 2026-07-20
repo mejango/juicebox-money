@@ -21,6 +21,7 @@ import splitsIllustration from '@/assets/illustrations/splits.png'
 import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { BsFreshActivityEvent, getRecentActivity } from '@/lib/bendystraw'
+import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { FreshActivity } from '@/components/FreshActivity'
 import { ProjectCard } from '@/components/ProjectCard'
 
@@ -186,8 +187,6 @@ export default async function HomePage() {
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg">
               Raise money from anyone, anywhere, transparently on your terms.
-              <br />
-              All open source.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
               <a href="#trending" className="btn-primary min-h-[48px] px-7 text-sm">
@@ -197,6 +196,7 @@ export default async function HomePage() {
                 Start a project
               </Link>
             </div>
+            <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
           </div>
           <div className="mx-auto w-full max-w-[280px] sm:max-w-[330px] lg:max-w-none" aria-hidden>
             <Image
