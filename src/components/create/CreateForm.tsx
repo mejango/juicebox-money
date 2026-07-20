@@ -1690,7 +1690,7 @@ export function CreateForm() {
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
           <h2 className="font-agrandir text-xl font-medium">
-            What are you making?
+            How should it look and feel?
           </h2>
         </div>
 
@@ -2194,12 +2194,12 @@ export function CreateForm() {
       >
         <div className="flex items-center gap-3">
           <StepBadge n={storeStep + 1} />
-          <h2 className="font-agrandir text-xl font-medium">Stock your store</h2>
+          <h2 className="font-agrandir text-xl font-medium">Stock your shop</h2>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           Sell things right from your project page. Each sale pays your
           treasury, and the buyer gets the item plus {tokenLabel}. Optional —
-          you can stock your store any time after launch.
+          you can stock your shop any time after launch.
         </p>
         <div className="mt-4">
           <span className="field-label">Pricing currency</span>
@@ -2270,7 +2270,7 @@ export function CreateForm() {
             aria-expanded={storeConfigOpen}
             className="text-sm font-medium text-bluebs-600 hover:text-bluebs-700"
           >
-            Store config {storeConfigOpen ? '▾' : '▸'}
+            Shop config {storeConfigOpen ? '▾' : '▸'}
           </button>
           {storeConfigOpen ? (
             <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4">
@@ -2506,7 +2506,7 @@ export function CreateForm() {
           ) : null}
           {items.length > 0 ? (
             <div className="flex items-center justify-between gap-3">
-              <dt className="text-smoke-700">Store</dt>
+              <dt className="text-smoke-700">Shop</dt>
               <dd className="font-medium text-ink">
                 {items.length} item{items.length === 1 ? '' : 's'}
               </dd>

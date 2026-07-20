@@ -246,9 +246,9 @@ export function ShopTab({
         pricing: resolved.shop?.pricing ?? null,
         error:
           resolved.failure === 'unreadable'
-            ? 'Could not read this store'
+            ? 'Could not read this shop'
             : resolved.failure === 'no-shop'
-              ? 'No store on this chain'
+              ? 'No shop on this chain'
               : undefined,
       })),
   })
@@ -267,7 +267,7 @@ export function ShopTab({
           {isLoading
             ? 'Loading…'
             : isError
-              ? "Couldn't load the store right now — try again in a moment."
+              ? "Couldn't load the shop right now — try again in a moment."
               : `No store yet.${
                   isRevnet
                     ? ' The operator can add items for supporters to buy.'
@@ -312,7 +312,7 @@ export function ShopTab({
         <div className="card p-5">
           <div>
             <p className="text-sm leading-relaxed text-smoke-700">
-              No items in the store yet.
+              No items in the shop yet.
             </p>
             <div className="mt-2">{addItemsButton}</div>
           </div>

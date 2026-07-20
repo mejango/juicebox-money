@@ -507,7 +507,7 @@ export function AddShopItemsModal({
                       target.error ??
                       (target.pricing
                         ? 'Different pricing currency'
-                        : 'Store unavailable')
+                        : 'Shop unavailable')
                     return (
                       <ChainPillButton
                         key={target.chainId}
