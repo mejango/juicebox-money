@@ -1280,12 +1280,12 @@ export function CreateForm() {
   ])
 
   const wizardSteps = isSimpleProject
-    ? ['Flavor', 'Basics', 'Store', 'Launch']
+    ? ['Flavor', 'Look & Feel', 'Shop', 'Launch']
     : [
         'Flavor',
-        'Basics',
+        'Look & Feel',
         flavor === 'revnet' ? 'Stages' : 'Rules',
-        'Store',
+        'Shop',
         'Launch',
       ]
   const storeStep = isSimpleProject ? 2 : 3
