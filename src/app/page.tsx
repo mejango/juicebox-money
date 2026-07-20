@@ -109,7 +109,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'A Shop built into your project',
     description:
-      'Use your Juicebox Shop to offer digital items and let every purchase flow directly into your project.',
+      'Use your shop to offer digital items and let every purchase flow directly into your project.',
     illustration: shopIllustration,
     art: 'square',
   },
