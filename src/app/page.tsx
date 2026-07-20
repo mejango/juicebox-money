@@ -46,7 +46,7 @@ const WHY_JUICEBOX_POINTS = [
   'Start with flexible rules, evolve them as your project changes, then lock the promises that should become permanent.',
   'Make every rule and transaction inspectable so community trust compounds over time.',
   'Keep control of your funds when you want, give up control to other mechanisms when you want.',
-  'Pay a predictable fee that sustains a healthy public payment network instead of extracting from your success.',
+  'Pay a fixed fee that sustains a healthy public payment network instead of having fees change over time.',
   'Be treated as both a customer and a participating investor, sharing in the growth your usage helps create.',
   'Use AI and open-source tooling to build faster and more securely without becoming dependent on private tools.',
   'Audit the whole money system yourself — with code, dashboards, or your own AI.',
