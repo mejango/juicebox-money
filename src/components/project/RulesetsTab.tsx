@@ -409,11 +409,15 @@ function ruleRows(
     },
     {
       section: 'Token',
-      label: 'Reserved',
+      label: 'Reserved issuance',
       value:
         m.reservedPercent > 0
           ? basisPoints(m.reservedPercent)
           : 'None',
+      hint:
+        m.reservedPercent > 0
+          ? 'This share of the issuance rate above is set aside for the recipients below — payers receive the rest.'
+          : undefined,
     },
     {
       section: 'Token',
@@ -996,7 +1000,7 @@ export function RulesetsTab({
           <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
             {rows
               .filter(
-                row => row.section === 'Token' && row.label !== 'Reserved',
+                row => row.section === 'Token' && row.label !== 'Reserved issuance',
               )
               .map(row => (
                 <StackedRule
@@ -1012,7 +1016,7 @@ export function RulesetsTab({
               <dl className="text-sm">
                 {rows
                   .filter(
-                    row => row.section === 'Token' && row.label === 'Reserved',
+                    row => row.section === 'Token' && row.label === 'Reserved issuance',
                   )
                   .map(row => (
                     <StackedRule
