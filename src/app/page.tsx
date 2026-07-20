@@ -290,7 +290,8 @@ export default async function HomePage() {
             </h3>
             <p className="mx-auto mt-4 max-w-3xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
               Start simply, add powerful tools when you need them, and keep the
-              important rules visible to everyone along the way.
+              important rules visible to everyone along the way. Easy enough for
+              a group of friends, powerful enough for a global network of anons.
             </p>
 
             <div className="mt-12 grid gap-x-16 gap-y-20 md:grid-cols-2 sm:mt-16 sm:gap-y-28">
