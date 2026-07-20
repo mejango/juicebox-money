@@ -285,7 +285,8 @@ export default async function HomePage() {
 
           <div className="mt-20 sm:mt-28">
             <h3 className="mx-auto max-w-5xl text-center font-agrandir-wide text-3xl font-bold leading-tight sm:text-5xl">
-              Built for the whole life of <span className="whitespace-nowrap">a project.</span>
+              Built for all projects, from startups{' '}
+              <span className="whitespace-nowrap">to scale.</span>
             </h3>
             <p className="mx-auto mt-4 max-w-3xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
               Start simply, add powerful tools when you need them, and keep the
