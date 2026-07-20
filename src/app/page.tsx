@@ -185,8 +185,9 @@ export default async function HomePage() {
               Fund your thing<span className="text-split-500">.</span>
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg">
-              Raise money from anyone, anywhere, on your terms. All open
-              source.
+              Raise money from anyone, anywhere, transparently on your terms.
+              <br />
+              All open source.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
               <a href="#trending" className="btn-primary min-h-[48px] px-7 text-sm">
