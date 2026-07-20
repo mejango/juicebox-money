@@ -30,6 +30,22 @@ export type TxRequest = {
   label?: string
 }
 
+/**
+ * The shared in-flight button copy: the fixed simulating/signing strings every
+ * flow uses, the caller's `pending` progress text, and its `idle` label
+ * (any non-in-flight phase falls through to `idle`). `confirm` overrides the
+ * signing string for flows with more specific wallet copy.
+ */
+export function txPhaseLabel(
+  phase: TxPhase,
+  labels: { idle: string; pending: string; confirm?: string },
+): string {
+  if (phase === 'simulating') return 'Double-checking the transaction…'
+  if (phase === 'signing') return labels.confirm ?? 'Confirm in your wallet…'
+  if (phase === 'pending') return labels.pending
+  return labels.idle
+}
+
 /** A friendly one-line message out of a viem/wagmi error. */
 function friendlyTxError(e: unknown): string {
   if (e instanceof BaseError) {
@@ -134,6 +150,11 @@ export function useSafeTx(chainId: number) {
 
   return {
     phase: effectivePhase,
+    /** True while the transaction is in flight: simulating/signing/pending. */
+    busy:
+      effectivePhase === 'simulating' ||
+      effectivePhase === 'signing' ||
+      effectivePhase === 'pending',
     error,
     hash,
     receipt: receipt.data ?? null,

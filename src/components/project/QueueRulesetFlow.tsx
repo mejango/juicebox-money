@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
@@ -24,16 +23,18 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
-  erc20Abi,
   formatUnits,
   parseUnits,
   type Address,
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { TxError } from '@/components/ui/TxError'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { truncateAddress } from '@/lib/format'
+import { billionthsToPct, etherscanTxUrl, formatDuration } from '@/lib/format'
+import type { RawSplit } from '@/lib/splits-types'
+import { tokenSymbol } from '@/lib/token-symbol'
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n
@@ -43,16 +44,6 @@ const UNLIMITED_PAYOUT = 2n ** 224n - 1n
 const BASE_ETH = 1
 /** uint16 max — the ceiling for reservedPercent / cashOutTaxRate. */
 const PERCENT_OUT_OF_10000_MAX = 10_000
-
-/** A live split as returned by JBSplits.splitsOf. */
-type RawSplit = {
-  percent: number
-  projectId: bigint
-  beneficiary: Address
-  preferAddToBalance: boolean
-  lockedUntil: number
-  hook: Address
-}
 
 type CurrencyAmount = { amount: bigint; currency: number }
 
@@ -113,10 +104,6 @@ const DURATION_PRESETS: { label: string; seconds: number }[] = [
   { label: '28 days', seconds: 2_419_200 },
 ]
 
-/** 1e9-scaled fraction → a trimmed 0-100 percent string. */
-function billionthsToPct(p: number): string {
-  return String(Number(((p / 1e9) * 100).toFixed(4)))
-}
 /** basis-points-of-10000 → a trimmed 0-100 percent string. */
 function bpToPct(bp: number): string {
   return String(Number((bp / 100).toFixed(2)))
@@ -132,16 +119,6 @@ function pctToBp(pct: string): number {
   const n = Number(pct)
   if (!Number.isFinite(n) || n <= 0) return 0
   return Math.min(PERCENT_OUT_OF_10000_MAX, Math.round(n * 100))
-}
-
-function formatDuration(secs: number): string {
-  if (secs <= 0) return 'No expiry'
-  if (secs % 86_400 === 0) {
-    const d = secs / 86_400
-    return `${d} day${d === 1 ? '' : 's'}`
-  }
-  if (secs % 3_600 === 0) return `${secs / 3_600} hours`
-  return `${secs} seconds`
 }
 
 function currencyLabel(currency: number, symbol: string): string {
@@ -239,7 +216,7 @@ export function QueueRulesetFlow({
               functionName: 'surplusAllowancesOf',
               args: [pid, rid, terminal, ctx.token],
             }) as Promise<readonly CurrencyAmount[]>,
-            tokenSymbol(publicClient!, chainId, ctx.token),
+            tokenSymbol(publicClient!, ctx.token, { chainId }),
           ])
           return { ctx, symbol, payoutLimits, surplusAllowances }
         }),
@@ -322,22 +299,6 @@ export function QueueRulesetFlow({
   )
 }
 
-/** Read an ERC-20 symbol, falling back to the native symbol / a short addr. */
-async function tokenSymbol(
-  client: PublicClient,
-  chainId: JBChainId,
-  token: Address,
-): Promise<string> {
-  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-  if (token.toLowerCase() === '0x000000000000000000000000000000000000eeee') {
-    return nativeSymbol
-  }
-  return client
-    .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })
-    .then(s => s as string)
-    .catch(() => truncateAddress(token))
-}
-
 /** The live state the editor prefills from. */
 type PrefillData = {
   current: Awaited<ReturnType<typeof getCurrentRuleset>>
@@ -379,7 +340,7 @@ function RulesetEditor({
     () => ({
       duration: r.duration,
       weight: formatUnits(r.weight, 18),
-      weightCutPct: billionthsToPct(r.weightCutPercent),
+      weightCutPct: billionthsToPct(r.weightCutPercent, 4),
       reservedPct: bpToPct(m.reservedPercent),
       cashOutTaxPct: bpToPct(m.cashOutTaxRate),
       pausePay: m.pausePay,
@@ -416,14 +377,8 @@ function RulesetEditor({
     setFlowError(null)
   }
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
-  const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
+  const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null
+  const busy = tx.busy
 
   // Which rows changed (old → new), for the confirm diff.
   const changes = useMemo(() => diffRows(baseline, state), [baseline, state])
@@ -574,7 +529,11 @@ function RulesetEditor({
           >
             {DURATION_PRESETS.some(p => p.seconds === state.duration) ? null : (
               <option value={state.duration}>
-                {formatDuration(state.duration)} (current)
+                {formatDuration(state.duration, {
+                  exact: true,
+                  zeroLabel: 'No expiry',
+                })}{' '}
+                (current)
               </option>
             )}
             {DURATION_PRESETS.map(p => (
@@ -733,17 +692,14 @@ function RulesetEditor({
         disabled={busy || (isConnected && (!weightValid || !limitsValid))}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {tx.phase === 'simulating'
-          ? 'Double-checking the transaction…'
-          : tx.phase === 'signing'
-            ? 'Confirm in your wallet…'
-            : tx.phase === 'pending'
-              ? 'Queueing…'
-              : !isConnected
-                ? 'Sign in to continue'
-                : review
-                  ? 'Confirm and queue'
-                  : 'Review changes'}
+        {txPhaseLabel(tx.phase, {
+          pending: 'Queueing…',
+          idle: !isConnected
+            ? 'Sign in to continue'
+            : review
+              ? 'Confirm and queue'
+              : 'Review changes',
+        })}
       </button>
 
       {tx.phase === 'pending' && txUrl ? (
@@ -760,11 +716,10 @@ function RulesetEditor({
         </p>
       ) : null}
 
-      {flowError || tx.error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {flowError ?? tx.error}
-        </p>
-      ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+      />
     </div>
   )
 }
@@ -803,9 +758,12 @@ function limitDraftFrom(a: TokenAccess): LimitDraft {
 type Change = { label: string; from: string; to: string }
 
 /** Describe one editor state as label → human value, for diffing. */
-function describe(s: EditorState): Change[] {
+function describe(s: EditorState): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [
-    { label: 'Cycle length', value: formatDuration(s.duration) },
+    {
+      label: 'Cycle length',
+      value: formatDuration(s.duration, { exact: true, zeroLabel: 'No expiry' }),
+    },
     {
       label: 'Issuance',
       value: `${Number(s.weight)} tokens per unit`,
@@ -849,7 +807,7 @@ function describe(s: EditorState): Change[] {
             : `${Number(l.amount)} ${unit}`,
     })
   }
-  return rows.map(row => ({ label: row.label, from: row.value, to: row.value }))
+  return rows
 }
 
 /** The changed rows between two editor states. */
@@ -858,8 +816,8 @@ function diffRows(baseline: EditorState, next: EditorState): Change[] {
   const b = describe(next)
   const out: Change[] = []
   for (let i = 0; i < a.length; i++) {
-    if (a[i].from !== b[i].from) {
-      out.push({ label: a[i].label, from: a[i].from, to: b[i].from })
+    if (a[i].value !== b[i].value) {
+      out.push({ label: a[i].label, from: a[i].value, to: b[i].value })
     }
   }
   return out

@@ -198,18 +198,19 @@ export function stageOk(
   const reservedOn =
     numOk(stage.reservedPct, 100) && Number(stage.reservedPct) > 0
   const payoutsMode = stage.routedMode === 'all' ? 'percent' : 'amount'
+  const issuanceOk = stageIssuanceOk(stage, isFirst)
+  const splitsValid =
+    stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
+    splitsTotal(stage.reservedSplits, 'percent') <= 100
   const common =
-    stageIssuanceOk(stage, isFirst) &&
+    issuanceOk &&
     (stage.cutPct.trim() === '' || numOk(stage.cutPct, 100)) &&
     (stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)) &&
-    (!reservedOn ||
-      (stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
-        splitsTotal(stage.reservedSplits, 'percent') <= 100))
+    (!reservedOn || splitsValid)
   if (flavor === 'revnet') {
     return (
-      stageIssuanceOk(stage, isFirst) &&
-      stage.reservedSplits.every(s => splitOk(s, 'percent')) &&
-      splitsTotal(stage.reservedSplits, 'percent') <= 100 &&
+      issuanceOk &&
+      splitsValid &&
       (!stage.cutOn ||
         (Number(stage.cutPct) > 0 &&
           numOk(stage.cutPct, 100) &&
@@ -322,6 +323,92 @@ const CASH_OUT_TAXES = [
   { rate: 3000, label: '30% tax' },
   { rate: 5000, label: '50% tax' },
 ] as const
+
+/** Off/On cash-out choice plus the tax picker shown while cash outs are on. */
+function TaxPicker({
+  stage,
+  set,
+  disabled,
+  offBlurb,
+  onBlurb,
+}: {
+  stage: DraftStage
+  set: (patch: Partial<DraftStage>) => void
+  disabled: boolean
+  offBlurb: string
+  onBlurb: string
+}) {
+  return (
+    <>
+      <div className="space-y-2">
+        <OptionRow
+          checked={!stage.cashOuts}
+          onSelect={() => set({ cashOuts: false })}
+          disabled={disabled}
+          title="Off"
+          blurb={offBlurb}
+        />
+        <OptionRow
+          checked={stage.cashOuts}
+          onSelect={() => set({ cashOuts: true })}
+          disabled={disabled}
+          title="On"
+          blurb={onBlurb}
+        />
+      </div>
+      {stage.cashOuts ? (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {CASH_OUT_TAXES.map(tax => (
+              <ChipButton
+                key={tax.rate}
+                active={!stage.taxCustomOn && stage.cashOutTax === tax.rate}
+                onClick={() =>
+                  set({ cashOutTax: tax.rate, taxCustomOn: false })
+                }
+                disabled={disabled}
+              >
+                {tax.label}
+              </ChipButton>
+            ))}
+            <ChipButton
+              active={stage.taxCustomOn}
+              onClick={() => set({ taxCustomOn: true })}
+              disabled={disabled}
+            >
+              Custom…
+            </ChipButton>
+          </div>
+          {stage.taxCustomOn ? (
+            <div className="mt-2 flex items-center gap-2.5">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={stage.taxCustomPct}
+                onChange={e =>
+                  set({ taxCustomPct: e.target.value.slice(0, 5) })
+                }
+                disabled={disabled}
+                placeholder="15"
+                className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                  stageTaxOk(stage) ? '' : '!border-red-400'
+                }`}
+              />
+              <span className="text-sm text-smoke-700">
+                % tax (up to 99.99)
+              </span>
+            </div>
+          ) : null}
+          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+            A tax leaves part of each cash out behind for holders who
+            stay.
+          </p>
+          <CashOutCurve rate={stageCashOutTax(stage)} />
+        </>
+      ) : null}
+    </>
+  )
+}
 
 export function StageRulesEditor({
   stage,

@@ -40,6 +40,60 @@ export function CheckIcon({ className }: { className: string }) {
   )
 }
 
+/** Selectable row shared by OptionRow (radio mark) and CheckRow (square mark). */
+function SelectableRow({
+  kind,
+  checked,
+  onActivate,
+  disabled,
+  title,
+  blurb,
+}: {
+  kind: 'radio' | 'checkbox'
+  checked: boolean
+  onActivate: () => void
+  disabled: boolean
+  title: string
+  blurb: string
+}) {
+  return (
+    <button
+      type="button"
+      role={kind}
+      onClick={onActivate}
+      disabled={disabled}
+      aria-checked={checked}
+      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg border border-smoke-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-bluebs-200 hover:bg-grey-50 focus-visible:border-bluebs-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {kind === 'radio' ? (
+        <span
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
+            checked ? 'border-bluebs-500' : 'border-grey-300'
+          }`}
+        >
+          {checked ? <span className="h-2 w-2 rounded-full bg-bluebs-500" /> : null}
+        </span>
+      ) : (
+        <span
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
+            checked
+              ? 'border-bluebs-500 bg-bluebs-500'
+              : 'border-grey-300 bg-white'
+          }`}
+        >
+          {checked ? <CheckIcon className="h-3 w-3 text-white" /> : null}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-ink">{title}</span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+          {blurb}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 /** One questionnaire choice: radio-style row with a title and a one-liner. */
 export function OptionRow({
   checked,
@@ -55,28 +109,14 @@ export function OptionRow({
   blurb: string
 }) {
   return (
-    <button
-      type="button"
-      role="radio"
-      onClick={onSelect}
+    <SelectableRow
+      kind="radio"
+      checked={checked}
+      onActivate={onSelect}
       disabled={disabled}
-      aria-checked={checked}
-      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg border border-smoke-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-bluebs-200 hover:bg-grey-50 focus-visible:border-bluebs-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-white transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
-          checked ? 'border-bluebs-500' : 'border-grey-300'
-        }`}
-      >
-        {checked ? <span className="h-2 w-2 rounded-full bg-bluebs-500" /> : null}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-ink">{title}</span>
-        <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-          {blurb}
-        </span>
-      </span>
-    </button>
+      title={title}
+      blurb={blurb}
+    />
   )
 }
 
@@ -95,30 +135,14 @@ export function CheckRow({
   blurb: string
 }) {
   return (
-    <button
-      type="button"
-      role="checkbox"
-      onClick={onToggle}
+    <SelectableRow
+      kind="checkbox"
+      checked={checked}
+      onActivate={onToggle}
       disabled={disabled}
-      aria-checked={checked}
-      className="group flex min-h-[52px] w-full items-start gap-3 rounded-lg border border-smoke-200 bg-white px-3 py-2.5 text-left transition-colors hover:border-bluebs-200 hover:bg-grey-50 focus-visible:border-bluebs-400 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      <span
-        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
-          checked
-            ? 'border-bluebs-500 bg-bluebs-500'
-            : 'border-grey-300 bg-white'
-        }`}
-      >
-        {checked ? <CheckIcon className="h-3 w-3 text-white" /> : null}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-ink">{title}</span>
-        <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-          {blurb}
-        </span>
-      </span>
-    </button>
+      title={title}
+      blurb={blurb}
+    />
   )
 }
 
@@ -175,6 +199,24 @@ export function ChipButton({
   )
 }
 
+/** Rotate-on-expand chevron used by collapsible headers. */
+export function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+
 /** Collapsible subsection: label + summary when closed. */
 export function SubSection({
   label,
@@ -203,18 +245,7 @@ export function SubSection({
               <Piped text={summary} />
             </span>
           ) : null}
-          <svg
-            viewBox="0 0 24 24"
-            className={`h-4 w-4 shrink-0 text-smoke-500 transition-transform ${open ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
+          <Chevron open={open} />
         </span>
       </button>
       {open ? <div className="px-4 pb-4">{children}</div> : null}

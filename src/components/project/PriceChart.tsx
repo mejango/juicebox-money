@@ -2,13 +2,16 @@
 
 import { useMemo, useState } from 'react'
 import {
-  buildStepPoints,
-  chartDateLabel,
   formatPrice,
   rateAtTime,
   resolveStages,
   type ChartStage,
 } from './chartUtils'
+import {
+  ChartRangeButton,
+  ISSUANCE_COLOR,
+  StepChartBase,
+} from './StepChartBase'
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
@@ -22,8 +25,6 @@ import {
 type ReferenceLine = { value: number; label: string } | null
 export type PricePoint = { timestamp: number; value: number }
 
-const ISSUANCE_COLOR = '#5777EB'
-const NOW_COLOR = '#F5A312'
 const CASH_OUT_COLOR = '#C85F9A'
 const AMM_COLOR = '#BD4513'
 const DAY = 86_400
@@ -36,14 +37,6 @@ const PRICE_RANGES = [
   { label: '1Y', seconds: 365 * DAY },
   { label: 'All', seconds: 0 },
 ] as const
-
-// Plot area gutters inside a 320×180 viewBox.
-const VW = 320
-const VH = 180
-const PL = 12
-const PR = 12
-const PT = 16
-const PB = 22
 
 function visibleSeries(
   points: PricePoint[],
@@ -143,7 +136,6 @@ export function PriceChart({
   ammHistory?: PricePoint[]
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
-  const [hoverT, setHoverT] = useState<number | null>(null)
 
   const now = useMemo(() => Math.floor(Date.now() / 1000), [])
   const resolved = useMemo(() => resolveStages(stages), [stages])
@@ -152,15 +144,6 @@ export function PriceChart({
     rangeSeconds === 0 ? firstStart : now - rangeSeconds
   const t0 = Math.min(now - 1, Math.max(firstStart, requestedStart))
   const t1 = now
-  // Price points: invert the rate steps; rate 0 → null (no mint price).
-  const points = useMemo(
-    () =>
-      buildStepPoints(resolved, t0, t1).map(
-        ([t, rate]) => [t, rate > 0 ? 1 / rate : null] as [number, number | null],
-      ),
-    [resolved, t0, t1],
-  )
-  const maxV = points.reduce((m, [, v]) => (v !== null && v > m ? v : m), 0)
   const issuanceNowRate = rateAtTime(resolved, now)
   const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
   const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
@@ -178,247 +161,117 @@ export function PriceChart({
     t1,
   )
 
-  if (resolved.length === 0 || maxV <= 0) {
-    return (
-      <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
-        <p className="text-xs text-smoke-500">No issuance to chart.</p>
-      </div>
-    )
-  }
-
-  const X = (t: number) => PL + ((VW - PL - PR) * (t - t0)) / (t1 - t0)
-  const Y = (v: number) =>
-    PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / maxV)))
-
-  const path = points
-    .map(([t, v]) => `${X(t).toFixed(1)},${Y(v ?? maxV).toFixed(1)}`)
-    .join(' ')
-  const floorPath = asStepSeries(floorSeries)
-    .map(point =>
-      `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
-    )
-    .join(' ')
-  const ammPath = ammSeries
-    .map(point =>
-      `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
-    )
-    .join(' ')
-
-  const t = Math.min(t1, Math.max(t0, hoverT ?? Math.min(now, t1)))
-  const rate = rateAtTime(resolved, t)
-  const price = rate > 0 ? 1 / rate : null
-  const span = t1 - t0
-  const nowX = X(now)
-
-  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const viewX = ((e.clientX - rect.left) / rect.width) * VW
-    const frac = Math.min(1, Math.max(0, (viewX - PL) / (VW - PL - PR)))
-    setHoverT(t0 + frac * (t1 - t0))
-  }
-
   return (
-    <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
-      <div className="grid gap-2 sm:grid-cols-3">
-        <PriceSummary
-          label="Issuance price"
-          color={ISSUANCE_COLOR}
-          value={issuanceNow}
-          baseSymbol={baseSymbol}
-          symbol={symbol}
-        />
-        <PriceSummary
-          label="Cash out price"
-          color={CASH_OUT_COLOR}
-          value={floor?.value ?? null}
-          baseSymbol={baseSymbol}
-          symbol={symbol}
-        />
-        <PriceSummary
-          label="AMM price"
-          color={AMM_COLOR}
-          value={amm?.value ?? null}
-          baseSymbol={baseSymbol}
-          symbol={symbol}
-        />
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="text-xs text-smoke-500">Price</span>
-        <div className="flex flex-wrap justify-end gap-1">
-          {PRICE_RANGES.map(r => (
-            <button
-              key={r.label}
-              type="button"
-              onClick={() => setRangeSeconds(r.seconds)}
-              aria-pressed={rangeSeconds === r.seconds}
-              className={`min-h-[32px] rounded-lg border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none ${
-                rangeSeconds === r.seconds
-                  ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
-                  : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
-              }`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <svg
-        viewBox={`0 0 ${VW} ${VH}`}
-        className="mt-2 h-auto w-full cursor-crosshair touch-none"
-        role="img"
-        aria-label={`${symbol} issuance ceiling history through Now, with the current cash-out floor and AMM price in ${baseSymbol}`}
-        onPointerMove={onPointerMove}
-        onPointerLeave={() => setHoverT(null)}
-      >
-        {/* Axes */}
-        <line x1={PL} y1={VH - PB} x2={VW - PR} y2={VH - PB} stroke="#D4D1C7" strokeWidth="1" />
-        <line x1={PL} y1={VH - PB} x2={PL} y2={PT} stroke="#D4D1C7" strokeWidth="1" />
-        {/* Stage boundaries */}
-        {resolved.map((s, i) =>
-          i > 0 && s.start > t0 && s.start < t1 ? (
-            <g key={s.start}>
-              <line
-                x1={X(s.start)}
-                y1={PT}
-                x2={X(s.start)}
-                y2={VH - PB}
-                stroke="#D4D1C7"
-                strokeWidth="1"
-                strokeDasharray="3 3"
+    <StepChartBase
+      resolved={resolved}
+      t0={t0}
+      t1={t1}
+      now={now}
+      symbol={symbol}
+      baseSymbol={baseSymbol}
+      ariaLabel={`${symbol} issuance ceiling history through Now, with the current cash-out floor and AMM price in ${baseSymbol}`}
+      header={
+        <>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <PriceSummary
+              label="Issuance price"
+              color={ISSUANCE_COLOR}
+              value={issuanceNow}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+            <PriceSummary
+              label="Cash out price"
+              color={CASH_OUT_COLOR}
+              value={floor?.value ?? null}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+            <PriceSummary
+              label="AMM price"
+              color={AMM_COLOR}
+              value={amm?.value ?? null}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <span className="text-xs text-smoke-500">Price</span>
+            <div className="flex flex-wrap justify-end gap-1">
+              {PRICE_RANGES.map(r => (
+                <ChartRangeButton
+                  key={r.label}
+                  label={r.label}
+                  active={rangeSeconds === r.seconds}
+                  onClick={() => setRangeSeconds(r.seconds)}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      }
+      renderSeries={({ X, Y }) => {
+        // Observed histories stop at the live value at Now.
+        const floorPath = asStepSeries(floorSeries)
+          .map(point =>
+            `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
+          )
+          .join(' ')
+        const ammPath = ammSeries
+          .map(point =>
+            `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
+          )
+          .join(' ')
+        return (
+          <>
+            {floorSeries.length > 1 ? (
+              <polyline
+                points={floorPath}
+                fill="none"
+                stroke={CASH_OUT_COLOR}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
-              <text x={X(s.start) + 3} y={PT + 8} fontSize="6.5" fill="#9C9580">
-                Stage {i + 1}
-              </text>
-            </g>
-          ) : null,
-        )}
-        {/* Observed histories stop at the live value at Now. */}
-        {floorSeries.length > 1 ? (
-          <polyline
-            points={floorPath}
-            fill="none"
-            stroke={CASH_OUT_COLOR}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ) : null}
-        {ammSeries.length > 1 ? (
-          <polyline
-            points={ammPath}
-            fill="none"
-            stroke={AMM_COLOR}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ) : null}
-        {/* Now marker */}
-        <line
-          x1={nowX}
-          y1={PT}
-          x2={nowX}
-          y2={VH - PB}
-          stroke={NOW_COLOR}
-          strokeWidth="1"
-          strokeDasharray="4 3"
-        />
-        <text
-          x={nowX - 3}
-          y={PT - 4}
-          fontSize="7"
-          fill="#575344"
-          textAnchor="end"
-        >
-          Now
-        </text>
-        {/* The price ceiling ladder */}
-        <polyline
-          points={path}
-          fill="none"
-          stroke={ISSUANCE_COLOR}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {/* Crosshair guides while hovering */}
-        {hoverT !== null && price !== null ? (
-          <>
-            <line
-              x1={X(t)}
-              y1={VH - PB}
-              x2={X(t)}
-              y2={Y(price)}
-              stroke="#9C9580"
-              strokeWidth="1"
-              strokeDasharray="2 2"
-            />
-            <line
-              x1={PL}
-              y1={Y(price)}
-              x2={X(t)}
-              y2={Y(price)}
-              stroke="#9C9580"
-              strokeWidth="1"
-              strokeDasharray="2 2"
-            />
+            ) : null}
+            {ammSeries.length > 1 ? (
+              <polyline
+                points={ammPath}
+                fill="none"
+                stroke={AMM_COLOR}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ) : null}
           </>
-        ) : null}
-        {/* The inspected point */}
-        <circle
-          cx={X(t)}
-          cy={Y(price ?? maxV)}
-          r="3.5"
-          fill={NOW_COLOR}
-          stroke="#1A1A1A"
-          strokeWidth="1"
-        />
-        {/* Exact live observations at Now. */}
-        {floor ? (
-          <circle
-            cx={nowX}
-            cy={Y(floor.value)}
-            r="2.5"
-            fill={CASH_OUT_COLOR}
-            stroke="white"
-            strokeWidth="1"
-          />
-        ) : null}
-        {amm ? (
-          <circle
-            cx={nowX}
-            cy={Y(amm.value)}
-            r="2.5"
-            fill={AMM_COLOR}
-            stroke="white"
-            strokeWidth="1"
-          />
-        ) : null}
-        {/* Scale + date labels */}
-        <text x={PL + 3} y={PT + 7} fontSize="7" fill="#9C9580">
-          {formatPrice(maxV)} {baseSymbol}
-        </text>
-        <text x={PL} y={VH - 6} fontSize="7.5" fill="#9C9580">
-          {chartDateLabel(t0, span)}
-        </text>
-        <text x={VW - PR} y={VH - 6} textAnchor="end" fontSize="7.5" fill="#9C9580">
-          {chartDateLabel(t1, span)}
-        </text>
-      </svg>
-      <p className="mt-2 text-xs leading-relaxed text-smoke-700" aria-live="polite">
-        <span className="font-medium text-ink">{chartDateLabel(t, span)}</span>
-        {' — '}
-        {price !== null ? (
-          <>
-            <span className="font-medium text-ink">
-              {formatPrice(price)} {baseSymbol}
-            </span>{' '}
-            per {symbol}
-          </>
-        ) : (
-          'no issuance'
-        )}
-      </p>
-    </div>
+        )
+      }}
+      renderOverlay={({ Y, nowX }) => (
+        // Exact live observations at Now.
+        <>
+          {floor ? (
+            <circle
+              cx={nowX}
+              cy={Y(floor.value)}
+              r="2.5"
+              fill={CASH_OUT_COLOR}
+              stroke="white"
+              strokeWidth="1"
+            />
+          ) : null}
+          {amm ? (
+            <circle
+              cx={nowX}
+              cy={Y(amm.value)}
+              r="2.5"
+              fill={AMM_COLOR}
+              stroke="white"
+              strokeWidth="1"
+            />
+          ) : null}
+        </>
+      )}
+    />
   )
 }

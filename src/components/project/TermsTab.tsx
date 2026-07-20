@@ -2,10 +2,8 @@
 
 import {
   JB_CHAINS,
-  JBCoreContracts,
+  NATIVE_TOKEN,
   USD_CURRENCY_ID,
-  jbContractAddress,
-  jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -15,37 +13,22 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
+import { erc20Abi, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import {
+  billionthsToPct,
+  fmtPct,
+  formatCountdown,
+  formatDate,
+  formatTokenAmount,
+  truncateAddress,
+} from '@/lib/format'
 import { IssuanceLadder } from './IssuanceLadder'
-
-const NATIVE = '0x000000000000000000000000000000000000eeee'
 
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
-  return `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`
-}
-
-/** Weight-cut percents use a 1e9 denominator: 5e8 → "50%". */
-function cutPercent(p: number): string {
-  return `${((p / 1e9) * 100).toFixed(2).replace(/\.?0+$/, '')}%`
-}
-
-/** Compact countdown: "2d 4h", "3h 12m", "45m". */
-function formatCountdown(secs: number): string {
-  if (secs <= 0) return 'now'
-  const d = Math.floor(secs / 86400)
-  if (d >= 1) {
-    const h = Math.floor((secs % 86400) / 3600)
-    return `${d}d${h ? ` ${h}h` : ''}`
-  }
-  const h = Math.floor(secs / 3600)
-  if (h >= 1) {
-    const m = Math.floor((secs % 3600) / 60)
-    return `${h}h${m ? ` ${m}m` : ''}`
-  }
-  return `${Math.max(1, Math.floor(secs / 60))}m`
+  return fmtPct(bp / 100)
 }
 
 function cutCadence(durationSecs: number): string {
@@ -82,28 +65,12 @@ export function TermsTab({
     retry: 1,
     queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) }
-      const [all, current, contexts, projectSymbol] = await Promise.all([
+      const [all, current, contexts] = await Promise.all([
         getAllRulesets(publicClient!, { ...args, size: 50n }),
         getCurrentRuleset(publicClient!, args).catch(() => null),
         getAccountingContexts(publicClient!, args).catch(
           () => [] as const,
         ),
-        // The revnet's OWN token symbol (bendystraw's tokenSymbol is the
-        // accounting token — "ETH per ETH" would be nonsense).
-        (async () => {
-          const token = (await publicClient!.readContract({
-            abi: jbTokensAbi,
-            address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
-            functionName: 'tokenOf',
-            args: [BigInt(projectId)],
-          })) as `0x${string}`
-          if (!token || token === zeroAddress) return null
-          return (await publicClient!.readContract({
-            address: token,
-            abi: erc20Abi,
-            functionName: 'symbol',
-          })) as string
-        })().catch(() => null),
       ])
       // The base currency can be token-keyed (uint32(uint160(token)), e.g. a
       // USDC-based revnet) — resolve those to the token's symbol.
@@ -111,7 +78,7 @@ export function TermsTab({
         contexts.map(async ctx => ({
           currency: ctx.currency,
           symbol:
-            ctx.token.toLowerCase() === NATIVE
+            ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
               ? nativeSymbol
               : await publicClient!
                   .readContract({
@@ -122,11 +89,14 @@ export function TermsTab({
                   .catch(() => truncateAddress(ctx.token)),
         })),
       )
-      return { all, current, contextSymbols, projectSymbol }
+      return { all, current, contextSymbols }
     },
   })
 
-  const sym = data?.projectSymbol || tokenSymbol || 'tokens'
+  // The revnet's OWN token symbol (bendystraw's tokenSymbol is the
+  // accounting token — "ETH per ETH" would be nonsense).
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const sym = projectToken?.symbol || tokenSymbol || 'tokens'
 
   if (isLoading) {
     return (
@@ -162,24 +132,19 @@ export function TermsTab({
 
   // The active stage: the latest one that has started. currentRulesetOf's id
   // matches its stored stage, with weight cuts already applied to the weight.
-  let activeIdx = 0
-  stages.forEach((s, i) => {
-    if (s.ruleset.start <= now) activeIdx = i
-  })
+  const activeIdx = Math.max(
+    0,
+    stages.findLastIndex(s => s.ruleset.start <= now),
+  )
   const firstStageStarted = stages[0].ruleset.start <= now
   const current = data?.current && data.current.ruleset.id !== 0 ? data.current : null
-  const base = baseCurrencyLabel(
-    (current ?? stages[activeIdx]).metadata.baseCurrency,
-  )
+  const live = current ?? stages[activeIdx]
+  const base = baseCurrencyLabel(live.metadata.baseCurrency)
 
-  const rate = current ? current.ruleset.weight : stages[activeIdx].ruleset.weight
-  const cutPct = current
-    ? current.ruleset.weightCutPercent
-    : stages[activeIdx].ruleset.weightCutPercent
-  const duration = current
-    ? current.ruleset.duration
-    : stages[activeIdx].ruleset.duration
-  const reserved = (current ?? stages[activeIdx]).metadata.reservedPercent
+  const rate = live.ruleset.weight
+  const cutPct = live.ruleset.weightCutPercent
+  const duration = live.ruleset.duration
+  const reserved = live.metadata.reservedPercent
   // currentRulesetOf's start is the current cycle's start, so the next cut
   // lands one duration later.
   const nextCutIn = current
@@ -299,7 +264,7 @@ export function TermsTab({
                       </span>
                       {r.weightCutPercent > 0 && r.duration > 0 ? (
                         <span className="block text-xs text-smoke-500">
-                          cut {cutPercent(r.weightCutPercent)} every{' '}
+                          cut {billionthsToPct(r.weightCutPercent)} every{' '}
                           {cutCadence(r.duration)}
                         </span>
                       ) : null}

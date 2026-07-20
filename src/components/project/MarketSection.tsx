@@ -9,27 +9,21 @@ import {
   RevnetCoreContracts,
   jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
-  jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbOmnichainDeployerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import {
-  getAccountingContexts,
-  getTokenAddress,
-} from '@bananapus/nana-sdk-core/v6'
+import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import {
-  erc20Abi,
-  formatUnits,
-  type Address,
-  type PublicClient,
-} from 'viem'
+import { type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
+import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { tokenSymbol } from '@/lib/token-symbol'
 import {
   MODIFY_LIQUIDITY_TOPIC,
   INITIALIZE_TOPIC,
@@ -122,21 +116,8 @@ const positionViewAbi = [
   },
 ] as const
 
-const ONE_TOKEN = 10n ** 18n
-
 function lc(a: string | undefined | null): string {
   return (a ?? '').toLowerCase()
-}
-
-// The address book isn't uniformly indexable by every contract enum or chain
-// id (some contracts/chains are absent), so read it through one cast point.
-const V6_ADDRESSES = jbContractAddress['6'] as Record<
-  string,
-  Record<number, string | undefined>
->
-
-function addrOf(name: string, chainId: number): Address | undefined {
-  return V6_ADDRESSES[name]?.[chainId] as Address | undefined
 }
 
 // -------------------------------------------------------------- resolution --
@@ -252,16 +233,7 @@ export async function resolveMarket(
   const primary = contexts[0]
   if (!primary) return { status: 'none' }
   const isNative = lc(primary.token) === lc(NATIVE_TOKEN)
-  let symbol = nativeSymbol
-  if (!isNative) {
-    symbol = await client
-      .readContract({
-        address: primary.token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })
-      .catch(() => truncateAddress(primary.token))
-  }
+  const symbol = await tokenSymbol(client, primary.token, { nativeSymbol })
   const pair: PairToken = {
     addr: (isNative ? ZERO_ADDRESS : lc(primary.token)) as Address,
     tokenOrig: primary.token,
@@ -645,25 +617,8 @@ export function MarketSection({
 
   // The project's OWN token symbol — the passed-in prop is the bendystraw
   // accounting-token symbol (e.g. "ETH"), which is NOT the project token.
-  const { data: resolvedSym } = useQuery({
-    queryKey: ['marketProjectSymbol', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<string | null> => {
-      const token = await getTokenAddress(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!token) return null
-      return (await publicClient!.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })) as string
-    },
-  })
-  const sym = resolvedSym || tokenSymbol || 'tokens'
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const sym = projectToken?.symbol || tokenSymbol || 'tokens'
 
   const {
     data: market,
@@ -679,29 +634,7 @@ export function MarketSection({
 
   const hasPool = market?.status === 'pool'
 
-  // Cash-out floor: what one token reclaims from surplus right now, in the
-  // accounting token's own terms (pair per token). Best-effort marker only.
-  const { data: floor } = useQuery({
-    queryKey: ['marketFloor', chainId, projectId],
-    enabled: !!publicClient && hasPool,
-    staleTime: 60_000,
-    retry: 0,
-    queryFn: async (): Promise<number | null> => {
-      const context = await getCashOutContext(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!context) return null
-      const quote = await getContextCashOutQuote(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        cashOutCount: ONE_TOKEN,
-        context,
-      })
-      const value = Number(formatUnits(quote.reclaimAmount, context.decimals))
-      return Number.isFinite(value) && value > 0 ? value : null
-    },
-  })
+  const { data: floor } = useCashOutFloor(chainId, projectId, hasPool)
 
   const {
     data: lp,
