@@ -49,7 +49,7 @@ const WHY_JUICEBOX_POINTS = [
   'Pay a fixed fee that sustains a healthy public payment network instead of having fees change over time.',
   'Be treated as both a customer and a participating investor, sharing in the growth your usage helps create.',
   'Use AI and open-source tooling to build faster and more securely without becoming dependent on private tools.',
-  'Audit the whole money system yourself — with code, dashboards, or your own AI.',
+  'Audit the whole money system yourself. Track all transactions. Ensure integrity without permission.',
   'Fund, earn, and grow on your own terms.',
 ]
 
