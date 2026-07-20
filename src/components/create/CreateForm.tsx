@@ -1690,7 +1690,7 @@ export function CreateForm() {
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
           <h2 className="font-agrandir text-xl font-medium">
-            How should it look and feel?
+            How should it appear?
           </h2>
         </div>
 
