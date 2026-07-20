@@ -138,8 +138,7 @@ export function SiteFooter() {
               className="h-8 w-auto brightness-0 invert"
             />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-slate-200">
-              Made with love on Ethereum, by a community of amazing and talented
-              contributors.
+              Made with love and taste.
             </p>
           </div>
 
