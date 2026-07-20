@@ -197,7 +197,7 @@ function txBase(chainId: number): string | null {
   const prefix = SAFE_PREFIX[chainId]
   return prefix
     ? `https://api.safe.global/tx-service/${prefix}`
-    : SAFE_TX_BASE[chainId] ?? null
+    : null
 }
 
 function legacyBase(chainId: number): string | null {
@@ -267,10 +267,6 @@ export function safeQueueLink(chainId: number, safe: Address): string | null {
   return prefix
     ? `https://app.safe.global/transactions/queue?safe=${prefix}:${safe}`
     : null
-}
-
-export function safeHomeLink(chainId: number, safe: Address): string {
-  return `https://app.safe.global/home?safe=${SAFE_PREFIX[chainId] ?? 'eth'}:${safe}`
 }
 
 export function safeTxLink(

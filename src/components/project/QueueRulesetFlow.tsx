@@ -33,7 +33,7 @@ import {
 import { usePublicClient, useReadContract } from 'wagmi'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { truncateAddress } from '@/lib/format'
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n

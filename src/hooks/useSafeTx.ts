@@ -31,7 +31,7 @@ export type TxRequest = {
 }
 
 /** A friendly one-line message out of a viem/wagmi error. */
-export function friendlyTxError(e: unknown): string {
+function friendlyTxError(e: unknown): string {
   if (e instanceof BaseError) {
     const short = e.shortMessage || e.message
     if (/user rejected|denied/i.test(short)) return 'Transaction cancelled.'

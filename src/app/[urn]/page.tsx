@@ -198,10 +198,9 @@ export default async function ProjectPage({
   // The owner (custom) / operator (revnet) can DIFFER per chain, so resolve
   // it for every deployment — custom owners come from bendystraw per sibling,
   // revnet operators from the per-chain permissionHolders query.
-  const siblingList = chains
   const authorities: [number, string | null][] = isRevnet
     ? await Promise.all(
-        siblingList.map(
+        chains.map(
           async p =>
             [p.chainId, await getRevnetOperator(p.chainId, p.projectId)] as [
               number,
@@ -209,8 +208,8 @@ export default async function ProjectPage({
             ],
         ),
       )
-    : siblingList.map(p => [p.chainId, p.owner] as [number, string | null])
-  const authorityDeployments = siblingList.map(projectOnChain => ({
+    : chains.map(p => [p.chainId, p.owner] as [number, string | null])
+  const authorityDeployments = chains.map(projectOnChain => ({
     chainId: projectOnChain.chainId as JBChainId,
     projectId: projectOnChain.projectId,
     indexedAuthority: (authorities.find(
@@ -218,7 +217,7 @@ export default async function ProjectPage({
     )?.[1] ?? null) as Address | null,
   }))
 
-  const totalRaisedUsd = siblingList
+  const totalRaisedUsd = chains
     .reduce((sum, row) => sum + BigInt(row.volumeUsd || '0'), 0n)
     .toString()
 
@@ -314,7 +313,7 @@ export default async function ProjectPage({
       {/* Stats */}
       <ProjectStats
         totalRaisedUsd={totalRaisedUsd}
-        raisedByChain={siblingList.map(row => ({
+        raisedByChain={chains.map(row => ({
           chainId: row.chainId,
           usd: row.volumeUsd || '0',
         }))}

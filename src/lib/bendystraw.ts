@@ -75,44 +75,6 @@ export async function getProject(
   return data.project
 }
 
-export type BsSuckerGroup = {
-  id: string
-  volume: string
-  balance: string
-  paymentsCount: number
-  contributorsCount: number
-  projects: { items: BsProject[] }
-}
-
-/**
- * Trending = one entry per SUCKER GROUP: an omnichain project's per-chain
- * deployments collapse into a single row with aggregated stats.
- */
-export async function getTrendingSuckerGroups(
-  limit = 12,
-): Promise<BsSuckerGroup[]> {
-  const data = await bendystraw<{ suckerGroups: { items: BsSuckerGroup[] } }>(
-    `query($limit: Int!) {
-      suckerGroups(
-        where: { version: 6 }
-        orderBy: "volume"
-        orderDirection: "desc"
-        limit: $limit
-      ) {
-        items {
-          id volume balance paymentsCount contributorsCount
-          projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
-            items { ${PROJECT_FIELDS} }
-          }
-        }
-      }
-    }`,
-    { limit },
-    { revalidate: 120 },
-  )
-  return data.suckerGroups.items
-}
-
 export async function searchProjects(
   text: string,
   limit = 8,

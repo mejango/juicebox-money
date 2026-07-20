@@ -68,7 +68,7 @@ export function registerTransactionReviewHandler(
   }
 }
 
-export async function requestTransactionReview(
+async function requestTransactionReview(
   request: TransactionReviewRequest,
 ): Promise<boolean> {
   if (!request.calls.length) {
@@ -83,7 +83,7 @@ export async function requestTransactionReview(
 }
 
 /** Encode once for review using the same ABI/function/args passed to wagmi. */
-export function contractCallForReview(
+function contractCallForReview(
   call: ContractTransactionReviewCall,
   options: Pick<TransactionReviewOptions, 'label' | 'contractName'> = {},
 ): TransactionReviewCall {
@@ -132,7 +132,7 @@ export function requestContractTransactionReview(
   })
 }
 
-export class TransactionReviewCancelledError extends Error {
+class TransactionReviewCancelledError extends Error {
   constructor() {
     super('Review closed. Nothing was sent.')
     this.name = 'TransactionReviewCancelledError'

@@ -419,10 +419,6 @@ export function SafeQueueCard({
         paymentHash,
         paymentChainId: payment.chain,
         expectedCount: batchReview.rows.length,
-        chains: batchReview.rows.map(row => ({
-          id: row.chain.chainId,
-          name: row.chain.name,
-        })),
         records: [],
         itemCount: batchReview.rows.length,
         account: address,

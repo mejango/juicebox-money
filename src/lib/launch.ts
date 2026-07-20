@@ -23,7 +23,7 @@ import {
 import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
 
 /** 10,000 tokens per ETH/USD paid (18-decimal fixed point). */
-export const DEFAULT_WEIGHT = 10n ** 22n
+const DEFAULT_WEIGHT = 10n ** 22n
 
 /** cashOutTaxRate sentinel: 100% tax = cash outs disabled. */
 const CASH_OUTS_OFF = 10_000
@@ -67,35 +67,6 @@ export type StoreItem = {
   }
   /** Per-chain supply overrides (null value = unlimited on that chain). */
   perChainSupply: Record<number, number | null>
-}
-
-export const DEFAULT_ITEM_EXTRAS: Pick<
-  StoreItem,
-  | 'splitPercent'
-  | 'splits'
-  | 'discountPercent'
-  | 'reserveFrequency'
-  | 'reserveBeneficiary'
-  | 'category'
-  | 'votingUnits'
-  | 'flags'
-  | 'perChainSupply'
-> = {
-  splitPercent: 0,
-  splits: [],
-  discountPercent: 0,
-  reserveFrequency: 0,
-  reserveBeneficiary: null,
-  category: 0,
-  votingUnits: 0,
-  flags: {
-    allowOwnerMint: false,
-    transfersPausable: false,
-    cantBeRemoved: false,
-    allowCredits: true,
-    ownerCanEditDiscount: true,
-  },
-  perChainSupply: {},
 }
 
 /** The Uniswap V4 LP split hook ("Fund market") — same address on every
@@ -270,7 +241,7 @@ export type LaunchPlan = {
   }
 }
 
-export const DEFAULT_STAGE: StageRules = {
+const DEFAULT_STAGE: StageRules = {
   duration: 0,
   mustStartAtOrAfter: 0,
   weight: DEFAULT_WEIGHT,
@@ -320,11 +291,6 @@ export function createSimpleProjectStage(): StageRules {
   }
 }
 
-export const DEFAULT_ACCOUNTING: AccountingConfig = {
-  tokens: ['eth'],
-  custom: null,
-}
-
 export const DEFAULT_STORE_FLAGS = {
   preventOverspending: false,
   noNewTiersWithReserves: false,
@@ -336,23 +302,6 @@ export const DEFAULT_STORE_FLAGS = {
   operatorCanUpdateMetadata: true,
   operatorCanMint: true,
   operatorCanIncreaseDiscount: true,
-}
-
-export const DEFAULT_PLAN: Omit<LaunchPlan, 'store'> = {
-  accounting: DEFAULT_ACCOUNTING,
-  issuanceBase: null,
-  flavor: 'project',
-  operator: null,
-  ticker: '',
-  stages: [DEFAULT_STAGE],
-  afterMode: 'wait',
-  approvalDeadline: '1day',
-  approvalCustomAddress: null,
-  allowAnyToken: true,
-  owner: null,
-  chains: [],
-  linkChains: true,
-  bridge: 'ccip',
 }
 
 /**
@@ -393,7 +342,7 @@ function toJbSplits(splits: SplitConfig[]) {
   }))
 }
 
-export function treasuryToken(
+function treasuryToken(
   currency: TreasuryCurrency,
   chainId: JBChainId,
 ): Address {

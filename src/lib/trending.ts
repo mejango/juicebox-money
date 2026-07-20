@@ -1,4 +1,3 @@
-import { JB_CHAINS, JBChainId } from '@bananapus/nana-sdk-core'
 import { bendystraw, BsProject } from './bendystraw'
 import { ipfsUrl } from './format'
 import { toUrn } from './urn'
@@ -210,8 +209,4 @@ export async function getTrendingCards(limit = 12): Promise<TrendingCard[]> {
   return cards
     .sort((a, b) => (b.trendingScore > a.trendingScore ? 1 : -1))
     .slice(0, limit)
-}
-
-export function chainNameFor(chainId: number): string {
-  return JB_CHAINS[chainId as JBChainId]?.name ?? `Chain ${chainId}`
 }

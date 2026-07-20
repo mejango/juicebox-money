@@ -99,12 +99,10 @@ export type RelayrPendingSession = {
   paymentHash: Hex | null
   paymentChainId: number | null
   expectedCount: number
-  chains: Array<{ id: number; name: string }>
   records: RelayrTransactionRecord[]
   itemCount: number
   account: string | null
   createdAt: number
-  persisted: boolean
 }
 
 export type RelayrExecutionErrorCode = 'RELAYR_FAILED' | 'RELAYR_TIMEOUT'
@@ -123,7 +121,7 @@ export class RelayrExecutionError extends Error {
   }
 }
 
-export function relayrStateIsSuccess(state?: string): boolean {
+function relayrStateIsSuccess(state?: string): boolean {
   const normalized = state?.trim().toLowerCase()
   return normalized === 'success' || normalized === 'completed'
 }
@@ -198,19 +196,17 @@ function relayrRecordSnapshot(
 /** Persist only the receipt/status data needed to resume polling a paid bundle. */
 export function saveRelayrPendingSession(
   scope: string,
-  session: Omit<RelayrPendingSession, 'persisted'> | RelayrPendingSession,
+  session: RelayrPendingSession,
 ): RelayrPendingSession {
   const safeSession: RelayrPendingSession = {
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
     paymentChainId: session.paymentChainId,
     expectedCount: session.expectedCount,
-    chains: session.chains.map(chain => ({ id: chain.id, name: chain.name })),
     records: session.records.map(relayrRecordSnapshot),
     itemCount: session.itemCount,
     account: session.account,
     createdAt: session.createdAt,
-    persisted: false,
   }
   if (typeof window === 'undefined') return safeSession
   try {
@@ -218,10 +214,10 @@ export function saveRelayrPendingSession(
       `${RELAYR_PENDING_PREFIX}${scope}`,
       JSON.stringify(safeSession),
     )
-    return { ...safeSession, persisted: true }
   } catch {
-    return safeSession
+    // Storage may be unavailable; the in-memory session still drives the flow.
   }
+  return safeSession
 }
 
 export function loadRelayrPendingSession(
@@ -242,7 +238,6 @@ export function loadRelayrPendingSession(
       !Number.isSafeInteger(value.itemCount) ||
       value.itemCount < 1 ||
       typeof value.createdAt !== 'number' ||
-      !Array.isArray(value.chains) ||
       !Array.isArray(value.records)
     ) {
       return null
@@ -256,11 +251,6 @@ export function loadRelayrPendingSession(
       paymentChainId:
         typeof value.paymentChainId === 'number' ? value.paymentChainId : null,
       expectedCount: value.expectedCount,
-      chains: value.chains.flatMap(chain =>
-        chain && typeof chain.id === 'number' && typeof chain.name === 'string'
-          ? [{ id: chain.id, name: chain.name }]
-          : [],
-      ),
       records: value.records,
       itemCount: value.itemCount,
       account: typeof value.account === 'string' ? value.account : null,
@@ -317,7 +307,7 @@ async function connectedWallet(chainId: JBChainId) {
 }
 
 /** Sign one EIP-2771 request for a Relayr destination transaction. */
-export async function buildForwardedTx(
+async function buildForwardedTx(
   call: RelayrCall,
   expectedAccount: Address,
 ): Promise<RelayrEntry> {
@@ -591,26 +581,10 @@ export async function relayrPoll(
   }
 }
 
-export function relayrDestinationHash(
+function relayrDestinationHash(
   record: RelayrTransactionRecord,
 ): Hex | null {
   return record.status?.data?.hash ?? record.status?.data?.transaction?.hash ?? null
-}
-
-function pendingChains(calls: RelayrCall[]): Array<{ id: number; name: string }> {
-  const seen = new Set<number>()
-  return calls.flatMap(call => {
-    const id = Number(call.chainId)
-    if (seen.has(id)) return []
-    seen.add(id)
-    return [
-      {
-        id,
-        name:
-          SUPPORTED_CHAINS.find(chain => chain.id === id)?.name ?? `Chain ${id}`,
-      },
-    ]
-  })
 }
 
 function relayrSessionFinished(
@@ -744,7 +718,6 @@ export async function runRelayrCalls({
         paymentHash,
         paymentChainId: payment.chain,
         expectedCount: calls.length,
-        chains: pendingChains(calls),
         records: quote.transactions ?? [],
         itemCount: calls.length,
         account,

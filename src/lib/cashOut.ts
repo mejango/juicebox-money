@@ -17,7 +17,7 @@ import { formatUnits, type Address, type PublicClient } from 'viem'
  */
 
 /** Slippage floor on cash-out quotes, in thousandths: 975 = 97.5%. */
-export const CASH_OUT_SLIPPAGE_FLOOR = 975n
+const CASH_OUT_SLIPPAGE_FLOOR = 975n
 
 /** The protocol takes 2.5% of feeable terminal cash outs. */
 const CASH_OUT_PROTOCOL_FEE_DENOMINATOR = 40n

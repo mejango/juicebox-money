@@ -23,7 +23,6 @@ import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
-import { useWallet } from '@/hooks/useWallet'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import {
   getPermissionHoldersAcrossDeployments,

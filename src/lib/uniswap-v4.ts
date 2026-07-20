@@ -177,7 +177,7 @@ export function getAmountsForLiquidity(
 }
 
 /** Sign-extend a 24-bit two's-complement tick (website lpSignExtend24 ~20782). */
-export function signExtend24(v: bigint): number {
+function signExtend24(v: bigint): number {
   return Number(v & 0x800000n ? v - 0x1000000n : v)
 }
 

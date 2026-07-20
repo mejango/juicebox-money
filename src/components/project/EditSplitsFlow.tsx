@@ -179,7 +179,6 @@ export function EditSplitsFlow({
   chainId: JBChainId
   projectId: number
   groupId: bigint
-  token?: Address | null
   title: string
   rulesetId: bigint
   isRevnet?: boolean

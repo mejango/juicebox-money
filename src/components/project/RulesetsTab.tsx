@@ -1149,7 +1149,6 @@ export function RulesetsTab({
                           chainId={chainId}
                           projectId={projectId}
                           groupId={payoutSplitGroupId(ctx.token)}
-                          token={ctx.token}
                           title={`${ctx.symbol} payout splits`}
                           rulesetId={BigInt(rulesetId)}
                         />

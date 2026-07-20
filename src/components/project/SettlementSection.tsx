@@ -848,5 +848,3 @@ function ClaimButton({ destChainId }: { destChainId: number }) {
     </span>
   )
 }
-
-// ------------------------------------------------------------------- sync --

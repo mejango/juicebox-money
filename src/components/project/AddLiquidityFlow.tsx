@@ -2,7 +2,6 @@
 
 import {
   JB_CHAINS,
-  NATIVE_TOKEN,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
@@ -31,7 +30,6 @@ import {
   lpCounterpart,
   lpDefaultRange,
   sqrtAtTick,
-  type PoolKey,
 } from '@/lib/uniswap-v4'
 import { formatPrice } from './chartUtils'
 import { resolveMarket, type MarketResult } from './MarketSection'
