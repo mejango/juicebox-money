@@ -1,5 +1,6 @@
 import Image from 'next/image'
 import Link from 'next/link'
+import logoFull from '@/assets/brand/logo-full.svg'
 
 type FooterLink = {
   label: string
@@ -130,7 +131,7 @@ export function SiteFooter() {
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-6 lg:gap-8">
           <div className="sm:col-span-2">
             <Image
-              src="/brand/logo-full.svg"
+              src={logoFull}
               alt="Juicebox"
               width={144}
               height={33}

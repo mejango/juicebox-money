@@ -1,15 +1,19 @@
-import Image from 'next/image'
+import Image, { type StaticImageData } from 'next/image'
+import arbitrumIcon from '@/assets/chains/arbitrum.svg'
+import baseIcon from '@/assets/chains/base.svg'
+import mainnetIcon from '@/assets/chains/mainnet.svg'
+import optimismIcon from '@/assets/chains/optimism.svg'
 import { chainName } from '@/lib/urn'
 
-const CHAIN_ICON: Record<number, string> = {
-  1: '/chains/mainnet.svg',
-  11155111: '/chains/mainnet.svg',
-  10: '/chains/optimism.svg',
-  11155420: '/chains/optimism.svg',
-  8453: '/chains/base.svg',
-  84532: '/chains/base.svg',
-  42161: '/chains/arbitrum.svg',
-  421614: '/chains/arbitrum.svg',
+const CHAIN_ICON: Record<number, StaticImageData> = {
+  1: mainnetIcon,
+  11155111: mainnetIcon,
+  10: optimismIcon,
+  11155420: optimismIcon,
+  8453: baseIcon,
+  84532: baseIcon,
+  42161: arbitrumIcon,
+  421614: arbitrumIcon,
 }
 
 /** A small round chain mark — icon only, name available on hover. */

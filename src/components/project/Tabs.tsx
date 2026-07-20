@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 export type TabDef = {
   /** Exact label shown on the tab button. */
@@ -23,13 +23,16 @@ export function tabSlug(label: string): string {
 export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
   const [active, setActive] = useState(0)
   const [mounted, setMounted] = useState<Set<number>>(new Set([0]))
+  const subtabByParent = useRef<Record<string, string>>({})
 
   // Resolve the initial tab from the URL hash, and follow hash changes
   // (back/forward navigation).
   useEffect(() => {
     const apply = () => {
-      const slug = window.location.hash.replace('#', '').split('/')[0]
+      const [slug, child] = window.location.hash.replace('#', '').split('/')
       if (!slug) return
+      if (child) subtabByParent.current[tabSlug(slug)] = tabSlug(child)
+      else delete subtabByParent.current[tabSlug(slug)]
       const i = tabs.findIndex(t => tabSlug(t.label) === slug)
       if (i >= 0) {
         setActive(i)
@@ -43,10 +46,23 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
   }, [])
 
   const activate = (i: number) => {
+    const [currentParent, currentChild] = window.location.hash
+      .replace('#', '')
+      .split('/')
+    if (currentParent && currentChild) {
+      subtabByParent.current[tabSlug(currentParent)] = tabSlug(currentChild)
+    }
+
     setActive(i)
     setMounted(prev => (prev.has(i) ? prev : new Set(prev).add(i)))
     // Keep the hash shareable without adding history entries per click.
-    window.history.replaceState(null, '', `#${tabSlug(tabs[i].label)}`)
+    const slug = tabSlug(tabs[i].label)
+    const child = subtabByParent.current[slug]
+    window.history.replaceState(
+      null,
+      '',
+      `#${slug}${child ? `/${child}` : ''}`,
+    )
   }
 
   return (
@@ -59,6 +75,7 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
         {tabs.map((tab, i) => (
           <button
             key={tab.label}
+            type="button"
             role="tab"
             aria-selected={active === i}
             onClick={() => activate(i)}
@@ -85,14 +102,52 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
   )
 }
 
-/** A subtab row used inside tabs (website/'s Owners/Tokens subtabs). */
-export function SubTabs({ tabs }: { tabs: TabDef[] }) {
+/**
+ * A subtab row used inside project tabs. When `hashParent` is provided, the
+ * second URL-hash segment selects and deep-links the subtab (`#shop/customers`).
+ */
+export function SubTabs({
+  tabs,
+  hashParent,
+}: {
+  tabs: TabDef[]
+  hashParent?: string
+}) {
   const [active, setActive] = useState(0)
   const [mounted, setMounted] = useState<Set<number>>(new Set([0]))
+
+  useEffect(() => {
+    if (!hashParent) return
+    const apply = () => {
+      const [parent, child] = window.location.hash.replace('#', '').split('/')
+      if (tabSlug(parent ?? '') !== tabSlug(hashParent)) return
+      const i = child
+        ? tabs.findIndex(tab => tabSlug(tab.label) === tabSlug(child))
+        : 0
+      if (i < 0) return
+      setActive(i)
+      setMounted(previous =>
+        previous.has(i) ? previous : new Set(previous).add(i),
+      )
+    }
+    apply()
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
+    // The tab definitions are stable for the mounted section; only their
+    // labels are used here, and remounting re-runs this resolver.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hashParent])
 
   const activate = (i: number) => {
     setActive(i)
     setMounted(prev => (prev.has(i) ? prev : new Set(prev).add(i)))
+    if (hashParent) {
+      window.history.replaceState(
+        null,
+        '',
+        `#${tabSlug(hashParent)}/${tabSlug(tabs[i].label)}`,
+      )
+    }
   }
 
   return (
@@ -104,6 +159,7 @@ export function SubTabs({ tabs }: { tabs: TabDef[] }) {
         {tabs.map((tab, i) => (
           <button
             key={tab.label}
+            type="button"
             role="tab"
             aria-selected={active === i}
             onClick={() => activate(i)}

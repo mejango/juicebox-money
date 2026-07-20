@@ -8,6 +8,7 @@ import ParaWeb, {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PropsWithChildren, useState } from 'react'
 import { http, WagmiProvider } from 'wagmi'
+import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import {
   arbitrum,
   arbitrumSepolia,
@@ -71,9 +72,15 @@ export const wagmiConfig = createParaWagmiConfig(paraClient, {
   // @ts-ignore Para's connector types lag wagmi's chain tuple type.
   chains: SUPPORTED_CHAINS,
   transports,
-  wallets: WALLET_CONNECT_PROJECT_ID
-    ? ['METAMASK', 'COINBASE', 'WALLETCONNECT']
-    : ['METAMASK', 'COINBASE'],
+  // Browser wallet connectors touch IndexedDB during initialization. Keep
+  // them out of the server bundle so SSR cannot trip Next's error overlay and
+  // leave an otherwise rendered page unable to receive pointer events.
+  wallets:
+    typeof window === 'undefined'
+      ? []
+      : WALLET_CONNECT_PROJECT_ID
+        ? ['METAMASK', 'COINBASE', 'WALLETCONNECT']
+        : ['METAMASK', 'COINBASE'],
   ssr: true,
 })
 
@@ -90,7 +97,9 @@ export function Providers({ children }: PropsWithChildren) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <WagmiProvider config={wagmiConfig}>{children}</WagmiProvider>
+      <WagmiProvider config={wagmiConfig}>
+        <TransactionReviewProvider>{children}</TransactionReviewProvider>
+      </WagmiProvider>
     </QueryClientProvider>
   )
 }

@@ -589,11 +589,13 @@ export function GossipCard({
 
   return (
     <div className="card p-5">
-      <span className="field-label">Sync accounting</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Each chain&apos;s cash out and loan availability depends on knowing the
-        project&apos;s composition on the other chains.
-      </p>
+      <div>
+        <span className="field-label">Sync accounting</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          Each chain&apos;s cash out and loan availability depends on knowing the
+          project&apos;s composition on the other chains.
+        </p>
+      </div>
       {isLoading ? (
         <p className="mt-3 text-sm text-smoke-500">Loading…</p>
       ) : isError || !data ? (
@@ -605,7 +607,7 @@ export function GossipCard({
           No linked chains to sync from.
         </p>
       ) : (
-        <div className="mt-4 space-y-6">
+        <div className="space-y-6">
           {data.blocks
             .filter(b => b.peers.length)
             .map(block => (

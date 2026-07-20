@@ -57,14 +57,6 @@ export function FreshActivity({
     }
   }, [])
 
-  if (events.length === 0) {
-    return (
-      <p className="px-4 py-6 text-sm text-smoke-700">
-        The chain is quiet right now — check back in a moment.
-      </p>
-    )
-  }
-
   return (
     <ul className="divide-y divide-smoke-100">
       {events.map(event => (

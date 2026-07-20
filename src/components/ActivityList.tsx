@@ -7,8 +7,10 @@ import {
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import Image from 'next/image'
 import { erc20Abi, zeroAddress } from 'viem'
 import { useReadContract } from 'wagmi'
+import quietIllustration from '@/assets/illustrations/quiet.png'
 import { BsActivityEvent } from '@/lib/bendystraw'
 import {
   formatCompactTokenAmount,
@@ -181,9 +183,15 @@ export function ActivityList({
 
   if (visible.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-smoke-300 p-6 text-sm text-smoke-700">
-        No activity yet — be the first to pay this project.
-      </p>
+      <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-smoke-300 p-5">
+        <Image
+          src={quietIllustration}
+          alt=""
+          sizes="128px"
+          className="h-32 w-32 object-contain"
+          aria-hidden
+        />
+      </div>
     )
   }
 

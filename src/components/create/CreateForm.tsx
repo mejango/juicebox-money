@@ -3,8 +3,11 @@
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import Image from 'next/image'
 import Link from 'next/link'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import congratsIllustration from '@/assets/illustrations/congrats.png'
+import createIllustration from '@/assets/illustrations/create.png'
 import {
   BaseError,
   parseUnits,
@@ -63,7 +66,12 @@ import {
 } from './ui'
 import { MultiChainSelect } from '@/components/ChainSelect'
 import { ChainIcon } from '@/components/ChainIcon'
+import {
+  TransactionProgressImage,
+  usePreloadTransactionAnimation,
+} from '@/components/TransactionInProgress'
 import { chainName, toUrn } from '@/lib/urn'
+import { requireContractTransactionReview } from '@/lib/transaction-review'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 import {
   StoreEditor,
@@ -140,6 +148,7 @@ function StepBadge({ n }: { n: number }) {
 }
 
 export function CreateForm() {
+  usePreloadTransactionAnimation()
   const { isConnected, address, openSignIn } = useWallet()
   const config = useConfig()
   const { switchChainAsync } = useSwitchChain()
@@ -999,7 +1008,6 @@ export function CreateForm() {
       if (statusesRef.current[chainId]?.phase === 'done') continue
       updateStatus(chainId, { phase: 'signing', error: undefined })
       try {
-        await switchChainAsync({ chainId: chainId as SupportedChainId })
         const client = getPublicClient(config, {
           chainId: chainId as SupportedChainId,
         }) as PublicClient
@@ -1017,6 +1025,14 @@ export function CreateForm() {
           plan: pinned.plans[chainId],
           salt: pinned.salt,
         })
+        await requireContractTransactionReview(
+          { ...request, account: address },
+          {
+            title: `Review launch on ${chainName(chainId)}`,
+            label: 'Launch project',
+          },
+        )
+        await switchChainAsync({ chainId: chainId as SupportedChainId })
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const hash = await writeContractAsync(request as any)
         updateStatus(chainId, { phase: 'confirming', txHash: hash })
@@ -1283,9 +1299,17 @@ export function CreateForm() {
     return (
       <div className="relative mx-auto max-w-2xl px-4 py-14 sm:px-6 sm:py-20">
         <div className="card p-8 text-center sm:p-10">
-          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-melon-400">
-            <CheckIcon className="h-8 w-8 text-ink" />
-          </span>
+          <div className="relative mx-auto w-fit" aria-hidden>
+            <Image
+              src={congratsIllustration}
+              alt=""
+              sizes="(min-width: 640px) 160px, 144px"
+              className="h-36 w-36 object-contain sm:h-40 sm:w-40"
+            />
+            <span className="absolute bottom-1 right-1 flex h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-melon-400 shadow-sm">
+              <CheckIcon className="h-5 w-5 text-ink" />
+            </span>
+          </div>
           <h1 className="mt-5 font-agrandir text-3xl font-medium sm:text-4xl">
             {name.trim()} is live!
           </h1>
@@ -1336,14 +1360,24 @@ export function CreateForm() {
 
   // ---- Form + progress checklist ----
   return (
-    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
-      <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-5xl">
-        Start a project<span className="text-split-500">.</span>
-      </h1>
-      <p className="mt-3 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">
-        Give it a name, answer a few questions, and launch. Live in minutes —
-        rules stay flexible unless you lock&nbsp;them&nbsp;in.
-      </p>
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+      <div className="relative sm:pr-52">
+        <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:whitespace-nowrap sm:text-5xl">
+          Start a project<span className="text-split-500">.</span>
+        </h1>
+        <p className="mt-3 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">
+          Give it a name, answer a few questions, and launch. Live in minutes —
+          rules stay flexible unless you lock&nbsp;them&nbsp;in.
+        </p>
+        <Image
+          src={createIllustration}
+          alt=""
+          aria-hidden
+          priority
+          sizes="192px"
+          className="pointer-events-none absolute right-0 top-1/2 hidden h-40 w-48 -translate-y-1/2 select-none object-contain sm:block"
+        />
+      </div>
 
       {/* Horizontal stepper */}
       <nav aria-label="Create steps" className="mt-8 flex min-w-0 items-center gap-1.5">
@@ -1434,7 +1468,7 @@ export function CreateForm() {
           <span className="field-label">Chains</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             Your {flavor === 'revnet' ? 'revnet' : 'project'} lives on every
-            chain you pick. You&apos;ll confirm one transaction per chain.
+            chain you pick. You can add more chains later.
           </p>
           <MultiChainSelect
             options={SUPPORTED_CHAINS.map(chain => chain.id)}
@@ -2540,10 +2574,16 @@ export function CreateForm() {
           />
         </div>
 
+        <p className="mt-5 text-sm leading-relaxed text-smoke-700">
+          {selected.length > 1
+            ? `You’ll confirm one transaction per chain — ${selected.length} transactions total.`
+            : 'You’ll confirm one transaction to launch.'}
+        </p>
+
         <button
           onClick={launch}
           disabled={connected && !canLaunch}
-          className="btn-primary mt-5 min-h-[56px] w-full text-base"
+          className="btn-primary mt-2 min-h-[56px] w-full text-base"
         >
           {phase === 'pinning'
             ? 'Saving your project details…'
@@ -2596,7 +2636,7 @@ export function CreateForm() {
                   ) : s.phase === 'pending' ? (
                     <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
                   ) : (
-                    <span className="h-6 w-6 shrink-0 animate-spin rounded-full border-2 border-smoke-200 border-t-bluebs-500" />
+                    <TransactionProgressImage className="h-9 w-9" />
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-ink">

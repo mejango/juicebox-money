@@ -723,8 +723,10 @@ export function MarketSection({
   if (isLoading) {
     return (
       <div className="card p-5">
-        <span className="field-label">Market</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+        <div>
+          <span className="field-label">Market</span>
+          <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+        </div>
       </div>
     )
   }
@@ -732,10 +734,12 @@ export function MarketSection({
   if (isError) {
     return (
       <div className="card p-5">
-        <span className="field-label">Market</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Couldn&apos;t read the market pool right now — try again in a moment.
-        </p>
+        <div>
+          <span className="field-label">Market</span>
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            Couldn&apos;t read the market pool right now — try again in a moment.
+          </p>
+        </div>
       </div>
     )
   }
@@ -743,10 +747,12 @@ export function MarketSection({
   if (!market || market.status !== 'pool') {
     return (
       <div className="card p-5">
-        <span className="field-label">Market</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          No market pool yet — this token trades only through the project.
-        </p>
+        <div>
+          <span className="field-label">Market</span>
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            No market pool yet — this token trades only through the project.
+          </p>
+        </div>
       </div>
     )
   }
@@ -759,56 +765,57 @@ export function MarketSection({
     <div className="space-y-5">
       {/* AMM price */}
       <div className="card p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="field-label">Market price</span>
-          <span
-            className="rounded-full bg-bluebs-50 px-2 py-0.5 text-[11px] font-medium text-bluebs-700"
-            title="Uniswap V4 buyback pool"
-          >
-            AMM
-          </span>
-          {pm && etherscanHost ? (
-            <a
-              href={`https://${etherscanHost}/address/${pm}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-smoke-500 hover:text-ink"
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="field-label">Market price</span>
+            <span
+              className="rounded-full bg-bluebs-50 px-2 py-0.5 text-[11px] font-medium text-bluebs-700"
+              title="Uniswap V4 buyback pool"
             >
-              {truncateAddress(pm)}
-            </a>
+              AMM
+            </span>
+            {pm && etherscanHost ? (
+              <a
+                href={`https://${etherscanHost}/address/${pm}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-smoke-500 hover:text-ink"
+              >
+                {truncateAddress(pm)}
+              </a>
+            ) : null}
+          </div>
+
+          <p className="mt-3 text-lg font-medium text-ink">
+            1 {sym} = {formatPrice(market.price)} {pairSym}
+          </p>
+          <p className="mt-0.5 text-sm text-smoke-700">
+            1 {pairSym} = {formatPrice(inverse)} {sym}
+          </p>
+
+          {(market.issuance && market.issuance > 0) ||
+          (floor && floor > 0) ? (
+            <dl className="mt-5 space-y-1.5 border-t border-smoke-100 pt-3 text-sm">
+              {market.issuance && market.issuance > 0 ? (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-smoke-700">Issuance price (ceiling)</dt>
+                  <dd className="font-medium text-ink">
+                    {formatPrice(market.issuance)} {pairSym}
+                  </dd>
+                </div>
+              ) : null}
+              {floor && floor > 0 ? (
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-smoke-700">Cash-out price (floor)</dt>
+                  <dd className="font-medium text-ink">
+                    {formatPrice(floor)} {pairSym}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
           ) : null}
         </div>
-
-        <p className="mt-3 text-lg font-medium text-ink">
-          1 {sym} = {formatPrice(market.price)} {pairSym}
-        </p>
-        <p className="mt-0.5 text-sm text-smoke-700">
-          1 {pairSym} = {formatPrice(inverse)} {sym}
-        </p>
-
-        {(market.issuance && market.issuance > 0) ||
-        (floor && floor > 0) ? (
-          <dl className="mt-4 space-y-1.5 border-t border-smoke-100 pt-3 text-sm">
-            {market.issuance && market.issuance > 0 ? (
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-smoke-700">Issuance price (ceiling)</dt>
-                <dd className="font-medium text-ink">
-                  {formatPrice(market.issuance)} {pairSym}
-                </dd>
-              </div>
-            ) : null}
-            {floor && floor > 0 ? (
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-smoke-700">Cash-out price (floor)</dt>
-                <dd className="font-medium text-ink">
-                  {formatPrice(floor)} {pairSym}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        ) : null}
-
-        <p className="mt-3 text-xs leading-relaxed text-smoke-500">
+        <p className="mt-4 border-t border-smoke-100 pt-3 text-xs leading-relaxed text-smoke-500">
           The market fills orders that would give payers more {sym} than
           issuance. Arbitrage keeps its price between the issuance ceiling and
           the cash-out floor.

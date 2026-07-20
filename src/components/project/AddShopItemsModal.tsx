@@ -15,6 +15,10 @@ import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import {
+  TransactionProgressImage,
+  usePreloadTransactionAnimation,
+} from '@/components/TransactionInProgress'
+import {
   StoreEditor,
   itemOk,
   newDraftItem,
@@ -29,6 +33,7 @@ import {
   type PinnedStoreItemDraft,
 } from '@/lib/store-items'
 import { chainName } from '@/lib/urn'
+import { requireContractTransactionReview } from '@/lib/transaction-review'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]['id']
@@ -42,7 +47,13 @@ export type ShopWriteTarget = {
 }
 
 type ChainStatus = {
-  phase: 'pending' | 'signing' | 'confirming' | 'done' | 'failed'
+  phase:
+    | 'pending'
+    | 'signing'
+    | 'confirming'
+    | 'uncertain'
+    | 'done'
+    | 'failed'
   hash?: `0x${string}`
   error?: string
 }
@@ -67,6 +78,7 @@ export function AddShopItemsModal({
   isRevnet: boolean
   onClose: () => void
 }) {
+  usePreloadTransactionAnimation()
   const config = useConfig()
   const queryClient = useQueryClient()
   const { switchChainAsync } = useSwitchChain()
@@ -79,9 +91,10 @@ export function AddShopItemsModal({
         target =>
           target.hook &&
           target.pricing &&
+          target.pricing.currency === activePricing.currency &&
           target.pricing.decimals === activePricing.decimals,
       ),
-    [targets, activePricing.decimals],
+    [targets, activePricing.currency, activePricing.decimals],
   )
   const [selected, setSelected] = useState<JBChainId[]>(() =>
     compatibleTargets.map(target => target.chainId),
@@ -101,16 +114,20 @@ export function AddShopItemsModal({
 
   const busy =
     phase === 'checking' || phase === 'pinning' || phase === 'writing'
+  const hasSubmittedTransactions = Object.values(statuses).some(
+    status => status.phase === 'done' || Boolean(status.hash),
+  )
+  const hasUncertainTransactions = Object.values(statuses).some(
+    status => status.phase === 'uncertain',
+  )
 
   const close = useCallback(() => {
     if (busy) return
-    const partiallyAdded =
-      phase !== 'done' &&
-      Object.values(statuses).some(status => status.phase === 'done')
     if (
-      partiallyAdded &&
+      phase !== 'done' &&
+      hasSubmittedTransactions &&
       !window.confirm(
-        'Some chains are already finished. Closing now discards the retry checklist. Close anyway?',
+        'Some transactions are already submitted. Closing now discards the status checklist. Close anyway?',
       )
     ) {
       return
@@ -119,7 +136,7 @@ export function AddShopItemsModal({
       if (item.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
     }
     onClose()
-  }, [busy, items, onClose, phase, statuses])
+  }, [busy, hasSubmittedTransactions, items, onClose, phase])
 
   useEffect(() => {
     const previous = document.body.style.overflow
@@ -236,6 +253,8 @@ export function AddShopItemsModal({
       review.chainIds.includes(target.chainId),
     )
     setMessage(null)
+    let activeTarget: ShopWriteTarget | undefined
+    let activeHash: `0x${string}` | undefined
 
     try {
       // Re-check every live role immediately before any irreversible work.
@@ -259,46 +278,85 @@ export function AddShopItemsModal({
       setPhase('writing')
       for (const target of selectedTargets) {
         if (statusesRef.current[target.chainId]?.phase === 'done') continue
+        activeTarget = target
         const chainId = target.chainId as SupportedChainId
         const client = getPublicClient(config, { chainId }) as PublicClient
         if (!client || !target.hook || !target.pricing) {
           throw new Error(`${chainName(target.chainId)} is not ready.`)
         }
 
-        updateStatus(target.chainId, {
-          phase: 'signing',
-          error: undefined,
-        })
-        setMessage(`Confirm the items on ${chainName(target.chainId)}…`)
-        await assertAuthority(client, target, address, isRevnet)
-        await switchChainAsync({ chainId })
+        let hash = statusesRef.current[target.chainId]?.hash
+        if (hash) {
+          activeHash = hash
+          updateStatus(target.chainId, {
+            phase: 'confirming',
+            error: undefined,
+          })
+          setMessage(
+            `Checking the submitted transaction on ${chainName(target.chainId)}…`,
+          )
+        } else {
+          updateStatus(target.chainId, {
+            phase: 'signing',
+            hash: undefined,
+            error: undefined,
+          })
+          setMessage(`Confirm the items on ${chainName(target.chainId)}…`)
+          await assertAuthority(client, target, address, isRevnet)
 
-        const storeItems = storeItemsForChain(
-          pinnedRef.current,
-          target.pricing.decimals,
-          target.chainId,
-        )
-        const tiers = build721TierConfigs(storeItems, target.chainId)
-        const { request } = await client.simulateContract({
-          address: target.hook,
-          abi: jb721TiersHookAbi,
-          functionName: 'adjustTiers',
-          args: [tiers, []],
-          account: address,
-        })
-        // wagmi's generated union cannot retain the tuple inference after a
-        // runtime chain switch, but this is the exact simulated request.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hash = await writeContractAsync(request as any)
-        updateStatus(target.chainId, { phase: 'confirming', hash })
+          const storeItems = storeItemsForChain(
+            pinnedRef.current,
+            target.pricing.decimals,
+            target.chainId,
+          )
+          const tiers = build721TierConfigs(storeItems, target.chainId)
+          await requireContractTransactionReview(
+            {
+              chainId,
+              address: target.hook,
+              abi: jb721TiersHookAbi,
+              functionName: 'adjustTiers',
+              args: [tiers, []],
+              account: address,
+            },
+            {
+              title: `Review shop items on ${chainName(target.chainId)}`,
+              label: 'Add shop items',
+              contractName: 'JB721TiersHook',
+            },
+          )
+          await switchChainAsync({ chainId })
+          const { request } = await client.simulateContract({
+            address: target.hook,
+            abi: jb721TiersHookAbi,
+            functionName: 'adjustTiers',
+            args: [tiers, []],
+            account: address,
+          })
+          // wagmi's generated union cannot retain the tuple inference after a
+          // runtime chain switch, but this is the exact simulated request.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash = await writeContractAsync(request as any)
+          activeHash = hash
+          updateStatus(target.chainId, { phase: 'confirming', hash })
+        }
+
         const receipt = await waitForTransactionReceipt(config, {
           chainId,
           hash,
         })
         if (receipt.status !== 'success') {
+          updateStatus(target.chainId, {
+            phase: 'failed',
+            hash: undefined,
+            error: `The transaction failed on ${chainName(chainId)}.`,
+          })
+          activeHash = undefined
           throw new Error(`The transaction failed on ${chainName(chainId)}.`)
         }
         updateStatus(target.chainId, { phase: 'done', hash })
+        activeHash = undefined
+        activeTarget = undefined
 
         await Promise.all([
           queryClient.invalidateQueries({
@@ -320,26 +378,39 @@ export function AddShopItemsModal({
       )
       setPhase('done')
     } catch (error) {
-      const failed = selectedTargets.find(
-        target =>
-          statusesRef.current[target.chainId]?.phase === 'signing' ||
-          statusesRef.current[target.chainId]?.phase === 'confirming',
-      )
       const errorMessage = shortError(error)
-      if (failed) {
-        updateStatus(failed.chainId, {
-          phase: 'failed',
-          error: errorMessage,
-        })
+      if (activeTarget) {
+        const current = statusesRef.current[activeTarget.chainId]
+        if (current?.phase !== 'failed') {
+          const submittedHash = current?.hash ?? activeHash
+          if (submittedHash) {
+            updateStatus(activeTarget.chainId, {
+              phase: 'uncertain',
+              hash: submittedHash,
+              error: errorMessage,
+            })
+            setMessage(
+              `The transaction was submitted on ${chainName(activeTarget.chainId)}, but its status could not be confirmed. Checking again will not send another transaction.`,
+            )
+          } else {
+            updateStatus(activeTarget.chainId, {
+              phase: 'failed',
+              error: errorMessage,
+            })
+            setMessage(errorMessage)
+          }
+        } else {
+          setMessage(errorMessage)
+        }
+      } else {
+        setMessage(errorMessage)
       }
-      setMessage(errorMessage)
       setPhase('failed')
     }
   }
 
   const backToForm = () => {
-    if (busy || Object.values(statuses).some(status => status.phase === 'done'))
-      return
+    if (busy || hasSubmittedTransactions) return
     setReview(null)
     pinnedRef.current = null
     statusesRef.current = {}
@@ -427,12 +498,13 @@ export function AddShopItemsModal({
                     const compatible =
                       !!target.hook &&
                       !!target.pricing &&
+                      target.pricing.currency === activePricing.currency &&
                       target.pricing.decimals === activePricing.decimals
                     const checked = selected.includes(target.chainId)
                     const unavailableReason =
                       target.error ??
                       (target.pricing
-                        ? 'Different pricing precision'
+                        ? 'Different pricing currency'
                         : 'Store unavailable')
                     return (
                       <button
@@ -508,14 +580,19 @@ export function AddShopItemsModal({
                           {chainName(chainId)}
                         </span>
                         <span
-                          className={
+                          className={`flex items-center gap-2 ${
                             status === 'done'
                               ? 'text-melon-700'
+                              : status === 'uncertain'
+                                ? 'text-split-700'
                               : status === 'failed'
                                 ? 'text-error-600'
                                 : 'text-smoke-700'
-                          }
+                          }`}
                         >
+                          {status === 'signing' || status === 'confirming' ? (
+                            <TransactionProgressImage className="h-8 w-8" />
+                          ) : null}
                           {chainStatusLabel(status)}
                         </span>
                       </div>
@@ -547,7 +624,7 @@ export function AddShopItemsModal({
             </button>
           ) : review ? (
             <>
-              {!Object.values(statuses).some(status => status.phase === 'done') ? (
+              {!hasSubmittedTransactions ? (
                 <button
                   type="button"
                   onClick={backToForm}
@@ -570,7 +647,9 @@ export function AddShopItemsModal({
                     : phase === 'writing'
                       ? 'Adding items…'
                       : phase === 'failed'
-                        ? 'Retry unfinished chains'
+                        ? hasUncertainTransactions
+                          ? 'Check submitted transactions'
+                          : 'Retry unfinished chains'
                         : 'Add items for sale'}
               </button>
             </>
@@ -671,6 +750,7 @@ function cloneDraftItem(item: DraftItem): DraftItem {
 function chainStatusLabel(status: ChainStatus['phase']) {
   if (status === 'signing') return 'Confirm in wallet'
   if (status === 'confirming') return 'Confirming…'
+  if (status === 'uncertain') return 'Submitted — status unknown'
   if (status === 'done') return 'Added'
   if (status === 'failed') return 'Needs retry'
   return 'Ready'

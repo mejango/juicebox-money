@@ -3,24 +3,26 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  JBOmnichainDeployerContracts,
   JBRouterTerminalContracts,
   NATIVE_TOKEN,
+  jbContractAddress,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
-  jbContractAddress,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
-  jbOmnichainDeployerAbi,
+  jbPricesAbi,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  BASE_CURRENCY_ETH,
+  BASE_CURRENCY_USD,
   build721PayMetadata,
   buildPayTx,
+  effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
-  getRevnetTiered721Hook,
+  getProject721Shop,
   getTokenAddress,
   previewPay,
 } from '@bananapus/nana-sdk-core/v6'
@@ -38,6 +40,7 @@ import {
 import { usePublicClient } from 'wagmi'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { useShopCart } from '@/components/project/ShopCartProvider'
 import { formatTokenAmount, ipfsUrl } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 
@@ -149,15 +152,20 @@ type ShopInfo = {
     price: bigint
     discountPercent: number
     remaining: number
+    initial: number
     unlimited: boolean
+    cantBuyWithCredits: boolean
     name: string | null
+    description: string | null
     image: string | null
   }[]
 }
 
-/** Discounted tier price (store math: denominator 200, floor division). */
-function effectivePrice(price: bigint, discountPercent: number): bigint {
-  return price - (price * BigInt(discountPercent)) / 200n
+type ShopPayRoute = {
+  supported: boolean
+  /** Payment-token units per one whole shop-pricing unit. */
+  pricePerUnit: bigint | null
+  reason?: string
 }
 
 /**
@@ -183,12 +191,26 @@ export function PayPanel({
   payDisclosure?: string
 }) {
   const { isConnected, address, openSignIn } = useWallet()
+  const {
+    quantities: cart,
+    items: cartItems,
+    count: cartCount,
+    setQuantity,
+    registerItem,
+    clear: clearCart,
+  } = useShopCart()
 
   // The chain being paid — a project lives on every linked chain, and the
   // payer picks which one. projectId can differ per chain (sucker groups).
-  const [chainId, setChainId] = useState<JBChainId>(initialChainId)
-  const projectId =
-    chains.find(([c]) => c === chainId)?.[1] ?? initialProjectId
+  const [deployment, setDeployment] = useState<{
+    chainId: JBChainId
+    projectId: number
+  }>(() => ({ chainId: initialChainId, projectId: initialProjectId }))
+  const { chainId, projectId } = deployment
+
+  useEffect(() => {
+    setDeployment({ chainId: initialChainId, projectId: initialProjectId })
+  }, [initialChainId, initialProjectId])
 
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const tx = useSafeTx(chainId)
@@ -207,8 +229,6 @@ export function PayPanel({
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null)
   const [memo, setMemo] = useState('')
-  const [cart, setCart] = useState<Record<number, number>>({})
-
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400)
     return () => clearTimeout(t)
@@ -425,145 +445,317 @@ export function PayPanel({
     retry: 1,
     queryFn: async (): Promise<ShopInfo | null> => {
       const client = publicClient!
-      // Resolve the hook (mirrors ShopTab): REVOwner for revnets, else the
-      // ruleset data hook / omnichain deployer record, verified via STORE().
-      let hook: Address | null = null
-      if (isRevnet) {
-        const fromRev = await getRevnetTiered721Hook(client, {
-          chainId,
-          revnetId: BigInt(projectId),
-        }).catch(() => null)
-        if (fromRev && fromRev !== zeroAddress) hook = fromRev
-      } else {
-        const ruleset = await getCurrentRuleset(client, {
-          chainId,
-          projectId: BigInt(projectId),
-        }).catch(() => null)
-        const dataHook = ruleset?.metadata.dataHook
-        if (
-          ruleset &&
-          ruleset.metadata.useDataHookForPay &&
-          dataHook &&
-          dataHook !== zeroAddress
-        ) {
-          const omnichain = jbContractAddress['6'][
-            JBOmnichainDeployerContracts.JBOmnichainDeployer
-          ]?.[chainId] as Address | undefined
-          if (omnichain && dataHook.toLowerCase() === omnichain.toLowerCase()) {
-            const recorded = await client
-              .readContract({
-                address: omnichain,
-                abi: jbOmnichainDeployerAbi,
-                functionName: 'tiered721HookOf',
-                args: [BigInt(projectId), BigInt(ruleset.ruleset.id)],
-              })
-              .catch(() => null)
-            const recordedHook = recorded ? recorded[0] : null
-            if (recordedHook && recordedHook !== zeroAddress)
-              hook = recordedHook
-          } else {
-            hook = dataHook as Address
-          }
-        }
-      }
-      if (!hook) return null
-      const store = (await client
+      const resolved = await getProject721Shop(client, {
+        chainId,
+        projectId: BigInt(projectId),
+        isRevnet,
+        tierLimit: 200,
+      })
+      if (!resolved) return null
+      const rawTiers = await client
         .readContract({
-          address: hook,
-          abi: jb721TiersHookAbi,
-          functionName: 'STORE',
-        })
-        .catch(() => null)) as Address | null
-      if (!store) return null
-      const [idTarget, pricing, tiers] = await Promise.all([
-        client
-          .readContract({
-            address: hook,
-            abi: jb721TiersHookAbi,
-            functionName: 'METADATA_ID_TARGET',
-          })
-          .catch(() => hook!),
-        client.readContract({
-          address: hook,
-          abi: jb721TiersHookAbi,
-          functionName: 'pricingContext',
-        }),
-        client.readContract({
-          address: store,
+          address: resolved.store,
           abi: jb721TiersHookStoreAbi,
           functionName: 'tiersOf',
-          args: [hook, [], true, 0n, 12n],
-        }),
-      ])
+          args: [resolved.hook, [], true, 0n, 200n],
+        })
+        .catch(() => [])
+      const flagsById = new Map(
+        rawTiers.map(rawTier => [rawTier.id, rawTier.flags] as const),
+      )
       return {
-        hook,
-        idTarget: idTarget as Address,
-        pricingCurrency: Number(pricing[0]),
-        pricingDecimals: Number(pricing[1]),
-        tiers: tiers
-          .filter(t => t.initialSupply > 0)
-          .map(t => {
-            let name: string | null = null
-            let image: string | null = null
-            try {
-              const uri = t.resolvedUri
-              if (uri?.startsWith('data:application/json')) {
-                const json = JSON.parse(
-                  uri.includes('base64,')
-                    ? decodeURIComponent(escape(atob(uri.split('base64,')[1])))
-                    : decodeURIComponent(uri.split(',').slice(1).join(',')),
-                ) as { name?: string; image?: string }
-                name = json.name ?? null
-                image = json.image?.startsWith('ipfs://')
-                  ? ipfsUrl(json.image)
-                  : (json.image ?? null)
+        hook: resolved.hook,
+        idTarget: resolved.metadataIdTarget,
+        pricingCurrency: resolved.pricing.currency,
+        pricingDecimals: resolved.pricing.decimals,
+        tiers: resolved.tiers.map(t => {
+          let name: string | null = null
+          let description: string | null = null
+          let image: string | null = null
+          try {
+            const uri = t.resolvedUri
+            if (uri?.startsWith('data:application/json')) {
+              const json = JSON.parse(
+                uri.includes('base64,')
+                  ? decodeURIComponent(escape(atob(uri.split('base64,')[1])))
+                  : decodeURIComponent(uri.split(',').slice(1).join(',')),
+              ) as {
+                name?: string
+                productName?: string
+                description?: string
+                productDescription?: string
+                image?: string
+                imageUri?: string
               }
-            } catch {
-              // Metadata is cosmetic — a tier without it still sells.
+              name = json.productName ?? json.name ?? null
+              description =
+                json.productDescription ?? json.description ?? null
+              const rawImage = json.image ?? json.imageUri
+              image = rawImage?.startsWith('ipfs://')
+                ? ipfsUrl(rawImage)
+                : (rawImage ?? null)
             }
-            return {
-              id: t.id,
-              price: t.price,
-              discountPercent: t.discountPercent,
-              remaining: t.remainingSupply,
-              unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
-              name,
-              image,
-            }
-          }),
+          } catch {
+            // Metadata is cosmetic — a tier without it still sells.
+          }
+          return {
+            id: t.id,
+            price: t.price,
+            discountPercent: t.discountPercent,
+            remaining: t.remainingSupply,
+            initial: t.initialSupply,
+            unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
+            // Fail closed if a legacy store does not return flags: charging
+            // fresh funds is safer than underfunding a credit-restricted mint.
+            cantBuyWithCredits:
+              flagsById.get(t.id)?.cantBuyWithCredits ?? true,
+            name,
+            description,
+            image,
+          }
+        }),
       }
     },
   })
 
-  // Item checkout requires paying in the shop's own pricing currency —
-  // cross-currency checkout needs a price-feed conversion (follow-up), so
-  // fail closed rather than guess.
-  const cartCount = Object.values(cart).reduce((a, b) => a + b, 0)
-  const shopMatchesToken =
-    !!shop && !!context && shop.pricingCurrency === context.currency
+  // Keep the shared cart's presentation metadata fresh even before the user
+  // opens the Shop tab. Clamp stale quantities against live per-chain supply.
+  useEffect(() => {
+    if (!shop) return
+    const liveIds = new Set(shop.tiers.map(tier => tier.id))
+    for (const tier of shop.tiers) {
+      registerItem({
+        tierId: tier.id,
+        name: tier.name ?? `Item #${tier.id}`,
+        image: tier.image ?? undefined,
+      })
+      const quantity = cart[tier.id] ?? 0
+      const cap = tier.unlimited ? 99 : tier.remaining
+      if (quantity > cap) setQuantity(tier.id, cap)
+    }
+    for (const id of Object.keys(cart).map(Number)) {
+      if (!liveIds.has(id)) setQuantity(id, 0)
+    }
+  }, [shop, cart, registerItem, setQuantity])
+
+  const { data: shopCredits = 0n, isLoading: shopCreditsLoading } = useQuery({
+    queryKey: ['payShopCredits', chainId, shop?.hook, address],
+    enabled: !!publicClient && !!shop && !!address,
+    staleTime: 15_000,
+    retry: 1,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: shop!.hook,
+        abi: jb721TiersHookAbi,
+        functionName: 'payCreditsOf',
+        args: [address!],
+      }),
+  })
+
+  // Verify every direct accounting token against the shop's pricing context.
+  // JBPrices returns payment-token units per one whole shop-pricing unit;
+  // router inputs stay disabled because the hook only sees the post-swap token.
+  const { data: shopRoutes, isLoading: shopRoutesLoading } = useQuery({
+    queryKey: [
+      'payShopRoutes',
+      chainId,
+      projectId,
+      shop?.pricingCurrency,
+      shop?.pricingDecimals,
+      contexts.map(payTokenKey).join(','),
+    ],
+    enabled: !!publicClient && !!shop && contexts.length > 0,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: async (): Promise<Record<string, ShopPayRoute>> => {
+      const prices = jbContractAddress['6'][JBCoreContracts.JBPrices][chainId]
+      const entries = await Promise.all(
+        contexts.map(async payContext => {
+          const key = payTokenKey(payContext)
+          if (payContext.viaRouter) {
+            return [
+              key,
+              {
+                supported: false,
+                pricePerUnit: null,
+                reason: 'Item checkout requires a directly accepted token.',
+              },
+            ] as const
+          }
+
+          const sameCurrency =
+            payContext.currency === shop!.pricingCurrency ||
+            (shop!.pricingCurrency === BASE_CURRENCY_ETH &&
+              payContext.token.toLowerCase() === NATIVE_TOKEN.toLowerCase())
+          if (sameCurrency) {
+            return [
+              key,
+              {
+                supported: true,
+                pricePerUnit: 10n ** BigInt(payContext.decimals),
+              },
+            ] as const
+          }
+
+          if (!prices) {
+            return [
+              key,
+              {
+                supported: false,
+                pricePerUnit: null,
+                reason: 'No price contract is available on this chain.',
+              },
+            ] as const
+          }
+          const pricePerUnit = await publicClient!
+            .readContract({
+              address: prices,
+              abi: jbPricesAbi,
+              functionName: 'pricePerUnitOf',
+              args: [
+                BigInt(projectId),
+                BigInt(payContext.currency),
+                BigInt(shop!.pricingCurrency),
+                BigInt(payContext.decimals),
+              ],
+            })
+            .catch(() => 0n)
+          return [
+            key,
+            pricePerUnit > 0n
+              ? { supported: true, pricePerUnit }
+              : {
+                  supported: false,
+                  pricePerUnit: null,
+                  reason: 'No price feed converts this payment token.',
+                },
+          ] as const
+        }),
+      )
+      return Object.fromEntries(entries)
+    },
+  })
+  const selectedShopRoute = context
+    ? shopRoutes?.[payTokenKey(context)]
+    : undefined
+  const shopMatchesToken = !!selectedShopRoute?.supported
+  const supportedShopContextIndexes = useMemo(
+    () =>
+      contexts.flatMap((payContext, index) =>
+        shopRoutes?.[payTokenKey(payContext)]?.supported ? [index] : [],
+      ),
+    [contexts, shopRoutes],
+  )
+
+  // Selecting an item from either surface moves the currency selector to the
+  // best verified checkout token instead of silently discarding the cart.
+  useEffect(() => {
+    if (cartCount === 0 || shopRoutesLoading || shopMatchesToken) return
+    const preferred = supportedShopContextIndexes
+      .map(index => ({ index, context: contexts[index] }))
+      .sort((a, b) => {
+        const score = (candidate: PayContext) =>
+          candidate.currency === shop?.pricingCurrency
+            ? 3
+            : shop?.pricingCurrency === BASE_CURRENCY_ETH &&
+                candidate.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+              ? 2
+              : shop?.pricingCurrency === BASE_CURRENCY_USD &&
+                  candidate.symbol.toUpperCase() === 'USDC'
+                ? 2
+                : 1
+        return score(b.context) - score(a.context)
+      })[0]
+    if (!preferred) return
+    setTokenIndex(preferred.index)
+    selectedKeyRef.current = payTokenKey(preferred.context)
+    setTokenTouched(true)
+  }, [
+    cartCount,
+    shopRoutesLoading,
+    shopMatchesToken,
+    supportedShopContextIndexes,
+    contexts,
+    shop?.pricingCurrency,
+  ])
+
+  const shopPricingSymbol =
+    shop?.pricingCurrency === BASE_CURRENCY_ETH
+      ? nativeSymbol
+      : shop?.pricingCurrency === BASE_CURRENCY_USD
+        ? 'USD'
+        : (contexts.find(c => c.currency === shop?.pricingCurrency)?.symbol ??
+          'units')
   const cartTotal = useMemo(() => {
     if (!shop || cartCount === 0) return 0n
     return shop.tiers.reduce(
       (sum, tier) =>
         sum +
-        effectivePrice(tier.price, tier.discountPercent) *
+        effectiveTierPrice(tier.price, tier.discountPercent) *
           BigInt(cart[tier.id] ?? 0),
       0n,
     )
   }, [shop, cart, cartCount])
+  const restrictedCartTotal = useMemo(() => {
+    if (!shop) return 0n
+    return shop.tiers.reduce(
+      (sum, tier) =>
+        sum +
+        (tier.cantBuyWithCredits
+          ? effectiveTierPrice(tier.price, tier.discountPercent) *
+            BigInt(cart[tier.id] ?? 0)
+          : 0n),
+      0n,
+    )
+  }, [shop, cart])
+  const shopCreditApplied = useMemo(() => {
+    const eligible = cartTotal - restrictedCartTotal
+    if (eligible <= 0n || shopCredits <= 0n) return 0n
+    return shopCredits < eligible ? shopCredits : eligible
+  }, [cartTotal, restrictedCartTotal, shopCredits])
+  const cartAmountDue = cartTotal - shopCreditApplied
+  const selectedCartRows = useMemo(
+    () =>
+      Object.entries(cart)
+        .filter(([, quantity]) => quantity > 0)
+        .map(([rawId, quantity]) => {
+          const tierId = Number(rawId)
+          const tier = shop?.tiers.find(candidate => candidate.id === tierId)
+          const registered = cartItems[tierId]
+          return {
+            tierId,
+            quantity,
+            name:
+              registered?.name ?? tier?.name ?? `Item #${tierId}`,
+            image: registered?.image ?? tier?.image ?? undefined,
+            cap: tier ? (tier.unlimited ? 99 : tier.remaining) : quantity,
+          }
+        })
+        .sort((a, b) => a.tierId - b.tierId),
+    [cart, cartItems, shop],
+  )
 
-  // Keep the amount at least the cart total (in the pay token's decimals —
-  // same currency, but the shop prices in its own fixed point).
+  // Keep the entered amount at least the verified checkout total. The price
+  // feed is expressed in payment-token units and this direction rounds up,
+  // exactly matching the hook's fail-safe normalization.
   const cartTotalInToken = useMemo(() => {
-    if (!shop || cartTotal === 0n || !context) return 0n
-    if (shop.pricingDecimals === context.decimals) return cartTotal
-    return shop.pricingDecimals > context.decimals
-      ? cartTotal / 10n ** BigInt(shop.pricingDecimals - context.decimals)
-      : cartTotal * 10n ** BigInt(context.decimals - shop.pricingDecimals)
-  }, [shop, cartTotal, context])
+    const pricePerUnit = selectedShopRoute?.pricePerUnit
+    if (
+      !shop ||
+      mode !== 'pay' ||
+      cartAmountDue === 0n ||
+      !context ||
+      !selectedShopRoute?.supported ||
+      !pricePerUnit
+    ) {
+      return 0n
+    }
+    const denominator = 10n ** BigInt(shop.pricingDecimals)
+    return (cartAmountDue * pricePerUnit + denominator - 1n) / denominator
+  }, [shop, mode, cartAmountDue, context, selectedShopRoute])
 
   useEffect(() => {
-    if (cartTotalInToken === 0n) return
+    if (mode !== 'pay' || cartCount === 0 || !shopMatchesToken) return
     const current = (() => {
       try {
         return parseUnits(amount.trim() || '0', decimals)
@@ -571,13 +763,12 @@ export function PayPanel({
         return 0n
       }
     })()
-    if (current < cartTotalInToken) {
-      const next = formatUnits(cartTotalInToken, decimals)
-      setAmount(next)
-      setDebouncedAmount(next)
-    }
+    if (current === cartTotalInToken) return
+    const next = formatUnits(cartTotalInToken, decimals)
+    setAmount(next)
+    setDebouncedAmount(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartTotalInToken])
+  }, [cartTotalInToken, cartCount, shopMatchesToken, mode])
 
   const tierIds = useMemo(
     () =>
@@ -589,7 +780,7 @@ export function PayPanel({
   const metadata: Hex | undefined =
     shop && tierIds.length > 0 && shopMatchesToken
       ? build721PayMetadata({
-          hookAddress: shop.idTarget,
+          metadataIdTarget: shop.idTarget,
           tierIdsToMint: tierIds,
         })
       : undefined
@@ -613,6 +804,7 @@ export function PayPanel({
     data: preview,
     isFetching: previewLoading,
     isError: previewError,
+    isPlaceholderData: previewIsPrevious,
   } = useQuery({
     queryKey: [
       'previewPay',
@@ -628,8 +820,12 @@ export function PayPanel({
       !!publicClient &&
       !!context &&
       !!terminalAddress &&
-      amountRaw > 0n &&
+      (amountRaw > 0n || cartCount > 0) &&
       mode === 'pay',
+    // Keep the last verified quote mounted while the next amount is quoted.
+    // The receipt gently dims it below, and submission stays blocked until the
+    // fresh quote arrives.
+    placeholderData: previous => previous,
     retry: false,
     queryFn: () =>
       previewPay(publicClient!, {
@@ -645,7 +841,9 @@ export function PayPanel({
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
-  const previewReady = mode === 'addbalance' || (!!preview && !previewError)
+  const previewReady =
+    mode === 'addbalance' ||
+    (!!preview && !previewError && !previewLoading && !previewIsPrevious)
   // Floor the guaranteed minimum at 99% of the preview (website parity): a
   // buyback-routed or USD-issuance pay legitimately drifts between preview
   // and inclusion, and an exact min would make ordinary pays revert. A
@@ -710,7 +908,17 @@ export function PayPanel({
       openSignIn()
       return
     }
-    if (!context || !terminalAddress || amountRaw <= 0n || busy) return
+    const creditOnlyCheckout =
+      mode === 'pay' && cartCount > 0 && cartAmountDue === 0n
+    if (
+      !context ||
+      !terminalAddress ||
+      (amountRaw <= 0n && !creditOnlyCheckout) ||
+      busy ||
+      (cartCount > 0 && shopCreditsLoading)
+    ) {
+      return
+    }
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return
@@ -769,8 +977,12 @@ export function PayPanel({
     setAmount('')
     setDebouncedAmount('')
     setMemo('')
-    setCart({})
+    clearCart()
   }
+
+  useEffect(() => {
+    if (tx.phase === 'success' && cartCount > 0) clearCart()
+  }, [tx.phase, cartCount, clearCart])
 
   // ---- Success view ----
   if (tx.phase === 'success') {
@@ -820,8 +1032,146 @@ export function PayPanel({
 
   return (
     <div>
+      {/* Shop strip */}
+      {shop && shop.tiers.length > 0 && mode === 'pay' ? (
+        <div className="mt-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="field-label">Shop</span>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = 'shop'
+              }}
+              className="text-xs font-medium text-bluebs-600 hover:underline"
+            >
+              All →
+            </button>
+          </div>
+          {cartCount > 0 && shopRoutesLoading ? (
+            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+              Checking checkout currencies…
+            </p>
+          ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
+            <p className="mt-1 text-xs leading-relaxed text-red-600">
+              No directly accepted payment token has a verified price feed for
+              these items on {chainName(chainId)}.
+            </p>
+          ) : cartCount > 0 && !shopMatchesToken ? (
+            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+              Switching to a supported checkout currency…
+            </p>
+          ) : null}
+
+          <div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto pb-1">
+            {shop.tiers.slice(0, 12).map(tier => {
+                const qty = cart[tier.id] ?? 0
+                const soldOut = !tier.unlimited && tier.remaining === 0
+                const cap = tier.unlimited ? 99 : tier.remaining
+                const price = effectiveTierPrice(
+                  tier.price,
+                  tier.discountPercent,
+                )
+                const item = {
+                  tierId: tier.id,
+                  name: tier.name ?? `Item #${tier.id}`,
+                  image: tier.image ?? undefined,
+                }
+                return (
+                  <div
+                    key={tier.id}
+                    className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
+                      qty > 0
+                        ? 'border-bluebs-500 bg-bluebs-25'
+                        : 'border-smoke-200 hover:border-bluebs-300'
+                    } ${soldOut ? 'opacity-40' : ''}`}
+                  >
+                    {qty > 0 ? (
+                      <span className="absolute right-1.5 top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-bluebs-600 px-1 text-[10px] font-medium text-white">
+                        {qty}
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (soldOut || qty > 0) return
+                        setQuantity(tier.id, 1, item)
+                      }}
+                      disabled={busy || soldOut}
+                      className="block w-full p-2 pb-1 disabled:cursor-not-allowed"
+                      title={
+                        soldOut
+                          ? `${item.name} is sold out`
+                          : `Add ${item.name} to cart`
+                      }
+                    >
+                      {tier.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={tier.image}
+                          alt={item.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="mx-auto h-14 w-14 rounded object-cover"
+                        />
+                      ) : (
+                        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded bg-smoke-75 text-xs text-smoke-500">
+                          #{tier.id}
+                        </span>
+                      )}
+                      <span className="mt-1 block truncate text-[11px] text-ink">
+                        {item.name}
+                      </span>
+                    </button>
+                    {soldOut ? (
+                      <p className="px-2 pb-2 text-[10px] text-smoke-500">
+                        Sold out
+                      </p>
+                    ) : qty === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setQuantity(tier.id, 1, item)}
+                        disabled={busy}
+                        className="w-full px-2 pb-2 text-[11px] text-smoke-700"
+                      >
+                        {formatTokenAmount(price, shop.pricingDecimals)}{' '}
+                        {shopPricingSymbol}
+                      </button>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1.5 px-2 pb-2">
+                        <button
+                          type="button"
+                          onClick={() => setQuantity(tier.id, qty - 1, item)}
+                          disabled={busy || qty === 0}
+                          aria-label={`Remove one ${item.name}`}
+                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
+                        >
+                          −
+                        </button>
+                        <span className="min-w-[1ch] text-xs tabular-nums">
+                          {qty}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setQuantity(tier.id, Math.min(cap, qty + 1), item)
+                          }
+                          disabled={busy || qty >= cap}
+                          aria-label={`Add one ${item.name}`}
+                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700">
+      <div className={`${shop && shop.tiers.length > 0 && mode === 'pay' ? 'mt-4' : ''} flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700`}>
         <TextSelect
           value={mode}
           onChange={v => setMode(v as 'pay' | 'addbalance')}
@@ -838,11 +1188,16 @@ export function PayPanel({
             <TextSelect
               value={String(chainId)}
               onChange={v => {
-                setChainId(Number(v) as JBChainId)
+                const next = chains.find(([cid]) => cid === Number(v))
+                if (!next) return
+                setDeployment({
+                  chainId: next[0] as JBChainId,
+                  projectId: next[1],
+                })
                 setTokenIndex(0)
                 setTokenTouched(false)
                 selectedKeyRef.current = null
-                setCart({})
+                clearCart()
                 setAmount('')
                 setDebouncedAmount('')
               }}
@@ -862,94 +1217,6 @@ export function PayPanel({
         </p>
       ) : null}
 
-      {/* Shop strip */}
-      {shop && shop.tiers.length > 0 && mode === 'pay' ? (
-        <div className="mt-4">
-          <span className="field-label">Items</span>
-          {!shopMatchesToken ? (
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Items are priced in a different currency than {symbol} — switch
-              the payment token to buy them.
-            </p>
-          ) : (
-            <div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto pb-1">
-              {shop.tiers.map(tier => {
-                const qty = cart[tier.id] ?? 0
-                const soldOut = !tier.unlimited && tier.remaining === 0
-                const price = effectivePrice(tier.price, tier.discountPercent)
-                return (
-                  <div
-                    key={tier.id}
-                    className={`w-24 shrink-0 rounded-lg border p-2 text-center ${
-                      qty > 0
-                        ? 'border-bluebs-500 bg-bluebs-25'
-                        : 'border-smoke-200 bg-white'
-                    } ${soldOut ? 'opacity-40' : ''}`}
-                  >
-                    {tier.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={tier.image}
-                        alt={tier.name ?? `Item ${tier.id}`}
-                        className="mx-auto h-14 w-14 rounded object-cover"
-                      />
-                    ) : (
-                      <span className="mx-auto flex h-14 w-14 items-center justify-center rounded bg-smoke-75 text-xs text-smoke-500">
-                        #{tier.id}
-                      </span>
-                    )}
-                    <p className="mt-1 truncate text-[11px] text-ink">
-                      {tier.name ?? `Item ${tier.id}`}
-                    </p>
-                    <p className="text-[11px] text-smoke-700">
-                      {formatTokenAmount(price, shop.pricingDecimals)} {symbol}
-                    </p>
-                    {soldOut ? (
-                      <p className="text-[10px] text-smoke-500">Sold out</p>
-                    ) : (
-                      <div className="mt-1 flex items-center justify-center gap-1.5">
-                        <button
-                          onClick={() =>
-                            setCart(c => ({
-                              ...c,
-                              [tier.id]: Math.max(0, (c[tier.id] ?? 0) - 1),
-                            }))
-                          }
-                          disabled={busy || qty === 0}
-                          aria-label="Remove one"
-                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
-                        >
-                          −
-                        </button>
-                        <span className="min-w-[1ch] text-xs tabular-nums">
-                          {qty}
-                        </span>
-                        <button
-                          onClick={() =>
-                            setCart(c => ({
-                              ...c,
-                              [tier.id]: Math.min(
-                                tier.unlimited ? 99 : tier.remaining,
-                                (c[tier.id] ?? 0) + 1,
-                              ),
-                            }))
-                          }
-                          disabled={busy}
-                          aria-label="Add one"
-                          className="h-5 w-5 rounded-full border border-smoke-300 text-xs leading-none text-smoke-700 disabled:opacity-40"
-                        >
-                          +
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      ) : null}
-
       {/* Amount + token + pay, inline (website/ parity) */}
       <div className="mt-3">
         <div className="input-well flex items-stretch overflow-hidden !p-0">
@@ -964,31 +1231,56 @@ export function PayPanel({
             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
           {contexts.length > 1 ? (
-            <select
-              // Valued by INDEX, not address — a token can appear direct and
-              // via-router, so the option must stay in lock-step with the
-              // selected context (website/ fund-loss fix).
-              value={tokenIndex}
-              onChange={e => {
-                const i = Number(e.target.value)
-                setTokenIndex(i)
-                // Remember the explicit pick so a refetch/chain-switch remaps to
-                // this exact token instead of snapping back to list[0].
-                const picked = contexts[i]
-                if (picked) selectedKeyRef.current = payTokenKey(picked)
-                setTokenTouched(true)
-                setCart({})
-              }}
-              disabled={busy}
-              aria-label="Payment token"
-              className="select-caret !w-auto shrink-0 border-0 bg-transparent pl-2 pr-7 text-sm font-medium text-smoke-700 focus:outline-none disabled:opacity-60"
+            <span
+              className={`relative flex shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700 ${
+                busy ? 'opacity-60' : ''
+              }`}
             >
-              {contexts.map((ctx, i) => (
-                <option key={`${ctx.token}-${i}`} value={i}>
-                  {ctx.symbol}
-                </option>
-              ))}
-            </select>
+              <span>{context?.symbol ?? symbol}</span>
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5 shrink-0 text-smoke-500"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+              <select
+                // Valued by INDEX, not address — a token can appear direct and
+                // via-router, so the option must stay in lock-step with the
+                // selected context (website/ fund-loss fix).
+                value={tokenIndex}
+                onChange={e => {
+                  const i = Number(e.target.value)
+                  setTokenIndex(i)
+                  // Remember the explicit pick so a refetch/chain-switch remaps
+                  // to this exact token instead of snapping back to list[0].
+                  const picked = contexts[i]
+                  if (picked) selectedKeyRef.current = payTokenKey(picked)
+                  setTokenTouched(true)
+                }}
+                disabled={busy}
+                aria-label="Payment token"
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+              >
+                {contexts.map((ctx, i) => (
+                  <option
+                    key={`${ctx.token}-${i}`}
+                    value={i}
+                    disabled={
+                      cartCount > 0 &&
+                      !shopRoutes?.[payTokenKey(ctx)]?.supported
+                    }
+                  >
+                    {ctx.symbol}
+                  </option>
+                ))}
+              </select>
+            </span>
           ) : (
             <span className="flex shrink-0 items-center pr-3 text-sm font-medium text-smoke-700">
               {symbol}
@@ -1002,9 +1294,20 @@ export function PayPanel({
               surfaceError ||
               terminalBlocked ||
               addBalanceViaRouter ||
+              (isConnected &&
+                cartCount > 0 &&
+                (shopRoutesLoading ||
+                  shopCreditsLoading ||
+                  !shopMatchesToken)) ||
               (surface?.pausePay && mode === 'pay') ||
               (isConnected &&
-                (amountRaw <= 0n || (mode === 'pay' && !previewReady)))
+                ((amountRaw <= 0n &&
+                  !(
+                    mode === 'pay' &&
+                    cartCount > 0 &&
+                    cartAmountDue === 0n
+                  )) ||
+                  (mode === 'pay' && !previewReady)))
             }
             className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
           >
@@ -1039,28 +1342,147 @@ export function PayPanel({
         className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
       />
 
-      {/* You get — only once an amount mints a non-zero token count */}
+      {/* One receipt for project tokens and every selected shop item. */}
       {mode === 'pay' &&
-      amountRaw > 0n &&
-      !previewLoading &&
-      !previewError &&
-      preview &&
-      preview.beneficiaryTokenCount > 0n ? (
+      (cartCount > 0 ||
+        (amountRaw > 0n &&
+          !previewError &&
+          (previewLoading ||
+            (preview && preview.beneficiaryTokenCount > 0n)))) ? (
         <div className="mt-4">
           <p className="text-xs text-smoke-500">You get</p>
-          <p className="font-agrandir text-xl font-medium text-ink">
-            {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{' '}
-            {projectTokenLabel}
-          </p>
-          {preview.reservedTokenCount > 0n ? (
-            <p className="mt-0.5 text-xs text-smoke-500">
-              Splits get {formatTokenAmount(preview.reservedTokenCount, 18)}{' '}
+          {preview && preview.beneficiaryTokenCount > 0n ? (
+            <p
+              aria-live="polite"
+              aria-busy={previewLoading}
+              className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
+                previewLoading ? 'text-smoke-500' : 'text-ink'
+              }`}
+            >
+              {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{' '}
               {projectTokenLabel}
             </p>
+          ) : amountRaw > 0n && previewLoading ? (
+            <span
+              className="mt-1 block h-7 w-28 animate-pulse rounded bg-smoke-100"
+              role="status"
+              aria-label="Calculating token return"
+            />
           ) : null}
-          {cartCount > 0 ? (
-            <p className="mt-0.5 text-xs text-smoke-500">
-              + {cartCount} item{cartCount === 1 ? '' : 's'} from the shop.
+
+          {selectedCartRows.length > 0 ? (
+            <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
+              {selectedCartRows.map(row => (
+                <div
+                  key={row.tierId}
+                  className="flex min-w-0 items-center gap-2"
+                >
+                  <span className="text-sm text-smoke-500">+</span>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-[10px] text-smoke-500">
+                    {row.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={row.image}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      `#${row.tierId}`
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
+                    {row.name}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setQuantity(row.tierId, row.quantity - 1)
+                      }
+                      disabled={busy}
+                      aria-label={`Remove one ${row.name}`}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-smoke-300 text-xs text-smoke-700 disabled:opacity-40"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-4 text-center text-xs tabular-nums text-ink">
+                      {row.quantity}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setQuantity(
+                          row.tierId,
+                          Math.min(row.cap, row.quantity + 1),
+                        )
+                      }
+                      disabled={busy || row.quantity >= row.cap}
+                      aria-label={`Add one ${row.name}`}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-smoke-300 text-xs text-smoke-700 disabled:opacity-40"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-smoke-600">
+                    {cartCount} item{cartCount === 1 ? '' : 's'}
+                  </span>
+                  <span className="tabular-nums text-ink">
+                    {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{' '}
+                    {shopPricingSymbol}
+                  </span>
+                </div>
+                {address && shopCreditsLoading ? (
+                  <div className="flex items-center justify-between gap-3 text-smoke-500">
+                    <span>Shop credit</span>
+                    <span>Checking…</span>
+                  </div>
+                ) : shopCreditApplied > 0n ? (
+                  <div className="flex items-center justify-between gap-3 text-emerald-700">
+                    <span>Shop credit applied</span>
+                    <span className="tabular-nums">
+                      −
+                      {formatTokenAmount(
+                        shopCreditApplied,
+                        shop?.pricingDecimals ?? 18,
+                      )}{' '}
+                      {shopPricingSymbol}
+                    </span>
+                  </div>
+                ) : null}
+                {restrictedCartTotal > 0n ? (
+                  <div className="flex items-center justify-between gap-3 text-smoke-500">
+                    <span>Fresh payment required</span>
+                    <span className="tabular-nums">
+                      {formatTokenAmount(
+                        restrictedCartTotal,
+                        shop?.pricingDecimals ?? 18,
+                      )}{' '}
+                      {shopPricingSymbol}
+                    </span>
+                  </div>
+                ) : null}
+                <div className="flex items-center justify-between gap-3 pt-0.5 font-medium">
+                  <span className="text-ink">Amount due</span>
+                  <span className="tabular-nums text-ink">
+                    {formatTokenAmount(
+                      cartAmountDue,
+                      shop?.pricingDecimals ?? 18,
+                    )}{' '}
+                    {shopPricingSymbol}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {preview && preview.reservedTokenCount > 0n ? (
+            <p className="mt-1.5 text-xs text-smoke-500">
+              Splits get {formatTokenAmount(preview.reservedTokenCount, 18)}{' '}
+              {projectTokenLabel}
             </p>
           ) : null}
         </div>

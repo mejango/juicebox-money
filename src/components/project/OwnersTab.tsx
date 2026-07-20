@@ -265,16 +265,30 @@ function YouCard({
         </div>
       ) : (
         <>
-          <div className="mt-3 divide-y divide-smoke-100">
-            {chains.map(([cid, pid]) => (
-              <YourChainRow
-                key={cid}
-                chainId={cid as JBChainId}
-                projectId={pid}
-                holder={address!}
-                isRevnet={isRevnet}
-              />
-            ))}
+          <div className="mt-4 overflow-x-auto rounded-xl border border-smoke-200">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-smoke-50">
+                <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
+                  <th className="px-4 py-3 font-normal">Chain</th>
+                  <th className="px-4 py-3 text-right font-normal">Balance</th>
+                  <th className="px-4 py-3 text-right font-normal">Cash out</th>
+                  <th className="px-4 py-3 text-right font-normal">Max loan</th>
+                  <th className="px-4 py-3 text-right font-normal">LP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chains.map(([cid, pid]) => (
+                  <YourChainRow
+                    key={cid}
+                    chainId={cid as JBChainId}
+                    projectId={pid}
+                    holder={address!}
+                    isRevnet={isRevnet}
+                    tokenSymbol={collateralSymbol}
+                  />
+                ))}
+              </tbody>
+            </table>
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -339,11 +353,13 @@ function YourChainRow({
   projectId,
   holder,
   isRevnet,
+  tokenSymbol,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
   isRevnet: boolean
+  tokenSymbol: string
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
@@ -466,77 +482,87 @@ function YourChainRow({
   })
 
   return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      <div className="flex items-start justify-between gap-3">
-        <span className="flex items-center gap-2 text-sm text-smoke-700">
-          <ChainIcon chainId={chainId} size={16} />
-          {chainName(chainId)}
-        </span>
-        <div className="text-right">
-          {isLoading ? (
-            <span className="text-sm text-smoke-500">Loading…</span>
-          ) : isError || !position ? (
-            <span className="text-sm text-smoke-500">
-              Couldn&apos;t load your position here.
-            </span>
-          ) : (
-            <>
-              <p className="text-sm font-medium text-ink">
-                {formatTokenAmount(position.balance)} tokens
+    <>
+      <tr className="border-b border-smoke-100 last:border-0">
+        <td className="px-4 py-3">
+          <span className="flex items-center gap-2 text-sm text-smoke-700">
+            <ChainIcon chainId={chainId} size={16} />
+            {chainName(chainId)}
+          </span>
+        </td>
+        {isLoading ? (
+          <td colSpan={4} className="px-4 py-3 text-right text-smoke-500">
+            Loading…
+          </td>
+        ) : isError || !position ? (
+          <td colSpan={4} className="px-4 py-3 text-right text-smoke-500">
+            Couldn&apos;t load your position here.
+          </td>
+        ) : (
+          <>
+            <td className="px-4 py-3 text-right align-top">
+              <p className="font-medium text-ink">
+                {formatTokenAmount(position.balance)} {tokenSymbol}
               </p>
               {position.token ? (
-                <p className="mt-0.5 text-xs text-smoke-700">
-                  {formatTokenAmount(position.credits)} credits |{' '}
+                <p className="mt-0.5 text-xs text-smoke-500">
+                  {formatTokenAmount(position.credits)} credits ·{' '}
                   {formatTokenAmount(position.erc20Balance)} ERC-20
                 </p>
               ) : position.credits > 0n ? (
-                <p className="mt-0.5 text-xs text-smoke-700">
-                  All credits — no ERC-20 deployed yet
-                </p>
+                <p className="mt-0.5 text-xs text-smoke-500">Credits only</p>
               ) : null}
-              {position.cashOutValue !== null ? (
-                <p className="mt-0.5 text-xs text-smoke-700">
-                  Cash-out value (approx):{' '}
+            </td>
+            <td className="px-4 py-3 text-right align-top font-medium text-ink">
+              {position.cashOutValue === null ? (
+                '—'
+              ) : (
+                <>
+                  ~
                   {formatTokenAmount(
                     position.cashOutValue,
                     position.cashOutDecimals,
                   )}{' '}
                   {position.cashOutSymbol}
-                </p>
-              ) : null}
-              {isRevnet ? (
-                <p className="mt-0.5 text-xs text-smoke-700">
-                  Max loan:{' '}
-                  {position.maxLoan === null ? (
-                    '—'
-                  ) : position.maxLoan > 0n ? (
-                    <>
-                      ~
-                      {formatTokenAmount(
-                        position.maxLoan,
-                        position.cashOutDecimals,
-                      )}{' '}
-                      {position.cashOutSymbol}
-                    </>
-                  ) : (
-                    'Locked'
-                  )}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
-      </div>
+                </>
+              )}
+            </td>
+            <td className="px-4 py-3 text-right align-top font-medium text-ink">
+              {!isRevnet || position.maxLoan === null ? (
+                '—'
+              ) : position.maxLoan > 0n ? (
+                <>
+                  ~
+                  {formatTokenAmount(
+                    position.maxLoan,
+                    position.cashOutDecimals,
+                  )}{' '}
+                  {position.cashOutSymbol}
+                </>
+              ) : (
+                'Locked'
+              )}
+            </td>
+            <td className="px-4 py-3 text-right align-top text-smoke-700">
+              Manage below
+            </td>
+          </>
+        )}
+      </tr>
       {position?.token && position.credits > 0n ? (
-        <ClaimFlow
-          chainId={chainId}
-          projectId={projectId}
-          holder={holder}
-          credits={position.credits}
-          onDone={refetch}
-        />
+        <tr className="border-b border-smoke-100 last:border-0">
+          <td colSpan={5} className="px-4 pb-3">
+            <ClaimFlow
+              chainId={chainId}
+              projectId={projectId}
+              holder={holder}
+              credits={position.credits}
+              onDone={refetch}
+            />
+          </td>
+        </tr>
       ) : null}
-    </div>
+    </>
   )
 }
 
@@ -874,7 +900,7 @@ function OwnersDonut({
         </text>
       </svg>
       <p className="mt-1 text-xs text-smoke-500">
-        {compactTokenTotal(total)} {tokenUnit}
+        Total: {compactTokenTotal(total)} {tokenUnit}
       </p>
     </div>
   )
@@ -971,12 +997,14 @@ function AllHoldersCard({
   }`
 
   return (
-    <div className="card p-5">
-      <span className="field-label">All</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Token owners paid in, received splits, received auto-issuance, or got
-        them second-hand.
-      </p>
+    <div className="card overflow-hidden p-5">
+      <div>
+        <span className="field-label">All</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          Token owners paid in, received splits, received auto-issuance, or got
+          them second-hand.
+        </p>
+      </div>
       {isLoading ? (
         <p className="mt-2 text-sm text-smoke-500">Loading…</p>
       ) : isError ? (
@@ -1232,15 +1260,16 @@ function ReservedCard({
   const reservedPercent = activeStage.metadata.reservedPercent
 
   return (
-    <div className="card p-5">
-      <span className="field-label">
-        {isRevnet ? 'Splits' : 'Reserved tokens'}
-      </span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        A share of every batch of new tokens is set aside for the recipients
-        below.
-      </p>
-
+    <div className="card overflow-hidden p-5">
+      <div>
+        <span className="field-label">
+          {isRevnet ? 'Splits' : 'Reserved tokens'}
+        </span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          A share of every batch of new tokens is set aside for the recipients
+          below.
+        </p>
+      </div>
       {isRevnet ? (
         <div className="mt-5 flex flex-wrap gap-5" aria-label="Split stage">
           {stages.map((stage, index) => (
@@ -1318,6 +1347,7 @@ function ReservedCard({
           groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
           title="Splits"
           rulesetId={BigInt(rulesetId)}
+          isRevnet
         />
       ) : null}
     </div>

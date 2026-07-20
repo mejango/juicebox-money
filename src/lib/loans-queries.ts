@@ -25,9 +25,9 @@ export type BsLoan = {
 }
 
 const LOANS_QUERY = `
-  query($projectId: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) {
+  query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) {
     loans(
-      where: { projectId: $projectId, version: 6, chainId_in: $chainIds }
+      where: { projectId: $projectId, version: 6, chainId: $chainId }
       orderBy: "createdAt"
       orderDirection: "desc"
       limit: $limit
@@ -43,12 +43,13 @@ const LOANS_QUERY = `
 `
 
 /**
- * A project's loans across the given chains, newest first. Paginated the same
- * way as getParticipants so a busy revnet's full loan book comes back.
+ * A deployment's loans, newest first. The chain and its local project ID are
+ * always passed together; linked deployments are never queried with one
+ * project's ID. Paginated so a busy revnet's full loan book comes back.
  */
 export async function getLoans(
   projectId: number,
-  chainIds: number[],
+  chainId: number,
   limit = 500,
 ): Promise<{ items: BsLoan[]; totalCount: number }> {
   const max = Math.max(1, Math.min(1000, limit))
@@ -63,7 +64,7 @@ export async function getLoans(
       loans: { items: BsLoan[]; totalCount: number }
     }>(
       LOANS_QUERY,
-      { projectId, chainIds, limit: pageLimit, offset },
+      { projectId, chainId, limit: pageLimit, offset },
       { revalidate: 30 },
     )
     const page = data.loans.items ?? []

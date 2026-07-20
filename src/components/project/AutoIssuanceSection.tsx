@@ -135,13 +135,14 @@ export function AutoIssuanceSection({
 
   return (
     <div className="card p-5">
-      <span className="field-label">Auto issuance</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        When a stage begins, this revnet mints preset token amounts to the
-        beneficiaries below. Anyone can trigger a mint once its stage has
-        started.
-      </p>
-
+      <div>
+        <span className="field-label">Auto issuance</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          When a stage begins, this revnet mints preset token amounts to the
+          beneficiaries below. Anyone can trigger a mint once its stage has
+          started.
+        </p>
+      </div>
       {isLoading ? (
         <p className="mt-3 text-sm text-smoke-500">Loading…</p>
       ) : isError ? (

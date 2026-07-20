@@ -26,6 +26,10 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { AddressField } from '@/components/create/AddressField'
+import {
+  TransactionInProgress,
+  usePreloadTransactionAnimation,
+} from '@/components/TransactionInProgress'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
@@ -51,6 +55,7 @@ export function PowersCard({
   chainId: JBChainId
   projectId: number
 }) {
+  usePreloadTransactionAnimation()
   const { isConnected, address } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
@@ -130,7 +135,7 @@ export function PowersCard({
 
 // ---------------------------------------------------------- power descriptors --
 
-type PowerFlag =
+export type PowerFlag =
   | 'allowOwnerMinting'
   | 'allowAddPriceFeed'
   | 'allowSetTerminals'
@@ -139,9 +144,9 @@ type PowerFlag =
   | 'allowSetCustomToken'
   | 'allowAddAccountingContext'
 
-type FieldKind = 'address' | 'amount' | 'uint' | 'decimals' | 'bool'
+export type FieldKind = 'address' | 'amount' | 'uint' | 'decimals' | 'bool'
 
-type FlowField = {
+export type FlowField = {
   name: string
   label: string
   kind: FieldKind
@@ -152,9 +157,12 @@ type FlowField = {
   initial?: string | 'ADDR_CONNECTED' | 'ADDR_CONTROLLER' | 'ADDR_TERMINAL'
 }
 
-type ResolvedValues = Record<string, Address | bigint | number | boolean>
+export type ResolvedValues = Record<
+  string,
+  Address | bigint | number | boolean
+>
 
-type PowerDescriptor = {
+export type PowerDescriptor = {
   flag: PowerFlag
   label: string
   desc: string
@@ -171,7 +179,7 @@ type PowerDescriptor = {
   buildArgs: (projectId: bigint, v: ResolvedValues) => readonly unknown[]
 }
 
-const POWERS: PowerDescriptor[] = [
+export const POWERS: PowerDescriptor[] = [
   {
     flag: 'allowOwnerMinting',
     label: 'Mint tokens',
@@ -418,12 +426,17 @@ function PendingNote({
   const url = etherscanTx(chainId, hash)
   if (!url) return null
   return (
-    <p className="mt-2 text-center text-xs text-smoke-700">
+    <TransactionInProgress className="mt-3">
       Waiting for confirmation —{' '}
-      <a href={url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2"
+      >
         view transaction
       </a>
-    </p>
+    </TransactionInProgress>
   )
 }
 

@@ -33,6 +33,7 @@ const LEGACY_SITE = 'https://juicebox.money'
 const LEGACY_SUBGRAPH_URL =
   process.env.NEXT_PUBLIC_LEGACY_SUBGRAPH_URL ??
   'https://api.subgraph.migration.ormilabs.com/api/public/c7abcd86-002e-4cba-8a21-7319b9239191/subgraphs/juicebox/v0.0.1/gn'
+const REQUEST_TIMEOUT_MS = 8_000
 
 type SuckerGroupTrending = {
   id: string
@@ -126,6 +127,7 @@ async function getLegacyTrending(limit: number): Promise<TrendingCard[]> {
       }`,
       variables: { limit },
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     next: { revalidate: 300 },
   })
   if (!res.ok) throw new Error(`legacy subgraph ${res.status}`)

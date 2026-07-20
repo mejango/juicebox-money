@@ -1,11 +1,12 @@
-import { JB_CHAINS } from '@bananapus/nana-sdk-core'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { Metadata } from 'next'
+import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cache } from 'react'
+import type { Address } from 'viem'
 import { ActivityList } from '@/components/ActivityList'
 import { ChainIcon } from '@/components/ChainIcon'
-import { OwnerPanel } from '@/components/OwnerPanel'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { BackOfficeTab } from '@/components/project/BackOfficeTab'
@@ -13,8 +14,10 @@ import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { FundsTab } from '@/components/project/FundsTab'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { OwnersTab } from '@/components/project/OwnersTab'
+import { ProjectStats } from '@/components/project/ProjectStats'
 import { ProjectTabs } from '@/components/project/Tabs'
 import { RulesetsTab } from '@/components/project/RulesetsTab'
+import { ShopCartProvider } from '@/components/project/ShopCartProvider'
 import { ShopTab } from '@/components/project/ShopTab'
 import { TermsTab } from '@/components/project/TermsTab'
 import {
@@ -24,10 +27,10 @@ import {
   getProjectActivity,
   getRevnetOperator,
   getSuckerGroupProjects,
+  resolveProjectDeployments,
 } from '@/lib/bendystraw'
 import {
   formatDate,
-  formatTokenAmount,
   ipfsUrl,
   truncateAddress,
 } from '@/lib/format'
@@ -157,9 +160,7 @@ export default async function ProjectPage({
   ])
 
   const name = project.name ?? `Project ${project.projectId}`
-  const decimals = project.decimals ?? 18
-  const symbol = project.tokenSymbol ?? 'ETH'
-  const chains = [...siblings].sort((a, b) => a.chainId - b.chainId)
+  const chains = resolveProjectDeployments(project, siblings)
   const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname
   const description = metadata?.description
     ? toParagraphs(metadata.description)
@@ -189,14 +190,15 @@ export default async function ProjectPage({
   ]
 
   const authority = isRevnet ? operator : project.owner
-  const chainPairs: [number, number][] = (
-    chains.length > 0 ? chains : [project]
-  ).map(p => [p.chainId, p.projectId])
+  const chainPairs: [number, number][] = chains.map(p => [
+    p.chainId,
+    p.projectId,
+  ])
 
   // The owner (custom) / operator (revnet) can DIFFER per chain, so resolve
   // it for every deployment — custom owners come from bendystraw per sibling,
   // revnet operators from the per-chain permissionHolders query.
-  const siblingList = chains.length > 0 ? chains : [project]
+  const siblingList = chains
   const authorities: [number, string | null][] = isRevnet
     ? await Promise.all(
         siblingList.map(
@@ -208,23 +210,32 @@ export default async function ProjectPage({
         ),
       )
     : siblingList.map(p => [p.chainId, p.owner] as [number, string | null])
+  const authorityDeployments = siblingList.map(projectOnChain => ({
+    chainId: projectOnChain.chainId as JBChainId,
+    projectId: projectOnChain.projectId,
+    indexedAuthority: (authorities.find(
+      ([chainId]) => chainId === projectOnChain.chainId,
+    )?.[1] ?? null) as Address | null,
+  }))
 
-  const stats: [string, string][] = [
-    [`${symbol} raised`, formatTokenAmount(project.volume, decimals)],
-    [`${symbol} in treasury`, formatTokenAmount(project.balance, decimals)],
-    ['Payments', project.paymentsCount.toLocaleString('en-US')],
-    ['Supporters', project.contributorsCount.toLocaleString('en-US')],
-  ]
+  const totalRaisedUsd = siblingList
+    .reduce((sum, row) => sum + BigInt(row.volumeUsd || '0'), 0n)
+    .toString()
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+    <ShopCartProvider>
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       {coverImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={coverImage}
-          alt=""
-          className="mb-6 h-32 w-full rounded-xl border border-smoke-200 object-cover sm:h-44"
-        />
+        <div className="relative mb-6 h-32 w-full overflow-hidden rounded-xl border border-smoke-200 sm:h-44">
+          <Image
+            src={coverImage}
+            alt=""
+            fill
+            priority
+            sizes="(min-width: 1152px) 1152px, calc(100vw - 2rem)"
+            className="object-cover"
+          />
+        </div>
       ) : null}
       {/* Header */}
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
@@ -286,7 +297,7 @@ export default async function ProjectPage({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="text-smoke-500">On:</span>
-              {(chains.length > 1 ? chains : [project]).map(p => (
+              {chains.map(p => (
                 <Link
                   key={p.chainId}
                   href={`/${toUrn(p.chainId, p.projectId)}`}
@@ -301,19 +312,16 @@ export default async function ProjectPage({
       </header>
 
       {/* Stats */}
-      <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {stats.map(([label, value]) => (
-          <div
-            key={label}
-            className="card px-4 py-3.5"
-          >
-            <dt className="field-label">{label}</dt>
-            <dd className="mt-1 font-agrandir text-xl font-medium text-ink sm:text-2xl">
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <ProjectStats
+        totalRaisedUsd={totalRaisedUsd}
+        raisedByChain={siblingList.map(row => ({
+          chainId: row.chainId,
+          usd: row.volumeUsd || '0',
+        }))}
+        paymentsCount={project.paymentsCount}
+        suckerGroupId={project.suckerGroupId}
+        chains={chainPairs}
+      />
 
       {/* Content + pay card */}
       <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
@@ -375,6 +383,7 @@ export default async function ProjectPage({
                       <RulesetsTab
                         chainId={urn.chainId}
                         projectId={project.projectId}
+                        chains={chainPairs}
                       />
                     ),
                   },
@@ -386,6 +395,7 @@ export default async function ProjectPage({
                         <FundsTab
                           chainId={urn.chainId}
                           projectId={project.projectId}
+                          chains={chainPairs}
                         />
                       ),
                     },
@@ -421,22 +431,6 @@ export default async function ProjectPage({
                   <ExtrasTab
                     chainId={urn.chainId}
                     projectId={project.projectId}
-                    isRevnet={isRevnet}
-                    profile={{
-                      name: metadata?.name ?? name,
-                      tagline:
-                        metadata?.projectTagline ??
-                        project.projectTagline ??
-                        '',
-                      description: metadata?.description ?? '',
-                      logoUri: metadata?.logoUri ?? project.logoUri ?? null,
-                      infoUri: metadata?.infoUri,
-                      twitter: metadata?.twitter,
-                      discord: metadata?.discord,
-                      telegram: metadata?.telegram,
-                      whatsapp: metadata?.whatsapp,
-                      instagram: metadata?.instagram,
-                    }}
                     chains={chainPairs}
                   />
                 ),
@@ -444,36 +438,14 @@ export default async function ProjectPage({
               {
                 label: isRevnet ? 'Operator' : 'Owner',
                 content: (
-                  <div>
-                    {isRevnet ? (
-                      <p className="mb-5 text-sm leading-relaxed text-smoke-700">
-                        Revnets have no owner — the rules are locked in at
-                        launch. An operator manages the few controls revnets
-                        leave open
-                        {authority
-                          ? `: ${truncateAddress(authority)}`
-                          : '.'}
-                      </p>
-                    ) : (
-                      <p className="mb-5 text-sm leading-relaxed text-smoke-700">
-                        The owner&apos;s tools appear here when the owner
-                        connects their wallet.
-                      </p>
-                    )}
-                    <BackOfficeTab
-                      chainId={urn.chainId}
-                      projectId={project.projectId}
-                      isRevnet={isRevnet}
-                      owner={project.owner}
-                      operator={operator}
-                    />
-                    {/* Renders only for the on-chain owner (client-gated). */}
-                    <OwnerPanel
-                      chainId={urn.chainId}
-                      projectId={project.projectId}
-                      initial={{
-                        // Prefer the pinned metadata (the truth setUriOf
-                        // points at); bendystraw mirrors it but can lag.
+                  <BackOfficeTab
+                    chainId={urn.chainId}
+                    projectId={project.projectId}
+                    isRevnet={isRevnet}
+                    owner={project.owner}
+                    operator={operator}
+                    deployments={authorityDeployments}
+                    profile={{
                         name: metadata?.name ?? name,
                         tagline:
                           metadata?.projectTagline ??
@@ -489,15 +461,15 @@ export default async function ProjectPage({
                         instagram: metadata?.instagram,
                         coverImageUri: metadata?.coverImageUri,
                         payDisclosure: metadata?.payDisclosure,
-                      }}
-                    />
-                  </div>
+                    }}
+                  />
                 ),
               },
             ]}
           />
         </div>
       </div>
-    </div>
+      </div>
+    </ShopCartProvider>
   )
 }

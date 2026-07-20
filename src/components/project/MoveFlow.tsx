@@ -86,20 +86,25 @@ export function MoveCard({
   const [to, setTo] = useState<number | null>(null)
   const [amount, setAmount] = useState('')
 
-  const fromPid = useMemo(
-    () => chains.find(([cid]) => cid === from)?.[1] ?? projectId,
-    [chains, from, projectId],
-  )
+  const fromPid = useMemo(() => {
+    const mapped = chains.find(([cid]) => cid === from)?.[1]
+    // The route's own pair is known exactly. A remote deployment must always
+    // come from the verified sucker-group map; never copy the home ID.
+    return mapped ?? (from === chainId ? projectId : null)
+  }, [chainId, chains, from, projectId])
 
   // Source-chain sucker pairs (linked destinations) + the caller's ERC-20
   // position on the source chain (only the deployed ERC-20 can bridge —
   // credits can't).
   const { data: src } = useQuery({
     queryKey: ['settlement-move-src', from, fromPid, address],
-    enabled: connected,
+    enabled: connected && fromPid !== null,
     staleTime: 20_000,
     retry: 1,
     queryFn: async () => {
+      if (fromPid === null) {
+        throw new Error('The source project ID could not be verified.')
+      }
       const client = getPublicClient(config, {
         chainId: from as JBChainId,
       }) as PublicClient | undefined
@@ -129,11 +134,23 @@ export function MoveCard({
 
   const dests = useMemo(
     () =>
-      (src?.pairs ?? []).map(p => ({
-        chainId: Number(p.remoteChainId),
-        sucker: p.local,
-      })),
-    [src],
+      (src?.pairs ?? []).flatMap(p => {
+        const remoteChainId = Number(p.remoteChainId)
+        const remoteProjectId = chains.find(
+          ([candidateChainId]) => candidateChainId === remoteChainId,
+        )?.[1]
+        // A sucker pair identifies the remote chain, not its project ID. If
+        // the indexer has not verified that exact remote pair, moving stays
+        // unavailable rather than guessing from either numeric ID.
+        return remoteProjectId === undefined
+          ? []
+          : [{
+              chainId: remoteChainId,
+              projectId: remoteProjectId,
+              sucker: p.local,
+            }]
+      }),
+    [chains, src],
   )
 
   // Default the destination to the first linked chain once pairs load.
@@ -171,6 +188,12 @@ export function MoveCard({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
+          {fromPid === null ? (
+            <p className="callout callout-warning text-xs">
+              This deployment&apos;s project ID could not be verified. Moving
+              stays unavailable until the linked projects can be resolved.
+            </p>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
             <label className="block min-w-0">
               <span className="field-label">From</span>
@@ -238,13 +261,17 @@ export function MoveCard({
             </>
           )}
 
-          {selectedPair && src?.token && parsedAmount > 0n && address ? (
+          {selectedPair &&
+          fromPid !== null &&
+          src?.token &&
+          parsedAmount > 0n &&
+          address ? (
             <MoveFlow
               key={`${from}:${to}`}
               from={from as JBChainId}
               fromPid={fromPid}
               to={to as number}
-              toPid={chains.find(([cid]) => cid === to)?.[1] ?? (to as number)}
+              toPid={selectedPair.projectId}
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}

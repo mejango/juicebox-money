@@ -7,17 +7,15 @@ import { parseEventLogs, zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { draftFileName, parseDraft } from '@/lib/draft'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
 import { chainName, toUrn } from '@/lib/urn'
 
 /**
- * Extras tab (website/ parity: renderExtrasSection): a .jb draft export
- * ("Copy this project") and the payer-address deployer (tx #32,
- * JBProjectPayerDeployer.deployProjectPayer). Deploys go through useSafeTx
- * (simulate-first) on the current page chain only; other chains link to
- * their own Extras tab.
+ * Extras tab (website/ parity: renderExtrasSection): the payer-address
+ * deployer (tx #32, JBProjectPayerDeployer.deployProjectPayer). Deploys go
+ * through useSafeTx (simulate-first) on the current page chain only; other
+ * chains link to their own Extras tab.
  */
 
 // ABI fragment + singleton address for JBProjectPayerDeployer, taken from
@@ -69,30 +67,13 @@ const PROJECT_PAYER_DEPLOYER_ABI = [
   },
 ] as const
 
-export type ExtrasProfile = {
-  name: string
-  tagline: string
-  description: string
-  logoUri: string | null
-  infoUri?: string
-  twitter?: string
-  discord?: string
-  telegram?: string
-  whatsapp?: string
-  instagram?: string
-}
-
 export function ExtrasTab({
   chainId,
   projectId,
-  isRevnet,
-  profile,
   chains,
 }: {
   chainId: JBChainId
   projectId: number
-  isRevnet: boolean
-  profile: ExtrasProfile
   /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
   chains: [number, number][]
 }) {
@@ -103,90 +84,6 @@ export function ExtrasTab({
         projectId={projectId}
         chains={chains}
       />
-    </div>
-  )
-}
-
-/**
- * "Copy this project": downloads a .jb create-flow draft seeded from this
- * project's profile. The draft is a PARTIAL copy — name, tagline,
- * description, links, chains, and flavor — not an on-chain reconstruction;
- * rules (stages) are the create flow's defaults. Built via the
- * parseDraft(JSON.stringify(...)) round-trip so the file is always
- * schema-valid (parseDraft is the .jb security boundary).
- */
-function CopyProjectCard({
-  isRevnet,
-  profile,
-  chains,
-}: {
-  isRevnet: boolean
-  profile: ExtrasProfile
-  chains: number[]
-}) {
-  const [error, setError] = useState<string | null>(null)
-
-  const download = () => {
-    setError(null)
-    try {
-      const draft = parseDraft(
-        JSON.stringify({
-          v: 1,
-          flavor: isRevnet ? 'revnet' : 'project',
-          name: profile.name,
-          tagline: profile.tagline,
-          description: profile.description,
-          links: {
-            infoUri: profile.infoUri ?? '',
-            twitter: profile.twitter ?? '',
-            discord: profile.discord ?? '',
-            telegram: profile.telegram ?? '',
-            whatsapp: profile.whatsapp ?? '',
-            instagram: profile.instagram ?? '',
-          },
-          chains,
-          // One default-shaped stage: parseDraft requires at least one, and
-          // sanitizeStage fills every rule with the create flow's defaults.
-          stages: [{}],
-        }),
-      )
-      const blob = new Blob([JSON.stringify(draft, null, 2)], {
-        type: 'application/json',
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = draftFileName(profile.name)
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      setError('Could not build the draft file. Try again.')
-    }
-  }
-
-  return (
-    <div className="card p-5">
-      <span className="field-label">Copy this project</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Start your own project from this one&apos;s profile. The download is a
-        .jb draft with this project&apos;s name, tagline, description, links,
-        and chains — rules start fresh in the create flow, and the logo
-        isn&apos;t included.
-      </p>
-      <button
-        onClick={download}
-        className="btn-secondary mt-4 min-h-[40px] px-4 text-sm"
-      >
-        Download .jb draft
-      </button>
-      <p className="mt-2 text-xs text-smoke-700">
-        Import the file on the Create page to pick up from here.
-      </p>
-      {error ? (
-        <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-        </p>
-      ) : null}
     </div>
   )
 }
@@ -271,11 +168,13 @@ function PayerAddressCard({
   if (!deployer) {
     return (
       <div className="card p-5">
-        <span className="field-label">Payer address</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Payer addresses aren&apos;t available on {chainName(chainId)} — the
-          deployer contract isn&apos;t on this chain.
-        </p>
+        <div>
+          <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            Payer addresses aren&apos;t available on {chainName(chainId)} — the
+            deployer contract isn&apos;t on this chain.
+          </p>
+        </div>
       </div>
     )
   }
@@ -346,13 +245,38 @@ function PayerAddressCard({
 
   return (
     <div className="card p-5">
-      <span className="field-label">Payer address</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Get a dedicated address that pays this project whenever someone sends
-        ETH to it — no app needed. Sending other tokens to it directly
-        doesn&apos;t work. Anyone can create any number of payer addresses.
-      </p>
-
+      <div>
+        <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          Get a dedicated address that pays this project whenever someone sends
+          ETH to it — no app needed. Sending other tokens to it directly
+          doesn&apos;t work. Anyone can create any number of payer addresses.
+        </p>
+        {tx.phase !== 'success' ? (
+          <>
+            <label className="mt-4 block max-w-sm">
+              <span className="field-label">Behavior</span>
+              <select
+                value={addToBalance ? 'balance' : 'pay'}
+                disabled={busy}
+                onChange={e => {
+                  setAddToBalance(e.target.value === 'balance')
+                  invalidate()
+                }}
+                className="input-well select-caret mt-1.5 min-h-[40px] w-full px-3 pr-9 text-sm"
+              >
+                <option value="pay">Pay</option>
+                <option value="balance">Add to balance</option>
+              </select>
+            </label>
+            <p className="mt-1.5 text-xs text-smoke-700">
+              {addToBalance
+                ? 'Adds funds to the project without minting any tokens.'
+                : 'Pays the project and mints its tokens to the beneficiary.'}
+            </p>
+          </>
+        ) : null}
+      </div>
       {tx.phase === 'success' ? (
         <PayerDeployedPanel
           payer={deployedPayer}
@@ -362,27 +286,6 @@ function PayerAddressCard({
         />
       ) : (
         <>
-          <label className="mt-4 block">
-            <span className="field-label">Behavior</span>
-            <select
-              value={addToBalance ? 'balance' : 'pay'}
-              disabled={busy}
-              onChange={e => {
-                setAddToBalance(e.target.value === 'balance')
-                invalidate()
-              }}
-              className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
-            >
-              <option value="pay">Pay</option>
-              <option value="balance">Add to balance</option>
-            </select>
-          </label>
-          <p className="mt-1.5 text-xs text-smoke-700">
-            {addToBalance
-              ? 'Adds funds to the project without minting any tokens.'
-              : 'Pays the project and mints its tokens to the beneficiary.'}
-          </p>
-
           {!addToBalance ? (
             <div className="mt-4">
               <span className="field-label">Token beneficiary</span>

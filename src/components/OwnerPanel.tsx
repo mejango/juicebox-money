@@ -26,6 +26,7 @@ import {
   buildSetUriTx,
   isKnownController,
 } from '@/lib/manage'
+import { requireContractTransactionReview } from '@/lib/transaction-review'
 
 const MAX_LOGO_BYTES = 1024 * 1024
 
@@ -283,13 +284,18 @@ function DetailsRow({
       setPhase('pinning')
       const projectUri = await pinMetadata()
       setPhase('signing')
-      await switchChainAsync({ chainId })
       const request = buildSetUriTx({
         chainId,
         projectId: BigInt(projectId),
         projectUri,
         controller,
       })
+      await requireContractTransactionReview(request, {
+        title: 'Review project details update',
+        label: 'Set project metadata URI',
+        contractName: 'JBController',
+      })
+      await switchChainAsync({ chainId })
       const hash = await writeContractAsync(request)
       setTxHash(hash)
     } catch (e) {
@@ -506,7 +512,6 @@ function TokenRow({
     setErrorMsg(null)
     setSending(true)
     try {
-      await switchChainAsync({ chainId })
       const request = buildDeployTokenRequest({
         chainId,
         projectId: BigInt(projectId),
@@ -514,6 +519,12 @@ function TokenRow({
         symbol,
         controller,
       })
+      await requireContractTransactionReview(request, {
+        title: 'Review project token deployment',
+        label: 'Deploy project ERC-20 token',
+        contractName: 'JBController',
+      })
+      await switchChainAsync({ chainId })
       const hash = await writeContractAsync(request)
       setTxHash(hash)
     } catch (e) {

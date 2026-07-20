@@ -18,13 +18,17 @@ import {
   v6Address,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
+import { getPublicClient } from '@wagmi/core'
 import { useQuery } from '@tanstack/react-query'
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { ChainIcon } from '@/components/ChainIcon'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { formatDate, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { chainName } from '@/lib/urn'
+import { wagmiConfig } from '@/providers/Providers'
 
 /** Fund-access amounts at/above this are stored as "no limit". */
 const UNLIMITED_FLOOR = 2n ** 200n
@@ -143,7 +147,263 @@ function approvalHookLabel(
   return `Approval hook ${truncateAddress(hook)}`
 }
 
-type RuleRow = { section: string; label: string; value: string }
+type RuleRow = {
+  section: string
+  label: string
+  value: string
+  hint?: string
+}
+
+type RulesetSyncField = {
+  key: string
+  label: string
+  raw: string
+  value: string
+}
+
+type ChainRulesetSnapshot = {
+  chainId: JBChainId
+  projectId: number
+  ruleset: JBRulesetWithMetadata | null
+  error: boolean
+}
+
+/**
+ * Configured characteristics used by website/ to decide whether omnichain
+ * rulesets are synced. Live timing, cycle number, ruleset id, and live weight
+ * are deliberately excluded: omnichain transactions land in different
+ * blocks, and an auto-cycling weight can legitimately be at a different live
+ * point while the rules themselves remain identical.
+ */
+function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
+  const { ruleset: r, metadata: m } = entry
+  const dataHook = String(m.dataHook ?? zeroAddress)
+  const hookValue =
+    dataHook.toLowerCase() === zeroAddress ? 'None' : truncateAddress(dataHook)
+
+  return [
+    {
+      key: 'duration',
+      label: 'Duration',
+      raw: String(r.duration),
+      value: r.duration > 0 ? formatDuration(r.duration) : 'None',
+    },
+    {
+      key: 'weightCutPercent',
+      label: 'Issuance cut',
+      raw: String(r.weightCutPercent),
+      value:
+        r.weightCutPercent > 0
+          ? `${billionths(r.weightCutPercent)} each cycle`
+          : 'None',
+    },
+    {
+      key: 'reservedPercent',
+      label: 'Reserved tokens',
+      raw: String(m.reservedPercent),
+      value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : 'None',
+    },
+    {
+      key: 'cashOutTaxRate',
+      label: 'Cash-out tax',
+      raw: String(m.cashOutTaxRate),
+      value:
+        m.cashOutTaxRate >= 10_000
+          ? 'Disabled'
+          : m.cashOutTaxRate > 0
+            ? basisPoints(m.cashOutTaxRate)
+            : 'None',
+    },
+    {
+      key: 'baseCurrency',
+      label: 'Base currency',
+      raw: String(m.baseCurrency),
+      value: baseCurrencyLabel(m.baseCurrency, undefined),
+    },
+    {
+      key: 'pausePay',
+      label: 'Payments',
+      raw: String(m.pausePay),
+      value: m.pausePay ? 'Paused' : 'Open',
+    },
+    {
+      key: 'pauseCreditTransfers',
+      label: 'Token transfers',
+      raw: String(m.pauseCreditTransfers),
+      value: m.pauseCreditTransfers ? 'Paused' : 'Allowed',
+    },
+    {
+      key: 'allowOwnerMinting',
+      label: 'Owner minting',
+      raw: String(m.allowOwnerMinting),
+      value: m.allowOwnerMinting ? 'Allowed' : 'Not allowed',
+    },
+    {
+      key: 'allowSetTerminals',
+      label: 'Change payment terminals',
+      raw: String(m.allowSetTerminals),
+      value: m.allowSetTerminals ? 'Allowed' : 'Not allowed',
+    },
+    {
+      key: 'allowSetController',
+      label: 'Change controller',
+      raw: String(m.allowSetController),
+      value: m.allowSetController ? 'Allowed' : 'Not allowed',
+    },
+    {
+      key: 'allowTerminalMigration',
+      label: 'Migrate terminals',
+      raw: String(m.allowTerminalMigration),
+      value: m.allowTerminalMigration ? 'Allowed' : 'Not allowed',
+    },
+    {
+      key: 'holdFees',
+      label: 'Hold fees',
+      raw: String(m.holdFees),
+      value: m.holdFees ? 'Yes' : 'No',
+    },
+    {
+      key: 'useDataHookForPay',
+      label: 'Use data hook for payments',
+      raw: String(m.useDataHookForPay),
+      value: m.useDataHookForPay ? 'Yes' : 'No',
+    },
+    {
+      key: 'useDataHookForCashOut',
+      label: 'Use data hook for cash outs',
+      raw: String(m.useDataHookForCashOut),
+      value: m.useDataHookForCashOut ? 'Yes' : 'No',
+    },
+    {
+      key: 'dataHook',
+      label: 'Data hook',
+      raw: dataHook.toLowerCase(),
+      value: hookValue,
+    },
+  ]
+}
+
+function RulesetChainStatus({
+  snapshots,
+  loading,
+}: {
+  snapshots: readonly ChainRulesetSnapshot[] | undefined
+  loading: boolean
+}) {
+  if (loading) {
+    return (
+      <p className="mt-4 text-center text-xs text-smoke-500">
+        Checking rules across chains…
+      </p>
+    )
+  }
+  if (!snapshots?.length) return null
+
+  const verified = snapshots.filter(
+    (snapshot): snapshot is ChainRulesetSnapshot & {
+      ruleset: JBRulesetWithMetadata
+    } => !!snapshot.ruleset,
+  )
+  const unavailable = snapshots.filter(snapshot => !snapshot.ruleset)
+
+  if (verified.length < 2) {
+    return unavailable.length ? (
+      <p className="mt-4 text-center text-xs text-smoke-500">
+        Couldn&apos;t compare the rules on every chain.
+      </p>
+    ) : null
+  }
+
+  const fieldsByChain = verified.map(snapshot => ({
+    ...snapshot,
+    fields: rulesetSyncFields(snapshot.ruleset),
+  }))
+  const baseline = fieldsByChain[0].fields
+  const differences = baseline.filter(field =>
+    fieldsByChain.some(snapshot => {
+      const candidate = snapshot.fields.find(item => item.key === field.key)
+      return candidate?.raw !== field.raw
+    }),
+  )
+
+  if (!differences.length && !unavailable.length) {
+    return (
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-sm text-melon-700">
+        <span className="flex -space-x-1" aria-hidden>
+          {verified.map(snapshot => (
+            <ChainIcon
+              key={snapshot.chainId}
+              chainId={snapshot.chainId}
+              size={18}
+              className="ring-2 ring-white"
+            />
+          ))}
+        </span>
+        <span className="font-medium">Synced across all chains</span>
+      </div>
+    )
+  }
+
+  if (!differences.length) {
+    return (
+      <div className="callout callout-warning mt-4 text-sm">
+        <p className="font-medium text-ink">Couldn&apos;t verify every chain</p>
+        <p className="mt-1 text-xs text-smoke-700">
+          The verified chains have matching rules, but{' '}
+          {unavailable.map(row => chainName(row.chainId)).join(', ')} could not
+          be checked.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="callout callout-warning mt-4 text-sm">
+      <p className="font-medium text-ink">Rules differ by chain</p>
+      <p className="mt-1 text-xs text-smoke-700">
+        Only the settings below differ. Live timing, cycle number, and current
+        issuance weight are not part of this comparison.
+      </p>
+      <div className="mt-3 divide-y divide-smoke-200 border-y border-smoke-200">
+        {differences.map(field => (
+          <div
+            key={field.key}
+            className="grid gap-2 py-3 sm:grid-cols-[10rem_minmax(0,1fr)]"
+          >
+            <p className="text-xs font-medium text-smoke-700">{field.label}</p>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {fieldsByChain.map(snapshot => {
+                const value = snapshot.fields.find(
+                  item => item.key === field.key,
+                )?.value
+                return (
+                  <div
+                    key={snapshot.chainId}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <ChainIcon chainId={snapshot.chainId} size={16} />
+                    <span className="text-xs text-smoke-500">
+                      {chainName(snapshot.chainId)}:
+                    </span>
+                    <span className="text-xs font-medium text-ink">
+                      {value ?? '—'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      {unavailable.length ? (
+        <p className="mt-2 text-xs text-smoke-700">
+          Couldn&apos;t verify{' '}
+          {unavailable.map(row => chainName(row.chainId)).join(', ')}.
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
 /** Every rule as a label/value row, in mainstream language. */
 function ruleRows(
@@ -155,12 +415,13 @@ function ruleRows(
   const { ruleset: r, metadata: m } = entry
   const base = baseCurrencyLabel(m.baseCurrency, contexts)
   return [
+    { section: 'Cycle', label: 'Start', value: formatDateTime(r.start) },
     {
       section: 'Cycle',
-      label: 'Cycle length',
-      value: r.duration > 0 ? formatDuration(r.duration) : 'None — rules last until changed',
+      label: 'Duration',
+      value: r.duration > 0 ? formatDuration(r.duration) : 'Not set',
+      hint: r.duration > 0 ? undefined : 'Rules last until changed',
     },
-    { section: 'Cycle', label: 'Start', value: formatDateTime(r.start) },
     {
       section: 'Cycle',
       label: 'Rule change deadline',
@@ -171,7 +432,7 @@ function ruleRows(
       label: 'Issuance',
       value:
         r.weight > 0n
-          ? `Supporters get ${formatTokenAmount(r.weight, 18, 2)} ${tokenSymbol} per ${base}`
+          ? `${formatTokenAmount(r.weight, 18, 2)} ${tokenSymbol} per ${base}`
           : 'No new tokens for payments',
     },
     {
@@ -187,14 +448,16 @@ function ruleRows(
       label: 'Reserved',
       value:
         m.reservedPercent > 0
-          ? `${basisPoints(m.reservedPercent)} of new tokens go to reserved recipients`
+          ? basisPoints(m.reservedPercent)
           : 'None',
     },
     {
       section: 'Token',
       label: 'Cashing out',
       value:
-        m.cashOutTaxRate > 0
+        m.cashOutTaxRate >= 10_000
+          ? 'Disabled'
+          : m.cashOutTaxRate > 0
           ? `Taxed ${basisPoints(m.cashOutTaxRate)}`
           : 'No tax',
     },
@@ -206,7 +469,7 @@ function ruleRows(
     {
       section: 'Token',
       label: 'Owner minting',
-      value: m.allowOwnerMinting ? 'Owner can mint tokens' : 'Not allowed',
+      value: m.allowOwnerMinting ? 'Allowed' : 'Not allowed',
     },
     {
       section: 'Other rules',
@@ -215,10 +478,8 @@ function ruleRows(
     },
     {
       section: 'Other rules',
-      label: 'Payouts',
-      value: m.ownerMustSendPayouts
-        ? 'Only the owner can send them'
-        : 'Anyone can trigger them',
+      label: 'Payout authority',
+      value: m.ownerMustSendPayouts ? 'Owner only' : 'Anyone',
     },
     {
       section: 'Other rules',
@@ -293,6 +554,28 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
     <div className="flex items-baseline justify-between gap-3">
       <dt className="shrink-0 text-smoke-700">{label}</dt>
       <dd className="text-right font-medium text-ink">{value}</dd>
+    </div>
+  )
+}
+
+function StackedRule({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: ReactNode
+  hint?: ReactNode
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-smoke-500">{label}</dt>
+      <dd className="mt-1 text-left font-medium leading-snug text-ink">
+        {value}
+      </dd>
+      {hint ? (
+        <p className="mt-1 text-xs leading-snug text-smoke-500">{hint}</p>
+      ) : null}
     </div>
   )
 }
@@ -403,12 +686,29 @@ function SplitsList({
 export function RulesetsTab({
   chainId,
   projectId,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
+  chains: readonly [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+
+  const projectChains = useMemo(() => {
+    const source = chains.length ? chains : [[chainId, projectId]]
+    return Array.from(
+      new Map(
+        source.map(([id, pid]) => [
+          id,
+          [id as JBChainId, pid] as const,
+        ]),
+      ).values(),
+    )
+  }, [chainId, chains, projectId])
+  const projectChainsKey = projectChains
+    .map(([id, pid]) => `${id}:${pid}`)
+    .join('|')
 
   const chainMeta = JB_CHAINS[chainId]
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
@@ -483,6 +783,41 @@ export function RulesetsTab({
     },
   })
   const sym = tokenSymbol ?? 'tokens'
+
+  const { data: chainRulesets, isLoading: chainRulesetsLoading } = useQuery({
+    queryKey: ['rulesetsTabCrossChain', projectChainsKey],
+    enabled: projectChains.length > 1,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: async (): Promise<ChainRulesetSnapshot[]> =>
+      Promise.all(
+        projectChains.map(async ([snapshotChainId, snapshotProjectId]) => {
+          try {
+            const client = getPublicClient(wagmiConfig, {
+              chainId: snapshotChainId,
+            }) as PublicClient | undefined
+            if (!client) throw new Error('No public client')
+            const ruleset = await getCurrentRuleset(client, {
+              chainId: snapshotChainId,
+              projectId: BigInt(snapshotProjectId),
+            })
+            return {
+              chainId: snapshotChainId,
+              projectId: snapshotProjectId,
+              ruleset: ruleset.ruleset.id === 0 ? null : ruleset,
+              error: ruleset.ruleset.id === 0,
+            }
+          } catch {
+            return {
+              chainId: snapshotChainId,
+              projectId: snapshotProjectId,
+              ruleset: null,
+              error: true,
+            }
+          }
+        }),
+      ),
+  })
 
   const entries = useMemo((): Entry[] => {
     if (!rulesets || rulesets.current.ruleset.id === 0) return []
@@ -595,7 +930,6 @@ export function RulesetsTab({
   const { ruleset: r } = selected.data
   const now = Math.floor(Date.now() / 1000)
   const rows = ruleRows(selected.data, chainId, sym, contexts)
-  const sections = ['Cycle', 'Token', 'Other rules']
 
   const status = approvalHookLabel(chainId, r.approvalHook) ?? 'Unlocked'
   const timing =
@@ -660,6 +994,13 @@ export function RulesetsTab({
           ) : null}
         </p>
 
+        {isCurrent && projectChains.length > 1 ? (
+          <RulesetChainStatus
+            snapshots={chainRulesets}
+            loading={chainRulesetsLoading}
+          />
+        ) : null}
+
         {selected.tag === 'Current' && upcomingChanges.length > 0 && upcoming ? (
           <div className="callout callout-warning mt-4 text-xs">
             <p className="font-medium">
@@ -679,100 +1020,165 @@ export function RulesetsTab({
           </div>
         ) : null}
 
-        <div className="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
-          {sections.map(section => (
-            <section key={section}>
-              <span className="field-label">{section}</span>
-              <dl className="mt-2 space-y-1.5 text-sm">
+        <section className="mt-7 border-t border-smoke-200 pt-6">
+          <span className="field-label">Cycle</span>
+          <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {rows
+              .filter(row => row.section === 'Cycle')
+              .map(row => (
+                <StackedRule
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  hint={row.hint}
+                />
+              ))}
+          </dl>
+        </section>
+
+        <section className="mt-7 border-t border-smoke-200 pt-6">
+          <span className="field-label">Token rules</span>
+          <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {rows
+              .filter(
+                row => row.section === 'Token' && row.label !== 'Reserved',
+              )
+              .map(row => (
+                <StackedRule
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  hint={row.hint}
+                />
+              ))}
+          </dl>
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-smoke-200 bg-smoke-25 p-5">
+              <dl className="text-sm">
                 {rows
-                  .filter(row => row.section === section)
+                  .filter(
+                    row => row.section === 'Token' && row.label === 'Reserved',
+                  )
                   .map(row => (
-                    <Row key={row.label} label={row.label} value={row.value} />
+                    <StackedRule
+                      key={row.label}
+                      label={row.label}
+                      value={row.value}
+                      hint={row.hint}
+                    />
                   ))}
               </dl>
-            </section>
-          ))}
-        </div>
-      </div>
-
-      {contexts && contexts.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {contexts.map(ctx => {
-            const fa = fundsAccess?.perToken.find(
-              t => t.ctx.token === ctx.token,
-            )
-            return (
-              <div key={ctx.token} className="card p-5">
-                <span className="field-label">{ctx.symbol} funds access</span>
-                <dl className="mt-2 space-y-1.5 text-sm">
-                  <Row
-                    label="Payout limit per cycle"
-                    value={
-                      fa
-                        ? formatLimits(fa.payoutLimits, ctx)
-                        : fundsFailed
-                          ? '—'
-                          : '…'
-                    }
+              {contexts && contexts.length > 0 ? (
+                <div className="mt-5 border-t border-smoke-200 pt-5">
+                  <span className="field-label">Recipients</span>
+                {fundsAccess ? (
+                  <SplitsList
+                    splits={fundsAccess.reservedSplits}
+                    chainId={chainId}
                   />
-                  <Row
-                    label="Surplus allowance"
-                    value={
-                      fa
-                        ? formatLimits(fa.surplusAllowances, ctx)
-                        : fundsFailed
-                          ? '—'
-                          : '…'
-                    }
-                  />
-                </dl>
-                <span className="field-label mt-5 block">
-                  {ctx.symbol} payout splits
-                </span>
-                {fa ? (
-                  <SplitsList splits={fa.payoutSplits} chainId={chainId} />
                 ) : (
                   <p className="mt-2 text-sm text-smoke-500">
-                    {fundsFailed ? 'Couldn’t verify payout splits.' : 'Loading…'}
+                    {fundsFailed
+                      ? 'Couldn’t verify reserved recipients.'
+                      : 'Loading…'}
                   </p>
                 )}
                 {isCurrent && rulesetId > 0 ? (
-                  <EditSplitsFlow
-                    chainId={chainId}
-                    projectId={projectId}
-                    groupId={payoutSplitGroupId(ctx.token)}
-                    token={ctx.token}
-                    title={`${ctx.symbol} payout splits`}
-                    rulesetId={BigInt(rulesetId)}
-                  />
+                  <div className="mt-3">
+                    <EditSplitsFlow
+                      chainId={chainId}
+                      projectId={projectId}
+                      groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
+                      title="reserved recipients"
+                      rulesetId={BigInt(rulesetId)}
+                    />
+                  </div>
                 ) : null}
-              </div>
-            )
-          })}
-
-          <div className="card p-5">
-            <span className="field-label">Reserved token recipients</span>
-            {fundsAccess ? (
-              <SplitsList splits={fundsAccess.reservedSplits} chainId={chainId} />
-            ) : (
-              <p className="mt-2 text-sm text-smoke-500">
-                {fundsFailed
-                  ? 'Couldn’t verify reserved recipients.'
-                  : 'Loading…'}
-              </p>
-            )}
-            {isCurrent && rulesetId > 0 ? (
-              <EditSplitsFlow
-                chainId={chainId}
-                projectId={projectId}
-                groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
-                title="Reserved token recipients"
-                rulesetId={BigInt(rulesetId)}
-              />
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      ) : null}
+        </section>
+
+        {contexts && contexts.length > 0 ? (
+          <section className="mt-7 border-t border-smoke-200 pt-6">
+            <span className="field-label">Funds access</span>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {contexts.map(ctx => {
+              const fa = fundsAccess?.perToken.find(
+                t => t.ctx.token === ctx.token,
+              )
+              const hasPayouts =
+                fa?.payoutLimits.some(limit => limit.amount > 0n) ?? false
+              return (
+                <div
+                  key={ctx.token}
+                  className="rounded-xl border border-smoke-200 bg-smoke-25 p-5"
+                >
+                  <span className="field-label">{ctx.symbol} funds access</span>
+                  <dl className="mt-2 space-y-1.5 text-sm">
+                    <Row
+                      label="Payout limit per cycle"
+                      value={
+                        fa
+                          ? formatLimits(fa.payoutLimits, ctx)
+                          : fundsFailed
+                            ? '—'
+                            : '…'
+                      }
+                    />
+                    <Row
+                      label="Surplus allowance"
+                      value={
+                        fa
+                          ? formatLimits(fa.surplusAllowances, ctx)
+                          : fundsFailed
+                            ? '—'
+                            : '…'
+                      }
+                    />
+                  </dl>
+                  {hasPayouts && fa ? (
+                    <div className="mt-5 border-t border-smoke-200 pt-5">
+                      <span className="field-label block">
+                        {ctx.symbol} payout splits
+                      </span>
+                      <SplitsList splits={fa.payoutSplits} chainId={chainId} />
+                      {isCurrent && rulesetId > 0 ? (
+                        <EditSplitsFlow
+                          chainId={chainId}
+                          projectId={projectId}
+                          groupId={payoutSplitGroupId(ctx.token)}
+                          token={ctx.token}
+                          title={`${ctx.symbol} payout splits`}
+                          rulesetId={BigInt(rulesetId)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="mt-7 border-t border-smoke-200 pt-6">
+          <span className="field-label">Other rules</span>
+          <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {rows
+              .filter(row => row.section === 'Other rules')
+              .map(row => (
+                <StackedRule
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  hint={row.hint}
+                />
+              ))}
+          </dl>
+        </section>
+      </div>
     </div>
   )
 }

@@ -19,6 +19,10 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { AddressField } from '@/components/create/AddressField'
+import {
+  TransactionInProgress,
+  usePreloadTransactionAnimation,
+} from '@/components/TransactionInProgress'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
@@ -51,6 +55,7 @@ export function BuybackRouterCard({
   /** Owner (custom) or operator (revnet) per the back office; can be null. */
   authority: string | null
 }) {
+  usePreloadTransactionAnimation()
   const { isConnected, address } = useWallet()
 
   const [mounted, setMounted] = useState(false)
@@ -389,12 +394,17 @@ function PendingNote({
   const url = etherscanTx(chainId, hash)
   if (!url) return null
   return (
-    <p className="mt-2 text-center text-xs text-smoke-700">
+    <TransactionInProgress className="mt-3">
       Waiting for confirmation —{' '}
-      <a href={url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2"
+      >
         view transaction
       </a>
-    </p>
+    </TransactionInProgress>
   )
 }
 

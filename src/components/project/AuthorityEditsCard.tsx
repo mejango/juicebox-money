@@ -1,0 +1,951 @@
+'use client'
+
+import { getPublicClient } from '@wagmi/core'
+import {
+  JB_CHAINS,
+  JBCoreContracts,
+  jbContractAddress,
+  jbControllerAbi,
+  jbDirectoryAbi,
+  jbProjectsAbi,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
+import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  encodeFunctionData,
+  erc20Abi,
+  zeroAddress,
+  zeroHash,
+  type Address,
+  type PublicClient,
+} from 'viem'
+import { ChainIcon } from '@/components/ChainIcon'
+import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
+import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { ipfsUrl, truncateAddress } from '@/lib/format'
+import { TOKEN_SYMBOL_RE } from '@/lib/manage'
+import { wagmiConfig } from '@/providers/Providers'
+
+const MAX_LOGO_BYTES = 1024 * 1024
+
+export type AuthorityEditProfile = {
+  name: string
+  tagline: string
+  description: string
+  logoUri: string | null
+  infoUri?: string
+  twitter?: string
+  discord?: string
+  telegram?: string
+  whatsapp?: string
+  instagram?: string
+  coverImageUri?: string
+  payDisclosure?: string
+}
+
+type EditChainState = AuthorityDeployment & {
+  name: string
+  authority: Address | null
+  controller: Address | null
+  uri: string | null
+  token: Address | null
+  tokenName: string | null
+  tokenSymbol: string | null
+  error: string | null
+}
+
+function clientFor(chainId: JBChainId): PublicClient {
+  const client = getPublicClient(wagmiConfig, { chainId })
+  if (!client) throw new Error(`No RPC client is configured for chain ${chainId}.`)
+  return client as PublicClient
+}
+
+async function readEditState(
+  deployment: AuthorityDeployment,
+  isRevnet: boolean,
+): Promise<EditChainState> {
+  const client = clientFor(deployment.chainId)
+  let authority = deployment.indexedAuthority
+  if (!isRevnet) {
+    authority = (await client
+      .readContract({
+        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
+          deployment.chainId
+        ],
+        abi: jbProjectsAbi,
+        functionName: 'ownerOf',
+        args: [BigInt(deployment.projectId)],
+      })
+      .catch(() => deployment.indexedAuthority)) as Address | null
+  }
+
+  const controller = (await client
+    .readContract({
+      address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
+        deployment.chainId
+      ],
+      abi: jbDirectoryAbi,
+      functionName: 'controllerOf',
+      args: [BigInt(deployment.projectId)],
+    })
+    .catch(() => null)) as Address | null
+
+  const [uri, token] = await Promise.all([
+    controller && controller !== zeroAddress
+      ? client
+          .readContract({
+            address: controller,
+            abi: jbControllerAbi,
+            functionName: 'uriOf',
+            args: [BigInt(deployment.projectId)],
+          })
+          .catch(() => null)
+      : null,
+    getTokenAddress(client, {
+      chainId: deployment.chainId,
+      projectId: BigInt(deployment.projectId),
+    }).catch(() => null),
+  ])
+
+  const [tokenName, tokenSymbol] = token
+    ? await Promise.all([
+        client
+          .readContract({ address: token, abi: erc20Abi, functionName: 'name' })
+          .catch(() => null),
+        client
+          .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })
+          .catch(() => null),
+      ])
+    : [null, null]
+
+  return {
+    ...deployment,
+    name: JB_CHAINS[deployment.chainId]?.name ?? `Chain ${deployment.chainId}`,
+    authority,
+    controller: controller && controller !== zeroAddress ? controller : null,
+    uri: typeof uri === 'string' && uri ? uri : null,
+    token,
+    tokenName: typeof tokenName === 'string' ? tokenName : null,
+    tokenSymbol: typeof tokenSymbol === 'string' ? tokenSymbol : null,
+    error:
+      !authority || !controller || controller === zeroAddress
+        ? 'Could not resolve this chain’s controller and authority.'
+        : null,
+  }
+}
+
+function valuesDiffer(values: (string | null)[]): boolean {
+  if (values.length < 2) return false
+  return new Set(values.map(value => value?.toLowerCase() ?? 'unset')).size > 1
+}
+
+function outcomeMessage(
+  result: Awaited<ReturnType<typeof runAuthorityCalls>>,
+  completed: string,
+): string {
+  const queued = result.safeResults.filter(row => row.status === 'queued').length
+  const waiting = result.safeResults.filter(row => row.status === 'waiting').length
+  const executed = result.safeResults.filter(row => row.status === 'executed').length
+  if (queued || waiting) {
+    return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
+      waiting ? ` · ${waiting} awaiting more approvals` : ''
+    }${executed ? ` · ${executed} executed` : ''}. Complete queued actions in Pending multisig transactions.`
+  }
+  return completed
+}
+
+export function AuthorityEditsCard({
+  deployments,
+  isRevnet,
+  profile,
+}: {
+  deployments: AuthorityDeployment[]
+  isRevnet: boolean
+  profile: AuthorityEditProfile
+}) {
+  const query = useQuery({
+    queryKey: [
+      'authorityEditState',
+      isRevnet,
+      deployments
+        .map(row => `${row.chainId}:${row.projectId}:${row.indexedAuthority ?? ''}`)
+        .join(','),
+    ],
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: () =>
+      Promise.all(deployments.map(row => readEditState(row, isRevnet))),
+  })
+  const rows = query.data ?? []
+  const [open, setOpen] = useState<'metadata' | 'token' | null>(null)
+  const uriDiffers = valuesDiffer(rows.map(row => row.uri))
+  const tokenDiffers = valuesDiffer(
+    rows.map(row =>
+      row.token
+        ? `${row.token}:${row.tokenName ?? ''}:${row.tokenSymbol ?? ''}`
+        : null,
+    ),
+  )
+
+  return (
+    <section className="card p-5">
+      <span className="field-label">Edits</span>
+      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+        Everyday owner/operator changes. Review exactly which chains will
+        change; EOAs sign per-chain requests and pay Relayr once, while Safe
+        signers propose the same calls to each multisig.
+      </p>
+
+      {query.isLoading ? (
+        <p className="mt-4 text-sm text-smoke-500">Reading every chain…</p>
+      ) : query.isError ? (
+        <p className="mt-4 text-sm text-red-700">
+          Could not load the editable project state.
+        </p>
+      ) : (
+        <div className="mt-4 divide-y divide-smoke-100">
+          <EditRow
+            title="Set project metadata"
+            description="Update the project’s name, logo, description, links, and public profile."
+            differs={uriDiffers}
+            actionLabel="Edit project"
+            open={open === 'metadata'}
+            onToggle={() => setOpen(current => (current === 'metadata' ? null : 'metadata'))}
+          >
+            <PerChainMetadataState rows={rows} />
+            {open === 'metadata' ? (
+              <MetadataEditor
+                rows={rows}
+                initial={profile}
+                onCancel={() => setOpen(null)}
+                onDone={() => query.refetch()}
+              />
+            ) : null}
+          </EditRow>
+
+          <EditRow
+            title="Set token metadata"
+            description="Set the token’s name and symbol, deploying the ERC-20 on chains that still use credits."
+            differs={tokenDiffers}
+            actionLabel="Edit token"
+            open={open === 'token'}
+            onToggle={() => setOpen(current => (current === 'token' ? null : 'token'))}
+          >
+            <PerChainTokenState rows={rows} />
+            {open === 'token' ? (
+              <TokenEditor
+                rows={rows}
+                fallbackName={profile.name}
+                onCancel={() => setOpen(null)}
+                onDone={() => query.refetch()}
+              />
+            ) : null}
+          </EditRow>
+
+          <EditRow
+            title="Set splits"
+            description="Edit reserved-token recipients. Payout splits are edited per accounting token from the Rulesets tab."
+            differs={false}
+            actionLabel="Edit reserved splits"
+            open={false}
+            onToggle={() => {
+              window.location.hash = isRevnet ? 'owners/splits' : 'rulesets'
+            }}
+          >
+            <p className="mt-2 text-xs leading-relaxed text-smoke-500">
+              Opens the live split editor, which preserves locked recipients and
+              re-checks the group before saving.
+            </p>
+          </EditRow>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function EditRow({
+  title,
+  description,
+  differs,
+  actionLabel,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string
+  description: string
+  differs: boolean
+  actionLabel: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div className="py-4 first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-ink">{title}</p>
+            {differs ? (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                Differs by chain
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+            {description}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="btn-secondary min-h-[36px] shrink-0 px-3 text-xs"
+        >
+          {open ? 'Close' : actionLabel}
+        </button>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function PerChainMetadataState({ rows }: { rows: EditChainState[] }) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+      {rows.map(row => (
+        <span
+          key={row.chainId}
+          className="inline-flex min-w-0 items-center gap-1.5 text-xs text-smoke-500"
+          title={row.uri ?? 'Not set'}
+        >
+          <ChainIcon chainId={row.chainId} size={16} />
+          {row.uri ? truncateUri(row.uri) : 'Not set'}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function PerChainTokenState({ rows }: { rows: EditChainState[] }) {
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      {rows.map(row => (
+        <div
+          key={row.chainId}
+          className="flex min-w-0 items-center gap-2 rounded-lg bg-smoke-50 px-3 py-2"
+        >
+          <ChainIcon chainId={row.chainId} size={18} />
+          <div className="min-w-0 text-xs">
+            <p className="font-medium text-smoke-700">{row.name}</p>
+            {row.token ? (
+              <p className="truncate text-smoke-500" title={row.token}>
+                {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
+                {truncateAddress(row.token)}
+              </p>
+            ) : (
+              <p className="text-smoke-500">Credits only · ERC-20 not deployed</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function truncateUri(uri: string): string {
+  if (uri.length <= 30) return uri
+  return `${uri.slice(0, 14)}…${uri.slice(-10)}`
+}
+
+function ChainPicker({
+  rows,
+  selected,
+  onChange,
+  disabled,
+}: {
+  rows: EditChainState[]
+  selected: Set<number>
+  onChange: (next: Set<number>) => void
+  disabled: boolean
+}) {
+  return (
+    <div>
+      <span className="field-label">Apply on</span>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {rows.map(row => (
+          <label
+            key={row.chainId}
+            className={`flex items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm ${
+              row.error ? 'opacity-50' : 'cursor-pointer'
+            }`}
+            title={row.error ?? undefined}
+          >
+            <input
+              type="checkbox"
+              checked={selected.has(row.chainId)}
+              onChange={() => {
+                const next = new Set(selected)
+                if (next.has(row.chainId)) next.delete(row.chainId)
+                else next.add(row.chainId)
+                onChange(next)
+              }}
+              disabled={disabled || !!row.error}
+              className="accent-bluebs-600"
+            />
+            <ChainIcon chainId={row.chainId} size={18} />
+            {row.name}
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MetadataEditor({
+  rows,
+  initial,
+  onCancel,
+  onDone,
+}: {
+  rows: EditChainState[]
+  initial: AuthorityEditProfile
+  onCancel: () => void
+  onDone: () => void
+}) {
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(rows.filter(row => !row.error).map(row => row.chainId)),
+  )
+  const [name, setName] = useState(initial.name)
+  const [tagline, setTagline] = useState(initial.tagline)
+  const [description, setDescription] = useState(initial.description)
+  const [infoUri, setInfoUri] = useState(initial.infoUri ?? '')
+  const [twitter, setTwitter] = useState(initial.twitter ?? '')
+  const [discord, setDiscord] = useState(initial.discord ?? '')
+  const [telegram, setTelegram] = useState(initial.telegram ?? '')
+  const [whatsapp, setWhatsapp] = useState(initial.whatsapp ?? '')
+  const [instagram, setInstagram] = useState(initial.instagram ?? '')
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [reviewed, setReviewed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(
+    () => () => {
+      if (logoPreview) URL.revokeObjectURL(logoPreview)
+    },
+    [logoPreview],
+  )
+
+  const invalidate = () => {
+    setReviewed(false)
+    setError(null)
+  }
+
+  const chooseLogo = (file: File | null) => {
+    if (logoPreview) URL.revokeObjectURL(logoPreview)
+    setLogoPreview(null)
+    setLogoFile(null)
+    invalidate()
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Choose an image file for the logo.')
+      return
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setError('Logos must be under 1 MB.')
+      return
+    }
+    setLogoFile(file)
+    setLogoPreview(URL.createObjectURL(file))
+  }
+
+  const review = () => {
+    setError(null)
+    if (!name.trim()) {
+      setError('Give the project a name.')
+      return
+    }
+    if (!selected.size) {
+      setError('Choose at least one chain.')
+      return
+    }
+    setReviewed(true)
+  }
+
+  const pinMetadata = async (): Promise<string> => {
+    let logoUri = initial.logoUri ?? undefined
+    if (logoFile) {
+      setStatus('Uploading the logo…')
+      const form = new FormData()
+      form.append('file', logoFile)
+      const response = await fetch('/api/ipfs/pin-file', {
+        method: 'POST',
+        body: form,
+      })
+      const body = (await response.json()) as { cid?: string; error?: string }
+      if (!response.ok || !body.cid) {
+        throw new Error(body.error ?? 'Logo upload failed.')
+      }
+      logoUri = `ipfs://${body.cid}`
+    }
+
+    setStatus('Pinning the project profile…')
+    const response = await fetch('/api/ipfs/pin-json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.trim(),
+        projectTagline: tagline.trim() || undefined,
+        description: description.trim() || undefined,
+        logoUri,
+        infoUri: infoUri.trim() || undefined,
+        twitter: twitter.trim() || undefined,
+        discord: discord.trim() || undefined,
+        telegram: telegram.trim() || undefined,
+        whatsapp: whatsapp.trim() || undefined,
+        instagram: instagram.trim() || undefined,
+        coverImageUri: initial.coverImageUri,
+        payDisclosure: initial.payDisclosure,
+      }),
+    })
+    const body = (await response.json()) as { cid?: string; error?: string }
+    if (!response.ok || !body.cid) {
+      throw new Error(body.error ?? 'Could not pin the project profile.')
+    }
+    return `ipfs://${body.cid}`
+  }
+
+  const submit = async () => {
+    if (!reviewed || busy) return
+    const chosen = rows.filter(row => selected.has(row.chainId))
+    setBusy(true)
+    setError(null)
+    try {
+      const uri = await pinMetadata()
+      const calls: AuthorityCall[] = chosen.map(row => {
+        if (!row.authority || !row.controller) {
+          throw new Error(`${row.name}: owner/operator or controller is unknown.`)
+        }
+        return {
+          chainId: row.chainId,
+          authority: row.authority,
+          target: row.controller,
+          data: encodeFunctionData({
+            abi: jbControllerAbi,
+            functionName: 'setUriOf',
+            args: [BigInt(row.projectId), uri],
+          }),
+          gas: 250_000n,
+          label: 'Set project metadata',
+        }
+      })
+      const result = await runAuthorityCalls({
+        calls,
+        onProgress: progress => setStatus(progress.message),
+      })
+      setStatus(
+        outcomeMessage(
+          result,
+          `Project metadata updated on ${calls.length} chain${
+            calls.length === 1 ? '' : 's'
+          }.`,
+        ),
+      )
+      onDone()
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Could not update project metadata.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const preview = logoPreview ?? ipfsUrl(initial.logoUri)
+
+  return (
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-ink">Edit project metadata</p>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="text-xs text-smoke-700 hover:text-ink"
+        >
+          Cancel
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <ChainPicker
+          rows={rows}
+          selected={selected}
+          onChange={next => {
+            setSelected(next)
+            invalidate()
+          }}
+          disabled={busy}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4">
+        <TextField
+          label="Name"
+          value={name}
+          onChange={value => {
+            setName(value.slice(0, 100))
+            invalidate()
+          }}
+          disabled={busy}
+          required
+        />
+        <TextField
+          label="Tagline"
+          value={tagline}
+          onChange={value => {
+            setTagline(value.slice(0, 100))
+            invalidate()
+          }}
+          disabled={busy}
+          placeholder="One line about the project"
+        />
+        <label className="block">
+          <span className="field-label">Description</span>
+          <textarea
+            value={description}
+            onChange={event => {
+              setDescription(event.target.value.slice(0, 5000))
+              invalidate()
+            }}
+            disabled={busy}
+            rows={4}
+            className="input-well mt-1.5 w-full resize-y px-3 py-2.5 text-sm leading-relaxed disabled:opacity-60"
+          />
+        </label>
+      </div>
+
+      <div className="mt-4">
+        <span className="field-label">Logo</span>
+        <div className="mt-2 flex items-center gap-3">
+          {preview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={preview}
+              alt="Logo preview"
+              className="h-14 w-14 rounded-lg border border-smoke-200 object-cover"
+            />
+          ) : (
+            <span className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-lg">
+              🧃
+            </span>
+          )}
+          <label className="btn-secondary min-h-[36px] cursor-pointer px-3 text-xs">
+            {preview ? 'Change logo' : 'Upload logo'}
+            <input
+              type="file"
+              accept="image/*"
+              disabled={busy}
+              className="sr-only"
+              onChange={event => chooseLogo(event.target.files?.[0] ?? null)}
+            />
+          </label>
+        </div>
+      </div>
+
+      <details className="mt-4 rounded-lg border border-smoke-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-ink">
+          Links
+        </summary>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {[
+            ['Website', infoUri, setInfoUri],
+            ['X / Twitter', twitter, setTwitter],
+            ['Discord', discord, setDiscord],
+            ['Telegram', telegram, setTelegram],
+            ['WhatsApp', whatsapp, setWhatsapp],
+            ['Instagram', instagram, setInstagram],
+          ].map(([label, value, setter]) => (
+            <TextField
+              key={label as string}
+              label={label as string}
+              value={value as string}
+              onChange={next => {
+                ;(setter as (value: string) => void)(next.slice(0, 300))
+                invalidate()
+              }}
+              disabled={busy}
+              placeholder="https://… or handle"
+            />
+          ))}
+        </div>
+      </details>
+
+      {reviewed ? (
+        <div className="callout callout-info mt-4 text-xs">
+          <p>
+            <span className="font-medium">{name.trim()}</span> will use one
+            pinned profile on {rows
+              .filter(row => selected.has(row.chainId))
+              .map(row => row.name)
+              .join(', ')}.
+          </p>
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={reviewed ? submit : review}
+        disabled={busy || !name.trim() || !selected.size}
+        className="btn-primary mt-4 min-h-[44px] w-full text-sm"
+      >
+        {busy ? status ?? 'Preparing…' : reviewed ? 'Save project metadata' : 'Review changes'}
+      </button>
+      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
+      {error ? <ErrorNote message={error} /> : null}
+    </div>
+  )
+}
+
+function TokenEditor({
+  rows,
+  fallbackName,
+  onCancel,
+  onDone,
+}: {
+  rows: EditChainState[]
+  fallbackName: string
+  onCancel: () => void
+  onDone: () => void
+}) {
+  const commonName =
+    rows.find(row => row.tokenName)?.tokenName ?? fallbackName
+  const commonSymbol = rows.find(row => row.tokenSymbol)?.tokenSymbol ?? ''
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(rows.filter(row => !row.error).map(row => row.chainId)),
+  )
+  const [name, setName] = useState(commonName)
+  const [symbol, setSymbol] = useState(commonSymbol)
+  const [review, setReview] = useState<AuthorityCall[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const invalidate = () => {
+    setReview(null)
+    setError(null)
+  }
+
+  const buildReview = () => {
+    setError(null)
+    const chosen = rows.filter(row => selected.has(row.chainId))
+    if (!chosen.length) {
+      setError('Choose at least one chain.')
+      return
+    }
+    if (!name.trim()) {
+      setError('Give the token a name.')
+      return
+    }
+    if (!TOKEN_SYMBOL_RE.test(symbol)) {
+      setError('Symbols are 1–8 uppercase letters or digits.')
+      return
+    }
+    try {
+      setReview(
+        chosen.map(row => {
+          if (!row.authority || !row.controller) {
+            throw new Error(`${row.name}: owner/operator or controller is unknown.`)
+          }
+          return {
+            chainId: row.chainId,
+            authority: row.authority,
+            target: row.controller,
+            data: row.token
+              ? encodeFunctionData({
+                  abi: jbControllerAbi,
+                  functionName: 'setTokenMetadataOf',
+                  args: [BigInt(row.projectId), name.trim(), symbol],
+                })
+              : encodeFunctionData({
+                  abi: jbControllerAbi,
+                  functionName: 'deployERC20For',
+                  args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
+                }),
+            gas: row.token ? 200_000n : 500_000n,
+            label: row.token ? 'Set token metadata' : 'Deploy ERC-20',
+          }
+        }),
+      )
+    } catch (reviewError) {
+      setError(
+        reviewError instanceof Error
+          ? reviewError.message
+          : 'Could not review token metadata.',
+      )
+    }
+  }
+
+  const submit = async () => {
+    if (!review || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await runAuthorityCalls({
+        calls: review,
+        onProgress: progress => setStatus(progress.message),
+      })
+      setStatus(
+        outcomeMessage(
+          result,
+          `Token metadata updated on ${review.length} chain${
+            review.length === 1 ? '' : 's'
+          }.`,
+        ),
+      )
+      onDone()
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Could not update token metadata.',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-ink">Edit token</p>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="text-xs text-smoke-700 hover:text-ink"
+        >
+          Cancel
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <ChainPicker
+          rows={rows}
+          selected={selected}
+          onChange={next => {
+            setSelected(next)
+            invalidate()
+          }}
+          disabled={busy}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_9rem]">
+        <TextField
+          label="Token name"
+          value={name}
+          onChange={value => {
+            setName(value.slice(0, 100))
+            invalidate()
+          }}
+          disabled={busy}
+          required
+        />
+        <TextField
+          label="Symbol"
+          value={symbol}
+          onChange={value => {
+            setSymbol(
+              value
+                .toUpperCase()
+                .replace(/[^A-Z0-9]/g, '')
+                .slice(0, 8),
+            )
+            invalidate()
+          }}
+          disabled={busy}
+          required
+        />
+      </div>
+
+      {review ? (
+        <div className="callout callout-info mt-4 text-xs">
+          <p className="font-medium">Review per-chain behavior</p>
+          <ul className="mt-2 space-y-1">
+            {rows
+              .filter(row => selected.has(row.chainId))
+              .map(row => (
+                <li key={row.chainId} className="flex items-center gap-2">
+                  <ChainIcon chainId={row.chainId} size={16} />
+                  {row.name}: {row.token ? 'rename existing token' : 'deploy ERC-20'}
+                </li>
+              ))}
+          </ul>
+          <p className="mt-2">
+            Final metadata: <span className="font-medium">{name.trim()}</span>{' '}
+            ({symbol}). Existing balances are unchanged.
+          </p>
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={review ? submit : buildReview}
+        disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
+        className="btn-primary mt-4 min-h-[44px] w-full text-sm"
+      >
+        {busy ? status ?? 'Preparing…' : review ? 'Save token metadata' : 'Review changes'}
+      </button>
+      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
+      {error ? <ErrorNote message={error} /> : null}
+    </div>
+  )
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  required,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  disabled: boolean
+  placeholder?: string
+  required?: boolean
+}) {
+  return (
+    <label className="block">
+      <span className="field-label">
+        {label}
+        {required ? <span className="ml-1 text-peel-500">*</span> : null}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        disabled={disabled}
+        placeholder={placeholder}
+        className="input-well mt-1.5 min-h-[42px] w-full px-3 text-sm disabled:opacity-60"
+      />
+    </label>
+  )
+}
+
+function ErrorNote({ message }: { message: string }) {
+  return (
+    <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
+      {message}
+    </p>
+  )
+}

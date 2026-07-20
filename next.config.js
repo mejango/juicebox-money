@@ -35,6 +35,10 @@ module.exports = {
     return config
   },
   images: {
+    // Project media is content-addressed (IPFS), so optimized variants can be
+    // cached aggressively. Bundled artwork uses hashed static imports and is
+    // served immutable independently of this TTL.
+    minimumCacheTTL: 60 * 60 * 24 * 30,
     remotePatterns: [
       { protocol: 'https', hostname: 'ipfs.io' },
       { protocol: 'https', hostname: '*.infura-ipfs.io' },

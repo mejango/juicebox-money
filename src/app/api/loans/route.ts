@@ -8,20 +8,22 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const projectId = Number(searchParams.get('projectId'))
-  const chainIds = (searchParams.get('chainIds') ?? '')
-    .split(',')
-    .map(s => Number(s.trim()))
-    .filter(n => Number.isInteger(n) && n > 0)
+  const chainId = Number(searchParams.get('chainId'))
 
-  if (!Number.isInteger(projectId) || projectId <= 0 || chainIds.length === 0) {
+  if (
+    !Number.isInteger(projectId) ||
+    projectId <= 0 ||
+    !Number.isInteger(chainId) ||
+    chainId <= 0
+  ) {
     return NextResponse.json(
-      { error: 'projectId and chainIds required' },
+      { error: 'chainId and projectId required' },
       { status: 400 },
     )
   }
 
   try {
-    return NextResponse.json(await getLoans(projectId, chainIds))
+    return NextResponse.json(await getLoans(projectId, chainId))
   } catch {
     return NextResponse.json({ items: [], totalCount: 0 }, { status: 502 })
   }

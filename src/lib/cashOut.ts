@@ -19,6 +19,9 @@ import { formatUnits, type Address, type PublicClient } from 'viem'
 /** Slippage floor on cash-out quotes, in thousandths: 975 = 97.5%. */
 export const CASH_OUT_SLIPPAGE_FLOOR = 975n
 
+/** The protocol takes 2.5% of feeable terminal cash outs. */
+const CASH_OUT_PROTOCOL_FEE_DENOMINATOR = 40n
+
 export function isNativeToken(token: string): boolean {
   return token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
 }
@@ -103,6 +106,42 @@ export function cashOutPriceFromTotals({
 /** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */
 export function minReclaimedFloor(quote: CashOutQuote): bigint {
   return (quote.reclaimAmountAfterFee * CASH_OUT_SLIPPAGE_FLOOR) / 1000n
+}
+
+/**
+ * Terminal protocol fee after previewCashOutFrom. A non-zero cash-out tax
+ * fees the whole reclaim; a zero tax only fees fee-free surplus. Unknown
+ * feeless/surplus reads conservatively assume the full fee, keeping the
+ * submitted minimum safely below what the terminal can deliver.
+ */
+export function cashOutProtocolFee({
+  reclaimAmount,
+  cashOutTaxRate,
+  feeless,
+  feeFreeSurplus,
+}: {
+  reclaimAmount: bigint
+  cashOutTaxRate: bigint
+  feeless: boolean | null
+  feeFreeSurplus: bigint | null
+}): bigint {
+  if (reclaimAmount <= 0n || feeless === true) return 0n
+  if (cashOutTaxRate > 0n || feeFreeSurplus === null || feeless === null) {
+    return reclaimAmount / CASH_OUT_PROTOCOL_FEE_DENOMINATOR
+  }
+  const feeable =
+    reclaimAmount < feeFreeSurplus ? reclaimAmount : feeFreeSurplus
+  return feeable / CASH_OUT_PROTOCOL_FEE_DENOMINATOR
+}
+
+/** Floor a reviewed output by basis points, returning at least one unit. */
+export function quotedOutputFloor(
+  quoted: bigint,
+  basisPoints = 9900n,
+): bigint {
+  if (quoted <= 0n) return 0n
+  const floor = (quoted * basisPoints) / 10_000n
+  return floor > 0n ? floor : 1n
 }
 
 /**

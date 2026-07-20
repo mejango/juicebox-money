@@ -4,7 +4,6 @@ import {
   JB_CHAINS,
   JBOmnichainDeployerContracts,
   jb721TiersHookAbi,
-  jb721TiersHookStoreAbi,
   jbContractAddress,
   jbOmnichainDeployerAbi,
   type JBChainId,
@@ -12,12 +11,14 @@ import {
 import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
+  effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
-  getRevnetTiered721Hook,
+  getProject721Shop,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import Image from 'next/image'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
   zeroAddress,
@@ -26,34 +27,45 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
+import { ChainIcon } from '@/components/ChainIcon'
 import {
   AddShopItemsModal,
   type ShopWriteTarget,
 } from '@/components/project/AddShopItemsModal'
+import {
+  RedeemShopItemsModal,
+  type RedeemableShopTarget,
+} from '@/components/project/RedeemShopItemsModal'
+import { SubTabs } from '@/components/project/Tabs'
+import { useShopCart } from '@/components/project/ShopCartProvider'
 import { useWallet } from '@/hooks/useWallet'
-import { formatTokenAmount, ipfsUrl, truncateAddress } from '@/lib/format'
+import type {
+  BsOwnedShopItem,
+  BsShopPurchase,
+  BsShopRows,
+} from '@/lib/bendystraw'
+import {
+  formatTokenAmount,
+  ipfsUrl,
+  timeAgo,
+  truncateAddress,
+} from '@/lib/format'
+import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
- * plus the owner/operator flow for adding new items. Buying happens in the
- * Pay card, not here.
+ * plus the owner/operator flow for adding new items. A shared cart connects
+ * this inventory to the Pay card's checkout.
  *
- * Hook resolution mirrors website/'s readShopHook: revnets read
- * REVOwner.tiered721HookOf (via the SDK); custom projects read the current
- * ruleset's dataHook — either the omnichain deployer (real hook lives in
- * JBOmnichainDeployer.tiered721HookOf(projectId, rulesetId)) or the 721 hook
- * itself, verified by probing STORE() (revert = not a 721 hook = no shop).
- * RPC failures surface as errors, never as "no shop".
+ * Hook/store/metadata/pricing/tier resolution comes from the shared SDK's
+ * getProject721Shop helper, so Pay and Shop use the same revnet, custom, and
+ * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
 
 /** Initial supply at/above this sentinel means unlimited inventory
  *  (website/ parity: TIER_UNLIMITED_SUPPLY in nft721-build.js). */
 const TIER_UNLIMITED_SUPPLY = 999_999_999
-
-/** JB721TiersHookStore's DISCOUNT_DENOMINATOR: discountPercent is out of
- *  200, so the shopper-facing "% off" is discountPercent / 2. */
-const DISCOUNT_DENOMINATOR = 200n
 
 type ShopTier = {
   id: number
@@ -62,7 +74,7 @@ type ShopTier = {
   remaining: number
   initial: number
   category: number
-  /** Out of 200 — see DISCOUNT_DENOMINATOR. */
+  /** Out of the SDK's 200-point discount denominator. */
   discountPercent: number
   reserveFrequency: number
   votingUnits: bigint
@@ -73,7 +85,9 @@ type ShopTier = {
 
 type Shop = {
   hook: Address
-  store: Address
+  /** Shared implementation address used to key 721 hook metadata. */
+  idTarget: Address
+  cashOutEnabled: boolean
   pricing: { currency: number; decimals: number; symbol: string }
   tiers: ShopTier[]
 }
@@ -82,6 +96,8 @@ type TierMedia = {
   name?: string
   description?: string
   image?: string
+  animationUrl?: string
+  mediaType?: string
   categoryName?: string
 }
 
@@ -99,12 +115,14 @@ export function ShopTab({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address } = useWallet()
+  const { quantities: cart, count: cartCount } = useShopCart()
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
   const [category, setCategory] = useState<number | null>(null)
   const [addItemsOpen, setAddItemsOpen] = useState(false)
+  const [detailTierId, setDetailTierId] = useState<number | null>(null)
 
   const {
     data: shop,
@@ -189,6 +207,20 @@ export function ShopTab({
       ? shop.tiers
       : shop.tiers.filter(tier => tier.category === category)
   }, [shop, category])
+  const cartTotal = useMemo(() => {
+    if (!shop) return 0n
+    return shop.tiers.reduce(
+      (total, tier) =>
+        total +
+        effectiveTierPrice(tier.price, tier.discountPercent) *
+          BigInt(cart[tier.id] ?? 0),
+      0n,
+    )
+  }, [shop, cart])
+  const detailTier =
+    detailTierId == null
+      ? null
+      : shop?.tiers.find(tier => tier.id === detailTierId) ?? null
 
   // Resolve each linked collection only when the operator opens the editor.
   // Per-chain failures stay local so one flaky RPC does not hide the chains
@@ -269,13 +301,15 @@ export function ShopTab({
   if (!shop) {
     return (
       <div className="card p-5">
-        <span className="field-label">Shop</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          No store yet.
-          {isRevnet
-            ? ' The operator can add items for supporters to buy.'
+        <div>
+          <span className="field-label">Shop</span>
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            No store yet.
+            {isRevnet
+              ? ' The operator can add items for supporters to buy.'
             : ''}
-        </p>
+          </p>
+        </div>
       </div>
     )
   }
@@ -293,7 +327,7 @@ export function ShopTab({
     </button>
   )
 
-  return (
+  const inventory = (
     <div className="space-y-5">
       {shop.tiers.length > 0 ? (
         <div className="flex justify-end">{addItemsButton}</div>
@@ -311,11 +345,13 @@ export function ShopTab({
       ) : null}
 
       {shop.tiers.length === 0 ? (
-        <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
-          <p className="text-sm leading-relaxed text-smoke-700">
-            No items in the store yet.
-          </p>
-          {addItemsButton}
+        <div className="card p-5">
+          <div>
+            <p className="text-sm leading-relaxed text-smoke-700">
+              No items in the store yet.
+            </p>
+            <div className="mt-2">{addItemsButton}</div>
+          </div>
         </div>
       ) : (
         <>
@@ -348,6 +384,7 @@ export function ShopTab({
                 tier={tier}
                 media={mediaById?.[tier.id]}
                 pricing={shop.pricing}
+                onOpen={() => setDetailTierId(tier.id)}
               />
             ))}
           </div>
@@ -400,8 +437,535 @@ export function ShopTab({
           onClose={() => setAddItemsOpen(false)}
         />
       ) : null}
+
+      {detailTier ? (
+        <TierDetailModal
+          isRevnet={isRevnet}
+          chains={chains}
+          tier={detailTier}
+          media={mediaById?.[detailTier.id]}
+          pricing={shop.pricing}
+          onClose={() => setDetailTierId(null)}
+        />
+      ) : null}
+
+      {cartCount > 0 ? (
+        <button
+          type="button"
+          onClick={() =>
+            document
+              .getElementById('project-pay-card')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          className="fixed bottom-4 left-4 right-4 z-50 flex min-h-[52px] items-center justify-between rounded-xl bg-bluebs-600 px-5 text-sm font-medium text-white shadow-xl lg:hidden"
+        >
+          <span>
+            Checkout, {cartCount} item{cartCount === 1 ? '' : 's'}
+          </span>
+          <span className="tabular-nums">
+            {formatTokenAmount(cartTotal, shop.pricing.decimals)}{' '}
+            {shop.pricing.symbol} →
+          </span>
+        </button>
+      ) : null}
     </div>
   )
+
+  return (
+    <SubTabs
+      hashParent="shop"
+      tabs={[
+        { label: 'Inventory', content: inventory },
+        {
+          label: 'Customers',
+          content: (
+            <ShopCustomers
+              chainId={chainId}
+              projectId={projectId}
+              isRevnet={isRevnet}
+              chains={chains}
+              primaryShop={shop}
+              mediaById={mediaById}
+            />
+          ),
+        },
+      ]}
+    />
+  )
+}
+
+type LinkedShop = {
+  chainId: JBChainId
+  projectId: number
+  shop: Shop
+}
+
+function projectsParam(chains: [number, number][]): string {
+  return chains.map(([cid, pid]) => `${cid}:${pid}`).join(',')
+}
+
+async function fetchShopRows<T>(
+  projects: string,
+  owner?: Address,
+): Promise<BsShopRows<T>> {
+  const params = new URLSearchParams({ projects })
+  if (owner) params.set('owner', owner)
+  const response = await fetch(`/api/shop-customers?${params.toString()}`, {
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error('Could not load shop activity.')
+  return response.json() as Promise<BsShopRows<T>>
+}
+
+function ShopCustomers({
+  chainId,
+  projectId,
+  isRevnet,
+  chains,
+  primaryShop,
+  mediaById,
+}: {
+  chainId: JBChainId
+  projectId: number
+  isRevnet: boolean
+  chains: [number, number][]
+  primaryShop: Shop
+  mediaById: Record<number, TierMedia> | undefined
+}) {
+  const { isConnected, address, openSignIn } = useWallet()
+  const [mounted, setMounted] = useState(false)
+  const [redeemTargets, setRedeemTargets] = useState<
+    RedeemableShopTarget[] | null
+  >(null)
+  useEffect(() => setMounted(true), [])
+  const connected = mounted && isConnected && !!address
+
+  const projectKey = useMemo(() => projectsParam(chains), [chains])
+  const names = useMemo(
+    () =>
+      Object.fromEntries(
+        primaryShop.tiers.map(tier => [
+          tier.id,
+          mediaById?.[tier.id]?.name ?? `Item #${tier.id}`,
+        ]),
+      ) as Record<number, string>,
+    [mediaById, primaryShop.tiers],
+  )
+
+  const purchases = useQuery({
+    queryKey: ['shop-purchases', projectKey],
+    staleTime: 15_000,
+    retry: 1,
+    queryFn: () => fetchShopRows<BsShopPurchase>(projectKey),
+  })
+  const owned = useQuery({
+    queryKey: ['shop-owned-items', projectKey, address],
+    enabled: connected,
+    staleTime: 15_000,
+    retry: 1,
+    queryFn: () => fetchShopRows<BsOwnedShopItem>(projectKey, address!),
+  })
+
+  // Resolve each chain's CURRENT shop and cash-out setting. Historical items
+  // still appear in You, but only items from an active cash-out-enabled hook
+  // can be offered to the terminal for redemption.
+  const linkedShops = useQuery({
+    queryKey: [
+      'shop-linked-collections',
+      projectKey,
+      isRevnet,
+      primaryShop.hook,
+    ],
+    enabled: connected && (owned.data?.items.length ?? 0) > 0,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: async (): Promise<LinkedShop[]> => {
+      const resolved = await Promise.all(
+        chains.map(async ([targetChainId, targetProjectId]) => {
+          const targetId = targetChainId as JBChainId
+          if (targetId === chainId && targetProjectId === projectId) {
+            return { chainId: targetId, projectId: targetProjectId, shop: primaryShop }
+          }
+          try {
+            const client = getPublicClient(wagmiConfig, {
+              chainId: targetId,
+            }) as PublicClient | undefined
+            if (!client) return null
+            const targetChain = JB_CHAINS[targetId]
+            const shop = await readShop(
+              client,
+              targetId,
+              targetProjectId,
+              isRevnet,
+              targetChain?.nativeTokenSymbol ?? 'ETH',
+            )
+            return shop
+              ? { chainId: targetId, projectId: targetProjectId, shop }
+              : null
+          } catch {
+            return null
+          }
+        }),
+      )
+      return resolved.filter((value): value is LinkedShop => value !== null)
+    },
+  })
+
+  const redeemCandidatesKey = useMemo(() => {
+    if (!address || !owned.data || !linkedShops.data) return ''
+    return linkedShops.data
+      .filter(linked => linked.shop.cashOutEnabled)
+      .flatMap(linked =>
+        owned.data.items
+          .filter(
+            item =>
+              item.chainId === linked.chainId &&
+              item.projectId === linked.projectId &&
+              item.hook.toLowerCase() === linked.shop.hook.toLowerCase(),
+          )
+          .map(item => `${linked.chainId}:${linked.shop.hook}:${item.tokenId}`),
+      )
+      .sort()
+      .join('|')
+  }, [address, linkedShops.data, owned.data])
+
+  // Verify current ownership in multicalls before showing the redeem action.
+  // RedeemShopItemsModal repeats this immediately before every quote/send.
+  const redeemable = useQuery({
+    queryKey: ['shop-redeemable-items', address, redeemCandidatesKey],
+    enabled: connected && redeemCandidatesKey.length > 0,
+    staleTime: 15_000,
+    retry: false,
+    queryFn: async (): Promise<RedeemableShopTarget[]> => {
+      if (!address || !owned.data || !linkedShops.data) return []
+      const targets: RedeemableShopTarget[] = []
+      for (const linked of linkedShops.data) {
+        if (!linked.shop.cashOutEnabled) continue
+        const candidates = owned.data.items.filter(
+          item =>
+            item.chainId === linked.chainId &&
+            item.projectId === linked.projectId &&
+            item.hook.toLowerCase() === linked.shop.hook.toLowerCase(),
+        )
+        if (!candidates.length) continue
+        const client = getPublicClient(wagmiConfig, {
+          chainId: linked.chainId,
+        }) as PublicClient | undefined
+        if (!client) continue
+        const owners = await client.multicall({
+          allowFailure: true,
+          contracts: candidates.map(item => ({
+            address: linked.shop.hook,
+            abi: jb721TiersHookAbi,
+            functionName: 'ownerOf' as const,
+            args: [BigInt(item.tokenId)] as const,
+          })),
+        })
+        const ownedItems = candidates
+          .filter(
+            (_, index) =>
+              owners[index]?.status === 'success' &&
+              String(owners[index]?.result).toLowerCase() ===
+                address.toLowerCase(),
+          )
+          .map(item => ({ tokenId: item.tokenId, tierId: item.tierId }))
+        const items = [
+          ...new Map(
+            ownedItems.map(item => [item.tokenId, item] as const),
+          ).values(),
+        ]
+        if (items.length) {
+          targets.push({
+            chainId: linked.chainId,
+            projectId: linked.projectId,
+            hook: linked.shop.hook,
+            idTarget: linked.shop.idTarget,
+            items,
+          })
+        }
+      }
+      return targets
+    },
+  })
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-5">
+        <span className="field-label">You</span>
+        {!connected ? (
+          <div className="mt-2">
+            <p className="text-sm leading-relaxed text-smoke-700">
+              Sign in to see the items you own.
+            </p>
+            <button
+              type="button"
+              onClick={openSignIn}
+              className="btn-primary mt-3 min-h-[40px] px-4 text-sm"
+            >
+              Sign in
+            </button>
+          </div>
+        ) : owned.isLoading ? (
+          <p className="mt-2 text-sm text-smoke-500">Loading your items…</p>
+        ) : owned.isError ||
+          (owned.data?.items.length === 0 &&
+            owned.data.failedChains.length === chains.length) ? (
+          <p className="mt-2 text-sm text-smoke-700">
+            Couldn&apos;t load your items right now.
+          </p>
+        ) : owned.data && owned.data.items.length > 0 ? (
+          <>
+            <p className="mt-2 text-sm font-medium text-ink">
+              {owned.data.totalCount || owned.data.items.length}{' '}
+              {(owned.data.totalCount || owned.data.items.length) === 1
+                ? 'item'
+                : 'items'}{' '}
+              owned
+              {owned.data.capped
+                ? ` (showing latest ${owned.data.items.length})`
+                : ''}
+            </p>
+            <div className="mt-3 divide-y divide-smoke-100">
+              {tallyItems(owned.data.items, names).map(item => (
+                <div
+                  key={item.tierId}
+                  className="flex items-baseline justify-between gap-3 py-2 text-sm"
+                >
+                  <span className="font-medium text-ink">{item.label}</span>
+                  <span className="text-smoke-700">×{item.count}</span>
+                </div>
+              ))}
+            </div>
+            {redeemable.data?.length ? (
+              <button
+                type="button"
+                onClick={() => setRedeemTargets(redeemable.data)}
+                className="mt-4 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+              >
+                Redeem items for surplus →
+              </button>
+            ) : null}
+            <PartialShopNotice failedChains={owned.data.failedChains} />
+          </>
+        ) : (
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            You don&apos;t own any items from this shop yet.
+          </p>
+        )}
+      </div>
+
+      <CustomerAllCard
+        query={purchases}
+        names={names}
+        chainCount={chains.length}
+        fallbackChainId={chainId}
+      />
+
+      {redeemTargets ? (
+        <RedeemShopItemsModal
+          targets={redeemTargets}
+          names={names}
+          onClose={() => setRedeemTargets(null)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function CustomerAllCard({
+  query,
+  names,
+  chainCount,
+  fallbackChainId,
+}: {
+  query: UseQueryResult<BsShopRows<BsShopPurchase>, Error>
+  names: Record<number, string>
+  chainCount: number
+  fallbackChainId: JBChainId
+}) {
+  if (query.isLoading) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">All</span>
+        <p className="mt-2 text-sm text-smoke-500">Loading customers…</p>
+      </div>
+    )
+  }
+  if (
+    query.isError ||
+    (query.data?.items.length === 0 &&
+      query.data.failedChains.length === chainCount)
+  ) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">All</span>
+        <p className="mt-2 text-sm text-smoke-700">
+          Couldn&apos;t load customers right now.
+        </p>
+      </div>
+    )
+  }
+  const data = query.data
+  if (!data || data.items.length === 0) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">All</span>
+        <p className="mt-2 text-sm text-smoke-700">
+          No items have been bought yet.
+        </p>
+      </div>
+    )
+  }
+
+  const byCustomer = new Map<string, BsShopPurchase[]>()
+  for (const purchase of data.items) {
+    const key = purchase.beneficiary.toLowerCase()
+    byCustomer.set(key, [...(byCustomer.get(key) ?? []), purchase])
+  }
+  const customers = [...byCustomer.entries()].sort(
+    (a, b) => b[1].length - a[1].length,
+  )
+  const total = data.totalCount || data.items.length
+
+  return (
+    <div className="card p-5">
+      <span className="field-label">All</span>
+      <p className="mt-2 text-sm font-medium text-ink">
+        {customers.length.toLocaleString('en-US')}{' '}
+        {customers.length === 1 ? 'customer' : 'customers'} ·{' '}
+        {total.toLocaleString('en-US')} {total === 1 ? 'item' : 'items'} sold
+        {data.capped ? ` (showing latest ${data.items.length})` : ''}
+      </p>
+
+      <div className="mt-3 divide-y divide-smoke-100">
+        {customers.slice(0, 100).map(([customer, purchases]) => (
+          <div
+            key={customer}
+            className="flex flex-col gap-1 py-2 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
+          >
+            <ExplorerAddress
+              address={purchases[0].beneficiary}
+              chainId={purchases[0].chainId || fallbackChainId}
+            />
+            <span className="text-xs text-smoke-700 sm:text-right">
+              {tallyItems(purchases, names)
+                .map(item =>
+                  item.count > 1
+                    ? `${item.count}× ${item.label}`
+                    : item.label,
+                )
+                .join(', ')}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <h3 className="mt-5 font-agrandir text-sm font-medium text-ink">
+        Recent purchases
+      </h3>
+      <div className="mt-2 divide-y divide-smoke-100">
+        {data.items.slice(0, 25).map(purchase => (
+          <div
+            key={`${purchase.chainId}:${purchase.txHash}:${purchase.tokenId}`}
+            className="flex items-baseline justify-between gap-3 py-2 text-xs"
+          >
+            <ExplorerTransaction
+              chainId={purchase.chainId || fallbackChainId}
+              txHash={purchase.txHash}
+              timestamp={purchase.timestamp}
+            />
+            <span className="min-w-0 truncate text-right text-smoke-700">
+              {itemLabel(names, purchase.tierId)} →{' '}
+              {truncateAddress(purchase.beneficiary)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <PartialShopNotice failedChains={data.failedChains} />
+    </div>
+  )
+}
+
+function PartialShopNotice({ failedChains }: { failedChains: number[] }) {
+  if (!failedChains.length) return null
+  return (
+    <p className="mt-3 text-xs leading-relaxed text-peel-600">
+      Couldn&apos;t load {failedChains.map(chainName).join(', ')}; totals above are
+      partial.
+    </p>
+  )
+}
+
+function ExplorerAddress({
+  address,
+  chainId,
+}: {
+  address: string
+  chainId: number
+}) {
+  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  return host ? (
+    <a
+      href={`https://${host}/address/${address}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="shrink-0 font-medium text-ink hover:underline"
+    >
+      {truncateAddress(address)}
+    </a>
+  ) : (
+    <span className="shrink-0 font-medium text-ink">
+      {truncateAddress(address)}
+    </span>
+  )
+}
+
+function ExplorerTransaction({
+  chainId,
+  txHash,
+  timestamp,
+}: {
+  chainId: number
+  txHash: string
+  timestamp: number
+}) {
+  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const label = timeAgo(timestamp)
+  return host ? (
+    <a
+      href={`https://${host}/tx/${txHash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="shrink-0 font-medium text-bluebs-600 hover:underline"
+    >
+      {label === 'now' ? 'now' : `${label} ago`}
+    </a>
+  ) : (
+    <span className="shrink-0 text-smoke-500">
+      {label === 'now' ? 'now' : `${label} ago`}
+    </span>
+  )
+}
+
+function itemLabel(names: Record<number, string>, tierId: number): string {
+  return names[tierId] ?? `Item #${tierId}`
+}
+
+function tallyItems<T extends { tierId: number }>(
+  rows: T[],
+  names: Record<number, string>,
+): { tierId: number; count: number; label: string }[] {
+  const counts = new Map<number, number>()
+  for (const row of rows) {
+    counts.set(row.tierId, (counts.get(row.tierId) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([tierId, count]) => ({
+      tierId,
+      count,
+      label: itemLabel(names, tierId),
+    }))
+    .sort((a, b) => b.count - a.count || a.tierId - b.tierId)
 }
 
 function ShopEditorLoading({ onClose }: { onClose: () => void }) {
@@ -439,40 +1003,240 @@ function ShopEditorLoading({ onClose }: { onClose: () => void }) {
   )
 }
 
+type StoreMediaKind = 'image' | 'video' | 'audio' | 'document' | 'unknown'
+
+function storeMediaKind(mediaType: string | undefined, url: string): StoreMediaKind {
+  const mime = mediaType?.toLowerCase() ?? ''
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime === 'application/pdf' || mime.startsWith('text/')) return 'document'
+
+  const path = (url.split(/[?#]/, 1)[0] ?? '').toLowerCase()
+  if (/\.(png|jpe?g|gif|webp|avif|svg)$/.test(path)) return 'image'
+  if (/\.(mp4|webm|mov|m4v|ogv)$/.test(path)) return 'video'
+  if (/\.(mp3|wav|ogg|m4a|aac|flac)$/.test(path)) return 'audio'
+  if (/\.(pdf|txt|md)$/.test(path)) return 'document'
+  return 'unknown'
+}
+
+function resolvedStoreMedia(media: TierMedia | undefined) {
+  if (!media) return null
+  const source = media.animationUrl || media.image || ''
+  if (!source) return null
+  return {
+    source,
+    poster: media.animationUrl && media.image ? media.image : undefined,
+    kind: storeMediaKind(media.mediaType, source),
+  }
+}
+
+function LazyStoreVideo({
+  src,
+  poster,
+  alt,
+  detail,
+  onError,
+}: {
+  src: string
+  poster?: string
+  alt: string
+  detail: boolean
+  onError: () => void
+}) {
+  const ref = useRef<HTMLVideoElement>(null)
+  const [nearViewport, setNearViewport] = useState(detail)
+  const [visible, setVisible] = useState(detail)
+
+  useEffect(() => {
+    if (detail) return
+    const node = ref.current
+    if (!node || !('IntersectionObserver' in window)) {
+      setNearViewport(true)
+      return
+    }
+    const loader = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) setNearViewport(true)
+      },
+      { rootMargin: '240px 0px' },
+    )
+    const player = new IntersectionObserver(
+      entries => setVisible(entries.some(entry => entry.intersectionRatio >= 0.35)),
+      { threshold: [0, 0.35] },
+    )
+    loader.observe(node)
+    player.observe(node)
+    return () => {
+      loader.disconnect()
+      player.disconnect()
+    }
+  }, [detail])
+
+  useEffect(() => {
+    if (detail) return
+    const node = ref.current
+    if (!node) return
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches
+    if (visible && nearViewport && !reducedMotion) {
+      void node.play().catch(() => undefined)
+    } else {
+      node.pause()
+    }
+  }, [detail, nearViewport, visible])
+
+  return (
+    <video
+      ref={ref}
+      src={detail || nearViewport ? src : undefined}
+      poster={poster}
+      aria-label={alt}
+      controls={detail}
+      muted={!detail}
+      loop={!detail}
+      playsInline
+      preload={detail ? 'metadata' : 'none'}
+      onError={onError}
+      className={
+        detail
+          ? 'max-h-[28rem] w-full rounded-lg object-contain'
+          : 'h-full w-full object-cover'
+      }
+    />
+  )
+}
+
+function StoreMediaPreview({
+  media,
+  alt,
+  detail = false,
+}: {
+  media: TierMedia | undefined
+  alt: string
+  detail?: boolean
+}) {
+  const resolved = resolvedStoreMedia(media)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => setFailed(false), [resolved?.source])
+
+  if (!resolved || failed) {
+    return (
+      <div className="flex h-full w-full items-center justify-center text-xs text-smoke-500">
+        {media ? 'No media' : 'Loading…'}
+      </div>
+    )
+  }
+
+  if (resolved.kind === 'image') {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={resolved.source}
+        alt={alt}
+        loading={detail ? 'eager' : 'lazy'}
+        decoding="async"
+        onError={() => setFailed(true)}
+        className={
+          detail
+            ? 'max-h-[28rem] w-full rounded-lg object-contain'
+            : 'h-full w-full object-cover'
+        }
+      />
+    )
+  }
+
+  if (resolved.kind === 'video') {
+    return (
+      <LazyStoreVideo
+        src={resolved.source}
+        poster={resolved.poster}
+        alt={alt}
+        detail={detail}
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
+  if (resolved.kind === 'audio' && detail) {
+    return (
+      <audio
+        src={resolved.source}
+        controls
+        preload="none"
+        aria-label={alt}
+        className="w-full"
+        onError={() => setFailed(true)}
+      />
+    )
+  }
+
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-sm text-smoke-600">
+      <span aria-hidden="true" className="text-3xl">
+        {resolved.kind === 'audio' ? '♪' : '↗'}
+      </span>
+      {detail ? (
+        <a
+          href={resolved.source}
+          target="_blank"
+          rel="noreferrer"
+          className="text-bluebs-700 underline underline-offset-4"
+        >
+          Open media
+        </a>
+      ) : (
+        <span>{resolved.kind === 'audio' ? 'Audio' : 'Media file'}</span>
+      )}
+    </div>
+  )
+}
+
 function TierCard({
   tier,
   media,
   pricing,
+  onOpen,
 }: {
   tier: ShopTier
   media: TierMedia | undefined
   pricing: Shop['pricing']
+  onOpen: () => void
 }) {
   const unlimited = tier.initial >= TIER_UNLIMITED_SUPPLY
   const soldOut = !unlimited && tier.remaining <= 0
   const discounted = tier.discountPercent > 0
-  const effective = tierEffectivePrice(tier.price, tier.discountPercent)
-  const [imageFailed, setImageFailed] = useState(false)
+  const effective = effectiveTierPrice(tier.price, tier.discountPercent)
+  const { quantityOf, setQuantity, registerItem } = useShopCart()
+  const quantity = quantityOf(tier.id)
+  const cap = unlimited ? 99 : tier.remaining
+  const item = useMemo(
+    () => ({
+      tierId: tier.id,
+      name: media?.name ?? `Item #${tier.id}`,
+      image: media?.image,
+    }),
+    [tier.id, media?.name, media?.image],
+  )
+
+  useEffect(() => registerItem(item), [item, registerItem])
 
   return (
     <div
-      className={`card overflow-hidden ${soldOut ? 'opacity-60' : ''}`}
+      data-tier-id={tier.id}
+      className={`card overflow-hidden transition ${
+        quantity > 0 ? '!border-bluebs-500' : ''
+      } ${soldOut ? 'opacity-60' : ''}`}
     >
-      <div className="relative aspect-square bg-smoke-100">
-        {media?.image && !imageFailed ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={media.image}
-            alt={media.name ?? `Item #${tier.id}`}
-            loading="lazy"
-            onError={() => setImageFailed(true)}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-smoke-500">
-            {media ? 'No media' : 'Loading…'}
-          </div>
-        )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="relative block aspect-square w-full bg-smoke-100 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-bluebs-500"
+        aria-label={`View details for ${item.name}`}
+      >
+        <StoreMediaPreview media={media} alt={item.name} />
         {discounted ? (
           <span className="absolute left-2 top-2 rounded-full bg-ink px-2 py-0.5 text-[11px] font-medium text-bone">
             {discountLabel(tier.discountPercent)}
@@ -483,12 +1247,27 @@ function TierCard({
             Sold out
           </span>
         ) : null}
-      </div>
+        {quantity > 0 ? (
+          <span className="absolute bottom-2 right-2 flex h-7 min-w-7 items-center justify-center rounded-full bg-bluebs-600 px-2 text-xs font-medium text-white shadow-sm">
+            {quantity}
+          </span>
+        ) : null}
+      </button>
 
       <div className="p-3.5">
-        <p className="truncate text-sm font-medium text-ink">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="block w-full truncate text-left text-sm font-medium text-ink hover:underline"
+        >
           {media?.name ?? `Item #${tier.id}`}
-        </p>
+        </button>
+
+        {media?.description ? (
+          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-smoke-600">
+            {plainText(media.description)}
+          </p>
+        ) : null}
 
         <p className="mt-1 text-sm text-ink">
           <span className="font-medium">
@@ -501,13 +1280,40 @@ function TierCard({
           ) : null}
         </p>
 
-        <p className="mt-1 text-xs text-smoke-700">
-          {soldOut
-            ? 'None left'
-            : unlimited
-              ? 'Unlimited'
-              : `${tier.remaining.toLocaleString('en-US')} left`}
-        </p>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="text-xs text-smoke-700">
+            {soldOut
+              ? 'None left'
+              : unlimited
+                ? 'Unlimited'
+                : `${tier.remaining.toLocaleString('en-US')} left`}
+          </p>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setQuantity(tier.id, quantity - 1, item)}
+              disabled={quantity <= 0}
+              aria-label={`Remove one ${item.name}`}
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-smoke-300 text-sm text-smoke-700 disabled:opacity-35"
+            >
+              −
+            </button>
+            <span className="min-w-4 text-center text-xs tabular-nums text-ink">
+              {quantity}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setQuantity(tier.id, Math.min(cap, quantity + 1), item)
+              }
+              disabled={soldOut || quantity >= cap}
+              aria-label={`Add one ${item.name}`}
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-smoke-300 text-sm text-smoke-700 disabled:opacity-35"
+            >
+              +
+            </button>
+          </div>
+        </div>
 
         {tier.reserveFrequency > 0 || tier.votingUnits > 0n ? (
           <p className="mt-1 text-[11px] text-smoke-500">
@@ -520,7 +1326,7 @@ function TierCard({
                 : null,
             ]
               .filter(Boolean)
-              .join(' · ')}
+              .join(', ')}
           </p>
         ) : null}
       </div>
@@ -528,13 +1334,252 @@ function TierCard({
   )
 }
 
-/** Effective (discounted) price, mirroring JB721TiersHookStore:
- *  price - mulDiv(price, discountPercent, 200) with integer-floor division. */
-function tierEffectivePrice(price: bigint, discountPercent: number): bigint {
-  let d = BigInt(discountPercent)
-  if (d <= 0n) return price
-  if (d > DISCOUNT_DENOMINATOR) d = DISCOUNT_DENOMINATOR
-  return price - (price * d) / DISCOUNT_DENOMINATOR
+function TierDetailModal({
+  isRevnet,
+  chains,
+  tier,
+  media,
+  pricing,
+  onClose,
+}: {
+  isRevnet: boolean
+  chains: [number, number][]
+  tier: ShopTier
+  media: TierMedia | undefined
+  pricing: Shop['pricing']
+  onClose: () => void
+}) {
+  const { quantityOf, setQuantity, registerItem } = useShopCart()
+  const quantity = quantityOf(tier.id)
+  const unlimited = tier.initial >= TIER_UNLIMITED_SUPPLY
+  const soldOut = !unlimited && tier.remaining <= 0
+  const cap = unlimited ? 99 : tier.remaining
+  const discounted = tier.discountPercent > 0
+  const effective = effectiveTierPrice(tier.price, tier.discountPercent)
+  const item = useMemo(
+    () => ({
+      tierId: tier.id,
+      name: media?.name ?? `Item #${tier.id}`,
+      image: media?.image,
+    }),
+    [tier.id, media?.name, media?.image],
+  )
+
+  useEffect(() => {
+    registerItem(item)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [item, registerItem, onClose])
+
+  const supply = useQuery({
+    queryKey: ['shopTierSupply', chains, isRevnet, tier.id],
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: async () =>
+      Promise.all(
+        chains.map(async ([targetChainId, targetProjectId]) => {
+          const targetId = targetChainId as JBChainId
+          const client = getPublicClient(wagmiConfig, {
+            chainId: targetId,
+          }) as PublicClient | undefined
+          if (!client) {
+            return { chainId: targetId, state: 'unavailable' as const }
+          }
+          try {
+            const targetShop = await getProject721Shop(client, {
+              chainId: targetId,
+              projectId: BigInt(targetProjectId),
+              isRevnet,
+              tierLimit: 200,
+            })
+            const targetTier = targetShop?.tiers.find(
+              candidate => candidate.id === tier.id,
+            )
+            if (!targetTier) {
+              return { chainId: targetId, state: 'missing' as const }
+            }
+            return {
+              chainId: targetId,
+              state: 'ready' as const,
+              remaining: targetTier.remainingSupply,
+              initial: targetTier.initialSupply,
+            }
+          } catch {
+            return { chainId: targetId, state: 'unavailable' as const }
+          }
+        }),
+      ),
+  })
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-slate-950/55 px-3 py-8 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shop-item-detail-title"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <div className="card relative w-full max-w-2xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close item details"
+          className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-xl text-smoke-700 shadow-sm hover:bg-white"
+        >
+          ×
+        </button>
+
+        <div className="grid md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <div className="flex min-h-64 items-center justify-center bg-smoke-100 p-5">
+            <StoreMediaPreview media={media} alt={item.name} detail />
+          </div>
+
+          <div className="p-5 sm:p-6">
+            <h2
+              id="shop-item-detail-title"
+              className="pr-10 font-agrandir text-2xl font-medium text-ink"
+            >
+              {item.name}
+            </h2>
+            {media?.description ? (
+              <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+                {plainText(media.description)}
+              </p>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="font-agrandir text-xl font-medium text-ink">
+                {formatTokenAmount(effective, pricing.decimals)}{' '}
+                {pricing.symbol}
+              </span>
+              {discounted ? (
+                <>
+                  <span className="text-sm text-smoke-500 line-through">
+                    {formatTokenAmount(tier.price, pricing.decimals)}{' '}
+                    {pricing.symbol}
+                  </span>
+                  <span className="rounded-full bg-ink px-2 py-0.5 text-[11px] font-medium text-bone">
+                    {discountLabel(tier.discountPercent)}
+                  </span>
+                </>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setQuantity(tier.id, quantity - 1, item)}
+                disabled={quantity <= 0}
+                aria-label={`Remove one ${item.name}`}
+                className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-40"
+              >
+                −
+              </button>
+              <span className="min-w-8 text-center font-medium tabular-nums text-ink">
+                {quantity}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setQuantity(tier.id, Math.min(cap, quantity + 1), item)
+                }
+                disabled={soldOut || quantity >= cap}
+                aria-label={`Add one ${item.name}`}
+                className="btn-primary flex h-10 min-w-10 items-center justify-center !px-3 disabled:opacity-40"
+              >
+                +
+              </button>
+              <span className="ml-1 text-xs text-smoke-500">
+                {soldOut
+                  ? 'Sold out'
+                  : unlimited
+                    ? 'Unlimited inventory'
+                    : `${tier.remaining.toLocaleString('en-US')} left here`}
+              </span>
+            </div>
+
+            <div className="mt-6 border-t border-smoke-200 pt-4">
+              <p className="field-label">Supply by chain</p>
+              <div className="mt-2 space-y-2">
+                {supply.isLoading ? (
+                  <p className="text-xs text-smoke-500">Reading supply…</p>
+                ) : (
+                  supply.data?.map(row => (
+                    <div
+                      key={row.chainId}
+                      className="flex items-center justify-between gap-3 text-xs"
+                    >
+                      <span className="inline-flex items-center gap-1.5 text-smoke-700">
+                        <ChainIcon chainId={row.chainId} size={17} />
+                        {chainName(row.chainId)}
+                      </span>
+                      <span className="tabular-nums text-ink">
+                        {row.state === 'missing'
+                          ? 'Not on this chain'
+                          : row.state === 'unavailable'
+                            ? 'Unavailable'
+                            : row.initial >= TIER_UNLIMITED_SUPPLY
+                              ? 'Unlimited'
+                              : `${row.remaining.toLocaleString('en-US')} / ${row.initial.toLocaleString('en-US')} left`}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <dl className="mt-5 space-y-2 border-t border-smoke-200 pt-4 text-xs">
+              <DetailFact label="Item ID" value={`#${tier.id}`} />
+              <DetailFact label="Category" value={String(tier.category)} />
+              {tier.reserveFrequency > 0 ? (
+                <DetailFact
+                  label="Reserve mint"
+                  value={`1 per ${tier.reserveFrequency} sold`}
+                />
+              ) : null}
+              {tier.votingUnits > 0n ? (
+                <DetailFact
+                  label="Voting units"
+                  value={tier.votingUnits.toLocaleString('en-US')}
+                />
+              ) : null}
+            </dl>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetailFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <dt className="text-smoke-500">{label}</dt>
+      <dd className="text-right text-ink">{value}</dd>
+    </div>
+  )
+}
+
+function plainText(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .trim()
 }
 
 /** Shopper-facing "X% off" — discountPercent is out of 200. */
@@ -555,75 +1600,63 @@ async function readShop(
   isRevnet: boolean,
   nativeSymbol: string,
 ): Promise<Shop | null> {
-  // 1. The 721 hook.
-  let hook: Address | null = null
-  // Non-authoritative = the ruleset dataHook might be some other hook; the
-  // STORE() probe below decides.
-  let authoritative = true
-
-  if (isRevnet) {
-    const revnetHook = await getRevnetTiered721Hook(client, {
-      chainId,
-      revnetId: BigInt(projectId),
-    })
-    hook = revnetHook && revnetHook !== zeroAddress ? revnetHook : null
-  } else {
-    const { ruleset, metadata } = await getCurrentRuleset(client, {
+  const [resolved, current] = await Promise.all([
+    getProject721Shop(client, {
       chainId,
       projectId: BigInt(projectId),
-    })
-    const dataHook = metadata.dataHook
-    if (metadata.useDataHookForPay && dataHook && dataHook !== zeroAddress) {
-      const omni = jbContractAddress['6'][
-        JBOmnichainDeployerContracts.JBOmnichainDeployer
-      ]?.[chainId] as Address | undefined
-      if (omni && dataHook.toLowerCase() === omni.toLowerCase()) {
-        // Omnichain project: the real 721 hook lives in the deployer's
-        // per-ruleset mapping.
-        const [omniHook] = await client.readContract({
+      isRevnet,
+      tierLimit: 200,
+    }),
+    getCurrentRuleset(client, {
+      chainId,
+      projectId: BigInt(projectId),
+    }).catch(() => null),
+  ])
+  if (!resolved) return null
+
+  const idTarget = resolved.metadataIdTarget
+  if (!idTarget || idTarget === zeroAddress) {
+    throw new Error('The shop metadata target is invalid.')
+  }
+
+  const { currency, decimals } = resolved.pricing
+
+  let cashOutEnabled = false
+  if (!isRevnet && current) {
+    const dataHook = current.metadata.dataHook
+    const omni = jbContractAddress['6'][
+      JBOmnichainDeployerContracts.JBOmnichainDeployer
+    ]?.[chainId] as Address | undefined
+    if (
+      omni &&
+      dataHook &&
+      dataHook.toLowerCase() === omni.toLowerCase()
+    ) {
+      // The ruleset flag only says to consult the omnichain deployer. Its
+      // per-ruleset 721 config authoritatively decides whether cash outs are
+      // forwarded to this collection.
+      const configured = await client
+        .readContract({
           address: omni,
           abi: jbOmnichainDeployerAbi,
           functionName: 'tiered721HookOf',
-          args: [BigInt(projectId), BigInt(ruleset.id)],
-        })
-        hook = omniHook !== zeroAddress ? omniHook : null
-      } else {
-        // Single-chain custom project: the dataHook may be the 721 hook
-        // itself.
-        hook = dataHook
-        authoritative = false
-      }
-    }
-  }
-  if (!hook) return null
-
-  // 2. The hook's store. For a non-authoritative candidate a revert means
-  // "not a 721 hook" (no shop); for an authoritative one, let failures throw.
-  const store = authoritative
-    ? await client.readContract({
-        address: hook,
-        abi: jb721TiersHookAbi,
-        functionName: 'STORE',
-      })
-    : await client
-        .readContract({
-          address: hook,
-          abi: jb721TiersHookAbi,
-          functionName: 'STORE',
+          args: [BigInt(projectId), BigInt(current.ruleset.id)],
         })
         .catch(() => null)
-  if (!store) return null
-
-  // 3. Pricing context — tier prices are meaningless without the hook's
-  // exact currency + decimals, so this read failing is an error, not a
-  // fallback.
-  const [currencyRaw, decimalsRaw] = await client.readContract({
-    address: hook,
-    abi: jb721TiersHookAbi,
-    functionName: 'pricingContext',
-  })
-  const currency = Number(currencyRaw)
-  const decimals = Number(decimalsRaw)
+      cashOutEnabled = !!(
+        configured &&
+        configured[0].toLowerCase() === resolved.hook.toLowerCase() &&
+        configured[1]
+      )
+    } else {
+      // A direct custom-project data hook uses the ruleset flag itself.
+      cashOutEnabled = !!(
+        dataHook &&
+        dataHook.toLowerCase() === resolved.hook.toLowerCase() &&
+        current.metadata.useDataHookForCashOut
+      )
+    }
+  }
 
   let symbol: string
   if (currency === BASE_CURRENCY_ETH) {
@@ -650,30 +1683,26 @@ async function readShop(
     }
   }
 
-  // 4. The tiers, with resolver URIs included so cards can name themselves
-  // without a per-tier resolver read.
-  const raw = await client.readContract({
-    address: store,
-    abi: jb721TiersHookStoreAbi,
-    functionName: 'tiersOf',
-    args: [hook, [], true, 0n, 50n],
-  })
-  const tiers: ShopTier[] = raw
-    .map(tier => ({
-      id: tier.id,
-      price: tier.price,
-      remaining: tier.remainingSupply,
-      initial: tier.initialSupply,
-      category: tier.category,
-      discountPercent: tier.discountPercent,
-      reserveFrequency: tier.reserveFrequency,
-      votingUnits: tier.votingUnits,
-      encodedIpfsUri: tier.encodedIpfsUri,
-      resolvedUri: tier.resolvedUri ?? '',
-    }))
-    .filter(tier => tier.initial > 0)
+  const tiers: ShopTier[] = resolved.tiers.map(tier => ({
+    id: tier.id,
+    price: tier.price,
+    remaining: tier.remainingSupply,
+    initial: tier.initialSupply,
+    category: tier.category,
+    discountPercent: tier.discountPercent,
+    reserveFrequency: tier.reserveFrequency,
+    votingUnits: tier.votingUnits,
+    encodedIpfsUri: tier.encodedIpfsUri,
+    resolvedUri: tier.resolvedUri ?? '',
+  }))
 
-  return { hook, store, pricing: { currency, decimals, symbol }, tiers }
+  return {
+    hook: resolved.hook,
+    idTarget,
+    cashOutEnabled,
+    pricing: { currency, decimals, symbol },
+    tiers,
+  }
 }
 
 /** Parse a data:application/json;base64 URI into its JSON object. */
@@ -717,6 +1746,11 @@ function gatewayUrl(url: string): string {
   return url.startsWith('ipfs://') ? (ipfsUrl(url) ?? '') : url
 }
 
+function mediaAssetUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  return gatewayUrl(value) || undefined
+}
+
 /** Resolve a tier's display metadata: the resolver's data URI first, then
  *  the tier's IPFS JSON. Best-effort — {} on any failure. */
 async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
@@ -724,6 +1758,9 @@ async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
     name: str(json.productName) ?? str(json.name),
     description: str(json.productDescription) ?? str(json.description),
     image: mediaImageUrl(json.image ?? json.imageUri),
+    animationUrl: mediaAssetUrl(json.animation_url ?? json.animationUrl),
+    mediaType:
+      str(json.mediaType) ?? str(json.animationType) ?? str(json.mimeType),
     categoryName: str(json.categoryName),
   })
 

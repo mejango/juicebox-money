@@ -127,7 +127,7 @@ function LoansTables({
     retry: 1,
     queryFn: async () => {
       const res = await fetch(
-        `/api/loans?projectId=${projectId}&chainIds=${chainId}`,
+        `/api/loans?chainId=${chainId}&projectId=${projectId}`,
       )
       if (!res.ok) throw new Error('Loan data unavailable')
       return (await res.json()) as { items: BsLoan[]; totalCount: number }
@@ -158,18 +158,21 @@ function LoansTables({
       ) : null}
 
       <div className="card p-5">
-        <span className="field-label">All loans</span>
-        {isLoading ? (
-          <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-        ) : isError ? (
-          <p className="mt-2 text-sm text-smoke-700">
-            Loan data is unavailable right now.
-          </p>
-        ) : loans.length === 0 ? (
-          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-            No one has taken a loan against this revnet yet.
-          </p>
-        ) : (
+        <div>
+          <span className="field-label">All loans</span>
+          {isLoading ? (
+            <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+          ) : isError ? (
+            <p className="mt-2 text-sm text-smoke-700">
+              Loan data is unavailable right now.
+            </p>
+          ) : loans.length === 0 ? (
+            <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+              No one has taken a loan against this revnet yet.
+            </p>
+          ) : null}
+        </div>
+        {!isLoading && !isError && loans.length > 0 ? (
           <LoanTable
             chainId={chainId}
             projectId={projectId}
@@ -177,7 +180,7 @@ function LoansTables({
             contexts={contexts}
             collateralSymbol={collateralSymbol}
           />
-        )}
+        ) : null}
       </div>
     </>
   )

@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
@@ -19,7 +18,12 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { zeroAddress, type Address, type PublicClient } from 'viem'
+import {
+  encodeFunctionData,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import {
   SplitsEditor,
@@ -27,12 +31,14 @@ import {
   splitOk,
   type DraftSplit,
 } from '@/components/create/SplitsEditor'
-import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { getRevnetOperator } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
 import { LP_SPLIT_HOOK } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
+import { fetchSafeInfo } from '@/lib/safe'
 
 /** A live split as returned by JBSplits.splitsOf. */
 type RawSplit = {
@@ -159,7 +165,8 @@ function draftToSplit(row: DraftSplit): JBSplit {
  * splits are fingerprinted at open and re-read at submit: if they changed
  * onchain in the meantime the send aborts, since a stale prefill could
  * silently clear a recipient. setSplitGroupsOf goes to the project's resolved
- * controller through useSafeTx (simulate-first).
+ * controller through the same simulation-first Safe/Relayr authority router
+ * used by the Owner/Operator tab.
  */
 export function EditSplitsFlow({
   chainId,
@@ -167,6 +174,7 @@ export function EditSplitsFlow({
   groupId,
   title,
   rulesetId,
+  isRevnet = false,
 }: {
   chainId: JBChainId
   projectId: number
@@ -174,6 +182,7 @@ export function EditSplitsFlow({
   token?: Address | null
   title: string
   rulesetId: bigint
+  isRevnet?: boolean
 }) {
   const { isConnected, address } = useWallet()
 
@@ -198,13 +207,46 @@ export function EditSplitsFlow({
     !!owner &&
     owner.toLowerCase() === address.toLowerCase()
 
+  const { data: revnetOperator } = useQuery({
+    queryKey: ['editSplitsRevnetOperator', chainId, projectId],
+    enabled: mounted && isRevnet,
+    staleTime: 30_000,
+    queryFn: () => getRevnetOperator(chainId, projectId),
+  })
+  const projectAuthority = (isRevnet ? revnetOperator : owner) as
+    | Address
+    | null
+    | undefined
+  const { data: authoritySafe } = useQuery({
+    queryKey: ['editSplitsAuthoritySafe', chainId, projectAuthority],
+    enabled: mounted && !!projectAuthority,
+    staleTime: 30_000,
+    queryFn: () => fetchSafeInfo(chainId, projectAuthority!),
+  })
+  const isDirectAuthority =
+    !!address &&
+    !!projectAuthority &&
+    address.toLowerCase() === projectAuthority.toLowerCase()
+  const isAuthoritySafeSigner =
+    !!address &&
+    !!authoritySafe?.owners.some(
+      signer => signer.toLowerCase() === address.toLowerCase(),
+    )
+
   // A revnet's owner is the REVOwner contract, so the human editing splits is
   // an operator holding SET_SPLIT_GROUPS granted FROM the owner (matching the
   // contract's _requirePermissionFrom(owner, …) check) — not the owner NFT.
   const { data: canOperate } = useQuery({
     queryKey: ['editSplitsPerm', chainId, projectId, address, owner],
     enabled:
-      mounted && isConnected && !!address && !!owner && !isOwner && !!publicClient,
+      mounted &&
+      isConnected &&
+      !!address &&
+      !!owner &&
+      !isOwner &&
+      !isDirectAuthority &&
+      !isAuthoritySafeSigner &&
+      !!publicClient,
     staleTime: 60_000,
     queryFn: () =>
       hasPermissions(publicClient!, {
@@ -216,7 +258,17 @@ export function EditSplitsFlow({
       }),
   })
 
-  const canEdit = isOwner || canOperate === true
+  const canEdit =
+    isOwner ||
+    isDirectAuthority ||
+    isAuthoritySafeSigner ||
+    canOperate === true
+  const actionAuthority =
+    isDirectAuthority || isAuthoritySafeSigner || isOwner
+      ? projectAuthority
+      : canOperate === true
+        ? address
+        : null
 
   const { data: controller } = useReadContract({
     abi: jbDirectoryAbi,
@@ -227,7 +279,13 @@ export function EditSplitsFlow({
     query: { enabled: canEdit, staleTime: 60_000 },
   })
 
-  if (!canEdit || !isKnownController(chainId, controller)) return null
+  if (
+    !canEdit ||
+    !actionAuthority ||
+    !isKnownController(chainId, controller)
+  ) {
+    return null
+  }
 
   return (
     <EditSplitsModal
@@ -237,6 +295,7 @@ export function EditSplitsFlow({
       title={title}
       rulesetId={rulesetId}
       controller={controller!}
+      authority={actionAuthority}
     />
   )
 }
@@ -248,6 +307,7 @@ function EditSplitsModal({
   title,
   rulesetId,
   controller,
+  authority,
 }: {
   chainId: JBChainId
   projectId: number
@@ -255,16 +315,18 @@ function EditSplitsModal({
   title: string
   rulesetId: bigint
   controller: Address
+  authority: Address
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { address } = useWallet()
-  const tx = useSafeTx(chainId)
 
   const [open, setOpen] = useState(false)
   const [drafts, setDrafts] = useState<DraftSplit[]>([])
   const [lockedRows, setLockedRows] = useState<RawSplit[]>([])
   const [baseline, setBaseline] = useState<string | null>(null)
   const [flowError, setFlowError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
   const initialized = useRef(false)
 
   const splitsAddr = jbContractAddress['6'][JBCoreContracts.JBSplits][
@@ -301,15 +363,6 @@ function EditSplitsModal({
     initialized.current = true
   }, [open, live])
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
-  const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending'
-
   const lockedPercent = useMemo(
     () => lockedRows.reduce((sum, s) => sum + s.percent, 0),
     [lockedRows],
@@ -332,12 +385,13 @@ function EditSplitsModal({
     setLockedRows([])
     setBaseline(null)
     setFlowError(null)
+    setStatus(null)
+    setSuccess(false)
     initialized.current = false
-    tx.reset()
   }
 
   const submit = async () => {
-    if (busy || !publicClient || !address) return
+    if (busy || !publicClient) return
     setFlowError(null)
     if (!rowsValid) {
       setFlowError('Fix the highlighted recipients before saving.')
@@ -390,13 +444,46 @@ function EditSplitsModal({
       ...editable,
     ]
 
-    tx.send({
+    const call: AuthorityCall = {
       chainId,
-      address: controller,
-      abi: jbControllerAbi,
-      functionName: 'setSplitGroupsOf',
-      args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
-    })
+      authority,
+      target: controller,
+      data: encodeFunctionData({
+        abi: jbControllerAbi,
+        functionName: 'setSplitGroupsOf',
+        args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
+      }),
+      gas: 600_000n,
+      label: `Edit ${title}`,
+    }
+    setBusy(true)
+    setStatus('Reviewing the split replacement…')
+    try {
+      const result = await runAuthorityCalls({
+        calls: [call],
+        onProgress: progress => setStatus(progress.message),
+      })
+      const queued = result.safeResults.filter(row => row.status === 'queued')
+        .length
+      const waiting = result.safeResults.filter(row => row.status === 'waiting')
+        .length
+      setStatus(
+        queued || waiting
+          ? `Safe action recorded${queued ? '; queued for co-signing' : ''}${
+              waiting ? '; waiting for more onchain approvals' : ''
+            }.`
+          : `${title} updated. This page picks it up in about a minute.`,
+      )
+      setSuccess(true)
+    } catch (submitError) {
+      setFlowError(
+        submitError instanceof Error
+          ? submitError.message
+          : 'Could not save the splits.',
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (!open) {
@@ -419,25 +506,15 @@ function EditSplitsModal({
           disabled={busy}
           className="text-xs font-medium text-smoke-700 hover:text-ink disabled:opacity-50"
         >
-          {tx.phase === 'success' ? 'Done' : 'Cancel'}
+          {success ? 'Done' : 'Cancel'}
         </button>
       </div>
 
-      {tx.phase === 'success' ? (
+      {success ? (
         <div className="mt-3">
           <p className="text-sm font-medium text-ink">
-            {title} updated. This page picks it up in about a minute.
+            {status}
           </p>
-          {txUrl ? (
-            <a
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 inline-block text-sm font-semibold text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-            >
-              View transaction
-            </a>
-          ) : null}
         </div>
       ) : isLoading || (!baseline && !isError) ? (
         <p className="mt-3 text-sm text-smoke-500">Loading current splits…</p>
@@ -498,32 +575,16 @@ function EditSplitsModal({
             disabled={busy || !rowsValid || overAllocated}
             className="btn-primary mt-3 min-h-[44px] w-full text-sm"
           >
-            {tx.phase === 'simulating'
-              ? 'Double-checking the transaction…'
-              : tx.phase === 'signing'
-                ? 'Confirm in your wallet…'
-                : tx.phase === 'pending'
-                  ? 'Saving…'
-                  : 'Save splits'}
+            {busy ? status ?? 'Saving…' : 'Save splits'}
           </button>
 
-          {tx.phase === 'pending' && txUrl ? (
-            <p className="mt-2 text-center text-xs text-smoke-700">
-              Waiting for confirmation —{' '}
-              <a
-                href={txUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2"
-              >
-                view transaction
-              </a>
-            </p>
+          {status && !busy ? (
+            <p className="mt-2 text-xs text-smoke-700">{status}</p>
           ) : null}
 
-          {flowError || tx.error ? (
+          {flowError ? (
             <p className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {flowError ?? tx.error}
+              {flowError}
             </p>
           ) : null}
         </div>

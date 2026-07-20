@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
 import '@getpara/react-sdk-lite/styles.css'
 import './globals.css'
+import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
 import { ParaHost, Providers } from '@/providers/Providers'
@@ -62,7 +63,7 @@ export const metadata: Metadata = {
   description:
     'Raise funds, reward supporters, and run your treasury in the open. Juicebox is programmable money for projects.',
   icons: {
-    icon: '/brand/logo-icon.svg',
+    icon: logoIcon.src,
   },
 }
 

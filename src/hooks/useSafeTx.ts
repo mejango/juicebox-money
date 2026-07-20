@@ -9,6 +9,7 @@ import {
   useWriteContract,
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
+import { requestContractTransactionReview } from '@/lib/transaction-review'
 
 export type TxPhase =
   | 'idle'
@@ -26,6 +27,7 @@ export type TxRequest = {
   functionName: string
   args: readonly unknown[]
   value?: bigint
+  label?: string
 }
 
 /** A friendly one-line message out of a viem/wagmi error. */
@@ -41,10 +43,10 @@ export function friendlyTxError(e: unknown): string {
 
 /**
  * The one transaction pipeline every project-page write flow uses
- * (website/ parity: simulate → send → status; the caller renders its own
- * confirm step before calling send()):
+ * (website/ parity: exact review → simulate → send → status):
  *
- * 1. `send(request)` switches chains if needed, SIMULATES the exact call
+ * 1. `send(request)` opens the global exact-payload review, then switches
+ *    chains if needed and SIMULATES the approved call
  *    (nothing is ever sent that doesn't simulate clean), then requests the
  *    wallet signature and tracks the receipt.
  * 2. Phases drive the caller's UI; `error` carries a friendly message.
@@ -82,6 +84,18 @@ export function useSafeTx(chainId: number) {
       }
       setError(null)
       try {
+        setPhase('review')
+        const approved = await requestContractTransactionReview(
+          {
+            ...request,
+            account: address,
+          },
+          { label: request.label },
+        )
+        if (!approved) {
+          setPhase('idle')
+          return null
+        }
         setPhase('simulating')
         await switchChainAsync({ chainId: request.chainId }).catch(() => {
           throw new Error('Switch your wallet to the right chain to continue.')

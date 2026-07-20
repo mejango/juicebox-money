@@ -6,6 +6,7 @@
 const MAINNET_URL =
   process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz/graphql'
 const TESTNET_URL = 'https://testnet.bendystraw.xyz/graphql'
+const REQUEST_TIMEOUT_MS = 8_000
 
 export const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 
@@ -18,6 +19,7 @@ export async function bendystraw<T>(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     next: { revalidate: opts.revalidate ?? 60 },
   })
   if (!res.ok) throw new Error(`bendystraw ${res.status}`)
@@ -38,6 +40,7 @@ export type BsProject = {
   logoUri: string | null
   projectTagline: string | null
   volume: string
+  volumeUsd: string
   balance: string
   paymentsCount: number
   contributorsCount: number
@@ -53,7 +56,7 @@ export type BsProject = {
 }
 
 const PROJECT_FIELDS = `
-  projectId chainId version name logoUri projectTagline volume balance
+  projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
   decimals currency isRevnet owner metadataUri
 `
@@ -321,9 +324,9 @@ export async function getParticipants(
       : await bendystraw<{
           participants: { items: BsParticipant[]; totalCount: number }
         }>(
-          `query($chainIds: [Int!], $projectId: Int!, $limit: Int!, $offset: Int!) {
+          `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
             participants(
-              where: { chainId_in: $chainIds, projectId: $projectId, version: 6, balance_gt: "0" }
+              where: { chainId: $chainId, projectId: $projectId, version: 6, balance_gt: "0" }
               orderBy: "balance"
               orderDirection: "desc"
               limit: $limit
@@ -331,7 +334,7 @@ export async function getParticipants(
             ) { items { address balance chainId volumeUsd } totalCount }
           }`,
           {
-            chainIds: [args.chainId],
+            chainId: args.chainId,
             projectId: args.projectId,
             limit: pageLimit,
             offset,
@@ -349,6 +352,244 @@ export async function getParticipants(
   return { items, totalCount: totalCount || items.length }
 }
 
+export type ShopProjectRef = {
+  chainId: number
+  projectId: number
+}
+
+export type BsShopPurchase = {
+  chainId: number
+  projectId: number
+  timestamp: number
+  txHash: string
+  beneficiary: string
+  tierId: number
+  tokenId: string
+  totalAmountPaid: string
+  hook: string
+}
+
+export type BsOwnedShopItem = {
+  chainId: number
+  projectId: number
+  createdAt: number
+  mintTx: string
+  hook: string
+  tokenId: string
+  owner: string
+  tierId: number
+}
+
+type BsOwnedShopItemRow = Omit<BsOwnedShopItem, 'hook'> & {
+  /** Bendystraw exposes the scalar hook address through this relation. */
+  hook: { address: string } | null
+}
+
+export type BsShopRows<T> = {
+  items: T[]
+  totalCount: number
+  /** At least one chain had more rows than the per-chain safety cap. */
+  capped: boolean
+  /** Chains whose indexer request failed. Successful chains remain usable. */
+  failedChains: number[]
+}
+
+const SHOP_ROWS_PAGE_SIZE = 200
+const SHOP_ROWS_MAX_PER_CHAIN = 1000
+
+/**
+ * Store-item purchases across linked deployments. Project IDs are paired to
+ * their own chains: linked projects are not assumed to share an ID.
+ */
+export async function getShopPurchases(
+  projects: ShopProjectRef[],
+): Promise<BsShopRows<BsShopPurchase>> {
+  const perChain = await Promise.all(
+    projects.map(async project => {
+      const items: BsShopPurchase[] = []
+      let totalCount = 0
+      let offset = 0
+      let failed = false
+
+      try {
+        while (items.length < SHOP_ROWS_MAX_PER_CHAIN) {
+          const limit = Math.min(
+            SHOP_ROWS_PAGE_SIZE,
+            SHOP_ROWS_MAX_PER_CHAIN - items.length,
+          )
+          const data = await bendystraw<{
+            mintNftEvents: {
+              items: BsShopPurchase[]
+              totalCount: number
+            }
+          }>(
+            `query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) {
+              mintNftEvents(
+                where: { projectId: $projectId, chainId: $chainId, version: 6 }
+                orderBy: "timestamp"
+                orderDirection: "desc"
+                limit: $limit
+                offset: $offset
+              ) {
+                totalCount
+                items {
+                  chainId projectId timestamp txHash beneficiary tierId tokenId
+                  totalAmountPaid hook
+                }
+              }
+            }`,
+            { ...project, limit, offset },
+            { revalidate: 15 },
+          )
+          const page = data.mintNftEvents?.items ?? []
+          totalCount = data.mintNftEvents?.totalCount ?? totalCount
+          items.push(
+            ...page.flatMap(row => {
+              // The query constrains this exact pair, but retain that identity
+              // check at the trust boundary. Never reinterpret a missing or
+              // mismatched row as the requested deployment.
+              if (
+                Number(row.chainId) !== project.chainId ||
+                Number(row.projectId) !== project.projectId
+              ) {
+                return []
+              }
+              return [
+                {
+                  ...row,
+                  chainId: project.chainId,
+                  projectId: project.projectId,
+                  timestamp: Number(row.timestamp),
+                  tierId: Number(row.tierId),
+                  tokenId: String(row.tokenId),
+                  totalAmountPaid: String(row.totalAmountPaid),
+                },
+              ]
+            }),
+          )
+          offset += page.length
+          if (page.length === 0 || items.length >= totalCount) break
+        }
+      } catch {
+        failed = true
+      }
+
+      return { project, items, totalCount, failed }
+    }),
+  )
+
+  const items = perChain
+    .flatMap(result => result.items)
+    .sort((a, b) => b.timestamp - a.timestamp)
+  return {
+    items,
+    totalCount: perChain.reduce((sum, result) => sum + result.totalCount, 0),
+    capped: perChain.some(result => result.totalCount > result.items.length),
+    failedChains: perChain
+      .filter(result => result.failed)
+      .map(result => result.project.chainId),
+  }
+}
+
+/**
+ * The connected account's currently indexed NFT holdings for this project's
+ * linked deployments. The caller still verifies ownerOf onchain before a
+ * redemption is offered or sent.
+ */
+export async function getOwnedShopItems(
+  projects: ShopProjectRef[],
+  owner: string,
+): Promise<BsShopRows<BsOwnedShopItem>> {
+  const normalizedOwner = owner.toLowerCase()
+  const perChain = await Promise.all(
+    projects.map(async project => {
+      const items: BsOwnedShopItem[] = []
+      let totalCount = 0
+      let offset = 0
+      let failed = false
+
+      try {
+        while (items.length < SHOP_ROWS_MAX_PER_CHAIN) {
+          const limit = Math.min(
+            SHOP_ROWS_PAGE_SIZE,
+            SHOP_ROWS_MAX_PER_CHAIN - items.length,
+          )
+          const data = await bendystraw<{
+            nfts: { items: BsOwnedShopItemRow[]; totalCount: number }
+          }>(
+            `query($projectId: Int!, $chainId: Int!, $owner: String!, $limit: Int!, $offset: Int!) {
+              nfts(
+                where: {
+                  projectId: $projectId
+                  chainId: $chainId
+                  version: 6
+                  owner: $owner
+                }
+                orderBy: "createdAt"
+                orderDirection: "desc"
+                limit: $limit
+                offset: $offset
+              ) {
+                totalCount
+                items {
+                  chainId projectId createdAt mintTx tokenId owner tierId
+                  hook { address }
+                }
+              }
+            }`,
+            { ...project, owner: normalizedOwner, limit, offset },
+            { revalidate: 15 },
+          )
+          const page = data.nfts?.items ?? []
+          totalCount = data.nfts?.totalCount ?? totalCount
+          items.push(
+            ...page.flatMap(row => {
+              const hook = row.hook?.address
+              if (
+                !hook ||
+                Number(row.chainId) !== project.chainId ||
+                Number(row.projectId) !== project.projectId
+              ) {
+                return []
+              }
+              return [
+                {
+                  ...row,
+                  chainId: project.chainId,
+                  projectId: project.projectId,
+                  createdAt: Number(row.createdAt),
+                  hook,
+                  tierId: Number(row.tierId),
+                  tokenId: String(row.tokenId),
+                  owner: String(row.owner).toLowerCase(),
+                },
+              ]
+            }),
+          )
+          offset += page.length
+          if (page.length === 0 || items.length >= totalCount) break
+        }
+      } catch {
+        failed = true
+      }
+
+      return { project, items, totalCount, failed }
+    }),
+  )
+
+  const items = perChain
+    .flatMap(result => result.items)
+    .sort((a, b) => b.createdAt - a.createdAt)
+  return {
+    items,
+    totalCount: perChain.reduce((sum, result) => sum + result.totalCount, 0),
+    capped: perChain.some(result => result.totalCount > result.items.length),
+    failedChains: perChain
+      .filter(result => result.failed)
+      .map(result => result.project.chainId),
+  }
+}
+
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
 ): Promise<BsProject[]> {
@@ -364,6 +605,72 @@ export async function getSuckerGroupProjects(
     { revalidate: 60 },
   )
   return data.suckerGroup?.projects.items ?? []
+}
+
+/**
+ * Turn a sucker-group response into verified per-chain deployments for the
+ * exact project route which loaded it. A linked project may have a different
+ * project ID on every chain. Conflicting rows are therefore never repaired by
+ * copying the home ID: the route chain fails closed to home-only, while an
+ * ambiguous remote chain is omitted.
+ */
+export function resolveProjectDeployments(
+  home: BsProject,
+  members: readonly BsProject[],
+): BsProject[] {
+  const homeOnly = [home]
+  if (!home.suckerGroupId) return homeOnly
+
+  const isUsable = (member: BsProject) =>
+    member.version === 6 &&
+    Number.isSafeInteger(member.chainId) &&
+    member.chainId > 0 &&
+    Number.isSafeInteger(member.projectId) &&
+    member.projectId > 0
+
+  // A group which identifies another project on the route's own chain cannot
+  // authorize any remote identity for this route.
+  if (
+    members.some(
+      member =>
+        isUsable(member) &&
+        member.chainId === home.chainId &&
+        member.projectId !== home.projectId,
+    )
+  ) {
+    return homeOnly
+  }
+
+  const reportedIdByChain = new Map<number, number>()
+  const conflictedChains = new Set<number>()
+  for (const member of members) {
+    if (!isUsable(member) || member.chainId === home.chainId) continue
+    const reported = reportedIdByChain.get(member.chainId)
+    if (reported !== undefined && reported !== member.projectId) {
+      conflictedChains.add(member.chainId)
+    } else if (reported === undefined) {
+      reportedIdByChain.set(member.chainId, member.projectId)
+    }
+  }
+
+  const byChain = new Map<number, BsProject>([[home.chainId, home]])
+
+  for (const member of members) {
+    if (
+      !isUsable(member) ||
+      member.suckerGroupId !== home.suckerGroupId ||
+      conflictedChains.has(member.chainId)
+    ) {
+      continue
+    }
+    if (member.chainId === home.chainId) continue
+
+    const existing = byChain.get(member.chainId)
+    if (existing && existing.projectId !== member.projectId) continue
+    if (!existing) byChain.set(member.chainId, member)
+  }
+
+  return [...byChain.values()].sort((a, b) => a.chainId - b.chainId)
 }
 
 export type BsPriceMoment = {
@@ -458,12 +765,16 @@ export async function getRevnetPriceHistory(
 }
 
 export type BsPermissionHolder = {
+  /** Chain where this grant exists. */
+  chainId: number
   /** The account that granted the permissions (usually the project owner). */
   account: string
   /** The operator holding the permissions. */
   operator: string
   /** JBPermissionIds the operator holds (see JBPermissionIdsV6). */
   permissions: number[]
+  /** Bendystraw's marker for the active revnet operator grant. */
+  isRevnetOperator: boolean
 }
 
 /**
@@ -483,7 +794,7 @@ export async function getPermissionHolders(
         permissionHolders(
           where: { chainId: $chainId, projectId: $projectId, version: 6 }
           limit: 100
-        ) { items { account operator permissions } }
+        ) { items { chainId account operator permissions isRevnetOperator } }
       }`,
       { chainId, projectId },
       { revalidate: 60 },
@@ -494,4 +805,26 @@ export async function getPermissionHolders(
   } catch {
     return []
   }
+}
+
+/**
+ * Every live grant across an omnichain project, including deployments whose
+ * local project id differs. Most sucker groups share an id, but imported or
+ * migrated projects are not required to do so.
+ */
+export async function getPermissionHoldersAcrossDeployments(
+  deployments: { chainId: number; projectId: number }[],
+): Promise<BsPermissionHolder[]> {
+  const unique = new Map(
+    deployments.map(deployment => [
+      `${deployment.chainId}:${deployment.projectId}`,
+      deployment,
+    ]),
+  )
+  const rows = await Promise.all(
+    [...unique.values()].map(deployment =>
+      getPermissionHolders(deployment.chainId, deployment.projectId),
+    ),
+  )
+  return rows.flat()
 }

@@ -1,0 +1,252 @@
+'use client'
+
+import { getAccount, getPublicClient } from '@wagmi/core'
+import type { Address, Hex, PublicClient } from 'viem'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import { wagmiConfig } from '@/providers/Providers'
+import {
+  loadRelayrPendingSession,
+  relayrCallsScope,
+  runRelayrCalls,
+  type RelayrCall,
+  type RelayrProgress,
+} from '@/lib/relayr'
+import { fetchSafeInfo, runSafeCalls, type SafeCallResult } from '@/lib/safe'
+
+export type AuthorityCall = {
+  chainId: JBChainId
+  authority: Address
+  target: Address
+  data: Hex
+  value?: bigint
+  gas?: bigint
+  label?: string
+}
+
+export type AuthorityProgress = {
+  kind: 'checking' | 'relayr' | 'safe'
+  message: string
+}
+
+export type AuthorityResult = {
+  relayrGroups: number
+  safeResults: SafeCallResult[]
+}
+
+/**
+ * Route reviewed owner/operator calls by the controlling account on each
+ * chain. An EOA signs ERC-2771 requests and pays Relayr once; a Safe signer
+ * queues or approves the exact call through that chain's Safe path.
+ */
+export async function runAuthorityCalls({
+  calls,
+  onProgress,
+}: {
+  calls: AuthorityCall[]
+  onProgress?: (progress: AuthorityProgress) => void
+}): Promise<AuthorityResult> {
+  if (!calls.length) throw new Error('Choose at least one chain.')
+  const connected = getAccount(wagmiConfig).address
+  if (!connected) throw new Error('Connect a wallet first.')
+
+  const groups = new Map<string, AuthorityCall[]>()
+  for (const call of calls) {
+    const key = call.authority.toLowerCase()
+    groups.set(key, [...(groups.get(key) ?? []), call])
+  }
+
+  type ReviewedGroup = {
+    calls: AuthorityCall[]
+    mode: 'safe' | 'relayr'
+    relayrCalls?: RelayrCall[]
+    pendingScope?: string
+    recovered?: boolean
+  }
+
+  // Review every authority before submitting anything. Without this pass a
+  // mixed-authority action could relay its first group and only then discover
+  // that the connected wallet cannot authorize a later Safe/EOA group.
+  const reviewedGroups: ReviewedGroup[] = []
+  for (const group of groups.values()) {
+    const authority = group[0].authority
+    onProgress?.({
+      kind: 'checking',
+      message: `Checking authority on ${group.length} chain${
+        group.length === 1 ? '' : 's'
+      }…`,
+    })
+    const safeInfo = await Promise.all(
+      group.map(call => fetchSafeInfo(call.chainId, authority)),
+    )
+    const safeCount = safeInfo.filter(Boolean).length
+
+    if (safeCount > 0 && safeCount !== group.length) {
+      const missing = group
+        .filter((_, index) => !safeInfo[index])
+        .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+      throw new Error(
+        `This Safe is not deployed on ${missing.join(', ')}. Deploy the same Safe there from the Account card, or deselect those chains.`,
+      )
+    }
+
+    if (safeCount === group.length) {
+      const unavailable = group.filter((_, index) => {
+        const info = safeInfo[index]
+        return !info?.owners.some(
+          owner => owner.toLowerCase() === connected.toLowerCase(),
+        )
+      })
+      if (unavailable.length) {
+        throw new Error(
+          `The connected wallet is not a signer of ${authority} on ${unavailable
+            .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+            .join(', ')}. Switch to a signer that belongs to every selected Safe.`,
+        )
+      }
+      reviewedGroups.push({ calls: group, mode: 'safe' })
+      continue
+    }
+
+    if (connected.toLowerCase() !== authority.toLowerCase()) {
+      throw new Error(
+        `The connected wallet is not the authority on ${group
+          .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+          .join(', ')}. Switch to ${authority}.`,
+      )
+    }
+    const relayrCalls: RelayrCall[] = group.map(call => ({
+      chainId: call.chainId,
+      target: call.target,
+      data: call.data,
+      value: call.value,
+      gas: call.gas,
+      label: call.label,
+    }))
+    reviewedGroups.push({
+      calls: group,
+      mode: 'relayr',
+      relayrCalls,
+      pendingScope: relayrCallsScope(relayrCalls),
+    })
+  }
+
+  const reportRelayrProgress = (progress: RelayrProgress) => {
+    const message =
+      progress.phase === 'signing'
+        ? `Sign ${progress.current}/${progress.total} chain requests…`
+        : progress.phase === 'quoting'
+          ? 'Requesting a Relayr quote…'
+          : progress.phase === 'paying'
+            ? 'Confirm one Relayr payment…'
+            : `Relaying… ${progress.done}/${progress.total} confirmed`
+    onProgress?.({ kind: 'relayr', message })
+  }
+
+  let relayrGroups = 0
+  const safeResults: SafeCallResult[] = []
+
+  // Recover an already-paid bundle before simulating current chain state. A
+  // reload can happen after payment while Relayr is still executing; in that
+  // case a fresh simulation may now revert and must not lead to a duplicate
+  // quote or payment.
+  for (const reviewed of reviewedGroups) {
+    if (
+      reviewed.mode !== 'relayr' ||
+      !reviewed.relayrCalls ||
+      !reviewed.pendingScope ||
+      !loadRelayrPendingSession(reviewed.pendingScope)
+    ) {
+      continue
+    }
+    await runRelayrCalls({
+      calls: reviewed.relayrCalls,
+      account: connected,
+      pendingScope: reviewed.pendingScope,
+      onProgress: reportRelayrProgress,
+    })
+    reviewed.recovered = true
+    relayrGroups += 1
+  }
+
+  // Fail before collecting new signatures or a Relayr payment. An eth_call
+  // from the real owner/operator address exercises the same authorization
+  // branch as the eventual direct, forwarded, or Safe call without changing
+  // state. Recovered bundles are deliberately excluded above.
+  const callsToSimulate = reviewedGroups
+    .filter(reviewed => !reviewed.recovered)
+    .flatMap(reviewed => reviewed.calls)
+  for (let index = 0; index < callsToSimulate.length; index++) {
+    const call = callsToSimulate[index]
+    const client = getPublicClient(wagmiConfig, {
+      chainId: call.chainId,
+    }) as PublicClient | undefined
+    if (!client) {
+      throw new Error(`No RPC client is configured for chain ${call.chainId}.`)
+    }
+    onProgress?.({
+      kind: 'checking',
+      message: `Checking ${index + 1}/${callsToSimulate.length} on ${
+        JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+      }…`,
+    })
+    try {
+      await client.call({
+        account: call.authority,
+        to: call.target,
+        data: call.data,
+        value: call.value ?? 0n,
+      })
+    } catch (simulationError) {
+      const detail =
+        simulationError instanceof Error &&
+        'shortMessage' in simulationError &&
+        typeof simulationError.shortMessage === 'string'
+          ? simulationError.shortMessage
+          : simulationError instanceof Error
+            ? simulationError.message.split('\n')[0]
+            : 'The call would revert.'
+      throw new Error(
+        `${call.label ?? 'Action'} cannot run on ${
+          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+        }: ${detail}`,
+      )
+    }
+  }
+
+  for (const reviewed of reviewedGroups) {
+    if (reviewed.recovered) continue
+    const group = reviewed.calls
+    if (reviewed.mode === 'safe') {
+      safeResults.push(
+        ...(await runSafeCalls({
+          signer: connected,
+          calls: group.map(call => ({
+            chainId: call.chainId,
+            safe: call.authority,
+            target: call.target,
+            data: call.data,
+            value: call.value,
+            label: call.label,
+          })),
+          onProgress: message => onProgress?.({ kind: 'safe', message }),
+        })),
+      )
+      continue
+    }
+
+    const relayrCalls = reviewed.relayrCalls
+    const pendingScope = reviewed.pendingScope
+    if (!relayrCalls || !pendingScope) {
+      throw new Error('Relayr authority review is incomplete.')
+    }
+    await runRelayrCalls({
+      calls: relayrCalls,
+      account: connected,
+      pendingScope,
+      onProgress: reportRelayrProgress,
+    })
+    relayrGroups += 1
+  }
+
+  return { relayrGroups, safeResults }
+}

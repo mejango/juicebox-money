@@ -30,8 +30,20 @@ import {
 import { usePublicClient, useReadContract } from 'wagmi'
 import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
-import { BuybackRouterCard } from '@/components/project/BuybackRouterCard'
-import { PowersCard } from '@/components/project/PowersCard'
+import {
+  TransactionInProgress,
+  usePreloadTransactionAnimation,
+} from '@/components/TransactionInProgress'
+import {
+  AuthorityOverview,
+  type AuthorityDeployment,
+} from '@/components/project/AuthorityOverview'
+import {
+  AuthorityEditsCard,
+  type AuthorityEditProfile,
+} from '@/components/project/AuthorityEditsCard'
+import { MultiChainBuybackRouterCard } from '@/components/project/MultiChainBuybackRouterCard'
+import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { getPermissionHolders, type BsPermissionHolder } from '@/lib/bendystraw'
@@ -59,6 +71,8 @@ export function BackOfficeTab({
   isRevnet,
   owner,
   operator,
+  deployments,
+  profile,
 }: {
   chainId: JBChainId
   projectId: number
@@ -67,81 +81,33 @@ export function BackOfficeTab({
   owner: string | null
   /** Operator per bendystraw (revnets). */
   operator: string | null
+  /** Every omnichain deployment and its indexed owner/operator. */
+  deployments: AuthorityDeployment[]
+  /** Current pinned profile used to prefill the chain-aware metadata editor. */
+  profile: AuthorityEditProfile
 }) {
-  const { isConnected, address } = useWallet()
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-
-  // Wallet state only exists client-side; keep SSR + first client render
-  // identical so hydration always matches (OwnerPanel does the same).
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-
-  // Custom projects: JBProjects.ownerOf is the truth — ownership IS the NFT.
-  const { data: chainOwner } = useReadContract({
-    abi: jbProjectsAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
-    functionName: 'ownerOf',
-    args: [BigInt(projectId)],
-    chainId,
-    query: { enabled: !isRevnet, staleTime: 30_000 },
-  })
-
-  // Revnets: live operator check for the connected wallet
-  // (REVOwner.isOperatorOf via the SDK helper).
-  const { data: connectedIsOperator } = useQuery({
-    queryKey: ['isRevnetOperator', chainId, projectId, address],
-    enabled: isRevnet && mounted && isConnected && !!address && !!publicClient,
-    staleTime: 30_000,
-    retry: 1,
-    queryFn: () =>
-      isRevnetOperator(publicClient!, {
-        chainId,
-        revnetId: BigInt(projectId),
-        operator: address!,
-      }),
-  })
-
-  const displayOwner = (chainOwner ?? owner ?? null) as Address | null
-  const isOwner =
-    !isRevnet &&
-    mounted &&
-    isConnected &&
-    !!address &&
-    !!chainOwner &&
-    chainOwner.toLowerCase() === address.toLowerCase()
-  const isOperator =
-    isRevnet && mounted && isConnected && connectedIsOperator === true
-
-  const authority = isRevnet ? ((operator as Address | null) ?? null) : displayOwner
-
+  usePreloadTransactionAnimation()
   return (
     <div className="space-y-5">
-      <AccountCard
-        chainId={chainId}
-        projectId={projectId}
+      <AuthorityOverview
+        deployments={deployments}
         isRevnet={isRevnet}
-        authority={authority}
-        isOwner={isOwner}
-        isOperator={isOperator}
-      />
-      <PermissionsCard
-        chainId={chainId}
-        projectId={projectId}
-        isRevnet={isRevnet}
-        isOwner={isOwner}
-        authority={authority}
-      />
-      {!isRevnet ? (
-        <TokenCard chainId={chainId} projectId={projectId} isOwner={isOwner} />
-      ) : null}
-      {!isRevnet ? (
-        <PowersCard chainId={chainId} projectId={projectId} />
-      ) : null}
-      <BuybackRouterCard
-        chainId={chainId}
-        projectId={projectId}
-        isRevnet={isRevnet}
-        authority={authority}
+        beforePermissions={
+          <>
+            <AuthorityEditsCard
+              deployments={deployments}
+              isRevnet={isRevnet}
+              profile={profile}
+            />
+            {!isRevnet ? (
+              <AuthorityPowersCard deployments={deployments} />
+            ) : null}
+            <MultiChainBuybackRouterCard
+              deployments={deployments}
+              isRevnet={isRevnet}
+            />
+          </>
+        }
       />
     </div>
   )
@@ -262,7 +228,7 @@ function PendingNote({
   const url = etherscanTx(chainId, hash)
   if (!url) return null
   return (
-    <p className="mt-2 text-center text-xs text-smoke-700">
+    <TransactionInProgress className="mt-3">
       Waiting for confirmation —{' '}
       <a
         href={url}
@@ -272,7 +238,7 @@ function PendingNote({
       >
         view transaction
       </a>
-    </p>
+    </TransactionInProgress>
   )
 }
 

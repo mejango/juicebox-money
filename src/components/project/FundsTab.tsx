@@ -5,9 +5,11 @@ import {
   JBCoreContracts,
   NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
+  USD_CURRENCY_ID,
   jbContractAddress,
   jbFundAccessLimitsAbi,
   jbMultiTerminalAbi,
+  jbPricesAbi,
   jbProjectsAbi,
   jbSplitsAbi,
   jbTerminalStoreAbi,
@@ -32,105 +34,13 @@ import {
   type Address,
   type PublicClient,
 } from 'viem'
-import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
+import { useConfig, usePublicClient, useReadContract } from 'wagmi'
+import { getPublicClient } from 'wagmi/actions'
+import { ChainIcon } from '@/components/ChainIcon'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
-import { toUrn } from '@/lib/urn'
-
-/**
- * Funds tab for custom projects (website/ parity: renderFundsCard, single
- * chain). Per accounting token: balance, what can be paid out now, the
- * owner's surplus allowance, the surplus backing cash outs, and the payout
- * recipients — plus the two write flows, "Send payouts"
- * (JBMultiTerminal.sendPayoutsOf) and "Use surplus allowance"
- * (JBMultiTerminal.useAllowanceOf), both through useSafeTx (simulate-first).
- */
-export function FundsTab({
-  chainId,
-  projectId,
-}: {
-  chainId: JBChainId
-  projectId: number
-}) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { address } = useWallet()
-
-  const { data: contexts, isLoading: contextsLoading } = useQuery({
-    queryKey: ['accountingContexts', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      getAccountingContexts(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      }),
-  })
-
-  const { data: rulesetData, isLoading: rulesetLoading } = useQuery({
-    queryKey: ['currentRuleset', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      getCurrentRuleset(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      }),
-  })
-
-  const { data: owner } = useReadContract({
-    abi: jbProjectsAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
-    functionName: 'ownerOf',
-    args: [BigInt(projectId)],
-    chainId,
-    query: { staleTime: 60_000 },
-  })
-
-  const isOwner =
-    !!address && !!owner && owner.toLowerCase() === address.toLowerCase()
-
-  if (contextsLoading || rulesetLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Funds</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
-  }
-
-  if (!contexts || contexts.length === 0) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Funds</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          This project doesn&apos;t hold funds on this chain yet.
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-5">
-      {contexts.map(ctx => (
-        <TokenFundsCard
-          key={ctx.token}
-          chainId={chainId}
-          projectId={projectId}
-          ctx={ctx}
-          rulesetId={rulesetData?.ruleset.id ?? 0}
-          rulesetCycleNumber={rulesetData?.ruleset.cycleNumber ?? 0}
-          ownerMustSendPayouts={
-            rulesetData?.metadata.ownerMustSendPayouts ?? false
-          }
-          isOwner={isOwner}
-        />
-      ))}
-    </div>
-  )
-}
+import { chainName, toUrn } from '@/lib/urn'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -171,326 +81,676 @@ function bigintMin(a: bigint, b: bigint): bigint {
   return a < b ? a : b
 }
 
-function TokenFundsCard({
-  chainId,
-  projectId,
-  ctx,
-  rulesetId,
-  rulesetCycleNumber,
-  ownerMustSendPayouts,
-  isOwner,
-}: {
+type Split = {
+  percent: number
+  projectId: bigint
+  beneficiary: Address
+  preferAddToBalance: boolean
+  lockedUntil: number
+  hook: Address
+}
+
+type FundsKindDescriptor = {
+  key: string
+  homeToken: Address
+  native: boolean
+  symbol: string
+  decimals: number
+}
+
+type ChainFundsSnapshot = {
   chainId: JBChainId
   projectId: number
   ctx: JBAccountingContext
+  tokenSymbol: string
+  balance: bigint
+  usd: bigint | null
+  surplus: bigint
+  payoutLines: LimitLine[]
+  allowanceLines: LimitLine[]
+  splits: readonly Split[]
   rulesetId: number
   rulesetCycleNumber: number
   ownerMustSendPayouts: boolean
-  isOwner: boolean
-}) {
-  const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
-  const etherscanHost = chainMeta?.etherscanHostname
+  terminal: Address
+  store: Address
+  limitsAddress: Address
+  etherscanHost?: string
+}
 
-  const isNative = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+type ChainFundsResult = {
+  chainId: JBChainId
+  projectId: number
+  verified: boolean
+  snapshot: ChainFundsSnapshot | null
+}
 
+type FundsKind = FundsKindDescriptor & {
+  snapshots: ChainFundsResult[]
+  totalBalance: bigint
+  totalUsd: bigint
+  readsVerified: boolean
+  fullyPriced: boolean
+}
+
+const USD_SCALE = 10n ** 18n
+
+function formatUsd18(value: bigint): string {
+  if (value > 0n && value < USD_SCALE / 100n) return '<$0.01'
+  const cents = (value * 100n + USD_SCALE / 2n) / USD_SCALE
+  const dollars = cents / 100n
+  const remainder = (cents % 100n).toString().padStart(2, '0')
+  return `$${dollars.toLocaleString('en-US')}.${remainder}`
+}
+
+async function symbolOf(
+  client: PublicClient,
+  chainId: JBChainId,
+  ctx: JBAccountingContext,
+): Promise<string> {
+  if (ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) {
+    return JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
+  }
+  return client
+    .readContract({
+      address: ctx.token,
+      abi: erc20Abi,
+      functionName: 'symbol',
+    })
+    .catch(() => truncateAddress(ctx.token))
+}
+
+async function readChainFunds(
+  config: ReturnType<typeof useConfig>,
+  pair: readonly [number, number],
+  descriptor: FundsKindDescriptor,
+  homeChainId: JBChainId,
+): Promise<ChainFundsResult> {
+  const chainId = pair[0] as JBChainId
+  const projectId = pair[1]
+  const client = getPublicClient(config, { chainId }) as
+    | PublicClient
+    | undefined
   const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
     chainId
-  ] as Address
+  ] as Address | undefined
   const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
     chainId
-  ] as Address
+  ] as Address | undefined
   const limitsAddress = jbContractAddress['6'][
     JBCoreContracts.JBFundAccessLimits
-  ][chainId] as Address
+  ][chainId] as Address | undefined
   const splitsAddress = jbContractAddress['6'][JBCoreContracts.JBSplits][
     chainId
-  ] as Address
+  ] as Address | undefined
+  const pricesAddress = jbContractAddress['6'][JBCoreContracts.JBPrices][
+    chainId
+  ] as Address | undefined
 
-  const { data: erc20Symbol } = useReadContract({
-    abi: erc20Abi,
-    address: ctx.token,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: !isNative, staleTime: 5 * 60_000 },
-  })
-  const tokenSymbol = isNative
-    ? nativeSymbol
-    : (erc20Symbol ?? truncateAddress(ctx.token))
+  if (!client || !terminal || !store || !limitsAddress || !splitsAddress) {
+    return { chainId, projectId, verified: false, snapshot: null }
+  }
 
-  // Balance, configured limits, surplus, and payout splits for this token.
-  const {
-    data: base,
-    isLoading: baseLoading,
-    refetch: refetchBase,
-  } = useReadContracts({
-    contracts: [
-      {
-        abi: jbTerminalStoreAbi,
-        address: store,
-        functionName: 'balanceOf',
-        args: [terminal, BigInt(projectId), ctx.token],
-        chainId,
-      },
-      {
-        abi: jbFundAccessLimitsAbi,
-        address: limitsAddress,
-        functionName: 'payoutLimitsOf',
-        args: [BigInt(projectId), BigInt(rulesetId), terminal, ctx.token],
-        chainId,
-      },
-      {
-        abi: jbFundAccessLimitsAbi,
-        address: limitsAddress,
-        functionName: 'surplusAllowancesOf',
-        args: [BigInt(projectId), BigInt(rulesetId), terminal, ctx.token],
-        chainId,
-      },
-      {
-        abi: jbTerminalStoreAbi,
-        address: store,
-        functionName: 'currentSurplusOf',
-        args: [
-          BigInt(projectId),
-          [terminal],
-          [ctx.token],
-          BigInt(ctx.decimals),
-          BigInt(ctx.currency),
-        ],
-        chainId,
-      },
-      {
-        abi: jbSplitsAbi,
-        address: splitsAddress,
-        functionName: 'splitsOf',
-        args: [BigInt(projectId), BigInt(rulesetId), payoutSplitGroupId(ctx.token)],
-        chainId,
-      },
-    ],
-  })
-
-  const balance = base?.[0]?.result as bigint | undefined
-  const payoutLimits = base?.[1]?.result as
-    | readonly { amount: bigint; currency: number }[]
-    | undefined
-  const surplusAllowances = base?.[2]?.result as
-    | readonly { amount: bigint; currency: number }[]
-    | undefined
-  const surplus = base?.[3]?.result as bigint | undefined
-  const splits = base?.[4]?.result as
-    | readonly {
-        percent: number
-        projectId: bigint
-        beneficiary: Address
-        preferAddToBalance: boolean
-        lockedUntil: number
-        hook: Address
-      }[]
-    | undefined
-
-  // How much of each configured limit has been used. Payout usage is keyed
-  // by the ruleset's CYCLE NUMBER; allowance usage by the ruleset's id.
-  const { data: usage, refetch: refetchUsage } = useReadContracts({
-    contracts: [
-      ...(payoutLimits ?? []).map(limit => ({
-        abi: jbTerminalStoreAbi,
-        address: store,
-        functionName: 'usedPayoutLimitOf' as const,
-        args: [
-          terminal,
-          BigInt(projectId),
-          ctx.token,
-          BigInt(rulesetCycleNumber),
-          BigInt(limit.currency),
-        ] as const,
-        chainId,
-      })),
-      ...(surplusAllowances ?? []).map(allowance => ({
-        abi: jbTerminalStoreAbi,
-        address: store,
-        functionName: 'usedSurplusAllowanceOf' as const,
-        args: [
-          terminal,
-          BigInt(projectId),
-          ctx.token,
-          BigInt(rulesetId),
-          BigInt(allowance.currency),
-        ] as const,
-        chainId,
-      })),
-    ],
-    query: { enabled: !!payoutLimits && !!surplusAllowances },
-  })
-
-  const payoutLines: LimitLine[] = useMemo(() => {
-    if (!payoutLimits) return []
-    return payoutLimits.map((limit, i) => {
-      const used = (usage?.[i]?.result as bigint | undefined) ?? 0n
-      const remaining = limit.amount > used ? limit.amount - used : 0n
-      return { amount: limit.amount, currency: limit.currency, used, remaining }
+  try {
+    const pid = BigInt(projectId)
+    const [contexts, current] = await Promise.all([
+      getAccountingContexts(client, { chainId, projectId: pid }),
+      getCurrentRuleset(client, { chainId, projectId: pid }),
+    ])
+    const candidates = await Promise.all(
+      contexts.map(async ctx => ({ ctx, symbol: await symbolOf(client, chainId, ctx) })),
+    )
+    const match = candidates.find(({ ctx, symbol }) => {
+      const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+      if (chainId === homeChainId && ctx.token === descriptor.homeToken) return true
+      return descriptor.native
+        ? native
+        : !native &&
+            ctx.decimals === descriptor.decimals &&
+            symbol.toLowerCase() === descriptor.symbol.toLowerCase()
     })
-  }, [payoutLimits, usage])
+    if (!match) return { chainId, projectId, verified: true, snapshot: null }
 
-  const allowanceLines: LimitLine[] = useMemo(() => {
-    if (!surplusAllowances) return []
-    const offset = payoutLimits?.length ?? 0
-    return surplusAllowances.map((allowance, i) => {
-      const used = (usage?.[offset + i]?.result as bigint | undefined) ?? 0n
-      const remaining = allowance.amount > used ? allowance.amount - used : 0n
+    const { ctx, symbol } = match
+    const rulesetId = current.ruleset.id
+    const cycleNumber = current.ruleset.cycleNumber
+    const [balance, payoutLimits, surplusAllowances, surplus, splits] =
+      await Promise.all([
+        client.readContract({
+          address: store,
+          abi: jbTerminalStoreAbi,
+          functionName: 'balanceOf',
+          args: [terminal, pid, ctx.token],
+        }),
+        client.readContract({
+          address: limitsAddress,
+          abi: jbFundAccessLimitsAbi,
+          functionName: 'payoutLimitsOf',
+          args: [pid, BigInt(rulesetId), terminal, ctx.token],
+        }),
+        client.readContract({
+          address: limitsAddress,
+          abi: jbFundAccessLimitsAbi,
+          functionName: 'surplusAllowancesOf',
+          args: [pid, BigInt(rulesetId), terminal, ctx.token],
+        }),
+        client
+          .readContract({
+            address: store,
+            abi: jbTerminalStoreAbi,
+            functionName: 'currentSurplusOf',
+            args: [
+              pid,
+              [terminal],
+              [ctx.token],
+              BigInt(ctx.decimals),
+              BigInt(ctx.currency),
+            ],
+          })
+          .catch(() => 0n),
+        client
+          .readContract({
+            address: splitsAddress,
+            abi: jbSplitsAbi,
+            functionName: 'splitsOf',
+            args: [pid, BigInt(rulesetId), payoutSplitGroupId(ctx.token)],
+          })
+          .catch(() => [] as readonly Split[]),
+      ])
+
+    const payoutUsage = await Promise.all(
+      payoutLimits.map(limit =>
+        client.readContract({
+          address: store,
+          abi: jbTerminalStoreAbi,
+          functionName: 'usedPayoutLimitOf',
+          args: [
+            terminal,
+            pid,
+            ctx.token,
+            BigInt(cycleNumber),
+            BigInt(limit.currency),
+          ],
+        }),
+      ),
+    )
+    const allowanceUsage = await Promise.all(
+      surplusAllowances.map(allowance =>
+        client.readContract({
+          address: store,
+          abi: jbTerminalStoreAbi,
+          functionName: 'usedSurplusAllowanceOf',
+          args: [
+            terminal,
+            pid,
+            ctx.token,
+            BigInt(rulesetId),
+            BigInt(allowance.currency),
+          ],
+        }),
+      ),
+    )
+    const payoutLines = payoutLimits.map((limit, index) => {
+      const used = payoutUsage[index] ?? 0n
+      return {
+        amount: limit.amount,
+        currency: limit.currency,
+        used,
+        remaining: limit.amount > used ? limit.amount - used : 0n,
+      }
+    })
+    const allowanceLines = surplusAllowances.map((allowance, index) => {
+      const used = allowanceUsage[index] ?? 0n
       return {
         amount: allowance.amount,
         currency: allowance.currency,
         used,
-        remaining,
+        remaining: allowance.amount > used ? allowance.amount - used : 0n,
       }
     })
-  }, [surplusAllowances, payoutLimits, usage])
+    const usdPrice = pricesAddress
+      ? await client
+          .readContract({
+            address: pricesAddress,
+            abi: jbPricesAbi,
+            functionName: 'pricePerUnitOf',
+            args: [
+              pid,
+              BigInt(USD_CURRENCY_ID(6)),
+              BigInt(ctx.currency),
+              18n,
+            ],
+          })
+          .catch(() => null)
+      : null
+    // JBPrices is the source of truth. USDC can still be valued safely at its
+    // accounting unit when a price lookup is temporarily unavailable. Never
+    // interpret a zero oracle response as a real $0 quote for a held token.
+    const resolvedUsdPrice =
+      usdPrice != null && usdPrice > 0n
+        ? usdPrice
+        : symbol.toUpperCase() === 'USDC' && ctx.decimals === 6
+          ? USD_SCALE
+          : null
+    const usd =
+      balance === 0n
+        ? 0n
+        : resolvedUsdPrice == null
+          ? null
+          : (balance * resolvedUsdPrice) / 10n ** BigInt(ctx.decimals)
 
-  const hasPayoutLimit = payoutLines.some(line => line.amount > 0n)
-  const hasAllowance = allowanceLines.some(line => line.amount > 0n)
-
-  // The line the payout flow (and the payouts table's amount column) uses:
-  // the first with room left, falling back to the first configured.
-  const activePayoutLine =
-    payoutLines.find(line => line.remaining > 0n) ?? payoutLines[0]
-
-  const refetchAll = () => {
-    refetchBase()
-    refetchUsage()
+    return {
+      chainId,
+      projectId,
+      verified: true,
+      snapshot: {
+        chainId,
+        projectId,
+        ctx,
+        tokenSymbol: symbol,
+        balance,
+        usd,
+        surplus,
+        payoutLines,
+        allowanceLines,
+        splits,
+        rulesetId,
+        rulesetCycleNumber: cycleNumber,
+        ownerMustSendPayouts: current.metadata.ownerMustSendPayouts,
+        terminal,
+        store,
+        limitsAddress,
+        etherscanHost: JB_CHAINS[chainId]?.etherscanHostname,
+      },
+    }
+  } catch {
+    return { chainId, projectId, verified: false, snapshot: null }
   }
+}
 
-  if (baseLoading) {
+function remainingLabel(
+  lines: LimitLine[],
+  ctx: JBAccountingContext,
+  tokenSymbol: string,
+  balance?: bigint,
+): string {
+  const configured = lines.filter(line => line.amount > 0n)
+  if (!configured.length) return 'None'
+  return configured
+    .map(line => {
+      const remaining =
+        balance !== undefined && line.currency === ctx.currency
+          ? bigintMin(line.remaining, balance)
+          : line.remaining
+      return `${formatTokenAmount(
+        remaining,
+        currencyDecimals(line.currency, ctx),
+      )} ${currencyLabel(line.currency, ctx, tokenSymbol)}`
+    })
+    .join(' + ')
+}
+
+/**
+ * A single, token-tabbed Funds surface matching website/: the selected
+ * accounting token is aggregated across every deployment, then broken down
+ * by chain. Writes remain scoped to the project's home deployment.
+ */
+export function FundsTab({
+  chainId,
+  projectId,
+  chains,
+}: {
+  chainId: JBChainId
+  projectId: number
+  chains: readonly [number, number][]
+}) {
+  const config = useConfig()
+  const { address } = useWallet()
+  const [selectedKey, setSelectedKey] = useState('')
+  const chainPairs = useMemo<readonly [number, number][]>(() => {
+    const homePair: [number, number] = [chainId, projectId]
+    const supplied: readonly [number, number][] = chains.length
+      ? chains
+      : [homePair]
+    return supplied.some(([id, pid]) => id === chainId && pid === projectId)
+      ? supplied
+      : [homePair, ...supplied]
+  }, [chains, chainId, projectId])
+
+  const {
+    data: matrix,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ['fundsMatrix', chainPairs, chainId, projectId],
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: async () => {
+      const homeClient = getPublicClient(config, { chainId }) as
+        | PublicClient
+        | undefined
+      if (!homeClient) throw new Error('No public client')
+      const homeContexts = await getAccountingContexts(homeClient, {
+        chainId,
+        projectId: BigInt(projectId),
+      })
+      const descriptors = await Promise.all(
+        homeContexts.map(async ctx => {
+          const symbol = await symbolOf(homeClient, chainId, ctx)
+          const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+          return {
+            key: native ? 'native' : `${symbol.toLowerCase()}:${ctx.decimals}`,
+            homeToken: ctx.token,
+            native,
+            symbol,
+            decimals: ctx.decimals,
+          } satisfies FundsKindDescriptor
+        }),
+      )
+      const kinds: FundsKind[] = await Promise.all(
+        descriptors.map(async descriptor => {
+          const snapshots = await Promise.all(
+            chainPairs.map(pair =>
+              readChainFunds(config, pair, descriptor, chainId),
+            ),
+          )
+          const present = snapshots.flatMap(result =>
+            result.snapshot ? [result.snapshot] : [],
+          )
+          const readsVerified = snapshots.every(result => result.verified)
+          return {
+            ...descriptor,
+            snapshots,
+            totalBalance: present.reduce(
+              (sum, snapshot) => sum + snapshot.balance,
+              0n,
+            ),
+            totalUsd: present.reduce(
+              (sum, snapshot) => sum + (snapshot.usd ?? 0n),
+              0n,
+            ),
+            readsVerified,
+            fullyPriced:
+              readsVerified &&
+              present.every(
+                snapshot => snapshot.balance === 0n || snapshot.usd != null,
+              ),
+          }
+        }),
+      )
+      return kinds
+    },
+  })
+
+  useEffect(() => {
+    if (!matrix?.length) return
+    if (!matrix.some(kind => kind.key === selectedKey)) {
+      setSelectedKey(matrix[0].key)
+    }
+  }, [matrix, selectedKey])
+
+  const { data: owner } = useReadContract({
+    abi: jbProjectsAbi,
+    address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
+    functionName: 'ownerOf',
+    args: [BigInt(projectId)],
+    chainId,
+    query: { staleTime: 60_000 },
+  })
+  const isOwner =
+    !!address && !!owner && owner.toLowerCase() === address.toLowerCase()
+
+  if (isLoading) {
     return (
-      <div className="card p-5">
+      <div className="card p-6">
         <span className="field-label">Funds</span>
         <p className="mt-2 text-sm text-smoke-500">Loading…</p>
       </div>
     )
   }
+  if (!matrix?.length) {
+    return (
+      <div className="card p-6">
+        <span className="field-label">Funds</span>
+        <p className="mt-2 text-sm text-smoke-700">
+          This project doesn&apos;t have an accounting token yet.
+        </p>
+      </div>
+    )
+  }
+
+  const selected =
+    matrix.find(kind => kind.key === selectedKey) ?? matrix[0]
+  const home = selected.snapshots.find(
+    result => result.chainId === chainId && result.projectId === projectId,
+  )?.snapshot
+  const allReadsVerified = matrix.every(kind => kind.readsVerified)
+  const allFullyPriced = matrix.every(kind => kind.fullyPriced)
+  const totalUsd = matrix.reduce((sum, kind) => sum + kind.totalUsd, 0n)
+  const rawBalances = matrix
+    .filter(kind => kind.totalBalance > 0n)
+    .map(
+      kind =>
+        `${formatTokenAmount(kind.totalBalance, kind.decimals)} ${kind.symbol}`,
+    )
+  const totalBalanceLabel = !allReadsVerified
+    ? '—'
+    : allFullyPriced
+      ? formatUsd18(totalUsd)
+      : rawBalances.join(' + ') || '$0.00'
+  const hasPayoutLimit =
+    home?.payoutLines.some(line => line.amount > 0n) ?? false
+  const hasAllowance =
+    home?.allowanceLines.some(line => line.amount > 0n) ?? false
+  const activePayoutLine =
+    home?.payoutLines.find(line => line.remaining > 0n) ??
+    home?.payoutLines[0]
 
   return (
-    <div className="card p-5">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="field-label">{tokenSymbol} funds</span>
-        <span className="font-agrandir text-xl font-medium text-ink">
-          {balance !== undefined
-            ? `${formatTokenAmount(balance, ctx.decimals)} ${tokenSymbol}`
-            : '—'}
-        </span>
+    <div className="card p-6">
+      <span className="field-label">Funds</span>
+      <p className="mt-2 text-sm text-smoke-700">Total balance</p>
+      <p className="mt-1 font-agrandir text-2xl font-medium text-ink">
+        {totalBalanceLabel}
+      </p>
+
+      <div className="mt-5 flex flex-wrap gap-x-6 border-b border-smoke-200">
+        {matrix.map(kind => {
+          const active = kind.key === selected.key
+          return (
+            <button
+              key={kind.key}
+              type="button"
+              onClick={() => setSelectedKey(kind.key)}
+              className={`inline-flex items-baseline gap-2 border-b-2 px-1 pb-2 text-sm font-medium transition-colors ${
+                active
+                  ? 'border-bluebs-500'
+                  : 'border-transparent hover:text-ink'
+              }`}
+            >
+              <span
+                className={active ? 'text-bluebs-700' : 'text-smoke-700'}
+              >
+                {kind.symbol}
+              </span>
+              <span className="text-xs font-normal text-smoke-600">
+                {formatTokenAmount(kind.totalBalance, kind.decimals)}
+              </span>
+            </button>
+          )
+        })}
       </div>
 
-      <dl className="mt-4 space-y-2 text-sm">
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-smoke-700">Available to pay out now</dt>
-          <dd className="text-right font-medium text-ink">
-            {!hasPayoutLimit ? (
-              <span className="font-normal text-smoke-700">None</span>
-            ) : (
-              payoutLines
-                .filter(line => line.amount > 0n)
-                .map(line => (
-                  <div key={line.currency}>
-                    {formatTokenAmount(
-                      // The treasury can only fund what it holds — cap the
-                      // remaining limit at the balance when both are in the
-                      // token's own terms.
-                      line.currency === ctx.currency
-                        ? bigintMin(line.remaining, balance ?? 0n)
-                        : line.remaining,
-                      currencyDecimals(line.currency, ctx),
-                    )}{' '}
-                    {currencyLabel(line.currency, ctx, tokenSymbol)}
-                  </div>
-                ))
-            )}
-          </dd>
-        </div>
+      <p className="mt-5 text-sm text-smoke-700">Balance</p>
+      <p className="mt-1 font-agrandir text-2xl font-medium text-ink">
+        {formatTokenAmount(selected.totalBalance, selected.decimals)}{' '}
+        {selected.symbol}
+      </p>
 
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-smoke-700">Owner&apos;s surplus allowance remaining</dt>
-          <dd className="text-right font-medium text-ink">
-            {!hasAllowance ? (
-              <span className="font-normal text-smoke-700">None</span>
-            ) : (
-              allowanceLines
-                .filter(line => line.amount > 0n)
-                .map(line => (
-                  <div key={line.currency}>
-                    {formatTokenAmount(
-                      line.remaining,
-                      currencyDecimals(line.currency, ctx),
-                    )}{' '}
-                    {currencyLabel(line.currency, ctx, tokenSymbol)}
-                  </div>
-                ))
-            )}
-          </dd>
-        </div>
-
-        <div className="flex items-baseline justify-between gap-3">
-          <dt className="text-smoke-700">Surplus backing cash outs</dt>
-          <dd className="font-medium text-ink">
-            {surplus !== undefined
-              ? `${formatTokenAmount(surplus, ctx.decimals)} ${tokenSymbol}`
-              : '—'}
-          </dd>
-        </div>
-      </dl>
-
-      {!hasPayoutLimit ? (
-        <p className="callout callout-warning mt-4 text-xs">
-          Nothing can be paid out under the current rules — funds stay in the
-          project.
-        </p>
-      ) : (
-        <PayoutsTable
-          chainId={chainId}
-          splits={splits ?? []}
-          activeLine={activePayoutLine}
-          ctx={ctx}
-          tokenSymbol={tokenSymbol}
-          balance={balance ?? 0n}
-          etherscanHost={etherscanHost}
-        />
-      )}
-
-      <div className="mt-4 space-y-4">
-        {hasPayoutLimit && (!ownerMustSendPayouts || isOwner) ? (
-          <FundsTxFlow
-            kind="payouts"
-            chainId={chainId}
-            projectId={projectId}
-            ctx={ctx}
-            terminal={terminal}
-            store={store}
-            limitsAddress={limitsAddress}
-            lines={payoutLines.filter(line => line.amount > 0n)}
-            balance={balance ?? 0n}
-            tokenSymbol={tokenSymbol}
-            onDone={refetchAll}
-          />
-        ) : hasPayoutLimit && ownerMustSendPayouts ? (
-          <p className="text-xs text-smoke-700">
-            Only the project owner can send payouts under the current rules.
-          </p>
-        ) : null}
-
-        {isOwner && hasAllowance ? (
-          <FundsTxFlow
-            kind="allowance"
-            chainId={chainId}
-            projectId={projectId}
-            ctx={ctx}
-            terminal={terminal}
-            store={store}
-            limitsAddress={limitsAddress}
-            lines={allowanceLines.filter(line => line.amount > 0n)}
-            balance={balance ?? 0n}
-            tokenSymbol={tokenSymbol}
-            onDone={refetchAll}
-          />
-        ) : null}
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full min-w-[42rem] text-sm">
+          <thead>
+            <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
+              <th className="pb-2 font-normal">Chain</th>
+              <th className="pb-2 text-right font-normal">Balance</th>
+              <th className="pb-2 text-right font-normal">
+                Payout limit remaining
+              </th>
+              <th className="pb-2 text-right font-normal">Surplus</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selected.snapshots.map(result => {
+              const snapshot = result.snapshot
+              return (
+                <tr
+                  key={`${result.chainId}:${result.projectId}`}
+                  className="border-b border-smoke-100 last:border-0"
+                >
+                  <td className="py-2 pr-4">
+                    <span className="inline-flex items-center gap-2">
+                      <ChainIcon chainId={result.chainId} size={18} />
+                      {chainName(result.chainId)}
+                    </span>
+                  </td>
+                  <td className="py-2 text-right">
+                    {snapshot
+                      ? `${formatTokenAmount(
+                          snapshot.balance,
+                          snapshot.ctx.decimals,
+                        )} ${snapshot.tokenSymbol}`
+                      : result.verified
+                        ? 'Not added'
+                        : '—'}
+                  </td>
+                  <td className="py-2 text-right">
+                    {snapshot
+                      ? remainingLabel(
+                          snapshot.payoutLines,
+                          snapshot.ctx,
+                          snapshot.tokenSymbol,
+                          snapshot.balance,
+                        )
+                      : '—'}
+                  </td>
+                  <td className="py-2 text-right">
+                    {snapshot
+                      ? `${formatTokenAmount(
+                          snapshot.surplus,
+                          snapshot.ctx.decimals,
+                        )} ${snapshot.tokenSymbol}`
+                      : '—'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
+
+      {home ? (
+        <div className="mt-6 grid gap-6 border-t border-smoke-200 pt-6 lg:grid-cols-2">
+          <section className="min-w-0 lg:border-r lg:border-smoke-200 lg:pr-6">
+            <p className="text-sm text-smoke-700">
+              Current payout limit remaining on {chainName(chainId)}:
+            </p>
+            <p className="mt-1 text-lg font-medium text-ink">
+              {remainingLabel(
+                home.payoutLines,
+                home.ctx,
+                home.tokenSymbol,
+                home.balance,
+              )}
+            </p>
+            <p className="mt-5 text-sm text-smoke-700">Payouts</p>
+            {hasPayoutLimit ? (
+              <PayoutsTable
+                chainId={chainId}
+                splits={home.splits}
+                activeLine={activePayoutLine}
+                ctx={home.ctx}
+                tokenSymbol={home.tokenSymbol}
+                balance={home.balance}
+                etherscanHost={home.etherscanHost}
+                showHeading={false}
+              />
+            ) : (
+              <p className="mt-1 text-sm text-ink">
+                No payout limit is configured for this token in the current
+                ruleset.
+              </p>
+            )}
+            <div className="mt-4">
+              {hasPayoutLimit &&
+              (!home.ownerMustSendPayouts || isOwner) ? (
+                <FundsTxFlow
+                  kind="payouts"
+                  chainId={chainId}
+                  projectId={projectId}
+                  ctx={home.ctx}
+                  terminal={home.terminal}
+                  store={home.store}
+                  limitsAddress={home.limitsAddress}
+                  lines={home.payoutLines.filter(line => line.amount > 0n)}
+                  balance={home.balance}
+                  tokenSymbol={home.tokenSymbol}
+                  onDone={() => void refetch()}
+                />
+              ) : hasPayoutLimit && home.ownerMustSendPayouts ? (
+                <p className="text-xs text-smoke-700">
+                  Only the project owner can distribute payouts.
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[40px] px-4 text-sm"
+                  disabled
+                >
+                  Distribute payouts
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section className="min-w-0">
+            <p className="text-sm text-smoke-700">
+              Current surplus allowance remaining on {chainName(chainId)}:
+            </p>
+            <p className="mt-1 text-lg font-medium text-ink">
+              {remainingLabel(
+                home.allowanceLines,
+                home.ctx,
+                home.tokenSymbol,
+              )}
+            </p>
+            <div className="mt-5">
+              {isOwner && hasAllowance ? (
+                <FundsTxFlow
+                  kind="allowance"
+                  chainId={chainId}
+                  projectId={projectId}
+                  ctx={home.ctx}
+                  terminal={home.terminal}
+                  store={home.store}
+                  limitsAddress={home.limitsAddress}
+                  lines={home.allowanceLines.filter(line => line.amount > 0n)}
+                  balance={home.balance}
+                  tokenSymbol={home.tokenSymbol}
+                  onDone={() => void refetch()}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[40px] px-4 text-sm"
+                  disabled
+                >
+                  Use surplus allowance
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -503,6 +763,7 @@ function PayoutsTable({
   tokenSymbol,
   balance,
   etherscanHost,
+  showHeading = true,
 }: {
   chainId: JBChainId
   splits: readonly {
@@ -517,6 +778,7 @@ function PayoutsTable({
   tokenSymbol: string
   balance: bigint
   etherscanHost?: string
+  showHeading?: boolean
 }) {
   // Each recipient's share of what can still be paid out this cycle.
   const distributable = activeLine
@@ -560,7 +822,9 @@ function PayoutsTable({
 
   return (
     <div className="mt-4">
-      <span className="field-label">Where payouts go</span>
+      {showHeading ? (
+        <span className="field-label">Where payouts go</span>
+      ) : null}
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -718,7 +982,8 @@ function FundsTxFlow({
     }
   }, [amount, decimals])
 
-  const label = kind === 'payouts' ? 'Send payouts' : 'Use surplus allowance'
+  const label =
+    kind === 'payouts' ? 'Distribute payouts' : 'Use surplus allowance'
 
   const closeAndReset = () => {
     setOpen(false)
