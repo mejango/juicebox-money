@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-audit/
 .next-dev/
 .next-verify/
 .env
