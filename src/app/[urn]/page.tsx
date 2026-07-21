@@ -39,6 +39,7 @@ import { chainName, parseUrn, toUrn } from '@/lib/urn'
 // getProject is a POST, which Next's fetch cache doesn't dedupe — memoize per
 // request so generateMetadata + page share one call.
 const getProjectCached = cache(getProject)
+const getRevnetOperatorCached = cache(getRevnetOperator)
 
 type ProjectMetadata = {
   name?: string
@@ -155,7 +156,7 @@ export default async function ProjectPage({
         )
       : Promise.resolve([] as BsProject[]),
     isRevnet
-      ? getRevnetOperator(urn.chainId, urn.projectId)
+      ? getRevnetOperatorCached(urn.chainId, urn.projectId)
       : Promise.resolve(null),
   ])
 
@@ -202,7 +203,7 @@ export default async function ProjectPage({
     ? await Promise.all(
         chains.map(
           async p =>
-            [p.chainId, await getRevnetOperator(p.chainId, p.projectId)] as [
+            [p.chainId, await getRevnetOperatorCached(p.chainId, p.projectId)] as [
               number,
               string | null,
             ],
@@ -241,7 +242,7 @@ export default async function ProjectPage({
         <ProjectLogo
           name={project.name}
           logoUri={project.logoUri}
-          size={88}
+          size={112}
           className="rounded-xl"
         />
         <div className="min-w-0">
@@ -323,8 +324,8 @@ export default async function ProjectPage({
       />
 
       {/* Content + pay card */}
-      <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
-        <aside className="order-1 lg:order-2 lg:col-span-1">
+      <ProjectTabs
+        sidebar={
           <TreasuryCard
             chainId={urn.chainId}
             projectId={project.projectId}
@@ -333,8 +334,10 @@ export default async function ProjectPage({
             chains={chainPairs}
             payDisclosure={metadata?.payDisclosure}
           />
-          <section className="mt-8">
-            <h2 className="mb-3 font-agrandir text-xl font-medium">
+        }
+        activity={
+          <section className="min-[601px]:mt-8">
+            <h2 className="mb-3 hidden font-agrandir text-xl font-medium min-[601px]:block">
               Activity
             </h2>
             <ActivityList
@@ -343,11 +346,8 @@ export default async function ProjectPage({
               projectId={project.projectId}
             />
           </section>
-        </aside>
-
-        <div className="order-2 min-w-0 lg:order-1 lg:col-span-2">
-          <ProjectTabs
-            tabs={[
+        }
+        tabs={[
               {
                 label: 'Overview',
                 content: (
@@ -464,10 +464,8 @@ export default async function ProjectPage({
                   />
                 ),
               },
-            ]}
-          />
-        </div>
-      </div>
+        ]}
+      />
       </div>
     </ShopCartProvider>
   )

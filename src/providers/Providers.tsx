@@ -93,7 +93,19 @@ export const wagmiConfig = createParaWagmiConfig(paraClient, {
  * self-contained modal host instead (see ParaHost).
  */
 export function Providers({ children }: PropsWithChildren) {
-  const [queryClient] = useState(() => new QueryClient())
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            gcTime: 10 * 60_000,
+            retry: 1,
+            refetchOnWindowFocus: false,
+          },
+        },
+      }),
+  )
 
   return (
     <QueryClientProvider client={queryClient}>

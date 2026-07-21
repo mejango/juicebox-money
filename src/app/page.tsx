@@ -1,5 +1,6 @@
 import Image from 'next/image'
 import Link from 'next/link'
+import { Suspense } from 'react'
 import accountsIllustration from '@/assets/illustrations/accounts.png'
 import autoIssuanceIllustration from '@/assets/illustrations/auto-issuance.png'
 import extrasIllustration from '@/assets/illustrations/extras.png'
@@ -24,6 +25,7 @@ import { BsFreshActivityEvent, getRecentActivity } from '@/lib/bendystraw'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { FreshActivity } from '@/components/FreshActivity'
 import { ProjectCard } from '@/components/ProjectCard'
+import { HomepageDiscoverySkeleton } from '@/components/LoadingSkeletons'
 
 export const revalidate = 120
 
@@ -135,15 +137,22 @@ const JUICEBOX_FEATURES = [
 const HOMEPAGE_DATA_TIMEOUT_MS = 9_000
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error('Homepage data request timed out')),
-        milliseconds,
-      ),
-    ),
-  ])
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error('Homepage data request timed out')),
+      milliseconds,
+    )
+    promise.then(
+      value => {
+        clearTimeout(timeout)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timeout)
+        reject(error)
+      },
+    )
+  })
 }
 
 function FruitSeparator() {
@@ -165,7 +174,7 @@ function FruitSeparator() {
   )
 }
 
-export default async function HomePage() {
+async function HomepageDiscovery() {
   const [cardsResult, activityResult] = await Promise.allSettled([
     withTimeout(getTrendingCards(12), HOMEPAGE_DATA_TIMEOUT_MS),
     withTimeout(getRecentActivity(12), HOMEPAGE_DATA_TIMEOUT_MS),
@@ -176,6 +185,56 @@ export default async function HomePage() {
   const activity: BsFreshActivityEvent[] =
     activityResult.status === 'fulfilled' ? activityResult.value : []
 
+  return (
+    <section
+      id="trending"
+      className="mx-auto max-w-6xl px-4 pb-0 pt-14 sm:px-6 sm:pb-0 sm:pt-16"
+    >
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">
+          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
+            Trending projects
+          </h2>
+          {cards.length === 0 ? (
+            <p className="card p-8 text-sm text-smoke-700">
+              Projects are temporarily unavailable. Please try again shortly.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-3 sm:hidden">
+                {cards.map(card => (
+                  <ProjectCard key={card.key} card={card} />
+                ))}
+              </div>
+              <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
+                {[0, 1].map(column => (
+                  <div key={column} className="flex flex-col gap-3">
+                    {cards
+                      .filter((_, index) => index % 2 === column)
+                      .map(card => (
+                        <ProjectCard key={card.key} card={card} />
+                      ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <aside className="min-w-0 lg:col-span-1">
+          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
+            Fresh activity
+          </h2>
+          <div className="card overflow-hidden">
+            <FreshActivity initialEvents={activity} />
+          </div>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+export default function HomePage() {
   return (
     <>
       {/* Hero band — statement, actions, and one brand illustration. */}
@@ -210,58 +269,12 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Trending mosaic + fresh activity rail. */}
-      <section
-        id="trending"
-        className="mx-auto max-w-6xl px-4 pb-0 pt-14 sm:px-6 sm:pb-0 sm:pt-16"
-      >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {/* Trending mosaic */}
-          <div className="min-w-0 lg:col-span-2">
-            <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-              Trending projects
-            </h2>
-            {cards.length === 0 ? (
-              <p className="card p-8 text-sm text-smoke-700">
-                Projects are loading slowly right now — check back in a moment.
-              </p>
-            ) : (
-              <>
-                {/* Keep ranking order on mobile. At two columns, alternate
-                    cards between independent stacks so a short card never
-                    forces its neighbor's whole row to be equally tall. */}
-                <div className="space-y-3 sm:hidden">
-                  {cards.map(card => (
-                    <ProjectCard key={card.key} card={card} />
-                  ))}
-                </div>
-                <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
-                  {[0, 1].map(column => (
-                    <div key={column} className="flex flex-col gap-3">
-                      {cards
-                        .filter((_, index) => index % 2 === column)
-                        .map(card => (
-                          <ProjectCard key={card.key} card={card} />
-                        ))}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Fresh activity rail — right column on desktop, stacks below on mobile. */}
-          <aside className="min-w-0 lg:col-span-1">
-            <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-              Fresh activity
-            </h2>
-            <div className="card overflow-hidden">
-              <FreshActivity initialEvents={activity} />
-            </div>
-          </aside>
-        </div>
+      <Suspense fallback={<HomepageDiscoverySkeleton />}>
+        <HomepageDiscovery />
+      </Suspense>
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <FruitSeparator />
-      </section>
+      </div>
 
       <section aria-labelledby="why-juicebox">
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-20">

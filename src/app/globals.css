@@ -37,6 +37,26 @@
     @apply rounded-xl border border-smoke-200 bg-white;
   }
 
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+    background-color: theme('colors.smoke.100');
+  }
+
+  .skeleton-shimmer::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      rgb(255 255 255 / 0.72) 50%,
+      transparent 80%
+    );
+    transform: translateX(-100%);
+    animation: skeleton-sweep 1.5s ease-in-out infinite;
+  }
+
   /* Controls use Bluebs; Split remains the page-level brand/warning accent. */
   .btn-primary {
     @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-500 font-sans font-medium text-white;
@@ -200,6 +220,18 @@
   }
 }
 
+@keyframes skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer::after {
+    animation: none;
+  }
+}
+
 @layer utilities {
   .card-lift {
     transition:
@@ -210,6 +242,16 @@
   .card-lift:hover {
     border-color: theme('colors.smoke.400');
     box-shadow: 0 4px 12px rgb(32 30 26 / 0.06);
+  }
+
+  /* Hide the scrollbar on horizontal strips (still scrollable by wheel/touch). */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 

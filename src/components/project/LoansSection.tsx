@@ -20,6 +20,7 @@ import { usePublicClient, useReadContract } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { TxError } from '@/components/ui/TxError'
+import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
   etherscanTxUrl,
   formatDate,
@@ -167,7 +168,7 @@ function LoansTables({
         <div>
           <span className="field-label">All loans</span>
           {isLoading ? (
-            <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+            <SkeletonTable rows={4} columns={5} className="mt-5" />
           ) : isError ? (
             <p className="mt-2 text-sm text-smoke-700">
               Loan data is unavailable right now.

@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
+const { PHASE_DEVELOPMENT_SERVER } = require('next/constants')
+
 const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
@@ -9,10 +11,13 @@ const securityHeaders = [
   },
 ]
 
-module.exports = {
-  // Verification builds set NEXT_DIST_DIR so they never clobber the dev
-  // server's .next; unset means the normal default.
-  distDir: process.env.NEXT_DIST_DIR || '.next',
+module.exports = phase => ({
+  // Keep development and production artifacts separate. Running `next build`
+  // while the dev server is active otherwise leaves their webpack chunks
+  // mixed together and causes intermittent MODULE_NOT_FOUND errors.
+  distDir:
+    process.env.NEXT_DIST_DIR ||
+    (phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next'),
   reactStrictMode: true,
   poweredByHeader: false,
   webpack: (config, { webpack }) => {
@@ -47,4 +52,4 @@ module.exports = {
   async headers() {
     return [{ source: '/(.*)', headers: securityHeaders }]
   },
-}
+})

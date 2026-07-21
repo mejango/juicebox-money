@@ -15,6 +15,7 @@ import { type Address, type PublicClient } from 'viem'
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
+import { Skeleton } from '@/components/ui/Skeleton'
 import type { BsParticipant } from '@/lib/bendystraw'
 import { formatTokenAmount, formatUsd18 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -76,13 +77,15 @@ async function readChainTreasury(
     })
     const rows = await Promise.all(
       contexts.map(async (context): Promise<TreasuryRow> => {
-        const balance = await client.readContract({
-          address: store,
-          abi: jbTerminalStoreAbi,
-          functionName: 'balanceOf',
-          args: [terminal, projectId, context.token],
-        })
-        const symbol = await tokenSymbol(client, context.token, { chainId })
+        const [balance, symbol] = await Promise.all([
+          client.readContract({
+            address: store,
+            abi: jbTerminalStoreAbi,
+            functionName: 'balanceOf',
+            args: [terminal, projectId, context.token],
+          }),
+          tokenSymbol(client, context.token, { chainId }),
+        ])
 
         // JBPrices checks this project's feeds first, then protocol defaults.
         // Asking for 18 decimals gives an exact fixed-point USD price for one
@@ -124,7 +127,7 @@ async function readChainTreasury(
   }
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="card px-4 py-3.5">
       <dt className="field-label">{label}</dt>
@@ -143,7 +146,7 @@ function HoverBreakdownStat({
   children,
 }: {
   label: string
-  value: string
+  value: ReactNode
   tooltipId: string
   align?: 'left' | 'right'
   children: ReactNode
@@ -281,7 +284,7 @@ export function ProjectStats({
     !!participantData &&
     participantData.totalCount <= participantData.items.length
   const holderValue = holdersLoading
-    ? '…'
+    ? <Skeleton className="h-7 w-20 rounded" />
     : holdersError || !participantData
       ? '—'
       : `${holderCount.toLocaleString('en-US')}${holderCountIsExact ? '' : '+'}`
@@ -289,7 +292,7 @@ export function ProjectStats({
   const hasBreakdown =
     !!data && (data.rows.length > 0 || data.failedChainIds.length > 0)
   const treasuryValue = isLoading
-    ? '…'
+    ? <Skeleton className="h-7 w-24 rounded" />
     : data?.totalUsd != null
       ? formatUsd18(data.totalUsd)
       : '—'

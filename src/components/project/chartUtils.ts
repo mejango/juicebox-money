@@ -158,7 +158,7 @@ export function formatPrice(n: number): string {
   if (n >= 1000) return Math.round(n).toLocaleString('en-US')
   if (n >= 1) return n.toFixed(2)
   if (n >= 0.001) return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
-  return n.toPrecision(2)
+  return n.toPrecision(5)
 }
 
 /** Span-aware date: "Jan 5, 2027" under two years of span, "Jan 2027" beyond. */

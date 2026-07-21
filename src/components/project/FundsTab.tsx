@@ -33,6 +33,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { useConfig, usePublicClient, useReadContract } from 'wagmi'
+import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
@@ -474,12 +475,7 @@ export function FundsTab({
     !!address && !!owner && owner.toLowerCase() === address.toLowerCase()
 
   if (isLoading) {
-    return (
-      <div className="card p-6">
-        <span className="field-label">Funds</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <FundsTabSkeleton />
   }
   if (!matrix?.length) {
     return (

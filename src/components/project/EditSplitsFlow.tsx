@@ -17,6 +17,7 @@ import {
   type JBSplit,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   encodeFunctionData,
@@ -503,7 +504,7 @@ function EditSplitsModal({
           </p>
         </div>
       ) : isLoading || (!baseline && !isError) ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading current splits…</p>
+        <FormFieldsSkeleton rows={4} label="Loading split recipients" />
       ) : isError ? (
         <p className="mt-3 text-sm text-smoke-700">
           Couldn&apos;t load the current splits. Close and try again.

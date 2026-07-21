@@ -26,6 +26,7 @@ import {
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
+import { GossipTablesSkeleton } from '@/components/LoadingSkeletons'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
@@ -602,7 +603,7 @@ export function GossipCard({
         </p>
       </div>
       {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <GossipTablesSkeleton groups={chains.length} />
       ) : isError || !data ? (
         <p className="mt-3 text-sm text-smoke-700">
           Couldn&apos;t verify cross-chain gossip state right now.

@@ -24,6 +24,8 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { RulesetsTabSkeleton } from '@/components/LoadingSkeletons'
+import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import {
@@ -256,9 +258,11 @@ function RulesetChainStatus({
 }) {
   if (loading) {
     return (
-      <p className="mt-4 text-center text-xs text-smoke-500">
-        Checking rules across chains…
-      </p>
+      <Skeleton
+        className="mx-auto mt-4 h-3 w-48 rounded"
+        role="status"
+        aria-label="Checking rules across chains"
+      />
     )
   }
   if (!snapshots?.length) return null
@@ -866,12 +870,7 @@ export function RulesetsTab({
   })
 
   if (isLoading) {
-    return (
-      <div className="card p-6">
-        <span className="field-label">Rulesets</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <RulesetsTabSkeleton />
   }
   if (isError || !selected || !current) {
     return (
@@ -1036,11 +1035,13 @@ export function RulesetsTab({
                     chainId={chainId}
                   />
                 ) : (
-                  <p className="mt-2 text-sm text-smoke-500">
-                    {fundsFailed
-                      ? 'Couldn’t verify reserved recipients.'
-                      : 'Loading…'}
-                  </p>
+                  fundsFailed ? (
+                    <p className="mt-2 text-sm text-smoke-500">
+                      Couldn’t verify reserved recipients.
+                    </p>
+                  ) : (
+                    <SkeletonTable rows={3} columns={2} className="mt-3" />
+                  )
                 )}
                 {isCurrent && rulesetId > 0 ? (
                   <div className="mt-3">

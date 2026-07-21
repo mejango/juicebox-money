@@ -48,10 +48,14 @@ export function FreshActivity({
   }, [])
 
   return (
-    <ul className="divide-y divide-smoke-100">
-      {events.map(event => (
-        <Row key={event.id} event={event} />
-      ))}
+    <ul className="min-h-[420px] divide-y divide-smoke-100">
+      {events.length === 0 ? (
+        <li className="flex min-h-[420px] items-center justify-center px-6 text-center text-sm text-smoke-600">
+          No recent activity yet.
+        </li>
+      ) : (
+        events.map(event => <Row key={event.id} event={event} />)
+      )}
     </ul>
   )
 }

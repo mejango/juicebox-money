@@ -8,8 +8,8 @@
  * IMPORTANT: bendystraw does NOT index merkle inclusion proofs, and the
  * outbox event does not carry the leaf's `metadata` word. A claim
  * (JBSucker.claim) needs both the full leaf AND a 32-entry proof, so this
- * data can surface a movement's STATUS but can never build a claim. The
- * Settlement UI treats claiming as fail-closed accordingly.
+ * data can surface a movement's STATUS but can never build a claim — that's
+ * sucker-claims.ts, which rebuilds leaf + proof on-chain at claim time.
  */
 
 import { bendystraw, getProject } from '@/lib/bendystraw'

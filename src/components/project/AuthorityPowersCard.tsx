@@ -17,6 +17,7 @@ import {
   type Address,
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
@@ -115,7 +116,7 @@ export function AuthorityPowersCard({
       </p>
 
       {query.isLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Reading every chain…</p>
+        <ActionRowsSkeleton rows={5} label="Loading owner powers" />
       ) : query.isError ? (
         <p className="mt-4 text-sm text-red-700">
           Could not load the current owner powers.

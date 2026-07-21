@@ -31,11 +31,13 @@ import {
   PriceChart,
   type PricePoint,
 } from '@/components/project/PriceChart'
+import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
 import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import { cashOutPriceFromTotals } from '@/lib/cashOut'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { poolPriceFromSqrt } from '@/lib/uniswap-v4'
 
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
@@ -58,7 +60,7 @@ export function RevnetPriceCard({
   const config = useConfig()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
 
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ['revnetPriceCard', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 60_000,
@@ -284,14 +286,43 @@ export function RevnetPriceCard({
     if (
       !references?.poolId ||
       references.pairDecimals === null ||
-      !history?.swaps.length
+      (!history?.swaps.length && !history?.pools?.length)
     ) {
       return []
     }
 
     const poolId = references.poolId.toLowerCase()
     const pairScale = 10 ** references.pairDecimals
-    return history.swaps.flatMap(swap => {
+    const spotPrice = (
+      sqrtPriceX96: string | null,
+      projectTokenIsCurrency0: boolean | null,
+    ) => {
+      if (!sqrtPriceX96 || projectTokenIsCurrency0 === null) return null
+      try {
+        return poolPriceFromSqrt(
+          BigInt(sqrtPriceX96),
+          !projectTokenIsCurrency0,
+          references.pairDecimals!,
+        )
+      }
+      catch {
+        return null
+      }
+    }
+    const initial = (history.pools ?? []).flatMap(pool => {
+      if (
+        pool.chainId !== chainId ||
+        pool.poolId.toLowerCase() !== poolId
+      ) {
+        return []
+      }
+      const value = spotPrice(
+        pool.initialSqrtPriceX96,
+        pool.projectTokenIsCurrency0,
+      )
+      return value ? [{ timestamp: Number(pool.timestamp), value }] : []
+    })
+    const swaps = history.swaps.flatMap(swap => {
       if (
         swap.chainId !== chainId ||
         swap.direction === 'mint' ||
@@ -300,6 +331,13 @@ export function RevnetPriceCard({
         return []
       }
       try {
+        const spot = spotPrice(
+          swap.sqrtPriceX96,
+          swap.projectTokenIsCurrency0,
+        )
+        if (spot) return [{ timestamp: Number(swap.timestamp), value: spot }]
+
+        // Compatibility for pre-sqrtPriceX96 rows while Bendystraw reindexes.
         const terminalAmount =
           Number(BigInt(swap.terminalTokenAmount)) / pairScale
         const projectAmount = Number(BigInt(swap.projectTokenAmount)) / 1e18
@@ -311,7 +349,14 @@ export function RevnetPriceCard({
         return []
       }
     })
-  }, [chainId, history?.swaps, references?.pairDecimals, references?.poolId])
+    return [...initial, ...swaps].sort((a, b) => a.timestamp - b.timestamp)
+  }, [
+    chainId,
+    history?.pools,
+    history?.swaps,
+    references?.pairDecimals,
+    references?.poolId,
+  ])
 
   const stages: ChartStage[] = (data?.all ?? []).map(s => ({
     start: s.ruleset.start,
@@ -319,6 +364,8 @@ export function RevnetPriceCard({
     weight: s.ruleset.weight,
     weightCutPercent: s.ruleset.weightCutPercent,
   }))
+
+  if (isPending) return <PriceChartSkeleton />
 
   if (stages.length === 0 || stages.every(s => s.weight === 0n)) return null
 

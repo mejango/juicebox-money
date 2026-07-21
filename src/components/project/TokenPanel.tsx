@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import { erc20Abi, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { TokenPanelSkeleton } from '@/components/LoadingSkeletons'
 import { truncateAddress } from '@/lib/format'
 
 /**
@@ -62,12 +63,7 @@ export function TokenPanel({
   })
 
   if (isLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Token</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <TokenPanelSkeleton compact={compact} />
   }
 
   // One row list for both variants; a row can align items-center instead of

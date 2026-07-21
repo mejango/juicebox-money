@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toFunctionSelector, type Address, type Hex } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
+import { SafeQueueSkeleton } from '@/components/LoadingSkeletons'
 import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import {
@@ -583,7 +584,7 @@ export function SafeQueueCard({
       ) : null}
 
       {query.isLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Loading Safe queues…</p>
+        <SafeQueueSkeleton groups={chains.length} />
       ) : (
         <div className="mt-4 space-y-5">
           {(query.data ?? []).map(chain => {

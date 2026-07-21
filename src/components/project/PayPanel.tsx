@@ -26,6 +26,7 @@ import {
   previewPay,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
@@ -42,11 +43,12 @@ import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useShopCart } from '@/components/project/ShopCartProvider'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
-import { formatTokenAmount, ipfsUrl } from '@/lib/format'
+import { formatTokenAmount } from '@/lib/format'
 import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,
   pickTierMetadata,
+  tierMediaImageUrl,
 } from '@/lib/tier-metadata'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
@@ -455,10 +457,7 @@ export function PayPanel({
           const meta = json ? pickTierMetadata(json) : null
           const name = meta?.name ?? null
           const description = meta?.description ?? null
-          const rawImage = meta?.image
-          const image = rawImage?.startsWith('ipfs://')
-            ? ipfsUrl(rawImage)
-            : (rawImage ?? null)
+          const image = tierMediaImageUrl(meta?.image) ?? null
           return {
             id: t.id,
             price: t.price,
@@ -1009,9 +1008,7 @@ export function PayPanel({
             </button>
           </div>
           {cartCount > 0 && shopRoutesLoading ? (
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Checking checkout currencies…
-            </p>
+            <Skeleton className="mt-2 h-3 w-40 rounded" role="status" aria-label="Loading checkout currencies" />
           ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
             <p className="mt-1 text-xs leading-relaxed text-red-600">
               No directly accepted payment token has a verified price feed for
@@ -1023,7 +1020,7 @@ export function PayPanel({
             </p>
           ) : null}
 
-          <div className="scrollbar-none mt-2 flex gap-2 overflow-x-auto pb-1">
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
             {shop.tiers.slice(0, 12).map(tier => {
                 const qty = cart[tier.id] ?? 0
                 const soldOut = !tier.unlimited && tier.remaining === 0
@@ -1058,7 +1055,7 @@ export function PayPanel({
                         setQuantity(tier.id, 1, item)
                       }}
                       disabled={busy || soldOut}
-                      className="block w-full p-2 pb-1 disabled:cursor-not-allowed"
+                      className="block w-full disabled:cursor-not-allowed"
                       title={
                         soldOut
                           ? `${item.name} is sold out`
@@ -1072,16 +1069,13 @@ export function PayPanel({
                           alt={item.name}
                           loading="lazy"
                           decoding="async"
-                          className="mx-auto h-14 w-14 rounded object-cover"
+                          className="block aspect-square w-full object-contain"
                         />
                       ) : (
-                        <span className="mx-auto flex h-14 w-14 items-center justify-center rounded bg-smoke-75 text-xs text-smoke-500">
+                        <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
                           #{tier.id}
                         </span>
                       )}
-                      <span className="mt-1 block truncate text-[11px] text-ink">
-                        {item.name}
-                      </span>
                     </button>
                     {soldOut ? (
                       <p className="px-2 pb-2 text-[10px] text-smoke-500">
@@ -1194,7 +1188,7 @@ export function PayPanel({
               }}
               disabled={busy}
               ariaLabel="Payment token"
-              className="relative flex shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700"
+              className="relative flex min-h-11 shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700"
               labelClassName=""
               selectClassName="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
               options={contexts.map((ctx, i) => ({
@@ -1287,8 +1281,8 @@ export function PayPanel({
               {projectTokenLabel}
             </p>
           ) : amountRaw > 0n && previewLoading ? (
-            <span
-              className="mt-1 block h-7 w-28 animate-pulse rounded bg-smoke-100"
+            <Skeleton
+              className="mt-1 h-7 w-28 rounded"
               role="status"
               aria-label="Calculating token return"
             />
@@ -1362,7 +1356,7 @@ export function PayPanel({
                 {address && shopCreditsLoading ? (
                   <div className="flex items-center justify-between gap-3 text-smoke-500">
                     <span>Shop credit</span>
-                    <span>Checking…</span>
+                    <Skeleton className="h-4 w-16 rounded" role="status" aria-label="Loading shop credit" />
                   </div>
                 ) : shopCreditApplied > 0n ? (
                   <div className="flex items-center justify-between gap-3 text-emerald-700">
@@ -1476,7 +1470,7 @@ function TextSelect({
   options,
   disabled,
   ariaLabel,
-  className = 'relative inline-flex items-center gap-1',
+  className = 'relative inline-flex min-h-11 items-center gap-1',
   labelClassName = 'font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4',
   selectClassName = 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default',
 }: {

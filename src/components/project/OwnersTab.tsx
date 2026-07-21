@@ -28,6 +28,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import {
+  HolderDistributionSkeleton,
+  SplitsCardSkeleton,
+} from '@/components/LoadingSkeletons'
+import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
@@ -468,9 +473,13 @@ function YourChainRow({
           </span>
         </td>
         {isLoading ? (
-          <td colSpan={4} className="px-4 py-3 text-right text-smoke-500">
-            Loading…
-          </td>
+          <>
+            {Array.from({ length: 4 }, (_, index) => (
+              <td key={index} className="px-4 py-3">
+                <Skeleton className="ml-auto h-4 w-20 rounded" />
+              </td>
+            ))}
+          </>
         ) : isError || !position ? (
           <td colSpan={4} className="px-4 py-3 text-right text-smoke-500">
             Couldn&apos;t load your position here.
@@ -942,7 +951,7 @@ function AllHoldersCard({
         </p>
       </div>
       {isLoading ? (
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
+        <HolderDistributionSkeleton rows={5} />
       ) : isError ? (
         <p className="mt-2 text-sm text-smoke-700">
           Holder data is unavailable right now.
@@ -1112,14 +1121,7 @@ function ReservedCard({
   const rows = (splits ?? []) as readonly SplitRow[]
 
   if (rulesetLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">
-          {isRevnet ? 'Splits' : 'Reserved tokens'}
-        </span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <SplitsCardSkeleton isRevnet={isRevnet} />
   }
 
   if (rulesetError || stages.length === 0) {
@@ -1185,7 +1187,7 @@ function ReservedCard({
       </p>
 
       {splitsLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Loading splits…</p>
+        <SkeletonTable rows={4} columns={3} className="mt-5" />
       ) : splitsError ? (
         <p className="mt-4 text-sm text-smoke-700">
           Couldn’t read splits for this stage.
@@ -1315,7 +1317,7 @@ function ChainSplitsBlock({
               </span>
               <span className="text-ink">
                 {pendingLoading && isCurrentStage
-                  ? 'Loading…'
+                  ? <Skeleton className="inline-block h-4 w-20 rounded align-middle" />
                   : recipientPending > 0n
                     ? `${formatTokenAmount(recipientPending)} ${symbol}`
                     : '—'}

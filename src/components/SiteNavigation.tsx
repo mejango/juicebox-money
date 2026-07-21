@@ -2,8 +2,10 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
+import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
@@ -34,19 +36,25 @@ function MenuIcon({ open }: { open: boolean }) {
   )
 }
 
-function Logo({ closeMenu }: { closeMenu?: () => void }) {
+function Logo({
+  closeMenu,
+  iconOnly,
+}: {
+  closeMenu?: () => void
+  iconOnly: boolean
+}) {
   return (
     <Link
       href="/"
       onClick={closeMenu}
-      className="flex shrink-0 items-center"
+      className="flex min-h-11 min-w-11 shrink-0 items-center justify-center"
       aria-label="Juicebox home"
     >
       <Image
-        src={logoFull}
+        src={iconOnly ? logoIcon : logoFull}
         alt="Juicebox"
-        width={144}
-        height={33}
+        width={iconOnly ? 25 : 144}
+        height={iconOnly ? 32 : 33}
         priority
         className="h-8 w-auto"
       />
@@ -54,11 +62,11 @@ function Logo({ closeMenu }: { closeMenu?: () => void }) {
   )
 }
 
-function DesktopNavigation() {
+function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
   return (
     <nav className="mx-auto hidden h-[72px] w-full max-w-6xl grid-cols-[minmax(0,1fr)_minmax(240px,384px)_minmax(0,1fr)] items-center gap-6 px-6 md:grid">
       <div className="justify-self-start">
-        <Logo />
+        <Logo iconOnly={iconOnly} />
       </div>
       <div className="w-full">
         <SearchBox expanded />
@@ -70,14 +78,14 @@ function DesktopNavigation() {
   )
 }
 
-function MobileNavigation() {
+function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
   const [open, setOpen] = useState(false)
   const closeMenu = () => setOpen(false)
 
   return (
     <nav className="mx-auto max-w-6xl md:hidden">
       <div className="flex h-[72px] items-center justify-between px-4 sm:px-6">
-        <Logo closeMenu={closeMenu} />
+        <Logo closeMenu={closeMenu} iconOnly={iconOnly} />
         <button
           type="button"
           onClick={() => setOpen(value => !value)}
@@ -106,10 +114,13 @@ function MobileNavigation() {
 }
 
 export function SiteNavigation() {
+  const pathname = usePathname()
+  const iconOnly = /^\/[^/]+:\d+$/.test(pathname)
+
   return (
     <>
-      <DesktopNavigation />
-      <MobileNavigation />
+      <DesktopNavigation iconOnly={iconOnly} />
+      <MobileNavigation iconOnly={iconOnly} />
     </>
   )
 }

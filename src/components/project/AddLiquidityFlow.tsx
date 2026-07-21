@@ -20,6 +20,7 @@ import { usePublicClient } from 'wagmi'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { FlowError, shortError } from '@/lib/errors'
 import { TxError } from '@/components/ui/TxError'
+import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
@@ -438,12 +439,7 @@ export function AddLiquidityFlow({
   }
 
   if (marketLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Add market liquidity</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <FormCardSkeleton label="Loading liquidity form" />
   }
 
   // No buyback hook at all, or no deployed project ERC-20: nothing to seed.

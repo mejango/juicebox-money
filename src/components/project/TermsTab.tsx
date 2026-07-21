@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query'
 import { erc20Abi, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import { TermsTabSkeleton } from '@/components/LoadingSkeletons'
 import {
   billionthsToPct,
   fmtPct,
@@ -99,12 +100,7 @@ export function TermsTab({
   const sym = projectToken?.symbol || tokenSymbol || 'tokens'
 
   if (isLoading) {
-    return (
-      <div className="card p-6">
-        <span className="field-label">Terms</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-      </div>
-    )
+    return <TermsTabSkeleton />
   }
 
   const stages: readonly JBRulesetWithMetadata[] = (data?.all ?? [])

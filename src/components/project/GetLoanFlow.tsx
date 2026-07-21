@@ -18,6 +18,7 @@ import {
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
@@ -352,7 +353,7 @@ export function GetLoanFlow({
       </p>
 
       {contextsLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <FormFieldsSkeleton rows={3} label="Loading loan terms" />
       ) : ctxs.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           This revnet doesn’t accept a token to borrow on this chain.

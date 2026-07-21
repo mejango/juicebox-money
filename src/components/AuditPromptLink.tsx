@@ -26,7 +26,7 @@ export function AuditPromptLink({ className }: { className?: string }) {
             // Clipboard unavailable; leave the label unchanged.
           }
         }}
-        className="underline decoration-smoke-400 underline-offset-2 hover:text-ink"
+        className="inline-flex min-h-11 items-center underline decoration-smoke-400 underline-offset-2 hover:text-ink"
       >
         {copied ? 'audit prompt copied to clipboard' : 'audit the code with your AI'}
       </button>

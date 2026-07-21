@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { encodeFunctionData, zeroAddress, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
@@ -269,7 +270,7 @@ export function MultiChainBuybackRouterCard({
       </p>
 
       {query.isLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Reading every chain…</p>
+        <ActionRowsSkeleton rows={3} label="Loading buyback router" />
       ) : query.isError ? (
         <p className="mt-4 text-sm text-red-700">
           Could not read the buyback registries.

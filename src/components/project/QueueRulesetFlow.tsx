@@ -30,6 +30,7 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
+import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { billionthsToPct, etherscanTxUrl, formatDuration } from '@/lib/format'
@@ -270,12 +271,7 @@ export function QueueRulesetFlow({
   }
 
   if (isLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Edit rules</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading current rules…</p>
-      </div>
-    )
+    return <FormCardSkeleton label="Loading ruleset editor" />
   }
 
   if (isError || !data) {

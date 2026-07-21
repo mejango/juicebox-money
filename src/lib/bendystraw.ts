@@ -625,11 +625,22 @@ export type BsSwapEvent = {
   projectTokenAmount: string
   poolId: string
   chainId: number
+  sqrtPriceX96: string | null
+  projectTokenIsCurrency0: boolean | null
+}
+
+export type BsBuybackPoolEvent = {
+  timestamp: number
+  poolId: string
+  chainId: number
+  initialSqrtPriceX96: string | null
+  projectTokenIsCurrency0: boolean | null
 }
 
 export type BsRevnetPriceHistory = {
   moments: BsPriceMoment[]
   swaps: BsSwapEvent[]
+  pools: BsBuybackPoolEvent[]
 }
 
 /**
@@ -667,52 +678,99 @@ export async function getPagedItems<T>(
 }
 
 /**
- * Real indexed cash-out inputs and AMM swaps for a revnet. Consumers derive
- * prices using the project's own decimals/rulesets and filter swaps to the
+ * Real indexed cash-out inputs, pool registration prices, and exact post-swap
+ * spots for a revnet. Consumers apply the project's decimals and filter to the
  * currently resolved pool; no values are projected beyond the last event.
  */
 export async function getRevnetPriceHistory(
   suckerGroupId: string,
 ): Promise<BsRevnetPriceHistory> {
-  const [moments, swaps] = await Promise.all([
-    getPagedItems<BsPriceMoment>(
-      `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-        suckerGroupMoments(
-          where: { suckerGroupId: $suckerGroupId, version: 6 }
-          orderBy: "timestamp"
-          orderDirection: "asc"
-          limit: $limit
-          offset: $offset
-        ) {
-          items { timestamp balance tokenSupply }
-          totalCount
-        }
-      }`,
-      'suckerGroupMoments',
-      { suckerGroupId },
-    ).then(page => page.items),
-    getPagedItems<BsSwapEvent>(
-      `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-        swapEvents(
-          where: { suckerGroupId: $suckerGroupId, version: 6 }
-          orderBy: "timestamp"
-          orderDirection: "asc"
-          limit: $limit
-          offset: $offset
-        ) {
-          items {
-            timestamp direction terminalTokenAmount projectTokenAmount
-            poolId chainId
-          }
-          totalCount
-        }
-      }`,
-      'swapEvents',
-      { suckerGroupId },
-    ).then(page => page.items),
-  ])
+  const momentsPromise = getPagedItems<BsPriceMoment>(
+    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+      suckerGroupMoments(
+        where: { suckerGroupId: $suckerGroupId, version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { timestamp balance tokenSupply }
+        totalCount
+      }
+    }`,
+    'suckerGroupMoments',
+    { suckerGroupId },
+  ).then(page => page.items)
 
-  return { moments, swaps }
+  const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
+    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+      swapEvents(
+        where: { suckerGroupId: $suckerGroupId, version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items {
+          timestamp direction terminalTokenAmount projectTokenAmount
+          poolId chainId sqrtPriceX96 projectTokenIsCurrency0
+        }
+        totalCount
+      }
+    }`,
+    'swapEvents',
+    { suckerGroupId },
+  ).then(page => page.items)
+
+  const pools = () => getPagedItems<BsBuybackPoolEvent>(
+    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+      buybackPoolEvents(
+        where: { suckerGroupId: $suckerGroupId, version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items {
+          timestamp poolId chainId initialSqrtPriceX96
+          projectTokenIsCurrency0
+        }
+        totalCount
+      }
+    }`,
+    'buybackPoolEvents',
+    { suckerGroupId },
+  ).then(page => page.items)
+
+  const marketPromise = Promise.all([enhancedSwaps(), pools()])
+    .then(([swaps, poolEvents]) => ({ swaps, pools: poolEvents }))
+    .catch(async () => {
+      // Preserve the existing average-price series if a frontend deployment
+      // reaches production before Bendystraw's additive schema fields.
+      const swaps = await getPagedItems<BsSwapEvent>(
+        `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+          swapEvents(
+            where: { suckerGroupId: $suckerGroupId, version: 6 }
+            orderBy: "timestamp"
+            orderDirection: "asc"
+            limit: $limit
+            offset: $offset
+          ) {
+            items {
+              timestamp direction terminalTokenAmount projectTokenAmount
+              poolId chainId
+            }
+            totalCount
+          }
+        }`,
+        'swapEvents',
+        { suckerGroupId },
+      ).then(page => page.items)
+      return { swaps, pools: [] }
+    })
+
+  const [moments, market] = await Promise.all([momentsPromise, marketPromise])
+  return { moments, ...market }
 }
 
 export type BsPermissionHolder = {

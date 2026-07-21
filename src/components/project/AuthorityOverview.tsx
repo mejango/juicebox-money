@@ -16,6 +16,10 @@ import { encodeFunctionData, zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
 import { ChainIcon } from '@/components/ChainIcon'
+import {
+  AccountGroupsSkeleton,
+  ActionRowsSkeleton,
+} from '@/components/LoadingSkeletons'
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
@@ -223,7 +227,7 @@ export function AuthorityOverview({
           </p>
         </div>
         {authorityQuery.isLoading ? (
-          <p className="mt-4 text-sm text-smoke-500">Reading every chain…</p>
+          <AccountGroupsSkeleton />
         ) : authorityQuery.isError ? (
           <p className="mt-4 text-sm text-red-700">Could not read project control.</p>
         ) : (
@@ -605,7 +609,7 @@ function PermissionsAcrossChains({
       </p>
 
       {query.isLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Loading permissions…</p>
+        <ActionRowsSkeleton rows={4} label="Loading permissions" />
       ) : grants.length === 0 ? (
         <p className="mt-4 text-sm text-smoke-500">
           {isRevnet ? 'No operator permissions found.' : 'No operators authorized yet.'}

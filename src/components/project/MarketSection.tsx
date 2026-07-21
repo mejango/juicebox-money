@@ -20,6 +20,10 @@ import { useMemo, useState } from 'react'
 import { type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import {
+  LiquidityBodySkeleton,
+  MarketSectionSkeleton,
+} from '@/components/LoadingSkeletons'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -654,14 +658,7 @@ export function MarketSection({
   })
 
   if (isLoading) {
-    return (
-      <div className="card p-5">
-        <div>
-          <span className="field-label">Market</span>
-          <p className="mt-2 text-sm text-smoke-500">Loading…</p>
-        </div>
-      </div>
-    )
+    return <MarketSectionSkeleton />
   }
 
   if (isError) {
@@ -768,7 +765,7 @@ export function MarketSection({
         </div>
 
         {lpLoading ? (
-          <p className="mt-3 text-sm text-smoke-500">Reading pool positions…</p>
+          <LiquidityBodySkeleton />
         ) : lpError ? (
           <p className="mt-3 text-sm leading-relaxed text-smoke-700">
             Couldn&apos;t read the pool&apos;s liquidity positions here right

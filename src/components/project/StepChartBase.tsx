@@ -55,7 +55,7 @@ export function ChartRangeButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`min-h-[32px] rounded-lg border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none ${
+      className={`min-h-11 rounded-lg border px-2.5 text-[11px] font-medium transition-colors focus-visible:outline-none ${
         active
           ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
           : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'

@@ -17,6 +17,7 @@ import {
   type Address,
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ErrorNote } from '@/components/ui/TxError'
@@ -182,7 +183,7 @@ export function AuthorityEditsCard({
       </p>
 
       {query.isLoading ? (
-        <p className="mt-4 text-sm text-smoke-500">Reading every chain…</p>
+        <ActionRowsSkeleton rows={2} label="Loading editable project state" />
       ) : query.isError ? (
         <p className="mt-4 text-sm text-red-700">
           Could not load the editable project state.
@@ -197,7 +198,7 @@ export function AuthorityEditsCard({
             open={open === 'metadata'}
             onToggle={() => setOpen(current => (current === 'metadata' ? null : 'metadata'))}
           >
-            <PerChainMetadataState rows={rows} />
+            <PerChainMetadataState rows={rows} differs={uriDiffers} />
             {open === 'metadata' ? (
               <MetadataEditor
                 rows={rows}
@@ -216,7 +217,7 @@ export function AuthorityEditsCard({
             open={open === 'token'}
             onToggle={() => setOpen(current => (current === 'token' ? null : 'token'))}
           >
-            <PerChainTokenState rows={rows} />
+            <PerChainTokenState rows={rows} differs={tokenDiffers} />
             {open === 'token' ? (
               <TokenEditor
                 rows={rows}
@@ -294,7 +295,34 @@ function EditRow({
   )
 }
 
-function PerChainMetadataState({ rows }: { rows: EditChainState[] }) {
+/** "(same on all N chains)" suffix, MultiChainBuybackRouterCard style. */
+function SameOnAllChains({ count }: { count: number }) {
+  return (
+    <span className="text-smoke-500">
+      (same on all {count} chain{count === 1 ? '' : 's'})
+    </span>
+  )
+}
+
+function PerChainMetadataState({
+  rows,
+  differs,
+}: {
+  rows: EditChainState[]
+  differs: boolean
+}) {
+  if (!differs && rows.length > 0) {
+    const uri = rows[0].uri
+    return (
+      <p className="mt-3 text-xs text-smoke-700" title={uri ?? 'Not set'}>
+        <span className="text-smoke-500">Current:</span>{' '}
+        <span className={uri ? 'text-ink' : 'text-smoke-500'}>
+          {uri ? truncateUri(uri) : 'Not set'}
+        </span>{' '}
+        <SameOnAllChains count={rows.length} />
+      </p>
+    )
+  }
   return (
     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
       {rows.map(row => (
@@ -311,7 +339,32 @@ function PerChainMetadataState({ rows }: { rows: EditChainState[] }) {
   )
 }
 
-function PerChainTokenState({ rows }: { rows: EditChainState[] }) {
+function PerChainTokenState({
+  rows,
+  differs,
+}: {
+  rows: EditChainState[]
+  differs: boolean
+}) {
+  if (!differs && rows.length > 0) {
+    const row = rows[0]
+    return (
+      <p className="mt-3 text-xs text-smoke-700">
+        <span className="text-smoke-500">Current:</span>{' '}
+        {row.token ? (
+          <span className="text-ink" title={row.token}>
+            {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
+            {truncateAddress(row.token)}
+          </span>
+        ) : (
+          <span className="text-smoke-500">
+            Credits only · ERC-20 not deployed
+          </span>
+        )}{' '}
+        <SameOnAllChains count={rows.length} />
+      </p>
+    )
+  }
   return (
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
       {rows.map(row => (

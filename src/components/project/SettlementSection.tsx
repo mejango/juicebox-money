@@ -11,6 +11,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  buildBridgeClaimTx,
   buildToRemoteTx,
   getAccountingContexts,
   getV6SuckerPairs,
@@ -28,11 +29,14 @@ import {
 import { getPublicClient } from 'wagmi/actions'
 import { useConfig } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { MovementGroupsSkeleton } from '@/components/LoadingSkeletons'
+import { SkeletonTable } from '@/components/ui/Skeleton'
 import { GossipCard } from '@/components/project/GossipCard'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import type { BridgeMovement } from '@/lib/suckers-queries'
+import { buildClaim } from '@/lib/sucker-claims'
 import { addrOf } from '@/lib/contracts'
 import {
   etherscanTxUrl,
@@ -379,7 +383,7 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
         separate deployment linked by bridges.
       </p>
       {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <SkeletonTable rows={Math.max(chains.length, 2)} columns={4} className="mt-5" />
       ) : isError || !data ? (
         <p className="mt-3 text-sm text-smoke-700">
           Couldn&apos;t read the cross-chain composition right now.
@@ -504,7 +508,7 @@ function BridgesCard({ chains }: { chains: [number, number][] }) {
     <div className="card p-5">
       <span className="field-label">Bridges</span>
       {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <SkeletonTable rows={Math.max(chains.length - 1, 2)} columns={2} className="mt-5" />
       ) : isError ? (
         <p className="mt-3 text-sm text-smoke-700">
           Couldn&apos;t read the bridge routes right now.
@@ -607,7 +611,7 @@ function QueuedMovementsCard({
     <div className="card p-5">
       <span className="field-label">Queued movements</span>
       {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <MovementGroupsSkeleton />
       ) : isError ? (
         <p className="mt-3 text-sm text-smoke-700">
           Couldn&apos;t load queued movements right now.
@@ -737,7 +741,7 @@ function MovementGroup({
                 </td>
                 <td className="py-1.5 text-right">
                   {m.status === 'claimable' ? (
-                    <ClaimButton destChainId={m.destChainId} />
+                    <ClaimButton m={m} />
                   ) : (
                     <span className="text-xs text-smoke-500">—</span>
                   )}
@@ -798,33 +802,90 @@ function MovementGroup({
 }
 
 /**
- * Claiming a bridged movement (JBSucker.claim) needs the full merkle leaf AND
- * a 32-entry inclusion proof. Neither the SDK nor bendystraw provides a proof
- * builder, and reconstructing one requires a full outbox-tree scan that is out
- * of scope here — so claiming FAILS CLOSED: the button explains where to claim
- * rather than sending a call that would revert.
- *
- * GAP (documented): wire a proof source (an on-chain outbox-tree reconstruction
- * or an SDK/indexer proof endpoint) to enable one-click claims. Until then,
- * claims complete on the destination chain's own tooling.
+ * One-click claim of a delivered movement (JBSucker.claim). The merkle leaf
+ * (with its `metadata` word) and 32-entry proof are rebuilt client-side from
+ * the source outbox's InsertToOutboxTree logs and verified against the live
+ * destination inbox root (sucker-claims.ts) before the simulate-first send.
+ * Like toRemote, claiming is permissionless — the beneficiary is baked into
+ * the leaf, so any connected wallet can push it through.
  */
-function ClaimButton({ destChainId }: { destChainId: number }) {
-  const [open, setOpen] = useState(false)
+function ClaimButton({ m }: { m: BridgeMovement }) {
+  const config = useConfig()
+  const { isConnected, openSignIn } = useWallet()
+  const tx = useSafeTx(m.destChainId)
+  const [building, setBuilding] = useState(false)
+  const [flowError, setFlowError] = useState<string | null>(null)
+  const busy = building || tx.busy
+  const txUrl = tx.hash ? etherscanTxUrl(m.destChainId, tx.hash) : null
+
+  const claim = async () => {
+    if (busy) return
+    if (!isConnected) {
+      openSignIn()
+      return
+    }
+    setFlowError(null)
+    setBuilding(true)
+    try {
+      const sourceClient = getPublicClient(config, {
+        chainId: m.sourceChainId as JBChainId,
+      }) as PublicClient | undefined
+      const destClient = getPublicClient(config, {
+        chainId: m.destChainId as JBChainId,
+      }) as PublicClient | undefined
+      if (!sourceClient || !destClient) {
+        throw new Error('Unsupported chain.')
+      }
+      const claimData = await buildClaim(sourceClient, destClient, m)
+      const request = buildBridgeClaimTx({
+        chainId: m.destChainId as JBChainId,
+        sucker: m.destSucker as Address,
+        claim: claimData,
+      })
+      await tx.send({ ...request, abi: request.abi as Abi })
+    } catch (e) {
+      setFlowError(e instanceof Error ? e.message : 'Could not claim.')
+    } finally {
+      setBuilding(false)
+    }
+  }
+
   return (
     <span className="inline-flex flex-col items-end">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={claim}
+        disabled={busy}
         className="btn-secondary min-h-[32px] px-3 text-xs"
       >
-        Claim on {chainName(destChainId)}
+        {building
+          ? 'Building proof…'
+          : txPhaseLabel(tx.phase, {
+              pending: 'Claiming…',
+              idle: `Claim on ${chainName(m.destChainId)}`,
+            })}
       </button>
-      {open ? (
-        <span className="mt-1 max-w-[220px] text-right text-[11px] leading-relaxed text-smoke-700">
-          One-click claiming isn&apos;t available here yet — a claim needs a
-          merkle proof this app can&apos;t build. Complete the claim on{' '}
-          {chainName(destChainId)} with the sucker&apos;s own tooling.
+      {tx.phase === 'success' ? (
+        <span className="mt-1 text-right text-[11px] text-smoke-900">
+          Claimed.
+          {txUrl ? (
+            <>
+              {' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-bluebs-600 underline underline-offset-2"
+              >
+                View transaction
+              </a>
+            </>
+          ) : null}
         </span>
       ) : null}
+      <TxError
+        error={flowError ?? tx.error}
+        className="mt-1 max-w-[220px] text-right text-[11px] text-red-700"
+      />
     </span>
   )
 }

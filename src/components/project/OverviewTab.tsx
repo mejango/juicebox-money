@@ -137,7 +137,7 @@ export function OverviewTab({
                   href={href!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn-secondary min-h-[36px] px-3.5 text-xs"
+                  className="btn-secondary min-h-11 px-3.5 text-xs"
                 >
                   {label}
                 </a>

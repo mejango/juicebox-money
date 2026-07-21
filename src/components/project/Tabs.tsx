@@ -81,28 +81,69 @@ function TabShell({
  * via the URL hash (#tab or #tab/subtab); lazy-mounts each tab on first
  * view and keeps it mounted after, like website/'s built{} cache.
  */
-export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
-  const [active, setActive] = useState(0)
+export function ProjectTabs({
+  tabs,
+  sidebar,
+  activity,
+}: {
+  tabs: TabDef[]
+  sidebar: ReactNode
+  activity: ReactNode
+}) {
+  const firstSlug = tabSlug(tabs[0]?.label ?? '')
+  const activitySlug = tabSlug('Activity')
+  const [activeSlug, setActiveSlug] = useState(firstSlug)
+  const [isPhone, setIsPhone] = useState(false)
   const subtabByParent = useRef<Record<string, string>>({})
+  const mounted = useRef(new Set<string>())
+
+  const normalActiveSlug = tabs.some(
+    tab => tabSlug(tab.label) === activeSlug,
+  )
+    ? activeSlug
+    : firstSlug
+  const activityActive = isPhone && activeSlug === activitySlug
+  mounted.current.add(normalActiveSlug)
 
   // Resolve the initial tab from the URL hash, and follow hash changes
-  // (back/forward navigation).
+  // (back/forward navigation). Activity participates only at phone widths,
+  // matching website/'s project-detail contract.
   useEffect(() => {
+    const phoneQuery = window.matchMedia('(max-width: 600px)')
     const apply = () => {
       const [slug, child] = window.location.hash.replace('#', '').split('/')
-      if (!slug) return
-      if (child) subtabByParent.current[tabSlug(slug)] = tabSlug(child)
-      else delete subtabByParent.current[tabSlug(slug)]
-      const i = tabs.findIndex(t => tabSlug(t.label) === slug)
-      if (i >= 0) setActive(i)
+      const phone = phoneQuery.matches
+      setIsPhone(phone)
+
+      if (slug) {
+        const normalized = tabSlug(slug)
+        if (child) subtabByParent.current[normalized] = tabSlug(child)
+        else delete subtabByParent.current[normalized]
+
+        if (phone && normalized === activitySlug) {
+          setActiveSlug(activitySlug)
+          return
+        }
+        const tab = tabs.find(t => tabSlug(t.label) === normalized)
+        if (tab) {
+          setActiveSlug(tabSlug(tab.label))
+          return
+        }
+      }
+
+      setActiveSlug(phone ? activitySlug : firstSlug)
     }
     apply()
     window.addEventListener('hashchange', apply)
-    return () => window.removeEventListener('hashchange', apply)
+    phoneQuery.addEventListener('change', apply)
+    return () => {
+      window.removeEventListener('hashchange', apply)
+      phoneQuery.removeEventListener('change', apply)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const activate = (i: number) => {
+  const activate = (nextSlug: string) => {
     const [currentParent, currentChild] = window.location.hash
       .replace('#', '')
       .split('/')
@@ -110,27 +151,85 @@ export function ProjectTabs({ tabs }: { tabs: TabDef[] }) {
       subtabByParent.current[tabSlug(currentParent)] = tabSlug(currentChild)
     }
 
-    setActive(i)
+    setActiveSlug(nextSlug)
     // Keep the hash shareable without adding history entries per click.
-    const slug = tabSlug(tabs[i].label)
-    const child = subtabByParent.current[slug]
+    const child = subtabByParent.current[nextSlug]
     window.history.replaceState(
       null,
       '',
-      `#${slug}${child ? `/${child}` : ''}`,
+      `#${nextSlug}${child ? `/${child}` : ''}`,
     )
   }
 
+  const buttonClasses = (selected: boolean) =>
+    `min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors ${
+      selected
+        ? 'border-ink text-ink'
+        : 'border-transparent text-smoke-500 hover:text-ink'
+    }`
+
   return (
-    <TabShell
-      tabs={tabs}
-      active={active}
-      onSelect={activate}
-      ariaLabel="Project sections"
-      listClassName="scrollbar-none -mx-1 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1"
-      buttonClassName="min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors"
-      panelClassName="pt-6"
-    />
+    <div className="mt-10 flex flex-col min-[601px]:flex-row min-[601px]:gap-6 lg:gap-10">
+      <aside className="contents min-[601px]:order-2 min-[601px]:flex min-[601px]:w-[280px] min-[601px]:shrink-0 min-[601px]:flex-col md:w-[320px] lg:w-[384px]">
+        <div className="order-1 min-[601px]:order-none">{sidebar}</div>
+        <div
+          className={`order-3 ${
+            activityActive ? 'block' : 'hidden'
+          } min-[601px]:order-none min-[601px]:block`}
+        >
+          {activity}
+        </div>
+      </aside>
+
+      <div className="contents min-[601px]:order-1 min-[601px]:block min-[601px]:min-w-0 min-[601px]:flex-1">
+        <div
+          role="tablist"
+          aria-label="Project sections"
+          className="scrollbar-none order-2 -mx-1 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1 min-[601px]:order-none"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activityActive}
+            onClick={() => activate(activitySlug)}
+            className={`${buttonClasses(activityActive)} min-[601px]:hidden`}
+          >
+            Activity
+          </button>
+          {tabs.map(tab => {
+            const slug = tabSlug(tab.label)
+            const selected = !activityActive && normalActiveSlug === slug
+            return (
+              <button
+                key={tab.label}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => activate(slug)}
+                className={buttonClasses(selected)}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+
+        <div
+          className={`order-4 pt-6 min-[601px]:order-none ${
+            activityActive ? 'hidden' : 'block'
+          }`}
+        >
+          {tabs.map(tab => {
+            const slug = tabSlug(tab.label)
+            return mounted.current.has(slug) ? (
+              <div key={tab.label} hidden={normalActiveSlug !== slug}>
+                {tab.content}
+              </div>
+            ) : null
+          })}
+        </div>
+      </div>
+    </div>
   )
 }
 

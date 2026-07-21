@@ -4,6 +4,7 @@ import {
   JB_CHAINS,
   JBOmnichainDeployerContracts,
   jb721TiersHookAbi,
+  jb721TiersHookStoreAbi,
   jbContractAddress,
   jbOmnichainDeployerAbi,
   type JBChainId,
@@ -24,6 +25,12 @@ import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import {
+  CustomerCardSkeleton,
+  FormFieldsSkeleton,
+  ShopTabSkeleton,
+} from '@/components/LoadingSkeletons'
+import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
+import {
   AddShopItemsModal,
   type ShopWriteTarget,
 } from '@/components/project/AddShopItemsModal'
@@ -42,7 +49,6 @@ import type {
 } from '@/lib/bendystraw'
 import {
   formatTokenAmount,
-  ipfsUrl,
   timeAgo,
   truncateAddress,
 } from '@/lib/format'
@@ -51,6 +57,8 @@ import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,
   pickTierMetadata,
+  tierMediaAssetUrl,
+  tierMediaImageUrl,
 } from '@/lib/tier-metadata'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
@@ -66,6 +74,14 @@ import { wagmiConfig } from '@/providers/Providers'
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
 
+type ShopTierFlags = {
+  allowOwnerMint: boolean
+  transfersPausable: boolean
+  cantBeRemoved: boolean
+  cantIncreaseDiscountPercent: boolean
+  cantBuyWithCredits: boolean
+}
+
 type ShopTier = {
   id: number
   /** Full (undiscounted) price in the shop's pricing terms. */
@@ -80,7 +96,38 @@ type ShopTier = {
   encodedIpfsUri: `0x${string}`
   /** tokenUriResolver output (tiersOf includeResolvedUri=true); '' if none. */
   resolvedUri: string
+  /** Stored tier flags (store tiersOf); undefined if the read failed. */
+  flags?: ShopTierFlags
 }
+
+/** Shopper-facing copy for each stored tier flag (revnet-app parity). */
+const FLAG_DESCRIPTIONS: [keyof ShopTierFlags, string, string][] = [
+  [
+    'allowOwnerMint',
+    'Operator can mint',
+    "The project's operator can mint this item for free, without a payment.",
+  ],
+  [
+    'transfersPausable',
+    'Transfers pausable',
+    'Transfers of this item can be paused.',
+  ],
+  [
+    'cantBeRemoved',
+    'Cannot be removed',
+    'This item can never be removed from the shop.',
+  ],
+  [
+    'cantIncreaseDiscountPercent',
+    'Discount capped',
+    "This item's discount can only be lowered, never increased.",
+  ],
+  [
+    'cantBuyWithCredits',
+    'No credit buys',
+    "Buyers can't use shop credits to mint this item — only a fresh payment.",
+  ],
+]
 
 type Shop = {
   hook: Address
@@ -253,26 +300,20 @@ export function ShopTab({
       })),
   })
 
-  if (isLoading || isError || !shop) {
+  if (isLoading) return <ShopTabSkeleton />
+
+  if (isError || !shop) {
     return (
       <div className="card p-5">
         <span className="field-label">Shop</span>
-        <p
-          className={
-            isLoading
-              ? 'mt-2 text-sm text-smoke-500'
-              : 'mt-2 text-sm leading-relaxed text-smoke-700'
-          }
-        >
-          {isLoading
-            ? 'Loading…'
-            : isError
-              ? "Couldn't load the shop right now — try again in a moment."
-              : `No store yet.${
-                  isRevnet
-                    ? ' The operator can add items for supporters to buy.'
-                    : ''
-                }`}
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          {isError
+            ? "Couldn't load the shop right now — try again in a moment."
+            : `No store yet.${
+                isRevnet
+                  ? ' The operator can add items for supporters to buy.'
+                  : ''
+              }`}
         </p>
       </div>
     )
@@ -405,6 +446,7 @@ export function ShopTab({
       {detailTier ? (
         <TierDetailModal
           isRevnet={isRevnet}
+          chainId={chainId}
           chains={chains}
           tier={detailTier}
           media={mediaById?.[detailTier.id]}
@@ -719,7 +761,7 @@ function ShopCustomers({
             </button>
           </div>
         ) : owned.isLoading ? (
-          <p className="mt-2 text-sm text-smoke-500">Loading your items…</p>
+          <SkeletonTable rows={4} columns={2} className="mt-4" />
         ) : owned.isError ||
           (owned.data?.items.length === 0 &&
             owned.data.failedChains.length === chains.length) ? (
@@ -797,12 +839,7 @@ function CustomerAllCard({
   fallbackChainId: JBChainId
 }) {
   if (query.isLoading) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">All</span>
-        <p className="mt-2 text-sm text-smoke-500">Loading customers…</p>
-      </div>
-    )
+    return <CustomerCardSkeleton rows={6} />
   }
   if (
     query.isError ||
@@ -1000,9 +1037,7 @@ function ShopEditorLoading({ onClose }: { onClose: () => void }) {
             >
               Add items for sale
             </h2>
-            <p className="mt-2 text-sm text-smoke-700">
-              Reading the collection on each chain…
-            </p>
+            <FormFieldsSkeleton rows={4} label="Loading shop item editor" />
           </div>
           <button
             type="button"
@@ -1039,10 +1074,13 @@ function resolvedStoreMedia(media: TierMedia | undefined) {
   if (!media) return null
   const source = media.animationUrl || media.image || ''
   if (!source) return null
+  const kind = storeMediaKind(media.mediaType, source)
   return {
     source,
     poster: media.animationUrl && media.image ? media.image : undefined,
-    kind: storeMediaKind(media.mediaType, source),
+    // An extension-less gateway URL from the image field IS an image
+    // (website parity) — never a "Media file" placeholder.
+    kind: kind === 'unknown' && !media.animationUrl ? 'image' : kind,
   }
 }
 
@@ -1117,7 +1155,7 @@ function LazyStoreVideo({
       className={
         detail
           ? 'max-h-[28rem] w-full rounded-lg object-contain'
-          : 'h-full w-full object-cover'
+          : 'h-full w-full object-contain'
       }
     />
   )
@@ -1139,9 +1177,13 @@ function StoreMediaPreview({
 
   if (!resolved || failed) {
     return (
-      <div className="flex h-full w-full items-center justify-center text-xs text-smoke-500">
-        {media ? 'No media' : 'Loading…'}
-      </div>
+      media ? (
+        <div className="flex h-full w-full items-center justify-center text-xs text-smoke-500">
+          No media
+        </div>
+      ) : (
+        <Skeleton className="h-full min-h-32 w-full" role="status" aria-label="Loading item media" />
+      )
     )
   }
 
@@ -1157,7 +1199,7 @@ function StoreMediaPreview({
         className={
           detail
             ? 'max-h-[28rem] w-full rounded-lg object-contain'
-            : 'h-full w-full object-cover'
+            : 'h-full w-full object-contain'
         }
       />
     )
@@ -1269,14 +1311,14 @@ function TierCard({
   return (
     <div
       data-tier-id={tier.id}
-      className={`card overflow-hidden transition ${
+      className={`card flex h-full flex-col overflow-hidden transition ${
         quantity > 0 ? '!border-bluebs-500' : ''
       } ${soldOut ? 'opacity-60' : ''}`}
     >
       <button
         type="button"
         onClick={onOpen}
-        className="relative block aspect-square w-full bg-smoke-100 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-bluebs-500"
+        className="relative block aspect-square w-full bg-white text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-bluebs-500"
         aria-label={`View details for ${item.name}`}
       >
         <StoreMediaPreview media={media} alt={item.name} />
@@ -1297,7 +1339,7 @@ function TierCard({
         ) : null}
       </button>
 
-      <div className="p-3.5">
+      <div className="flex-1 bg-split-25 p-3.5">
         <button
           type="button"
           onClick={onOpen}
@@ -1341,18 +1383,9 @@ function TierCard({
           />
         </div>
 
-        {tier.reserveFrequency > 0 || tier.votingUnits > 0n ? (
+        {tier.reserveFrequency > 0 ? (
           <p className="mt-1 text-[11px] text-smoke-500">
-            {[
-              tier.reserveFrequency > 0
-                ? `1 of every ${tier.reserveFrequency} reserved`
-                : null,
-              tier.votingUnits > 0n
-                ? `${tier.votingUnits.toLocaleString('en-US')} votes each`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(', ')}
+            1 of every {tier.reserveFrequency} reserved
           </p>
         ) : null}
       </div>
@@ -1362,6 +1395,7 @@ function TierCard({
 
 function TierDetailModal({
   isRevnet,
+  chainId,
   chains,
   tier,
   media,
@@ -1369,6 +1403,8 @@ function TierDetailModal({
   onClose,
 }: {
   isRevnet: boolean
+  /** The chain the page (and this modal's stepper inventory) is on. */
+  chainId: JBChainId
   chains: [number, number][]
   tier: ShopTier
   media: TierMedia | undefined
@@ -1385,6 +1421,9 @@ function TierDetailModal({
     effective,
     item,
   } = useTierCartItem(tier, media)
+  const setFlags = tier.flags
+    ? FLAG_DESCRIPTIONS.filter(([flag]) => tier.flags![flag])
+    : []
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1460,11 +1499,11 @@ function TierDetailModal({
         </button>
 
         <div className="grid md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="flex min-h-64 items-center justify-center bg-smoke-100 p-5">
+          <div className="flex min-h-64 items-center justify-center bg-white p-5">
             <StoreMediaPreview media={media} alt={item.name} detail />
           </div>
 
-          <div className="p-5 sm:p-6">
+          <div className="bg-split-25 p-5 sm:p-6">
             <h2
               id="shop-item-detail-title"
               className="pr-10 font-agrandir text-2xl font-medium text-ink"
@@ -1524,7 +1563,7 @@ function TierDetailModal({
                   ? 'Sold out'
                   : unlimited
                     ? 'Unlimited inventory'
-                    : `${tier.remaining.toLocaleString('en-US')} left here`}
+                    : `${tier.remaining.toLocaleString('en-US')} left on ${chainName(chainId)}`}
               </span>
             </div>
 
@@ -1532,7 +1571,7 @@ function TierDetailModal({
               <p className="field-label">Supply by chain</p>
               <div className="mt-2 space-y-2">
                 {supply.isLoading ? (
-                  <p className="text-xs text-smoke-500">Reading supply…</p>
+                  <SkeletonTable rows={Math.max(chains.length, 2)} columns={2} />
                 ) : (
                   supply.data?.map(row => (
                     <div
@@ -1560,7 +1599,16 @@ function TierDetailModal({
 
             <dl className="mt-5 space-y-2 border-t border-smoke-200 pt-4 text-xs">
               <DetailFact label="Item ID" value={`#${tier.id}`} />
-              <DetailFact label="Category" value={String(tier.category)} />
+              <DetailFact
+                label="Category"
+                value={media?.categoryName ?? String(tier.category)}
+              />
+              {discounted ? (
+                <DetailFact
+                  label="Current discount"
+                  value={discountLabel(tier.discountPercent)}
+                />
+              ) : null}
               {tier.reserveFrequency > 0 ? (
                 <DetailFact
                   label="Reserve mint"
@@ -1574,6 +1622,20 @@ function TierDetailModal({
                 />
               ) : null}
             </dl>
+
+            {setFlags.length > 0 ? (
+              <div className="mt-5 border-t border-smoke-200 pt-4">
+                <p className="field-label">Flags</p>
+                <div className="mt-2 space-y-2">
+                  {setFlags.map(([flag, label, description]) => (
+                    <div key={flag}>
+                      <p className="text-xs font-medium text-ink">{label}</p>
+                      <p className="text-xs text-smoke-500">{description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1696,6 +1758,21 @@ async function readShop(
     }
   }
 
+  // Stored flags come from the store directly — getProject721Shop's tier
+  // shape doesn't carry them. Cosmetic here (detail-modal facts), so a
+  // failed read just omits the flags section.
+  const rawTiers = await client
+    .readContract({
+      address: resolved.store,
+      abi: jb721TiersHookStoreAbi,
+      functionName: 'tiersOf',
+      args: [resolved.hook, [], true, 0n, 200n],
+    })
+    .catch(() => [])
+  const flagsById = new Map(
+    rawTiers.map(rawTier => [rawTier.id, rawTier.flags] as const),
+  )
+
   const tiers: ShopTier[] = resolved.tiers.map(tier => ({
     id: tier.id,
     price: tier.price,
@@ -1707,6 +1784,7 @@ async function readShop(
     votingUnits: tier.votingUnits,
     encodedIpfsUri: tier.encodedIpfsUri,
     resolvedUri: tier.resolvedUri ?? '',
+    flags: flagsById.get(tier.id),
   }))
 
   return {
@@ -1718,39 +1796,6 @@ async function readShop(
   }
 }
 
-/**
- * Make a metadata image renderable in an <img>. Resolvers sometimes return
- * an SVG data URI that merely wraps an external <image href="…"> (website/
- * parity) — browsers block external loads inside an <img> data URI, so pull
- * the href out and load the bitmap directly. Self-contained SVGs pass
- * through, and ipfs:// URLs go through the gateway.
- */
-function mediaImageUrl(image: unknown): string {
-  if (typeof image !== 'string' || !image) return ''
-  const svg = /^data:image\/svg\+xml;base64,(.*)$/.exec(image)
-  if (svg) {
-    try {
-      const inner = /<image[^>]+href="([^"]+)"/.exec(
-        decodeURIComponent(escape(atob(svg[1]))),
-      )
-      if (inner) return gatewayUrl(inner[1])
-    } catch {
-      // Fall through to the data URI itself.
-    }
-    return image
-  }
-  return gatewayUrl(image)
-}
-
-function gatewayUrl(url: string): string {
-  return url.startsWith('ipfs://') ? (ipfsUrl(url) ?? '') : url
-}
-
-function mediaAssetUrl(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !value) return undefined
-  return gatewayUrl(value) || undefined
-}
-
 /** Resolve a tier's display metadata: the resolver's data URI first, then
  *  the tier's IPFS JSON. Best-effort — {} on any failure. */
 async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
@@ -1759,8 +1804,8 @@ async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
     return {
       name: meta.name,
       description: meta.description,
-      image: mediaImageUrl(meta.image),
-      animationUrl: mediaAssetUrl(meta.animationUrl),
+      image: tierMediaImageUrl(meta.image),
+      animationUrl: tierMediaAssetUrl(meta.animationUrl),
       mediaType: meta.mediaType,
       categoryName: meta.categoryName,
     }
@@ -1772,7 +1817,7 @@ async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   if (resolved && Object.keys(resolved).length > 0) return pick(resolved)
 
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
-  const url = cid ? ipfsUrl(cid) : null
+  const url = cid ? `/api/ipfs/${cid}` : null
   if (!url) return {}
   try {
     const controller = new AbortController()

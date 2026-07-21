@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { SkeletonTable } from '@/components/ui/Skeleton'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { TxError } from '@/components/ui/TxError'
@@ -150,7 +151,7 @@ export function AutoIssuanceSection({
         </p>
       </div>
       {isLoading ? (
-        <p className="mt-3 text-sm text-smoke-500">Loading…</p>
+        <SkeletonTable rows={4} columns={5} className="mt-5" />
       ) : isError ? (
         <p className="mt-3 text-sm text-smoke-700">
           Auto-issuance data is unavailable right now.
