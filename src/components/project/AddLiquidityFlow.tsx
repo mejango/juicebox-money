@@ -4,7 +4,10 @@ import {
   JB_CHAINS,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
+import {
+  getTokenAddress,
+  UNISWAP_PERMIT2_ADDRESS,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -56,9 +59,6 @@ import { resolveMarket, type MarketResult } from './MarketSection'
  * mint calldata (unlockData: MINT_POSITION + CLOSE + CLOSE [+ SWEEP]) and the
  * exact amounts sent are identical to website's.
  */
-
-// The canonical Permit2 singleton (same address every chain) — website line 20630.
-const PERMIT2_ADDRESS: Address = '0x000000000022D473030F116dDEE9F6B43aC78BA3'
 
 const UINT160_MAX = (1n << 160n) - 1n
 
@@ -328,7 +328,7 @@ async function buildPlan(
       address: side.currency,
       abi: erc20Abi,
       functionName: 'allowance',
-      args: [account, PERMIT2_ADDRESS],
+      args: [account, UNISWAP_PERMIT2_ADDRESS],
     })) as bigint
     if (erc20Allow < side.max) {
       steps.push({
@@ -339,7 +339,7 @@ async function buildPlan(
       })
     }
     const p2 = (await client.readContract({
-      address: PERMIT2_ADDRESS,
+      address: UNISWAP_PERMIT2_ADDRESS,
       abi: permit2Abi,
       functionName: 'allowance',
       args: [account, side.currency, posm],
@@ -781,12 +781,12 @@ function AddLiquidityForm({
           address: step.token,
           abi: erc20Abi as Abi,
           functionName: 'approve',
-          args: [PERMIT2_ADDRESS, step.amount],
+          args: [UNISWAP_PERMIT2_ADDRESS, step.amount],
         })
       } else if (step.kind === 'permit2-approve') {
         tx.send({
           chainId,
-          address: PERMIT2_ADDRESS,
+          address: UNISWAP_PERMIT2_ADDRESS,
           abi: permit2Abi as Abi,
           functionName: 'approve',
           args: [step.token, p.posm, step.amount, step.expiration],

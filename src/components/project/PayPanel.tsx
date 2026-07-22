@@ -5,6 +5,7 @@ import {
   JBCoreContracts,
   JBRouterTerminalContracts,
   NATIVE_TOKEN,
+  USDC_ADDRESSES,
   jbContractAddress,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
@@ -24,6 +25,7 @@ import {
   getCurrentRuleset,
   getProject721Shop,
   previewPay,
+  tokenCurrencyId,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -75,28 +77,8 @@ type PaySurface = {
   unknown: Address[]
 }
 
-// Canonical Circle USDC per chain (lowercased to skip viem checksum
-// validation). Offered as a swap-via-router pay currency on projects that have
-// the router terminal — website/ USDC_BY_CHAIN parity.
-const USDC_BY_CHAIN: Record<number, Address> = {
-  1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-  10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
-  8453: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-  42161: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
-  84532: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
-  11155111: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238',
-  11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7',
-  421614: '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d',
-}
-
 const ROUTER_PROBE_BENEFICIARY: Address =
   '0x0000000000000000000000000000000000000001'
-
-/** The accounting-context currency id of a token: `uint32(uint160(token))`.
- *  Used for router candidates (direct tokens carry the context's own currency). */
-function tokenCurrencyId(token: Address): number {
-  return Number(BigInt(token) & 0xffffffffn)
-}
 
 /** A stable identity for a pay token — a token can appear both directly AND
  *  via-router, so the key must include the route. */
@@ -325,7 +307,7 @@ export function PayPanel({
             viaRouter: true,
           })
         }
-        const usdc = USDC_BY_CHAIN[chainId]
+        const usdc = USDC_ADDRESSES[chainId as JBChainId]
         if (usdc && !has(usdc)) {
           candidates.push({
             token: usdc,

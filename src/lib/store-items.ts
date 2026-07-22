@@ -5,7 +5,7 @@ import type {
 } from '@/components/create/StoreEditor'
 import { splitOk, type DraftSplit } from '@/components/create/SplitsEditor'
 import { resolvedAddress } from '@/lib/ens'
-import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
+import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import {
   LP_SPLIT_HOOK,
   type SplitConfig,

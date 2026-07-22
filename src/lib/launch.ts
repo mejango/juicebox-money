@@ -17,6 +17,8 @@ import {
   buildRulesetConfiguration,
   buildRulesetMetadata,
   buildTerminalConfigurations,
+  projectIdFromLaunchLogs,
+  TIER_UNLIMITED_SUPPLY,
   tokenCurrencyId,
   v6Address,
 } from '@bananapus/nana-sdk-core/v6'
@@ -31,13 +33,10 @@ const CASH_OUTS_OFF = 10_000
 /** JBFundAccessLimitGroup "unlimited" payout amount sentinel. */
 const UNLIMITED_PAYOUT = 2n ** 224n - 1n
 
-/** JB721 tier initialSupply sentinel for unlimited inventory. */
-const TIER_UNLIMITED_SUPPLY = 999_999_999
-
 export type TreasuryCurrency = 'eth' | 'usdc'
 
 /** One store item, already pinned: encodedIpfsUri is the bytes32 digest of
- *  the item's CIDv0 metadata (see ipfs-cid.ts). Price is in the store
+ *  the item's CIDv0 metadata. Price is in the store
  *  currency's base units (18-dec for ETH prices, 6-dec for USD prices). */
 export type StoreItem = {
   price: bigint
@@ -815,26 +814,16 @@ function build721HookConfig(
   }
 }
 
-const ERC721_TRANSFER_TOPIC =
-  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
-
 /**
- * Pull the new project id out of a launch receipt: the JBProjects ERC-721
- * mint is the Transfer log with 4 topics whose `from` is the zero address —
- * its tokenId topic IS the project id. Store launches deploy the hook but
- * mint no hook 721s, so this holds for both launch paths.
+ * Pull the new project id from the canonical controller's LaunchProject log.
  */
 export function projectIdFromReceipt(
   receipt: TransactionReceipt,
+  chainId: JBChainId,
 ): number | null {
-  for (const log of receipt.logs) {
-    if (
-      log.topics[0] === ERC721_TRANSFER_TOPIC &&
-      log.topics.length === 4 &&
-      BigInt(log.topics[1] ?? '0x0') === 0n
-    ) {
-      return parseInt(log.topics[3] as string, 16)
-    }
+  const projectId = projectIdFromLaunchLogs(receipt.logs, { chainId })
+  if (projectId === null || projectId > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return null
   }
-  return null
+  return Number(projectId)
 }

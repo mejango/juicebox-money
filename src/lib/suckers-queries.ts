@@ -8,15 +8,16 @@
  * IMPORTANT: bendystraw does NOT index merkle inclusion proofs, and the
  * outbox event does not carry the leaf's `metadata` word. A claim
  * (JBSucker.claim) needs both the full leaf AND a 32-entry proof, so this
- * data can surface a movement's STATUS but can never build a claim — that's
- * sucker-claims.ts, which rebuilds leaf + proof on-chain at claim time.
+ * data can surface a movement's STATUS but can never build a claim. The SDK
+ * reconstructs and verifies that claim payload on-chain at claim time.
  */
 
 import { bendystraw, getProject } from '@/lib/bendystraw'
+import { suckerBytes32ToAddress } from '@bananapus/nana-sdk-core/v6'
 
 /** A bytes32-packed EVM address (left-padded) unpacked to its 20-byte form. */
 function unpackAddress(bytes32: string): string {
-  return `0x${bytes32.slice(-40)}`.toLowerCase()
+  return suckerBytes32ToAddress(bytes32 as `0x${string}`).toLowerCase()
 }
 
 type OutboxRow = {

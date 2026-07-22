@@ -1,7 +1,10 @@
 'use client'
 
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
-import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
+import {
+  getProjectCreationFee,
+  RULESET_WEIGHT_INHERIT,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -19,7 +22,7 @@ import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
 import { friendlyError } from '@/lib/errors'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
-import { cidV0ToBytes32 } from '@/lib/ipfs-cid'
+import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import { randomSalt } from '@/lib/manage'
 import { resolvedAddress } from '@/lib/ens'
 import {
@@ -645,7 +648,7 @@ export function CreateForm() {
       // Empty rate on a later stage = keep the previous (cut) rate.
       weight:
         stage.issuanceRate.trim() === '' && index > 0
-          ? 0n
+          ? RULESET_WEIGHT_INHERIT
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: Math.round(Number(stage.cutPct || '0') * 1e7),
       reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
@@ -705,10 +708,10 @@ export function CreateForm() {
     return {
       duration: 0,
       mustStartAtOrAfter: start,
-      // Empty rate on a later stage = 0n = inherit the previous (cut) rate.
+      // Empty rate on a later stage inherits the previous cut-adjusted rate.
       weight:
         stage.issuanceRate.trim() === '' && index > 0
-          ? 0n
+          ? RULESET_WEIGHT_INHERIT
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: cutOn ? Math.round(Number(stage.cutPct) * 1e7) : 0,
       reservedPercent: Math.round(splitsPct * 100),
@@ -1050,7 +1053,9 @@ export function CreateForm() {
           chainId: chainId as SupportedChainId,
         })
         const projectId =
-          receipt.status === 'success' ? projectIdFromReceipt(receipt) : null
+          receipt.status === 'success'
+            ? projectIdFromReceipt(receipt, chainId as JBChainId)
+            : null
         if (!projectId) throw new Error('Transaction failed on this chain.')
         updateStatus(chainId, { phase: 'done', projectId })
       } catch (e) {

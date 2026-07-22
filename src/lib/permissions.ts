@@ -1,4 +1,8 @@
-import { JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
+import {
+  JBPermissionCatalogV6,
+  JBPermissionIdsV6,
+  decodePermissionBitmap as decodeSdkPermissionBitmap,
+} from '@bananapus/nana-sdk-core/v6'
 
 export type PermissionDefinition = {
   id: number
@@ -13,7 +17,7 @@ export type PermissionDefinition = {
  * views agree and prevents newly indexed permissions from being reduced to a
  * bare number.
  */
-export const V6_PERMISSIONS: PermissionDefinition[] = [
+const PERMISSION_COPY = [
   ['ROOT', 'Full control (root)', 'Grants every permission below — full control of the project.'],
   ['QUEUE_RULESETS', 'Queue rulesets', 'Queue future rulesets, including issuance, payouts, and project rules.'],
   ['LAUNCH_RULESETS', 'Launch rulesets', 'Launch the project’s first rulesets.'],
@@ -53,12 +57,27 @@ export const V6_PERMISSIONS: PermissionDefinition[] = [
   ['OPEN_LOAN', 'Open loans', 'Open loans against the project’s tokens.'],
   ['REALLOCATE_LOAN', 'Reallocate loans', 'Move collateral between the project’s loans.'],
   ['REPAY_LOAN', 'Repay loans', 'Repay the project’s loans.'],
-].map(([key, label, description]) => ({
-  key: key as keyof typeof JBPermissionIdsV6,
-  id: JBPermissionIdsV6[key as keyof typeof JBPermissionIdsV6],
-  label,
-  description,
-}))
+] as const
+
+const COPY_BY_KEY = new Map(
+  PERMISSION_COPY.map(([key, label, description]) => [
+    key,
+    { label, description },
+  ]),
+)
+
+export const V6_PERMISSIONS: PermissionDefinition[] =
+  JBPermissionCatalogV6.map(({ key, id }) => {
+    const copy = COPY_BY_KEY.get(key)
+    return {
+      key,
+      id,
+      label: copy?.label ?? key,
+      description:
+        copy?.description ??
+        'This permission is recognized by the SDK but has no app-specific description yet.',
+    }
+  })
 
 const BY_ID = new Map(V6_PERMISSIONS.map(permission => [permission.id, permission]))
 
@@ -74,9 +93,5 @@ export function permissionDefinition(id: number): PermissionDefinition {
 }
 
 export function decodePermissionBitmap(bitmap: bigint): number[] {
-  const ids: number[] = []
-  for (let id = 1; id <= 255; id++) {
-    if (((bitmap >> BigInt(id)) & 1n) === 1n) ids.push(id)
-  }
-  return ids
+  return decodeSdkPermissionBitmap(bitmap, { includeUnknown: true })
 }
