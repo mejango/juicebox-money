@@ -52,7 +52,7 @@ import {
   timeAgo,
   truncateAddress,
 } from '@/lib/format'
-import { bytes32ToCidV0 } from '@/lib/ipfs-cid'
+import { bytes32ToCidV0 } from '@bananapus/nana-sdk-core'
 import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,

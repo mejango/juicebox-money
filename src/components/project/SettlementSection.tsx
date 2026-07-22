@@ -11,17 +11,21 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  CCIP_SUCKER_TRANSPORT_VALUES,
+  assertSuckerTransportValue,
   buildBridgeClaimTx,
   buildToRemoteTx,
+  classifySuckerTransport,
+  findSuckerTransportValue,
   getAccountingContexts,
   getV6SuckerPairs,
   jbSuckerV6Abi,
+  suckerBytes32ToAddress,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
   encodeFunctionData,
-  zeroAddress,
   type Abi,
   type Address,
   type PublicClient,
@@ -50,114 +54,21 @@ import { chainName } from '@/lib/urn'
 
 // ------------------------------------------------------------ inline ABIs --
 
-/** Sucker views the SDK ABI doesn't carry: identity + token mapping + sync. */
-export const SUCKER_EXTRA_ABI = [
-  {
-    type: 'function',
-    name: 'projectId',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'remoteTokenFor',
-    stateMutability: 'view',
-    inputs: [{ name: 'token', type: 'address' }],
-    outputs: [
-      {
-        name: 'remoteToken',
-        type: 'tuple',
-        components: [
-          { name: 'enabled', type: 'bool' },
-          { name: 'emergencyHatch', type: 'bool' },
-          { name: 'minGas', type: 'uint32' },
-          { name: 'addr', type: 'bytes32' },
-        ],
-      },
-    ],
-  },
-  {
-    type: 'function',
-    name: 'syncAccountingData',
-    stateMutability: 'payable',
-    inputs: [],
-    outputs: [],
-  },
-] as const
-
-const CCIP_ROUTER_ABI = [
-  {
-    type: 'function',
-    name: 'CCIP_ROUTER',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address' }],
-  },
-] as const
-
-const NATIVE_PROBE_ABI = (name: 'OPMESSENGER' | 'ARBINBOX') =>
-  [
-    {
-      type: 'function',
-      name,
-      stateMutability: 'view',
-      inputs: [],
-      outputs: [{ type: 'address' }],
-    },
-  ] as const
+/** Canonical sucker view/write ABI; kept as a compatibility export for MoveFlow. */
+export const SUCKER_EXTRA_ABI = jbSuckerV6Abi
 
 export type Infra = 'CCIP' | 'native' | 'unknown'
 
-/**
- * Classify a sucker's bridge. CCIP suckers expose CCIP_ROUTER; native
- * (OP-stack / Arbitrum) suckers don't implement it at all (that read
- * reverts), so probe their bridge-specific getters. Only when nothing
- * answers is the infra genuinely unknown — and fee-sensitive actions stay
- * blocked for it. (website/ parity: classifySuckerInfra.)
- */
+/** Classify with the SDK and preserve the app's display spelling for CCIP. */
 export async function classifyInfra(
   client: PublicClient,
   sucker: Address,
 ): Promise<Infra> {
-  try {
-    const router = (await client.readContract({
-      address: sucker,
-      abi: CCIP_ROUTER_ABI,
-      functionName: 'CCIP_ROUTER',
-    })) as Address
-    return router && router.toLowerCase() !== zeroAddress ? 'CCIP' : 'native'
-  } catch {
-    for (const name of ['OPMESSENGER', 'ARBINBOX'] as const) {
-      try {
-        await client.readContract({
-          address: sucker,
-          abi: NATIVE_PROBE_ABI(name),
-          functionName: name,
-        })
-        return 'native'
-      } catch {
-        /* try the next probe */
-      }
-    }
-    return 'unknown'
-  }
+  const transport = await classifySuckerTransport(client, sucker)
+  return transport === 'ccip' ? 'CCIP' : transport
 }
 
-const CCIP_LADDER = [
-  1_000_000_000_000_000n,
-  5_000_000_000_000_000n,
-  20_000_000_000_000_000n,
-  50_000_000_000_000_000n,
-  200_000_000_000_000_000n,
-  500_000_000_000_000_000n,
-]
-const SYNC_NATIVE_LADDER = [
-  0n,
-  1_000_000_000_000_000n,
-  10_000_000_000_000_000n,
-  50_000_000_000_000_000n,
-]
+const CCIP_LADDER = CCIP_SUCKER_TRANSPORT_VALUES
 const FUNDED_BALANCE = 10n ** 21n
 
 /**
@@ -192,65 +103,29 @@ export async function findToRemoteValue(
     return null
   }
   if (infra === 'native') return fee
+  const request = buildToRemoteTx({ chainId, sucker, token })
   const data = encodeFunctionData({
-    abi: jbSuckerV6Abi,
-    functionName: 'toRemote',
-    args: [token],
+    abi: request.abi,
+    functionName: request.functionName,
+    args: request.args,
   })
-  for (const extra of CCIP_LADDER) {
-    const value = fee + extra
-    try {
-      await client.call({
+  const value = await findSuckerTransportValue(
+    CCIP_LADDER.map(extra => fee + extra),
+    candidate =>
+      client.call({
         account,
         to: sucker,
         data,
-        value,
+        value: candidate,
         stateOverride: [{ address: account, balance: FUNDED_BALANCE }],
-      })
-      return value
-    } catch {
-      /* insufficient budget — try a larger one */
-    }
-  }
-  return null
-}
-
-/**
- * The msg.value a `syncAccountingData` needs, discovered the same way.
- * (website/ parity: findSyncValue.) Never returns 0 for a CCIP sucker.
- */
-async function findSyncValue(
-  client: PublicClient,
-  sucker: Address,
-  infra: Infra,
-  account: Address,
-): Promise<bigint | null> {
-  if (infra === 'unknown') return null
-  const data = encodeFunctionData({
-    abi: SUCKER_EXTRA_ABI,
-    functionName: 'syncAccountingData',
-    args: [],
-  })
-  const ladder = infra === 'CCIP' ? CCIP_LADDER : SYNC_NATIVE_LADDER
-  for (const value of ladder) {
-    try {
-      await client.call({
-        account,
-        to: sucker,
-        data,
-        value,
-        stateOverride: [{ address: account, balance: FUNDED_BALANCE }],
-      })
-      return value
-    } catch {
-      /* try a larger budget */
-    }
-  }
-  return null
+      }),
+  )
+  if (value !== null) assertSuckerTransportValue('ccip', value, fee)
+  return value
 }
 
 export function unpackAddress(bytes32: string): Address {
-  return `0x${bytes32.slice(-40)}` as Address
+  return suckerBytes32ToAddress(bytes32 as `0x${string}`)
 }
 
 // -------------------------------------------------------------- root card --
@@ -279,7 +154,11 @@ export function SettlementSection({
       <CompositionCard chains={chains} />
       <GossipCard chainId={chainId} projectId={projectId} chains={chains} />
       <BridgesCard chains={chains} />
-      <QueuedMovementsCard chainId={chainId} projectId={projectId} />
+      <QueuedMovementsCard
+        chainId={chainId}
+        projectId={projectId}
+        chains={chains}
+      />
     </div>
   )
 }
@@ -567,9 +446,11 @@ function BridgesCard({ chains }: { chains: [number, number][] }) {
 function QueuedMovementsCard({
   chainId,
   projectId,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
+  chains: [number, number][]
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settlement-movements', chainId, projectId],
@@ -626,6 +507,7 @@ function QueuedMovementsCard({
             <MovementGroup
               key={`${g.sourceChainId}->${g.destChainId}:${g.token}`}
               group={g}
+              chains={chains}
             />
           ))}
         </div>
@@ -636,6 +518,7 @@ function QueuedMovementsCard({
 
 function MovementGroup({
   group,
+  chains,
 }: {
   group: {
     sourceChainId: number
@@ -644,6 +527,7 @@ function MovementGroup({
     token: Address
     rows: BridgeMovement[]
   }
+  chains: [number, number][]
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
@@ -741,7 +625,7 @@ function MovementGroup({
                 </td>
                 <td className="py-1.5 text-right">
                   {m.status === 'claimable' ? (
-                    <ClaimButton m={m} />
+                    <ClaimButton m={m} chains={chains} />
                   ) : (
                     <span className="text-xs text-smoke-500">—</span>
                   )}
@@ -803,13 +687,19 @@ function MovementGroup({
 
 /**
  * One-click claim of a delivered movement (JBSucker.claim). The merkle leaf
- * (with its `metadata` word) and 32-entry proof are rebuilt client-side from
+ * (with its `metadata` word) and 32-entry proof are rebuilt by the SDK from
  * the source outbox's InsertToOutboxTree logs and verified against the live
- * destination inbox root (sucker-claims.ts) before the simulate-first send.
+ * destination inbox root before the simulate-first send.
  * Like toRemote, claiming is permissionless — the beneficiary is baked into
  * the leaf, so any connected wallet can push it through.
  */
-function ClaimButton({ m }: { m: BridgeMovement }) {
+function ClaimButton({
+  m,
+  chains,
+}: {
+  m: BridgeMovement
+  chains: [number, number][]
+}) {
   const config = useConfig()
   const { isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(m.destChainId)
@@ -836,7 +726,19 @@ function ClaimButton({ m }: { m: BridgeMovement }) {
       if (!sourceClient || !destClient) {
         throw new Error('Unsupported chain.')
       }
-      const claimData = await buildClaim(sourceClient, destClient, m)
+      const sourceProjectId = chains.find(
+        ([candidate]) => candidate === m.sourceChainId,
+      )?.[1]
+      const destinationProjectId = chains.find(
+        ([candidate]) => candidate === m.destChainId,
+      )?.[1]
+      if (sourceProjectId === undefined || destinationProjectId === undefined) {
+        throw new Error('The cross-chain project mapping is unavailable.')
+      }
+      const claimData = await buildClaim(sourceClient, destClient, m, {
+        sourceProjectId: BigInt(sourceProjectId),
+        destinationProjectId: BigInt(destinationProjectId),
+      })
       const request = buildBridgeClaimTx({
         chainId: m.destChainId as JBChainId,
         sucker: m.destSucker as Address,

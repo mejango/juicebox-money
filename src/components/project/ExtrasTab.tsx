@@ -1,9 +1,13 @@
 'use client'
 
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import {
+  buildDeployProjectPayerTx,
+  projectPayerFromDeployLogs,
+} from '@bananapus/nana-sdk-core/v6'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { parseEventLogs, zeroAddress, type Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
@@ -19,54 +23,10 @@ import { chainName, toUrn } from '@/lib/urn'
  * chains link to their own Extras tab.
  */
 
-// ABI fragment + singleton address for JBProjectPayerDeployer, taken from
-// website/src/abi-registry.js (generated from
-// deploy-all-v6/deployments/<chain>/JBProjectPayerDeployer.json) —
-// @bananapus/nana-sdk-core@1.2.0 does not ship this contract. The deployer
-// is a singleton at the same address on every supported chain.
-const PROJECT_PAYER_DEPLOYER: Address =
-  '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517'
-const PROJECT_PAYER_CHAINS = new Set<number>([
-  1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420,
-])
-
-const PROJECT_PAYER_DEPLOYER_ABI = [
-  {
-    type: 'function',
-    name: 'deployProjectPayer',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'defaultProjectId', type: 'uint256' },
-      { name: 'defaultBeneficiary', type: 'address' },
-      { name: 'defaultMemo', type: 'string' },
-      { name: 'defaultMetadata', type: 'bytes' },
-      { name: 'defaultAddToBalance', type: 'bool' },
-      { name: 'owner', type: 'address' },
-    ],
-    outputs: [{ name: 'projectPayer', type: 'address' }],
-  },
-  {
-    type: 'event',
-    name: 'DeployProjectPayer',
-    anonymous: false,
-    inputs: [
-      { name: 'projectPayer', type: 'address', indexed: true },
-      { name: 'defaultProjectId', type: 'uint256', indexed: false },
-      { name: 'defaultBeneficiary', type: 'address', indexed: false },
-      { name: 'defaultMemo', type: 'string', indexed: false },
-      { name: 'defaultMetadata', type: 'bytes', indexed: false },
-      { name: 'defaultAddToBalance', type: 'bool', indexed: false },
-      { name: 'directory', type: 'address', indexed: false },
-      { name: 'owner', type: 'address', indexed: false },
-      { name: 'caller', type: 'address', indexed: false },
-    ],
-  },
-] as const
-
 /** A reviewed, ready-to-send deploy: the exact args are frozen here so what
  *  the user confirms is what's sent. */
 type ReviewedDeploy = {
-  args: readonly [bigint, Address, string, `0x${string}`, boolean, Address]
+  request: ReturnType<typeof buildDeployProjectPayerTx>
   beneficiary: Address
   owner: Address
   addToBalance: boolean
@@ -103,9 +63,6 @@ export function ExtrasTab({
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedDeploy | null>(null)
 
-  const deployer = PROJECT_PAYER_CHAINS.has(chainId)
-    ? PROJECT_PAYER_DEPLOYER
-    : undefined
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
   const txUrl = tx.hash
@@ -125,33 +82,10 @@ export function ExtrasTab({
   // a transaction) — projectPayer is the indexed first arg.
   const deployedPayer = useMemo(() => {
     if (!tx.receipt) return null
-    try {
-      const logs = parseEventLogs({
-        abi: PROJECT_PAYER_DEPLOYER_ABI,
-        eventName: 'DeployProjectPayer',
-        logs: tx.receipt.logs,
-      })
-      return logs[0]?.args.projectPayer ?? null
-    } catch {
-      return null
-    }
+    return projectPayerFromDeployLogs(tx.receipt.logs)
   }, [tx.receipt])
 
   const otherChains = chains.filter(([id]) => id !== chainId)
-
-  if (!deployer) {
-    return (
-      <div className="card p-5">
-        <div>
-          <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
-          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-            Payer addresses aren&apos;t available on {chainName(chainId)} — the
-            deployer contract isn&apos;t on this chain.
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   const handleReview = () => {
     if (busy) return
@@ -178,14 +112,14 @@ export function ExtrasTab({
     // change the payer); editable mode sets the connected wallet as owner.
     const owner: Address = editable ? address : zeroAddress
     setReview({
-      args: [
-        BigInt(projectId),
-        beneficiaryAddress,
-        memo.trim(),
-        '0x',
+      request: buildDeployProjectPayerTx({
+        chainId,
+        projectId: BigInt(projectId),
+        beneficiary: beneficiaryAddress,
+        memo: memo.trim(),
         addToBalance,
         owner,
-      ],
+      }),
       beneficiary: beneficiaryAddress,
       owner,
       addToBalance,
@@ -202,13 +136,7 @@ export function ExtrasTab({
       setFlowError('Your connected account changed — review the deploy again.')
       return
     }
-    tx.send({
-      chainId,
-      address: deployer,
-      abi: PROJECT_PAYER_DEPLOYER_ABI,
-      functionName: 'deployProjectPayer',
-      args: review.args,
-    })
+    tx.send(review.request)
   }
 
   const resetAll = () => {

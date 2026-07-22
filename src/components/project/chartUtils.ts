@@ -1,3 +1,10 @@
+import {
+  resolveRulesetIssuanceStages,
+  rulesetIssuanceRateAt,
+  type ResolvedRulesetIssuanceStage,
+  type RulesetIssuanceStage,
+} from '@bananapus/nana-sdk-core/v6'
+
 /**
  * Shared projection math + formatting for the issuance/price schedule charts.
  * Mirrors website/'s issuanceAtTime + priceChartTimeBounds (projection branch):
@@ -6,21 +13,9 @@
  * cycles. Pure client math — no fetching.
  */
 
-export type ChartStage = {
-  start: number
-  duration: number
-  weight: bigint
-  weightCutPercent: number
-}
+export type ChartStage = RulesetIssuanceStage
 
-export type ResolvedStage = {
-  start: number
-  duration: number
-  /** weightCutPercent on the protocol's 1e9 scale. */
-  cut: number
-  /** Tokens issued per base unit at the stage's start. */
-  rate0: number
-}
+export type ResolvedStage = ResolvedRulesetIssuanceStage
 
 export const YEAR = 365 * 86400
 
@@ -31,47 +26,18 @@ export const CHART_RANGES: { label: string; years: number }[] = [
   { label: 'All', years: 0 },
 ]
 
-/** Rate within a single stage at time t: rate0, cut once per elapsed cycle. */
-function rateWithinStage(stage: ResolvedStage, t: number): number {
-  if (stage.duration === 0 || stage.cut === 0) return stage.rate0
-  const k = Math.max(0, Math.floor((t - stage.start) / stage.duration))
-  return stage.rate0 * Math.pow((1e9 - stage.cut) / 1e9, k)
-}
-
 /**
- * Sort stages and resolve each one's starting rate. A stage queued with
- * weight 0 inherits: its rate0 is the previous stage's rate at the boundary,
- * cuts included (JBRulesets' "weight 0 = inherit the base ruleset's weight"
- * convention). Weight 0 on the first stage is genuinely zero issuance.
+ * Sort stages and resolve each one's starting rate. Stored on-chain rulesets
+ * must leave `inheritsWeight` unset: their weights are already resolved and a
+ * stored zero is genuine zero issuance.
  */
 export function resolveStages(stages: ChartStage[]): ResolvedStage[] {
-  const sorted = stages.slice().sort((a, b) => a.start - b.start)
-  const out: ResolvedStage[] = []
-  sorted.forEach((s, i) => {
-    const prev = out[i - 1]
-    const rate0 =
-      s.weight === 0n && prev
-        ? rateWithinStage(prev, s.start)
-        : Number(s.weight) / 1e18
-    out.push({
-      start: s.start,
-      duration: s.duration,
-      cut: s.weightCutPercent,
-      rate0,
-    })
-  })
-  return out
+  return resolveRulesetIssuanceStages(stages)
 }
 
 /** Issuance rate (tokens per base unit) at time t across the schedule. */
 export function rateAtTime(resolved: ResolvedStage[], t: number): number {
-  if (resolved.length === 0 || t < resolved[0].start) return 0
-  let active = resolved[0]
-  for (const s of resolved) {
-    if (s.start <= t) active = s
-    else break
-  }
-  return active ? rateWithinStage(active, t) : 0
+  return rulesetIssuanceRateAt(resolved, t)
 }
 
 /**
@@ -115,7 +81,7 @@ export function buildStepPoints(
     const from = Math.max(s.start, t0)
     if (end <= from) continue
     if (s.start > t0 && s.start < t1) breaks.push(s.start)
-    if (s.duration > 0 && s.cut > 0) {
+    if (s.duration > 0 && s.weightCutPercent > 0) {
       if ((end - from) / s.duration > MAX_BREAKS) {
         dense = true
         break

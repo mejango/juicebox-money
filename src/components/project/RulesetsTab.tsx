@@ -15,6 +15,7 @@ import {
   getCurrentRuleset,
   getUpcomingRuleset,
   payoutSplitGroupId,
+  tokenCurrencyId,
   v6Address,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
@@ -71,11 +72,6 @@ function formatDateTime(sec: number): string {
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
   return fmtPct(bp / 100)
-}
-
-/** The accounting-context currency id for a token: uint32(uint160(token)). */
-function tokenCurrencyId(token: string): number {
-  return Number(BigInt(token) & 0xffffffffn)
 }
 
 function baseCurrencyLabel(

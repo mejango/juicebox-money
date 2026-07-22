@@ -13,12 +13,23 @@ import {
   jbTerminalStoreAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getAccountingContexts, getV6SuckerPairs } from '@bananapus/nana-sdk-core/v6'
+import {
+  CCIP_SUCKER_TRANSPORT_VALUES,
+  NATIVE_SUCKER_TRANSPORT_VALUES,
+  assertSuckerTransportValue,
+  buildSyncAccountingDataTx,
+  classifySuckerTransport,
+  findSuckerTransportValue,
+  getAccountingContexts,
+  getV6SuckerPairs,
+  relativeSuckerDrift,
+  suckerBytes32ToAddress,
+  suckerTimestampSeconds,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   encodeFunctionData,
-  zeroAddress,
   type Abi,
   type Address,
   type PublicClient,
@@ -35,90 +46,18 @@ import { chainName } from '@/lib/urn'
 
 // ------------------------------------------------------------ inline ABIs --
 
-/** The sucker's payable sync + bridge-classification getters (same shape the
- *  Settlement subtab uses; not exported by the SDK). */
-const SUCKER_EXTRA_ABI = [
-  {
-    type: 'function',
-    name: 'syncAccountingData',
-    stateMutability: 'payable',
-    inputs: [],
-    outputs: [],
-  },
-] as const
-
-const CCIP_ROUTER_ABI = [
-  {
-    type: 'function',
-    name: 'CCIP_ROUTER',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address' }],
-  },
-] as const
-
-const NATIVE_PROBE_ABI = (name: 'OPMESSENGER' | 'ARBINBOX') =>
-  [
-    {
-      type: 'function',
-      name,
-      stateMutability: 'view',
-      inputs: [],
-      outputs: [{ type: 'address' }],
-    },
-  ] as const
-
 type Infra = 'CCIP' | 'native' | 'unknown'
 
-/**
- * Classify a sucker's bridge. CCIP suckers expose CCIP_ROUTER; native
- * (OP-stack / Arbitrum) suckers don't implement it (that read reverts), so
- * probe their bridge-specific getters. Nothing answering means the infra is
- * genuinely unknown — and the fee-sensitive Sync stays blocked for it.
- * (website/ parity: classifySuckerInfra; jbm parity: SettlementSection.)
- */
 async function classifyInfra(
   client: PublicClient,
   sucker: Address,
 ): Promise<Infra> {
-  try {
-    const router = (await client.readContract({
-      address: sucker,
-      abi: CCIP_ROUTER_ABI,
-      functionName: 'CCIP_ROUTER',
-    })) as Address
-    return router && router.toLowerCase() !== zeroAddress ? 'CCIP' : 'native'
-  } catch {
-    for (const name of ['OPMESSENGER', 'ARBINBOX'] as const) {
-      try {
-        await client.readContract({
-          address: sucker,
-          abi: NATIVE_PROBE_ABI(name),
-          functionName: name,
-        })
-        return 'native'
-      } catch {
-        /* try the next probe */
-      }
-    }
-    return 'unknown'
-  }
+  const transport = await classifySuckerTransport(client, sucker)
+  return transport === 'ccip' ? 'CCIP' : transport
 }
 
-const CCIP_LADDER = [
-  1_000_000_000_000_000n,
-  5_000_000_000_000_000n,
-  20_000_000_000_000_000n,
-  50_000_000_000_000_000n,
-  200_000_000_000_000_000n,
-  500_000_000_000_000_000n,
-]
-const SYNC_NATIVE_LADDER = [
-  0n,
-  1_000_000_000_000_000n,
-  10_000_000_000_000_000n,
-  50_000_000_000_000_000n,
-]
+const CCIP_LADDER = CCIP_SUCKER_TRANSPORT_VALUES
+const SYNC_NATIVE_LADDER = NATIVE_SUCKER_TRANSPORT_VALUES
 const FUNDED_BALANCE = 10n ** 21n
 
 /**
@@ -131,32 +70,34 @@ const FUNDED_BALANCE = 10n ** 21n
  */
 async function findSyncValue(
   client: PublicClient,
+  chainId: JBChainId,
   sucker: Address,
   infra: Infra,
   account: Address,
 ): Promise<bigint | null> {
   if (infra === 'unknown') return null
+  const request = buildSyncAccountingDataTx({ chainId, sucker })
   const data = encodeFunctionData({
-    abi: SUCKER_EXTRA_ABI,
-    functionName: 'syncAccountingData',
-    args: [],
+    abi: request.abi,
+    functionName: request.functionName,
+    args: request.args,
   })
   const ladder = infra === 'CCIP' ? CCIP_LADDER : SYNC_NATIVE_LADDER
-  for (const value of ladder) {
-    try {
-      await client.call({
+  const value = await findSuckerTransportValue(
+    ladder,
+    candidate =>
+      client.call({
         account,
         to: sucker,
         data,
-        value,
+        value: candidate,
         stateOverride: [{ address: account, balance: FUNDED_BALANCE }],
-      })
-      return value
-    } catch {
-      /* try a larger budget */
-    }
+      }),
+  )
+  if (value !== null) {
+    assertSuckerTransportValue(infra === 'CCIP' ? 'ccip' : infra, value)
   }
-  return null
+  return value
 }
 
 // ------------------------------------------------------- staleness helpers --
@@ -165,11 +106,7 @@ const U128_MAX = (1n << 128n) - 1n
 
 /** Relative drift of two bigints, 0..1. 0/0 → 0. (website/ parity: rel.) */
 function rel(a: bigint, b: bigint): number {
-  if (a === 0n && b === 0n) return 0
-  const hi = a > b ? a : b
-  if (hi === 0n) return 0
-  const d = a > b ? a - b : b - a
-  return Number((d * 10_000n) / hi) / 10_000
+  return relativeSuckerDrift(a, b)
 }
 
 type Staleness = {
@@ -336,7 +273,7 @@ type Block = { chainId: number; projectId: number; peers: PeerRow[] }
 type GossipData = { blocks: Block[]; live: Record<number, LiveChain> }
 
 function unpackTs(raw: bigint): number {
-  return Number(raw >> 128n)
+  return suckerTimestampSeconds(raw)
 }
 
 // ---------------------------------------------------------------- reads --
@@ -544,7 +481,7 @@ export function GossipCard({
                 supply: a.totalSupply,
                 snapshot: unpackTs(a.timestamp),
                 balances: a.contexts.map(c => ({
-                  token: (`0x${c.token.slice(-40)}`) as Address,
+                  token: suckerBytes32ToAddress(c.token),
                   decimals: Number(c.decimals),
                   balance: c.balance,
                 })),
@@ -837,20 +774,25 @@ function GossipRow({
       }) as PublicClient | undefined
       if (!client) throw new Error(`Unsupported chain ${peer.peerChainId}.`)
       const infra = await classifyInfra(client, peer.syncSucker)
-      const value = await findSyncValue(client, peer.syncSucker, infra, address)
+      const targetChainId = peer.peerChainId as JBChainId
+      const value = await findSyncValue(
+        client,
+        targetChainId,
+        peer.syncSucker,
+        infra,
+        address,
+      )
       if (value === null) {
         throw new Error(
           'The bridge fee could not be determined yet — try again shortly.',
         )
       }
-      await tx.send({
-        chainId: peer.peerChainId,
-        address: peer.syncSucker,
-        abi: SUCKER_EXTRA_ABI as unknown as Abi,
-        functionName: 'syncAccountingData',
-        args: [],
+      const request = buildSyncAccountingDataTx({
+        chainId: targetChainId,
+        sucker: peer.syncSucker,
         value,
       })
+      await tx.send({ ...request, abi: request.abi as unknown as Abi })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')
     } finally {
