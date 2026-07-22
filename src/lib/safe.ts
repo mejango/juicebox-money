@@ -21,6 +21,7 @@ import {
 import {
   requireContractTransactionReview,
   requireTransactionReview,
+  type TransactionReviewRequest,
 } from '@/lib/transaction-review'
 
 export type SafeInfo = {
@@ -58,14 +59,24 @@ export type SafeCall = {
   data: Hex
   value?: bigint
   label?: string
+  abi?: Abi
+  functionName?: string
+  args?: readonly unknown[]
+  contractName?: string
 }
 
 export type SafeCallResult = {
   chainId: JBChainId
   mode: 'service' | 'onchain'
-  status: 'queued' | 'approved' | 'executed' | 'waiting'
+  status: 'queued' | 'approved' | 'executed' | 'waiting' | 'submitted'
   nonce: number
   safeTxHash: Hex
+  transactionHash?: Hex
+}
+
+export type ConfirmedContractWrite = {
+  hash: Hex
+  status: 'confirmed' | 'submitted'
 }
 
 export const SAFE_ABI = [
@@ -327,6 +338,10 @@ async function signSafeTx(
   tx: SafeQueuedTx,
   signer: Address,
   label?: string,
+  reviewCall?: Pick<
+    SafeCall,
+    'abi' | 'functionName' | 'args' | 'contractName'
+  >,
 ): Promise<Hex> {
   const activeAccount = getAccount(wagmiConfig).address
   if (!activeAccount || activeAccount.toLowerCase() !== signer.toLowerCase()) {
@@ -354,6 +369,10 @@ async function signSafeTx(
         value: BigInt(tx.value ?? 0),
         data: tx.data ?? '0x',
         label: label ?? `Safe transaction #${tx.nonce}`,
+        abi: reviewCall?.abi,
+        functionName: reviewCall?.functionName,
+        args: reviewCall?.args,
+        contractName: reviewCall?.contractName,
       },
     ],
   })
@@ -455,6 +474,10 @@ export async function proposeSafeTx({
   signer,
   nonce,
   label,
+  abi,
+  functionName,
+  args,
+  contractName,
 }: SafeCall & { signer: Address; nonce?: number }): Promise<SafeQueuedTx> {
   const base = txBase(chainId)
   if (!base) throw new Error('No hosted Safe service is configured for this chain.')
@@ -474,7 +497,12 @@ export async function proposeSafeTx({
     confirmations: [],
   }
   const safeTxHash = safeTxHashOf(chainId, safe, tx)
-  const signature = await signSafeTx(chainId, safe, tx, signer, label)
+  const signature = await signSafeTx(chainId, safe, tx, signer, label, {
+    abi,
+    functionName,
+    args,
+    contractName,
+  })
   const response = await safeFetch(
     `${base}/api/v1/safes/${getAddress(safe)}/multisig-transactions/`,
     {
@@ -517,12 +545,23 @@ export async function confirmSafeTx(
   safe: Address,
   tx: SafeQueuedTx,
   signer: Address,
+  reviewCall?: Pick<
+    SafeCall,
+    'label' | 'abi' | 'functionName' | 'args' | 'contractName'
+  >,
 ): Promise<void> {
   const base = txBase(chainId)
   if (!base) throw new Error('No hosted Safe service is configured for this chain.')
   const hash = tx.safeTxHash ?? tx.contractTransactionHash
   if (!hash) throw new Error('The queued transaction has no Safe transaction hash.')
-  const signature = await signSafeTx(chainId, safe, tx, signer)
+  const signature = await signSafeTx(
+    chainId,
+    safe,
+    tx,
+    signer,
+    reviewCall?.label,
+    reviewCall,
+  )
   const response = await safeFetch(
     `${base}/api/v1/multisig-transactions/${hash}/confirmations/`,
     {
@@ -587,38 +626,44 @@ async function sendContractAndConfirm({
   abi,
   functionName,
   args,
+  review,
 }: {
   chainId: JBChainId
   address: Address
   abi: Abi
   functionName: string
   args: readonly unknown[]
-}): Promise<Hex> {
+  review?: TransactionReviewRequest
+}): Promise<ConfirmedContractWrite> {
   const reviewAccount = getAccount(wagmiConfig).address
   if (!reviewAccount) throw new Error('Connect a wallet first.')
-  await requireContractTransactionReview(
-    {
-      chainId,
-      address,
-      abi,
-      functionName,
-      args,
-      account: reviewAccount,
-    },
-    {
-      title: 'Review onchain transaction',
-      label:
-        functionName === 'execTransaction'
-          ? 'Execute Safe transaction'
-          : functionName === 'approveHash'
-            ? 'Approve Safe transaction hash'
-            : functionName === 'createProxyWithNonce'
-              ? 'Deploy Safe on this chain'
-              : functionName,
-      contractName:
-        functionName === 'createProxyWithNonce' ? 'Safe Proxy Factory' : 'Safe',
-    },
-  )
+  if (review) {
+    await requireTransactionReview(review)
+  } else {
+    await requireContractTransactionReview(
+      {
+        chainId,
+        address,
+        abi,
+        functionName,
+        args,
+        account: reviewAccount,
+      },
+      {
+        title: 'Review onchain transaction',
+        label:
+          functionName === 'execTransaction'
+            ? 'Execute Safe transaction'
+            : functionName === 'approveHash'
+              ? 'Approve Safe transaction hash'
+              : functionName === 'createProxyWithNonce'
+                ? 'Deploy Safe on this chain'
+                : functionName,
+        contractName:
+          functionName === 'createProxyWithNonce' ? 'Safe Proxy Factory' : 'Safe',
+      },
+    )
+  }
   const { wallet, account } = await connectedWallet(chainId, reviewAccount)
   const client = publicClient(chainId)
   const simulation = await client.simulateContract({
@@ -661,8 +706,9 @@ async function sendContractAndConfirm({
     ) {
       throw receiptError
     }
+    return { hash, status: 'submitted' }
   }
-  return hash
+  return { hash, status: 'confirmed' }
 }
 
 async function safeFeeOverrides(
@@ -687,7 +733,7 @@ export async function executeSafeTx(
   chainId: JBChainId,
   safe: Address,
   tx: SafeQueuedTx,
-): Promise<Hex> {
+): Promise<ConfirmedContractWrite> {
   const info = await fetchSafeInfo(chainId, safe)
   if (!info) throw new Error('Could not verify this Safe onchain.')
   if (safeUsableConfirmationCount(tx) < info.threshold) {
@@ -697,12 +743,51 @@ export async function executeSafeTx(
       } before it can execute.`,
     )
   }
+  const args = safeExecArgs(tx, safeExecSignatures(tx))
+  const data = encodeFunctionData({
+    abi: SAFE_EXEC_ABI,
+    functionName: 'execTransaction',
+    args,
+  })
   return sendContractAndConfirm({
     chainId,
     address: safe,
     abi: SAFE_EXEC_ABI,
     functionName: 'execTransaction',
-    args: safeExecArgs(tx, safeExecSignatures(tx)),
+    args,
+    review: {
+      kind: 'transaction',
+      title: 'Review Safe execution',
+      description:
+        'Your wallet will send the outer Safe execTransaction call below. The raw context also contains the exact inner destination call the Safe will execute.',
+      confirmLabel: 'Agree & execute Safe transaction',
+      authorization: {
+        type: 'Safe execution context',
+        safe,
+        safeTxHash: safeTxHashOf(chainId, safe, tx),
+        nonce: tx.nonce,
+        destinationCall: {
+          to: tx.to,
+          value: tx.value,
+          data: tx.data ?? '0x',
+          operation: tx.operation,
+        },
+      },
+      calls: [
+        {
+          chainId,
+          from: getAccount(wagmiConfig).address,
+          to: safe,
+          value: 0n,
+          data,
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args,
+          label: `Execute Safe transaction #${tx.nonce}`,
+          contractName: 'Safe',
+        },
+      ],
+    },
   })
 }
 
@@ -801,13 +886,53 @@ export async function approveSafeHashOnChain(
   chainId: JBChainId,
   safe: Address,
   hash: Hex,
-): Promise<Hex> {
+  tx: SafeQueuedTx,
+): Promise<ConfirmedContractWrite> {
+  const args = [hash] as const
+  const data = encodeFunctionData({
+    abi: SAFE_ONCHAIN_ABI,
+    functionName: 'approveHash',
+    args,
+  })
   return sendContractAndConfirm({
     chainId,
     address: safe,
     abi: SAFE_ONCHAIN_ABI,
     functionName: 'approveHash',
-    args: [hash],
+    args,
+    review: {
+      kind: 'transaction',
+      title: 'Review Safe hash approval',
+      description:
+        'Your wallet will send approveHash to the Safe. The raw context identifies the exact queued destination call this digest authorizes; approval does not execute it yet.',
+      confirmLabel: 'Agree & approve Safe hash',
+      authorization: {
+        type: 'Safe approveHash context',
+        safe,
+        safeTxHash: hash,
+        nonce: tx.nonce,
+        destinationCall: {
+          to: tx.to,
+          value: tx.value,
+          data: tx.data ?? '0x',
+          operation: tx.operation,
+        },
+      },
+      calls: [
+        {
+          chainId,
+          from: getAccount(wagmiConfig).address,
+          to: safe,
+          value: 0n,
+          data,
+          abi: SAFE_ONCHAIN_ABI,
+          functionName: 'approveHash',
+          args,
+          label: `Approve Safe transaction #${tx.nonce}`,
+          contractName: 'Safe',
+        },
+      ],
+    },
   })
 }
 
@@ -837,6 +962,28 @@ export async function runSafeCalls({
         listPendingSafeTxs(call.chainId, call.safe).catch(() => []),
       ])
       if (nextNonce === null) throw new Error('Could not read the Safe nonce.')
+      const matching = pending.find(tx => safeCallMatches(tx, call))
+      if (matching) {
+        const alreadyConfirmed = (matching.confirmations ?? []).some(
+          confirmation =>
+            confirmation.owner.toLowerCase() === signer.toLowerCase(),
+        )
+        if (!alreadyConfirmed) {
+          onProgress?.(`Signing existing Safe proposal ${index + 1}/${calls.length}…`)
+          await confirmSafeTx(call.chainId, call.safe, matching, signer, call)
+        }
+        results.push({
+          chainId: call.chainId,
+          mode: 'service',
+          status: 'queued',
+          nonce: matching.nonce,
+          safeTxHash:
+            matching.safeTxHash ??
+            matching.contractTransactionHash ??
+            safeTxHashOf(call.chainId, call.safe, matching),
+        })
+        continue
+      }
       const highest = pending.reduce(
         (value, tx) => Math.max(value, Number(tx.nonce)),
         nextNonce - 1,
@@ -879,21 +1026,39 @@ export async function runSafeCalls({
     )
     if (!approvals.some(owner => owner.toLowerCase() === signer.toLowerCase())) {
       onProgress?.(`Approving onchain ${index + 1}/${calls.length}…`)
-      await approveSafeHashOnChain(call.chainId, call.safe, hash)
+      const approval = await approveSafeHashOnChain(
+        call.chainId,
+        call.safe,
+        hash,
+        queued,
+      )
+      if (approval.status === 'submitted') {
+        results.push({
+          chainId: call.chainId,
+          mode: 'onchain',
+          status: 'submitted',
+          nonce: context.nonce,
+          safeTxHash: hash,
+          transactionHash: approval.hash,
+        })
+        continue
+      }
       approvals = [...approvals, signer]
     }
     if (approvals.length >= context.threshold) {
       onProgress?.(`Executing Safe transaction ${index + 1}/${calls.length}…`)
-      await executeSafeTx(call.chainId, call.safe, {
+      const execution = await executeSafeTx(call.chainId, call.safe, {
         ...queued,
         confirmations: approvals.map(owner => ({ owner })),
       })
       results.push({
         chainId: call.chainId,
         mode: 'onchain',
-        status: 'executed',
+        status:
+          execution.status === 'confirmed' ? 'executed' : 'submitted',
         nonce: context.nonce,
         safeTxHash: hash,
+        transactionHash: execution.hash,
       })
     } else {
       results.push({
@@ -906,6 +1071,19 @@ export async function runSafeCalls({
     }
   }
   return results
+}
+
+function safeCallMatches(tx: SafeQueuedTx, call: SafeCall): boolean {
+  try {
+    return (
+      getAddress(tx.to) === getAddress(call.target) &&
+      BigInt(tx.value ?? 0) === (call.value ?? 0n) &&
+      (tx.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
+      Number(tx.operation ?? 0) === 0
+    )
+  } catch {
+    return false
+  }
 }
 
 export type SafeCreation = {
@@ -951,7 +1129,7 @@ export async function deploySafeSameAddress(
   creation: SafeCreation,
   expectedSafe: Address,
 ): Promise<Hex> {
-  const hash = await sendContractAndConfirm({
+  const submission = await sendContractAndConfirm({
     chainId,
     address: creation.factory,
     abi: PROXY_FACTORY_ABI,
@@ -961,10 +1139,10 @@ export async function deploySafeSameAddress(
   const client = publicClient(chainId)
   for (let attempt = 0; attempt < 6; attempt++) {
     const code = await client.getBytecode({ address: expectedSafe }).catch(() => null)
-    if (code && code !== '0x') return hash
+    if (code && code !== '0x') return submission.hash
     await new Promise(resolve => setTimeout(resolve, 1_500))
   }
   throw new Error(
-    `The deployment was submitted, but ${expectedSafe} is not readable on this chain yet.`,
+    `The deployment was submitted as ${submission.hash}, but ${expectedSafe} is not readable on this chain yet. Check that transaction before trying again.`,
   )
 }

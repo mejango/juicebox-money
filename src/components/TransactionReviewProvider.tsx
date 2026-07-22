@@ -288,7 +288,6 @@ function ReviewModal({
   onFinish: (approved: boolean) => void
 }) {
   const { request } = pending
-  const [view, setView] = useState<'pretty' | 'raw'>('pretty')
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -412,29 +411,7 @@ function ReviewModal({
             </div>
           ) : null}
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <div
-              className="inline-flex rounded-lg border border-smoke-200 bg-white p-1"
-              role="tablist"
-              aria-label="Transaction data view"
-            >
-              {(['pretty', 'raw'] as const).map(nextView => (
-                <button
-                  key={nextView}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === nextView}
-                  onClick={() => setView(nextView)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize ${
-                    view === nextView
-                      ? 'bg-bluebs-500 text-white'
-                      : 'text-smoke-700 hover:bg-grey-50'
-                  }`}
-                >
-                  {nextView}
-                </button>
-              ))}
-            </div>
+          <div className="mt-5 flex justify-end">
             <button
               type="button"
               onClick={copyPrompt}
@@ -444,23 +421,26 @@ function ReviewModal({
                 ? 'Prompt copied — paste into your LLM'
                 : copyState === 'failed'
                   ? 'Could not copy prompt'
-                  : 'Copy transaction review prompt'}
+                  : '[copy tx audit prompt]'}
             </button>
           </div>
 
-          {view === 'pretty' ? (
-            <div className="mt-4 space-y-4" role="tabpanel">
-              {request.calls.map((call, index) => (
-                <PrettyCall
-                  key={`${call.chainId}-${call.to}-${index}`}
-                  call={call}
-                  index={index}
-                  total={request.calls.length}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="mt-4" role="tabpanel">
+          <div className="mt-4 space-y-4">
+            {request.calls.map((call, index) => (
+              <PrettyCall
+                key={`${call.chainId}-${call.to}-${index}`}
+                call={call}
+                index={index}
+                total={request.calls.length}
+              />
+            ))}
+          </div>
+
+          <details className="mt-4 overflow-hidden rounded-xl border border-smoke-200 bg-white">
+            <summary className="cursor-pointer px-4 py-3 text-xs font-medium text-smoke-700 hover:bg-grey-25">
+              Raw transaction payload
+            </summary>
+            <div className="border-t border-smoke-200 p-4">
               <p className="mb-2 text-xs leading-relaxed text-smoke-600">
                 {request.authorization
                   ? 'Exact typed data plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
@@ -470,7 +450,7 @@ function ReviewModal({
                 {transactionReviewJson(request)}
               </pre>
             </div>
-          )}
+          </details>
         </div>
 
         <footer className="shrink-0 border-t border-smoke-200 bg-white px-4 py-4 sm:px-6">

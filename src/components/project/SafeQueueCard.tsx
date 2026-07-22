@@ -17,11 +17,14 @@ import {
   clearRelayrPendingSession,
   loadRelayrPendingSession,
   relayrErrorIsUncertain,
+  relayrDestinationHash,
   relayrPay,
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
   relayrProgress,
+  relayrStateIsFailed,
+  relayrStateIsSuccess,
   saveRelayrPendingSession,
   type RelayrEntry,
   type RelayrPayment,
@@ -262,10 +265,9 @@ export function SafeQueueCard({
         setBatchReview(null)
         await refetchQueues()
       } catch (recoveryError) {
-        if (!relayrErrorIsUncertain(recoveryError)) {
-          clearRelayrPendingSession(pendingScope)
-          setPendingSession(null)
-        }
+        // Keep the paid bundle and its per-chain terminal states visible.
+        // A failed/partial destination is not permission to forget the payment
+        // or invite a duplicate execution attempt.
         setError(
           recoveryError instanceof Error
             ? recoveryError.message
@@ -309,8 +311,12 @@ export function SafeQueueCard({
     setError(null)
     setNotice(null)
     try {
-      await executeSafeTx(chain.chainId, safe, tx)
-      setNotice(`Executed transaction #${tx.nonce} on ${chain.name}.`)
+      const result = await executeSafeTx(chain.chainId, safe, tx)
+      setNotice(
+        result.status === 'confirmed'
+          ? `Executed transaction #${tx.nonce} on ${chain.name}.`
+          : `Execution submitted as ${result.hash}. Confirmation is still pending; do not submit it again.`,
+      )
       await refetchQueues()
     } catch (executeError) {
       setError(
@@ -408,16 +414,39 @@ export function SafeQueueCard({
           }
         }),
       })
-      const paymentHash = await relayrPay(payment, address)
+      let submittedSession: RelayrPendingSession | null = null
+      const paymentHash = await relayrPay(payment, address, hash => {
+        submittedSession = saveRelayrPendingSession(pendingScope, {
+          bundleUuid: batchReview.quote.bundle_uuid,
+          paymentHash: hash,
+          paymentChainId: payment.chain,
+          paymentStatus: 'submitted',
+          chainIds: batchReview.rows.map(row => row.chain.chainId),
+          expectedCount: batchReview.rows.length,
+          records: batchReview.quote.transactions ?? [],
+          itemCount: batchReview.rows.length,
+          account: address,
+          createdAt: Date.now(),
+        })
+        paidSession = submittedSession
+        setPendingSession(submittedSession)
+        setNotice(
+          `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
+        )
+      })
       const initialSession = saveRelayrPendingSession(pendingScope, {
-        bundleUuid: batchReview.quote.bundle_uuid,
-        paymentHash,
-        paymentChainId: payment.chain,
-        expectedCount: batchReview.rows.length,
-        records: [],
-        itemCount: batchReview.rows.length,
-        account: address,
-        createdAt: Date.now(),
+        ...(submittedSession ?? {
+          bundleUuid: batchReview.quote.bundle_uuid,
+          paymentHash,
+          paymentChainId: payment.chain,
+          chainIds: batchReview.rows.map(row => row.chain.chainId),
+          expectedCount: batchReview.rows.length,
+          records: batchReview.quote.transactions ?? [],
+          itemCount: batchReview.rows.length,
+          account: address,
+          createdAt: Date.now(),
+        }),
+        paymentStatus: 'confirmed',
       })
       paidSession = initialSession
       setPendingSession(initialSession)
@@ -438,7 +467,14 @@ export function SafeQueueCard({
       setBatchReview(null)
       await refetchQueues()
     } catch (batchError) {
-      if (paidSession && !relayrErrorIsUncertain(batchError)) {
+      // Clear only a payment which failed before confirmation (for example an
+      // explicit onchain revert). Once payment is confirmed, keep every
+      // destination result recoverable even when Relayr reports failures.
+      if (
+        paidSession?.paymentStatus !== 'confirmed' &&
+        paidSession &&
+        !relayrErrorIsUncertain(batchError)
+      ) {
         clearRelayrPendingSession(pendingScope)
         setPendingSession(null)
       }
@@ -481,13 +517,23 @@ export function SafeQueueCard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-ink">
-                Relayr payment confirmed
+                Relayr payment {pendingSession.paymentStatus}
               </p>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Bundle {pendingSession.bundleUuid.slice(0, 8)}… is already paid.
-                Checking its status will not re-sign, re-pay, or resubmit
-                transactions.
+                Bundle <span className="font-mono">{pendingSession.bundleUuid}</span>{' '}
+                has a submitted payment. Checking its status will not re-sign,
+                re-pay, or resubmit transactions.
               </p>
+              {pendingSession.paymentHash && pendingSession.paymentChainId ? (
+                <a
+                  href={`https://${JB_CHAINS[pendingSession.paymentChainId as JBChainId]?.etherscanHostname}/tx/${pendingSession.paymentHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex font-mono text-xs text-bluebs-600 underline"
+                >
+                  Payment {pendingSession.paymentHash.slice(0, 10)}…
+                </a>
+              ) : null}
             </div>
             <button
               type="button"
@@ -497,6 +543,56 @@ export function SafeQueueCard({
             >
               {busy === 'recover-bundle' ? 'Checking…' : 'Check bundle status'}
             </button>
+          </div>
+          <div className="mt-3 space-y-2 border-t border-smoke-200 pt-3">
+            {pendingSession.chainIds.map((chainId, index) => {
+              const record =
+                pendingSession.records.find(row => row.chain === chainId) ??
+                pendingSession.records[index]
+              const state = record?.status?.state
+              const hash = record ? relayrDestinationHash(record) : null
+              const label = relayrStateIsSuccess(state)
+                ? 'Confirmed'
+                : relayrStateIsFailed(state)
+                  ? 'Failed'
+                  : state || 'Pending'
+              return (
+                <div
+                  key={`${chainId}-${index}`}
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <span>{JB_CHAINS[chainId as JBChainId]?.name ?? `Chain ${chainId}`}</span>
+                  {hash ? (
+                    <a
+                      href={`https://${JB_CHAINS[chainId as JBChainId]?.etherscanHostname}/tx/${hash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`font-mono underline ${
+                        relayrStateIsFailed(state)
+                          ? 'text-error-600'
+                          : relayrStateIsSuccess(state)
+                            ? 'text-mint-700'
+                            : 'text-bluebs-600'
+                      }`}
+                    >
+                      {label} · {hash.slice(0, 10)}…
+                    </a>
+                  ) : (
+                    <span
+                      className={
+                        relayrStateIsFailed(state)
+                          ? 'text-error-600'
+                          : relayrStateIsSuccess(state)
+                            ? 'text-mint-700'
+                            : 'text-smoke-600'
+                      }
+                    >
+                      {label}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       ) : null}

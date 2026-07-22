@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { getAccount } from '@wagmi/core'
 import { BaseError, type Abi } from 'viem'
 import {
   usePublicClient,
@@ -10,6 +11,7 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
+import { wagmiConfig } from '@/providers/Providers'
 
 export type TxPhase =
   | 'idle'
@@ -76,6 +78,7 @@ export function useSafeTx(chainId: number) {
   const [phase, setPhase] = useState<TxPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+  const inFlightRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
@@ -83,21 +86,39 @@ export function useSafeTx(chainId: number) {
     query: { enabled: !!hash },
   })
 
-  // Fold receipt state into the phase without extra renders downstream.
+  // A successful receipt *query* can still contain an onchain revert. Only the
+  // receipt's status is authoritative. A receipt RPC error leaves the already
+  // submitted transaction pending/unknown so the UI never invites a duplicate
+  // submission merely because confirmation could not be read.
+  const receiptReverted =
+    phase === 'pending' && receipt.data?.status === 'reverted'
   const effectivePhase: TxPhase =
-    phase === 'pending' && receipt.isSuccess
+    phase === 'pending' && receipt.data?.status === 'success'
       ? 'success'
-      : phase === 'pending' && receipt.isError
+      : receiptReverted
         ? 'error'
         : phase
+  const effectiveError = receiptReverted
+    ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
+    : phase === 'pending' && receipt.isError
+      ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
+    : error
+
+  useEffect(() => {
+    if (effectivePhase === 'success' || effectivePhase === 'error') {
+      inFlightRef.current = false
+    }
+  }, [effectivePhase])
 
   const send = useCallback(
     async (request: TxRequest) => {
+      if (inFlightRef.current) return null
       if (!isConnected || !publicClient) {
         setError('Connect a wallet first.')
         setPhase('error')
         return null
       }
+      inFlightRef.current = true
       setError(null)
       try {
         setPhase('review')
@@ -109,6 +130,7 @@ export function useSafeTx(chainId: number) {
           { label: request.label },
         )
         if (!approved) {
+          inFlightRef.current = false
           setPhase('idle')
           return null
         }
@@ -116,6 +138,14 @@ export function useSafeTx(chainId: number) {
         await switchChainAsync({ chainId: request.chainId }).catch(() => {
           throw new Error('Switch your wallet to the right chain to continue.')
         })
+        const liveAccount = getAccount(wagmiConfig).address
+        if (
+          !address ||
+          !liveAccount ||
+          liveAccount.toLowerCase() !== address.toLowerCase()
+        ) {
+          throw new Error('Connected account changed. Review the transaction again.')
+        }
         // Simulation is the safety gate: the exact call, args, and value
         // must succeed against live state before a signature is requested.
         // We then sign the SIMULATED request itself, so what's broadcast is
@@ -128,12 +158,20 @@ export function useSafeTx(chainId: number) {
           value: request.value,
           account: address,
         })
+        const accountBeforeSend = getAccount(wagmiConfig).address
+        if (
+          !accountBeforeSend ||
+          accountBeforeSend.toLowerCase() !== address.toLowerCase()
+        ) {
+          throw new Error('Connected account changed. Review the transaction again.')
+        }
         setPhase('signing')
         const txHash = await writeContractAsync(simulated)
         setHash(txHash)
         setPhase('pending')
         return txHash
       } catch (e) {
+        inFlightRef.current = false
         setError(friendlyTxError(e))
         setPhase('error')
         return null
@@ -143,6 +181,7 @@ export function useSafeTx(chainId: number) {
   )
 
   const reset = useCallback(() => {
+    inFlightRef.current = false
     setPhase('idle')
     setError(null)
     setHash(null)
@@ -155,9 +194,11 @@ export function useSafeTx(chainId: number) {
       effectivePhase === 'simulating' ||
       effectivePhase === 'signing' ||
       effectivePhase === 'pending',
-    error,
+    error: effectiveError,
     hash,
     receipt: receipt.data ?? null,
+    /** The transaction has a hash, but the current RPC could not confirm it. */
+    confirmationUncertain: phase === 'pending' && receipt.isError,
     send,
     reset,
   }

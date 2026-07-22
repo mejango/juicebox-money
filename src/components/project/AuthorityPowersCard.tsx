@@ -416,6 +416,15 @@ function PowerActionForm({
             functionName: power.functionName,
             args,
           }),
+          abi: abi as Abi,
+          functionName: power.functionName,
+          args,
+          contractName:
+            power.target === 'controller'
+              ? 'JBController'
+              : power.target === 'directory'
+                ? 'JBDirectory'
+                : 'JBMultiTerminal',
           gas: power.flag === 'allowAddAccountingContext' ? 300_000n : 500_000n,
           label: power.actionLabel,
         })
