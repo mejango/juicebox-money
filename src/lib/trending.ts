@@ -29,10 +29,13 @@ const LEGACY_SITE = 'https://juicebox.money'
  * The v1–v3 mainnet subgraph (v1 pv "1", v2/v3 pv "2"). Same trendingScore
  * formula lineage as bendystraw's, so scores merge directly.
  */
-const LEGACY_SUBGRAPH_URL =
-  process.env.NEXT_PUBLIC_LEGACY_SUBGRAPH_URL ??
-  'https://api.subgraph.migration.ormilabs.com/api/public/c7abcd86-002e-4cba-8a21-7319b9239191/subgraphs/juicebox/v0.0.1/gn'
+const LEGACY_SUBGRAPH_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
+  ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
+  : (process.env.NEXT_PUBLIC_LEGACY_SUBGRAPH_URL ??
+    'https://api.subgraph.migration.ormilabs.com/api/public/c7abcd86-002e-4cba-8a21-7319b9239191/subgraphs/juicebox/v0.0.1/gn')
 const REQUEST_TIMEOUT_MS = 8_000
+const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 
 type SuckerGroupTrending = {
   id: string
@@ -127,7 +130,9 @@ async function getLegacyTrending(limit: number): Promise<TrendingCard[]> {
       variables: { limit },
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    next: { revalidate: 300 },
+    ...(IS_DETERMINISTIC_BROWSER
+      ? { cache: 'no-store' as const }
+      : { next: { revalidate: 300 } }),
   })
   if (!res.ok) throw new Error(`legacy subgraph ${res.status}`)
   const json = (await res.json()) as {

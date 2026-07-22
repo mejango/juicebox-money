@@ -8,7 +8,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { toFunctionSelector, type Address, type Hex } from 'viem'
+import { toFunctionSelector, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SafeQueueSkeleton } from '@/components/LoadingSkeletons'
 import { TxError } from '@/components/ui/TxError'

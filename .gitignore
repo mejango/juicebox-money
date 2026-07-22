@@ -3,8 +3,13 @@ node_modules/
 .next-audit/
 .next-dev/
 .next-verify/
-.env
-.env.local
+coverage/
+playwright-report/
+test-results/
+.playwright/
+.contract-source/
+.env*
+!.env.example
 *.tsbuildinfo
 next-env.d.ts
 .gstack/

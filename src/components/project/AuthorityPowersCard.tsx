@@ -10,12 +10,7 @@ import {
 import { getCurrentRuleset } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import {
-  encodeFunctionData,
-  parseUnits,
-  type Abi,
-  type Address,
-} from 'viem'
+import { parseUnits, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
@@ -39,6 +34,7 @@ import {
 } from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { buildProjectPowerAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 type PowerChainState = AuthorityDeployment & {
@@ -407,27 +403,25 @@ function PowerActionForm({
               ? jbDirectoryAbi
               : jbMultiTerminalAbi
         const args = power.buildArgs(BigInt(row.projectId), values)
-        calls.push({
-          chainId: row.chainId,
-          authority: row.authority,
-          target,
-          data: encodeFunctionData({
-            abi: abi as Abi,
+        calls.push(
+          buildProjectPowerAuthorityCall({
+            chainId: row.chainId,
+            authority: row.authority,
+            target,
+            abi,
             functionName: power.functionName,
             args,
+            contractName:
+              power.target === 'controller'
+                ? 'JBController'
+                : power.target === 'directory'
+                  ? 'JBDirectory'
+                  : 'JBMultiTerminal',
+            gas:
+              power.flag === 'allowAddAccountingContext' ? 300_000n : 500_000n,
+            label: power.actionLabel,
           }),
-          abi: abi as Abi,
-          functionName: power.functionName,
-          args,
-          contractName:
-            power.target === 'controller'
-              ? 'JBController'
-              : power.target === 'directory'
-                ? 'JBDirectory'
-                : 'JBMultiTerminal',
-          gas: power.flag === 'allowAddAccountingContext' ? 300_000n : 500_000n,
-          label: power.actionLabel,
-        })
+        )
         lines.push(
           `${row.name}${display.length ? ` · ${display.join(' · ')}` : ''}`,
         )

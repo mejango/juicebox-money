@@ -10,6 +10,7 @@ import {
   useWriteContract,
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
+import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'
 
@@ -121,57 +122,48 @@ export function useSafeTx(chainId: number) {
       inFlightRef.current = true
       setError(null)
       try {
-        setPhase('review')
-        const approved = await requestContractTransactionReview(
-          {
-            ...request,
-            account: address,
+        const txHash = await submitReviewedContractWrite({
+          request,
+          expectedAccount: address,
+          review: async reviewed => {
+            const approved = await requestContractTransactionReview(
+              { ...reviewed, account: address },
+              { label: reviewed.label },
+            )
+            if (!approved) throw new TransactionReviewCancelledError()
           },
-          { label: request.label },
-        )
-        if (!approved) {
-          inFlightRef.current = false
-          setPhase('idle')
-          return null
-        }
-        setPhase('simulating')
-        await switchChainAsync({ chainId: request.chainId }).catch(() => {
-          throw new Error('Switch your wallet to the right chain to continue.')
+          switchChain: async reviewedChainId => {
+            await switchChainAsync({ chainId: reviewedChainId }).catch(() => {
+              throw new Error('Switch your wallet to the right chain to continue.')
+            })
+          },
+          currentAccount: () => getAccount(wagmiConfig).address,
+          // Simulation is the safety gate: the exact reviewed call, args, and
+          // value must succeed before a signature is requested. Only the
+          // simulation result reaches the wallet writer.
+          simulate: async reviewed => {
+            const { request: simulated } = await publicClient.simulateContract({
+              address: reviewed.address,
+              abi: reviewed.abi,
+              functionName: reviewed.functionName,
+              args: reviewed.args as unknown[],
+              value: reviewed.value,
+              account: address,
+            })
+            return simulated
+          },
+          write: simulated => writeContractAsync(simulated),
+          onPhase: setPhase,
         })
-        const liveAccount = getAccount(wagmiConfig).address
-        if (
-          !address ||
-          !liveAccount ||
-          liveAccount.toLowerCase() !== address.toLowerCase()
-        ) {
-          throw new Error('Connected account changed. Review the transaction again.')
-        }
-        // Simulation is the safety gate: the exact call, args, and value
-        // must succeed against live state before a signature is requested.
-        // We then sign the SIMULATED request itself, so what's broadcast is
-        // exactly what was validated (viem resolves gas/nonce from it too).
-        const { request: simulated } = await publicClient.simulateContract({
-          address: request.address,
-          abi: request.abi,
-          functionName: request.functionName,
-          args: request.args as unknown[],
-          value: request.value,
-          account: address,
-        })
-        const accountBeforeSend = getAccount(wagmiConfig).address
-        if (
-          !accountBeforeSend ||
-          accountBeforeSend.toLowerCase() !== address.toLowerCase()
-        ) {
-          throw new Error('Connected account changed. Review the transaction again.')
-        }
-        setPhase('signing')
-        const txHash = await writeContractAsync(simulated)
         setHash(txHash)
         setPhase('pending')
         return txHash
       } catch (e) {
         inFlightRef.current = false
+        if (e instanceof TransactionReviewCancelledError) {
+          setPhase('idle')
+          return null
+        }
         setError(friendlyTxError(e))
         setPhase('error')
         return null
@@ -202,4 +194,8 @@ export function useSafeTx(chainId: number) {
     send,
     reset,
   }
+}
+
+class TransactionReviewCancelledError extends Error {
+  readonly name = 'TransactionReviewCancelledError'
 }

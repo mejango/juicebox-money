@@ -1,0 +1,360 @@
+import {
+  NATIVE_TOKEN,
+  USDC_ADDRESSES,
+  jbContractAddress,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
+import {
+  BASE_CURRENCY_ETH,
+  BASE_CURRENCY_USD,
+  TIER_UNLIMITED_SUPPLY,
+  tokenCurrencyId,
+} from '@bananapus/nana-sdk-core/v6'
+import {
+  decodeFunctionData,
+  encodeFunctionData,
+  zeroAddress,
+  type Abi,
+  type Address,
+} from 'viem'
+import { describe, expect, it } from 'vitest'
+import {
+  DEFAULT_STORE_FLAGS,
+  FOREVER_SECONDS,
+  build721TierConfigs,
+  buildLaunchRequest,
+  createSimpleProjectStage,
+  nativeBridgeViable,
+  resolveStages,
+  type LaunchPlan,
+  type SplitConfig,
+  type StageRules,
+  type StoreItem,
+} from '@/lib/launch'
+
+const ALICE = '0x1111111111111111111111111111111111111111' as Address
+const BOB = '0x2222222222222222222222222222222222222222' as Address
+const CUSTOM = '0x3333333333333333333333333333333333333333' as Address
+const HOOK = '0x4444444444444444444444444444444444444444' as Address
+const SALT = `0x${'12'.repeat(32)}` as const
+const URI = 'ipfs://QmProjectMetadata'
+
+type EncodableRequest = {
+  abi: Abi
+  functionName: string
+  args: readonly unknown[]
+}
+
+type LaunchRuleset = {
+  metadata: { cashOutTaxRate: number; baseCurrency: number }
+  splitGroups: {
+    groupId: bigint
+    splits: { percent: number; beneficiary: Address; hook: Address }[]
+  }[]
+  fundAccessLimitGroups: {
+    token: Address
+    payoutLimits: { amount: bigint; currency: number }[]
+    surplusAllowances: { amount: bigint; currency: number }[]
+  }[]
+}
+
+type ProjectLaunchConfig = {
+  rulesetConfigurations: LaunchRuleset[]
+  terminalConfigurations: {
+    terminal: Address
+    accountingContextsToAccept: {
+      token: Address
+      decimals: number
+      currency: number
+    }[]
+  }[]
+}
+
+function plan(overrides: Partial<LaunchPlan> = {}): LaunchPlan {
+  return {
+    accounting: { tokens: ['eth'], custom: null },
+    issuanceBase: null,
+    flavor: 'project',
+    operator: null,
+    ticker: 'TEST',
+    stages: [createSimpleProjectStage()],
+    afterMode: 'cycle',
+    approvalDeadline: 'none',
+    approvalCustomAddress: null,
+    allowAnyToken: false,
+    owner: ALICE,
+    chains: [1],
+    linkChains: false,
+    bridge: 'ccip',
+    store: {
+      name: 'Test collection',
+      symbol: 'TEST',
+      currency: 'eth',
+      ...DEFAULT_STORE_FLAGS,
+      items: [],
+    },
+    ...overrides,
+  }
+}
+
+function requestFor(launchPlan: LaunchPlan, chainId: JBChainId = 1) {
+  return buildLaunchRequest({
+    chainId,
+    owner: ALICE,
+    projectUri: URI,
+    creationFee: 123n,
+    plan: launchPlan,
+    salt: SALT,
+  })
+}
+
+function encode(request: ReturnType<typeof buildLaunchRequest>) {
+  return encodeFunctionData(request as unknown as EncodableRequest)
+}
+
+function projectConfig(
+  request: ReturnType<typeof buildLaunchRequest>,
+): ProjectLaunchConfig {
+  // The builder returns a union of deployer tuple types; this branch is pinned
+  // by the launchProjectFor assertion before its project config is inspected.
+  return request.args[2] as unknown as ProjectLaunchConfig
+}
+
+function split(overrides: Partial<SplitConfig> = {}): SplitConfig {
+  return {
+    percent: 1_000_000_000,
+    projectId: 0n,
+    beneficiary: BOB,
+    preferAddToBalance: false,
+    lockedUntil: 0,
+    hook: zeroAddress,
+    ...overrides,
+  }
+}
+
+describe('project launch encoding', () => {
+  it('round-trips the 721 project deployer call through its canonical ABI', () => {
+    const request = requestFor(plan())
+    const data = encode(request)
+    const decoded = decodeFunctionData({ abi: request.abi, data })
+
+    expect(request.functionName).toBe('launchProjectFor')
+    expect(request.value).toBe(123n)
+    expect(data.slice(0, 10)).toBe('0xc04ae38f')
+    expect(decoded.functionName).toBe('launchProjectFor')
+    expect(decoded.args).toHaveLength(5)
+  })
+
+  it.each([
+    {
+      label: 'ETH',
+      accounting: { tokens: ['eth'] as const, custom: null },
+      token: NATIVE_TOKEN,
+      decimals: 18,
+      contextCurrency: tokenCurrencyId(NATIVE_TOKEN),
+      baseCurrency: BASE_CURRENCY_ETH,
+    },
+    {
+      label: 'USDC',
+      accounting: { tokens: ['usdc'] as const, custom: null },
+      token: USDC_ADDRESSES[1],
+      decimals: 6,
+      contextCurrency: tokenCurrencyId(USDC_ADDRESSES[1]),
+      baseCurrency: BASE_CURRENCY_USD,
+    },
+    {
+      label: 'custom token',
+      accounting: { tokens: [] as const, custom: { address: CUSTOM, decimals: 8 } },
+      token: CUSTOM,
+      decimals: 8,
+      contextCurrency: tokenCurrencyId(CUSTOM),
+      baseCurrency: tokenCurrencyId(CUSTOM),
+    },
+  ])('uses the contract currency and decimals for $label accounting', row => {
+    const launchPlan = plan({
+      accounting: {
+        tokens: [...row.accounting.tokens],
+        custom: row.accounting.custom,
+      },
+      store: {
+        ...plan().store,
+        currency: row.accounting.custom ? 'token' : row.label === 'USDC' ? 'usd' : 'eth',
+      },
+    })
+    const request = requestFor(launchPlan)
+    const config = projectConfig(request)
+    const contexts = config.terminalConfigurations.flatMap(
+      terminal => terminal.accountingContextsToAccept,
+    )
+
+    expect(contexts).toEqual([
+      expect.objectContaining({
+        token: row.token,
+        decimals: row.decimals,
+        currency: row.contextCurrency,
+      }),
+    ])
+    expect(config.rulesetConfigurations[0].metadata.baseCurrency).toBe(
+      row.baseCurrency,
+    )
+    expect(() => encode(request)).not.toThrow()
+  })
+
+  it('keeps ETH and USDC payout limits, currencies, and splits separate', () => {
+    const ethSplit = split({ percent: 600_000_000 })
+    const usdcSplit = split({ beneficiary: ALICE, hook: HOOK })
+    const stage: StageRules = {
+      ...createSimpleProjectStage(),
+      payouts: 'routed',
+      payoutSplits: [ethSplit],
+      payoutLimitAmount: 2n * 10n ** 18n,
+      payoutSplitsUsdc: [usdcSplit],
+      payoutLimitAmountUsdc: 3_000_000n,
+      surplusAllowanceOn: false,
+      surplusAllowanceAmount: null,
+      cashOutTaxRate: 5_000,
+    }
+    const request = requestFor(
+      plan({ accounting: { tokens: ['eth', 'usdc'], custom: null }, stages: [stage] }),
+    )
+    const ruleset = projectConfig(request).rulesetConfigurations[0]
+    const eth = ruleset.fundAccessLimitGroups.find(
+      group => group.token.toLowerCase() === NATIVE_TOKEN.toLowerCase(),
+    )
+    const usdc = ruleset.fundAccessLimitGroups.find(
+      group => group.token.toLowerCase() === USDC_ADDRESSES[1].toLowerCase(),
+    )
+
+    expect(eth?.payoutLimits).toEqual([
+      { amount: 2n * 10n ** 18n, currency: tokenCurrencyId(NATIVE_TOKEN) },
+    ])
+    expect(usdc?.payoutLimits).toEqual([
+      { amount: 3_000_000n, currency: tokenCurrencyId(USDC_ADDRESSES[1]) },
+    ])
+    expect(ruleset.splitGroups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          groupId: BigInt(NATIVE_TOKEN),
+          splits: [expect.objectContaining({ beneficiary: BOB, percent: 600_000_000 })],
+        }),
+        expect.objectContaining({
+          groupId: BigInt(USDC_ADDRESSES[1]),
+          splits: [expect.objectContaining({ beneficiary: ALICE, hook: HOOK })],
+        }),
+      ]),
+    )
+    expect(ruleset.metadata.cashOutTaxRate).toBe(5_000)
+  })
+
+  it('disables cash outs when an unlimited routed payout consumes all funds', () => {
+    const stage: StageRules = {
+      ...createSimpleProjectStage(),
+      payouts: 'routed',
+      payoutSplits: [split()],
+      payoutLimitAmount: null,
+      cashOutTaxRate: 0,
+    }
+    const ruleset = projectConfig(requestFor(plan({ stages: [stage] })))
+      .rulesetConfigurations[0]
+
+    expect(ruleset.metadata.cashOutTaxRate).toBe(10_000)
+    expect(ruleset.fundAccessLimitGroups[0].payoutLimits[0].amount).toBe(
+      2n ** 224n - 1n,
+    )
+  })
+
+  it('uses the omnichain deployer ABI only for explicitly linked chains', () => {
+    const request = requestFor(
+      plan({ chains: [1, 10], linkChains: true, bridge: 'ccip' }),
+    )
+    const data = encode(request)
+
+    expect(request.address).toBe(jbContractAddress['6'].JBOmnichainDeployer[1])
+    expect(data.slice(0, 10)).toBe('0x2d993173')
+    expect(decodeFunctionData({ abi: request.abi, data }).functionName).toBe(
+      'launchProjectFor',
+    )
+  })
+
+  it('encodes a revnet deployment through the SDK-provided request', () => {
+    const request = requestFor(
+      plan({
+        flavor: 'revnet',
+        operator: BOB,
+        ticker: 'REV',
+        stages: [
+          {
+            ...createSimpleProjectStage(),
+            reservedPercent: 2_500,
+            reservedSplits: [split({ percent: 500_000_000 })],
+          },
+        ],
+      }),
+    )
+    const data = encode(request)
+    const decoded = decodeFunctionData({ abi: request.abi, data })
+
+    expect(request.functionName).toBe('deployFor')
+    expect(decoded.functionName).toBe('deployFor')
+    expect(data).toMatch(/^0x[0-9a-f]+$/)
+  })
+})
+
+describe('launch helper invariants', () => {
+  it('only permits native bridges for an Ethereum + one-L2 ETH pair', () => {
+    expect(nativeBridgeViable([1, 10], ['eth'], false)).toBe(true)
+    expect(nativeBridgeViable([11155111, 84532], ['eth'], false)).toBe(true)
+    expect(nativeBridgeViable([10, 8453], ['eth'], false)).toBe(false)
+    expect(nativeBridgeViable([1, 10, 8453], ['eth'], false)).toBe(false)
+    expect(nativeBridgeViable([1, 10], ['usdc'], false)).toBe(false)
+    expect(nativeBridgeViable([1, 10], ['eth'], true)).toBe(false)
+  })
+
+  it('expands terminal and standby aftermath without mutating the input stage', () => {
+    const timed = { ...createSimpleProjectStage(), duration: 86_400, cashOutTaxRate: 2_000 }
+    const terminal = resolveStages(plan({ stages: [timed], afterMode: 'terminal' }))
+    const waiting = resolveStages(plan({ stages: [timed], afterMode: 'wait' }))
+
+    expect(terminal).toHaveLength(2)
+    expect(terminal[1]).toEqual(expect.objectContaining({ duration: FOREVER_SECONDS }))
+    expect(waiting[1]).toEqual(
+      expect.objectContaining({ weight: 0n, pausePay: true, cashOutTaxRate: 2_000 }),
+    )
+    expect(timed.duration).toBe(86_400)
+  })
+
+  it('sorts tiers and applies per-chain supply and inverted flags exactly', () => {
+    const item = (category: number, supply: number | null): StoreItem => ({
+      price: 1_000n,
+      supply,
+      encodedIpfsUri: `0x${String(category + 1).padStart(64, '0')}`,
+      splitPercent: 0,
+      splits: [],
+      discountPercent: 4,
+      reserveFrequency: 2,
+      reserveBeneficiary: BOB,
+      category,
+      votingUnits: 7,
+      flags: {
+        allowOwnerMint: true,
+        transfersPausable: false,
+        cantBeRemoved: true,
+        allowCredits: true,
+        ownerCanEditDiscount: true,
+      },
+      perChainSupply: category === 2 ? { 1: null } : { 1: 9 },
+    })
+    const tiers = build721TierConfigs([item(2, 5), item(1, 4)], 1)
+
+    expect(tiers.map(tier => tier.category)).toEqual([1, 2])
+    expect(tiers.map(tier => tier.initialSupply)).toEqual([9, TIER_UNLIMITED_SUPPLY])
+    expect(tiers[0].flags).toEqual(
+      expect.objectContaining({
+        useReserveBeneficiaryAsDefault: true,
+        useVotingUnits: true,
+        cantIncreaseDiscountPercent: false,
+        cantBuyWithCredits: false,
+      }),
+    )
+  })
+})

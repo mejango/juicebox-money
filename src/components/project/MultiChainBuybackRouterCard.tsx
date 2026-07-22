@@ -13,7 +13,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { encodeFunctionData, zeroAddress, type Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
@@ -30,6 +30,11 @@ import {
 } from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import {
+  buildBuybackHookAuthorityCall,
+  buildInitializeBuybackPoolAuthorityCall,
+  buildRouterTerminalAuthorityCall,
+} from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 type BuybackChainState = AuthorityDeployment & {
@@ -534,74 +539,49 @@ function BuybackActionForm({
 
         if (kind === 'hook') {
           if (!row.buybackRegistry) throw new Error(`${row.name}: no buyback registry.`)
-          calls.push({
-            chainId: row.chainId,
-            authority: row.authority,
-            target: row.buybackRegistry,
-            data: encodeFunctionData({
-              abi: jbBuybackHookRegistryAbi,
-              functionName: 'setHookFor',
-              args: [BigInt(row.projectId), address],
+          calls.push(
+            buildBuybackHookAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              registry: row.buybackRegistry,
+              projectId: BigInt(row.projectId),
+              hook: address,
+              gas: action.gas,
+              label: action.title,
             }),
-            abi: jbBuybackHookRegistryAbi,
-            functionName: 'setHookFor',
-            args: [BigInt(row.projectId), address],
-            contractName: 'JBBuybackHookRegistry',
-            gas: action.gas,
-            label: action.title,
-          })
+          )
         } else if (kind === 'terminal') {
           if (!row.routerRegistry) throw new Error(`${row.name}: no router registry.`)
-          calls.push({
-            chainId: row.chainId,
-            authority: row.authority,
-            target: row.routerRegistry,
-            data: encodeFunctionData({
-              abi: jbRouterTerminalRegistryAbi,
-              functionName: 'setTerminalFor',
-              args: [BigInt(row.projectId), address],
+          calls.push(
+            buildRouterTerminalAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              registry: row.routerRegistry,
+              projectId: BigInt(row.projectId),
+              terminal: address,
+              gas: action.gas,
+              label: action.title,
             }),
-            abi: jbRouterTerminalRegistryAbi,
-            functionName: 'setTerminalFor',
-            args: [BigInt(row.projectId), address],
-            contractName: 'JBRouterTerminalRegistry',
-            gas: action.gas,
-            label: action.title,
-          })
+          )
         } else {
           if (!row.buybackRegistry || !poolValues) {
             throw new Error(`${row.name}: no buyback registry.`)
           }
-          calls.push({
-            chainId: row.chainId,
-            authority: row.authority,
-            target: row.buybackRegistry,
-            data: encodeFunctionData({
-              abi: jbBuybackHookRegistryAbi,
-              functionName: 'initializePoolFor',
-              args: [
-                BigInt(row.projectId),
-                poolValues.fee,
-                poolValues.tickSpacing,
-                BigInt(poolValues.twapWindow),
-                address,
-                poolValues.sqrtPriceX96,
-              ],
+          calls.push(
+            buildInitializeBuybackPoolAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              registry: row.buybackRegistry,
+              projectId: BigInt(row.projectId),
+              fee: poolValues.fee,
+              tickSpacing: poolValues.tickSpacing,
+              twapWindow: BigInt(poolValues.twapWindow),
+              pairToken: address,
+              sqrtPriceX96: poolValues.sqrtPriceX96,
+              gas: action.gas,
+              label: action.title,
             }),
-            abi: jbBuybackHookRegistryAbi,
-            functionName: 'initializePoolFor',
-            args: [
-              BigInt(row.projectId),
-              poolValues.fee,
-              poolValues.tickSpacing,
-              BigInt(poolValues.twapWindow),
-              address,
-              poolValues.sqrtPriceX96,
-            ],
-            contractName: 'JBBuybackHookRegistry',
-            gas: action.gas,
-            label: action.title,
-          })
+          )
         }
         lines.push(
           `${row.name}: ${truncateAddress(address)}${

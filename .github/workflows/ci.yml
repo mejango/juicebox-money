@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CI: true
+      NEXT_TELEMETRY_DISABLED: 1
+      NEXT_PUBLIC_TESTNET: 'false'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check out pinned deploy-all-v6 deployment artifacts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Bananapus/deploy-all-v6
+          ref: 316e9d4d3f9e1c5b41a5df7c0ad6183abbeccc7f
+          path: .contract-source/deploy-all-v6
+          sparse-checkout: deployments
+          persist-credentials: false
+      - name: Use pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Verify the locked production dependency graph
+        run: npm run deps:check
+      - name: Check container and release definitions
+        run: npm run container:check
+      - name: Reject high or critical production dependency advisories
+        run: npm run audit:prod
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npm run ts:check
+      - name: Check pinned contract deployments
+        env:
+          PROTOCOL_DEPLOYMENTS_DIR: ${{ github.workspace }}/.contract-source/deploy-all-v6
+        run: npm run protocol:check
+      - name: Check reviewed transaction inventory
+        run: npm run transaction:check
+      - name: Run deterministic tests
+        run: npm run test:ci
+      - name: Build deterministic production application
+        run: npm run build:browser
+      - name: Enforce client budgets
+        run: npm run budget
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run production browser invariants
+        run: npm run test:browser
+      - name: Upload unit coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-coverage
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  container-smoke:
+    name: Standalone OCI smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build the production image
+        run: |
+          docker build --tag juicebox-money:ci \
+            --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example/graphql \
+            --build-arg NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=https://legacy.example/graphql \
+            --build-arg NEXT_PUBLIC_TESTNET=false \
+            --build-arg NEXT_PUBLIC_PARA_API_KEY=ci-public-para-key \
+            --build-arg NEXT_PUBLIC_PARA_ENV=PROD \
+            --build-arg NEXT_PUBLIC_INFURA_ID=ci-public-infura-id \
+            --build-arg NEXT_PUBLIC_VERSION=$GITHUB_SHA .
+      - name: Run the image as non-root and check readiness
+        run: |
+          docker run --detach --name juicebox-ci \
+            --read-only \
+            --tmpfs /app/.next/cache:uid=1000,gid=1000 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --publish 127.0.0.1:3000:3000 \
+            --env IPFS_PINNING_ENABLED=false \
+            juicebox-money:ci
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/healthz >/dev/null; then
+              test "$(docker inspect --format '{{.Config.User}}' juicebox-ci)" = node
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs juicebox-ci
+          exit 1
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm --force juicebox-ci || true

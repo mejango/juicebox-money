@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config "../../tailwind.config.ts";
+@import "tailwindcss";
 
 @layer base {
   :root {
@@ -59,7 +58,7 @@
 
   /* Controls use Bluebs; Split remains the page-level brand/warning accent. */
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-500 font-sans font-medium text-white;
+    @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-600 font-sans font-medium text-white;
     box-shadow: 0 6px 10px rgb(0 0 0 / 0.08);
     transition:
       background-color 100ms linear,
@@ -68,7 +67,7 @@
   }
 
   .btn-primary:hover:not(:disabled) {
-    @apply bg-bluebs-600;
+    @apply bg-bluebs-700;
     box-shadow: 0 8px 12px rgb(0 0 0 / 0.12);
   }
 

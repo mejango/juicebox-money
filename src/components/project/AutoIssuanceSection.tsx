@@ -315,7 +315,7 @@ function AutoIssueRow({
  * is aborted if nothing is left, so the useSafeTx simulation plus that
  * re-read are the whole safety gate.
  */
-function DistributeFlow({
+export function DistributeFlow({
   chainId,
   projectId,
   stageId,

@@ -2,7 +2,6 @@
 
 import {
   JBCoreContracts,
-  jb721TiersHookAbi,
   jbContractAddress,
   jbProjectsAbi,
   type JBChainId,
@@ -31,6 +30,7 @@ import {
   type StoreCategory,
 } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
+import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { shortError } from '@/lib/errors'
 import { build721TierConfigs } from '@/lib/launch'
 import {
@@ -39,6 +39,7 @@ import {
   type PinnedStoreItemDraft,
 } from '@/lib/store-items'
 import { chainName } from '@/lib/urn'
+import { buildAdjustTiersRequest } from '@/lib/transaction-builders'
 import { requireContractTransactionReview } from '@/lib/transaction-review'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
@@ -316,47 +317,40 @@ export function AddShopItemsModal({
             target.chainId,
           )
           const tiers = build721TierConfigs(storeItems, target.chainId)
-          await requireContractTransactionReview(
-            {
-              chainId,
-              address: target.hook,
-              abi: jb721TiersHookAbi,
-              functionName: 'adjustTiers',
-              args: [tiers, []],
-              account: address,
-            },
-            {
-              title: `Review shop items on ${chainName(target.chainId)}`,
-              label: 'Add shop items',
-              contractName: 'JB721TiersHook',
-            },
-          )
-          await switchChainAsync({ chainId })
-          const liveAccount = getAccount(config).address
-          if (
-            !liveAccount ||
-            liveAccount.toLowerCase() !== address.toLowerCase()
-          ) {
-            throw new Error('Connected account changed. Review the shop items again.')
-          }
-          const { request } = await client.simulateContract({
-            address: target.hook,
-            abi: jb721TiersHookAbi,
-            functionName: 'adjustTiers',
-            args: [tiers, []],
-            account: address,
+          const request = buildAdjustTiersRequest({
+            chainId,
+            hook: target.hook,
+            tiers,
           })
-          const accountBeforeSend = getAccount(config).address
-          if (
-            !accountBeforeSend ||
-            accountBeforeSend.toLowerCase() !== address.toLowerCase()
-          ) {
-            throw new Error('Connected account changed. Review the shop items again.')
-          }
-          // wagmi's generated union cannot retain the tuple inference after a
-          // runtime chain switch, but this is the exact simulated request.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          hash = await writeContractAsync(request as any)
+          hash = await submitReviewedContractWrite({
+            request,
+            expectedAccount: address,
+            review: reviewed =>
+              requireContractTransactionReview(
+                { ...reviewed, account: address },
+                {
+                  title: `Review shop items on ${chainName(target.chainId)}`,
+                  label: 'Add shop items',
+                  contractName: 'JB721TiersHook',
+                },
+              ),
+            switchChain: reviewedChainId =>
+              switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
+            currentAccount: () => getAccount(config).address,
+            simulate: async reviewed => {
+              const { request: simulated } = await client.simulateContract({
+                ...reviewed,
+                account: address,
+              })
+              return simulated
+            },
+            // wagmi's generated union cannot retain tuple inference after a
+            // runtime chain switch, but this is the exact simulated request.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            write: simulated => writeContractAsync(simulated as any),
+            accountChangedError:
+              'Connected account changed. Review the shop items again.',
+          })
           activeHash = hash
           updateStatus(target.chainId, { phase: 'confirming', hash })
         }

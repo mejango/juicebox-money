@@ -361,7 +361,6 @@ async function readLiveChain(
  * drift, and the Sync send never bypasses useSafeTx.
  */
 export function GossipCard({
-  chainId,
   projectId,
   chains,
 }: {

@@ -8,7 +8,6 @@ import {
   USD_CURRENCY_ID,
   jbContractAddress,
   jbFundAccessLimitsAbi,
-  jbMultiTerminalAbi,
   jbPricesAbi,
   jbProjectsAbi,
   jbSplitsAbi,
@@ -28,7 +27,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   formatUnits,
   parseUnits,
-  type Abi,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -48,6 +46,10 @@ import {
   formatUsd18,
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
+import {
+  buildSendPayoutsRequest,
+  buildUseAllowanceRequest,
+} from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 /** A payout limit or surplus allowance entry with its live usage. */
@@ -813,15 +815,29 @@ function PayoutsTable({
 /** A reviewed, ready-to-send transaction: the exact args (including the min
  *  that was displayed) are frozen here so what the user confirms is what's
  *  sent. */
+type FundsWriteRequest =
+  | ReturnType<typeof buildSendPayoutsRequest>
+  | ReturnType<typeof buildUseAllowanceRequest>
+
 type ReviewedTx = {
-  functionName: 'sendPayoutsOf' | 'useAllowanceOf'
-  args: readonly unknown[]
+  request: FundsWriteRequest
   /** The simulated amount that will be paid out, in the token's decimals. */
   quote: bigint
   /** The minTokensPaidOut param inside `args`, in the token's decimals. */
   min: bigint
   /** The account the review was made for. */
   account: Address
+}
+
+async function simulateFundsRequest(
+  publicClient: PublicClient,
+  request: FundsWriteRequest,
+  account: Address,
+) {
+  if (request.functionName === 'sendPayoutsOf') {
+    return publicClient.simulateContract({ ...request, account })
+  }
+  return publicClient.simulateContract({ ...request, account })
 }
 
 function FundsTxFlow({
@@ -991,37 +1007,39 @@ function FundsTxFlow({
       // The exact call args for a given min-out: the quote simulates with 0,
       // and the reviewed transaction reuses the same builder with the
       // enforced min, so the two can never drift.
-      const argsWithMin = (min: bigint): readonly unknown[] =>
+      const requestWithMin = (
+        min: bigint,
+      ): FundsWriteRequest =>
         kind === 'payouts'
-          ? [
-              BigInt(projectId),
-              ctx.token,
-              parsedAmount,
-              BigInt(line.currency),
-              min,
-            ]
-          : [
-              BigInt(projectId),
-              ctx.token,
-              parsedAmount,
-              BigInt(line.currency),
-              min,
-              address,
-              address,
-              '',
-            ]
+          ? buildSendPayoutsRequest({
+              chainId,
+              terminal,
+              projectId: BigInt(projectId),
+              token: ctx.token,
+              amount: parsedAmount,
+              currency: BigInt(line.currency),
+              minTokensPaidOut: min,
+            })
+          : buildUseAllowanceRequest({
+              chainId,
+              terminal,
+              projectId: BigInt(projectId),
+              token: ctx.token,
+              amount: parsedAmount,
+              currency: BigInt(line.currency),
+              minTokensPaidOut: min,
+              beneficiary: address,
+            })
 
       // Quote: simulate the exact call with min = 0. The simulated return
       // value (amountPaidOut / netAmountPaidOut) is the quote, in the
       // token's decimals.
-      const sim = await publicClient.simulateContract({
-        address: terminal,
-        abi: jbMultiTerminalAbi as Abi,
-        functionName:
-          kind === 'payouts' ? 'sendPayoutsOf' : 'useAllowanceOf',
-        args: argsWithMin(0n),
-        account: address,
-      })
+      const quoteRequest = requestWithMin(0n)
+      const sim = await simulateFundsRequest(
+        publicClient,
+        quoteRequest,
+        address,
+      )
       const quote = sim.result as bigint
       if (quote <= 0n) {
         throw new FlowError(
@@ -1037,8 +1055,7 @@ function FundsTxFlow({
         kind === 'payouts' && tokenKeyed ? quote : (quote * 99n) / 100n
 
       setReview({
-        functionName: kind === 'payouts' ? 'sendPayoutsOf' : 'useAllowanceOf',
-        args: argsWithMin(min),
+        request: requestWithMin(min),
         quote,
         min,
         account: address,
@@ -1058,13 +1075,7 @@ function FundsTxFlow({
       setFlowError('Your connected account changed — review the amount again.')
       return
     }
-    tx.send({
-      chainId,
-      address: terminal,
-      abi: jbMultiTerminalAbi,
-      functionName: review.functionName,
-      args: review.args,
-    })
+    tx.send(review.request)
   }
 
   if (!line) return null

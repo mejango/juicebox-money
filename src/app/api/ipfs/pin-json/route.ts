@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { pinToIpfs, takeString } from '@/lib/ipfs-server'
+import {
+  pinToIpfs,
+  readLimitedJson,
+  requirePinningAccess,
+  takeString,
+} from '@/lib/ipfs-server'
+import { isIpfsUri } from '@/lib/ipfs-cid'
 
 export const runtime = 'nodejs'
 
@@ -11,12 +17,11 @@ export const runtime = 'nodejs'
  * project's existing links forward instead of dropping them.
  */
 export async function POST(req: NextRequest) {
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Expected a JSON body' }, { status: 400 })
-  }
+  const unavailable = requirePinningAccess(req)
+  if (unavailable) return unavailable
+  const parsed = await readLimitedJson(req, 16 * 1024)
+  if ('response' in parsed) return parsed.response
+  const body = parsed.value
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return NextResponse.json({ error: 'Expected a JSON object' }, { status: 400 })
   }
@@ -55,10 +60,7 @@ export async function POST(req: NextRequest) {
     ['coverImageUri', coverImageUri],
   ] as const) {
     if (value === undefined) continue
-    if (
-      typeof value !== 'string' ||
-      !/^ipfs:\/\/[a-zA-Z0-9]{1,128}$/.test(value)
-    ) {
+    if (!isIpfsUri(value)) {
       return NextResponse.json({ error: `Invalid ${key}` }, { status: 400 })
     }
     metadata[key] = value

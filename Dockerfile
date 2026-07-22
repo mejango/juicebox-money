@@ -1,0 +1,59 @@
+FROM node:22.16.0-bookworm-slim@sha256:048ed02c5fd52e86fda6fbd2f6a76cf0d4492fd6c6fee9e2c463ed5108da0e34 AS base
+
+ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+
+FROM base AS dependencies
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+FROM base AS builder
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY . .
+
+ARG NEXT_PUBLIC_BENDYSTRAW_URL
+ARG NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=""
+ARG NEXT_PUBLIC_TESTNET
+ARG NEXT_PUBLIC_PARA_API_KEY
+ARG NEXT_PUBLIC_PARA_ENV
+ARG NEXT_PUBLIC_INFURA_ID
+ARG NEXT_PUBLIC_VERSION
+ENV NEXT_PUBLIC_BENDYSTRAW_URL=$NEXT_PUBLIC_BENDYSTRAW_URL \
+    NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=$NEXT_PUBLIC_LEGACY_SUBGRAPH_URL \
+    NEXT_PUBLIC_TESTNET=$NEXT_PUBLIC_TESTNET \
+    NEXT_PUBLIC_PARA_API_KEY=$NEXT_PUBLIC_PARA_API_KEY \
+    NEXT_PUBLIC_PARA_ENV=$NEXT_PUBLIC_PARA_ENV \
+    NEXT_PUBLIC_INFURA_ID=$NEXT_PUBLIC_INFURA_ID \
+    NEXT_PUBLIC_VERSION=$NEXT_PUBLIC_VERSION
+RUN node scripts/check-deployment-env.mjs build && npm run build
+
+FROM base AS runner
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+
+ARG NEXT_PUBLIC_BENDYSTRAW_URL
+ARG NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=""
+ARG NEXT_PUBLIC_TESTNET
+ARG NEXT_PUBLIC_PARA_API_KEY
+ARG NEXT_PUBLIC_PARA_ENV
+ARG NEXT_PUBLIC_INFURA_ID
+ARG NEXT_PUBLIC_VERSION
+ENV NEXT_PUBLIC_BENDYSTRAW_URL=$NEXT_PUBLIC_BENDYSTRAW_URL \
+    NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=$NEXT_PUBLIC_LEGACY_SUBGRAPH_URL \
+    NEXT_PUBLIC_TESTNET=$NEXT_PUBLIC_TESTNET \
+    NEXT_PUBLIC_PARA_API_KEY=$NEXT_PUBLIC_PARA_API_KEY \
+    NEXT_PUBLIC_PARA_ENV=$NEXT_PUBLIC_PARA_ENV \
+    NEXT_PUBLIC_INFURA_ID=$NEXT_PUBLIC_INFURA_ID \
+    NEXT_PUBLIC_VERSION=$NEXT_PUBLIC_VERSION
+
+COPY --chown=node:node --from=builder /app/public ./public
+COPY --chown=node:node --from=builder /app/.next/standalone ./
+COPY --chown=node:node --from=builder /app/.next/static ./.next/static
+COPY --chown=node:node --from=builder /app/scripts/check-deployment-env.mjs ./scripts/check-deployment-env.mjs
+COPY --chown=node:node --from=builder /app/scripts/start-production.mjs ./scripts/start-production.mjs
+
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["node", "scripts/start-production.mjs"]

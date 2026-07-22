@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "useSafeTx": {
+    "src/components/project/AddLiquidityFlow.tsx": {
+      "hooks": 1,
+      "sends": 3,
+      "sendSites": [
+        { "id": "approve-token-for-permit2", "actions": ["Approve an ERC-20"] },
+        { "id": "authorize-position-manager", "actions": ["Authorize the Uniswap position manager"] },
+        { "id": "mint-liquidity-position", "actions": ["Add Uniswap V4 liquidity"] }
+      ]
+    },
+    "src/components/project/AutoIssuanceSection.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "auto-issue-stage-allocation", "actions": ["Auto-issue tokens"] }
+      ]
+    },
+    "src/components/project/CashOutFlow.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "cash-out-project-tokens", "actions": ["Cash out project tokens"] }
+      ]
+    },
+    "src/components/project/ExtrasTab.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "deploy-project-payer", "actions": ["Deploy a project payer address"] }
+      ]
+    },
+    "src/components/project/FundsTab.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        {
+          "id": "send-fund-access-action",
+          "actions": ["Distribute payouts", "Use surplus allowance"]
+        }
+      ]
+    },
+    "src/components/project/GetLoanFlow.tsx": {
+      "hooks": 2,
+      "sends": 2,
+      "sendSites": [
+        { "id": "borrow-after-permission", "actions": ["Borrow or repay"] },
+        { "id": "grant-loan-burn-permission", "actions": ["Add or revoke permissions"] }
+      ]
+    },
+    "src/components/project/GossipCard.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "sync-sucker-accounting", "actions": ["Sync sucker accounting"] }
+      ]
+    },
+    "src/components/project/LoansSection.tsx": {
+      "hooks": 2,
+      "sends": 4,
+      "sendSites": [
+        { "id": "repay-after-approval", "actions": ["Borrow or repay"] },
+        { "id": "repay-native-loan", "actions": ["Borrow or repay"] },
+        { "id": "repay-approved-erc20-loan", "actions": ["Borrow or repay"] },
+        { "id": "approve-loan-repayment", "actions": ["Approve an ERC-20"] }
+      ]
+    },
+    "src/components/project/MoveFlow.tsx": {
+      "hooks": 1,
+      "sends": 3,
+      "sendSites": [
+        { "id": "approve-project-token-for-sucker", "actions": ["Approve an ERC-20"] },
+        { "id": "prepare-token-move", "actions": ["Prepare/move tokens cross-chain"] },
+        { "id": "send-prepared-token-move", "actions": ["Prepare/move tokens cross-chain"] }
+      ]
+    },
+    "src/components/project/OwnersTab.tsx": {
+      "hooks": 2,
+      "sends": 2,
+      "sendSites": [
+        { "id": "claim-project-token-credits", "actions": ["Claim project-token credits"] },
+        { "id": "distribute-reserved-tokens", "actions": ["Distribute reserved tokens"] }
+      ]
+    },
+    "src/components/project/PayPanel.tsx": {
+      "hooks": 2,
+      "sends": 3,
+      "sendSites": [
+        { "id": "approve-payment-token", "actions": ["Approve an ERC-20"] },
+        { "id": "pay-project", "actions": ["Pay a project"] },
+        { "id": "add-to-project-balance", "actions": ["Add to treasury balance"] }
+      ]
+    },
+    "src/components/project/QueueRulesetFlow.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "queue-rulesets", "actions": ["Queue rulesets"] }
+      ]
+    },
+    "src/components/project/RedeemShopItemsModal.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "redeem-shop-items", "actions": ["Redeem shop NFTs"] }
+      ]
+    },
+    "src/components/project/SettlementSection.tsx": {
+      "hooks": 2,
+      "sends": 2,
+      "sendSites": [
+        { "id": "send-prepared-settlement", "actions": ["Prepare/move tokens cross-chain"] },
+        { "id": "claim-bridged-funds", "actions": ["Claim bridged funds"] }
+      ]
+    }
+  },
+  "authorityCalls": {
+    "src/components/project/AuthorityEditsCard.tsx": {
+      "calls": 2,
+      "actions": ["Transfer project ownership", "Change owner/operator powers"]
+    },
+    "src/components/project/AuthorityOverview.tsx": {
+      "calls": 2,
+      "actions": ["Add or revoke permissions", "Transfer project ownership"]
+    },
+    "src/components/project/AuthorityPowersCard.tsx": {
+      "calls": 1,
+      "actions": ["Change owner/operator powers"]
+    },
+    "src/components/project/EditSplitsFlow.tsx": {
+      "calls": 1,
+      "actions": ["Edit split groups"]
+    },
+    "src/components/project/MultiChainBuybackRouterCard.tsx": {
+      "calls": 1,
+      "actions": ["Configure buyback/router"]
+    }
+  },
+  "reviewedDirectWrites": {
+    "src/components/create/CreateForm.tsx": {
+      "calls": 1,
+      "actions": ["Launch a project", "Launch linked chains", "Deploy a revnet"]
+    },
+    "src/components/project/AddShopItemsModal.tsx": {
+      "calls": 1,
+      "actions": ["Add shop tiers"]
+    },
+    "src/hooks/useSafeTx.ts": {
+      "calls": 1,
+      "actions": ["Submit a reviewed direct write"]
+    }
+  },
+  "rawWalletCalls": {
+    "useWriteContract": {
+      "src/components/create/CreateForm.tsx": 1,
+      "src/components/project/AddShopItemsModal.tsx": 1,
+      "src/hooks/useSafeTx.ts": 1
+    },
+    "writeContractAsync": {
+      "src/components/create/CreateForm.tsx": 1,
+      "src/components/project/AddShopItemsModal.tsx": 1,
+      "src/hooks/useSafeTx.ts": 1
+    },
+    "writeContract": {
+      "src/lib/safe.ts": 1
+    },
+    "sendTransaction": {
+      "src/lib/relayr.ts": 1
+    },
+    "signTypedData": {
+      "src/lib/relayr.ts": 1,
+      "src/lib/safe.ts": 1
+    }
+  }
+}

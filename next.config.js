@@ -12,6 +12,10 @@ const securityHeaders = [
 ]
 
 module.exports = phase => ({
+  // Emit a self-contained server tree for the production OCI image. Keep
+  // tracing rooted here because the monorepo parent also has a lockfile.
+  output: 'standalone',
+  outputFileTracingRoot: __dirname,
   // Keep development and production artifacts separate. Running `next build`
   // while the dev server is active otherwise leaves their webpack chunks
   // mixed together and causes intermittent MODULE_NOT_FOUND errors.
@@ -27,7 +31,29 @@ module.exports = phase => ({
     config.resolve.alias['@farcaster/miniapp-sdk'] = false
     config.resolve.alias['@farcaster/miniapp-wagmi-connector'] = false
     config.resolve.alias['@getpara/cosmos-wallet-connectors'] = false
+    config.resolve.alias['@getpara/evm-wallet-connectors'] = false
     config.resolve.alias['@getpara/solana-wallet-connectors'] = false
+    // wagmi's connector barrel resolves optional vendor integrations before
+    // tree-shaking down to `injected`; none of these paths is used at runtime.
+    config.resolve.alias['@x402/core'] = false
+    config.resolve.alias['@x402/evm'] = false
+    config.resolve.alias['@x402/svm'] = false
+    config.resolve.alias['@react-native-async-storage/async-storage'] = false
+    config.resolve.alias['pino-pretty'] = false
+    for (const provider of [
+      'alchemy',
+      'biconomy',
+      'cdp',
+      'gelato',
+      'pimlico',
+      'porto',
+      'rhinestone',
+      'safe',
+      'thirdweb',
+      'zerodev',
+    ]) {
+      config.resolve.alias[`@getpara/aa-${provider}`] = false
+    }
     // @coinbase/wallet-sdk's HeartbeatWorker ends in `export {}`, which the
     // minifier rejects in a classic worker script. Use our vendored copy
     // (identical, minus the module marker).

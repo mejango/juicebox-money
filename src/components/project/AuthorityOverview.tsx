@@ -3,16 +3,13 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  RevnetCoreContracts,
   jbContractAddress,
   jbPermissionsAbi,
-  jbProjectsAbi,
-  revOwnerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { encodeFunctionData, zeroAddress, type Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { AddressField } from '@/components/create/AddressField'
 import { CheckRow } from '@/components/create/ui'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -47,6 +44,11 @@ import {
   fetchSafeInfo,
   type SafeInfo,
 } from '@/lib/safe'
+import {
+  buildPermissionsAuthorityCall,
+  buildProjectOwnershipAuthorityCall,
+  buildRevnetOperatorAuthorityCall,
+} from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 export type AuthorityDeployment = {
@@ -195,6 +197,9 @@ export function AuthorityOverview({
     staleTime: 30_000,
     queryFn: () => readAuthorityRows(deployments, isRevnet),
   })
+  // `rows` intentionally falls back to a fresh empty array only while the
+  // query has no data; no derived group can be observed in that state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const rows = authorityQuery.data ?? []
   const groups = useMemo(() => groupAuthorityRows(rows), [rows])
   const known = rows.filter(row => !!row.authority)
@@ -443,43 +448,19 @@ function TransferAuthorityFlow({
     try {
       const calls: AuthorityCall[] = rows.map(row => {
         if (isRevnet) {
-          const target = jbContractAddress['6'][RevnetCoreContracts.REVOwner][
-            row.chainId
-          ]
-          return {
+          return buildRevnetOperatorAuthorityCall({
             chainId: row.chainId,
             authority,
-            target,
-            data: encodeFunctionData({
-              abi: revOwnerAbi,
-              functionName: 'setOperatorOf',
-              args: [BigInt(row.projectId), to],
-            }),
-            abi: revOwnerAbi,
-            functionName: 'setOperatorOf',
-            args: [BigInt(row.projectId), to],
-            contractName: 'REVOwner',
-            label: 'Transfer operator',
-          }
+            revnetId: BigInt(row.projectId),
+            operator: to,
+          })
         }
-        const target = jbContractAddress['6'][JBCoreContracts.JBProjects][
-          row.chainId
-        ]
-        return {
+        return buildProjectOwnershipAuthorityCall({
           chainId: row.chainId,
           authority,
-          target,
-          data: encodeFunctionData({
-            abi: jbProjectsAbi,
-            functionName: 'transferFrom',
-            args: [authority, to, BigInt(row.projectId)],
-          }),
-          abi: jbProjectsAbi,
-          functionName: 'transferFrom',
-          args: [authority, to, BigInt(row.projectId)],
-          contractName: 'JBProjects',
-          label: 'Transfer ownership',
-        }
+          projectId: BigInt(row.projectId),
+          destination: to,
+        })
       })
       const result = await runAuthorityCalls({
         calls,
@@ -770,39 +751,17 @@ function PermissionEditor({
         const finalIds = [...new Set([...selected, ...unknownIds])].sort(
           (a, b) => a - b,
         )
-        calls.push({
+        calls.push(
+          buildPermissionsAuthorityCall({
           chainId: deployment.chainId,
           authority,
-          target:
-            jbContractAddress['6'][JBCoreContracts.JBPermissions][
-              deployment.chainId
-            ],
-          data: encodeFunctionData({
-            abi: jbPermissionsAbi,
-            functionName: 'setPermissionsFor',
-            args: [
-              authority,
-              {
-                operator,
-                projectId: BigInt(deployment.projectId),
-                permissionIds: finalIds,
-              },
-            ],
+            account: authority,
+            operator,
+            projectId: BigInt(deployment.projectId),
+            permissionIds: finalIds,
+            label: grant ? 'Edit permissions' : 'Add operator',
           }),
-          abi: jbPermissionsAbi,
-          functionName: 'setPermissionsFor',
-          args: [
-            authority,
-            {
-              operator,
-              projectId: BigInt(deployment.projectId),
-              permissionIds: finalIds,
-            },
-          ],
-          contractName: 'JBPermissions',
-          gas: 200_000n,
-          label: grant ? 'Edit permissions' : 'Add operator',
-        })
+        )
       }
       const result = await runAuthorityCalls({
         calls,

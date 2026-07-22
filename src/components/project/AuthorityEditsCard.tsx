@@ -8,7 +8,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   encodeFunctionData,
   erc20Abi,
@@ -30,6 +30,7 @@ import {
 } from '@/lib/authority'
 import { ipfsUrl, truncateAddress } from '@/lib/format'
 import { TOKEN_SYMBOL_RE } from '@/lib/manage'
+import { buildTokenMetadataAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 const MAX_LOGO_BYTES = 1024 * 1024
@@ -787,29 +788,31 @@ function TokenEditor({
           if (!row.authority || !row.controller) {
             throw new Error(`${row.name}: owner/operator or controller is unknown.`)
           }
+          if (row.token) {
+            return buildTokenMetadataAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              controller: row.controller,
+              projectId: BigInt(row.projectId),
+              name: name.trim(),
+              symbol,
+            })
+          }
           return {
             chainId: row.chainId,
             authority: row.authority,
             target: row.controller,
-            data: row.token
-              ? encodeFunctionData({
-                  abi: jbControllerAbi,
-                  functionName: 'setTokenMetadataOf',
-                  args: [BigInt(row.projectId), name.trim(), symbol],
-                })
-              : encodeFunctionData({
-                  abi: jbControllerAbi,
-                  functionName: 'deployERC20For',
-                  args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
-                }),
+            data: encodeFunctionData({
+              abi: jbControllerAbi,
+              functionName: 'deployERC20For',
+              args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
+            }),
             abi: jbControllerAbi,
-            functionName: row.token ? 'setTokenMetadataOf' : 'deployERC20For',
-            args: row.token
-              ? [BigInt(row.projectId), name.trim(), symbol]
-              : [BigInt(row.projectId), name.trim(), symbol, zeroHash],
+            functionName: 'deployERC20For',
+            args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
             contractName: 'JBController',
-            gas: row.token ? 200_000n : 500_000n,
-            label: row.token ? 'Set token metadata' : 'Deploy ERC-20',
+            gas: 500_000n,
+            label: 'Deploy ERC-20',
           }
         }),
       )

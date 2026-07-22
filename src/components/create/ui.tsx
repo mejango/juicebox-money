@@ -77,7 +77,7 @@ function SelectableRow({
         <span
           className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
             checked
-              ? 'border-bluebs-500 bg-bluebs-500'
+              ? 'border-bluebs-600 bg-bluebs-600'
               : 'border-grey-300 bg-white'
           }`}
         >
@@ -162,7 +162,7 @@ export function AddButton({
       disabled={disabled}
       className="group inline-flex min-h-[40px] items-center gap-2 rounded-full border border-dashed border-grey-400 bg-white py-1.5 pl-1.5 pr-4 text-xs font-medium text-grey-700 transition-colors hover:border-bluebs-500 hover:text-bluebs-700 disabled:opacity-60"
     >
-      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-bluebs-100 font-agrandir text-sm text-bluebs-700 transition-colors group-hover:bg-bluebs-500 group-hover:text-white">
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-bluebs-100 font-agrandir text-sm text-bluebs-700 transition-colors group-hover:bg-bluebs-600 group-hover:text-white">
         +
       </span>
       {children}

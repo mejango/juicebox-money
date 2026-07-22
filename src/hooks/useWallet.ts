@@ -1,10 +1,10 @@
 'use client'
 
-import { useModal } from '@getpara/react-sdk-lite'
 import { useEffect, useRef } from 'react'
 import type { Address } from 'viem'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
-import { paraClient } from '@/providers/Providers'
+import { IS_DETERMINISTIC_BROWSER } from '@/providers/Providers'
+import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
 
 /**
  * Wallet state with wagmi as the single source of truth.
@@ -16,23 +16,31 @@ import { paraClient } from '@/providers/Providers'
  *   connector so the embedded wallet behaves like any other connection.
  */
 export function useWallet() {
-  const { address, isConnected } = useAccount()
+  const { address, connector: activeConnector, isConnected } = useAccount()
   const { connectAsync, connectors } = useConnect()
   const { disconnect: wagmiDisconnect } = useDisconnect()
-  const { isOpen, openModal } = useModal()
+  const { modalOpen, requestSignIn, sessionVersion } = useParaAuth()
   const bridging = useRef(false)
 
-  // Bridge Para embedded sessions into wagmi. Runs on mount (session persisted
-  // from a previous visit) and whenever the Para modal closes (fresh login).
+  // Bridge a newly settled Para modal into wagmi. The dynamic import is
+  // deliberately gated by sessionVersion so anonymous visits never initialize
+  // Para's worker or session API.
   useEffect(() => {
-    if (isOpen || isConnected || bridging.current) return
+    if (IS_DETERMINISTIC_BROWSER) return
+    if (sessionVersion === 0) return
+    if (modalOpen || isConnected || bridging.current) return
     bridging.current = true
     ;(async () => {
       try {
+        const { getParaClient } = await import('@/providers/para-config')
+        const paraClient = getParaClient()
         const loggedIn = await paraClient.isFullyLoggedIn()
         if (!loggedIn) return
         const para = connectors.find(c => c.id === 'para')
-        if (para) await connectAsync({ connector: para })
+        if (para) {
+          await connectAsync({ connector: para })
+          markParaSession(true)
+        }
       } catch {
         // No Para session, or the user's Para env is unreachable — external
         // wallets still work.
@@ -40,7 +48,7 @@ export function useWallet() {
         bridging.current = false
       }
     })()
-  }, [isOpen, isConnected, connectors, connectAsync])
+  }, [modalOpen, sessionVersion, isConnected, connectors, connectAsync])
 
   return {
     isConnected,
@@ -58,10 +66,17 @@ export function useWallet() {
       return Promise.reject(new Error('Unknown wallet'))
     },
     /** Open the Para email/social sign-in modal. */
-    openSignIn: () => openModal(),
+    openSignIn: () => {
+      if (!IS_DETERMINISTIC_BROWSER) requestSignIn()
+    },
     disconnect: () => {
       wagmiDisconnect()
-      paraClient.logout().catch(() => {})
+      if (!IS_DETERMINISTIC_BROWSER && activeConnector?.id === 'para') {
+        markParaSession(false)
+        void import('@/providers/para-config').then(({ getParaClient }) =>
+          getParaClient().logout().catch(() => {}),
+        )
+      }
     },
   }
 }

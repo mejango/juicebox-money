@@ -5,7 +5,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Official Juicebox Design System 2023 token scales — see DESIGN.md.
+        // Juicebox Design System 2023 scales, with foreground mid-tones
+        // darkened where needed to meet WCAG AA on Bone and white.
         bone: '#FFF7E8',
         ink: '#1A1A1A',
         split: {
@@ -106,8 +107,8 @@ export default {
           200: '#E7E3DC',
           300: '#D4D1C7',
           400: '#C0BBAD',
-          500: '#9C9580',
-          600: '#857C63',
+          500: '#756E59',
+          600: '#686250',
           700: '#575344',
           800: '#3F3A2E',
           900: '#353026',

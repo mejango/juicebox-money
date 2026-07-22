@@ -15,13 +15,17 @@ import {
   erc20Abi,
   formatUnits,
   parseUnits,
-  type Abi,
   type Address,
   type PublicClient,
 } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { FlowError, shortError } from '@/lib/errors'
+import {
+  buildErc20ApproveRequest,
+  buildModifyLiquiditiesRequest,
+  buildPermit2ApproveRequest,
+} from '@/lib/transaction-builders'
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
@@ -84,20 +88,6 @@ const permit2Abi = [
       { name: 'spender', type: 'address' },
       { name: 'amount', type: 'uint160' },
       { name: 'expiration', type: 'uint48' },
-    ],
-    outputs: [],
-  },
-] as const
-
-// Uniswap V4 PositionManager — matches website lpPositionManagerAbi (line 20669).
-const positionManagerAbi = [
-  {
-    type: 'function',
-    name: 'modifyLiquidities',
-    stateMutability: 'payable',
-    inputs: [
-      { name: 'unlockData', type: 'bytes' },
-      { name: 'deadline', type: 'uint256' },
     ],
     outputs: [],
   },
@@ -776,33 +766,37 @@ function AddLiquidityForm({
       const p = planRef.current
       if (!p) return
       if (step.kind === 'approve-erc20') {
-        tx.send({
-          chainId,
-          address: step.token,
-          abi: erc20Abi as Abi,
-          functionName: 'approve',
-          args: [UNISWAP_PERMIT2_ADDRESS, step.amount],
-        })
+        tx.send(
+          buildErc20ApproveRequest({
+            chainId,
+            token: step.token,
+            spender: UNISWAP_PERMIT2_ADDRESS,
+            amount: step.amount,
+          }),
+        )
       } else if (step.kind === 'permit2-approve') {
-        tx.send({
-          chainId,
-          address: UNISWAP_PERMIT2_ADDRESS,
-          abi: permit2Abi as Abi,
-          functionName: 'approve',
-          args: [step.token, p.posm, step.amount, step.expiration],
-        })
+        tx.send(
+          buildPermit2ApproveRequest({
+            chainId,
+            token: step.token,
+            positionManager: p.posm,
+            amount: step.amount,
+            expiration: step.expiration,
+          }),
+        )
       } else {
         // Deadline is set at send time (~20 min), like website — everything
         // that touches funds is frozen inside unlockData.
         const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200)
-        tx.send({
-          chainId,
-          address: p.posm,
-          abi: positionManagerAbi as Abi,
-          functionName: 'modifyLiquidities',
-          args: [p.mint.unlockData, deadline],
-          value: p.mint.value,
-        })
+        tx.send(
+          buildModifyLiquiditiesRequest({
+            chainId,
+            positionManager: p.posm,
+            unlockData: p.mint.unlockData,
+            deadline,
+            value: p.mint.value,
+          }),
+        )
       }
     },
     [tx, chainId],

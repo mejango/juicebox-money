@@ -88,7 +88,6 @@ export function OverviewTab({
   description,
   socialLinks,
   isRevnet,
-  authority,
   authorities,
   chains,
   suckerGroupId,

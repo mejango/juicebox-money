@@ -12,7 +12,6 @@ import {
   getAccountingContexts,
   getBorrowableAmount,
   getCashOutDelay,
-  getTokenAddress,
   hasPermissions,
   JBPermissionIdsV6,
   type JBAccountingContext,
@@ -21,7 +20,6 @@ import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  erc20Abi,
   formatUnits,
   parseUnits,
   type Address,

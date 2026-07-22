@@ -62,6 +62,7 @@ import {
 } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
+import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 /**
@@ -580,7 +581,6 @@ function ClaimFlow({
   chainId,
   projectId,
   holder,
-  credits,
   onDone,
 }: {
   chainId: JBChainId
@@ -1378,13 +1378,13 @@ function DistributeFlow({
       openSignIn()
       return
     }
-    tx.send({
-      chainId,
-      address: controller,
-      abi: jbControllerAbi,
-      functionName: 'sendReservedTokensToSplitsOf',
-      args: [BigInt(projectId)],
-    })
+    tx.send(
+      buildSendReservedTokensRequest({
+        chainId,
+        controller,
+        projectId: BigInt(projectId),
+      }),
+    )
   }
 
   return (

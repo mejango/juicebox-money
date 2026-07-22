@@ -4,7 +4,6 @@ import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
-  jbControllerAbi,
   jbDirectoryAbi,
   jbFundAccessLimitsAbi,
   jbProjectsAbi,
@@ -36,6 +35,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { billionthsToPct, etherscanTxUrl, formatDuration } from '@/lib/format'
 import type { RawSplit } from '@/lib/splits-types'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { buildQueueRulesetsRequest } from '@/lib/transaction-builders'
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n
@@ -474,13 +474,15 @@ function RulesetEditor({
       setFlowError('Your connected account changed — review the changes again.')
       return
     }
-    tx.send({
-      chainId,
-      address: controller,
-      abi: jbControllerAbi,
-      functionName: 'queueRulesetsOf',
-      args: [BigInt(projectId), [review.config], ''],
-    })
+    tx.send(
+      buildQueueRulesetsRequest({
+        chainId,
+        controller,
+        projectId: BigInt(projectId),
+        rulesetConfigurations: [review.config],
+        memo: '',
+      }),
+    )
   }
 
   if (tx.phase === 'success') {

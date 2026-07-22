@@ -1,14 +1,23 @@
 'use client'
 
-import { createParaWagmiConfig } from '@getpara/evm-wallet-connectors'
-import ParaWeb, {
-  ParaProvider,
-  type Environment,
-} from '@getpara/react-sdk-lite'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { PropsWithChildren, useState } from 'react'
-import { http, WagmiProvider } from 'wagmi'
+import {
+  lazy,
+  PropsWithChildren,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
+import { createConfig, http, WagmiProvider } from 'wagmi'
+import { injected } from 'wagmi/connectors'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
+import {
+  hasParaSessionMarker,
+  markParaSession,
+  ParaAuthContext,
+} from './ParaAuthContext'
 import {
   arbitrum,
   arbitrumSepolia,
@@ -21,15 +30,20 @@ import {
 } from 'wagmi/chains'
 
 const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
-const PARA_API_KEY = process.env.NEXT_PUBLIC_PARA_API_KEY ?? ''
 const INFURA_ID = process.env.NEXT_PUBLIC_INFURA_ID ?? ''
+export const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
+const BROWSER_FIXTURE_ORIGIN =
+  process.env.NEXT_PUBLIC_BROWSER_FIXTURE_ORIGIN ?? 'http://127.0.0.1:4399'
 
 export const SUPPORTED_CHAINS = IS_TESTNET
   ? ([sepolia, optimismSepolia, baseSepolia, arbitrumSepolia] as const)
   : ([mainnet, optimism, base, arbitrum] as const)
 
 const infura = (network: string) =>
-  INFURA_ID
+  IS_DETERMINISTIC_BROWSER
+    ? http(`${BROWSER_FIXTURE_ORIGIN}/rpc/${network}`)
+    : INFURA_ID
     ? http(`https://${network}.infura.io/v3/${INFURA_ID}`)
     : http()
 
@@ -44,45 +58,47 @@ const transports = {
   [arbitrumSepolia.id]: infura('arbitrum-sepolia'),
 }
 
-export const paraClient = new ParaWeb(
-  (process.env.NEXT_PUBLIC_PARA_ENV as Environment) || 'BETA',
-  PARA_API_KEY,
-)
-
-const APP = {
-  appName: 'Juicebox',
-  appDescription: 'Fund your thing. Programmable money for projects.',
-  appUrl: 'https://juicebox.money',
-}
-
-const WALLET_CONNECT_PROJECT_ID =
-  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? ''
+const ParaModalHost = lazy(() => import('./ParaModalHost'))
+let paraSetup: Promise<void> | undefined
 
 /**
  * The app's single wagmi config — the one source of truth for connections,
- * chain switching, and writes. It includes Para's `para` connector (bridging
- * embedded wallets into wagmi) plus the external wallet connectors.
+ * chain switching, and writes. Para's focused connector bridges embedded
+ * wallets into wagmi after the user asks to sign in. EIP-6963 discovery plus a
+ * generic injected fallback cover browser wallets without eager vendor SDKs.
  */
-export const wagmiConfig = createParaWagmiConfig(paraClient, {
-  appName: APP.appName,
-  appDescription: APP.appDescription,
-  appUrl: APP.appUrl,
-  projectId: WALLET_CONNECT_PROJECT_ID,
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore Para's connector types lag wagmi's chain tuple type.
+export const wagmiConfig = createConfig({
   chains: SUPPORTED_CHAINS,
   transports,
-  // Browser wallet connectors touch IndexedDB during initialization. Keep
-  // them out of the server bundle so SSR cannot trip Next's error overlay and
-  // leave an otherwise rendered page unable to receive pointer events.
-  wallets:
-    typeof window === 'undefined'
-      ? []
-      : WALLET_CONNECT_PROJECT_ID
-        ? ['METAMASK', 'COINBASE', 'WALLETCONNECT']
-        : ['METAMASK', 'COINBASE'],
+  connectors: IS_DETERMINISTIC_BROWSER
+    ? []
+    : [injected({ shimDisconnect: true })],
+  multiInjectedProviderDiscovery: !IS_DETERMINISTIC_BROWSER,
   ssr: true,
 })
+
+async function ensureParaConnector() {
+  if (wagmiConfig.connectors.some(connector => connector.id === 'para')) return
+  paraSetup ??= import('./para-config')
+    .then(({ createParaWagmiConnector }) => {
+      if (wagmiConfig.connectors.some(connector => connector.id === 'para')) {
+        return
+      }
+      const connector = wagmiConfig._internal.connectors.setup(
+        createParaWagmiConnector(transports),
+      )
+      wagmiConfig._internal.connectors.setState(current =>
+        current.some(candidate => candidate.id === 'para')
+          ? current
+          : [...current, connector],
+      )
+    })
+    .catch(error => {
+      paraSetup = undefined
+      throw error
+    })
+  return paraSetup
+}
 
 /**
  * Root providers: react-query + wagmi only. Both render children
@@ -106,41 +122,80 @@ export function Providers({ children }: PropsWithChildren) {
         },
       }),
   )
+  const [paraHostLoaded, setParaHostLoaded] = useState(false)
+  const [paraRequestId, setParaRequestId] = useState(0)
+  const [paraModalOpen, setParaModalOpen] = useState(false)
+  const [paraSessionVersion, setParaSessionVersion] = useState(0)
+
+  // Preserve embedded-wallet sessions without penalizing anonymous visitors:
+  // only a browser that previously completed Para auth loads its runtime on
+  // mount. Everyone else stays on the wallet-free initial path.
+  useEffect(() => {
+    if (
+      IS_DETERMINISTIC_BROWSER ||
+      !hasParaSessionMarker()
+    ) {
+      return
+    }
+    void ensureParaConnector()
+      .then(async () => {
+        if (wagmiConfig.state.current) return
+        const { getParaClient } = await import('./para-config')
+        if (!(await getParaClient().isFullyLoggedIn())) {
+          markParaSession(false)
+          return
+        }
+        const connector = wagmiConfig.connectors.find(
+          candidate => candidate.id === 'para',
+        )
+        if (!connector) return
+        const { connect } = await import('@wagmi/core')
+        await connect(wagmiConfig, { connector })
+      })
+      .catch(() => {})
+  }, [])
+
+  const requestSignIn = useCallback(() => {
+    if (IS_DETERMINISTIC_BROWSER) return
+    void ensureParaConnector()
+      .then(() => {
+        setParaHostLoaded(true)
+        setParaRequestId(current => current + 1)
+      })
+      .catch(() => {})
+  }, [])
+  const markParaSettled = useCallback(
+    () => setParaSessionVersion(current => current + 1),
+    [],
+  )
+  const paraAuth = useMemo(
+    () => ({
+      modalOpen: paraModalOpen,
+      sessionVersion: paraSessionVersion,
+      requestSignIn,
+    }),
+    [paraModalOpen, paraSessionVersion, requestSignIn],
+  )
 
   return (
     <QueryClientProvider client={queryClient}>
-      <WagmiProvider config={wagmiConfig}>
-        <TransactionReviewProvider>{children}</TransactionReviewProvider>
+      <WagmiProvider
+        config={wagmiConfig}
+        reconnectOnMount={!IS_DETERMINISTIC_BROWSER}
+      >
+        <ParaAuthContext.Provider value={paraAuth}>
+          <TransactionReviewProvider>{children}</TransactionReviewProvider>
+          {paraHostLoaded ? (
+            <Suspense fallback={null}>
+              <ParaModalHost
+                requestId={paraRequestId}
+                onOpenChange={setParaModalOpen}
+                onSettled={markParaSettled}
+              />
+            </Suspense>
+          ) : null}
+        </ParaAuthContext.Provider>
       </WagmiProvider>
     </QueryClientProvider>
-  )
-}
-
-/**
- * Hosts Para's auth modal and client machinery without wrapping any app
- * content. Email/social sign-in happens here; the resulting embedded wallet
- * reaches the app through wagmiConfig's `para` connector (see useWallet).
- * External wallets are deliberately excluded from the modal — they connect
- * through wagmiConfig directly so connection state lives in one place.
- */
-export function ParaHost() {
-  return (
-    <ParaProvider
-      paraClientConfig={paraClient}
-      config={{ appName: APP.appName }}
-      paraModalConfig={{
-        authLayout: ['AUTH:FULL'],
-        oAuthMethods: ['GOOGLE', 'TWITTER', 'APPLE', 'DISCORD', 'FARCASTER'],
-        theme: {
-          mode: 'light',
-          backgroundColor: '#FFF7E8',
-          foregroundColor: '#5777EB',
-          borderRadius: 'md',
-        },
-      }}
-      externalWalletConfig={{ wallets: [] }}
-    >
-      {null}
-    </ParaProvider>
   )
 }

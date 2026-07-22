@@ -40,6 +40,7 @@ import { txPhaseLabel, useSafeTx, type TxPhase } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 /** The frozen, reviewed prepare: what the user confirms is exactly what's
@@ -488,13 +489,14 @@ function MoveFlow({
   const sendApprove = () => {
     if (!review || busy) return
     if (!guardAccount()) return
-    tx.send({
-      chainId: from,
-      address: review.projectToken,
-      abi: erc20Abi as Abi,
-      functionName: 'approve',
-      args: [review.sucker, review.amount],
-    })
+    tx.send(
+      buildErc20ApproveRequest({
+        chainId: from as JBChainId,
+        token: review.projectToken,
+        spender: review.sucker,
+        amount: review.amount,
+      }),
+    )
   }
 
   const sendPrepare = () => {

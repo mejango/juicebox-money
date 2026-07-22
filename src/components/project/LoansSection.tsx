@@ -28,6 +28,7 @@ import {
   truncateAddress,
 } from '@/lib/format'
 import type { BsLoan } from '@/lib/loans-queries'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 
 export function revLoansAddress(chainId: JBChainId): Address {
   return jbContractAddress['6']['REVLoans'][chainId] as Address
@@ -291,7 +292,6 @@ type OnChainLoan = {
 
 function RepayFlow({
   chainId,
-  projectId,
   loan,
   contexts,
   collateralSymbol,
@@ -404,13 +404,14 @@ function RepayFlow({
         return
       }
       setPendingRepay(request)
-      await approveTx.send({
-        chainId,
-        address: fresh.sourceToken,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [loans, maxRepay],
-      })
+      await approveTx.send(
+        buildErc20ApproveRequest({
+          chainId,
+          token: fresh.sourceToken,
+          spender: loans,
+          amount: maxRepay,
+        }),
+      )
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {

@@ -34,7 +34,7 @@ import {
   ipfsUrl,
   truncateAddress,
 } from '@/lib/format'
-import { chainName, parseUrn, toUrn } from '@/lib/urn'
+import { parseUrn, toUrn } from '@/lib/urn'
 
 // getProject is a POST, which Next's fetch cache doesn't dedupe — memoize per
 // request so generateMetadata + page share one call.
@@ -110,11 +110,11 @@ function httpsOnly(url: string | undefined): string | null {
 export async function generateMetadata({
   params,
 }: {
-  params: { urn: string }
+  params: Promise<{ urn: string }>
 }): Promise<Metadata> {
   // notFound() here (not just in the page) so the 404 status is set before
   // streaming starts — metadata is awaited ahead of the response shell.
-  const urn = parseUrn(params.urn)
+  const urn = parseUrn((await params).urn)
   if (!urn) notFound()
   const project = await getProjectCached(urn.chainId, urn.projectId)
   if (!project) notFound()
@@ -134,9 +134,9 @@ export async function generateMetadata({
 export default async function ProjectPage({
   params,
 }: {
-  params: { urn: string }
+  params: Promise<{ urn: string }>
 }) {
-  const urn = parseUrn(params.urn)
+  const urn = parseUrn((await params).urn)
   if (!urn) notFound()
 
   const project = await getProjectCached(urn.chainId, urn.projectId)

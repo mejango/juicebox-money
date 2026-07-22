@@ -3,10 +3,13 @@
  * here, typed by hand — auditable end to end. All queries are V6-only.
  */
 
-const MAINNET_URL =
-  process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz/graphql'
+const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
+  ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
+  : (process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz/graphql')
 const TESTNET_URL = 'https://testnet.bendystraw.xyz/graphql'
 const REQUEST_TIMEOUT_MS = 8_000
+const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 
 export const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 
@@ -20,7 +23,9 @@ export async function bendystraw<T>(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    next: { revalidate: opts.revalidate ?? 60 },
+    ...(IS_DETERMINISTIC_BROWSER
+      ? { cache: 'no-store' as const }
+      : { next: { revalidate: opts.revalidate ?? 60 } }),
   })
   if (!res.ok) throw new Error(`bendystraw ${res.status}`)
   const json = (await res.json()) as {

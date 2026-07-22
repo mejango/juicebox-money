@@ -1,11 +1,10 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
-import '@getpara/react-sdk-lite/styles.css'
 import './globals.css'
 import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
-import { ParaHost, Providers } from '@/providers/Providers'
+import { Providers } from '@/providers/Providers'
 
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
 // Headings — PP Agrandir Medium.
@@ -91,8 +90,6 @@ export default function RootLayout({
 
           <SiteFooter />
 
-          {/* Para's auth modal host — renders no app content (see Providers). */}
-          <ParaHost />
         </Providers>
       </body>
     </html>

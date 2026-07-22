@@ -9,6 +9,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   build721CashOutMetadata,
+  buildCashOutTx,
   getAccountingContexts,
   resolvePaymentTerminal,
 } from '@bananapus/nana-sdk-core/v6'
@@ -17,7 +18,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
   zeroAddress,
-  type Abi,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -334,21 +334,19 @@ export function RedeemShopItemsModal({
         throw new Error('Your account or item selection changed. Review again.')
       }
       const minReclaimed = quotedOutputFloor(reviewed.net, 9900n)
-      await tx.send({
-        chainId: reviewed.chainId,
-        address: reviewed.terminal,
-        abi: jbMultiTerminalAbi as Abi,
-        functionName: 'cashOutTokensOf',
-        args: [
-          reviewed.holder,
-          BigInt(target.projectId),
-          0n,
-          reviewed.token,
-          minReclaimed,
-          reviewed.holder,
-          reviewed.metadata,
-        ],
-      })
+      await tx.send(
+        buildCashOutTx({
+          chainId: reviewed.chainId,
+          terminal: reviewed.terminal,
+          holder: reviewed.holder,
+          projectId: BigInt(target.projectId),
+          cashOutCount: 0n,
+          tokenToReclaim: reviewed.token,
+          minTokensReclaimed: minReclaimed,
+          beneficiary: reviewed.holder,
+          metadata: reviewed.metadata,
+        }),
+      )
     } catch (error) {
       setPrepareError(
         error instanceof Error

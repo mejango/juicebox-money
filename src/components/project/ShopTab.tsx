@@ -18,7 +18,6 @@ import {
   getProject721Shop,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'

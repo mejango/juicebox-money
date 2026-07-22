@@ -4,7 +4,6 @@ import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
-  jbControllerAbi,
   jbDirectoryAbi,
   jbProjectsAbi,
   jbSplitsAbi,
@@ -20,7 +19,6 @@ import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  encodeFunctionData,
   zeroAddress,
   type Address,
   type PublicClient,
@@ -34,7 +32,7 @@ import {
 } from '@/components/create/SplitsEditor'
 import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { runAuthorityCalls } from '@/lib/authority'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
 import { billionthsToPct, truncateAddress } from '@/lib/format'
@@ -42,6 +40,7 @@ import { LP_SPLIT_HOOK } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
 import { fetchSafeInfo } from '@/lib/safe'
 import type { RawSplit } from '@/lib/splits-types'
+import { buildSplitGroupsAuthorityCall } from '@/lib/transaction-builders'
 
 /** A stable string of the on-chain splits, for fingerprint comparison. */
 function fingerprint(splits: readonly RawSplit[]): string {
@@ -431,22 +430,15 @@ function EditSplitsModal({
       ...editable,
     ]
 
-    const call: AuthorityCall = {
+    const call = buildSplitGroupsAuthorityCall({
       chainId,
       authority,
-      target: controller,
-      data: encodeFunctionData({
-        abi: jbControllerAbi,
-        functionName: 'setSplitGroupsOf',
-        args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
-      }),
-      abi: jbControllerAbi,
-      functionName: 'setSplitGroupsOf',
-      args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
-      contractName: 'JBController',
-      gas: 600_000n,
+      controller,
+      projectId: BigInt(projectId),
+      rulesetId,
+      splitGroups: [{ groupId, splits }],
       label: `Edit ${title}`,
-    }
+    })
     setBusy(true)
     setStatus('Reviewing the split replacement…')
     try {

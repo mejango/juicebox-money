@@ -4,14 +4,127 @@
  * juicebox.money site.
  */
 
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
+import { isIpfsCid } from '@/lib/ipfs-cid'
 
 const INFURA_IPFS_API_BASE = 'https://ipfs.infura.io:5001'
+const IPFS_REQUEST_TIMEOUT_MS = 20_000
+export const PINNING_INGRESS_HEADER = 'x-juicebox-pinning-ingress-token'
+
+function pinningConfigured(): boolean {
+  return (
+    process.env.IPFS_PINNING_ENABLED === 'true' &&
+    process.env.IPFS_PINNING_EDGE_PROTECTED === 'true' &&
+    (process.env.IPFS_PINNING_INGRESS_TOKEN?.trim().length ?? 0) >= 32 &&
+    !!process.env.INFURA_IPFS_PROJECT_ID &&
+    !!process.env.INFURA_IPFS_API_SECRET
+  )
+}
+
+function hasValidIngressToken(req: NextRequest): boolean {
+  const expected = process.env.IPFS_PINNING_INGRESS_TOKEN
+  const supplied = req.headers.get(PINNING_INGRESS_HEADER)
+  if (!expected || !supplied) return false
+
+  const digest = (value: string) => createHash('sha256').update(value).digest()
+  return timingSafeEqual(digest(expected), digest(supplied))
+}
+
+/**
+ * Public, credential-backed pinning must be an explicit deployment decision.
+ * The ingress must strip the private header from untrusted requests, enforce
+ * its caller/quota policy, then inject the shared token. Browser Origin
+ * headers and the edge-protection acknowledgement are not authorization.
+ */
+export function requirePinningAccess(req: NextRequest): NextResponse | null {
+  if (!pinningConfigured()) {
+    return NextResponse.json(
+      { error: 'IPFS pinning is unavailable' },
+      { status: 503, headers: { 'cache-control': 'no-store' } },
+    )
+  }
+  if (!hasValidIngressToken(req)) {
+    return NextResponse.json(
+      { error: 'IPFS pinning ingress is not authorized' },
+      { status: 401, headers: { 'cache-control': 'no-store' } },
+    )
+  }
+  return null
+}
+
+export async function readLimitedJson(
+  req: NextRequest,
+  maxBytes: number,
+): Promise<{ value: unknown } | { response: NextResponse }> {
+  const declaredLength = Number(req.headers.get('content-length') ?? 0)
+  if (!Number.isFinite(declaredLength) || declaredLength < 0) {
+    return {
+      response: NextResponse.json(
+        { error: 'Invalid content length' },
+        { status: 400 },
+      ),
+    }
+  }
+  if (declaredLength > maxBytes) {
+    return {
+      response: NextResponse.json(
+        { error: 'JSON body too large' },
+        { status: 413 },
+      ),
+    }
+  }
+
+  const reader = req.body?.getReader()
+  if (!reader) {
+    return {
+      response: NextResponse.json(
+        { error: 'Expected a JSON body' },
+        { status: 400 },
+      ),
+    }
+  }
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel()
+      return {
+        response: NextResponse.json(
+          { error: 'JSON body too large' },
+          { status: 413 },
+        ),
+      }
+    }
+    chunks.push(value)
+  }
+
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  try {
+    return { value: JSON.parse(new TextDecoder().decode(bytes)) }
+  } catch {
+    return {
+      response: NextResponse.json(
+        { error: 'Expected a JSON body' },
+        { status: 400 },
+      ),
+    }
+  }
+}
 
 export async function pinToIpfs(
   content: Blob | string,
   filename = 'file',
 ): Promise<string> {
+  if (!pinningConfigured()) throw new Error('IPFS pinning is unavailable')
   const projectId = process.env.INFURA_IPFS_PROJECT_ID
   const secret = process.env.INFURA_IPFS_API_SECRET
   if (!projectId || !secret) {
@@ -33,11 +146,14 @@ export async function pinToIpfs(
       Authorization: `Basic ${Buffer.from(`${projectId}:${secret}`).toString('base64')}`,
     },
     body: form,
+    signal: AbortSignal.timeout(IPFS_REQUEST_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`ipfs add failed: ${res.status}`)
 
   const json = (await res.json()) as { Hash?: string }
-  if (!json.Hash) throw new Error('ipfs add returned no hash')
+  if (!json.Hash || !isIpfsCid(json.Hash)) {
+    throw new Error('ipfs add returned an invalid CID')
+  }
   return json.Hash
 }
 
@@ -62,9 +178,26 @@ export function makePinFileHandler({
   const sizeLabel = `${maxBytes / (1024 * 1024)}MB`
 
   return async function POST(req: NextRequest) {
+    const unavailable = requirePinningAccess(req)
+    if (unavailable) return unavailable
+
     // Cheap early reject before buffering the body.
-    const declaredLength = Number(req.headers.get('content-length') ?? 0)
-    if (declaredLength > maxBytes * 1.05) {
+    const rawLength = req.headers.get('content-length')
+    const declaredLength = Number(rawLength)
+    if (
+      !rawLength ||
+      !Number.isSafeInteger(declaredLength) ||
+      declaredLength <= 0
+    ) {
+      return NextResponse.json(
+        { error: 'A valid Content-Length header is required' },
+        { status: 411 },
+      )
+    }
+    // formData() buffers before the Blob size can be checked. Requiring and
+    // bounding the envelope closes the chunked/lying-length memory-DoS path;
+    // the edge must also reject requests whose received bytes exceed it.
+    if (declaredLength > maxBytes + 256 * 1024) {
       return NextResponse.json(
         { error: `File too large (max ${sizeLabel})` },
         { status: 413 },

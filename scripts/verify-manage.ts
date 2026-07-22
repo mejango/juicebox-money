@@ -100,7 +100,6 @@ async function main() {
     transport: http('https://ethereum-sepolia-rpc.publicnode.com'),
   })
   const projects = jbContractAddress['6'][JBCoreContracts.JBProjects][CHAIN_ID]
-  const tokens = jbContractAddress['6'][JBCoreContracts.JBTokens][CHAIN_ID]
   const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][CHAIN_ID]
 
   const controllerOf = (id: bigint) =>

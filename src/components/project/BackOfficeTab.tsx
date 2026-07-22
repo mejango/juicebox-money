@@ -22,11 +22,7 @@ import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
  * through useSafeTx (simulate-first).
  */
 export function BackOfficeTab({
-  chainId,
-  projectId,
   isRevnet,
-  owner,
-  operator,
   deployments,
   profile,
 }: {

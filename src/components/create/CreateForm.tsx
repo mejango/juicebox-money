@@ -14,7 +14,6 @@ import createIllustration from '@/assets/illustrations/create.png'
 import {
   parseUnits,
   zeroAddress,
-  type Address,
   type PublicClient,
 } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
@@ -25,6 +24,7 @@ import {
 } from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
 import { friendlyError } from '@/lib/errors'
+import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import { randomSalt } from '@/lib/manage'
@@ -1050,39 +1050,36 @@ export function CreateForm() {
             plan: pinned.plans[chainId],
             salt: pinned.salt,
           })
-          await requireContractTransactionReview(
-            { ...request, account: address },
-            {
-              title: `Review launch on ${chainName(chainId)}`,
-              label: 'Launch project',
+          hash = await submitReviewedContractWrite({
+            request,
+            expectedAccount: address,
+            review: reviewed =>
+              requireContractTransactionReview(
+                { ...reviewed, account: address },
+                {
+                  title: `Review launch on ${chainName(chainId)}`,
+                  label: 'Launch project',
+                },
+              ),
+            switchChain: reviewedChainId =>
+              switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
+            currentAccount: () => getAccount(config).address,
+            // `buildLaunchRequest` is a union of deployer ABIs; viem cannot
+            // infer its tuple branch after runtime chain selection.
+            simulate: async reviewed => {
+              /* eslint-disable @typescript-eslint/no-explicit-any */
+              const { request: simulated } = await client.simulateContract({
+                ...reviewed,
+                account: address,
+              } as any)
+              /* eslint-enable @typescript-eslint/no-explicit-any */
+              return simulated
             },
-          )
-          await switchChainAsync({ chainId: chainId as SupportedChainId })
-          const liveAccount = getAccount(config).address
-          if (
-            !address ||
-            !liveAccount ||
-            liveAccount.toLowerCase() !== address.toLowerCase()
-          ) {
-            throw new Error('Connected account changed. Review the launch again.')
-          }
-          // `buildLaunchRequest` is a union of deployer ABIs; viem cannot infer
-          // its tuple branch after the runtime chain selection, but the exact
-          // reviewed request is what is simulated here.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { request: simulated } = await client.simulateContract({
-            ...request,
-            account: address,
-          } as any)
-          const accountBeforeSend = getAccount(config).address
-          if (
-            !accountBeforeSend ||
-            accountBeforeSend.toLowerCase() !== address.toLowerCase()
-          ) {
-            throw new Error('Connected account changed. Review the launch again.')
-          }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          hash = await writeContractAsync(simulated as any)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            write: simulated => writeContractAsync(simulated as any),
+            accountChangedError:
+              'Connected account changed. Review the launch again.',
+          })
           updateStatus(chainId, { phase: 'confirming', txHash: hash })
         }
         const receipt = await waitForTransactionReceipt(config, {
@@ -1304,7 +1301,6 @@ export function CreateForm() {
     } catch {
       // Corrupt draft — start fresh.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
     if (!hydratedRef.current || busy) return
@@ -1438,7 +1434,10 @@ export function CreateForm() {
 
   // ---- Form + progress checklist ----
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+    <div
+      className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14"
+      data-create-ready={mounted ? 'true' : 'false'}
+    >
       <div className="relative sm:pr-52">
         <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:whitespace-nowrap sm:text-5xl">
           Start a project<span className="text-split-500">.</span>
@@ -1472,6 +1471,7 @@ export function CreateForm() {
             <button
               onClick={() => !busy && goToStep(i)}
               disabled={busy}
+              aria-label={label}
               aria-current={step === i ? 'step' : undefined}
               className="flex min-w-0 shrink-0 items-center gap-2 disabled:opacity-60"
             >
@@ -1510,6 +1510,7 @@ export function CreateForm() {
         <div className="mt-5">
           <span className="field-label">Flavor</span>
           <select
+            aria-label="Project flavor"
             value={flavor}
             onChange={e => {
               if (busy) return

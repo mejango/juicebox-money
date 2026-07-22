@@ -57,7 +57,7 @@ export function ActorLink({
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-smoke-700 hover:text-ink hover:underline"
+      className="text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
     >
       {truncateAddress(actor)}
     </a>

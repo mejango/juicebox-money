@@ -1,0 +1,36 @@
+import { defineConfig, globalIgnores } from 'eslint/config'
+import nextCoreWebVitals from 'eslint-config-next/core-web-vitals'
+import nextTypeScript from 'eslint-config-next/typescript'
+
+export default defineConfig([
+  ...nextCoreWebVitals,
+  ...nextTypeScript,
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
+      ],
+      // These rules are React Compiler eligibility checks. The app does not
+      // enable the compiler, and adopting them requires deliberate state-model
+      // refactors rather than a framework/tooling upgrade.
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+    },
+  },
+  {
+    files: ['next.config.js'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  globalIgnores([
+    '.next/**',
+    '.next-*/**',
+    'coverage/**',
+    'playwright-report/**',
+    'test-results/**',
+    'public/**',
+  ]),
+])

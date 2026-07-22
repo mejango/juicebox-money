@@ -1,0 +1,355 @@
+import AxeBuilder from '@axe-core/playwright'
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from '@playwright/test'
+
+const viewports = [
+  { label: 'phone-320', width: 320, height: 720 },
+  { label: 'phone-390', width: 390, height: 844 },
+  { label: 'tablet-768', width: 768, height: 1024 },
+  { label: 'desktop-1280', width: 1280, height: 800 },
+] as const
+
+const routes = [
+  {
+    path: '/create',
+    heading: 'Start a project',
+    create: true,
+  },
+  {
+    path: '/',
+    heading: 'Fund your thing',
+  },
+  {
+    path: '/eth:1',
+    heading: 'Browser Fixture Project',
+    project: true,
+  },
+] as const
+
+function isLocalHostname(hostname: string) {
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1'
+}
+
+async function blockExternalTraffic(context: BrowserContext) {
+  const attempts = { http: [] as string[], webSockets: [] as string[] }
+  await context.route(/^https?:\/\//, async route => {
+    const url = route.request().url()
+    if (isLocalHostname(new URL(url).hostname)) {
+      await route.continue()
+      return
+    }
+    attempts.http.push(url)
+    // Fulfil locally instead of opening a socket. A fast HTTP failure lets
+    // client libraries exercise their normal error handling without turning
+    // an intentionally blocked fetch into an unhandled browser exception.
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'External browser traffic is disabled' }),
+    })
+  })
+
+  await context.routeWebSocket(
+    url => !isLocalHostname(url.hostname),
+    socket => {
+      attempts.webSockets.push(socket.url())
+      socket.close()
+    },
+  )
+  return attempts
+}
+
+function securityHeaders(headers: Record<string, string>) {
+  expect(headers['x-frame-options']).toBe('DENY')
+  expect(headers['x-content-type-options']).toBe('nosniff')
+  expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
+  expect(headers['permissions-policy']).toContain('camera=()')
+  expect(headers['permissions-policy']).toContain('microphone=()')
+  expect(headers['permissions-policy']).toContain('geolocation=()')
+}
+
+async function expectNoDocumentOverflow(page: Page, surface: string) {
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))
+  expect(
+    dimensions.scrollWidth,
+    `${surface} introduced document-level horizontal overflow`,
+  ).toBeLessThanOrEqual(dimensions.clientWidth + 1)
+}
+
+async function expectVisibleFocus(page: Page, locator: Locator, surface: string) {
+  await locator.focus()
+  // Return to the target through keyboard navigation so :focus-visible (not
+  // merely :focus after a pointer click) is the state under test. Traverse
+  // backwards first: the content mounted by activating a tab can add the next
+  // focusable element asynchronously, while the preceding focus order is
+  // already stable.
+  await locator.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(locator, `${surface} focus target`).toBeFocused()
+  const focusIndicator = await locator.evaluate(element => {
+    const style = getComputedStyle(element)
+    return {
+      boxShadow: style.boxShadow,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+    }
+  })
+  expect(
+    (focusIndicator.outlineStyle !== 'none' &&
+      focusIndicator.outlineWidth !== '0px') ||
+      focusIndicator.boxShadow !== 'none',
+    `${surface} must expose a visible keyboard focus indicator`,
+  ).toBe(true)
+}
+
+async function expectAxeClean(page: Page, surface: string) {
+  const axe = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()
+  const severe = axe.violations.filter(
+    violation =>
+      violation.id !== 'color-contrast' &&
+      (violation.impact === 'serious' || violation.impact === 'critical'),
+  )
+  expect(
+    severe.map(violation => ({
+      id: violation.id,
+      impact: violation.impact,
+      targets: violation.nodes.map(node => node.target),
+    })),
+    `${surface} has serious or critical accessibility violations`,
+  ).toEqual([])
+
+  const contrastNodes =
+    axe.violations.find(violation => violation.id === 'color-contrast')?.nodes ??
+    []
+  expect(
+    contrastNodes.map(node => ({
+      target: node.target,
+      html: node.html,
+      failureSummary: node.failureSummary,
+    })),
+    `${surface} has color-contrast violations`,
+  ).toEqual([])
+}
+
+async function expectSurface(page: Page, surface: string) {
+  await expectNoDocumentOverflow(page, surface)
+  await expectAxeClean(page, surface)
+}
+
+async function exerciseCreateWizard(page: Page, viewport: string) {
+  const flavor = page.getByLabel('Project flavor')
+  const stepper = page.getByRole('navigation', { name: 'Create steps' })
+
+  await expect(page.locator('[data-create-ready="true"]')).toBeVisible()
+  await expect(stepper.getByRole('button')).toHaveCount(4)
+  // A state transition is a deterministic hydration handshake; changing the
+  // select before React attaches would only mutate the temporary server DOM.
+  await page.getByRole('button', { name: 'Next →' }).click()
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'How should it appear?' }),
+  ).toBeVisible()
+  await page.getByRole('button', { name: '← Back' }).click()
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'What are you launching?' }),
+  ).toBeVisible()
+  await flavor.selectOption('project')
+  await expect(stepper.getByRole('button')).toHaveCount(5)
+  await expect(page.getByText('You set the rules', { exact: false })).toBeVisible()
+  await flavor.selectOption('revnet')
+  await expect(stepper.getByRole('button')).toHaveCount(5)
+  await expect(page.getByText('Fixed rules that run forever', { exact: false })).toBeVisible()
+
+  const steps = [
+    { index: 0, heading: 'What are you launching?', label: 'Flavor' },
+    { index: 1, heading: 'How should it appear?', label: 'Look & Feel' },
+    { index: 2, heading: 'How should it work?', label: 'Stages' },
+    { index: 3, heading: 'Stock your shop', label: 'Shop' },
+    { index: 4, heading: 'Review & launch', label: 'Launch' },
+  ] as const
+
+  for (const step of steps) {
+    const button = stepper.getByRole('button').nth(step.index)
+    await button.click()
+    await expect(button).toHaveAttribute('aria-current', 'step')
+    await expect(
+      page.getByRole('heading', { level: 2, name: step.heading }),
+    ).toBeVisible()
+    await expectVisibleFocus(page, button, `${viewport} create ${step.label}`)
+    await expectSurface(page, `${viewport} create ${step.label}`)
+  }
+
+  await expect(page.getByText('Your connected wallet', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign in to launch' })).toBeVisible()
+}
+
+async function exerciseProjectSurfaces(
+  page: Page,
+  viewport: (typeof viewports)[number],
+) {
+  const projectTabs = page.getByRole('tablist', { name: 'Project sections' })
+  const activeTab = viewport.width <= 600 ? 'Activity' : 'Overview'
+  await expect(projectTabs).toBeVisible()
+  await expect(
+    projectTabs.getByRole('tab', { name: activeTab, exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+
+  const payCard = page.locator('#project-pay-card')
+  await expect(payCard.getByLabel('Amount')).toBeVisible()
+  // USDC only appears after the ABI-correct accounting-context and ERC-20
+  // reads resolve; the unhydrated fallback says ETH.
+  await expect(payCard.getByText('USDC', { exact: true })).toBeVisible()
+  await expect(
+    payCard.getByText("Couldn't verify this project's accepted tokens"),
+  ).toHaveCount(0)
+  await expect(
+    payCard.getByText("This project doesn't list the direct payment terminal"),
+  ).toHaveCount(0)
+
+  const holdersStat = page.locator('dt', { hasText: 'Holders' }).locator('..')
+  await expect(holdersStat.locator('dd')).toHaveText('2')
+
+  if (viewport.width <= 600) {
+    const activity = projectTabs.getByRole('tab', {
+      name: 'Activity',
+      exact: true,
+    })
+    await activity.click()
+    await expect(activity).toHaveAttribute('aria-selected', 'true')
+    await expectVisibleFocus(page, activity, `${viewport.label} project Activity`)
+  } else {
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Activity' }),
+    ).toBeVisible()
+  }
+  await expectSurface(page, `${viewport.label} project Activity`)
+
+  const tabs = [
+    {
+      label: 'Overview',
+      ready: () => page.getByText('Details', { exact: true }),
+    },
+    {
+      label: 'Terms',
+      ready: () => page.getByText('Token issuance', { exact: true }),
+    },
+    {
+      label: 'Owners',
+      ready: () => page.getByText('Sign in to see your position.', { exact: true }),
+    },
+    {
+      label: 'Shop',
+      ready: () => page.getByText('No store yet.', { exact: false }),
+    },
+    {
+      label: 'Extras',
+      ready: () => page.getByRole('heading', { level: 2, name: 'Payer address' }),
+    },
+    {
+      label: 'Operator',
+      ready: () => page.getByText('Everyday owner/operator changes.', { exact: false }),
+    },
+  ] as const
+
+  for (const tab of tabs) {
+    const button = projectTabs.getByRole('tab', {
+      name: tab.label,
+      exact: true,
+    })
+    await button.click()
+    await expect(button).toHaveAttribute('aria-selected', 'true')
+    await expect(tab.ready()).toBeVisible()
+    await expectVisibleFocus(page, button, `${viewport.label} project ${tab.label}`)
+    await expectSurface(page, `${viewport.label} project ${tab.label}`)
+  }
+}
+
+for (const viewport of viewports) {
+  test.describe(viewport.label, () => {
+    test.use({ viewport: { width: viewport.width, height: viewport.height } })
+
+    for (const route of routes) {
+      test(`${route.path} keeps its production shape and safety invariants`, async ({
+        context,
+        page,
+      }, testInfo) => {
+        if ('project' in route || 'create' in route) {
+          testInfo.setTimeout(90_000)
+        }
+
+        const pageErrors: string[] = []
+        page.on('pageerror', error => pageErrors.push(error.message))
+        const externalTraffic = await blockExternalTraffic(context)
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+
+        const response = await page.goto(route.path, { waitUntil: 'domcontentloaded' })
+        expect(response?.status()).toBe(200)
+        securityHeaders(response?.headers() ?? {})
+
+        await page.evaluate(() => document.fonts.ready)
+        await expect(page.locator('main:visible')).toHaveCount(1)
+        await expect(
+          page.getByRole('heading', {
+            level: 1,
+            name: new RegExp(route.heading, 'i'),
+          }),
+        ).toBeVisible()
+
+        if ('project' in route) {
+          await exerciseProjectSurfaces(page, viewport)
+        } else if ('create' in route) {
+          await exerciseCreateWizard(page, viewport.label)
+        } else {
+          const fixtureHeading = page.getByRole('heading', {
+            level: 3,
+            name: 'Browser Fixture Project',
+          })
+          // The production route uses stale-while-revalidate. A build made
+          // before the fixture starts can serve one empty cached response;
+          // reload until the local revalidation has populated it.
+          await expect(async () => {
+            if (!(await fixtureHeading.isVisible())) {
+              await page.reload({ waitUntil: 'domcontentloaded' })
+            }
+            await expect(fixtureHeading).toBeVisible()
+          }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] })
+          await expect(
+            fixtureHeading,
+          ).toBeVisible()
+          await expect(
+            page.getByRole('heading', {
+              level: 3,
+              name: 'Legacy Browser Fixture',
+            }),
+          ).toBeVisible()
+          await expect(
+            page.getByRole('link', { name: 'Open Browser Fixture Project' }),
+          ).toBeVisible()
+          await expect(
+            page.getByText('5 token credits', { exact: false }),
+          ).toBeVisible()
+          await page.keyboard.press('Tab')
+          await expectVisibleFocus(
+            page,
+            page.locator(':focus'),
+            `${viewport.label} home`,
+          )
+          await expectSurface(page, `${viewport.label} home`)
+        }
+
+        await page.waitForTimeout(500)
+        expect(pageErrors).toEqual([])
+        expect(externalTraffic).toEqual({ http: [], webSockets: [] })
+      })
+    }
+  })
+}

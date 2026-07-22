@@ -10,7 +10,6 @@ import {
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
   jbDirectoryAbi,
-  jbMultiTerminalAbi,
   jbPricesAbi,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
@@ -53,6 +52,10 @@ import {
   tierMediaImageUrl,
 } from '@/lib/tier-metadata'
 import { tokenSymbol } from '@/lib/token-symbol'
+import {
+  buildAddToBalanceRequest,
+  buildErc20ApproveRequest,
+} from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 type PayContext = {
@@ -349,6 +352,8 @@ export function PayPanel({
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const projectTokenLabel = projectToken?.symbol || 'tokens'
 
+  // The empty fallback is only used before the queried pay surface exists.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const contexts = surface?.contexts ?? []
   const context = contexts[Math.min(tokenIndex, contexts.length - 1)] as
     | PayContext
@@ -865,13 +870,14 @@ export function PayPanel({
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return
     if (needsApproval) {
-      void approveTx.send({
-        chainId,
-        address: context.token,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [terminalAddress, amountRaw],
-      })
+      void approveTx.send(
+        buildErc20ApproveRequest({
+          chainId,
+          token: context.token,
+          spender: terminalAddress,
+          amount: amountRaw,
+        }),
+      )
       return
     }
     if (mode === 'pay') {
@@ -895,21 +901,16 @@ export function PayPanel({
         value: request.value,
       })
     } else {
-      void tx.send({
-        chainId,
-        address: terminalAddress,
-        abi: jbMultiTerminalAbi,
-        functionName: 'addToBalanceOf',
-        args: [
-          BigInt(projectId),
-          context.token,
-          amountRaw,
-          false,
-          memo.trim(),
-          '0x',
-        ],
-        value: isNative ? amountRaw : undefined,
-      })
+      void tx.send(
+        buildAddToBalanceRequest({
+          chainId,
+          terminal: terminalAddress,
+          projectId: BigInt(projectId),
+          token: context.token,
+          amount: amountRaw,
+          memo: memo.trim(),
+        }),
+      )
     }
   }
 
