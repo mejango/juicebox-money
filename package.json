@@ -8,7 +8,7 @@
     "build": "next build --webpack",
     "start": "node scripts/start-standalone.mjs",
     "lint": "eslint . --max-warnings=0 --no-cache",
-    "ts:check": "tsc --noEmit",
+    "ts:check": "next typegen && tsc --noEmit",
     "deps:check": "npm ls --all --omit=dev",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "env:check:build": "node scripts/check-deployment-env.mjs build",
