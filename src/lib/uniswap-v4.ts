@@ -7,6 +7,7 @@
  * Sources cited inline are line numbers in website/src/discover.js.
  */
 
+import { uniswapV4PriceFromSqrtPriceX96 } from '@bananapus/nana-sdk-core/v6'
 import {
   encodeAbiParameters,
   keccak256,
@@ -105,13 +106,7 @@ export function poolPriceFromSqrt(
   pairIsC0: boolean,
   pairDecimals: number,
 ): number | null {
-  if (sqrtP <= 0n) return null
-  const sp = Number(sqrtP) / Math.pow(2, 96)
-  const rawP = sp * sp
-  const rawRatio = pairIsC0 ? (rawP > 0 ? 1 / rawP : null) : rawP
-  if (rawRatio == null) return null
-  const human = rawRatio * Math.pow(10, 18 - pairDecimals)
-  return Number.isFinite(human) && human > 0 ? human : null
+  return uniswapV4PriceFromSqrtPriceX96(sqrtP, pairIsC0, pairDecimals)
 }
 
 /** sqrtPriceX96 at a tick — EXACT port of website lpSqrtAtTick (~line 20682),
