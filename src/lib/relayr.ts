@@ -13,6 +13,7 @@ import {
   isAddress,
   keccak256,
   stringToHex,
+  type Abi,
   type Address,
   type Hex,
 } from 'viem'
@@ -43,6 +44,10 @@ export type RelayrCall = {
   value?: bigint
   gas?: bigint
   label?: string
+  abi?: Abi
+  functionName?: string
+  args?: readonly unknown[]
+  contractName?: string
 }
 
 /** Stable storage key for a particular set of authority calls. */
@@ -96,6 +101,8 @@ export type RelayrPendingSession = {
   bundleUuid: string
   paymentHash: Hex | null
   paymentChainId: number | null
+  paymentStatus: 'submitted' | 'confirmed'
+  chainIds: number[]
   expectedCount: number
   records: RelayrTransactionRecord[]
   itemCount: number
@@ -119,12 +126,29 @@ export class RelayrExecutionError extends Error {
   }
 }
 
-function relayrStateIsSuccess(state?: string): boolean {
+/**
+ * The Relayr payment has a real transaction hash, but its receipt could not be
+ * read. This is an unknown submitted outcome, never a failed/no-op outcome.
+ */
+export class RelayrPaymentSubmittedError extends Error {
+  readonly name = 'RelayrPaymentSubmittedError'
+
+  constructor(
+    readonly hash: Hex,
+    readonly chainId: number,
+  ) {
+    super(
+      `Relayr payment ${hash} was submitted on chain ${chainId}, but confirmation is not available yet. Do not pay again; resume the saved bundle instead.`,
+    )
+  }
+}
+
+export function relayrStateIsSuccess(state?: string): boolean {
   const normalized = state?.trim().toLowerCase()
   return normalized === 'success' || normalized === 'completed'
 }
 
-function relayrStateIsFailed(state?: string): boolean {
+export function relayrStateIsFailed(state?: string): boolean {
   return state?.trim().toLowerCase() === 'failed'
 }
 
@@ -150,7 +174,10 @@ export function relayrProgress(
 
 /** A timeout means Relayr may still execute a paid bundle. Do not submit it again blindly. */
 export function relayrErrorIsUncertain(error: unknown): boolean {
-  return error instanceof RelayrExecutionError && error.code === 'RELAYR_TIMEOUT'
+  return (
+    error instanceof RelayrPaymentSubmittedError ||
+    (error instanceof RelayrExecutionError && error.code === 'RELAYR_TIMEOUT')
+  )
 }
 
 class RelayrHttpTimeoutError extends Error {
@@ -199,6 +226,10 @@ export function saveRelayrPendingSession(
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
     paymentChainId: session.paymentChainId,
+    paymentStatus: session.paymentStatus,
+    chainIds: session.chainIds.filter(
+      chainId => Number.isSafeInteger(chainId) && chainId > 0,
+    ),
     expectedCount: session.expectedCount,
     records: session.records.map(relayrRecordSnapshot),
     itemCount: session.itemCount,
@@ -247,6 +278,18 @@ export function loadRelayrPendingSession(
           : null,
       paymentChainId:
         typeof value.paymentChainId === 'number' ? value.paymentChainId : null,
+      paymentStatus:
+        value.paymentStatus === 'submitted' ? 'submitted' : 'confirmed',
+      chainIds: Array.isArray(value.chainIds)
+        ? value.chainIds.filter(
+            (chainId): chainId is number =>
+              typeof chainId === 'number' &&
+              Number.isSafeInteger(chainId) &&
+              chainId > 0,
+          )
+        : value.records
+            .map(record => record.chain)
+            .filter((chainId): chainId is number => typeof chainId === 'number'),
       expectedCount: value.expectedCount,
       records: value.records,
       itemCount: value.itemCount,
@@ -271,7 +314,26 @@ export type RelayrProgress =
   | { phase: 'signing'; current: number; total: number; chainId: number }
   | { phase: 'quoting' }
   | { phase: 'paying'; payment: RelayrPayment }
-  | { phase: 'executing'; done: number; total: number }
+  | {
+      phase: 'payment-submitted'
+      payment: RelayrPayment
+      paymentHash: Hex
+      bundleUuid: string
+    }
+  | {
+      phase: 'payment-confirmed'
+      payment: RelayrPayment
+      paymentHash: Hex
+      bundleUuid: string
+    }
+  | {
+      phase: 'executing'
+      done: number
+      total: number
+      records: RelayrTransactionRecord[]
+      bundleUuid: string
+      paymentHash: Hex | null
+    }
 
 const FORWARD_REQUEST_TYPES = {
   ForwardRequest: [
@@ -358,6 +420,10 @@ async function buildForwardedTx(
         value,
         data: call.data,
         label: call.label ?? 'Relayed Juicebox transaction',
+        abi: call.abi,
+        functionName: call.functionName,
+        args: call.args,
+        contractName: call.contractName,
       },
     ],
   })
@@ -447,6 +513,7 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
 export async function relayrPay(
   payment: RelayrPayment,
   expectedAccount: Address,
+  onSubmitted?: (hash: Hex) => void,
 ): Promise<Hex> {
   const chainId = Number(payment.chain) as JBChainId
   if (!SUPPORTED_CHAINS.some(chain => chain.id === chainId)) {
@@ -506,7 +573,13 @@ export async function relayrPay(
     value,
     data: payment.calldata,
   })
-  const receipt = await client.waitForTransactionReceipt({ hash })
+  onSubmitted?.(hash)
+  let receipt
+  try {
+    receipt = await client.waitForTransactionReceipt({ hash })
+  } catch {
+    throw new RelayrPaymentSubmittedError(hash, chainId)
+  }
   if (receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.')
   return hash
 }
@@ -567,7 +640,7 @@ export async function relayrPoll(
   }
 }
 
-function relayrDestinationHash(
+export function relayrDestinationHash(
   record: RelayrTransactionRecord,
 ): Hex | null {
   return record.status?.data?.hash ?? record.status?.data?.transaction?.hash ?? null
@@ -626,6 +699,9 @@ export async function runRelayrCalls({
         phase: 'executing',
         done: progress.confirmed,
         total: progress.total,
+        records,
+        bundleUuid: saved.bundleUuid,
+        paymentHash: saved.paymentHash,
       })
     }
     reportProgress(saved.records)
@@ -697,19 +773,49 @@ export async function runRelayrCalls({
   const activeChain = paymentChainId ?? getAccount(wagmiConfig).chainId
   const payment = payments.find(option => option.chain === activeChain) ?? payments[0]
   onProgress?.({ phase: 'paying', payment })
-  const paymentHash = await relayrPay(payment, account)
-  const session = pendingScope
-    ? saveRelayrPendingSession(pendingScope, {
+  let session: RelayrPendingSession | null = null
+  const paymentHash = await relayrPay(payment, account, hash => {
+    if (pendingScope) {
+      session = saveRelayrPendingSession(pendingScope, {
         bundleUuid: quote.bundle_uuid,
-        paymentHash,
+        paymentHash: hash,
         paymentChainId: payment.chain,
+        paymentStatus: 'submitted',
+        chainIds: calls.map(call => call.chainId),
         expectedCount: calls.length,
         records: quote.transactions ?? [],
         itemCount: calls.length,
         account,
         createdAt: Date.now(),
       })
-    : null
+    }
+    onProgress?.({
+      phase: 'payment-submitted',
+      payment,
+      paymentHash: hash,
+      bundleUuid: quote.bundle_uuid,
+    })
+  })
+  if (pendingScope) {
+    session = saveRelayrPendingSession(pendingScope, {
+      bundleUuid: quote.bundle_uuid,
+      paymentHash,
+      paymentChainId: payment.chain,
+      paymentStatus: 'confirmed',
+      chainIds: calls.map(call => call.chainId),
+      expectedCount: calls.length,
+      records: quote.transactions ?? [],
+      itemCount: calls.length,
+      account,
+      createdAt: Date.now(),
+    })
+  }
+  onProgress?.({
+    phase: 'payment-confirmed',
+    payment,
+    paymentHash,
+    bundleUuid: quote.bundle_uuid,
+  })
 
   try {
     const records = await relayrPoll(quote.bundle_uuid, next => {
@@ -721,6 +827,9 @@ export async function runRelayrCalls({
         phase: 'executing',
         done: progress.confirmed,
         total: progress.total,
+        records: next,
+        bundleUuid: quote.bundle_uuid,
+        paymentHash,
       })
     })
     if (pendingScope) clearRelayrPendingSession(pendingScope)

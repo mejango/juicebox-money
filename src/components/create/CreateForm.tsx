@@ -18,10 +18,14 @@ import {
   type PublicClient,
 } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
-import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
+import {
+  getAccount,
+  getPublicClient,
+  waitForTransactionReceipt,
+} from 'wagmi/actions'
 import { useWallet } from '@/hooks/useWallet'
 import { friendlyError } from '@/lib/errors'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import { randomSalt } from '@/lib/manage'
 import { resolvedAddress } from '@/lib/ens'
@@ -122,7 +126,7 @@ const makeImageHandler =
   }
 
 type ChainStatus = {
-  phase: 'pending' | 'signing' | 'confirming' | 'done' | 'failed'
+  phase: 'pending' | 'signing' | 'confirming' | 'uncertain' | 'done' | 'failed'
   txHash?: `0x${string}`
   projectId?: number
   error?: string
@@ -1017,51 +1021,111 @@ export function CreateForm() {
   const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase('launching')
     for (const chainId of selected) {
-      if (statusesRef.current[chainId]?.phase === 'done') continue
-      updateStatus(chainId, { phase: 'signing', error: undefined })
+      const priorStatus = statusesRef.current[chainId]
+      if (priorStatus?.phase === 'done') continue
+      let hash =
+        priorStatus?.phase === 'confirming' || priorStatus?.phase === 'uncertain'
+          ? priorStatus.txHash
+          : undefined
+      let provenReverted = false
       try {
         const client = getPublicClient(config, {
           chainId: chainId as SupportedChainId,
         }) as PublicClient
-        // Fees are dynamic and must match msg.value EXACTLY — re-read right
-        // before sending, never reuse across chains.
-        const creationFee = await getProjectCreationFee(
-          client,
-          chainId as JBChainId,
-        )
-        const request = buildLaunchRequest({
-          chainId: chainId as JBChainId,
-          owner: pinned.plans[chainId].owner ?? address!,
-          projectUri: pinned.projectUri,
-          creationFee,
-          plan: pinned.plans[chainId],
-          salt: pinned.salt,
-        })
-        await requireContractTransactionReview(
-          { ...request, account: address },
-          {
-            title: `Review launch on ${chainName(chainId)}`,
-            label: 'Launch project',
-          },
-        )
-        await switchChainAsync({ chainId: chainId as SupportedChainId })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hash = await writeContractAsync(request as any)
-        updateStatus(chainId, { phase: 'confirming', txHash: hash })
+        if (hash) {
+          updateStatus(chainId, { phase: 'confirming', error: undefined })
+        } else {
+          updateStatus(chainId, { phase: 'signing', error: undefined })
+          // Fees are dynamic and must match msg.value EXACTLY — re-read right
+          // before sending, never reuse across chains.
+          const creationFee = await getProjectCreationFee(
+            client,
+            chainId as JBChainId,
+          )
+          const request = buildLaunchRequest({
+            chainId: chainId as JBChainId,
+            owner: pinned.plans[chainId].owner ?? address!,
+            projectUri: pinned.projectUri,
+            creationFee,
+            plan: pinned.plans[chainId],
+            salt: pinned.salt,
+          })
+          await requireContractTransactionReview(
+            { ...request, account: address },
+            {
+              title: `Review launch on ${chainName(chainId)}`,
+              label: 'Launch project',
+            },
+          )
+          await switchChainAsync({ chainId: chainId as SupportedChainId })
+          const liveAccount = getAccount(config).address
+          if (
+            !address ||
+            !liveAccount ||
+            liveAccount.toLowerCase() !== address.toLowerCase()
+          ) {
+            throw new Error('Connected account changed. Review the launch again.')
+          }
+          // `buildLaunchRequest` is a union of deployer ABIs; viem cannot infer
+          // its tuple branch after the runtime chain selection, but the exact
+          // reviewed request is what is simulated here.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { request: simulated } = await client.simulateContract({
+            ...request,
+            account: address,
+          } as any)
+          const accountBeforeSend = getAccount(config).address
+          if (
+            !accountBeforeSend ||
+            accountBeforeSend.toLowerCase() !== address.toLowerCase()
+          ) {
+            throw new Error('Connected account changed. Review the launch again.')
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          hash = await writeContractAsync(simulated as any)
+          updateStatus(chainId, { phase: 'confirming', txHash: hash })
+        }
         const receipt = await waitForTransactionReceipt(config, {
-          hash,
+          hash: hash!,
           chainId: chainId as SupportedChainId,
         })
-        const projectId =
-          receipt.status === 'success'
-            ? projectIdFromReceipt(receipt, chainId as JBChainId)
-            : null
-        if (!projectId) throw new Error('Transaction failed on this chain.')
+        if (receipt.status !== 'success') {
+          provenReverted = true
+          updateStatus(chainId, {
+            phase: 'failed',
+            txHash: hash,
+            error: `Transaction ${hash} reverted on ${chainName(chainId)}.`,
+          })
+          throw new Error(`Transaction failed on ${chainName(chainId)}.`)
+        }
+        const projectId = projectIdFromReceipt(
+          receipt,
+          chainId as JBChainId,
+        )
+        if (!projectId) {
+          updateStatus(chainId, {
+            phase: 'uncertain',
+            txHash: hash,
+            error: `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
+          })
+          setPhase('failed')
+          return
+        }
         updateStatus(chainId, { phase: 'done', projectId })
       } catch (e) {
-        updateStatus(chainId, { phase: 'failed', error: friendlyError(e) })
+        updateStatus(chainId, hash && !provenReverted
+          ? {
+              phase: 'uncertain',
+              txHash: hash,
+              error: `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
+            }
+          : {
+              phase: 'failed',
+              txHash: provenReverted ? hash : undefined,
+              error: friendlyError(e),
+            })
         setPhase('failed')
-        return // Stop here — retry resumes from this chain.
+        return // Stop here — retry checks a submitted hash before sending.
       }
     }
     if (selected.every(id => statusesRef.current[id]?.phase === 'done')) {
@@ -2592,6 +2656,9 @@ export function CreateForm() {
           <ul className="mt-5 space-y-2" aria-live="polite">
             {selected.map(chainId => {
               const s = statuses[chainId] ?? { phase: 'pending' as const }
+              const txUrl = s.txHash
+                ? etherscanTxUrl(chainId, s.txHash)
+                : null
               const label =
                 s.phase === 'pending'
                   ? 'Waiting'
@@ -2599,6 +2666,8 @@ export function CreateForm() {
                     ? 'Confirm in your wallet…'
                     : s.phase === 'confirming'
                       ? 'Confirming onchain…'
+                      : s.phase === 'uncertain'
+                        ? (s.error ?? 'Submitted; confirmation is unavailable. Do not submit again.')
                       : s.phase === 'done'
                         ? `Launched — Project #${s.projectId}`
                         : (s.error ?? 'Failed')
@@ -2611,9 +2680,9 @@ export function CreateForm() {
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-melon-400">
                       <CheckIcon className="h-3.5 w-3.5 text-ink" />
                     </span>
-                  ) : s.phase === 'failed' ? (
+                  ) : s.phase === 'failed' || s.phase === 'uncertain' ? (
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-red-500 text-xs font-bold text-red-600">
-                      !
+                      {s.phase === 'uncertain' ? '?' : '!'}
                     </span>
                   ) : s.phase === 'pending' ? (
                     <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
@@ -2625,17 +2694,28 @@ export function CreateForm() {
                       {chainName(chainId)}
                     </p>
                     <p
-                      className={`truncate text-xs ${s.phase === 'failed' ? 'text-red-600' : 'text-smoke-700'}`}
+                      className={`text-xs ${s.phase === 'failed' || s.phase === 'uncertain' ? 'text-red-600' : 'text-smoke-700'}`}
                     >
                       {label}
                     </p>
+                    {txUrl ? (
+                      <a
+                        href={txUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 block truncate font-mono text-[10px] text-bluebs-600 underline"
+                      >
+                        View {s.txHash}
+                      </a>
+                    ) : null}
                   </div>
-                  {s.phase === 'failed' && phase === 'failed' ? (
+                  {(s.phase === 'failed' || s.phase === 'uncertain') &&
+                  phase === 'failed' ? (
                     <button
                       onClick={retry}
                       className="btn-secondary shrink-0 px-4 py-1.5 text-xs"
                     >
-                      Retry
+                      {s.phase === 'uncertain' ? 'Check again' : 'Retry'}
                     </button>
                   ) : null}
                 </li>

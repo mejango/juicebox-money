@@ -12,7 +12,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Address, type PublicClient } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
-import { getPublicClient, waitForTransactionReceipt } from 'wagmi/actions'
+import {
+  getAccount,
+  getPublicClient,
+  waitForTransactionReceipt,
+} from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import {
@@ -328,6 +332,13 @@ export function AddShopItemsModal({
             },
           )
           await switchChainAsync({ chainId })
+          const liveAccount = getAccount(config).address
+          if (
+            !liveAccount ||
+            liveAccount.toLowerCase() !== address.toLowerCase()
+          ) {
+            throw new Error('Connected account changed. Review the shop items again.')
+          }
           const { request } = await client.simulateContract({
             address: target.hook,
             abi: jb721TiersHookAbi,
@@ -335,6 +346,13 @@ export function AddShopItemsModal({
             args: [tiers, []],
             account: address,
           })
+          const accountBeforeSend = getAccount(config).address
+          if (
+            !accountBeforeSend ||
+            accountBeforeSend.toLowerCase() !== address.toLowerCase()
+          ) {
+            throw new Error('Connected account changed. Review the shop items again.')
+          }
           // wagmi's generated union cannot retain the tuple inference after a
           // runtime chain switch, but this is the exact simulated request.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

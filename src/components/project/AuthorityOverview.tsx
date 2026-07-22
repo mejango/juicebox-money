@@ -455,6 +455,10 @@ function TransferAuthorityFlow({
               functionName: 'setOperatorOf',
               args: [BigInt(row.projectId), to],
             }),
+            abi: revOwnerAbi,
+            functionName: 'setOperatorOf',
+            args: [BigInt(row.projectId), to],
+            contractName: 'REVOwner',
             label: 'Transfer operator',
           }
         }
@@ -470,6 +474,10 @@ function TransferAuthorityFlow({
             functionName: 'transferFrom',
             args: [authority, to, BigInt(row.projectId)],
           }),
+          abi: jbProjectsAbi,
+          functionName: 'transferFrom',
+          args: [authority, to, BigInt(row.projectId)],
+          contractName: 'JBProjects',
           label: 'Transfer ownership',
         }
       })
@@ -781,6 +789,17 @@ function PermissionEditor({
               },
             ],
           }),
+          abi: jbPermissionsAbi,
+          functionName: 'setPermissionsFor',
+          args: [
+            authority,
+            {
+              operator,
+              projectId: BigInt(deployment.projectId),
+              permissionIds: finalIds,
+            },
+          ],
+          contractName: 'JBPermissions',
           gas: 200_000n,
           label: grant ? 'Edit permissions' : 'Add operator',
         })

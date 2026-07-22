@@ -1,7 +1,7 @@
 'use client'
 
 import { getAccount, getPublicClient } from '@wagmi/core'
-import type { Address, Hex, PublicClient } from 'viem'
+import type { Abi, Address, Hex, PublicClient } from 'viem'
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -16,6 +16,7 @@ import {
   runRelayrCalls,
   type RelayrCall,
   type RelayrProgress,
+  type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import { fetchSafeInfo, runSafeCalls, type SafeCallResult } from '@/lib/safe'
 
@@ -27,6 +28,10 @@ export type AuthorityCall = {
   value?: bigint
   gas?: bigint
   label?: string
+  abi?: Abi
+  functionName?: string
+  args?: readonly unknown[]
+  contractName?: string
 }
 
 export type AuthorityProgress = {
@@ -36,6 +41,11 @@ export type AuthorityProgress = {
 
 export type AuthorityResult = {
   relayrGroups: number
+  relayrResults: Array<{
+    bundleUuid: string
+    paymentHash: Hex | null
+    records: RelayrTransactionRecord[]
+  }>
   safeResults: SafeCallResult[]
 }
 
@@ -89,13 +99,18 @@ export function safeOutcomeMessage(
 ): string {
   const queued = result.safeResults.filter(row => row.status === 'queued').length
   const waiting = result.safeResults.filter(row => row.status === 'waiting').length
+  const submitted = result.safeResults.filter(
+    row => row.status === 'submitted',
+  ).length
   const executed = options.showExecuted
     ? result.safeResults.filter(row => row.status === 'executed').length
     : 0
-  if (queued || waiting) {
+  if (queued || waiting || submitted) {
     return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
       waiting ? ` · ${waiting} awaiting more approvals` : ''
-    }${executed ? ` · ${executed} executed` : ''}. ${
+    }${submitted ? ` · ${submitted} submitted and awaiting confirmation` : ''}${
+      executed ? ` · ${executed} executed` : ''
+    }. ${
       options.instruction ?? 'Complete it in Pending multisig transactions.'
     }`
   }
@@ -198,6 +213,10 @@ export async function runAuthorityCalls({
       value: call.value,
       gas: call.gas,
       label: call.label,
+      abi: call.abi,
+      functionName: call.functionName,
+      args: call.args,
+      contractName: call.contractName,
     }))
     reviewedGroups.push({
       calls: group,
@@ -208,18 +227,36 @@ export async function runAuthorityCalls({
   }
 
   const reportRelayrProgress = (progress: RelayrProgress) => {
-    const message =
-      progress.phase === 'signing'
-        ? `Sign ${progress.current}/${progress.total} chain requests…`
-        : progress.phase === 'quoting'
-          ? 'Requesting a Relayr quote…'
-          : progress.phase === 'paying'
-            ? 'Confirm one Relayr payment…'
-            : `Relaying… ${progress.done}/${progress.total} confirmed`
+    let message: string
+    if (progress.phase === 'signing') {
+      message = `Review and sign ${progress.current}/${progress.total} chain requests…`
+    } else if (progress.phase === 'quoting') {
+      message = 'Requesting a Relayr quote…'
+    } else if (progress.phase === 'paying') {
+      message = 'Review and confirm one Relayr payment…'
+    } else if (progress.phase === 'payment-submitted') {
+      message = `Relayr payment submitted (${progress.paymentHash.slice(0, 10)}…) · bundle ${progress.bundleUuid}. Do not pay again.`
+    } else if (progress.phase === 'payment-confirmed') {
+      message = `Relayr payment confirmed · bundle ${progress.bundleUuid}. Waiting for destination chains…`
+    } else {
+      const states = progress.records.map((record, index) => {
+        const chainId = record.chain
+        const chain =
+          typeof chainId === 'number'
+            ? JB_CHAINS[chainId as JBChainId]?.name ?? `Chain ${chainId}`
+            : `Call ${index + 1}`
+        const state = record.status?.state || 'Pending'
+        return `${chain}: ${state}`
+      })
+      message = `Relayr bundle ${progress.bundleUuid} · ${progress.done}/${progress.total} confirmed${
+        states.length ? ` · ${states.join(' · ')}` : ''
+      }`
+    }
     onProgress?.({ kind: 'relayr', message })
   }
 
   let relayrGroups = 0
+  const relayrResults: AuthorityResult['relayrResults'] = []
   const safeResults: SafeCallResult[] = []
 
   // Recover an already-paid bundle before simulating current chain state. A
@@ -235,11 +272,16 @@ export async function runAuthorityCalls({
     ) {
       continue
     }
-    await runRelayrCalls({
+    const recovered = await runRelayrCalls({
       calls: reviewed.relayrCalls,
       account: connected,
       pendingScope: reviewed.pendingScope,
       onProgress: reportRelayrProgress,
+    })
+    relayrResults.push({
+      bundleUuid: recovered.quote.bundle_uuid,
+      paymentHash: recovered.paymentHash,
+      records: recovered.records,
     })
     reviewed.recovered = true
     relayrGroups += 1
@@ -304,6 +346,10 @@ export async function runAuthorityCalls({
             data: call.data,
             value: call.value,
             label: call.label,
+            abi: call.abi,
+            functionName: call.functionName,
+            args: call.args,
+            contractName: call.contractName,
           })),
           onProgress: message => onProgress?.({ kind: 'safe', message }),
         })),
@@ -316,14 +362,19 @@ export async function runAuthorityCalls({
     if (!relayrCalls || !pendingScope) {
       throw new Error('Relayr authority review is incomplete.')
     }
-    await runRelayrCalls({
+    const relayrResult = await runRelayrCalls({
       calls: relayrCalls,
       account: connected,
       pendingScope,
       onProgress: reportRelayrProgress,
     })
+    relayrResults.push({
+      bundleUuid: relayrResult.quote.bundle_uuid,
+      paymentHash: relayrResult.paymentHash,
+      records: relayrResult.records,
+    })
     relayrGroups += 1
   }
 
-  return { relayrGroups, safeResults }
+  return { relayrGroups, relayrResults, safeResults }
 }

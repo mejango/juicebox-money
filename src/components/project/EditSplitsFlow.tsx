@@ -440,6 +440,10 @@ function EditSplitsModal({
         functionName: 'setSplitGroupsOf',
         args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
       }),
+      abi: jbControllerAbi,
+      functionName: 'setSplitGroupsOf',
+      args: [BigInt(projectId), rulesetId, [{ groupId, splits }]],
+      contractName: 'JBController',
       gas: 600_000n,
       label: `Edit ${title}`,
     }

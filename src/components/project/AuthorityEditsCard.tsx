@@ -559,6 +559,10 @@ function MetadataEditor({
             functionName: 'setUriOf',
             args: [BigInt(row.projectId), uri],
           }),
+          abi: jbControllerAbi,
+          functionName: 'setUriOf',
+          args: [BigInt(row.projectId), uri],
+          contractName: 'JBController',
           gas: 250_000n,
           label: 'Set project metadata',
         }
@@ -798,6 +802,12 @@ function TokenEditor({
                   functionName: 'deployERC20For',
                   args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
                 }),
+            abi: jbControllerAbi,
+            functionName: row.token ? 'setTokenMetadataOf' : 'deployERC20For',
+            args: row.token
+              ? [BigInt(row.projectId), name.trim(), symbol]
+              : [BigInt(row.projectId), name.trim(), symbol, zeroHash],
+            contractName: 'JBController',
             gas: row.token ? 200_000n : 500_000n,
             label: row.token ? 'Set token metadata' : 'Deploy ERC-20',
           }
