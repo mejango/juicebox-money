@@ -7,7 +7,7 @@ const release = readFileSync('.github/workflows/release-image.yml', 'utf8')
 
 const checks = [
   [
-    /^FROM node:22\.16\.0-bookworm-slim@sha256:[a-f0-9]{64} AS base$/m,
+    /^FROM node:22\.23\.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS base$/m,
     'the Node base image must be versioned and digest-pinned',
   ],
   [/output: 'standalone'/, 'Next must emit a standalone server'],
