@@ -17,6 +17,9 @@ updates:
         update-types:
           - version-update:semver-minor
           - version-update:semver-patch
+    # This is an npm alias supplied by @wagmi/connectors, not a registry name.
+    ignore:
+      - dependency-name: cbw-sdk
     groups:
       routine:
         applies-to: version-updates
