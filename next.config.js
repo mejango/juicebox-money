@@ -33,8 +33,12 @@ module.exports = phase => ({
     config.resolve.alias['@getpara/cosmos-wallet-connectors'] = false
     config.resolve.alias['@getpara/evm-wallet-connectors'] = false
     config.resolve.alias['@getpara/solana-wallet-connectors'] = false
-    // wagmi's connector barrel resolves optional vendor integrations before
-    // tree-shaking down to `injected`; none of these paths is used at runtime.
+    // Para's Wagmi bridge imports the connector barrel for `injected`. Wagmi 3
+    // deliberately makes the barrel's vendor SDKs optional, so resolve that
+    // import to core's public connector export instead of requiring unused
+    // Coinbase, WalletConnect, Safe, Tempo, and Porto peers.
+    config.resolve.alias['wagmi/connectors$'] = '@wagmi/core'
+    // Other optional integrations referenced by lazy Para modules are unused.
     config.resolve.alias['@x402/core'] = false
     config.resolve.alias['@x402/evm'] = false
     config.resolve.alias['@x402/svm'] = false

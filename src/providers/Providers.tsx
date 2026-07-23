@@ -10,14 +10,11 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { createConfig, http, WagmiProvider } from 'wagmi'
-import { injected } from 'wagmi/connectors'
+import { createConfig, http, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import {
-  hasParaSessionMarker,
-  markParaSession,
-  ParaAuthContext,
-} from './ParaAuthContext'
+import { ParaAuthContext } from './ParaAuthContext'
+import { lazyParaConnector } from './lazy-para-connector'
+import { verifyMarkedParaSession } from './para-session'
 import {
   arbitrum,
   arbitrumSepolia,
@@ -59,46 +56,23 @@ const transports = {
 }
 
 const ParaModalHost = lazy(() => import('./ParaModalHost'))
-let paraSetup: Promise<void> | undefined
 
 /**
  * The app's single wagmi config — the one source of truth for connections,
- * chain switching, and writes. Para's focused connector bridges embedded
- * wallets into wagmi after the user asks to sign in. EIP-6963 discovery plus a
- * generic injected fallback cover browser wallets without eager vendor SDKs.
+ * chain switching, and writes. Para has a stable, publicly configured lazy
+ * connector: its SDK is not imported until a marked session is restored or an
+ * auth attempt settles. EIP-6963 discovery plus a generic injected fallback
+ * cover browser wallets without eager vendor SDKs.
  */
 export const wagmiConfig = createConfig({
   chains: SUPPORTED_CHAINS,
   transports,
   connectors: IS_DETERMINISTIC_BROWSER
     ? []
-    : [injected({ shimDisconnect: true })],
+    : [injected({ shimDisconnect: true }), lazyParaConnector()],
   multiInjectedProviderDiscovery: !IS_DETERMINISTIC_BROWSER,
   ssr: true,
 })
-
-async function ensureParaConnector() {
-  if (wagmiConfig.connectors.some(connector => connector.id === 'para')) return
-  paraSetup ??= import('./para-config')
-    .then(({ createParaWagmiConnector }) => {
-      if (wagmiConfig.connectors.some(connector => connector.id === 'para')) {
-        return
-      }
-      const connector = wagmiConfig._internal.connectors.setup(
-        createParaWagmiConnector(transports),
-      )
-      wagmiConfig._internal.connectors.setState(current =>
-        current.some(candidate => candidate.id === 'para')
-          ? current
-          : [...current, connector],
-      )
-    })
-    .catch(error => {
-      paraSetup = undefined
-      throw error
-    })
-  return paraSetup
-}
 
 /**
  * Root providers: react-query + wagmi only. Both render children
@@ -128,41 +102,17 @@ export function Providers({ children }: PropsWithChildren) {
   const [paraSessionVersion, setParaSessionVersion] = useState(0)
 
   // Preserve embedded-wallet sessions without penalizing anonymous visitors:
-  // only a browser that previously completed Para auth loads its runtime on
-  // mount. Everyone else stays on the wallet-free initial path.
+  // only a browser that previously completed Para auth loads its runtime.
+  // Para's own session is authoritative; transient verification failures keep
+  // the marker intact so a later page load can recover.
   useEffect(() => {
-    if (
-      IS_DETERMINISTIC_BROWSER ||
-      !hasParaSessionMarker()
-    ) {
-      return
-    }
-    void ensureParaConnector()
-      .then(async () => {
-        if (wagmiConfig.state.current) return
-        const { getParaClient } = await import('./para-config')
-        if (!(await getParaClient().isFullyLoggedIn())) {
-          markParaSession(false)
-          return
-        }
-        const connector = wagmiConfig.connectors.find(
-          candidate => candidate.id === 'para',
-        )
-        if (!connector) return
-        const { connect } = await import('@wagmi/core')
-        await connect(wagmiConfig, { connector })
-      })
-      .catch(() => {})
+    if (!IS_DETERMINISTIC_BROWSER) void verifyMarkedParaSession()
   }, [])
 
   const requestSignIn = useCallback(() => {
     if (IS_DETERMINISTIC_BROWSER) return
-    void ensureParaConnector()
-      .then(() => {
-        setParaHostLoaded(true)
-        setParaRequestId(current => current + 1)
-      })
-      .catch(() => {})
+    setParaHostLoaded(true)
+    setParaRequestId(current => current + 1)
   }, [])
   const markParaSettled = useCallback(
     () => setParaSessionVersion(current => current + 1),
