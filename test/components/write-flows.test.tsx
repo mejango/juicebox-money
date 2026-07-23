@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   reset: vi.fn(),
   amountToAutoIssue: vi.fn(),
   buildAutoIssue: vi.fn(),
+  clientAvailable: true,
   publicClient: { readContract: vi.fn() },
   refetchBalance: vi.fn(),
 }))
@@ -20,7 +21,8 @@ vi.mock('next/link', () => ({
     createElement('a', { href, ...props }, children as never),
 }))
 vi.mock('wagmi', () => ({
-  usePublicClient: () => mocks.publicClient,
+  usePublicClient: () =>
+    mocks.clientAvailable ? mocks.publicClient : undefined,
   useReadContract: () => ({
     data: 5n * 10n ** 18n,
     refetch: mocks.refetchBalance,
@@ -131,6 +133,7 @@ function buttonWith(renderer: TestRenderer.ReactTestRenderer, text: string) {
 
 beforeEach(() => {
   mocks.address = ALICE
+  mocks.clientAvailable = true
   mocks.connected = true
   mocks.amountToAutoIssue.mockResolvedValue(10n)
   mocks.buildAutoIssue.mockReturnValue(AUTO_ISSUE_REQUEST)
@@ -267,6 +270,18 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.openSignIn).toHaveBeenCalledTimes(1)
+    expect(mocks.amountToAutoIssue).not.toHaveBeenCalled()
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('fails closed before reading or writing when the chain client is unavailable', async () => {
+    mocks.clientAvailable = false
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(DistributeFlow, props))
+    })
+    await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
+
     expect(mocks.amountToAutoIssue).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()
   })

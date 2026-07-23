@@ -2,13 +2,26 @@ import { readFileSync } from 'node:fs'
 
 const dockerfile = readFileSync('Dockerfile', 'utf8')
 const dockerignore = readFileSync('.dockerignore', 'utf8')
+const npmConfig = readFileSync('.npmrc', 'utf8')
 const ci = readFileSync('.github/workflows/ci.yml', 'utf8')
 const release = readFileSync('.github/workflows/release-image.yml', 'utf8')
 
 const checks = [
   [
-    /^FROM node:22\.23\.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS base$/m,
+    /^FROM node:26\.5\.0-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS base$/m,
     'the Node base image must be versioned and digest-pinned',
+  ],
+  [
+    /^RUN npm install --global npm@12\.0\.1 --no-audit --no-fund$/m,
+    'the container build must use the package-manager version pinned by package.json',
+  ],
+  [
+    /^COPY package\.json package-lock\.json \.npmrc \.\/$/m,
+    'the dependency stage must inherit the repository Node runtime policy',
+  ],
+  [
+    /NODE_OPTIONS=--no-experimental-webstorage/,
+    'the Node 26 server must not expose its experimental process-wide localStorage',
   ],
   [/output: 'standalone'/, 'Next must emit a standalone server'],
   [/^USER node$/m, 'the production container must run as non-root'],
@@ -38,6 +51,15 @@ for (const [pattern, message] of checks) {
         ? readFileSync('next.config.js', 'utf8')
         : dockerfile
   if (!pattern.test(source)) throw new Error(message)
+}
+
+if (
+  !npmConfig.includes('node-options=--no-experimental-webstorage') ||
+  !npmConfig.includes('strict-allow-scripts=true')
+) {
+  throw new Error(
+    'local lifecycle scripts must disable Node Web Storage and reject unreviewed dependency scripts',
+  )
 }
 
 for (const [label, workflow] of [

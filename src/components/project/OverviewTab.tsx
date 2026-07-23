@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { ChainIcon } from '@/components/ChainIcon'
+import { RichContent } from '@/components/RichContent'
 import { RevnetPriceCard } from '@/components/project/RevnetPriceCard'
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { truncateAddress } from '@/lib/format'
@@ -86,6 +87,7 @@ export function OverviewTab({
   chainId,
   projectId,
   description,
+  descriptionFallback,
   socialLinks,
   isRevnet,
   authorities,
@@ -95,7 +97,8 @@ export function OverviewTab({
 }: {
   chainId: JBChainId
   projectId: number
-  description: string[]
+  description: string
+  descriptionFallback: string[]
   socialLinks: [string, string | null][]
   isRevnet: boolean
   /** Owner (custom) or operator (revnet) address; null hides the row. */
@@ -118,15 +121,15 @@ export function OverviewTab({
           suckerGroupId={suckerGroupId}
         />
       ) : null}
-      {description.length > 0 || links.length > 0 ? (
+      {description || links.length > 0 ? (
         <section>
           <h2 className="mb-3 font-agrandir text-xl font-medium">About</h2>
-          {description.length > 0 ? (
-            <div className="card space-y-3 p-5 text-sm leading-relaxed text-ink/90">
-              {description.map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
-            </div>
+          {description ? (
+            <RichContent
+              html={description}
+              fallback={descriptionFallback}
+              className="card whitespace-pre-wrap p-5 text-sm leading-relaxed text-ink/90 [&>*+*]:mt-3 [&_a]:break-words [&_a]:font-medium [&_a]:text-bluebs-600 [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-2 [&_blockquote]:border-smoke-300 [&_blockquote]:pl-3 [&_li+li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5"
+            />
           ) : null}
           {links.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-2">

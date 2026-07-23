@@ -27,7 +27,13 @@ npm run test:browser
 npm run check:deploy
 ```
 
-Use the Node version pinned in `.nvmrc`; local and CI gates run on Node 22.
+Use the Node version pinned in `.nvmrc`; local, CI, and the production image run
+on Node 26.5 with npm 12.0.1.
+TypeScript 7 supplies the `tsc` binary through the `@typescript/native` npm
+alias. The `typescript` package name intentionally points at Microsoft's
+TypeScript 6 compatibility package so Next and typescript-eslint can keep using
+the compiler API that TypeScript 7.0 does not yet expose; `tsc6` is also
+available for tooling diagnostics.
 `npm run check` runs the complete required sequence after Chromium has been
 installed once. Unit tests use Node only and must not require a wallet, RPC
 endpoint, Bendystraw, IPFS, Safe, Relayr, or any other network service. Mock
@@ -81,10 +87,11 @@ enables the full artifact comparison; it does not trust the fixture alone.
   dedicated test reference beyond the shared wrapper test.
 
 Coverage includes every production `src/**/*.{ts,tsx}` file; only declaration
-files are excluded. The 19 test files currently run 171 tests. Component
-write-flow and IPFS-boundary tests raised the measured all-source baseline to
-11.67% statements, 8.82% branches, 9.55% functions, and 12.17% lines. CI floors
-are ratcheted to 10.4/8.0/9.1/10.9 respectively, while strong
+files are excluded. The 22 test files currently run 182 tests. Component
+write-flow, rich-content XSS, and IPFS-boundary tests put the measured
+all-source baseline at 12.23% statements, 9.07% branches, 10.00% functions,
+and 12.72% lines. CI floors are ratcheted to 10.4/8.0/9.1/10.9 respectively,
+while strong
 per-file floors protect the three component write flows plus the deeply tested
 contract, review, Safe, and Relayr boundaries. Coverage is diagnostic, not the
 definition of transaction safety: a high line percentage can still miss one

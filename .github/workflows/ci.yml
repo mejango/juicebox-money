@@ -22,6 +22,7 @@ jobs:
       CI: true
       NEXT_TELEMETRY_DISABLED: 1
       NEXT_PUBLIC_TESTNET: 'false'
+      NODE_OPTIONS: --no-experimental-webstorage
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,6 +41,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@12.0.1 --no-audit --no-fund
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Verify the locked production dependency graph

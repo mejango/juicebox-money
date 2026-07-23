@@ -2,7 +2,9 @@
 
 Juicebox Money ships as one portable Next standalone OCI image. It does not
 require Vercel or another vendor-specific runtime. The image is built from an
-exact Node 22.23.1 base image digest and runs as the non-root `node` user.
+exact Node 26.5.0 base image digest, installs the exact npm 12.0.1 toolchain,
+disables Node's experimental process-wide Web Storage on the server, and runs
+as the non-root `node` user.
 
 The platform decision and alternatives are recorded in
 [`docs/adr/0001-application-platform.md`](docs/adr/0001-application-platform.md).

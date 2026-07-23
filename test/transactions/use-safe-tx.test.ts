@@ -61,9 +61,12 @@ const Harness = forwardRef<SafeTxValue>(function Harness(_, ref) {
   return null
 })
 
-function renderHook() {
+async function renderHook() {
   const ref = createRef<SafeTxValue>()
-  const renderer = TestRenderer.create(createElement(Harness, { ref }))
+  let renderer!: TestRenderer.ReactTestRenderer
+  await act(async () => {
+    renderer = TestRenderer.create(createElement(Harness, { ref }))
+  })
   return { ref, renderer }
 }
 
@@ -82,7 +85,7 @@ beforeEach(() => {
 
 describe('useSafeTx', () => {
   it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
-    const hook = renderHook()
+    const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null
 
     await act(async () => {
@@ -115,7 +118,7 @@ describe('useSafeTx', () => {
 
   it('cancels without switching, simulating, or signing', async () => {
     mocks.requestReview.mockResolvedValueOnce(false)
-    const hook = renderHook()
+    const hook = await renderHook()
 
     await act(async () => {
       await expect(hook.ref.current!.send(request)).resolves.toBeNull()
@@ -132,7 +135,7 @@ describe('useSafeTx', () => {
     mocks.requestReview.mockImplementationOnce(
       () => new Promise<boolean>(resolve => (finishReview = resolve)),
     )
-    const hook = renderHook()
+    const hook = await renderHook()
 
     await act(async () => {
       const first = hook.ref.current!.send(request)
@@ -150,7 +153,7 @@ describe('useSafeTx', () => {
     mocks.switchChain.mockImplementationOnce(async () => {
       mocks.account = BOB
     })
-    const hook = renderHook()
+    const hook = await renderHook()
 
     await act(async () => {
       await hook.ref.current!.send(request)
@@ -167,7 +170,7 @@ describe('useSafeTx', () => {
       mocks.account = BOB
       return { request: { gas: 100n } }
     })
-    const hook = renderHook()
+    const hook = await renderHook()
 
     await act(async () => {
       await hook.ref.current!.send(request)
@@ -178,7 +181,7 @@ describe('useSafeTx', () => {
   })
 
   it('keeps a receipt RPC error pending and prevents a duplicate send', async () => {
-    const hook = renderHook()
+    const hook = await renderHook()
     await act(async () => {
       await hook.ref.current!.send(request)
     })
@@ -206,7 +209,7 @@ describe('useSafeTx', () => {
   ] as const)(
     'treats a %s receipt as a terminal state',
     async (status, phase, error) => {
-      const hook = renderHook()
+      const hook = await renderHook()
       await act(async () => {
         await hook.ref.current!.send(request)
       })
@@ -224,7 +227,7 @@ describe('useSafeTx', () => {
 
   it('reports a disconnected wallet and reset clears terminal state', async () => {
     mocks.connected = false
-    const hook = renderHook()
+    const hook = await renderHook()
 
     await act(async () => {
       await hook.ref.current!.send(request)

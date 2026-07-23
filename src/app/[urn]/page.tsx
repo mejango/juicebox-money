@@ -76,7 +76,7 @@ async function fetchProjectMetadata(
   }
 }
 
-/** Metadata descriptions may be raw HTML; render them as plain paragraphs. */
+/** Escaped, hydration-safe fallback while the browser sanitizer initializes. */
 function toParagraphs(text: string): string[] {
   return text
     .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
@@ -163,9 +163,8 @@ export default async function ProjectPage({
   const name = project.name ?? `Project ${project.projectId}`
   const chains = resolveProjectDeployments(project, siblings)
   const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname
-  const description = metadata?.description
-    ? toParagraphs(metadata.description)
-    : []
+  const description = metadata?.description?.trim() ?? ''
+  const descriptionFallback = description ? toParagraphs(description) : []
   const infoUri = httpsOnly(metadata?.infoUri)
   const twitterHandle = metadata?.twitter?.replace(/^@/, '').trim()
   const twitter = twitterHandle && /^\w{1,15}$/.test(twitterHandle)
@@ -355,6 +354,7 @@ export default async function ProjectPage({
                     chainId={urn.chainId}
                     projectId={project.projectId}
                     description={description}
+                    descriptionFallback={descriptionFallback}
                     socialLinks={socialLinks}
                     isRevnet={isRevnet}
                     authority={authority ?? null}
