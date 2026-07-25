@@ -78,6 +78,7 @@ export function StepChartBase({
   header,
   renderSeries,
   renderOverlay,
+  renderInspection,
 }: {
   resolved: ResolvedStage[]
   t0: number
@@ -94,6 +95,11 @@ export function StepChartBase({
   renderSeries?: (geom: ChartGeom) => ReactNode
   /** Extra marks drawn after the inspected point, under the scale labels. */
   renderOverlay?: (geom: ChartGeom) => ReactNode
+  /** Additional details for the inspected timestamp, rendered below the chart. */
+  renderInspection?: (state: {
+    timestamp: number
+    isHovering: boolean
+  }) => ReactNode
 }) {
   const [hoverT, setHoverT] = useState<number | null>(null)
 
@@ -266,6 +272,7 @@ export function StepChartBase({
           'no issuance'
         )}
       </p>
+      {renderInspection?.({ timestamp: t, isHovering: hoverT !== null })}
     </div>
   )
 }

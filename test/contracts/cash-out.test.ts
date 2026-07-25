@@ -7,6 +7,7 @@ import {
   cashOutProtocolFee,
   isNativeToken,
   minReclaimedFloor,
+  minimumCashOutPriceFromTotals,
   quotedOutputFloor,
 } from '@/lib/cashOut'
 
@@ -92,6 +93,26 @@ describe('cash-out arithmetic', () => {
         balance: 0n,
         tokenSupply: 100n * one,
         cashOutTaxRate: 0,
+        balanceDecimals: 18,
+      }),
+    ).toBeNull()
+  })
+
+  it('derives the asymptotic minimum cash-out price', () => {
+    const one = 10n ** 18n
+    expect(
+      minimumCashOutPriceFromTotals({
+        balance: 100n * one,
+        tokenSupply: 100n * one,
+        cashOutTaxRate: 2_000,
+        balanceDecimals: 18,
+      }),
+    ).toBe(0.8)
+    expect(
+      minimumCashOutPriceFromTotals({
+        balance: 100n * one,
+        tokenSupply: 100n * one,
+        cashOutTaxRate: 10_000,
         balanceDecimals: 18,
       }),
     ).toBeNull()

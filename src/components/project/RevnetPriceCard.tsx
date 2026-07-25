@@ -35,7 +35,14 @@ import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
 import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
-import { cashOutPriceFromTotals } from '@/lib/cashOut'
+import {
+  cashOutPriceFromTotals,
+  minimumCashOutPriceFromTotals,
+} from '@/lib/cashOut'
+import {
+  explainCashOutChange,
+  type CashOutObservation,
+} from '@/lib/cashOutChange'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { poolPriceFromSqrt } from '@/lib/uniswap-v4'
 
@@ -206,7 +213,7 @@ export function RevnetPriceCard({
           )
           if (!homogeneous) return null
 
-          return cashOutPriceFromTotals({
+          const totals = {
             balance: pricedRows.reduce((sum, row) => sum + row.balance, 0n),
             tokenSupply: pricedRows.reduce(
               (sum, row) => sum + row.supply,
@@ -214,7 +221,11 @@ export function RevnetPriceCard({
             ),
             cashOutTaxRate: current.cashOutTaxRate,
             balanceDecimals: current.decimals,
-          })
+          }
+          return {
+            price: cashOutPriceFromTotals(totals),
+            minimum: minimumCashOutPriceFromTotals(totals),
+          }
         })().catch(error => {
           if (process.env.NODE_ENV !== 'production') {
             console.warn('Unable to resolve omnichain cash-out price', error)
@@ -224,7 +235,8 @@ export function RevnetPriceCard({
       ])
 
       return {
-        floor,
+        floor: floor?.price ?? null,
+        minimumFloor: floor?.minimum ?? null,
         amm: market?.status === 'pool' ? market.price : null,
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
@@ -261,7 +273,10 @@ export function RevnetPriceCard({
     const taxSchedule = [...data.all].sort(
       (a, b) => a.ruleset.start - b.ruleset.start,
     )
-    return history.moments.flatMap(moment => {
+    let previous: CashOutObservation | undefined
+    return [...history.moments]
+      .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+      .flatMap(moment => {
       const timestamp = Number(moment.timestamp)
       let tax = taxSchedule[0]?.metadata.cashOutTaxRate ?? 0
       for (const ruleset of taxSchedule) {
@@ -275,11 +290,26 @@ export function RevnetPriceCard({
           cashOutTaxRate: tax,
           balanceDecimals: decimals,
         })
-        return value ? [{ timestamp, value }] : []
+        const minimum = minimumCashOutPriceFromTotals({
+          balance: BigInt(moment.balance),
+          tokenSupply: BigInt(moment.tokenSupply),
+          cashOutTaxRate: tax,
+          balanceDecimals: decimals,
+        })
+        if (!value) return []
+        const observation: CashOutObservation = {
+          balance: BigInt(moment.balance),
+          tokenSupply: BigInt(moment.tokenSupply),
+          cashOutTax: tax,
+          price: value,
+        }
+        const reason = explainCashOutChange(previous, observation)
+        previous = observation
+        return [{ timestamp, value, minimum: minimum ?? undefined, reason }]
       } catch {
         return []
       }
-    })
+      })
   }, [data, history?.moments, references?.floor])
 
   const ammHistory = useMemo<PricePoint[]>(() => {
@@ -389,7 +419,11 @@ export function RevnetPriceCard({
       ammHistory={ammHistory}
       floorPrice={
         references?.floor
-          ? { value: references.floor, label: 'Cash out price' }
+          ? {
+              value: references.floor,
+              label: 'Cash out price',
+              minimum: references.minimumFloor,
+            }
           : null
       }
       ammPrice={

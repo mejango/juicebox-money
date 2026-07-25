@@ -95,7 +95,13 @@ export function etherscanAddressUrl(
 
 /** A 0-100 percent → trimmed display percent: 38 → "38%", 2.5 → "2.5%". */
 export function fmtPct(pct: number): string {
-  return `${pct.toFixed(2).replace(/\.?0+$/, '')}%`
+  if (!Number.isFinite(pct) || pct === 0) return '0%'
+  const magnitude = Math.abs(pct)
+  const decimals =
+    magnitude >= 0.01
+      ? 2
+      : Math.min(8, Math.max(2, Math.ceil(-Math.log10(magnitude)) + 3))
+  return `${pct.toFixed(decimals).replace(/\.?0+$/, '')}%`
 }
 
 /**

@@ -22,8 +22,17 @@ import {
  * values stay in the legend. Linear scale — no log toggle, matching website/.
  */
 
-type ReferenceLine = { value: number; label: string } | null
-export type PricePoint = { timestamp: number; value: number }
+type ReferenceLine = {
+  value: number
+  label: string
+  minimum?: number | null
+} | null
+export type PricePoint = {
+  timestamp: number
+  value: number
+  minimum?: number
+  reason?: string
+}
 
 const CASH_OUT_COLOR = '#C85F9A'
 const AMM_COLOR = '#BD4513'
@@ -59,13 +68,13 @@ function visibleSeries(
     point => point.timestamp >= t0 && point.timestamp <= t1,
   )
   const out = before
-    ? [{ timestamp: t0, value: before.value }, ...visible]
+    ? [{ ...before, timestamp: t0 }, ...visible]
     : visible
 
   if (live && live > 0) {
     const last = out.at(-1)
     if (last?.timestamp === t1) {
-      out[out.length - 1] = { timestamp: t1, value: live }
+      out[out.length - 1] = { ...out[out.length - 1], timestamp: t1, value: live }
     }
     else out.push({ timestamp: t1, value: live })
   }
@@ -80,6 +89,15 @@ function asStepSeries(points: PricePoint[]): PricePoint[] {
     stepped.push(points[i])
   }
   return stepped
+}
+
+function pointAt(points: PricePoint[], timestamp: number): PricePoint | null {
+  let found: PricePoint | null = null
+  for (const point of points) {
+    if (point.timestamp > timestamp) break
+    found = point
+  }
+  return found
 }
 
 function PriceSummary({
@@ -160,6 +178,16 @@ export function PriceChart({
     t0,
     t1,
   )
+  const minimumSeries = visibleSeries(
+    floorHistory.flatMap(point =>
+      point.minimum && point.minimum > 0
+        ? [{ timestamp: point.timestamp, value: point.minimum }]
+        : [],
+    ),
+    floorPrice?.minimum ?? null,
+    t0,
+    t1,
+  )
 
   return (
     <StepChartBase
@@ -169,7 +197,7 @@ export function PriceChart({
       now={now}
       symbol={symbol}
       baseSymbol={baseSymbol}
-      ariaLabel={`${symbol} issuance ceiling history through Now, with the current cash-out floor and AMM price in ${baseSymbol}`}
+      ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price, dotted minimum cash-out price, and AMM price in ${baseSymbol}`}
       header={
         <>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -222,6 +250,11 @@ export function PriceChart({
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
           .join(' ')
+        const minimumPath = asStepSeries(minimumSeries)
+          .map(point =>
+            `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
+          )
+          .join(' ')
         return (
           <>
             {floorSeries.length > 1 ? (
@@ -242,6 +275,18 @@ export function PriceChart({
                 strokeWidth="1.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
+              />
+            ) : null}
+            {minimumSeries.length > 1 ? (
+              <polyline
+                points={minimumPath}
+                fill="none"
+                stroke={CASH_OUT_COLOR}
+                strokeWidth="1.3"
+                strokeDasharray="5 4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity="0.55"
               />
             ) : null}
           </>
@@ -272,6 +317,30 @@ export function PriceChart({
           ) : null}
         </>
       )}
+      renderInspection={({ timestamp, isHovering }) => {
+        if (!isHovering) return null
+        const point = pointAt(floorSeries, timestamp)
+        if (!point) return null
+        return (
+          <div className="mt-1 space-y-0.5 text-xs leading-relaxed text-smoke-700">
+            <p>
+              Cash out:{' '}
+              <span className="font-medium text-ink">
+                {formatPrice(point.value)} {baseSymbol}/{symbol}
+              </span>
+              {point.minimum ? (
+                <>
+                  {' · minimum '}
+                  <span className="font-medium text-ink">
+                    {formatPrice(point.minimum)} {baseSymbol}/{symbol}
+                  </span>
+                </>
+              ) : null}
+            </p>
+            {point.reason ? <p>{point.reason}</p> : null}
+          </div>
+        )
+      }}
     />
   )
 }

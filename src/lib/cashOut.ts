@@ -103,6 +103,39 @@ export function cashOutPriceFromTotals({
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+/**
+ * The asymptotic minimum per-token cash-out price:
+ * (1 - tax) × balance ÷ supply.
+ *
+ * The one-token quote is slightly above this value because it includes that
+ * token's quadratic share term. As supply grows, the quote approaches this
+ * minimum. Payments can raise it; payouts can lower it.
+ */
+export function minimumCashOutPriceFromTotals({
+  balance,
+  tokenSupply,
+  cashOutTaxRate,
+  balanceDecimals,
+}: {
+  balance: bigint
+  tokenSupply: bigint
+  /** Basis points, out of 10,000. */
+  cashOutTaxRate: number
+  balanceDecimals: number
+}): number | null {
+  if (balance <= 0n || tokenSupply <= 0n) return null
+
+  const oneToken = 10n ** 18n
+  const tax = BigInt(Math.max(0, Math.min(10_000, cashOutTaxRate)))
+  const rawPrice =
+    (balance * oneToken * (10_000n - tax)) /
+    (tokenSupply * 10_000n)
+  if (rawPrice <= 0n) return null
+
+  const value = Number(formatUnits(rawPrice, balanceDecimals))
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
 /** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */
 export function minReclaimedFloor(quote: CashOutQuote): bigint {
   return (quote.reclaimAmountAfterFee * CASH_OUT_SLIPPAGE_FLOOR) / 1000n
