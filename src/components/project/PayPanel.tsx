@@ -58,6 +58,15 @@ import {
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
+function payChainName(chainId: JBChainId): string {
+  const compactNames: Partial<Record<JBChainId, string>> = {
+    11155420: 'OP Sep',
+    84532: 'Base Sep',
+    421614: 'Arb Sep',
+  }
+  return compactNames[chainId] ?? chainName(chainId)
+}
+
 type PayContext = {
   token: Address
   decimals: number
@@ -227,7 +236,7 @@ export function PayPanel({
   }, [amount])
 
   const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
+  const nativeSymbol = 'ETH'
 
   // ---- The project's payment surface: accepted tokens + live ruleset ----
   // Direct tokens = the project's accounting contexts (viaRouter:false). When
@@ -1106,9 +1115,8 @@ export function PayPanel({
             { value: 'addbalance', label: 'Add to balance' },
           ]}
         />
+        <span>on</span>
         {chains.length > 1 ? (
-          <>
-            <span>on</span>
             <TextSelect
               value={String(chainId)}
               onChange={v => {
@@ -1129,11 +1137,12 @@ export function PayPanel({
               ariaLabel="Chain"
               options={chains.map(([cid]) => ({
                 value: String(cid),
-                label: chainName(cid),
+                label: payChainName(cid as JBChainId),
               }))}
             />
-          </>
-        ) : null}
+        ) : (
+          <span className="whitespace-nowrap">{payChainName(chainId)}</span>
+        )}
       </div>
       {mode === 'addbalance' ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">

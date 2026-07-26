@@ -37,6 +37,20 @@ export const SUPPORTED_CHAINS = IS_TESTNET
   ? ([sepolia, optimismSepolia, baseSepolia, arbitrumSepolia] as const)
   : ([mainnet, optimism, base, arbitrum] as const)
 
+// A direct project URL may target either environment. Keep all supported
+// chains available for client-side reads while preserving the environment's
+// narrower discovery/create defaults above.
+const WAGMI_CHAINS = [
+  mainnet,
+  optimism,
+  base,
+  arbitrum,
+  sepolia,
+  optimismSepolia,
+  baseSepolia,
+  arbitrumSepolia,
+] as const
+
 const infura = (network: string) =>
   IS_DETERMINISTIC_BROWSER
     ? http(`${BROWSER_FIXTURE_ORIGIN}/rpc/${network}`)
@@ -65,7 +79,7 @@ const ParaModalHost = lazy(() => import('./ParaModalHost'))
  * cover browser wallets without eager vendor SDKs.
  */
 export const wagmiConfig = createConfig({
-  chains: SUPPORTED_CHAINS,
+  chains: WAGMI_CHAINS,
   transports,
   connectors: IS_DETERMINISTIC_BROWSER
     ? []

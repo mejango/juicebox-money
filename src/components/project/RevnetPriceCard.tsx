@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   NATIVE_TOKEN,
   USD_CURRENCY_ID,
@@ -65,7 +64,7 @@ export function RevnetPriceCard({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
-  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
+  const nativeSymbol = 'ETH'
 
   const { data, isPending } = useQuery({
     queryKey: ['revnetPriceCard', chainId, projectId],
@@ -175,9 +174,7 @@ export function RevnetPriceCard({
                   ],
                 }),
                 context.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-                  ? Promise.resolve(
-                      JB_CHAINS[rowChainId]?.nativeTokenSymbol ?? 'ETH',
-                    )
+                  ? Promise.resolve('ETH')
                   : client.readContract({
                       address: context.token,
                       abi: erc20Abi,
