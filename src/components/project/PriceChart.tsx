@@ -13,7 +13,10 @@ import {
   ISSUANCE_COLOR,
   StepChartBase,
 } from './StepChartBase'
-import { minimumCashOutPriceAtIssuancePrice } from '@/lib/cashOut'
+import {
+  minimumCashOutPriceAtIssuancePrice,
+  shouldShowCashOutAsymptote,
+} from '@/lib/cashOut'
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
@@ -215,6 +218,12 @@ export function PriceChart({
       return value && value > 0 ? [{ timestamp, value }] : []
     },
   )
+  const currentMinimum = pointAt(minimumSeries, now)?.value
+  const showMinimum = shouldShowCashOutAsymptote(
+    floor?.value,
+    currentMinimum,
+  )
+  const visibleMinimumSeries = showMinimum ? minimumSeries : []
 
   return (
     <StepChartBase
@@ -224,7 +233,7 @@ export function PriceChart({
       now={now}
       symbol={symbol}
       baseSymbol={baseSymbol}
-      ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price, dotted minimum cash-out price, and AMM price in ${baseSymbol}`}
+      ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
         <>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -277,7 +286,7 @@ export function PriceChart({
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
           .join(' ')
-        const minimumPath = minimumSeries
+        const minimumPath = visibleMinimumSeries
           .map(point =>
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
@@ -304,7 +313,7 @@ export function PriceChart({
                 strokeLinejoin="round"
               />
             ) : null}
-            {minimumSeries.length > 1 ? (
+            {visibleMinimumSeries.length > 1 ? (
               <polyline
                 points={minimumPath}
                 fill="none"
@@ -348,7 +357,7 @@ export function PriceChart({
         if (!isHovering) return null
         const point = pointAt(floorSeries, timestamp)
         if (!point) return null
-        const minimum = pointAt(minimumSeries, timestamp)?.value
+        const minimum = pointAt(visibleMinimumSeries, timestamp)?.value
         return (
           <div className="mt-1 space-y-0.5 text-xs leading-relaxed text-smoke-700">
             <p className="whitespace-nowrap">

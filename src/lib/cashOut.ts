@@ -146,6 +146,22 @@ export function minimumCashOutPriceAtIssuancePrice(
   return issuancePrice * (1 - tax / 10_000)
 }
 
+/** Show the payment asymptote only when paid issuance can pull the live quote down toward it. */
+export function shouldShowCashOutAsymptote(
+  cashOutPrice: number | undefined,
+  asymptote: number | undefined,
+): boolean {
+  return (
+    cashOutPrice !== undefined &&
+    asymptote !== undefined &&
+    Number.isFinite(cashOutPrice) &&
+    Number.isFinite(asymptote) &&
+    cashOutPrice > 0 &&
+    asymptote > 0 &&
+    cashOutPrice > asymptote
+  )
+}
+
 /** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */
 export function minReclaimedFloor(quote: CashOutQuote): bigint {
   return (quote.reclaimAmountAfterFee * CASH_OUT_SLIPPAGE_FLOOR) / 1000n

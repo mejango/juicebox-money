@@ -10,6 +10,7 @@ import {
   minimumCashOutPriceAtIssuancePrice,
   minimumCashOutPriceFromTotals,
   quotedOutputFloor,
+  shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 
 const HOLDER = '0x1111111111111111111111111111111111111111' as Address
@@ -23,6 +24,12 @@ describe('cash-out arithmetic', () => {
       0.00006,
       12,
     )
+  })
+
+  it('shows the payment asymptote only when the live quote can fall toward it', () => {
+    expect(shouldShowCashOutAsymptote(0.000066, 0.00006)).toBe(true)
+    expect(shouldShowCashOutAsymptote(0.00006, 0.00006)).toBe(false)
+    expect(shouldShowCashOutAsymptote(0.000009, 0.00144)).toBe(false)
   })
 
   it('recognizes the protocol native-token sentinel case-insensitively', () => {
