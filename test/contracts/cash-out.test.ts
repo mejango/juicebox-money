@@ -7,6 +7,7 @@ import {
   cashOutProtocolFee,
   isNativeToken,
   minReclaimedFloor,
+  minimumCashOutPriceAtIssuancePrice,
   minimumCashOutPriceFromTotals,
   quotedOutputFloor,
 } from '@/lib/cashOut'
@@ -17,6 +18,13 @@ const TOKEN = '0x3333333333333333333333333333333333333333' as Address
 const NATIVE = '0x000000000000000000000000000000000000eeee' as Address
 
 describe('cash-out arithmetic', () => {
+  it('derives the payment asymptote from issuance price and tax', () => {
+    expect(minimumCashOutPriceAtIssuancePrice(0.0001, 4_000)).toBeCloseTo(
+      0.00006,
+      12,
+    )
+  })
+
   it('recognizes the protocol native-token sentinel case-insensitively', () => {
     expect(isNativeToken(NATIVE)).toBe(true)
     expect(isNativeToken(NATIVE.toUpperCase())).toBe(true)

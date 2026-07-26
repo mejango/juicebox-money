@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import {
+  buildStepPoints,
   formatPrice,
   rateAtTime,
   resolveStages,
@@ -12,6 +13,7 @@ import {
   ISSUANCE_COLOR,
   StepChartBase,
 } from './StepChartBase'
+import { minimumCashOutPriceAtIssuancePrice } from '@/lib/cashOut'
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
@@ -25,13 +27,16 @@ import {
 type ReferenceLine = {
   value: number
   label: string
-  minimum?: number | null
+  cashOutTaxRate?: number
 } | null
 export type PricePoint = {
   timestamp: number
   value: number
-  minimum?: number
   reason?: string
+}
+export type CashOutTaxPoint = {
+  timestamp: number
+  cashOutTaxRate: number
 }
 
 const CASH_OUT_COLOR = '#C85F9A'
@@ -144,6 +149,7 @@ export function PriceChart({
   ammPrice,
   floorHistory = [],
   ammHistory = [],
+  cashOutTaxHistory = [],
 }: {
   stages: ChartStage[]
   symbol: string
@@ -152,6 +158,7 @@ export function PriceChart({
   ammPrice?: ReferenceLine
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
+  cashOutTaxHistory?: CashOutTaxPoint[]
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
 
@@ -166,27 +173,47 @@ export function PriceChart({
   const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
   const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
   const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
-  const floorSeries = visibleSeries(
+  const rawFloorSeries = visibleSeries(
     floorHistory,
     floor?.value ?? null,
     t0,
     t1,
   )
+  const floorSeries = rawFloorSeries
   const ammSeries = visibleSeries(
     ammHistory,
     amm?.value ?? null,
     t0,
     t1,
   )
-  const minimumSeries = visibleSeries(
-    floorHistory.flatMap(point =>
-      point.minimum && point.minimum > 0
-        ? [{ timestamp: point.timestamp, value: point.minimum }]
-        : [],
-    ),
-    floorPrice?.minimum ?? null,
-    t0,
-    t1,
+  const sortedTaxHistory = [...cashOutTaxHistory].sort(
+    (a, b) => a.timestamp - b.timestamp,
+  )
+  const taxAtTime = (timestamp: number) => {
+    let tax = sortedTaxHistory[0]?.cashOutTaxRate ?? floorPrice?.cashOutTaxRate
+    for (const point of sortedTaxHistory) {
+      if (point.timestamp > timestamp) break
+      tax = point.cashOutTaxRate
+    }
+    return tax
+  }
+  const issuanceSteps = buildStepPoints(resolved, t0, t1)
+  const minimumSeries = issuanceSteps.flatMap(
+    ([timestamp, rate], index) => {
+      // buildStepPoints repeats a stage boundary: first with the outgoing
+      // rate, then with the incoming rate. Match the outgoing point to the
+      // tax immediately before the boundary so the line remains stepped.
+      const isOutgoingBoundary =
+        issuanceSteps[index + 1]?.[0] === timestamp
+      const tax = taxAtTime(
+        isOutgoingBoundary ? timestamp - 0.001 : timestamp,
+      )
+      const value =
+        rate > 0 && tax !== undefined
+          ? minimumCashOutPriceAtIssuancePrice(1 / rate, tax)
+          : null
+      return value && value > 0 ? [{ timestamp, value }] : []
+    },
   )
 
   return (
@@ -250,7 +277,7 @@ export function PriceChart({
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
           .join(' ')
-        const minimumPath = asStepSeries(minimumSeries)
+        const minimumPath = minimumSeries
           .map(point =>
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
@@ -321,18 +348,19 @@ export function PriceChart({
         if (!isHovering) return null
         const point = pointAt(floorSeries, timestamp)
         if (!point) return null
+        const minimum = pointAt(minimumSeries, timestamp)?.value
         return (
           <div className="mt-1 space-y-0.5 text-xs leading-relaxed text-smoke-700">
-            <p>
+            <p className="whitespace-nowrap">
               Cash out:{' '}
               <span className="font-medium text-ink">
                 {formatPrice(point.value)} {baseSymbol}/{symbol}
               </span>
-              {point.minimum ? (
+              {minimum ? (
                 <>
-                  {' · minimum '}
+                  {' · Min cash out '}
                   <span className="font-medium text-ink">
-                    {formatPrice(point.minimum)} {baseSymbol}/{symbol}
+                    {formatPrice(minimum)} {baseSymbol}/{symbol}
                   </span>
                 </>
               ) : null}

@@ -16,12 +16,25 @@ export function explainCashOutChange(
   const balanceFell = current.balance < previous.balance
   const supplyRose = current.tokenSupply > previous.tokenSupply
   const supplyFell = current.tokenSupply < previous.tokenSupply
+  const backingRatio = compareBackingPerToken(previous, current)
 
   if (balanceRose && supplyRose) {
-    causes.push('a payment added backing and issued tokens')
+    causes.push(
+      backingRatio < 0
+        ? 'a payment increased token supply faster than backing, diluting backing per token'
+        : backingRatio > 0
+          ? 'a payment increased backing faster than token supply'
+          : 'a payment added backing and tokens at the same backing-per-token ratio',
+    )
   }
   else if (balanceFell && supplyFell) {
-    causes.push('a cash out removed backing and burned tokens')
+    causes.push(
+      backingRatio > 0
+        ? 'a cash out burned supply faster than it removed backing, increasing backing per remaining token'
+        : backingRatio < 0
+          ? 'a cash out removed backing faster than it burned supply'
+          : 'a cash out removed backing and supply at the same ratio',
+    )
   }
   else {
     if (balanceRose) causes.push('funds were added to the project')
@@ -44,6 +57,16 @@ export function explainCashOutChange(
   return causes.length
     ? `Cash-out price ${direction} because ${joinCauses(causes)}.`
     : `Cash-out price ${direction}; the indexed backing, supply, and tax inputs did not change.`
+}
+
+function compareBackingPerToken(
+  previous: CashOutObservation,
+  current: CashOutObservation,
+): number {
+  if (previous.tokenSupply === 0n || current.tokenSupply === 0n) return 0
+  const left = current.balance * previous.tokenSupply
+  const right = previous.balance * current.tokenSupply
+  return left > right ? 1 : left < right ? -1 : 0
 }
 
 function formatTax(value: number): string {

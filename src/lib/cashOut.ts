@@ -104,12 +104,12 @@ export function cashOutPriceFromTotals({
 }
 
 /**
- * The asymptotic minimum per-token cash-out price:
+ * The current cash-out curve's backing asymptote:
  * (1 - tax) × balance ÷ supply.
  *
  * The one-token quote is slightly above this value because it includes that
  * token's quadratic share term. As supply grows, the quote approaches this
- * minimum. Payments can raise it; payouts can lower it.
+ * value. This is distinct from the payment asymptote shown on the chart.
  */
 export function minimumCashOutPriceFromTotals({
   balance,
@@ -134,6 +134,16 @@ export function minimumCashOutPriceFromTotals({
 
   const value = Number(formatUnits(rawPrice, balanceDecimals))
   return Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** Long-run cash-out price after payments at the current issuance price. */
+export function minimumCashOutPriceAtIssuancePrice(
+  issuancePrice: number,
+  cashOutTaxRate: number,
+): number | null {
+  if (!Number.isFinite(issuancePrice) || issuancePrice <= 0) return null
+  const tax = Math.max(0, Math.min(10_000, cashOutTaxRate))
+  return issuancePrice * (1 - tax / 10_000)
 }
 
 /** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */

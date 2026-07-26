@@ -16,7 +16,7 @@ describe('explainCashOutChange', () => {
         cashOutTax: 1_000,
         price: 1.2,
       }),
-    ).toContain('payment added backing and issued tokens')
+    ).toContain('payment increased backing faster than token supply')
     expect(
       explainCashOutChange(first, {
         balance: 80n,
@@ -24,6 +24,23 @@ describe('explainCashOutChange', () => {
         cashOutTax: 1_000,
         price: 1,
       }),
-    ).toContain('cash out removed backing and burned tokens')
+    ).toContain('cash out burned supply faster than it removed backing')
+  })
+
+  it('explains a dilutive payment', () => {
+    const first = {
+      balance: 100n,
+      tokenSupply: 100n,
+      cashOutTax: 1_000,
+      price: 0.9,
+    }
+    expect(
+      explainCashOutChange(first, {
+        balance: 150n,
+        tokenSupply: 200n,
+        cashOutTax: 1_000,
+        price: 0.65,
+      }),
+    ).toContain('increased token supply faster than backing')
   })
 })

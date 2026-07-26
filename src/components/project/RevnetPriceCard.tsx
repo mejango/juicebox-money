@@ -29,6 +29,7 @@ import { getPublicClient } from 'wagmi/actions'
 import { useConfig, usePublicClient } from 'wagmi'
 import {
   PriceChart,
+  type CashOutTaxPoint,
   type PricePoint,
 } from '@/components/project/PriceChart'
 import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
@@ -37,7 +38,6 @@ import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
-  minimumCashOutPriceFromTotals,
 } from '@/lib/cashOut'
 import {
   explainCashOutChange,
@@ -224,7 +224,7 @@ export function RevnetPriceCard({
           }
           return {
             price: cashOutPriceFromTotals(totals),
-            minimum: minimumCashOutPriceFromTotals(totals),
+            cashOutTaxRate: current.cashOutTaxRate,
           }
         })().catch(error => {
           if (process.env.NODE_ENV !== 'production') {
@@ -236,7 +236,7 @@ export function RevnetPriceCard({
 
       return {
         floor: floor?.price ?? null,
-        minimumFloor: floor?.minimum ?? null,
+        cashOutTaxRate: floor?.cashOutTaxRate,
         amm: market?.status === 'pool' ? market.price : null,
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
@@ -290,12 +290,6 @@ export function RevnetPriceCard({
           cashOutTaxRate: tax,
           balanceDecimals: decimals,
         })
-        const minimum = minimumCashOutPriceFromTotals({
-          balance: BigInt(moment.balance),
-          tokenSupply: BigInt(moment.tokenSupply),
-          cashOutTaxRate: tax,
-          balanceDecimals: decimals,
-        })
         if (!value) return []
         const observation: CashOutObservation = {
           balance: BigInt(moment.balance),
@@ -305,12 +299,26 @@ export function RevnetPriceCard({
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation
-        return [{ timestamp, value, minimum: minimum ?? undefined, reason }]
+        return [{ timestamp, value, reason }]
       } catch {
         return []
       }
       })
   }, [data, history?.moments, references?.floor])
+
+  const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
+    const byTimestamp = new Map<number, number>()
+    for (const ruleset of data?.all ?? []) {
+      byTimestamp.set(
+        ruleset.ruleset.start,
+        ruleset.metadata.cashOutTaxRate,
+      )
+    }
+    return [...byTimestamp].map(([timestamp, cashOutTaxRate]) => ({
+      timestamp,
+      cashOutTaxRate,
+    }))
+  }, [data?.all])
 
   const ammHistory = useMemo<PricePoint[]>(() => {
     if (
@@ -417,12 +425,13 @@ export function RevnetPriceCard({
       baseSymbol={baseSymbol}
       floorHistory={floorHistory}
       ammHistory={ammHistory}
+      cashOutTaxHistory={cashOutTaxHistory}
       floorPrice={
         references?.floor
           ? {
               value: references.floor,
               label: 'Cash out price',
-              minimum: references.minimumFloor,
+              cashOutTaxRate: references.cashOutTaxRate,
             }
           : null
       }
