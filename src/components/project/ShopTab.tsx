@@ -23,6 +23,8 @@ import { zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
+import { AddressLabel } from '@/components/ui/AddressLabel'
+import { AddressLink } from '@/components/ui/AddressLink'
 import {
   CustomerCardSkeleton,
   FormFieldsSkeleton,
@@ -49,7 +51,6 @@ import type {
 import {
   formatTokenAmount,
   timeAgo,
-  truncateAddress,
 } from '@/lib/format'
 import { bytes32ToCidV0 } from '@bananapus/nana-sdk-core'
 import {
@@ -412,18 +413,11 @@ export function ShopTab({
           <div className="flex items-center justify-between gap-3">
             <dt className="text-smoke-700">Address</dt>
             <dd>
-              {etherscanHost ? (
-                <a
-                  href={`https://${etherscanHost}/address/${shop.hook}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-ink hover:underline"
-                >
-                  {truncateAddress(shop.hook)}
-                </a>
-              ) : (
-                <span className="text-ink">{truncateAddress(shop.hook)}</span>
-              )}
+              <AddressLink
+                address={shop.hook}
+                host={etherscanHost}
+                className="text-ink"
+              />
             </dd>
           </div>
         </dl>
@@ -927,7 +921,7 @@ function CustomerAllCard({
             />
             <span className="min-w-0 truncate text-right text-smoke-700">
               {itemLabel(names, purchase.tierId)} →{' '}
-              {truncateAddress(purchase.beneficiary)}
+              <AddressLabel address={purchase.beneficiary} />
             </span>
           </div>
         ))}
@@ -954,20 +948,12 @@ function ExplorerAddress({
   address: string
   chainId: number
 }) {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
-  return host ? (
-    <a
-      href={`https://${host}/address/${address}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="shrink-0 font-medium text-ink hover:underline"
-    >
-      {truncateAddress(address)}
-    </a>
-  ) : (
-    <span className="shrink-0 font-medium text-ink">
-      {truncateAddress(address)}
-    </span>
+  return (
+    <AddressLink
+      address={address}
+      chainId={chainId}
+      className="shrink-0 font-medium text-ink"
+    />
   )
 }
 

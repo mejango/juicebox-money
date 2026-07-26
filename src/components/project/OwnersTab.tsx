@@ -49,6 +49,7 @@ import {
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
+import { AddressText } from '@/components/ui/AddressLabel'
 import { TxError } from '@/components/ui/TxError'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
@@ -58,7 +59,6 @@ import {
   compactTokenTotal,
   fmtPct,
   formatTokenAmount,
-  truncateAddress,
 } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
@@ -838,7 +838,7 @@ function OwnersDonut({
             strokeWidth="0.8"
           >
             <title>
-              {truncateAddress(holder.address)} —{' '}
+              <AddressText address={holder.address} /> —{' '}
               {holderPercentLabel(holder.balance, total)}
             </title>
           </path>

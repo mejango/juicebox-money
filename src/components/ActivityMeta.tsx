@@ -27,7 +27,7 @@ export function ActivityMeta({
   chainId: number
   txHash: string
   amountUsd: string | null | undefined
-  direction: 'in' | 'out'
+  direction?: 'in' | 'out' | null
 }) {
   const chain = JB_CHAINS[chainId as JBChainId]
   const txUrl = chain?.etherscanHostname
@@ -38,15 +38,17 @@ export function ActivityMeta({
   return (
     <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-smoke-500">
       {usd ? <span>{usd}</span> : null}
-      <span
-        className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
-          direction === 'in'
-            ? 'border-bluebs-500 text-bluebs-600'
-            : 'border-peel-500 text-peel-600'
-        }`}
-      >
-        {direction}
-      </span>
+      {direction === 'in' || direction === 'out' ? (
+        <span
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+            direction === 'in'
+              ? 'border-bluebs-500 text-bluebs-600'
+              : 'border-peel-500 text-peel-600'
+          }`}
+        >
+          {direction}
+        </span>
+      ) : null}
       {txUrl ? (
         <a
           href={txUrl}

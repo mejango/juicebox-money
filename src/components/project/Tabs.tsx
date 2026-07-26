@@ -175,7 +175,7 @@ export function ProjectTabs({
         <div
           className={`order-3 ${
             activityActive ? 'block' : 'hidden'
-          } min-[601px]:order-none min-[601px]:block`}
+          } pt-6 min-[601px]:order-none min-[601px]:block min-[601px]:pt-0`}
         >
           {activity}
         </div>
@@ -185,7 +185,7 @@ export function ProjectTabs({
         <div
           role="tablist"
           aria-label="Project sections"
-          className="scrollbar-none order-2 -mx-1 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1 min-[601px]:order-none"
+          className="scrollbar-none order-2 -mx-1 mt-8 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1 min-[601px]:order-none min-[601px]:mt-0"
         >
           <button
             type="button"

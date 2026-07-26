@@ -23,6 +23,8 @@ import { getPublicClient } from '@wagmi/core'
 import { useQuery } from '@tanstack/react-query'
 import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, zeroAddress, type PublicClient } from 'viem'
+import { AddressLabel } from '@/components/ui/AddressLabel'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { RulesetsTabSkeleton } from '@/components/LoadingSkeletons'
@@ -600,22 +602,22 @@ function SplitsList({
   const leftover = 1e9 - total
 
   const recipient = (sp: RawSplit): ReactNode => {
-    if (sp.hook !== zeroAddress) return `Hook ${truncateAddress(sp.hook)}`
-    if (sp.projectId > 0n) return `Project #${sp.projectId}`
-    if (sp.beneficiary.toLowerCase() === BURN_ADDRESS) return 'Burn'
-    if (host) {
+    if (sp.hook !== zeroAddress) {
       return (
-        <a
-          href={`https://${host}/address/${sp.beneficiary}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:underline"
-        >
-          {truncateAddress(sp.beneficiary)}
-        </a>
+        <>
+          Hook <AddressLabel address={sp.hook} />
+        </>
       )
     }
-    return truncateAddress(sp.beneficiary)
+    if (sp.projectId > 0n) return `Project #${sp.projectId}`
+    if (sp.beneficiary.toLowerCase() === BURN_ADDRESS) return 'Burn'
+    return (
+      <AddressLink
+        address={sp.beneficiary}
+        host={host}
+        className="text-inherit"
+      />
+    )
   }
 
   return (

@@ -1,0 +1,53 @@
+.root {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.tablist {
+  display: flex;
+}
+
+.tab {
+  display: flex;
+  flex: 1;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 2px solid transparent;
+  color: var(--color-smoke-500);
+}
+
+.tab:has(.input:checked) {
+  border-bottom-color: var(--color-ink);
+  color: var(--color-ink);
+}
+
+.tab:focus-within {
+  outline: 2px solid var(--color-bluebs-500);
+  outline-offset: -2px;
+}
+
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 1023px) {
+  .root:has(.trendingInput:checked) .activityPanel,
+  .root:has(.activityInput:checked) .trendingPanel {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .tablist {
+    display: none;
+  }
+}

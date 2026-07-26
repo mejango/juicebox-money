@@ -11,7 +11,7 @@ import { erc20Abi, zeroAddress } from 'viem'
 import { useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { TokenPanelSkeleton } from '@/components/LoadingSkeletons'
-import { truncateAddress } from '@/lib/format'
+import { AddressLink } from '@/components/ui/AddressLink'
 
 /**
  * The project's own token, as a card (website/ parity: renderTokenPanel).
@@ -96,20 +96,11 @@ export function TokenPanel({
           centerFull: true,
           dd: (
             <dd>
-              {etherscanHost ? (
-                <a
-                  href={`https://${etherscanHost}/address/${tokenAddress}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-ink hover:underline"
-                >
-                  {truncateAddress(tokenAddress!)}
-                </a>
-              ) : (
-                <span className="text-ink">
-                  {truncateAddress(tokenAddress!)}
-                </span>
-              )}
+              <AddressLink
+                address={tokenAddress!}
+                host={etherscanHost}
+                className="text-ink"
+              />
             </dd>
           ),
         },

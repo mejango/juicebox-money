@@ -70,6 +70,10 @@ export type BsProject = {
   metadataUri: string | null
 }
 
+export type BsSearchProject = BsProject & {
+  searchTicker: string | null
+}
+
 const PROJECT_FIELDS = `
   projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
@@ -92,21 +96,99 @@ export async function getProject(
 
 export async function searchProjects(
   text: string,
-  limit = 8,
-): Promise<BsProject[]> {
-  const data = await bendystraw<{ projects: { items: BsProject[] } }>(
-    `query($text: String!, $limit: Int!) {
-      projects(
-        where: { version: 6, name_contains_nocase: $text }
-        orderBy: "volume"
-        orderDirection: "desc"
-        limit: $limit
-      ) { items { ${PROJECT_FIELDS} } }
-    }`,
-    { text, limit },
-    { revalidate: 30 },
-  )
-  return data.projects.items
+  limit = 24,
+): Promise<BsSearchProject[]> {
+  const searchText = text.trim().replace(/^\$/, '')
+  const numericId = /^\d+$/.test(searchText) ? Number(searchText) : null
+  const idFilter =
+    numericId !== null && Number.isSafeInteger(numericId) && numericId > 0
+      ? `{ projectId: ${numericId} }`
+      : null
+  const filters = [
+    '{ name_contains_nocase: $text }',
+    ...(idFilter ? [idFilter] : []),
+  ].join('\n')
+  const [projectData, tickerData] = await Promise.all([
+    bendystraw<{ projects: { items: BsProject[] } }>(
+      `query($text: String!, $limit: Int!) {
+        projects(
+          where: {
+            version: 6
+            OR: [
+              ${filters}
+            ]
+          }
+          orderBy: "volume"
+          orderDirection: "desc"
+          limit: $limit
+        ) { items { ${PROJECT_FIELDS} } }
+      }`,
+      { text: searchText, limit },
+      { revalidate: 30 },
+    ),
+    bendystraw<{
+      deployErc20Events: {
+        items: { chainId: number; projectId: number; symbol: string }[]
+      }
+    }>(
+      `query($text: String!) {
+        deployErc20Events(
+          where: { symbol_contains_nocase: $text }
+          limit: 100
+        ) {
+          items { chainId projectId symbol }
+        }
+      }`,
+      { text: searchText },
+      { revalidate: 30 },
+    ),
+  ])
+
+  const tickerByDeployment = new Map<string, string>()
+  for (const event of tickerData.deployErc20Events.items) {
+    tickerByDeployment.set(
+      `${event.chainId}:${event.projectId}`,
+      event.symbol,
+    )
+  }
+  const tickerPairs = Array.from(tickerByDeployment.keys()).map(pair => {
+    const [chainId, projectId] = pair.split(':').map(Number)
+    return `{ chainId: ${chainId}, projectId: ${projectId} }`
+  })
+  const tickerProjects =
+    tickerPairs.length > 0
+      ? (
+          await bendystraw<{ projects: { items: BsProject[] } }>(
+            `query($limit: Int!) {
+              projects(
+                where: {
+                  version: 6
+                  OR: [${tickerPairs.join('\n')}]
+                }
+                orderBy: "volume"
+                orderDirection: "desc"
+                limit: $limit
+              ) { items { ${PROJECT_FIELDS} } }
+            }`,
+            { limit },
+            { revalidate: 30 },
+          )
+        ).projects.items
+      : []
+
+  const projects = new Map<string, BsProject>()
+  for (const project of [...projectData.projects.items, ...tickerProjects]) {
+    projects.set(`${project.chainId}:${project.projectId}`, project)
+  }
+  return Array.from(projects.values())
+    .map(project => ({
+      ...project,
+      searchTicker:
+        tickerByDeployment.get(
+          `${project.chainId}:${project.projectId}`,
+        ) ?? null,
+    }))
+    .slice(0, limit)
 }
 
 export type BsActivityEvent = {
@@ -114,6 +196,7 @@ export type BsActivityEvent = {
   chainId: number
   projectId: number
   timestamp: number
+  from: string
   txHash: string
   payEvent: {
     amount: string
@@ -128,6 +211,118 @@ export type BsActivityEvent = {
     reclaimAmountUsd: string | null
     beneficiary: string
   } | null
+  projectCreateEvent?: {
+    from: string
+  } | null
+  addToBalanceEvent?: {
+    amount: string
+    from: string
+    memo: string | null
+  } | null
+  mintTokensEvent?: {
+    beneficiaryTokenCount: string
+    beneficiary: string
+    caller: string
+    from: string
+  } | null
+  sendPayoutsEvent?: {
+    amount: string
+    amountPaidOut: string
+    amountPaidOutUsd: string | null
+    caller: string
+    from: string
+  } | null
+  sendReservedTokensToSplitsEvent?: {
+    tokenCount: string
+    from: string
+  } | null
+  autoIssueEvent?: {
+    beneficiary: string
+    count: string
+    stageId: string
+    from: string
+  } | null
+  borrowLoanEvent?: {
+    borrowAmount: string
+    collateral: string
+    beneficiary: string
+    token: string
+    from: string
+  } | null
+  repayLoanEvent?: {
+    repayBorrowAmount: string
+    collateralCountToReturn: string
+    from: string
+  } | null
+  liquidateLoanEvent?: {
+    borrowAmount: string
+    collateral: string
+    from: string
+  } | null
+  mintNftEvent?: {
+    tierId: string
+    tokenId: string
+    beneficiary: string
+    totalAmountPaid: string
+    from: string
+  } | null
+  deployErc20Event?: {
+    symbol: string
+    name: string
+    token: string
+    from: string
+  } | null
+  setUriEvent?: {
+    uri: string
+    caller: string
+    from: string
+  } | null
+  projectTransferEvent?: {
+    previousOwner: string
+    owner: string
+    from: string
+  } | null
+  operatorPermissionsSetEvent?: {
+    account: string
+    operator: string
+    isRevnetOperator: boolean | null
+    caller: string
+    from: string
+  } | null
+  addNftTierEvent?: {
+    tierId: string
+    price: string
+    category: string
+    caller: string
+    from: string
+  } | null
+  removeNftTierEvent?: {
+    tierId: string
+    caller: string
+    from: string
+  } | null
+  swapEvent?: {
+    direction: boolean
+    terminalTokenAmount: string
+    projectTokenAmount: string
+    caller: string
+    from: string
+  } | null
+  buybackPoolEvent?: {
+    terminalToken: string
+    poolId: string
+    caller: string
+    from: string
+  } | null
+  bridgeClaimEvent?: {
+    peerChainId: number
+    token: string
+    beneficiary: string
+    projectTokenCount: string
+    terminalTokenAmount: string
+    caller: string
+    from: string
+  } | null
 }
 
 export async function getProjectActivity(
@@ -140,18 +335,80 @@ export async function getProjectActivity(
   }>(
     `query($suckerGroupId: String!, $limit: Int!) {
       activityEvents(
-        where: { suckerGroupId: $suckerGroupId }
+        where: {
+          suckerGroupId: $suckerGroupId
+          version: 6
+          OR: [
+            { payEvent_not: null }
+            { cashOutTokensEvent_not: null }
+            { sendPayoutsEvent_not: null }
+            { sendReservedTokensToSplitsEvent_not: null }
+            { autoIssueEvent_not: null }
+            { mintTokensEvent_not: null }
+            { borrowLoanEvent_not: null }
+            { repayLoanEvent_not: null }
+            { liquidateLoanEvent_not: null }
+            { mintNftEvent_not: null }
+            { deployErc20Event_not: null }
+            { projectCreateEvent_not: null }
+            { addToBalanceEvent_not: null }
+            { setUriEvent_not: null }
+            { projectTransferEvent_not: null }
+            { operatorPermissionsSetEvent_not: null }
+            { addNftTierEvent_not: null }
+            { removeNftTierEvent_not: null }
+            { swapEvent_not: null }
+            { buybackPoolEvent_not: null }
+            { bridgeClaimEvent_not: null }
+          ]
+        }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
       ) {
         items {
-          id chainId projectId timestamp txHash
+          id chainId projectId timestamp from txHash
           payEvent {
             amount amountUsd beneficiary memo newlyIssuedTokenCount
           }
           cashOutTokensEvent {
             cashOutCount reclaimAmount reclaimAmountUsd beneficiary
+          }
+          projectCreateEvent { from }
+          addToBalanceEvent { amount memo from }
+          mintTokensEvent {
+            beneficiary beneficiaryTokenCount caller from
+          }
+          sendPayoutsEvent {
+            amount amountPaidOut amountPaidOutUsd caller from
+          }
+          sendReservedTokensToSplitsEvent { tokenCount from }
+          autoIssueEvent { beneficiary count stageId from }
+          borrowLoanEvent {
+            borrowAmount collateral beneficiary token from
+          }
+          repayLoanEvent {
+            repayBorrowAmount collateralCountToReturn from
+          }
+          liquidateLoanEvent { borrowAmount collateral from }
+          mintNftEvent {
+            tierId tokenId beneficiary totalAmountPaid from
+          }
+          deployErc20Event { symbol name token from }
+          setUriEvent { uri caller from }
+          projectTransferEvent { previousOwner owner from }
+          operatorPermissionsSetEvent {
+            account operator isRevnetOperator caller from
+          }
+          addNftTierEvent { tierId price category caller from }
+          removeNftTierEvent { tierId caller from }
+          swapEvent {
+            direction terminalTokenAmount projectTokenAmount caller from
+          }
+          buybackPoolEvent { terminalToken poolId caller from }
+          bridgeClaimEvent {
+            peerChainId token beneficiary projectTokenCount
+            terminalTokenAmount caller from
           }
         }
       }

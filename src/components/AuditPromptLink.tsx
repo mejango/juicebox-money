@@ -13,7 +13,7 @@ export function AuditPromptLink({ className }: { className?: string }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   return (
     <p className={className}>
-      All open source,{' '}
+      100% open source,{' '}
       <button
         type="button"
         onClick={async () => {
@@ -28,7 +28,7 @@ export function AuditPromptLink({ className }: { className?: string }) {
         }}
         className="inline-flex min-h-11 items-center underline decoration-smoke-400 underline-offset-2 hover:text-ink"
       >
-        {copied ? 'audit prompt copied to clipboard' : 'audit the code with your AI'}
+        {copied ? 'audit prompt copied to clipboard' : 'audit with your AI'}
       </button>
       .
     </p>

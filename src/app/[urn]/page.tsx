@@ -9,6 +9,7 @@ import { ActivityList } from '@/components/ActivityList'
 import { ChainIcon } from '@/components/ChainIcon'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { BackOfficeTab } from '@/components/project/BackOfficeTab'
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { FundsTab } from '@/components/project/FundsTab'
@@ -29,11 +30,7 @@ import {
   getSuckerGroupProjects,
   resolveProjectDeployments,
 } from '@/lib/bendystraw'
-import {
-  formatDate,
-  ipfsUrl,
-  truncateAddress,
-} from '@/lib/format'
+import { formatDate, ipfsUrl } from '@/lib/format'
 import { parseUrn, toUrn } from '@/lib/urn'
 
 // getProject is a POST, which Next's fetch cache doesn't dedupe — memoize per
@@ -146,7 +143,7 @@ export default async function ProjectPage({
   const [metadata, activity, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
     project.suckerGroupId
-      ? getProjectActivity(project.suckerGroupId, 40, urn.chainId).catch(
+      ? getProjectActivity(project.suckerGroupId, 100, urn.chainId).catch(
           () => [] as BsActivityEvent[],
         )
       : Promise.resolve([] as BsActivityEvent[]),
@@ -253,59 +250,103 @@ export default async function ProjectPage({
               {project.projectTagline}
             </p>
           ) : null}
-          <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
-            <span>
-              <span className="text-smoke-500">Type:</span>{' '}
-              <span className="font-medium text-ink">
-                {isRevnet ? 'Revnet' : 'Project'}
-              </span>
-            </span>
-            <span aria-hidden className="mx-2.5 text-smoke-300">
-              |
-            </span>
-            {authority ? (
-              <>
+          <div className="mt-2 text-sm text-smoke-700">
+            <div className="space-y-1 lg:hidden">
+              <div className="flex items-center">
                 <span>
-                  <span className="text-smoke-500">
-                    {isRevnet ? 'Operator:' : 'Owner:'}
-                  </span>{' '}
-                  {etherscan ? (
-                    <a
-                      href={`https://${etherscan}/address/${authority}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="hover:text-ink hover:underline"
-                    >
-                      {truncateAddress(authority)}
-                    </a>
-                  ) : (
-                    <span>{truncateAddress(authority)}</span>
-                  )}
+                  <span className="text-smoke-500">Type:</span>{' '}
+                  <span className="font-medium text-ink">
+                    {isRevnet ? 'Revnet' : 'Project'}
+                  </span>
+                </span>
+                {authority ? (
+                  <>
+                    <span aria-hidden className="mx-2.5 text-smoke-300">
+                      |
+                    </span>
+                    <span>
+                      <span className="text-smoke-500">
+                        {isRevnet ? 'Operator:' : 'Owner:'}
+                      </span>{' '}
+                      <AddressLink
+                        address={authority}
+                        host={etherscan}
+                        className="text-smoke-700"
+                      />
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              <div className="flex items-center">
+                <span>
+                  <span className="text-smoke-500">Created:</span>{' '}
+                  {formatDate(project.createdAt)}
                 </span>
                 <span aria-hidden className="mx-2.5 text-smoke-300">
                   |
                 </span>
-              </>
-            ) : null}
-            <span>
-              <span className="text-smoke-500">Created:</span>{' '}
-              {formatDate(project.createdAt)}
-            </span>
-            <span aria-hidden className="mx-2.5 text-smoke-300">
-              |
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="text-smoke-500">On:</span>
-              {chains.map(p => (
-                <Link
-                  key={p.chainId}
-                  href={`/${toUrn(p.chainId, p.projectId)}`}
-                  className="transition-opacity hover:opacity-70"
-                >
-                  <ChainIcon chainId={p.chainId} />
-                </Link>
-              ))}
-            </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-smoke-500">On:</span>
+                  {chains.map(p => (
+                    <Link
+                      key={p.chainId}
+                      href={`/${toUrn(p.chainId, p.projectId)}`}
+                      className="transition-opacity hover:opacity-70"
+                    >
+                      <ChainIcon chainId={p.chainId} />
+                    </Link>
+                  ))}
+                </span>
+              </div>
+            </div>
+
+            <div className="hidden items-center whitespace-nowrap lg:flex">
+              <span>
+                <span className="text-smoke-500">Type:</span>{' '}
+                <span className="font-medium text-ink">
+                  {isRevnet ? 'Revnet' : 'Project'}
+                </span>
+              </span>
+              {authority ? (
+                <>
+                  <span aria-hidden className="mx-2.5 text-smoke-300">
+                    |
+                  </span>
+                  <span>
+                    <span className="text-smoke-500">
+                      {isRevnet ? 'Operator:' : 'Owner:'}
+                    </span>{' '}
+                    <AddressLink
+                      address={authority}
+                      host={etherscan}
+                      className="text-smoke-700"
+                    />
+                  </span>
+                </>
+              ) : null}
+              <span aria-hidden className="mx-2.5 text-smoke-300">
+                |
+              </span>
+              <span>
+                <span className="text-smoke-500">Created:</span>{' '}
+                {formatDate(project.createdAt)}
+              </span>
+              <span aria-hidden className="mx-2.5 text-smoke-300">
+                |
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="text-smoke-500">On:</span>
+                {chains.map(p => (
+                  <Link
+                    key={p.chainId}
+                    href={`/${toUrn(p.chainId, p.projectId)}`}
+                    className="transition-opacity hover:opacity-70"
+                  >
+                    <ChainIcon chainId={p.chainId} />
+                  </Link>
+                ))}
+              </span>
+            </div>
           </div>
         </div>
       </header>

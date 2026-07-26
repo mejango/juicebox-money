@@ -31,6 +31,11 @@ import {
 } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import {
+  isSafeConnection,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 import { shortError } from '@/lib/errors'
 import { build721TierConfigs } from '@/lib/launch'
 import {
@@ -62,6 +67,7 @@ type ChainStatus = {
     | 'done'
     | 'failed'
   hash?: `0x${string}`
+  safeProposalHash?: `0x${string}`
   error?: string
 }
 
@@ -294,6 +300,8 @@ export function AddShopItemsModal({
 
         let hash = statusesRef.current[target.chainId]?.hash
         if (hash) {
+          const safeProposalHash =
+            statusesRef.current[target.chainId]?.safeProposalHash
           activeHash = hash
           updateStatus(target.chainId, {
             phase: 'confirming',
@@ -302,6 +310,15 @@ export function AddShopItemsModal({
           setMessage(
             `Checking the submitted transaction on ${chainName(target.chainId)}…`,
           )
+          if (safeProposalHash) {
+            hash = await waitForSafeExecutionHash(chainId, safeProposalHash)
+            activeHash = hash
+            updateStatus(target.chainId, {
+              phase: 'confirming',
+              hash,
+              safeProposalHash: undefined,
+            })
+          }
         } else {
           updateStatus(target.chainId, {
             phase: 'signing',
@@ -332,6 +349,12 @@ export function AddShopItemsModal({
                   title: `Review shop items on ${chainName(target.chainId)}`,
                   label: 'Add shop items',
                   contractName: 'JB721TiersHook',
+                  ...(isSafeConnection(config)
+                    ? {
+                        description: SAFE_NONCE_GUIDANCE,
+                        confirmLabel: 'Agree & continue to Safe',
+                      }
+                    : {}),
                 },
               ),
             switchChain: reviewedChainId =>
@@ -353,6 +376,20 @@ export function AddShopItemsModal({
           })
           activeHash = hash
           updateStatus(target.chainId, { phase: 'confirming', hash })
+          if (isSafeConnection(config)) {
+            updateStatus(target.chainId, {
+              phase: 'confirming',
+              hash,
+              safeProposalHash: hash,
+            })
+            hash = await waitForSafeExecutionHash(chainId, hash)
+            activeHash = hash
+            updateStatus(target.chainId, {
+              phase: 'confirming',
+              hash,
+              safeProposalHash: undefined,
+            })
+          }
         }
 
         const receipt = await waitForTransactionReceipt(config, {

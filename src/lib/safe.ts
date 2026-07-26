@@ -23,6 +23,10 @@ import {
   requireTransactionReview,
   type TransactionReviewRequest,
 } from '@/lib/transaction-review'
+import {
+  isSafeConnection,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 
 export type SafeInfo = {
   owners: Address[]
@@ -683,7 +687,7 @@ async function sendContractAndConfirm({
   const fees = await safeFeeOverrides(client)
   // Reuse the exact call which just simulated, while setting EIP-1559 fees
   // explicitly instead of spreading a provider-specific transaction fee mode.
-  const hash = await wallet.writeContract({
+  let hash = await wallet.writeContract({
     address,
     abi,
     functionName,
@@ -692,6 +696,9 @@ async function sendContractAndConfirm({
     ...fees,
     type: 'eip1559',
   })
+  if (isSafeConnection(wagmiConfig)) {
+    hash = await waitForSafeExecutionHash(chainId, hash)
+  }
   try {
     const receipt = await client.waitForTransactionReceipt({ hash })
     if (receipt.status !== 'success') {

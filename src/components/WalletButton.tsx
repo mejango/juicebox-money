@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useWallet } from '@/hooks/useWallet'
-import { truncateAddress } from '@/lib/format'
 
 export function WalletButton() {
   const { isConnected, address, connectors, connectWith, openSignIn, disconnect } =
@@ -29,7 +29,7 @@ export function WalletButton() {
           className="btn-secondary flex min-h-[44px] items-center gap-2 px-4 text-sm"
         >
           <span className="h-2 w-2 rounded-full bg-melon-500" />
-          {truncateAddress(address)}
+          <AddressLabel address={address} />
         </button>
       ) : (
         <button

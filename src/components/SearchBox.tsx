@@ -3,14 +3,18 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
-import { BsProject } from '@/lib/bendystraw'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
 import { ProjectLogo } from './ProjectLogo'
 
-type Result = Pick<
-  BsProject,
-  'projectId' | 'chainId' | 'name' | 'logoUri' | 'projectTagline'
->
+type Result = {
+  projectId: number
+  chainId: number
+  name: string | null
+  logoUri: string | null
+  projectTagline: string | null
+  ticker: string | null
+  chainIds: number[]
+}
 
 function MagnifierIcon({ className }: { className?: string }) {
   return (
@@ -43,7 +47,7 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
   // Debounced free-text search against bendystraw (via our API route).
   useEffect(() => {
     const text = query.trim()
-    if (urn || text.length < 2) {
+    if (urn || (text.length < 2 && !/^\d+$/.test(text))) {
       setResults([])
       return
     }
@@ -102,7 +106,7 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
             setMobileOpen(false)
           }
         }}
-        placeholder="Search projects, or eth:1"
+        placeholder="Search projects"
         aria-label="Search projects"
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />
@@ -129,8 +133,14 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
                     <span className="block truncate text-sm font-medium text-ink">
                       {r.name ?? `Project ${r.projectId}`}
                     </span>
-                    <span className="block text-xs text-smoke-700">
-                      {chainName(r.chainId)}
+                    <span className="flex items-center gap-1 text-xs text-smoke-700">
+                      {r.ticker ? <span>${r.ticker}</span> : null}
+                      {r.ticker && r.chainIds.length > 0 ? (
+                        <span aria-hidden>·</span>
+                      ) : null}
+                      <span>
+                        {r.chainIds.map(chainName).join(', ')}
+                      </span>
                     </span>
                   </span>
                 </button>

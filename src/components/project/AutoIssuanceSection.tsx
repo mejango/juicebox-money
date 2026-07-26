@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -21,7 +22,6 @@ import {
   etherscanTxUrl,
   formatDate,
   formatTokenAmount,
-  truncateAddress,
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 
@@ -264,18 +264,11 @@ function AutoIssueRow({
         {stage ? `Stage ${stage.number}` : `#${row.stageId}`}
       </td>
       <td className="py-2 pr-3">
-        {etherscanHost ? (
-          <a
-            href={`https://${etherscanHost}/address/${row.beneficiary}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-ink hover:underline"
-          >
-            {truncateAddress(row.beneficiary)}
-          </a>
-        ) : (
-          truncateAddress(row.beneficiary)
-        )}
+        <AddressLink
+          address={row.beneficiary}
+          host={etherscanHost}
+          className="text-ink"
+        />
       </td>
       <td className="py-2 text-right tabular-nums">
         {formatTokenAmount(available ? remaining! : row.storedCount)}

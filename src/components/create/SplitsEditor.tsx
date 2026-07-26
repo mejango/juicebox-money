@@ -375,7 +375,7 @@ export function SplitsEditor({
               ) : null}
 
               {multiChain && split.kind !== 'hook' ? (
-                <div className="mt-2">
+                <div className="-ml-[7.5rem] mt-2 border-l-2 border-smoke-200 pl-3 sm:ml-0 sm:border-l-0 sm:pl-0">
                   <button
                     onClick={() =>
                       update(split.id, { perChainOpen: !split.perChainOpen })
@@ -391,9 +391,9 @@ export function SplitsEditor({
                   {split.perChainOpen ? (
                     <div className="mt-2 space-y-2">
                       {chainIds!.map(chainId => (
-                        <div key={chainId} className="flex items-start gap-2">
-                          <span className="mt-1.5 flex w-9 shrink-0 items-center justify-center">
-                            <ChainIcon chainId={chainId} size={28} />
+                        <div key={chainId} className="flex items-start gap-1.5">
+                          <span className="mt-2 flex w-7 shrink-0 items-center justify-center">
+                            <ChainIcon chainId={chainId} size={24} />
                           </span>
                           {mode === 'amount' ? (
                             <>
@@ -412,7 +412,7 @@ export function SplitsEditor({
                                 disabled={disabled}
                                 placeholder={split.value.trim() || amountLabel}
                                 aria-label={`Amount on ${chainName(chainId)}`}
-                                className="input-well min-h-[40px] w-24 shrink-0 px-2.5 text-xs tabular-nums disabled:opacity-60"
+                                className="input-well min-h-[40px] w-16 shrink-0 px-2.5 text-xs tabular-nums disabled:opacity-60 sm:w-24"
                               />
                               <span className="mt-2.5 shrink-0 text-xs text-smoke-700">
                                 to
@@ -468,7 +468,7 @@ export function SplitsEditor({
                           )}
                         </div>
                       ))}
-                      <p className="text-[11px] leading-relaxed text-smoke-500">
+                      <p className="pl-[34px] text-[11px] leading-relaxed text-smoke-500">
                         Empty fields use the default above.
                       </p>
                     </div>

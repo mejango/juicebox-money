@@ -3,50 +3,15 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
 import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
-function MenuIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-7 w-7"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      aria-hidden
-    >
-      {open ? (
-        <>
-          <path d="M5 5l14 14" />
-          <path d="M19 5 5 19" />
-        </>
-      ) : (
-        <>
-          <path d="M4 7h16" />
-          <path d="M4 12h16" />
-          <path d="M4 17h16" />
-        </>
-      )}
-    </svg>
-  )
-}
-
-function Logo({
-  closeMenu,
-  iconOnly,
-}: {
-  closeMenu?: () => void
-  iconOnly: boolean
-}) {
+function Logo({ iconOnly }: { iconOnly: boolean }) {
   return (
     <Link
       href="/"
-      onClick={closeMenu}
       className="flex min-h-11 min-w-11 shrink-0 items-center justify-center"
       aria-label="Juicebox home"
     >
@@ -78,37 +43,16 @@ function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
   )
 }
 
-function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
-  const [open, setOpen] = useState(false)
-  const closeMenu = () => setOpen(false)
-
+function MobileNavigation() {
   return (
-    <nav className="mx-auto max-w-6xl md:hidden">
-      <div className="flex h-[72px] items-center justify-between px-4 sm:px-6">
-        <Logo closeMenu={closeMenu} iconOnly={iconOnly} />
-        <button
-          type="button"
-          onClick={() => setOpen(value => !value)}
-          aria-label={open ? 'Close menu' : 'Open menu'}
-          aria-expanded={open}
-          aria-controls="mobile-site-menu"
-          className="icon-button"
-        >
-          <MenuIcon open={open} />
-        </button>
+    <nav className="mx-auto grid h-[72px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 md:hidden">
+      <Logo iconOnly={false} />
+      <div className="w-full max-w-[280px] min-w-0 justify-self-center">
+        <SearchBox expanded />
       </div>
-
-      {open ? (
-        <div
-          id="mobile-site-menu"
-          className="absolute inset-x-0 top-full max-h-[calc(100vh-72px)] overflow-y-auto border-y border-smoke-200 bg-bone px-4 py-5 shadow-lg sm:px-6"
-        >
-          <SearchBox expanded />
-          <div className="mt-4 border-t border-smoke-200 pt-4">
-            <WalletButton />
-          </div>
-        </div>
-      ) : null}
+      <div className="justify-self-end">
+        <WalletButton />
+      </div>
     </nav>
   )
 }
@@ -120,7 +64,7 @@ export function SiteNavigation() {
   return (
     <>
       <DesktopNavigation iconOnly={iconOnly} />
-      <MobileNavigation iconOnly={iconOnly} />
+      <MobileNavigation />
     </>
   )
 }

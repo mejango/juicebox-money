@@ -1,10 +1,10 @@
 import Link from 'next/link'
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { ChainIcon } from '@/components/ChainIcon'
 import { RichContent } from '@/components/RichContent'
 import { RevnetPriceCard } from '@/components/project/RevnetPriceCard'
 import { TokenPanel } from '@/components/project/TokenPanel'
-import { truncateAddress } from '@/lib/format'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { chainName, toUrn } from '@/lib/urn'
 
 /** The owner/operator address, linked to its own chain's explorer. */
@@ -15,19 +15,7 @@ function AuthorityLink({
   chainId: number
   address: string
 }) {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
-  return host ? (
-    <a
-      href={`https://${host}/address/${address}`}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-ink hover:underline"
-    >
-      {truncateAddress(address)}
-    </a>
-  ) : (
-    <span className="text-ink">{truncateAddress(address)}</span>
-  )
+  return <AddressLink address={address} chainId={chainId} />
 }
 
 /**

@@ -22,10 +22,16 @@ import {
   getPublicClient,
   waitForTransactionReceipt,
 } from 'wagmi/actions'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useWallet } from '@/hooks/useWallet'
 import { friendlyError } from '@/lib/errors'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
+import {
+  isSafeConnection,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
+import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import { randomSalt } from '@/lib/manage'
 import { resolvedAddress } from '@/lib/ens'
@@ -128,6 +134,7 @@ const makeImageHandler =
 type ChainStatus = {
   phase: 'pending' | 'signing' | 'confirming' | 'uncertain' | 'done' | 'failed'
   txHash?: `0x${string}`
+  safeProposalHash?: `0x${string}`
   projectId?: number
   error?: string
   indexed?: boolean
@@ -571,6 +578,32 @@ export function CreateForm() {
         ...toRecipient(row, chainId),
       }))
 
+  /** Reserved-token rows express shares of all newly issued tokens. Their
+   * sum becomes the reserved percent; within that bucket the contract splits
+   * are normalized to 100%. */
+  const buildReservedSplits = (
+    rows: DraftSplit[],
+    chainId: number,
+  ): { percent: number; splits: SplitConfig[] } => {
+    const valid = rows.filter(s => splitOk(s, 'percent'))
+    const total = valid.reduce((sum, row) => sum + Number(row.value), 0)
+    if (total <= 0) return { percent: 0, splits: [] }
+
+    const percents = valid.map(row =>
+      Math.floor((Number(row.value) / total) * 1e9),
+    )
+    percents[percents.length - 1] =
+      1e9 - percents.slice(0, -1).reduce((sum, percent) => sum + percent, 0)
+
+    return {
+      percent: Math.min(100, total),
+      splits: valid.map((row, index) => ({
+        percent: percents[index],
+        ...toRecipient(row, chainId),
+      })),
+    }
+  }
+
   /** Routed payouts for one stage: '%' mode splits all funds (unlimited
    *  limit); 'amounts' mode fixes each recipient's amount — the payout
    *  limit is the sum and split percents are the amounts' shares of it
@@ -634,8 +667,7 @@ export function CreateForm() {
     const surplusOn =
       stage.payouts === 'flexible' ||
       (stage.payouts === 'routed' && !routedAll && stage.routedSurplusOn)
-    const reservedOn =
-      Number(stage.reservedPct) > 0 && Number(stage.reservedPct) <= 100
+    const reserved = buildReservedSplits(stage.reservedSplits, chainId)
     return {
       duration: stageDurationSeconds(stage),
       // Stage 1 honors a scheduled start; multichain launches pin a shared
@@ -655,10 +687,8 @@ export function CreateForm() {
           ? RULESET_WEIGHT_INHERIT
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: Math.round(Number(stage.cutPct || '0') * 1e7),
-      reservedPercent: Math.round(Number(stage.reservedPct || '0') * 100),
-      reservedSplits: reservedOn
-        ? toSplitConfigs(stage.reservedSplits, chainId)
-        : [],
+      reservedPercent: Math.round(reserved.percent * 100),
+      reservedSplits: reserved.splits,
       payouts: stage.payouts,
       payoutSplits: routed?.splits ?? [],
       payoutLimitAmount: routed?.limit ?? null,
@@ -697,18 +727,7 @@ export function CreateForm() {
     const cutOn = stage.cutOn && Number(stage.cutPct) > 0
     // Revnet splits: each row is a % of new issuance; splitPercent is their
     // sum and the bucket shares are the rows normalized to exactly 1e9.
-    const rows = stage.reservedSplits.filter(s => splitOk(s, 'percent'))
-    const rowTotal = rows.reduce((sum, r) => sum + Number(r.value), 0)
-    const splitsPct = Math.min(100, rowTotal)
-    let revnetSplits: SplitConfig[] = []
-    if (rowTotal > 0) {
-      const rel = rows.map(r => Math.floor((Number(r.value) / rowTotal) * 1e9))
-      rel[rel.length - 1] = 1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0)
-      revnetSplits = rows.map((r, i) => ({
-        percent: rel[i],
-        ...toRecipient(r, chainId),
-      }))
-    }
+    const reserved = buildReservedSplits(stage.reservedSplits, chainId)
     return {
       duration: 0,
       mustStartAtOrAfter: start,
@@ -718,8 +737,8 @@ export function CreateForm() {
           ? RULESET_WEIGHT_INHERIT
           : parseUnits(stage.issuanceRate || '0', 18),
       weightCutPercent: cutOn ? Math.round(Number(stage.cutPct) * 1e7) : 0,
-      reservedPercent: Math.round(splitsPct * 100),
-      reservedSplits: revnetSplits,
+      reservedPercent: Math.round(reserved.percent * 100),
+      reservedSplits: reserved.splits,
       payouts: 'none',
       payoutSplits: [],
       payoutLimitAmount: null,
@@ -1027,6 +1046,7 @@ export function CreateForm() {
         priorStatus?.phase === 'confirming' || priorStatus?.phase === 'uncertain'
           ? priorStatus.txHash
           : undefined
+      const priorSafeProposalHash = priorStatus?.safeProposalHash
       let provenReverted = false
       try {
         const client = getPublicClient(config, {
@@ -1034,6 +1054,14 @@ export function CreateForm() {
         }) as PublicClient
         if (hash) {
           updateStatus(chainId, { phase: 'confirming', error: undefined })
+          if (priorSafeProposalHash) {
+            hash = await waitForSafeExecutionHash(chainId, priorSafeProposalHash)
+            updateStatus(chainId, {
+              phase: 'confirming',
+              txHash: hash,
+              safeProposalHash: undefined,
+            })
+          }
         } else {
           updateStatus(chainId, { phase: 'signing', error: undefined })
           // Fees are dynamic and must match msg.value EXACTLY — re-read right
@@ -1059,6 +1087,12 @@ export function CreateForm() {
                 {
                   title: `Review launch on ${chainName(chainId)}`,
                   label: 'Launch project',
+                  ...(isSafeConnection(config)
+                    ? {
+                        description: SAFE_NONCE_GUIDANCE,
+                        confirmLabel: 'Agree & continue to Safe',
+                      }
+                    : {}),
                 },
               ),
             switchChain: reviewedChainId =>
@@ -1081,6 +1115,19 @@ export function CreateForm() {
               'Connected account changed. Review the launch again.',
           })
           updateStatus(chainId, { phase: 'confirming', txHash: hash })
+          if (isSafeConnection(config)) {
+            updateStatus(chainId, {
+              phase: 'confirming',
+              txHash: hash,
+              safeProposalHash: hash,
+            })
+            hash = await waitForSafeExecutionHash(chainId, hash)
+            updateStatus(chainId, {
+              phase: 'confirming',
+              txHash: hash,
+              safeProposalHash: undefined,
+            })
+          }
         }
         const receipt = await waitForTransactionReceipt(config, {
           hash: hash!,
@@ -1457,13 +1504,16 @@ export function CreateForm() {
       </div>
 
       {/* Horizontal stepper */}
-      <nav aria-label="Create steps" className="mt-8 flex min-w-0 items-center gap-1.5">
+      <nav
+        aria-label="Create steps"
+        className="mt-8 flex min-w-0 items-start gap-1.5 sm:items-center"
+      >
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
             {i > 0 ? (
               <span
                 aria-hidden
-                className={`h-0.5 min-w-3 flex-1 rounded-full ${
+                className={`mt-[13px] h-0.5 min-w-2 flex-1 rounded-full sm:mt-0 sm:min-w-3 ${
                   i <= step ? 'bg-ink' : 'bg-smoke-300'
                 }`}
               />
@@ -1473,7 +1523,7 @@ export function CreateForm() {
               disabled={busy}
               aria-label={label}
               aria-current={step === i ? 'step' : undefined}
-              className="flex min-w-0 shrink-0 items-center gap-2 disabled:opacity-60"
+              className="flex min-w-0 shrink-0 flex-col items-center gap-1.5 disabled:opacity-60 sm:flex-row sm:gap-2"
             >
               <span
                 className={`flex h-7 w-7 items-center justify-center rounded-full font-agrandir text-xs font-medium sm:h-8 sm:w-8 sm:text-sm ${
@@ -1487,7 +1537,7 @@ export function CreateForm() {
                 {i < step ? <CheckIcon className="h-3.5 w-3.5" /> : i + 1}
               </span>
               <span
-                className={`hidden text-sm font-medium sm:inline ${
+                className={`whitespace-nowrap text-[10px] font-medium leading-tight sm:text-sm ${
                   step === i ? 'text-ink' : 'text-smoke-500'
                 }`}
               >
@@ -2492,7 +2542,7 @@ export function CreateForm() {
             <dt className="text-smoke-700">Owner</dt>
             <dd className="font-medium text-ink">
               {connected ? (
-                <span>{truncateAddress(address!)}</span>
+                <AddressLabel address={address!} />
               ) : (
                 <span className="text-smoke-700">Your connected wallet</span>
               )}
@@ -2525,7 +2575,7 @@ export function CreateForm() {
               <dd className="mt-1">
                 <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
                   <li>Starts at launch and lasts until changed</li>
-                  <li>Issues 10,000 tokens per {unitLabel} paid</li>
+                  <li>Issues 10,000 tokens per {unitLabel}</li>
                   <li>Unlimited owner withdrawals; cash outs off</li>
                   <li>All owner controls stay editable</li>
                   <li>Later rule changes can take effect immediately</li>

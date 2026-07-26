@@ -20,6 +20,11 @@ import {
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import {
+  isSafeConnection,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
+import {
   connectedWallet as connectedWalletCore,
   publicClient,
 } from '@/lib/wallet-core'
@@ -537,8 +542,11 @@ export async function relayrPay(
   await requireTransactionReview({
     title: 'Review Relayr payment',
     description:
-      'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.',
-    confirmLabel: 'Agree & pay Relayr',
+      'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.' +
+      (isSafeConnection(wagmiConfig) ? ` ${SAFE_NONCE_GUIDANCE}` : ''),
+    confirmLabel: isSafeConnection(wagmiConfig)
+      ? 'Agree & continue to Safe'
+      : 'Agree & pay Relayr',
     calls: [
       {
         chainId,
@@ -567,13 +575,16 @@ export async function relayrPay(
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
-  const hash = await wallet.sendTransaction({
+  let hash = await wallet.sendTransaction({
     account,
     to: payment.target,
     value,
     data: payment.calldata,
   })
   onSubmitted?.(hash)
+  if (isSafeConnection(wagmiConfig)) {
+    hash = await waitForSafeExecutionHash(chainId, hash)
+  }
   let receipt
   try {
     receipt = await client.waitForTransactionReceipt({ hash })

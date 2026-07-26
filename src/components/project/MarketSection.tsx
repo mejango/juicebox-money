@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { AddressLink } from '@/components/ui/AddressLink'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import {
   LiquidityBodySkeleton,
@@ -26,7 +27,7 @@ import {
 } from '@/components/LoadingSkeletons'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
-import { formatTokenAmount, truncateAddress } from '@/lib/format'
+import { formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import {
   MODIFY_LIQUIDITY_TOPIC,
@@ -705,14 +706,11 @@ export function MarketSection({
               AMM
             </span>
             {pm && etherscanHost ? (
-              <a
-                href={`https://${etherscanHost}/address/${pm}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <AddressLink
+                address={pm}
+                host={etherscanHost}
                 className="text-xs text-smoke-500 hover:text-ink"
-              >
-                {truncateAddress(pm)}
-              </a>
+              />
             ) : null}
           </div>
 

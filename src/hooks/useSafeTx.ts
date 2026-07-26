@@ -13,6 +13,11 @@ import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'
+import {
+  isSafeConnection,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 
 export type TxPhase =
   | 'idle'
@@ -79,13 +84,34 @@ export function useSafeTx(chainId: number) {
   const [phase, setPhase] = useState<TxPhase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+  const [safeProposalHash, setSafeProposalHash] = useState<`0x${string}` | null>(
+    null,
+  )
   const inFlightRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
     chainId,
-    query: { enabled: !!hash },
+    query: { enabled: !!hash && !safeProposalHash },
   })
+
+  useEffect(() => {
+    if (!safeProposalHash) return
+    const controller = new AbortController()
+    void waitForSafeExecutionHash(chainId, safeProposalHash, {
+      signal: controller.signal,
+    })
+      .then(executionHash => {
+        setHash(executionHash)
+        setSafeProposalHash(null)
+      })
+      .catch(reason => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return
+        setError(friendlyTxError(reason))
+        setPhase('error')
+      })
+    return () => controller.abort()
+  }, [chainId, safeProposalHash])
 
   // A successful receipt *query* can still contain an onchain revert. Only the
   // receipt's status is authoritative. A receipt RPC error leaves the already
@@ -128,7 +154,15 @@ export function useSafeTx(chainId: number) {
           review: async reviewed => {
             const approved = await requestContractTransactionReview(
               { ...reviewed, account: address },
-              { label: reviewed.label },
+              {
+                label: reviewed.label,
+                ...(isSafeConnection(wagmiConfig)
+                  ? {
+                      description: SAFE_NONCE_GUIDANCE,
+                      confirmLabel: 'Agree & continue to Safe',
+                    }
+                  : {}),
+              },
             )
             if (!approved) throw new TransactionReviewCancelledError()
           },
@@ -156,6 +190,7 @@ export function useSafeTx(chainId: number) {
           onPhase: setPhase,
         })
         setHash(txHash)
+        if (isSafeConnection(wagmiConfig)) setSafeProposalHash(txHash)
         setPhase('pending')
         return txHash
       } catch (e) {
@@ -177,6 +212,7 @@ export function useSafeTx(chainId: number) {
     setPhase('idle')
     setError(null)
     setHash(null)
+    setSafeProposalHash(null)
   }, [])
 
   return {
@@ -188,6 +224,8 @@ export function useSafeTx(chainId: number) {
       effectivePhase === 'pending',
     error: effectiveError,
     hash,
+    safeProposalHash,
+    safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
     receipt: receipt.data ?? null,
     /** The transaction has a hash, but the current RPC could not confirm it. */
     confirmationUncertain: phase === 'pending' && receipt.isError,

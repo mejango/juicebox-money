@@ -195,8 +195,6 @@ export function stageOk(
   flavor: 'project' | 'revnet' = 'project',
   multiToken = false,
 ): boolean {
-  const reservedOn =
-    numOk(stage.reservedPct, 100) && Number(stage.reservedPct) > 0
   const payoutsMode = stage.routedMode === 'all' ? 'percent' : 'amount'
   const issuanceOk = stageIssuanceOk(stage, isFirst)
   const splitsValid =
@@ -205,8 +203,7 @@ export function stageOk(
   const common =
     issuanceOk &&
     (stage.cutPct.trim() === '' || numOk(stage.cutPct, 100)) &&
-    (stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)) &&
-    (!reservedOn || splitsValid)
+    splitsValid
   if (flavor === 'revnet') {
     return (
       issuanceOk &&
@@ -288,12 +285,13 @@ export function stageSummaryParts(
   } else {
     parts.push('No issuance')
   }
-  if (flavor === 'revnet') {
-    const splitsPct = splitsTotal(stage.reservedSplits, 'percent')
-    if (splitsPct > 0) parts.push(`${splitsPct}% to splits`)
-  } else if (Number(stage.reservedPct) > 0) {
-    parts.push(`${Number(stage.reservedPct)}% reserved`)
-  }
+  const splitsPct = splitsTotal(stage.reservedSplits, 'percent')
+  if (splitsPct > 0)
+    parts.push(
+      flavor === 'revnet'
+        ? `${splitsPct}% to splits`
+        : `${splitsPct}% reserved`,
+    )
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   if (flavor === 'revnet') {
     parts.push(
@@ -450,7 +448,8 @@ export function StageRulesEditor({
     set({ open: { ...stage.open, [key]: !stage.open[key] } })
 
   const duration = stageDurationSeconds(stage)
-  const reservedOn = numOk(stage.reservedPct, 100) && Number(stage.reservedPct) > 0
+  const reservedPercent = splitsTotal(stage.reservedSplits, 'percent')
+  const reservedOn = reservedPercent > 0
   const payoutsMode = stage.routedMode === 'all' ? 'percent' : 'amount'
   const routedAll = stage.payouts === 'routed' && stage.routedMode === 'all'
   const issuanceOk = stageIssuanceOk(stage, isFirst)
@@ -480,7 +479,7 @@ export function StageRulesEditor({
         stage.issuanceRate.trim() === '' && !isFirst
           ? 'Keeps rate'
           : `${Number(stage.issuanceRate || '0').toLocaleString('en-US')} per ${unitLabel}`
-      }${reservedOn ? ` | ${Number(stage.reservedPct)}% reserved` : ''}${
+      }${reservedOn ? ` | ${reservedPercent}% reserved` : ''}${
         Number(stage.cutPct) > 0 ? ` | -${Number(stage.cutPct)}% per cycle` : ''
       }`
     : '—'
@@ -678,11 +677,10 @@ export function StageRulesEditor({
                 <option value="eth">ETH</option>
                 <option value="usd">USD</option>
               </select>
-              paid
             </span>
           ) : (
-            <span className="text-sm text-smoke-700">
-              {tokenLabel} per {unitLabel} paid
+            <span className="whitespace-nowrap text-sm text-smoke-700">
+              {tokenLabel} per {unitLabel}
             </span>
           )}
         </div>
@@ -845,43 +843,34 @@ export function StageRulesEditor({
             </div>
           </div>
         ) : (
-          <>
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={stage.reservedPct}
-                onChange={e => set({ reservedPct: e.target.value.slice(0, 5) })}
-                disabled={disabled}
-                className={`input-well min-h-[44px] w-20 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
-                  stage.reservedPct.trim() === '' || numOk(stage.reservedPct, 100)
-                    ? ''
-                    : '!border-red-400'
-                }`}
-              />
-              <span className="text-sm text-smoke-700">
-                % of new {tokenLabel} reserved
-              </span>
-            </div>
+          <div className="mt-4">
             {reservedOn ? (
-              <div className="mt-4">
                 <p className="text-xs leading-relaxed text-smoke-700">
-                  Where should reserved tokens go? Leave empty to keep them
-                  all for yourself.
+                Each split reserves its percentage of newly issued {tokenLabel}.
+                The reserved total is the sum of these splits.
                 </p>
-                <SplitsEditor
-                  splits={stage.reservedSplits}
-                  onChange={reservedSplits => set({ reservedSplits })}
-                  disabled={disabled}
-                  bucketLabel="reserved tokens"
-                  chainIds={chainIds}
-                  allowHook
-                  allowFundMarket
-                  allowLock={duration > 0 && duration !== FOREVER_SECONDS}
-                />
-              </div>
             ) : null}
-          </>
+            <SplitsEditor
+              splits={stage.reservedSplits}
+              onChange={reservedSplits =>
+                set({
+                  reservedSplits,
+                  reservedPct: String(
+                    splitsTotal(reservedSplits, 'percent'),
+                  ),
+                })
+              }
+              disabled={disabled}
+              bucketLabel={`new ${tokenLabel}`}
+              remainderNote="go to payers"
+              chainIds={chainIds}
+              addLabel="Add split"
+              allocatedLabel="reserved"
+              allowHook
+              allowFundMarket
+              allowLock={duration > 0 && duration !== FOREVER_SECONDS}
+            />
+          </div>
         )}
       </SubSection>
 

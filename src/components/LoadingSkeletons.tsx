@@ -1,4 +1,5 @@
 import { Skeleton, SkeletonLines, SkeletonTable } from './ui/Skeleton'
+import { HomepageDiscoveryTabs } from './HomepageDiscoveryTabs'
 
 export function ProjectCardSkeleton({ index = 0 }: { index?: number }) {
   return (
@@ -59,41 +60,46 @@ export function HomepageDiscoverySkeleton() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-6xl px-4 pb-0 pt-14 sm:px-6 sm:pt-16"
+      className="mx-auto max-w-6xl px-4 pb-0 pt-8 sm:px-6 sm:pt-16"
       role="status"
       aria-label="Loading projects and activity"
     >
       <span className="sr-only">Loading projects and activity</span>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="min-w-0 lg:col-span-2">
-          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-            Trending projects
-          </h2>
-          <div className="space-y-3 sm:hidden">
-            {Array.from({ length: 4 }, (_, index) => (
-              <ProjectCardSkeleton key={index} index={index} />
-            ))}
-          </div>
-          <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
-            {[0, 1].map(column => (
-              <div key={column} className="flex flex-col gap-3">
-                {Array.from({ length: 3 }, (_, index) => (
-                  <ProjectCardSkeleton
-                    key={index}
-                    index={index * 2 + column}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-        <aside className="min-w-0 lg:col-span-1">
-          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-            Fresh activity
-          </h2>
-          <ActivityRailSkeleton rows={6} />
-        </aside>
-      </div>
+      <HomepageDiscoveryTabs
+        name="homepage-discovery-loading"
+        trending={
+          <>
+            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
+              Trending projects
+            </h2>
+            <div className="space-y-3 sm:hidden">
+              {Array.from({ length: 4 }, (_, index) => (
+                <ProjectCardSkeleton key={index} index={index} />
+              ))}
+            </div>
+            <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
+              {[0, 1].map(column => (
+                <div key={column} className="flex flex-col gap-3">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <ProjectCardSkeleton
+                      key={index}
+                      index={index * 2 + column}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </>
+        }
+        activity={
+          <>
+            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
+              Fresh activity
+            </h2>
+            <ActivityRailSkeleton rows={6} />
+          </>
+        }
+      />
     </section>
   )
 }
@@ -628,9 +634,9 @@ export function ProjectPageSkeleton() {
         </div>
       </header>
 
-      <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="scrollbar-none -mx-4 mt-8 flex gap-3 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
         {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="card px-4 py-3.5">
+          <div key={index} className="card min-w-[160px] flex-1 px-4 py-3.5">
             <Skeleton className="h-3 w-20 rounded" />
             <Skeleton className="mt-2 h-7 w-24 rounded" />
           </div>

@@ -24,6 +24,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 import {
   encodeFunctionData,
   type Abi,
@@ -46,7 +47,6 @@ import {
   etherscanTxUrl,
   formatTokenAmount,
   timeAgo,
-  truncateAddress,
 } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -604,7 +604,9 @@ function MovementGroup({
             {group.rows.map(m => (
               <tr key={m.id} className="border-t border-smoke-100">
                 <td className="py-1.5 pr-3 text-smoke-700">{timeAgo(m.timestamp)}</td>
-                <td className="py-1.5 pr-3">{truncateAddress(m.beneficiary)}</td>
+                <td className="py-1.5 pr-3">
+                  <AddressLabel address={m.beneficiary} />
+                </td>
                 <td className="py-1.5 text-right">
                   {formatTokenAmount(BigInt(m.projectTokenCount))}
                 </td>

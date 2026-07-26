@@ -10,7 +10,14 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useId, useMemo, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { type Address, type PublicClient } from 'viem'
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
@@ -129,7 +136,7 @@ async function readChainTreasury(
 
 function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="card px-4 py-3.5">
+    <div className="card min-w-[160px] flex-1 px-4 py-3.5">
       <dt className="field-label">{label}</dt>
       <dd className="mt-1 font-agrandir text-xl font-medium text-ink sm:text-2xl">
         {value}
@@ -138,7 +145,7 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
-function HoverBreakdownStat({
+export function HoverBreakdownStat({
   label,
   value,
   tooltipId,
@@ -151,11 +158,49 @@ function HoverBreakdownStat({
   align?: 'left' | 'right'
   children: ReactNode
 }) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [isMobile, setIsMobile] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 639px)')
+    const update = () => {
+      setIsMobile(query.matches)
+      if (!query.matches) setMobileOpen(false)
+    }
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => {
+    if (!isMobile || !mobileOpen) return
+    const closeOutside = (event: PointerEvent) => {
+      if (!cardRef.current?.contains(event.target as Node)) {
+        setMobileOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOutside, true)
+    document.addEventListener('keydown', closeOnEscape, true)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside, true)
+      document.removeEventListener('keydown', closeOnEscape, true)
+    }
+  }, [isMobile, mobileOpen])
+
   return (
     <div
-      className="group relative card px-4 py-3.5 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500"
+      ref={cardRef}
+      className="group relative card min-w-[160px] flex-1 px-4 py-3.5 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500"
       tabIndex={0}
       aria-describedby={tooltipId}
+      aria-expanded={isMobile ? mobileOpen : undefined}
+      onClick={() => {
+        if (isMobile) setMobileOpen(open => !open)
+      }}
     >
       <dt className="field-label">{label}</dt>
       <dd className="mt-1">
@@ -165,7 +210,10 @@ function HoverBreakdownStat({
         <div
           id={tooltipId}
           role="tooltip"
-          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100 ${
+          aria-hidden={isMobile ? !mobileOpen : undefined}
+          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg sm:group-hover:visible sm:group-hover:opacity-100 sm:group-focus:visible sm:group-focus:opacity-100 ${
+            mobileOpen ? 'visible opacity-100' : ''
+          } ${
             align === 'left' ? 'left-3' : 'right-3'
           }`}
         >
@@ -298,7 +346,7 @@ export function ProjectStats({
       : '—'
 
   return (
-    <dl className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <dl className="scrollbar-none -mx-4 mt-8 flex gap-3 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
       <HoverBreakdownStat
         label="Total raised"
         value={formatUsd18(totalRaisedUsd)}

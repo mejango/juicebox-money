@@ -3,13 +3,13 @@
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { BsActivityEvent } from '@/lib/bendystraw'
 import {
   formatCompactTokenAmount,
   formatDate,
   timeAgo,
-  truncateAddress,
 } from '@/lib/format'
 import { ActivityMeta } from './ActivityMeta'
 
@@ -59,10 +59,10 @@ export function ActorLink({
       rel="noopener noreferrer"
       className="text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
     >
-      {truncateAddress(actor)}
+      <AddressLabel address={actor} />
     </a>
   ) : (
-    <span className="text-smoke-700">{truncateAddress(actor)}</span>
+    <AddressLabel address={actor} className="text-smoke-700" />
   )
 }
 
@@ -75,18 +75,172 @@ function Row({
 }) {
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
-  if (!pay && !cashOut) return null
-
-  const isPay = !!pay
-  const actor = pay?.beneficiary ?? cashOut?.beneficiary ?? ''
+  const mint = event.mintTokensEvent
+  const loan = event.borrowLoanEvent
+  const actor =
+    pay?.beneficiary ??
+    cashOut?.beneficiary ??
+    mint?.beneficiary ??
+    event.autoIssueEvent?.beneficiary ??
+    loan?.beneficiary ??
+    event.mintNftEvent?.beneficiary ??
+    event.bridgeClaimEvent?.beneficiary ??
+    event.projectCreateEvent?.from ??
+    event.addToBalanceEvent?.from ??
+    event.deployErc20Event?.from ??
+    event.sendPayoutsEvent?.from ??
+    event.sendReservedTokensToSplitsEvent?.from ??
+    event.repayLoanEvent?.from ??
+    event.liquidateLoanEvent?.from ??
+    event.setUriEvent?.caller ??
+    event.projectTransferEvent?.previousOwner ??
+    event.operatorPermissionsSetEvent?.caller ??
+    event.addNftTierEvent?.caller ??
+    event.removeNftTierEvent?.caller ??
+    event.swapEvent?.caller ??
+    event.buybackPoolEvent?.caller ??
+    event.from
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
-  const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
+  const rawTokenCount =
+    pay?.newlyIssuedTokenCount ??
+    cashOut?.cashOutCount ??
+    mint?.beneficiaryTokenCount ??
+    event.autoIssueEvent?.count ??
+    event.sendReservedTokensToSplitsEvent?.tokenCount ??
+    event.swapEvent?.projectTokenAmount ??
+    event.bridgeClaimEvent?.projectTokenCount ??
+    '0'
   const tokenCount = formatCompactTokenAmount(rawTokenCount)
-  const issuedTokens = BigInt(rawTokenCount) > 0n
+  const issuedTokens = (() => {
+    try {
+      return BigInt(rawTokenCount) > 0n
+    } catch {
+      return false
+    }
+  })()
   const relativeTime = timeAgo(event.timestamp)
+  const direction =
+    pay || event.addToBalanceEvent
+      ? 'in'
+      : cashOut ||
+          event.sendPayoutsEvent ||
+          event.borrowLoanEvent ||
+          event.liquidateLoanEvent
+        ? 'out'
+        : event.repayLoanEvent ||
+            event.mintNftEvent ||
+            event.swapEvent ||
+            event.bridgeClaimEvent
+          ? 'in'
+          : null
 
   const actorNode = <ActorLink href={actorLink} actor={actor} />
+  const action = pay ? (
+    issuedTokens ? (
+      <>
+        got{' '}
+        <span className="font-medium text-bluebs-600">
+          {tokenCount} {tokenUnit}
+        </span>
+      </>
+    ) : (
+      <>paid into the project</>
+    )
+  ) : cashOut ? (
+    <>
+      cashed out{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>
+    </>
+  ) : mint ? (
+    <>
+      minted{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>
+    </>
+  ) : event.projectCreateEvent ? (
+    <>created the project</>
+  ) : event.addToBalanceEvent ? (
+    <>added to balance</>
+  ) : event.deployErc20Event ? (
+    <>
+      deployed token{' '}
+      {event.deployErc20Event.symbol
+        ? `$${event.deployErc20Event.symbol}`
+        : ''}
+    </>
+  ) : event.sendPayoutsEvent ? (
+    <>paid out</>
+  ) : event.sendReservedTokensToSplitsEvent ? (
+    <>
+      distributed reserved{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>
+    </>
+  ) : event.autoIssueEvent ? (
+    <>
+      auto-issued{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>
+    </>
+  ) : loan ? (
+    <>
+      borrowed against {formatCompactTokenAmount(loan.collateral)} {tokenUnit}
+    </>
+  ) : event.repayLoanEvent ? (
+    <>repaid a loan</>
+  ) : event.liquidateLoanEvent ? (
+    <>liquidated a loan</>
+  ) : event.mintNftEvent ? (
+    <>minted shop item #{event.mintNftEvent.tierId}</>
+  ) : event.setUriEvent ? (
+    <>updated project info</>
+  ) : event.projectTransferEvent ? (
+    <>
+      transferred ownership to{' '}
+      <AddressLabel address={event.projectTransferEvent.owner} />
+    </>
+  ) : event.operatorPermissionsSetEvent ? (
+    <>
+      set{' '}
+      {event.operatorPermissionsSetEvent.isRevnetOperator
+        ? 'revnet operator'
+        : 'operator'}{' '}
+      permissions for{' '}
+      <AddressLabel address={event.operatorPermissionsSetEvent.operator} />
+    </>
+  ) : event.addNftTierEvent ? (
+    <>added shop item #{event.addNftTierEvent.tierId}</>
+  ) : event.removeNftTierEvent ? (
+    <>removed shop item #{event.removeNftTierEvent.tierId}</>
+  ) : event.swapEvent ? (
+    <>
+      bought{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>{' '}
+      via the buyback pool
+    </>
+  ) : event.buybackPoolEvent ? (
+    <>set up a buyback pool</>
+  ) : event.bridgeClaimEvent ? (
+    <>
+      claimed{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>{' '}
+      from {JB_CHAINS[event.bridgeClaimEvent.peerChainId as JBChainId]?.name ??
+        `chain ${event.bridgeClaimEvent.peerChainId}`}
+    </>
+  ) : (
+    <>updated the project</>
+  )
+  const memo = pay?.memo ?? event.addToBalanceEvent?.memo ?? null
 
   return (
     <li className="flex gap-3 py-3.5">
@@ -116,35 +270,20 @@ function Row({
           <ActivityMeta
             chainId={event.chainId}
             txHash={event.txHash}
-            amountUsd={pay?.amountUsd ?? cashOut?.reclaimAmountUsd}
-            direction={isPay ? 'in' : 'out'}
+            amountUsd={
+              pay?.amountUsd ??
+              cashOut?.reclaimAmountUsd ??
+              event.sendPayoutsEvent?.amountPaidOutUsd
+            }
+            direction={direction}
           />
         </div>
         <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-          {actorNode}{' '}
-          {isPay ? (
-            issuedTokens ? (
-              <>
-                got{' '}
-                <span className="font-medium text-bluebs-600">
-                  {tokenCount} {tokenUnit}
-                </span>
-              </>
-            ) : (
-              <>paid into {tokenUnit}</>
-            )
-          ) : (
-            <>
-              cashed out{' '}
-              <span className="font-medium text-bluebs-600">
-                {tokenCount} {tokenUnit}
-              </span>
-            </>
-          )}
+          {actorNode} {action}
         </p>
-        {pay?.memo ? (
+        {memo ? (
           <p className="mt-0.5 break-words text-xs italic text-smoke-500">
-            “{pay.memo}”
+            “{memo}”
           </p>
         ) : null}
       </div>
@@ -161,7 +300,30 @@ export function ActivityList({
   chainId: JBChainId
   projectId: number
 }) {
-  const visible = events.filter(e => e.payEvent || e.cashOutTokensEvent)
+  const visible = events.filter(
+    e =>
+      e.payEvent ||
+      e.cashOutTokensEvent ||
+      e.projectCreateEvent ||
+      e.addToBalanceEvent ||
+      e.mintTokensEvent ||
+      e.deployErc20Event ||
+      e.sendPayoutsEvent ||
+      e.sendReservedTokensToSplitsEvent ||
+      e.autoIssueEvent ||
+      e.borrowLoanEvent ||
+      e.repayLoanEvent ||
+      e.liquidateLoanEvent ||
+      e.mintNftEvent ||
+      e.setUriEvent ||
+      e.projectTransferEvent ||
+      e.operatorPermissionsSetEvent ||
+      e.addNftTierEvent ||
+      e.removeNftTierEvent ||
+      e.swapEvent ||
+      e.buybackPoolEvent ||
+      e.bridgeClaimEvent,
+  )
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
 
   if (visible.length === 0) {

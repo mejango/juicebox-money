@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchProjects } from '@/lib/bendystraw'
+import { getSuckerGroupProjects, searchProjects } from '@/lib/bendystraw'
 
 /**
  * Free-text project search, proxied server-side so the bendystraw endpoint and
@@ -7,26 +7,58 @@ import { searchProjects } from '@/lib/bendystraw'
  */
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q')?.trim() ?? ''
-  if (q.length < 2 || q.length > 64) return NextResponse.json({ projects: [] })
+  const normalizedQ = q.replace(/^\$/, '')
+  if (normalizedQ.length < 1 || q.length > 64) {
+    return NextResponse.json({ projects: [] })
+  }
   try {
     const all = await searchProjects(q)
-    // One result per omnichain project (highest-volume member wins).
-    const byGroup = new Map<string, (typeof all)[number]>()
+    // One result per omnichain project (highest-volume member represents it).
+    const byGroup = new Map<
+      string,
+      { representative: (typeof all)[number]; members: typeof all }
+    >()
     for (const p of all) {
       const key = p.suckerGroupId ?? `${p.chainId}-${p.projectId}`
       const existing = byGroup.get(key)
-      if (!existing || BigInt(p.volume) > BigInt(existing.volume)) {
-        byGroup.set(key, p)
+      if (!existing) {
+        byGroup.set(key, { representative: p, members: [p] })
+      } else {
+        existing.members.push(p)
+        if (BigInt(p.volume) > BigInt(existing.representative.volume)) {
+          existing.representative = p
+        }
       }
     }
-    const projects = Array.from(byGroup.values())
+    const projects = await Promise.all(
+      Array.from(byGroup.values()).map(async group => ({
+        ...group,
+        members: group.representative.suckerGroupId
+          ? await getSuckerGroupProjects(
+              group.representative.suckerGroupId,
+            )
+              .then(members =>
+                members.map(member => ({
+                  ...member,
+                  searchTicker: null,
+                })),
+              )
+              .catch(() => group.members)
+          : group.members,
+      })),
+    )
     return NextResponse.json({
-      projects: projects.map(p => ({
+      projects: projects.map(({ representative: p, members }) => ({
         projectId: p.projectId,
         chainId: p.chainId,
         name: p.name,
         logoUri: p.logoUri,
         projectTagline: p.projectTagline,
+        ticker:
+          p.searchTicker ??
+          members.find(member => member.searchTicker)?.searchTicker ??
+          null,
+        chainIds: Array.from(new Set(members.map(member => member.chainId))),
       })),
     })
   } catch {

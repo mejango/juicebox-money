@@ -24,6 +24,7 @@ import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { BsFreshActivityEvent, getRecentActivity } from '@/lib/bendystraw'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { FreshActivity } from '@/components/FreshActivity'
+import { HomepageDiscoveryTabs } from '@/components/HomepageDiscoveryTabs'
 import { ProjectCard } from '@/components/ProjectCard'
 import { HomepageDiscoverySkeleton } from '@/components/LoadingSkeletons'
 
@@ -188,48 +189,51 @@ async function HomepageDiscovery() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-6xl px-4 pb-0 pt-14 sm:px-6 sm:pb-0 sm:pt-16"
+      className="mx-auto max-w-6xl px-4 pb-0 pt-8 sm:px-6 sm:pb-0 sm:pt-16"
     >
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="min-w-0 lg:col-span-2">
-          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-            Trending projects
-          </h2>
-          {cards.length === 0 ? (
-            <p className="card p-8 text-sm text-smoke-700">
-              Projects are temporarily unavailable. Please try again shortly.
-            </p>
-          ) : (
-            <>
-              <div className="space-y-3 sm:hidden">
-                {cards.map(card => (
-                  <ProjectCard key={card.key} card={card} />
-                ))}
-              </div>
-              <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
-                {[0, 1].map(column => (
-                  <div key={column} className="flex flex-col gap-3">
-                    {cards
-                      .filter((_, index) => index % 2 === column)
-                      .map(card => (
-                        <ProjectCard key={card.key} card={card} />
-                      ))}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <aside className="min-w-0 lg:col-span-1">
-          <h2 className="mb-5 font-agrandir text-2xl font-medium sm:text-3xl">
-            Fresh activity
-          </h2>
-          <div className="card overflow-hidden">
-            <FreshActivity initialEvents={activity} />
-          </div>
-        </aside>
-      </div>
+      <HomepageDiscoveryTabs
+        trending={
+          <>
+            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
+              Trending projects
+            </h2>
+            {cards.length === 0 ? (
+              <p className="card p-8 text-sm text-smoke-700">
+                Projects are temporarily unavailable. Please try again shortly.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-3 sm:hidden">
+                  {cards.map(card => (
+                    <ProjectCard key={card.key} card={card} />
+                  ))}
+                </div>
+                <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
+                  {[0, 1].map(column => (
+                    <div key={column} className="flex flex-col gap-3">
+                      {cards
+                        .filter((_, index) => index % 2 === column)
+                        .map(card => (
+                          <ProjectCard key={card.key} card={card} />
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        }
+        activity={
+          <>
+            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
+              Fresh activity
+            </h2>
+            <div className="card overflow-hidden">
+              <FreshActivity initialEvents={activity} />
+            </div>
+          </>
+        }
+      />
     </section>
   )
 }
@@ -240,29 +244,31 @@ export default function HomePage() {
       {/* Hero band — statement, actions, and one brand illustration. */}
       <section>
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-24 lg:grid-cols-[minmax(0,1fr)_400px]">
-          <div>
-            <h1 className="max-w-3xl font-agrandir-wide text-4xl font-bold leading-[1.08] sm:text-6xl lg:text-7xl">
+          <div className="text-center lg:text-left">
+            <h1 className="mx-auto max-w-3xl font-agrandir-wide text-4xl font-bold leading-[1.08] sm:text-6xl lg:mx-0 lg:text-7xl">
               Fund your thing<span className="text-split-500">.</span>
             </h1>
-            <p className="mt-6 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg">
-              Raise money from anyone, anywhere, transparently on your terms.
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg lg:mx-0">
+              Raise money from anyone, anywhere,{' '}
+              <br className="lg:hidden" />
+              transparently on your terms.
             </p>
-            <div className="mt-9 flex flex-wrap gap-3">
-              <a href="#trending" className="btn-primary min-h-[48px] px-7 text-sm">
-                Explore projects
-              </a>
-              <Link href="/create" className="btn-secondary min-h-[48px] px-7 text-sm">
+            <div className="mt-9 flex flex-wrap justify-center gap-3 lg:justify-start">
+              <Link href="/create" className="btn-primary min-h-[48px] px-7 text-sm">
                 Start a project
               </Link>
             </div>
             <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
           </div>
-          <div className="mx-auto w-full max-w-[280px] sm:max-w-[330px] lg:max-w-none" aria-hidden>
+          <div
+            className="order-first mx-auto w-full max-w-[280px] lg:order-none lg:max-w-none"
+            aria-hidden
+          >
             <Image
               src={juiceboxHero}
               alt=""
               priority
-              sizes="(min-width: 1024px) 400px, (min-width: 640px) 330px, 280px"
+              sizes="(min-width: 1024px) 400px, 280px"
               className="h-auto w-full"
             />
           </div>
@@ -331,11 +337,19 @@ export default function HomePage() {
                     key={feature.title}
                     className={`grid items-center px-2 sm:px-6 ${
                       isWide
-                        ? 'min-h-[400px] gap-10 py-8 md:col-span-2 sm:grid-cols-[minmax(0,1fr)_minmax(300px,520px)] sm:py-10'
-                        : 'content-between gap-10 py-10 sm:min-h-[500px] sm:grid-rows-[auto_1fr] sm:py-14'
+                        ? 'min-h-[400px] gap-10 py-8 md:col-span-2 sm:py-10 lg:grid-cols-[minmax(0,1fr)_minmax(300px,520px)]'
+                        : 'content-between gap-10 py-10 sm:min-h-[500px] sm:grid-rows-[1fr_auto] sm:py-14'
                     }`}
                   >
-                    <div className={isReversed ? 'sm:order-2' : ''}>
+                    <div
+                      className={
+                        isWide
+                          ? isReversed
+                            ? 'order-2 lg:order-2'
+                            : 'order-2 lg:order-1'
+                          : 'order-2'
+                      }
+                    >
                       <h4 className="font-agrandir text-2xl font-medium text-ink">
                         {feature.title}
                       </h4>
@@ -352,8 +366,8 @@ export default function HomePage() {
                           ? '(min-width: 1024px) 520px, (min-width: 640px) 44vw, 84vw'
                           : '(min-width: 768px) 40vw, 84vw'
                       }
-                      className={`h-auto w-full justify-self-center select-none object-contain ${imageSizeClass} ${
-                        isReversed ? 'sm:order-1' : ''
+                      className={`order-1 h-auto w-full justify-self-center select-none object-contain ${imageSizeClass} ${
+                        isWide ? (isReversed ? 'lg:order-1' : 'lg:order-2') : ''
                       }`}
                     />
                   </article>

@@ -18,6 +18,7 @@ import {
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ErrorNote } from '@/components/ui/TxError'
@@ -28,7 +29,7 @@ import {
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
-import { ipfsUrl, truncateAddress } from '@/lib/format'
+import { ipfsUrl } from '@/lib/format'
 import { TOKEN_SYMBOL_RE } from '@/lib/manage'
 import { buildTokenMetadataAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
@@ -355,7 +356,7 @@ function PerChainTokenState({
         {row.token ? (
           <span className="text-ink" title={row.token}>
             {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
-            {truncateAddress(row.token)}
+            <AddressLabel address={row.token} />
           </span>
         ) : (
           <span className="text-smoke-500">
@@ -379,7 +380,7 @@ function PerChainTokenState({
             {row.token ? (
               <p className="truncate text-smoke-500" title={row.token}>
                 {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
-                {truncateAddress(row.token)}
+                <AddressLabel address={row.token} />
               </p>
             ) : (
               <p className="text-smoke-500">Credits only · ERC-20 not deployed</p>

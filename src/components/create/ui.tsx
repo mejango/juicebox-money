@@ -1,25 +1,26 @@
 'use client'
 
-import { Fragment } from 'react'
-
 /** Shared create-flow UI primitives. */
 
 /** Render " | "-separated text with subtle, spaced pipes. */
 export function Piped({ text }: { text: string }) {
   const parts = text.split(' | ')
   return (
-    <>
+    <span className="inline-flex flex-wrap items-baseline gap-x-2">
       {parts.map((part, i) => (
-        <Fragment key={i}>
-          {i > 0 ? (
-            <span aria-hidden className="mx-2 text-smoke-300">
+        <span key={i} className="whitespace-nowrap">
+          {part}
+          {i < parts.length - 1 ? (
+            <span
+              aria-hidden
+              className="ml-2 hidden text-smoke-300 sm:inline"
+            >
               |
             </span>
           ) : null}
-          {part}
-        </Fragment>
+        </span>
       ))}
-    </>
+    </span>
   )
 }
 

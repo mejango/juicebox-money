@@ -10,6 +10,7 @@ transaction simulation.
 
 ```sh
 npm ci
+npm run dev # http://localhost:3001
 npm run deps:check
 npm run audit:prod
 npm run container:check

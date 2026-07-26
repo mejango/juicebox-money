@@ -1,6 +1,6 @@
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { ReactNode } from 'react'
-import { truncateAddress } from '@/lib/format'
+import { AddressLabel } from '@/components/ui/AddressLabel'
 
 /**
  * A truncated address that links to the chain's block explorer, or a plain
@@ -32,7 +32,7 @@ export function AddressLink({
     (chainId !== undefined
       ? JB_CHAINS[chainId as JBChainId]?.etherscanHostname
       : undefined)
-  const label = children ?? truncateAddress(address)
+  const label = children ?? <AddressLabel address={address} />
   const core = explorerHost ? (
     <a
       href={`https://${explorerHost}/address/${address}`}
