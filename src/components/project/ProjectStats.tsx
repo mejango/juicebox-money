@@ -165,7 +165,7 @@ function HoverBreakdownStat({
         <div
           id={tooltipId}
           role="tooltip"
-          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] translate-y-[-2px] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg transition group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus:visible group-focus:translate-y-0 group-focus:opacity-100 ${
+          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100 ${
             align === 'left' ? 'left-3' : 'right-3'
           }`}
         >
