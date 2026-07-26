@@ -3,6 +3,8 @@
  * here, typed by hand — auditable end to end. All queries are V6-only.
  */
 
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+
 const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
   ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
   : (process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz/graphql')
@@ -16,9 +18,17 @@ export const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 export async function bendystraw<T>(
   query: string,
   variables: Record<string, unknown>,
-  opts: { revalidate?: number } = {},
+  opts: { revalidate?: number; testnet?: boolean } = {},
 ): Promise<T> {
-  const res = await fetch(IS_TESTNET ? TESTNET_URL : MAINNET_URL, {
+  const variableChainId =
+    typeof variables.chainId === 'number' ? variables.chainId : null
+  const variableChain =
+    variableChainId === null
+      ? undefined
+      : JB_CHAINS[variableChainId as JBChainId]?.chain
+  const useTestnet =
+    opts.testnet ?? variableChain?.testnet ?? IS_TESTNET
+  const res = await fetch(useTestnet ? TESTNET_URL : MAINNET_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
@@ -123,6 +133,7 @@ export type BsActivityEvent = {
 export async function getProjectActivity(
   suckerGroupId: string,
   limit = 20,
+  chainId?: number,
 ): Promise<BsActivityEvent[]> {
   const data = await bendystraw<{
     activityEvents: { items: BsActivityEvent[] }
@@ -146,7 +157,13 @@ export async function getProjectActivity(
       }
     }`,
     { suckerGroupId, limit },
-    { revalidate: 15 },
+    {
+      revalidate: 15,
+      testnet:
+        chainId === undefined
+          ? undefined
+          : JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+    },
   )
   return data.activityEvents.items
 }
@@ -536,6 +553,7 @@ export async function getOwnedShopItems(
 
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
+  chainId?: number,
 ): Promise<BsProject[]> {
   const data = await bendystraw<{
     suckerGroup: { projects: { items: BsProject[] } } | null
@@ -546,7 +564,13 @@ export async function getSuckerGroupProjects(
       }
     }`,
     { id: suckerGroupId },
-    { revalidate: 60 },
+    {
+      revalidate: 60,
+      testnet:
+        chainId === undefined
+          ? undefined
+          : JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+    },
   )
   return data.suckerGroup?.projects.items ?? []
 }

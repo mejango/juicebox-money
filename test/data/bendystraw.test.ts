@@ -45,6 +45,21 @@ describe('minimal Bendystraw client', () => {
     expect(init.signal).toBeInstanceOf(AbortSignal)
   })
 
+  it('routes an explicitly testnet-scoped query to testnet Bendystraw', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      graphqlResponse({ data: { project: { projectId: 11 } } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await bendystraw('query($chainId: Float!) { project(chainId: $chainId) { projectId } }', {
+      chainId: 84532,
+    })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://testnet.bendystraw.xyz/graphql',
+    )
+  })
+
   it('rejects HTTP, GraphQL, and empty-data failures', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)

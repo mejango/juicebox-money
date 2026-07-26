@@ -146,12 +146,12 @@ export default async function ProjectPage({
   const [metadata, activity, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
     project.suckerGroupId
-      ? getProjectActivity(project.suckerGroupId, 40).catch(
+      ? getProjectActivity(project.suckerGroupId, 40, urn.chainId).catch(
           () => [] as BsActivityEvent[],
         )
       : Promise.resolve([] as BsActivityEvent[]),
     project.suckerGroupId
-      ? getSuckerGroupProjects(project.suckerGroupId).catch(
+      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId).catch(
           () => [] as BsProject[],
         )
       : Promise.resolve([] as BsProject[]),
