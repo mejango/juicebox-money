@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  bytes32ToCidV0,
   JB_CHAINS,
   JBCoreContracts,
   JBRouterTerminalContracts,
@@ -105,6 +106,35 @@ function payTokenKey(t: Pick<PayContext, 'token' | 'viaRouter'>): string {
 // (ruleset.id == 0). Cached (as a promise) per (chain, project, token), exactly
 // like website/ _payRouteCache. Fail-soft: any error resolves false.
 const _payRouteCache = new Map<string, Promise<boolean>>()
+
+async function resolvePayTierMetadata(tier: {
+  resolvedUri?: string
+  encodedIpfsUri: `0x${string}`
+}) {
+  const resolved = tier.resolvedUri
+    ? parseTierMetadataJson(tier.resolvedUri)
+    : null
+  if (resolved && Object.keys(resolved).length > 0) {
+    return pickTierMetadata(resolved)
+  }
+
+  const cid = bytes32ToCidV0(tier.encodedIpfsUri)
+  if (!cid) return null
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    const response = await fetch(`/api/ipfs/${cid}`, {
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer))
+    if (!response.ok) return null
+    const json = (await response.json()) as unknown
+    return json && typeof json === 'object'
+      ? pickTierMetadata(json as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
 function routerPayRouteWorks(
   client: PublicClient,
   chainId: number,
@@ -445,31 +475,30 @@ export function PayPanel({
         idTarget: resolved.metadataIdTarget,
         pricingCurrency: resolved.pricing.currency,
         pricingDecimals: resolved.pricing.decimals,
-        tiers: resolved.tiers.map(t => {
-          // Metadata is cosmetic — a tier without it still sells.
-          const json = t.resolvedUri
-            ? parseTierMetadataJson(t.resolvedUri)
-            : null
-          const meta = json ? pickTierMetadata(json) : null
-          const name = meta?.name ?? null
-          const description = meta?.description ?? null
-          const image = tierMediaImageUrl(meta?.image) ?? null
-          return {
-            id: t.id,
-            price: t.price,
-            discountPercent: t.discountPercent,
-            remaining: t.remainingSupply,
-            initial: t.initialSupply,
-            unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
-            // Fail closed if a legacy store does not return flags: charging
-            // fresh funds is safer than underfunding a credit-restricted mint.
-            cantBuyWithCredits:
-              flagsById.get(t.id)?.cantBuyWithCredits ?? true,
-            name,
-            description,
-            image,
-          }
-        }),
+        tiers: await Promise.all(
+          resolved.tiers.map(async t => {
+            // Metadata is cosmetic — a tier without it still sells.
+            const meta = await resolvePayTierMetadata(t)
+            const name = meta?.name ?? null
+            const description = meta?.description ?? null
+            const image = tierMediaImageUrl(meta?.image) ?? null
+            return {
+              id: t.id,
+              price: t.price,
+              discountPercent: t.discountPercent,
+              remaining: t.remainingSupply,
+              initial: t.initialSupply,
+              unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
+              // Fail closed if a legacy store does not return flags: charging
+              // fresh funds is safer than underfunding a credit-restricted mint.
+              cantBuyWithCredits:
+                flagsById.get(t.id)?.cantBuyWithCredits ?? true,
+              name,
+              description,
+              image,
+            }
+          }),
+        ),
       }
     },
   })
