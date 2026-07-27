@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 import {
   bytes32ToCidV0,
@@ -14,22 +14,27 @@ import {
   jbPricesAbi,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
-} from '@bananapus/nana-sdk-core'
+} from "@bananapus/nana-sdk-core";
 import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   build721PayMetadata,
+  buildPermit2ApproveTx,
   buildPayTx,
+  buildUniswapV4ExactInputSwapTx,
+  chooseBestPayRoute,
   effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
   getProject721Shop,
   previewPay,
+  quoteUniswapV4ExactInputSingle,
   tokenCurrencyId,
-} from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
-import { Skeleton } from '@/components/ui/Skeleton'
-import { useEffect, useMemo, useRef, useState } from 'react'
+  uniswapV4Deployment,
+} from "@bananapus/nana-sdk-core/v6";
+import { useQuery } from "@tanstack/react-query";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   erc20Abi,
   formatUnits,
@@ -38,65 +43,66 @@ import {
   type Address,
   type Hex,
   type PublicClient,
-} from 'viem'
-import { usePublicClient } from 'wagmi'
-import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-import { useSafeTx } from '@/hooks/useSafeTx'
-import { useWallet } from '@/hooks/useWallet'
-import { useShopCart } from '@/components/project/ShopCartProvider'
-import { QuantityStepper } from '@/components/ui/QuantityStepper'
-import { formatTokenAmount } from '@/lib/format'
+} from "viem";
+import { usePublicClient } from "wagmi";
+import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
+import { useSafeTx } from "@/hooks/useSafeTx";
+import { useWallet } from "@/hooks/useWallet";
+import { useShopCart } from "@/components/project/ShopCartProvider";
+import { QuantityStepper } from "@/components/ui/QuantityStepper";
+import { formatTokenAmount } from "@/lib/format";
 import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,
   pickTierMetadata,
   tierMediaImageUrl,
-} from '@/lib/tier-metadata'
-import { tokenSymbol } from '@/lib/token-symbol'
+} from "@/lib/tier-metadata";
+import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
   buildErc20ApproveRequest,
-} from '@/lib/transaction-builders'
-import { chainName } from '@/lib/urn'
+} from "@/lib/transaction-builders";
+import { chainName } from "@/lib/urn";
+import { resolveMarket } from "@/components/project/MarketSection";
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
-    11155420: 'OP Sep',
-    84532: 'Base Sep',
-    421614: 'Arb Sep',
-  }
-  return compactNames[chainId] ?? chainName(chainId)
+    11155420: "OP Sep",
+    84532: "Base Sep",
+    421614: "Arb Sep",
+  };
+  return compactNames[chainId] ?? chainName(chainId);
 }
 
 type PayContext = {
-  token: Address
-  decimals: number
-  currency: number
-  symbol: string
+  token: Address;
+  decimals: number;
+  currency: number;
+  symbol: string;
   /** True when this token is NOT accepted directly and is paid through the
    *  JBRouterTerminalRegistry, which swaps it into the project's accounting
    *  token. False for the project's own directly-accepted accounting tokens. */
-  viaRouter: boolean
-}
+  viaRouter: boolean;
+};
 
 type PaySurface = {
-  contexts: PayContext[]
-  rulesetStart: number
-  pausePay: boolean
+  contexts: PayContext[];
+  rulesetStart: number;
+  pausePay: boolean;
   /** The project's payment terminals (JBDirectory.terminalsOf) — the surface a
    *  pay is fail-closed against: the target terminal MUST appear here. */
-  terminals: Address[]
+  terminals: Address[];
   /** Listed terminals this form doesn't recognize — a non-blocking note. */
-  unknown: Address[]
-}
+  unknown: Address[];
+};
 
 const ROUTER_PROBE_BENEFICIARY: Address =
-  '0x0000000000000000000000000000000000000001'
+  "0x0000000000000000000000000000000000000001";
 
 /** A stable identity for a pay token — a token can appear both directly AND
  *  via-router, so the key must include the route. */
-function payTokenKey(t: Pick<PayContext, 'token' | 'viaRouter'>): string {
-  return `${t.token.toLowerCase()}:${t.viaRouter}`
+function payTokenKey(t: Pick<PayContext, "token" | "viaRouter">): string {
+  return `${t.token.toLowerCase()}:${t.viaRouter}`;
 }
 
 // Whether the router registry can actually route a pay of `token` into
@@ -105,34 +111,34 @@ function payTokenKey(t: Pick<PayContext, 'token' | 'viaRouter'>): string {
 // is a trap, not a convenience — so a dead route previews an all-zero ruleset
 // (ruleset.id == 0). Cached (as a promise) per (chain, project, token), exactly
 // like website/ _payRouteCache. Fail-soft: any error resolves false.
-const _payRouteCache = new Map<string, Promise<boolean>>()
+const _payRouteCache = new Map<string, Promise<boolean>>();
 
 async function resolvePayTierMetadata(tier: {
-  resolvedUri?: string
-  encodedIpfsUri: `0x${string}`
+  resolvedUri?: string;
+  encodedIpfsUri: `0x${string}`;
 }) {
   const resolved = tier.resolvedUri
     ? parseTierMetadataJson(tier.resolvedUri)
-    : null
+    : null;
   if (resolved && Object.keys(resolved).length > 0) {
-    return pickTierMetadata(resolved)
+    return pickTierMetadata(resolved);
   }
 
-  const cid = bytes32ToCidV0(tier.encodedIpfsUri)
-  if (!cid) return null
+  const cid = bytes32ToCidV0(tier.encodedIpfsUri);
+  if (!cid) return null;
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 8_000)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
     const response = await fetch(`/api/ipfs/${cid}`, {
       signal: controller.signal,
-    }).finally(() => clearTimeout(timer))
-    if (!response.ok) return null
-    const json = (await response.json()) as unknown
-    return json && typeof json === 'object'
+    }).finally(() => clearTimeout(timer));
+    if (!response.ok) return null;
+    const json = (await response.json()) as unknown;
+    return json && typeof json === "object"
       ? pickTierMetadata(json as Record<string, unknown>)
-      : null
+      : null;
   } catch {
-    return null
+    return null;
   }
 }
 function routerPayRouteWorks(
@@ -143,61 +149,79 @@ function routerPayRouteWorks(
   token: Address,
   decimals: number,
 ): Promise<boolean> {
-  const key = `${chainId}:${projectId}:${token.toLowerCase()}`
-  let cached = _payRouteCache.get(key)
+  const key = `${chainId}:${projectId}:${token.toLowerCase()}`;
+  let cached = _payRouteCache.get(key);
   if (!cached) {
     cached = client
       .readContract({
         address: registry,
         abi: jbRouterTerminalRegistryAbi,
-        functionName: 'previewPayFor',
+        functionName: "previewPayFor",
         args: [
           BigInt(projectId),
           token,
           10n ** BigInt(decimals),
           ROUTER_PROBE_BENEFICIARY,
-          '0x',
+          "0x",
         ],
       })
-      .then(out => {
+      .then((out) => {
         // previewPayFor returns [ruleset, ...]; a dead route yields ruleset.id == 0.
-        const ruleset = (out as readonly [{ id: number }, ...unknown[]])[0]
-        return Number(ruleset?.id ?? 0) !== 0
+        const ruleset = (out as readonly [{ id: number }, ...unknown[]])[0];
+        return Number(ruleset?.id ?? 0) !== 0;
       })
-      .catch(() => false)
-    _payRouteCache.set(key, cached)
+      .catch(() => false);
+    _payRouteCache.set(key, cached);
   }
-  return cached
+  return cached;
 }
 
 type ShopInfo = {
-  hook: Address
+  hook: Address;
   /** The metadata id target — the hook's METADATA_ID_TARGET (the shared
    *  implementation), NOT the clone. Keying by the clone address makes the
    *  hook miss the tier ids entirely: payment goes through, no NFT mints. */
-  idTarget: Address
-  pricingCurrency: number
-  pricingDecimals: number
+  idTarget: Address;
+  pricingCurrency: number;
+  pricingDecimals: number;
   tiers: {
-    id: number
-    price: bigint
-    discountPercent: number
-    remaining: number
-    initial: number
-    unlimited: boolean
-    cantBuyWithCredits: boolean
-    name: string | null
-    description: string | null
-    image: string | null
-  }[]
-}
+    id: number;
+    price: bigint;
+    discountPercent: number;
+    remaining: number;
+    initial: number;
+    unlimited: boolean;
+    cantBuyWithCredits: boolean;
+    name: string | null;
+    description: string | null;
+    image: string | null;
+  }[];
+};
 
 type ShopPayRoute = {
-  supported: boolean
+  supported: boolean;
   /** Payment-token units per one whole shop-pricing unit. */
-  pricePerUnit: bigint | null
-  reason?: string
-}
+  pricePerUnit: bigint | null;
+  reason?: string;
+};
+
+const permit2AllowanceAbi = [
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "token", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [
+      { name: "amount", type: "uint160" },
+      { name: "expiration", type: "uint48" },
+      { name: "nonce", type: "uint48" },
+    ],
+  },
+] as const;
 
 /**
  * The pay side of the treasury card (website/ pay-card parity, jbm shape):
@@ -213,15 +237,15 @@ export function PayPanel({
   chains,
   payDisclosure,
 }: {
-  chainId: JBChainId
-  projectId: number
-  projectName: string
-  isRevnet: boolean
+  chainId: JBChainId;
+  projectId: number;
+  projectName: string;
+  isRevnet: boolean;
   /** [chainId, projectId] pairs across the sucker group (chain selector). */
-  chains: [number, number][]
-  payDisclosure?: string
+  chains: [number, number][];
+  payDisclosure?: string;
 }) {
-  const { isConnected, address, openSignIn } = useWallet()
+  const { isConnected, address, openSignIn } = useWallet();
   const {
     quantities: cart,
     items: cartItems,
@@ -229,44 +253,44 @@ export function PayPanel({
     setQuantity,
     registerItem,
     clear: clearCart,
-  } = useShopCart()
+  } = useShopCart();
 
   // The chain being paid — a project lives on every linked chain, and the
   // payer picks which one. projectId can differ per chain (sucker groups).
   const [deployment, setDeployment] = useState<{
-    chainId: JBChainId
-    projectId: number
-  }>(() => ({ chainId: initialChainId, projectId: initialProjectId }))
-  const { chainId, projectId } = deployment
+    chainId: JBChainId;
+    projectId: number;
+  }>(() => ({ chainId: initialChainId, projectId: initialProjectId }));
+  const { chainId, projectId } = deployment;
 
   useEffect(() => {
-    setDeployment({ chainId: initialChainId, projectId: initialProjectId })
-  }, [initialChainId, initialProjectId])
+    setDeployment({ chainId: initialChainId, projectId: initialProjectId });
+  }, [initialChainId, initialProjectId]);
 
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const tx = useSafeTx(chainId)
-  const approveTx = useSafeTx(chainId)
+  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
+  const tx = useSafeTx(chainId);
+  const approveTx = useSafeTx(chainId);
 
-  const [mode, setMode] = useState<'pay' | 'addbalance'>('pay')
-  const [amount, setAmount] = useState('')
-  const [debouncedAmount, setDebouncedAmount] = useState('')
-  const [tokenIndex, setTokenIndex] = useState(0)
+  const [mode, setMode] = useState<"pay" | "addbalance">("pay");
+  const [amount, setAmount] = useState("");
+  const [debouncedAmount, setDebouncedAmount] = useState("");
+  const [tokenIndex, setTokenIndex] = useState(0);
   // True once the user explicitly picks a pay token. Until then the selection
   // auto-defaults to the project's first accounting token (list[0]) so an
   // ETH/USDC router option never shadows a USDC/ETH project's real token — the
   // documented fund-loss desync. (website/ chooseRefinedPayToken parity.)
-  const [tokenTouched, setTokenTouched] = useState(false)
+  const [tokenTouched, setTokenTouched] = useState(false);
   // The (address+route) identity of the user's pick, so a background refetch or
   // chain switch remaps the index to the same token rather than clobbering it.
-  const selectedKeyRef = useRef<string | null>(null)
-  const [memo, setMemo] = useState('')
+  const selectedKeyRef = useRef<string | null>(null);
+  const [memo, setMemo] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedAmount(amount), 400)
-    return () => clearTimeout(t)
-  }, [amount])
+    const t = setTimeout(() => setDebouncedAmount(amount), 400);
+    return () => clearTimeout(t);
+  }, [amount]);
 
-  const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = 'ETH'
+  const chainMeta = JB_CHAINS[chainId];
+  const nativeSymbol = "ETH";
 
   // ---- The project's payment surface: accepted tokens + live ruleset ----
   // Direct tokens = the project's accounting contexts (viaRouter:false). When
@@ -276,26 +300,25 @@ export function PayPanel({
   // dead route reverts at pay time). Built atomically so the token list is
   // never a partial/desynced snapshot.
   const { data: surface, isError: surfaceError } = useQuery<PaySurface>({
-    queryKey: ['paySurface', chainId, projectId],
+    queryKey: ["paySurface", chainId, projectId],
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
     queryFn: async (): Promise<PaySurface> => {
-      const client = publicClient!
-      const pid = BigInt(projectId)
-      const args = { chainId, projectId: pid }
+      const client = publicClient!;
+      const pid = BigInt(projectId);
+      const args = { chainId, projectId: pid };
       const directory =
-        jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId]
+        jbContractAddress["6"][JBCoreContracts.JBDirectory][chainId];
       const multiTerminal =
-        jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chainId]
-      const routerRegistry = jbContractAddress['6'][
+        jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
+      const routerRegistry = jbContractAddress["6"][
         JBRouterTerminalContracts.JBRouterTerminalRegistry
-      ]?.[chainId] as Address | undefined
+      ]?.[chainId] as Address | undefined;
       const directRouter = (
-        jbContractAddress['6'][JBRouterTerminalContracts.JBRouterTerminal] as
-          | Record<number, Address>
-          | undefined
-      )?.[chainId]
+        jbContractAddress["6"][JBRouterTerminalContracts.JBRouterTerminal] as
+          Record<number, Address> | undefined
+      )?.[chainId];
 
       const [contexts, ruleset, terminalsRaw] = await Promise.all([
         getAccountingContexts(client, args),
@@ -304,42 +327,42 @@ export function PayPanel({
           .readContract({
             address: directory,
             abi: jbDirectoryAbi,
-            functionName: 'terminalsOf',
+            functionName: "terminalsOf",
             args: [pid],
           })
           .catch(() => [] as readonly Address[]),
-      ])
+      ]);
 
       const direct: PayContext[] = await Promise.all(
-        contexts.map(async ctx => ({
+        contexts.map(async (ctx) => ({
           token: ctx.token,
           decimals: ctx.decimals,
           currency: ctx.currency,
           viaRouter: false,
           symbol: await tokenSymbol(client, ctx.token, { nativeSymbol }),
         })),
-      )
+      );
 
-      const terminals = (terminalsRaw ?? []).filter(Boolean) as Address[]
+      const terminals = (terminalsRaw ?? []).filter(Boolean) as Address[];
       const sameAddr = (a?: Address, b?: Address) =>
-        !!a && !!b && a.toLowerCase() === b.toLowerCase()
+        !!a && !!b && a.toLowerCase() === b.toLowerCase();
       const hasRouter = terminals.some(
-        t => sameAddr(t, routerRegistry) || sameAddr(t, directRouter),
-      )
+        (t) => sameAddr(t, routerRegistry) || sameAddr(t, directRouter),
+      );
       const known = new Set(
         [multiTerminal, routerRegistry, directRouter]
           .filter(Boolean)
-          .map(a => (a as Address).toLowerCase()),
-      )
-      const unknown = terminals.filter(t => !known.has(t.toLowerCase()))
+          .map((a) => (a as Address).toLowerCase()),
+      );
+      const unknown = terminals.filter((t) => !known.has(t.toLowerCase()));
 
       // Router candidates: ETH/USDC that aren't already accepted directly,
       // each gated by an actual previewPayFor route probe.
       const has = (a: Address) =>
-        direct.some(t => t.token.toLowerCase() === a.toLowerCase())
-      let routable: PayContext[] = []
+        direct.some((t) => t.token.toLowerCase() === a.toLowerCase());
+      let routable: PayContext[] = [];
       if (hasRouter && routerRegistry) {
-        const candidates: PayContext[] = []
+        const candidates: PayContext[] = [];
         if (!has(NATIVE_TOKEN)) {
           candidates.push({
             token: NATIVE_TOKEN,
@@ -347,20 +370,20 @@ export function PayPanel({
             currency: tokenCurrencyId(NATIVE_TOKEN),
             symbol: nativeSymbol,
             viaRouter: true,
-          })
+          });
         }
-        const usdc = USDC_ADDRESSES[chainId as JBChainId]
+        const usdc = USDC_ADDRESSES[chainId as JBChainId];
         if (usdc && !has(usdc)) {
           candidates.push({
             token: usdc,
             decimals: 6,
             currency: tokenCurrencyId(usdc),
-            symbol: 'USDC',
+            symbol: "USDC",
             viaRouter: true,
-          })
+          });
         }
         const gated = await Promise.all(
-          candidates.map(async c =>
+          candidates.map(async (c) =>
             (await routerPayRouteWorks(
               client,
               chainId,
@@ -372,8 +395,8 @@ export function PayPanel({
               ? c
               : null,
           ),
-        )
-        routable = gated.filter((c): c is PayContext => c !== null)
+        );
+        routable = gated.filter((c): c is PayContext => c !== null);
       }
 
       return {
@@ -382,106 +405,105 @@ export function PayPanel({
         pausePay: ruleset ? ruleset.metadata.pausePay : false,
         terminals,
         unknown,
-      }
+      };
     },
-  })
+  });
 
   // The project's OWN token symbol ("You get X MARKEE") — resolved on-chain,
   // NOT bendystraw's accounting symbol.
-  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
-  const projectTokenLabel = projectToken?.symbol || 'tokens'
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId);
+  const projectTokenLabel = projectToken?.symbol || "tokens";
 
   // The empty fallback is only used before the queried pay surface exists.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const contexts = surface?.contexts ?? []
+  const contexts = surface?.contexts ?? [];
   const context = contexts[Math.min(tokenIndex, contexts.length - 1)] as
-    | PayContext
-    | undefined
-  const symbol = context?.symbol ?? nativeSymbol
-  const decimals = context?.decimals ?? 18
+    PayContext | undefined;
+  const symbol = context?.symbol ?? nativeSymbol;
+  const decimals = context?.decimals ?? 18;
   const isNative =
-    context?.token.toLowerCase() === NATIVE_TOKEN.toLowerCase() || !context
+    context?.token.toLowerCase() === NATIVE_TOKEN.toLowerCase() || !context;
 
   // Keep the index in lock-step with the token list as it (re)resolves. If the
   // user hasn't touched the selector, always default to list[0] (the real
   // accounting token). If they have, re-find their exact pick (address+route);
   // if it's gone, fall back to list[0] and forget the touch.
   useEffect(() => {
-    const list = surface?.contexts
-    if (!list || list.length === 0) return
+    const list = surface?.contexts;
+    if (!list || list.length === 0) return;
     if (!tokenTouched) {
-      if (tokenIndex !== 0) setTokenIndex(0)
-      return
+      if (tokenIndex !== 0) setTokenIndex(0);
+      return;
     }
-    const key = selectedKeyRef.current
-    const idx = key ? list.findIndex(t => payTokenKey(t) === key) : -1
+    const key = selectedKeyRef.current;
+    const idx = key ? list.findIndex((t) => payTokenKey(t) === key) : -1;
     if (idx >= 0) {
-      if (idx !== tokenIndex) setTokenIndex(idx)
+      if (idx !== tokenIndex) setTokenIndex(idx);
     } else {
-      selectedKeyRef.current = null
-      setTokenTouched(false)
-      setTokenIndex(0)
+      selectedKeyRef.current = null;
+      setTokenTouched(false);
+      setTokenIndex(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surface, tokenTouched])
+  }, [surface, tokenTouched]);
 
-  const startsAt = surface?.rulesetStart ?? 0
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  const startsAt = surface?.rulesetStart ?? 0;
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
-    if (!startsAt || startsAt <= now) return
-    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
-    return () => clearInterval(t)
-  }, [startsAt, now])
-  const notStarted = startsAt > now
+    if (!startsAt || startsAt <= now) return;
+    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [startsAt, now]);
+  const notStarted = startsAt > now;
 
   const amountRaw = useMemo(() => {
     try {
-      const trimmed = debouncedAmount.trim()
-      if (!trimmed || Number(trimmed) <= 0) return 0n
-      return parseUnits(trimmed, decimals)
+      const trimmed = debouncedAmount.trim();
+      if (!trimmed || Number(trimmed) <= 0) return 0n;
+      return parseUnits(trimmed, decimals);
     } catch {
-      return 0n
+      return 0n;
     }
-  }, [debouncedAmount, decimals])
+  }, [debouncedAmount, decimals]);
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
   const { data: shop } = useQuery({
-    queryKey: ['payShop', chainId, projectId, isRevnet],
+    queryKey: ["payShop", chainId, projectId, isRevnet],
     enabled: !!publicClient,
     staleTime: 120_000,
     retry: 1,
     queryFn: async (): Promise<ShopInfo | null> => {
-      const client = publicClient!
+      const client = publicClient!;
       const resolved = await getProject721Shop(client, {
         chainId,
         projectId: BigInt(projectId),
         isRevnet,
         tierLimit: 200,
-      })
-      if (!resolved) return null
+      });
+      if (!resolved) return null;
       const rawTiers = await client
         .readContract({
           address: resolved.store,
           abi: jb721TiersHookStoreAbi,
-          functionName: 'tiersOf',
+          functionName: "tiersOf",
           args: [resolved.hook, [], true, 0n, 200n],
         })
-        .catch(() => [])
+        .catch(() => []);
       const flagsById = new Map(
-        rawTiers.map(rawTier => [rawTier.id, rawTier.flags] as const),
-      )
+        rawTiers.map((rawTier) => [rawTier.id, rawTier.flags] as const),
+      );
       return {
         hook: resolved.hook,
         idTarget: resolved.metadataIdTarget,
         pricingCurrency: resolved.pricing.currency,
         pricingDecimals: resolved.pricing.decimals,
         tiers: await Promise.all(
-          resolved.tiers.map(async t => {
+          resolved.tiers.map(async (t) => {
             // Metadata is cosmetic — a tier without it still sells.
-            const meta = await resolvePayTierMetadata(t)
-            const name = meta?.name ?? null
-            const description = meta?.description ?? null
-            const image = tierMediaImageUrl(meta?.image) ?? null
+            const meta = await resolvePayTierMetadata(t);
+            const name = meta?.name ?? null;
+            const description = meta?.description ?? null;
+            const image = tierMediaImageUrl(meta?.image) ?? null;
             return {
               id: t.id,
               price: t.price,
@@ -496,35 +518,35 @@ export function PayPanel({
               name,
               description,
               image,
-            }
+            };
           }),
         ),
-      }
+      };
     },
-  })
+  });
 
   // Keep the shared cart's presentation metadata fresh even before the user
   // opens the Shop tab. Clamp stale quantities against live per-chain supply.
   useEffect(() => {
-    if (!shop) return
-    const liveIds = new Set(shop.tiers.map(tier => tier.id))
+    if (!shop) return;
+    const liveIds = new Set(shop.tiers.map((tier) => tier.id));
     for (const tier of shop.tiers) {
       registerItem({
         tierId: tier.id,
         name: tier.name ?? `Item #${tier.id}`,
         image: tier.image ?? undefined,
-      })
-      const quantity = cart[tier.id] ?? 0
-      const cap = tier.unlimited ? 99 : tier.remaining
-      if (quantity > cap) setQuantity(tier.id, cap)
+      });
+      const quantity = cart[tier.id] ?? 0;
+      const cap = tier.unlimited ? 99 : tier.remaining;
+      if (quantity > cap) setQuantity(tier.id, cap);
     }
     for (const id of Object.keys(cart).map(Number)) {
-      if (!liveIds.has(id)) setQuantity(id, 0)
+      if (!liveIds.has(id)) setQuantity(id, 0);
     }
-  }, [shop, cart, registerItem, setQuantity])
+  }, [shop, cart, registerItem, setQuantity]);
 
   const { data: shopCredits = 0n, isLoading: shopCreditsLoading } = useQuery({
-    queryKey: ['payShopCredits', chainId, shop?.hook, address],
+    queryKey: ["payShopCredits", chainId, shop?.hook, address],
     enabled: !!publicClient && !!shop && !!address,
     staleTime: 15_000,
     retry: 1,
@@ -532,46 +554,46 @@ export function PayPanel({
       publicClient!.readContract({
         address: shop!.hook,
         abi: jb721TiersHookAbi,
-        functionName: 'payCreditsOf',
+        functionName: "payCreditsOf",
         args: [address!],
       }),
-  })
+  });
 
   // Verify every direct accounting token against the shop's pricing context.
   // JBPrices returns payment-token units per one whole shop-pricing unit;
   // router inputs stay disabled because the hook only sees the post-swap token.
   const { data: shopRoutes, isLoading: shopRoutesLoading } = useQuery({
     queryKey: [
-      'payShopRoutes',
+      "payShopRoutes",
       chainId,
       projectId,
       shop?.pricingCurrency,
       shop?.pricingDecimals,
-      contexts.map(payTokenKey).join(','),
+      contexts.map(payTokenKey).join(","),
     ],
     enabled: !!publicClient && !!shop && contexts.length > 0,
     staleTime: 60_000,
     retry: 1,
     queryFn: async (): Promise<Record<string, ShopPayRoute>> => {
-      const prices = jbContractAddress['6'][JBCoreContracts.JBPrices][chainId]
+      const prices = jbContractAddress["6"][JBCoreContracts.JBPrices][chainId];
       const entries = await Promise.all(
-        contexts.map(async payContext => {
-          const key = payTokenKey(payContext)
+        contexts.map(async (payContext) => {
+          const key = payTokenKey(payContext);
           if (payContext.viaRouter) {
             return [
               key,
               {
                 supported: false,
                 pricePerUnit: null,
-                reason: 'Item checkout requires a directly accepted token.',
+                reason: "Item checkout requires a directly accepted token.",
               },
-            ] as const
+            ] as const;
           }
 
           const sameCurrency =
             payContext.currency === shop!.pricingCurrency ||
             (shop!.pricingCurrency === BASE_CURRENCY_ETH &&
-              payContext.token.toLowerCase() === NATIVE_TOKEN.toLowerCase())
+              payContext.token.toLowerCase() === NATIVE_TOKEN.toLowerCase());
           if (sameCurrency) {
             return [
               key,
@@ -579,7 +601,7 @@ export function PayPanel({
                 supported: true,
                 pricePerUnit: 10n ** BigInt(payContext.decimals),
               },
-            ] as const
+            ] as const;
           }
 
           if (!prices) {
@@ -588,15 +610,15 @@ export function PayPanel({
               {
                 supported: false,
                 pricePerUnit: null,
-                reason: 'No price contract is available on this chain.',
+                reason: "No price contract is available on this chain.",
               },
-            ] as const
+            ] as const;
           }
           const pricePerUnit = await publicClient!
             .readContract({
               address: prices,
               abi: jbPricesAbi,
-              functionName: 'pricePerUnitOf',
+              functionName: "pricePerUnitOf",
               args: [
                 BigInt(projectId),
                 BigInt(payContext.currency),
@@ -604,7 +626,7 @@ export function PayPanel({
                 BigInt(payContext.decimals),
               ],
             })
-            .catch(() => 0n)
+            .catch(() => 0n);
           return [
             key,
             pricePerUnit > 0n
@@ -612,32 +634,32 @@ export function PayPanel({
               : {
                   supported: false,
                   pricePerUnit: null,
-                  reason: 'No price feed converts this payment token.',
+                  reason: "No price feed converts this payment token.",
                 },
-          ] as const
+          ] as const;
         }),
-      )
-      return Object.fromEntries(entries)
+      );
+      return Object.fromEntries(entries);
     },
-  })
+  });
   const selectedShopRoute = context
     ? shopRoutes?.[payTokenKey(context)]
-    : undefined
-  const shopMatchesToken = !!selectedShopRoute?.supported
+    : undefined;
+  const shopMatchesToken = !!selectedShopRoute?.supported;
   const supportedShopContextIndexes = useMemo(
     () =>
       contexts.flatMap((payContext, index) =>
         shopRoutes?.[payTokenKey(payContext)]?.supported ? [index] : [],
       ),
     [contexts, shopRoutes],
-  )
+  );
 
   // Selecting an item from either surface moves the currency selector to the
   // best verified checkout token instead of silently discarding the cart.
   useEffect(() => {
-    if (cartCount === 0 || shopRoutesLoading || shopMatchesToken) return
+    if (cartCount === 0 || shopRoutesLoading || shopMatchesToken) return;
     const preferred = supportedShopContextIndexes
-      .map(index => ({ index, context: contexts[index] }))
+      .map((index) => ({ index, context: contexts[index] }))
       .sort((a, b) => {
         const score = (candidate: PayContext) =>
           candidate.currency === shop?.pricingCurrency
@@ -646,15 +668,15 @@ export function PayPanel({
                 candidate.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
               ? 2
               : shop?.pricingCurrency === BASE_CURRENCY_USD &&
-                  candidate.symbol.toUpperCase() === 'USDC'
+                  candidate.symbol.toUpperCase() === "USDC"
                 ? 2
-                : 1
-        return score(b.context) - score(a.context)
-      })[0]
-    if (!preferred) return
-    setTokenIndex(preferred.index)
-    selectedKeyRef.current = payTokenKey(preferred.context)
-    setTokenTouched(true)
+                : 1;
+        return score(b.context) - score(a.context);
+      })[0];
+    if (!preferred) return;
+    setTokenIndex(preferred.index);
+    selectedKeyRef.current = payTokenKey(preferred.context);
+    setTokenTouched(true);
   }, [
     cartCount,
     shopRoutesLoading,
@@ -662,27 +684,27 @@ export function PayPanel({
     supportedShopContextIndexes,
     contexts,
     shop?.pricingCurrency,
-  ])
+  ]);
 
   const shopPricingSymbol =
     shop?.pricingCurrency === BASE_CURRENCY_ETH
       ? nativeSymbol
       : shop?.pricingCurrency === BASE_CURRENCY_USD
-        ? 'USD'
-        : (contexts.find(c => c.currency === shop?.pricingCurrency)?.symbol ??
-          'units')
+        ? "USD"
+        : (contexts.find((c) => c.currency === shop?.pricingCurrency)?.symbol ??
+          "units");
   const cartTotal = useMemo(() => {
-    if (!shop || cartCount === 0) return 0n
+    if (!shop || cartCount === 0) return 0n;
     return shop.tiers.reduce(
       (sum, tier) =>
         sum +
         effectiveTierPrice(tier.price, tier.discountPercent) *
           BigInt(cart[tier.id] ?? 0),
       0n,
-    )
-  }, [shop, cart, cartCount])
+    );
+  }, [shop, cart, cartCount]);
   const restrictedCartTotal = useMemo(() => {
-    if (!shop) return 0n
+    if (!shop) return 0n;
     return shop.tiers.reduce(
       (sum, tier) =>
         sum +
@@ -691,69 +713,68 @@ export function PayPanel({
             BigInt(cart[tier.id] ?? 0)
           : 0n),
       0n,
-    )
-  }, [shop, cart])
+    );
+  }, [shop, cart]);
   const shopCreditApplied = useMemo(() => {
-    const eligible = cartTotal - restrictedCartTotal
-    if (eligible <= 0n || shopCredits <= 0n) return 0n
-    return shopCredits < eligible ? shopCredits : eligible
-  }, [cartTotal, restrictedCartTotal, shopCredits])
-  const cartAmountDue = cartTotal - shopCreditApplied
+    const eligible = cartTotal - restrictedCartTotal;
+    if (eligible <= 0n || shopCredits <= 0n) return 0n;
+    return shopCredits < eligible ? shopCredits : eligible;
+  }, [cartTotal, restrictedCartTotal, shopCredits]);
+  const cartAmountDue = cartTotal - shopCreditApplied;
   const selectedCartRows = useMemo(
     () =>
       Object.entries(cart)
         .filter(([, quantity]) => quantity > 0)
         .map(([rawId, quantity]) => {
-          const tierId = Number(rawId)
-          const tier = shop?.tiers.find(candidate => candidate.id === tierId)
-          const registered = cartItems[tierId]
+          const tierId = Number(rawId);
+          const tier = shop?.tiers.find((candidate) => candidate.id === tierId);
+          const registered = cartItems[tierId];
           return {
             tierId,
             quantity,
-            name:
-              registered?.name ?? tier?.name ?? `Item #${tierId}`,
+            name: registered?.name ?? tier?.name ?? `Item #${tierId}`,
             image: registered?.image ?? tier?.image ?? undefined,
             cap: tier ? (tier.unlimited ? 99 : tier.remaining) : quantity,
-          }
+          };
         })
         .sort((a, b) => a.tierId - b.tierId),
     [cart, cartItems, shop],
-  )
+  );
 
   // Keep the entered amount at least the verified checkout total. The price
   // feed is expressed in payment-token units and this direction rounds up,
   // exactly matching the hook's fail-safe normalization.
   const cartTotalInToken = useMemo(() => {
-    const pricePerUnit = selectedShopRoute?.pricePerUnit
+    const pricePerUnit = selectedShopRoute?.pricePerUnit;
     if (
       !shop ||
-      mode !== 'pay' ||
+      mode !== "pay" ||
       cartAmountDue === 0n ||
       !context ||
       !selectedShopRoute?.supported ||
       !pricePerUnit
     ) {
-      return 0n
+      return 0n;
     }
-    const denominator = 10n ** BigInt(shop.pricingDecimals)
-    return (cartAmountDue * pricePerUnit + denominator - 1n) / denominator
-  }, [shop, mode, cartAmountDue, context, selectedShopRoute])
+    const denominator = 10n ** BigInt(shop.pricingDecimals);
+    return (cartAmountDue * pricePerUnit + denominator - 1n) / denominator;
+  }, [shop, mode, cartAmountDue, context, selectedShopRoute]);
 
   useEffect(() => {
-    if (mode !== 'pay' || cartCount === 0 || !shopMatchesToken) return
+    if (mode !== "pay" || cartCount === 0 || !shopMatchesToken) return;
     const current = (() => {
       try {
-        return parseUnits(amount.trim() || '0', decimals)
+        return parseUnits(amount.trim() || "0", decimals);
       } catch {
-        return 0n
+        return 0n;
       }
-    })()
-    if (current === cartTotalInToken) return
-    const next = formatUnits(cartTotalInToken, decimals)
-    setAmount(next)
-    setDebouncedAmount(next)
+    })();
+    if (current === cartTotalInToken) return;
+    const next = formatUnits(cartTotalInToken, decimals);
+    setAmount(next);
+    setDebouncedAmount(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartTotalInToken, cartCount, shopMatchesToken, mode])
+  }, [cartTotalInToken, cartCount, shopMatchesToken, mode]);
 
   const tierIds = useMemo(
     () =>
@@ -761,29 +782,29 @@ export function PayPanel({
         Array.from({ length: qty }, () => BigInt(id)),
       ),
     [cart],
-  )
+  );
   const metadata: Hex | undefined =
     shop && tierIds.length > 0 && shopMatchesToken
       ? build721PayMetadata({
           metadataIdTarget: shop.idTarget,
           tierIdsToMint: tierIds,
         })
-      : undefined
+      : undefined;
 
   // ---- Terminal + preview ----
   // viaRouter tokens are paid through the JBRouterTerminalRegistry (which swaps
   // them into the project's accounting token); direct tokens go to the
   // JBMultiTerminal. Preview, allowance, approval, and pay all target this.
   const multiTerminal =
-    jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chainId]
-  const routerRegistry = jbContractAddress['6'][
+    jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
+  const routerRegistry = jbContractAddress["6"][
     JBRouterTerminalContracts.JBRouterTerminalRegistry
-  ]?.[chainId] as Address | undefined
+  ]?.[chainId] as Address | undefined;
   const terminalAddress = !context
     ? undefined
     : context.viaRouter
       ? routerRegistry
-      : multiTerminal
+      : multiTerminal;
 
   const {
     data: preview,
@@ -792,25 +813,25 @@ export function PayPanel({
     isPlaceholderData: previewIsPrevious,
   } = useQuery({
     queryKey: [
-      'previewPay',
+      "previewPay",
       chainId,
       projectId,
       context?.token,
       context?.viaRouter,
       terminalAddress,
       amountRaw.toString(),
-      metadata ?? '0x',
+      metadata ?? "0x",
     ],
     enabled:
       !!publicClient &&
       !!context &&
       !!terminalAddress &&
       (amountRaw > 0n || cartCount > 0) &&
-      mode === 'pay',
+      mode === "pay",
     // Keep the last verified quote mounted while the next amount is quoted.
     // The receipt gently dims it below, and submission stays blocked until the
     // fresh quote arrives.
-    placeholderData: previous => previous,
+    placeholderData: (previous) => previous,
     retry: false,
     queryFn: () =>
       previewPay(publicClient!, {
@@ -822,18 +843,98 @@ export function PayPanel({
         beneficiary: address ?? zeroAddress,
         metadata,
       }),
-  })
+  });
+
+  // Compare the terminal preview with a direct exact-input Uniswap V4 quote.
+  // The direct path bypasses reserved-token splits, so the SDK compares its
+  // slippage-protected minimum—not its optimistic quote—against what the
+  // terminal guarantees. Shop checkouts stay on the terminal because the
+  // direct pool cannot mint the selected NFTs.
+  const { data: market } = useQuery({
+    queryKey: ["payMarket", chainId, projectId],
+    enabled: !!publicClient && mode === "pay" && cartCount === 0,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: () =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+  });
+  const directInputMatches =
+    market?.status === "pool" &&
+    !!context &&
+    (context.token.toLowerCase() === market.pair.tokenOrig.toLowerCase() ||
+      (isNative && market.pair.isNative));
+  const {
+    data: directSwapQuote,
+    isFetching: directSwapQuoteLoading,
+    isError: directSwapQuoteError,
+  } = useQuery({
+    queryKey: [
+      "directPaySwapQuote",
+      chainId,
+      projectId,
+      context?.token,
+      amountRaw.toString(),
+      market?.status === "pool" ? market.poolId : null,
+    ],
+    enabled:
+      !!publicClient &&
+      !!preview &&
+      directInputMatches &&
+      amountRaw > 0n &&
+      mode === "pay" &&
+      cartCount === 0,
+    placeholderData: (previous) => previous,
+    retry: false,
+    queryFn: () => {
+      if (market?.status !== "pool") {
+        throw new Error("No direct swap pool is available.");
+      }
+      return quoteUniswapV4ExactInputSingle(publicClient!, {
+        chainId,
+        poolKey: market.key,
+        zeroForOne: market.pairIsC0,
+        amountIn: amountRaw,
+      });
+    },
+  });
+  const bestRoute = useMemo(
+    () =>
+      preview
+        ? chooseBestPayRoute({
+            pay: preview,
+            paySettlement: context?.viaRouter ? "swap" : "issuance",
+            directSwapQuote:
+              directInputMatches && !directSwapQuoteError
+                ? directSwapQuote
+                : null,
+          })
+        : null,
+    [
+      preview,
+      context?.viaRouter,
+      directInputMatches,
+      directSwapQuote,
+      directSwapQuoteError,
+    ],
+  );
+  const directSwapRoute = bestRoute?.kind === "direct-swap";
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
   const previewReady =
-    mode === 'addbalance' ||
-    (!!preview && !previewError && !previewLoading && !previewIsPrevious)
+    mode === "addbalance" ||
+    (!!preview &&
+      !previewError &&
+      !previewLoading &&
+      !previewIsPrevious &&
+      (!directInputMatches || !directSwapQuoteLoading));
   // Floor the guaranteed minimum at 99% of the preview (website parity): a
   // buyback-routed or USD-issuance pay legitimately drifts between preview
   // and inclusion, and an exact min would make ordinary pays revert. A
   // verified zero stays zero.
-  const minReturned = ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n
+  const minReturned = directSwapRoute
+    ? bestRoute.beneficiaryTokenCount
+    : ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n;
 
   // ---- ERC-20 allowance ----
   // Direct pays approve the JBMultiTerminal; swap-via-router ERC-20 pays approve
@@ -842,59 +943,111 @@ export function PayPanel({
   // safeTransferFrom when it covers the amount — so a single simulated
   // approve(terminal, amount), identical to the direct path, satisfies it. No
   // Permit2 signature is needed, so nothing bypasses useSafeTx.
+  const swapDeployment = directSwapRoute
+    ? uniswapV4Deployment(chainId)
+    : undefined;
+  const approvalSpender = directSwapRoute
+    ? swapDeployment?.permit2
+    : terminalAddress;
   const { data: allowance, refetch: refetchAllowance } = useQuery({
     queryKey: [
-      'payAllowance',
+      "payAllowance",
       chainId,
       context?.token,
-      terminalAddress,
+      approvalSpender,
       address,
     ],
     enabled:
-      !!publicClient && !!context && !isNative && !!address && amountRaw > 0n,
+      !!publicClient &&
+      !!context &&
+      !isNative &&
+      !!address &&
+      !!approvalSpender &&
+      amountRaw > 0n,
     staleTime: 15_000,
     queryFn: () =>
       publicClient!.readContract({
         address: context!.token,
         abi: erc20Abi,
-        functionName: 'allowance',
-        args: [address!, terminalAddress!],
+        functionName: "allowance",
+        args: [address!, approvalSpender!],
       }),
-  })
-  const needsApproval = !isNative && (allowance ?? 0n) < amountRaw
+  });
+  const needsApproval = !isNative && (allowance ?? 0n) < amountRaw;
+  const { data: permit2Allowance, refetch: refetchPermit2Allowance } = useQuery(
+    {
+      queryKey: [
+        "payPermit2Allowance",
+        chainId,
+        context?.token,
+        swapDeployment?.universalRouter,
+        address,
+      ],
+      enabled:
+        !!publicClient &&
+        directSwapRoute &&
+        !isNative &&
+        !!address &&
+        !!context &&
+        !!swapDeployment?.universalRouter,
+      staleTime: 15_000,
+      queryFn: () =>
+        publicClient!.readContract({
+          address: swapDeployment!.permit2,
+          abi: permit2AllowanceAbi,
+          functionName: "allowance",
+          args: [
+            address!,
+            context!.token,
+            swapDeployment!.universalRouter as Address,
+          ],
+        }),
+    },
+  );
+  const needsPermit2Approval =
+    directSwapRoute &&
+    !isNative &&
+    (!permit2Allowance ||
+      permit2Allowance[0] < amountRaw ||
+      Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800);
 
   // ---- Terminal-surface safety (website/ renderTerminalNotice parity) ----
   // Fail closed: the target terminal MUST be listed among the project's
   // terminals (JBDirectory.terminalsOf), or paying is blocked. Listed
   // terminals we don't recognize are a non-blocking note (surface.unknown).
-  const surfaceTerminals = surface?.terminals ?? []
+  const surfaceTerminals = surface?.terminals ?? [];
   const terminalListed =
     !terminalAddress ||
-    surfaceTerminals.some(t => t.toLowerCase() === terminalAddress.toLowerCase())
-  const terminalBlocked = !!surface && !!terminalAddress && !terminalListed
+    surfaceTerminals.some(
+      (t) => t.toLowerCase() === terminalAddress.toLowerCase(),
+    );
+  const terminalBlocked = !!surface && !!terminalAddress && !terminalListed;
   // Add-to-balance has no on-chain minimum-output field, so a router swap can't
   // be bounded — refuse it (website/ 6439 parity), only direct tokens top up.
-  const addBalanceViaRouter = mode === 'addbalance' && !!context?.viaRouter
+  const addBalanceViaRouter = mode === "addbalance" && !!context?.viaRouter;
 
   useEffect(() => {
-    if (approveTx.phase === 'success') void refetchAllowance()
-  }, [approveTx.phase, refetchAllowance])
+    if (approveTx.phase === "success") {
+      void refetchAllowance();
+      void refetchPermit2Allowance();
+    }
+  }, [approveTx.phase, refetchAllowance, refetchPermit2Allowance]);
 
   const busy =
-    tx.phase === 'simulating' ||
-    tx.phase === 'signing' ||
-    tx.phase === 'pending' ||
-    approveTx.phase === 'simulating' ||
-    approveTx.phase === 'signing' ||
-    approveTx.phase === 'pending'
+    tx.phase === "simulating" ||
+    tx.phase === "signing" ||
+    tx.phase === "pending" ||
+    approveTx.phase === "simulating" ||
+    approveTx.phase === "signing" ||
+    approveTx.phase === "pending";
 
   const submit = () => {
     if (!isConnected || !address) {
-      openSignIn()
-      return
+      openSignIn();
+      return;
     }
     const creditOnlyCheckout =
-      mode === 'pay' && cartCount > 0 && cartAmountDue === 0n
+      mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
       !context ||
       !terminalAddress ||
@@ -902,23 +1055,54 @@ export function PayPanel({
       busy ||
       (cartCount > 0 && shopCreditsLoading)
     ) {
-      return
+      return;
     }
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
-    if (terminalBlocked || addBalanceViaRouter) return
+    if (terminalBlocked || addBalanceViaRouter) return;
     if (needsApproval) {
       void approveTx.send(
         buildErc20ApproveRequest({
           chainId,
           token: context.token,
-          spender: terminalAddress,
+          spender: approvalSpender!,
           amount: amountRaw,
         }),
-      )
-      return
+      );
+      return;
     }
-    if (mode === 'pay') {
+    if (needsPermit2Approval) {
+      const request = buildPermit2ApproveTx({
+        chainId,
+        token: context.token,
+        amount: amountRaw,
+        expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+      });
+      void approveTx.send({
+        ...request,
+        args: request.args as unknown as readonly unknown[],
+        label: "Approve swap router",
+      });
+      return;
+    }
+    if (mode === "pay") {
+      if (directSwapRoute && market?.status === "pool") {
+        const request = buildUniswapV4ExactInputSwapTx({
+          chainId,
+          poolKey: market.key,
+          zeroForOne: market.pairIsC0,
+          amountIn: amountRaw,
+          minimumAmountOut: bestRoute.beneficiaryTokenCount,
+          recipient: address,
+          deadline: BigInt(Math.floor(Date.now() / 1000) + 20 * 60),
+        });
+        void tx.send({
+          ...request,
+          args: request.args as unknown as readonly unknown[],
+          label: "Swap for project tokens",
+        });
+        return;
+      }
       const request = buildPayTx({
         chainId,
         terminal: terminalAddress,
@@ -929,7 +1113,7 @@ export function PayPanel({
         minReturnedTokens: minReturned,
         memo: memo.trim() || undefined,
         metadata,
-      })
+      });
       void tx.send({
         chainId,
         address: request.address,
@@ -937,7 +1121,7 @@ export function PayPanel({
         functionName: request.functionName,
         args: request.args as unknown as readonly unknown[],
         value: request.value,
-      })
+      });
     } else {
       void tx.send(
         buildAddToBalanceRequest({
@@ -948,25 +1132,25 @@ export function PayPanel({
           amount: amountRaw,
           memo: memo.trim(),
         }),
-      )
+      );
     }
-  }
+  };
 
   const reset = () => {
-    tx.reset()
-    approveTx.reset()
-    setAmount('')
-    setDebouncedAmount('')
-    setMemo('')
-    clearCart()
-  }
+    tx.reset();
+    approveTx.reset();
+    setAmount("");
+    setDebouncedAmount("");
+    setMemo("");
+    clearCart();
+  };
 
   useEffect(() => {
-    if (tx.phase === 'success' && cartCount > 0) clearCart()
-  }, [tx.phase, cartCount, clearCart])
+    if (tx.phase === "success" && cartCount > 0) clearCart();
+  }, [tx.phase, cartCount, clearCart]);
 
   // ---- Success view ----
-  if (tx.phase === 'success') {
+  if (tx.phase === "success") {
     return (
       <div className="flex flex-col items-center py-4 text-center">
         <span className="flex h-14 w-14 items-center justify-center rounded-full bg-melon-400">
@@ -984,10 +1168,10 @@ export function PayPanel({
           </svg>
         </span>
         <p className="mt-3 font-agrandir text-lg font-medium">
-          {mode === 'pay' ? 'Payment confirmed' : 'Added to the balance'}
+          {mode === "pay" ? "Payment confirmed" : "Added to the balance"}
         </p>
         <p className="mt-1 text-sm text-smoke-700">
-          {mode === 'pay'
+          {mode === "pay"
             ? `You supported ${projectName}.`
             : `${projectName}'s balance grew — no tokens minted.`}
         </p>
@@ -1008,20 +1192,20 @@ export function PayPanel({
           Done
         </button>
       </div>
-    )
+    );
   }
 
   return (
     <div>
       {/* Shop strip */}
-      {shop && shop.tiers.length > 0 && mode === 'pay' ? (
+      {shop && shop.tiers.length > 0 && mode === "pay" ? (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-3">
             <span className="field-label">Shop</span>
             <button
               type="button"
               onClick={() => {
-                window.location.hash = 'shop'
+                window.location.hash = "shop";
               }}
               className="text-xs font-medium text-bluebs-600 hover:underline"
             >
@@ -1029,7 +1213,11 @@ export function PayPanel({
             </button>
           </div>
           {cartCount > 0 && shopRoutesLoading ? (
-            <Skeleton className="mt-2 h-3 w-40 rounded" role="status" aria-label="Loading checkout currencies" />
+            <Skeleton
+              className="mt-2 h-3 w-40 rounded"
+              role="status"
+              aria-label="Loading checkout currencies"
+            />
           ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
             <p className="mt-1 text-xs leading-relaxed text-red-600">
               No directly accepted payment token has a verified price feed for
@@ -1042,138 +1230,140 @@ export function PayPanel({
           ) : null}
 
           <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
-            {shop.tiers.slice(0, 12).map(tier => {
-                const qty = cart[tier.id] ?? 0
-                const soldOut = !tier.unlimited && tier.remaining === 0
-                const cap = tier.unlimited ? 99 : tier.remaining
-                const price = effectiveTierPrice(
-                  tier.price,
-                  tier.discountPercent,
-                )
-                const item = {
-                  tierId: tier.id,
-                  name: tier.name ?? `Item #${tier.id}`,
-                  image: tier.image ?? undefined,
-                }
-                return (
-                  <div
-                    key={tier.id}
-                    className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
-                      qty > 0
-                        ? 'border-bluebs-500 bg-bluebs-25'
-                        : 'border-smoke-200 hover:border-bluebs-300'
-                    } ${soldOut ? 'opacity-40' : ''}`}
+            {shop.tiers.slice(0, 12).map((tier) => {
+              const qty = cart[tier.id] ?? 0;
+              const soldOut = !tier.unlimited && tier.remaining === 0;
+              const cap = tier.unlimited ? 99 : tier.remaining;
+              const price = effectiveTierPrice(
+                tier.price,
+                tier.discountPercent,
+              );
+              const item = {
+                tierId: tier.id,
+                name: tier.name ?? `Item #${tier.id}`,
+                image: tier.image ?? undefined,
+              };
+              return (
+                <div
+                  key={tier.id}
+                  className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
+                    qty > 0
+                      ? "border-bluebs-500 bg-bluebs-25"
+                      : "border-smoke-200 hover:border-bluebs-300"
+                  } ${soldOut ? "opacity-40" : ""}`}
+                >
+                  {qty > 0 ? (
+                    <span className="absolute right-1.5 top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-bluebs-600 px-1 text-[10px] font-medium text-white">
+                      {qty}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (soldOut || qty > 0) return;
+                      setQuantity(tier.id, 1, item);
+                    }}
+                    disabled={busy || soldOut}
+                    className="block w-full disabled:cursor-not-allowed"
+                    title={
+                      soldOut
+                        ? `${item.name} is sold out`
+                        : `Add ${item.name} to cart`
+                    }
                   >
-                    {qty > 0 ? (
-                      <span className="absolute right-1.5 top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-bluebs-600 px-1 text-[10px] font-medium text-white">
-                        {qty}
+                    {tier.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={tier.image}
+                        alt={item.name}
+                        loading="lazy"
+                        decoding="async"
+                        className="block aspect-square w-full object-contain"
+                      />
+                    ) : (
+                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
+                        #{tier.id}
                       </span>
-                    ) : null}
+                    )}
+                  </button>
+                  {soldOut ? (
+                    <p className="px-2 pb-2 text-[10px] text-smoke-500">
+                      Sold out
+                    </p>
+                  ) : qty === 0 ? (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (soldOut || qty > 0) return
-                        setQuantity(tier.id, 1, item)
-                      }}
-                      disabled={busy || soldOut}
-                      className="block w-full disabled:cursor-not-allowed"
-                      title={
-                        soldOut
-                          ? `${item.name} is sold out`
-                          : `Add ${item.name} to cart`
-                      }
+                      onClick={() => setQuantity(tier.id, 1, item)}
+                      disabled={busy}
+                      className="w-full px-2 pb-2 text-[11px] text-smoke-700"
                     >
-                      {tier.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={tier.image}
-                          alt={item.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="block aspect-square w-full object-contain"
-                        />
-                      ) : (
-                        <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
-                          #{tier.id}
-                        </span>
-                      )}
+                      {formatTokenAmount(price, shop.pricingDecimals)}{" "}
+                      {shopPricingSymbol}
                     </button>
-                    {soldOut ? (
-                      <p className="px-2 pb-2 text-[10px] text-smoke-500">
-                        Sold out
-                      </p>
-                    ) : qty === 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setQuantity(tier.id, 1, item)}
-                        disabled={busy}
-                        className="w-full px-2 pb-2 text-[11px] text-smoke-700"
-                      >
-                        {formatTokenAmount(price, shop.pricingDecimals)}{' '}
-                        {shopPricingSymbol}
-                      </button>
-                    ) : (
-                      <QuantityStepper
-                        size="sm"
-                        quantity={qty}
-                        itemName={item.name}
-                        onRemove={() => setQuantity(tier.id, qty - 1, item)}
-                        onAdd={() =>
-                          setQuantity(tier.id, Math.min(cap, qty + 1), item)
-                        }
-                        disabledRemove={busy || qty === 0}
-                        disabledAdd={busy || qty >= cap}
-                      />
-                    )}
-                  </div>
-                )
+                  ) : (
+                    <QuantityStepper
+                      size="sm"
+                      quantity={qty}
+                      itemName={item.name}
+                      onRemove={() => setQuantity(tier.id, qty - 1, item)}
+                      onAdd={() =>
+                        setQuantity(tier.id, Math.min(cap, qty + 1), item)
+                      }
+                      disabledRemove={busy || qty === 0}
+                      disabledAdd={busy || qty >= cap}
+                    />
+                  )}
+                </div>
+              );
             })}
           </div>
         </div>
       ) : null}
 
       {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
-      <div className={`${shop && shop.tiers.length > 0 && mode === 'pay' ? 'mt-4' : ''} flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700`}>
+      <div
+        className={`${shop && shop.tiers.length > 0 && mode === "pay" ? "mt-4" : ""} flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700`}
+      >
         <TextSelect
           value={mode}
-          onChange={v => setMode(v as 'pay' | 'addbalance')}
+          onChange={(v) => setMode(v as "pay" | "addbalance")}
           disabled={busy}
           ariaLabel="Payment mode"
           options={[
-            { value: 'pay', label: 'Pay' },
-            { value: 'addbalance', label: 'Add to balance' },
+            { value: "pay", label: "Pay" },
+            { value: "addbalance", label: "Add to balance" },
           ]}
         />
         <span>on</span>
         {chains.length > 1 ? (
-            <TextSelect
-              value={String(chainId)}
-              onChange={v => {
-                const next = chains.find(([cid]) => cid === Number(v))
-                if (!next) return
-                setDeployment({
-                  chainId: next[0] as JBChainId,
-                  projectId: next[1],
-                })
-                setTokenIndex(0)
-                setTokenTouched(false)
-                selectedKeyRef.current = null
-                clearCart()
-                setAmount('')
-                setDebouncedAmount('')
-              }}
-              disabled={busy}
-              ariaLabel="Chain"
-              options={chains.map(([cid]) => ({
-                value: String(cid),
-                label: payChainName(cid as JBChainId),
-              }))}
-            />
+          <TextSelect
+            value={String(chainId)}
+            onChange={(v) => {
+              const next = chains.find(([cid]) => cid === Number(v));
+              if (!next) return;
+              setDeployment({
+                chainId: next[0] as JBChainId,
+                projectId: next[1],
+              });
+              setTokenIndex(0);
+              setTokenTouched(false);
+              selectedKeyRef.current = null;
+              clearCart();
+              setAmount("");
+              setDebouncedAmount("");
+            }}
+            disabled={busy}
+            ariaLabel="Chain"
+            options={chains.map(([cid]) => ({
+              value: String(cid),
+              label: payChainName(cid as JBChainId),
+            }))}
+          />
         ) : (
           <span className="whitespace-nowrap">{payChainName(chainId)}</span>
         )}
       </div>
-      {mode === 'addbalance' ? (
+      {mode === "addbalance" ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
           Adds funds without minting tokens — useful for refills and refunds.
         </p>
@@ -1186,7 +1376,7 @@ export function PayPanel({
             type="text"
             inputMode="decimal"
             value={amount}
-            onChange={e => setAmount(e.target.value)}
+            onChange={(e) => setAmount(e.target.value)}
             disabled={busy}
             placeholder="0.00"
             aria-label="Amount"
@@ -1198,14 +1388,14 @@ export function PayPanel({
             // selected context (website/ fund-loss fix).
             <TextSelect
               value={String(tokenIndex)}
-              onChange={value => {
-                const i = Number(value)
-                setTokenIndex(i)
+              onChange={(value) => {
+                const i = Number(value);
+                setTokenIndex(i);
                 // Remember the explicit pick so a refetch/chain-switch remaps
                 // to this exact token instead of snapping back to list[0].
-                const picked = contexts[i]
-                if (picked) selectedKeyRef.current = payTokenKey(picked)
-                setTokenTouched(true)
+                const picked = contexts[i];
+                if (picked) selectedKeyRef.current = payTokenKey(picked);
+                setTokenTouched(true);
               }}
               disabled={busy}
               ariaLabel="Payment token"
@@ -1216,8 +1406,7 @@ export function PayPanel({
                 value: String(i),
                 label: ctx.symbol,
                 disabled:
-                  cartCount > 0 &&
-                  !shopRoutes?.[payTokenKey(ctx)]?.supported,
+                  cartCount > 0 && !shopRoutes?.[payTokenKey(ctx)]?.supported,
               }))}
             />
           ) : (
@@ -1238,29 +1427,25 @@ export function PayPanel({
                 (shopRoutesLoading ||
                   shopCreditsLoading ||
                   !shopMatchesToken)) ||
-              (surface?.pausePay && mode === 'pay') ||
+              (surface?.pausePay && mode === "pay") ||
               (isConnected &&
                 ((amountRaw <= 0n &&
-                  !(
-                    mode === 'pay' &&
-                    cartCount > 0 &&
-                    cartAmountDue === 0n
-                  )) ||
-                  (mode === 'pay' && !previewReady)))
+                  !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
+                  (mode === "pay" && !previewReady)))
             }
             className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
           >
             {notStarted
-              ? 'Soon'
+              ? "Soon"
               : !isConnected
-                ? 'Sign in'
+                ? "Sign in"
                 : busy
-                  ? '…'
-                  : needsApproval
-                    ? 'Approve'
-                    : mode === 'pay'
-                      ? 'Pay'
-                      : 'Add'}
+                  ? "…"
+                  : needsApproval || needsPermit2Approval
+                    ? "Approve"
+                    : mode === "pay"
+                      ? "Pay"
+                      : "Add"}
           </button>
         </div>
         {notStarted ? (
@@ -1274,7 +1459,7 @@ export function PayPanel({
       <input
         type="text"
         value={memo}
-        onChange={e => setMemo(e.target.value.slice(0, 256))}
+        onChange={(e) => setMemo(e.target.value.slice(0, 256))}
         disabled={busy}
         placeholder="Add a note (optional)"
         aria-label="Note"
@@ -1282,7 +1467,7 @@ export function PayPanel({
       />
 
       {/* One receipt for project tokens and every selected shop item. */}
-      {mode === 'pay' &&
+      {mode === "pay" &&
       (cartCount > 0 ||
         (amountRaw > 0n &&
           !previewError &&
@@ -1290,16 +1475,19 @@ export function PayPanel({
             (preview && preview.beneficiaryTokenCount > 0n)))) ? (
         <div className="mt-4">
           <p className="text-xs text-smoke-500">You get</p>
-          {preview && preview.beneficiaryTokenCount > 0n ? (
+          {bestRoute && bestRoute.beneficiaryTokenCount > 0n ? (
             <p
               aria-live="polite"
               aria-busy={previewLoading}
               className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
-                previewLoading ? 'text-smoke-500' : 'text-ink'
+                previewLoading ? "text-smoke-500" : "text-ink"
               }`}
             >
-              {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{' '}
+              {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)}{" "}
               {projectTokenLabel}
+              <span className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-bluebs-700">
+                {bestRoute.settlement === "swap" ? "Swap" : "Issuance"}
+              </span>
             </p>
           ) : amountRaw > 0n && previewLoading ? (
             <Skeleton
@@ -1311,7 +1499,7 @@ export function PayPanel({
 
           {selectedCartRows.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
-              {selectedCartRows.map(row => (
+              {selectedCartRows.map((row) => (
                 <div
                   key={row.tierId}
                   className="flex min-w-0 items-center gap-2"
@@ -1335,9 +1523,7 @@ export function PayPanel({
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      onClick={() =>
-                        setQuantity(row.tierId, row.quantity - 1)
-                      }
+                      onClick={() => setQuantity(row.tierId, row.quantity - 1)}
                       disabled={busy}
                       aria-label={`Remove one ${row.name}`}
                       className="flex h-6 w-6 items-center justify-center rounded-full border border-smoke-300 text-xs text-smoke-700 disabled:opacity-40"
@@ -1367,17 +1553,21 @@ export function PayPanel({
               <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-smoke-600">
-                    {cartCount} item{cartCount === 1 ? '' : 's'}
+                    {cartCount} item{cartCount === 1 ? "" : "s"}
                   </span>
                   <span className="tabular-nums text-ink">
-                    {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{' '}
+                    {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
                     {shopPricingSymbol}
                   </span>
                 </div>
                 {address && shopCreditsLoading ? (
                   <div className="flex items-center justify-between gap-3 text-smoke-500">
                     <span>Shop credit</span>
-                    <Skeleton className="h-4 w-16 rounded" role="status" aria-label="Loading shop credit" />
+                    <Skeleton
+                      className="h-4 w-16 rounded"
+                      role="status"
+                      aria-label="Loading shop credit"
+                    />
                   </div>
                 ) : shopCreditApplied > 0n ? (
                   <div className="flex items-center justify-between gap-3 text-emerald-700">
@@ -1387,7 +1577,7 @@ export function PayPanel({
                       {formatTokenAmount(
                         shopCreditApplied,
                         shop?.pricingDecimals ?? 18,
-                      )}{' '}
+                      )}{" "}
                       {shopPricingSymbol}
                     </span>
                   </div>
@@ -1399,7 +1589,7 @@ export function PayPanel({
                       {formatTokenAmount(
                         restrictedCartTotal,
                         shop?.pricingDecimals ?? 18,
-                      )}{' '}
+                      )}{" "}
                       {shopPricingSymbol}
                     </span>
                   </div>
@@ -1410,7 +1600,7 @@ export function PayPanel({
                     {formatTokenAmount(
                       cartAmountDue,
                       shop?.pricingDecimals ?? 18,
-                    )}{' '}
+                    )}{" "}
                     {shopPricingSymbol}
                   </span>
                 </div>
@@ -1418,15 +1608,15 @@ export function PayPanel({
             </div>
           ) : null}
 
-          {preview && preview.reservedTokenCount > 0n ? (
+          {bestRoute && bestRoute.reservedTokenCount > 0n ? (
             <p className="mt-1.5 text-xs text-smoke-500">
-              Splits get {formatTokenAmount(preview.reservedTokenCount, 18)}{' '}
+              Splits get {formatTokenAmount(bestRoute.reservedTokenCount, 18)}{" "}
               {projectTokenLabel}
             </p>
           ) : null}
         </div>
       ) : null}
-      {mode === 'pay' && amountRaw > 0n && previewError ? (
+      {mode === "pay" && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
           until the preview works.
@@ -1444,7 +1634,7 @@ export function PayPanel({
           are disabled.
         </p>
       ) : null}
-      {surface?.pausePay && mode === 'pay' ? (
+      {surface?.pausePay && mode === "pay" ? (
         <p className="mt-3 text-sm text-smoke-700">
           Payments are paused under the current rules.
         </p>
@@ -1457,18 +1647,18 @@ export function PayPanel({
       ) : null}
       {terminalBlocked ? (
         <p className="mt-3 text-sm text-red-600">
-          This project doesn&apos;t list the{' '}
-          {context?.viaRouter ? 'router' : 'direct'} payment terminal on{' '}
+          This project doesn&apos;t list the{" "}
+          {context?.viaRouter ? "router" : "direct"} payment terminal on{" "}
           {chainName(chainId)}. Review the project contracts before paying.
         </p>
       ) : null}
       {!terminalBlocked && surface?.unknown && surface.unknown.length > 0 ? (
         <p className="mt-3 text-xs leading-relaxed text-smoke-700">
           This project also lists unknown payment terminal
-          {surface.unknown.length > 1 ? 's' : ''}:{' '}
+          {surface.unknown.length > 1 ? "s" : ""}:{" "}
           {surface.unknown
-            .map(a => `${a.slice(0, 6)}…${a.slice(-4)}`)
-            .join(', ')}
+            .map((a) => `${a.slice(0, 6)}…${a.slice(-4)}`)
+            .join(", ")}
           . This form only sends to a recognized Juicebox terminal.
         </p>
       ) : null}
@@ -1478,7 +1668,7 @@ export function PayPanel({
         </p>
       ) : null}
     </div>
-  )
+  );
 }
 
 /** A subtle underlined-text dropdown (website/ parity: sizeSelectToText) —
@@ -1491,26 +1681,26 @@ function TextSelect({
   options,
   disabled,
   ariaLabel,
-  className = 'relative inline-flex min-h-11 items-center gap-1',
-  labelClassName = 'font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4',
-  selectClassName = 'absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default',
+  className = "relative inline-flex min-h-11 items-center gap-1",
+  labelClassName = "font-medium text-ink underline decoration-smoke-300 decoration-1 underline-offset-4",
+  selectClassName = "absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-default",
 }: {
-  value: string
-  onChange: (value: string) => void
-  options: { value: string; label: string; disabled?: boolean }[]
-  disabled?: boolean
-  ariaLabel: string
-  className?: string
-  labelClassName?: string
-  selectClassName?: string
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string; disabled?: boolean }[];
+  disabled?: boolean;
+  ariaLabel: string;
+  className?: string;
+  labelClassName?: string;
+  selectClassName?: string;
 }) {
   // A native <select> sizes to its WIDEST option, which would leave a gap
   // between a short label and the caret. So show the current label + caret as
   // tight visible text and overlay a transparent, full-cover select for the
   // real (native) dropdown.
-  const current = options.find(o => o.value === value)?.label ?? ''
+  const current = options.find((o) => o.value === value)?.label ?? "";
   return (
-    <span className={`${className} ${disabled ? 'opacity-60' : ''}`}>
+    <span className={`${className} ${disabled ? "opacity-60" : ""}`}>
       <span className={labelClassName || undefined}>{current}</span>
       <svg
         viewBox="0 0 24 24"
@@ -1526,26 +1716,26 @@ function TextSelect({
       </svg>
       <select
         value={value}
-        onChange={e => onChange(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
         aria-label={ariaLabel}
         className={selectClassName}
       >
-        {options.map(o => (
+        {options.map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled}>
             {o.label}
           </option>
         ))}
       </select>
     </span>
-  )
+  );
 }
 
 function formatStartCountdown(secs: number): string {
-  if (secs <= 0) return 'moments'
-  const d = Math.floor(secs / 86400)
-  if (d >= 1) return `${d}d ${Math.floor((secs % 86400) / 3600)}h`
-  const h = Math.floor(secs / 3600)
-  if (h >= 1) return `${h}h ${Math.floor((secs % 3600) / 60)}m`
-  return `${Math.max(1, Math.floor(secs / 60))}m`
+  if (secs <= 0) return "moments";
+  const d = Math.floor(secs / 86400);
+  if (d >= 1) return `${d}d ${Math.floor((secs % 86400) / 3600)}h`;
+  const h = Math.floor(secs / 3600);
+  if (h >= 1) return `${h}h ${Math.floor((secs % 3600) / 60)}m`;
+  return `${Math.max(1, Math.floor(secs / 60))}m`;
 }

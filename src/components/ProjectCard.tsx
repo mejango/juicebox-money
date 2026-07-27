@@ -58,13 +58,21 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
 
   if (card.external) {
     return (
-      <a href={card.href} className={className}>
+      <a
+        href={card.href}
+        className={className}
+        aria-label={`Open ${card.name}`}
+      >
         {body}
       </a>
     )
   }
   return (
-    <Link href={card.href} className={className}>
+    <Link
+      href={card.href}
+      className={className}
+      aria-label={`Open ${card.name}`}
+    >
       {body}
     </Link>
   )

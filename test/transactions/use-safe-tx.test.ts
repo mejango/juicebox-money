@@ -13,7 +13,9 @@ const mocks = vi.hoisted(() => ({
   },
   getAccount: vi.fn(),
   requestReview: vi.fn(),
+  safeConnection: false,
   switchChain: vi.fn(),
+  waitForSafeExecutionHash: vi.fn(),
   writeContract: vi.fn(),
 }))
 
@@ -36,12 +38,18 @@ vi.mock('@/lib/transaction-review', () => ({
   requestContractTransactionReview: mocks.requestReview,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@/lib/safe-connector', () => ({
+  isSafeConnection: () => mocks.safeConnection,
+  SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
+  waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
+}))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
 const HASH = `0x${'ab'.repeat(32)}` as const
+const EXECUTION_HASH = `0x${'cd'.repeat(32)}` as const
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
   chainId: 10,
@@ -76,7 +84,9 @@ beforeEach(() => {
   mocks.receipt = { data: undefined, isError: false }
   mocks.getAccount.mockImplementation(() => ({ address: mocks.account }))
   mocks.requestReview.mockResolvedValue(true)
+  mocks.safeConnection = false
   mocks.switchChain.mockResolvedValue(undefined)
+  mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
@@ -242,6 +252,59 @@ describe('useSafeTx', () => {
       phase: 'idle',
       error: null,
       hash: null,
+    })
+  })
+
+  it('tracks a Safe proposal until its execution transaction is available', async () => {
+    mocks.safeConnection = true
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request)
+    })
+
+    expect(mocks.requestReview).toHaveBeenCalledWith(
+      { ...request, account: ALICE },
+      {
+        label: 'Transfer',
+        description: 'Safe nonce guidance',
+        confirmLabel: 'Agree & continue to Safe',
+      },
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(
+      10,
+      HASH,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    expect(hook.ref.current).toMatchObject({
+      hash: EXECUTION_HASH,
+      safeProposalHash: null,
+      safeNonceGuidance: null,
+    })
+  })
+
+  it('surfaces a Safe execution lookup failure', async () => {
+    mocks.safeConnection = true
+    mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
+      new Error('Safe service unavailable'),
+    )
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(hook.ref.current).toMatchObject({
+      phase: 'error',
+      error: 'Safe service unavailable',
+      busy: false,
     })
   })
 })

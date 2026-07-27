@@ -85,9 +85,11 @@
     },
     "src/components/project/PayPanel.tsx": {
       "hooks": 2,
-      "sends": 3,
+      "sends": 5,
       "sendSites": [
         { "id": "approve-payment-token", "actions": ["Approve an ERC-20"] },
+        { "id": "authorize-swap-router", "actions": ["Approve an ERC-20"] },
+        { "id": "swap-for-project-tokens", "actions": ["Swap for project tokens"] },
         { "id": "pay-project", "actions": ["Pay a project"] },
         { "id": "add-to-project-balance", "actions": ["Add to treasury balance"] }
       ]
@@ -166,6 +168,7 @@
       "src/lib/safe.ts": 1
     },
     "sendTransaction": {
+      "src/lib/authority.ts": 1,
       "src/lib/relayr.ts": 1
     },
     "signTypedData": {

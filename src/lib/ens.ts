@@ -14,6 +14,8 @@ const ensClient = createPublicClient({
   // CORS-friendly public RPC (several big providers block browser origins).
   transport: http('https://ethereum-rpc.publicnode.com'),
 })
+const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 
 const addressCache = new Map<string, Address | null>()
 const nameCache = new Map<string, string | null>()
@@ -34,6 +36,7 @@ export function resolvedAddress(input: string): Address | null {
 
 /** Async: resolve an ENS name, filling the sync cache. */
 export async function lookupEnsAddress(name: string): Promise<Address | null> {
+  if (IS_DETERMINISTIC_BROWSER) return null
   const key = name.trim().toLowerCase()
   const cached = addressCache.get(key)
   if (cached !== undefined) return cached
@@ -49,6 +52,7 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
 
 /** Async: an address's primary ENS name, cached. */
 export async function lookupEnsName(address: string): Promise<string | null> {
+  if (IS_DETERMINISTIC_BROWSER) return null
   const key = address.trim().toLowerCase()
   const cached = nameCache.get(key)
   if (cached !== undefined) return cached

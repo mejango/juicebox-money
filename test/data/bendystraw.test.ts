@@ -4,6 +4,7 @@ import {
   getPagedItems,
   getParticipants,
   getShopPurchases,
+  searchProjects,
 } from '@/lib/bendystraw'
 
 function graphqlResponse(data: unknown, status = 200): Response {
@@ -84,6 +85,78 @@ describe('minimal Bendystraw client', () => {
 })
 
 describe('Bendystraw pagination and trust boundaries', () => {
+  it('searches project names and tickers, then deduplicates matching deployments', async () => {
+    const project = {
+      projectId: 11,
+      chainId: 84532,
+      version: 6,
+      name: 'Bounty Engine Network',
+      logoUri: null,
+      projectTagline: null,
+      volume: '0',
+      volumeUsd: '0',
+      balance: '0',
+      paymentsCount: 0,
+      contributorsCount: 0,
+      createdAt: 1,
+      suckerGroupId: null,
+      token: null,
+      tokenSymbol: null,
+      decimals: null,
+      currency: null,
+      isRevnet: true,
+      owner: null,
+      metadataUri: null,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { projects: { items: [project] } } }),
+      )
+      .mockResolvedValueOnce(
+        graphqlResponse({
+          data: {
+            deployErc20Events: {
+              items: [{ chainId: 84532, projectId: 11, symbol: 'BEN' }],
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { projects: { items: [project] } } }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(searchProjects('$BEN')).resolves.toEqual([
+      expect.objectContaining({
+        chainId: 84532,
+        projectId: 11,
+        searchTicker: 'BEN',
+      }),
+    ])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(bodyOf(fetchMock.mock.calls[0]?.[1] as RequestInit).variables).toEqual(
+      { text: 'BEN', limit: 24 },
+    )
+  })
+
+  it('adds a safe numeric project-id filter and skips the ticker lookup fetch when empty', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { projects: { items: [] } } }),
+      )
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { deployErc20Events: { items: [] } } }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(searchProjects('11', 3)).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const query = bodyOf(fetchMock.mock.calls[0]?.[1] as RequestInit).query
+    expect(query).toContain('{ projectId: 11 }')
+  })
+
   it('paginates participants with bounded page sizes and offsets', async () => {
     const rows = Array.from({ length: 300 }, (_, index) => ({
       address: `0x${index.toString(16).padStart(40, '0')}`,

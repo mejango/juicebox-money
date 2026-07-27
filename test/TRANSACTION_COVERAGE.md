@@ -19,6 +19,7 @@ Legend:
 | Add shop tiers | `JB721TiersHook.adjustTiers` | **E** | `contracts/transaction-builders.test.ts` |
 | Deploy a project payer address | `JBProjectPayerDeployer.deployProjectPayer` | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
+| Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts` |
 | Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
@@ -46,6 +47,7 @@ Legend:
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
 | Submit a reviewed direct write | review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
+| Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |
 | Propose/confirm/execute a Safe tx | EIP-712 + `execTransaction` | **P/E** | `transactions/safe.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts` |
 
@@ -65,6 +67,9 @@ Legend:
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
   `transactions/relayr-orchestration.test.ts`.
+- Relayr is reserved for genuinely multi-chain EOA actions. One-chain
+  project-owner/operator calls are reviewed and submitted directly; Safe-owned
+  calls remain in the Safe path.
 
 The remaining direct-burn **—** is intentional: the active UI exposes minting,
 while burns happen through separately reviewed cash-out, loan, and reserved-split

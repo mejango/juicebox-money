@@ -1,5 +1,6 @@
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { ChainIcon } from '@/components/ChainIcon'
+import { explorerHostname } from '@/lib/chainDisplay'
+import { chainName } from '@/lib/urn'
 
 /** Bendystraw stores indexed USD amounts as 18-decimal fixed point values. */
 function formatIndexedUsd(raw: string | null | undefined): string | null {
@@ -29,9 +30,9 @@ export function ActivityMeta({
   amountUsd: string | null | undefined
   direction?: 'in' | 'out' | null
 }) {
-  const chain = JB_CHAINS[chainId as JBChainId]
-  const txUrl = chain?.etherscanHostname
-    ? `https://${chain.etherscanHostname}/tx/${txHash}`
+  const explorer = explorerHostname(chainId)
+  const txUrl = explorer
+    ? `https://${explorer}/tx/${txHash}`
     : null
   const usd = formatIndexedUsd(amountUsd)
 
@@ -54,7 +55,7 @@ export function ActivityMeta({
           href={txUrl}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label={`View transaction on ${chain?.name ?? 'chain explorer'}`}
+          aria-label={`View transaction on ${chainName(chainId)}`}
           className="inline-flex transition-opacity hover:opacity-70"
         >
           <ChainIcon chainId={chainId} size={18} />

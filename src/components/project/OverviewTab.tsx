@@ -1,21 +1,21 @@
-import Link from 'next/link'
-import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { ChainIcon } from '@/components/ChainIcon'
-import { RichContent } from '@/components/RichContent'
-import { RevnetPriceCard } from '@/components/project/RevnetPriceCard'
-import { TokenPanel } from '@/components/project/TokenPanel'
-import { AddressLink } from '@/components/ui/AddressLink'
-import { chainName, toUrn } from '@/lib/urn'
+import Link from "next/link";
+import type { JBChainId } from "@bananapus/nana-sdk-core";
+import { ChainIcon } from "@/components/ChainIcon";
+import { RichContent } from "@/components/RichContent";
+import { RevnetPriceCard } from "@/components/project/RevnetPriceCard";
+import { TokenPanel } from "@/components/project/TokenPanel";
+import { AddressLink } from "@/components/ui/AddressLink";
+import { chainName, toUrn } from "@/lib/urn";
 
 /** The owner/operator address, linked to its own chain's explorer. */
 function AuthorityLink({
   chainId,
   address,
 }: {
-  chainId: number
-  address: string
+  chainId: number;
+  address: string;
 }) {
-  return <AddressLink address={address} chainId={chainId} />
+  return <AddressLink address={address} chainId={chainId} />;
 }
 
 /**
@@ -27,15 +27,15 @@ function AuthorityRows({
   label,
   authorities,
 }: {
-  label: string
-  authorities: [number, string | null][]
+  label: string;
+  authorities: [number, string | null][];
 }) {
-  const known = authorities.filter(([, a]) => !!a) as [number, string][]
-  if (known.length === 0) return null
+  const known = authorities.filter(([, a]) => !!a) as [number, string][];
+  if (known.length === 0) return null;
 
   const uniform = known.every(
     ([, a]) => a.toLowerCase() === known[0][1].toLowerCase(),
-  )
+  );
 
   if (uniform) {
     return (
@@ -45,7 +45,7 @@ function AuthorityRows({
           <AuthorityLink chainId={known[0][0]} address={known[0][1]} />
         </dd>
       </div>
-    )
+    );
   }
 
   return (
@@ -63,7 +63,7 @@ function AuthorityRows({
         ))}
       </dd>
     </div>
-  )
+  );
 }
 
 /**
@@ -83,22 +83,22 @@ export function OverviewTab({
   suckerGroupId,
   etherscanHost,
 }: {
-  chainId: JBChainId
-  projectId: number
-  description: string
-  descriptionFallback: string[]
-  socialLinks: [string, string | null][]
-  isRevnet: boolean
+  chainId: JBChainId;
+  projectId: number;
+  description: string;
+  descriptionFallback: string[];
+  socialLinks: [string, string | null][];
+  isRevnet: boolean;
   /** Owner (custom) or operator (revnet) address; null hides the row. */
-  authority: string | null
+  authority: string | null;
   /** The authority per chain — [chainId, address|null]. Can differ. */
-  authorities: [number, string | null][]
+  authorities: [number, string | null][];
   /** Per-chain deployments: [chainId, projectId]. */
-  chains: [number, number][]
-  suckerGroupId: string | null
-  etherscanHost?: string
+  chains: [number, number][];
+  suckerGroupId: string | null;
+  etherscanHost?: string;
 }) {
-  const links = socialLinks.filter(([, href]) => href)
+  const links = socialLinks.filter(([, href]) => href);
   return (
     <div className="space-y-5">
       {isRevnet ? (
@@ -165,12 +165,12 @@ export function OverviewTab({
               </div>
             ))}
             <AuthorityRows
-              label={isRevnet ? 'Operator' : 'Owner'}
+              label={isRevnet ? "Project operator" : "Project owner"}
               authorities={authorities}
             />
           </dl>
         </div>
       </div>
     </div>
-  )
+  );
 }

@@ -194,24 +194,26 @@ export function HoverBreakdownStat({
   return (
     <div
       ref={cardRef}
-      className="group relative card min-w-[160px] flex-1 px-4 py-3.5 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500"
-      tabIndex={0}
-      aria-describedby={tooltipId}
-      aria-expanded={isMobile ? mobileOpen : undefined}
-      onClick={() => {
-        if (isMobile) setMobileOpen(open => !open)
-      }}
+      className="group relative card min-w-[160px] flex-1 px-4 py-3.5"
     >
       <dt className="field-label">{label}</dt>
       <dd className="mt-1">
-        <span className="cursor-help font-agrandir text-xl font-medium text-ink underline decoration-smoke-300 decoration-dotted underline-offset-4 sm:text-2xl">
+        <button
+          type="button"
+          className="cursor-help font-agrandir text-xl font-medium text-ink underline decoration-smoke-300 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500 sm:text-2xl"
+          aria-describedby={tooltipId}
+          aria-expanded={isMobile ? mobileOpen : undefined}
+          onClick={() => {
+            if (isMobile) setMobileOpen(open => !open)
+          }}
+        >
           {value}
-        </span>
+        </button>
         <div
           id={tooltipId}
           role="tooltip"
           aria-hidden={isMobile ? !mobileOpen : undefined}
-          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg sm:group-hover:visible sm:group-hover:opacity-100 sm:group-focus:visible sm:group-focus:opacity-100 ${
+          className={`invisible absolute top-[calc(100%+0.5rem)] z-40 max-h-[min(24rem,60vh)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-smoke-200 bg-white p-3 opacity-0 shadow-lg sm:group-hover:visible sm:group-hover:opacity-100 sm:group-focus-within:visible sm:group-focus-within:opacity-100 ${
             mobileOpen ? 'visible opacity-100' : ''
           } ${
             align === 'left' ? 'left-3' : 'right-3'

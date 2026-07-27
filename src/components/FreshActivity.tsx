@@ -1,10 +1,11 @@
 'use client'
 
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { BsFreshActivityEvent } from '@/lib/bendystraw'
+import { explorerHostname } from '@/lib/chainDisplay'
 import { formatCompactTokenAmount, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActivityMeta } from './ActivityMeta'
@@ -65,16 +66,21 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
   const href = `/${toUrn(event.chainId, event.projectId)}`
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
-  const chainId = event.chainId as JBChainId
-
-  const tokenUnit = useProjectTokenUnit(chainId, event.projectId)
+  // Bendystraw's project.tokenSymbol is the accounting token (ETH/USDC),
+  // not the project's issued token. Resolve the latter on-chain so projects
+  // without an ERC-20 correctly say "token credits".
+  const tokenUnit = useProjectTokenUnit(
+    event.chainId as JBChainId,
+    event.projectId,
+  )
 
   if (!pay && !cashOut) return null
 
   const isPay = !!pay
   const actor = pay?.beneficiary ?? cashOut?.beneficiary ?? event.from
-  const actorUrl = JB_CHAINS[chainId]?.etherscanHostname
-    ? `https://${JB_CHAINS[chainId].etherscanHostname}/address/${actor}`
+  const explorer = explorerHostname(event.chainId)
+  const actorUrl = explorer
+    ? `https://${explorer}/address/${actor}`
     : null
   const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
   const tokenCount = formatCompactTokenAmount(rawTokenCount)
@@ -84,7 +90,11 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
   return (
     <li className="px-4 py-4 transition-colors hover:bg-smoke-25">
       <div className="flex items-start gap-3">
-        <Link href={href} aria-label={`Open ${name}`} className="shrink-0">
+        <Link
+          href={href}
+          aria-label={`Open ${name} activity`}
+          className="shrink-0"
+        >
           <ProjectLogo
             name={name}
             logoUri={event.project?.logoUri ?? null}

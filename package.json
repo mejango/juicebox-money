@@ -29,7 +29,7 @@
     "check:deploy": "npm run check && npm run env:check:all"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-core": "1.4.1",
+    "@bananapus/nana-sdk-core": "1.5.0",
     "@getpara/react-sdk-lite": "3.8.0",
     "@getpara/wagmi-v2-connector": "3.8.0",
     "@getpara/web-sdk": "3.8.0",

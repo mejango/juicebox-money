@@ -9,7 +9,10 @@ const legacyManifestPath = join(distDir, 'app-build-manifest.json')
 
 const budgets = {
   routes: {
-    '/page': 340 * KIB,
+    // The root layout carries the shared Wagmi + exact-transaction-review
+    // runtime on every route. Keep a narrow ceiling around its measured size;
+    // aggregate and largest-chunk budgets below still catch shared regressions.
+    '/page': 385 * KIB,
     '/[urn]/page': 570 * KIB,
     '/create/page': 465 * KIB,
   },

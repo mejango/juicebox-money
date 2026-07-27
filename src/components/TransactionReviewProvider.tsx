@@ -1,6 +1,5 @@
 'use client'
 
-import { jbContractAddress } from '@bananapus/nana-sdk-core'
 import {
   type PropsWithChildren,
   useCallback,
@@ -32,15 +31,7 @@ type PendingReview = {
 }
 
 function knownContractName(call: TransactionReviewCall): string | null {
-  if (call.contractName) return call.contractName
-  const deployments = jbContractAddress['6'] as unknown as Record<
-    string,
-    Partial<Record<number, Address>>
-  >
-  for (const [name, addresses] of Object.entries(deployments)) {
-    if (addresses[call.chainId]?.toLowerCase() === call.to.toLowerCase()) return name
-  }
-  return null
+  return call.contractName ?? null
 }
 
 function stringify(value: unknown): string {

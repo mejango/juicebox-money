@@ -1,5 +1,5 @@
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { formatUnits } from 'viem'
+import { explorerHostname } from './chainDisplay'
 
 export function formatTokenAmount(
   wei: bigint | string,
@@ -80,7 +80,7 @@ export function ipfsUrl(uri: string | null | undefined): string | null {
 
 /** Block-explorer transaction URL, or null when the chain has no explorer. */
 export function etherscanTxUrl(chainId: number, hash: string): string | null {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${hash}` : null
 }
 
@@ -89,7 +89,7 @@ export function etherscanAddressUrl(
   chainId: number,
   address: string,
 ): string | null {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const host = explorerHostname(chainId)
   return host ? `https://${host}/address/${address}` : null
 }
 

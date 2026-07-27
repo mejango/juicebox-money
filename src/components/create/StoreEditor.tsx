@@ -1,16 +1,16 @@
-'use client'
+"use client";
 
-import { resolvedAddress } from '@/lib/ens'
-import { AddressField } from './AddressField'
+import { resolvedAddress } from "@/lib/ens";
+import { AddressField } from "./AddressField";
 import {
   SplitsEditor,
   splitOk,
   splitsTotal,
   type DraftSplit,
-} from './SplitsEditor'
-import { AddButton, CheckRow } from './ui'
-import { ChainIcon } from '@/components/ChainIcon'
-import { chainName } from '@/lib/urn'
+} from "./SplitsEditor";
+import { AddButton, CheckRow } from "./ui";
+import { ChainIcon } from "@/components/ChainIcon";
+import { chainName } from "@/lib/urn";
 
 /**
  * Store items editor for the create flow. Purely controlled — drafts live in
@@ -18,55 +18,55 @@ import { chainName } from '@/lib/urn'
  */
 
 export type DraftItem = {
-  id: string
-  name: string
+  id: string;
+  name: string;
   /** Human units in the store currency (ETH or USD). */
-  price: string
+  price: string;
   /** '' = unlimited inventory. */
-  supply: string
-  description: string
+  supply: string;
+  description: string;
   /** Any media: image, video, audio, PDF, or text (website/ parity). */
-  mediaFile: File | null
+  mediaFile: File | null;
   /** Object URL preview — images only. */
-  mediaPreview: string | null
+  mediaPreview: string | null;
   /** Initial discount, 0–100 (%). '' = none. */
-  discountPct: string
+  discountPct: string;
   /** Reserve 1 of every N for the beneficiary. '' = off. */
-  reserveN: string
-  reserveBeneficiary: string
+  reserveN: string;
+  reserveBeneficiary: string;
   /** % of each sale routed to recipients (percent mode). */
-  splits: DraftSplit[]
+  splits: DraftSplit[];
   /** Category id (0 = default). */
-  category: number
-  votingUnits: string
-  allowOwnerMint: boolean
-  transfersPausable: boolean
-  cantBeRemoved: boolean
-  allowCredits: boolean
-  ownerCanEditDiscount: boolean
+  category: number;
+  votingUnits: string;
+  allowOwnerMint: boolean;
+  transfersPausable: boolean;
+  cantBeRemoved: boolean;
+  allowCredits: boolean;
+  ownerCanEditDiscount: boolean;
   /** Per-chain quantity overrides ('' = default; 'unlimited' allowed). */
-  perChainSupply: Record<number, string>
-  perChainSupplyOpen: boolean
-  moreOpen: boolean
-}
+  perChainSupply: Record<number, string>;
+  perChainSupplyOpen: boolean;
+  moreOpen: boolean;
+};
 
-export type StoreCategory = { id: number; name: string }
+export type StoreCategory = { id: number; name: string };
 
 export function newDraftItem(): DraftItem {
   return {
     id: crypto.randomUUID(),
-    name: '',
-    price: '',
-    supply: '',
-    description: '',
+    name: "",
+    price: "",
+    supply: "",
+    description: "",
     mediaFile: null,
     mediaPreview: null,
-    discountPct: '',
-    reserveN: '',
-    reserveBeneficiary: '',
+    discountPct: "",
+    reserveN: "",
+    reserveBeneficiary: "",
     splits: [],
     category: 0,
-    votingUnits: '',
+    votingUnits: "",
     allowOwnerMint: false,
     transfersPausable: false,
     cantBeRemoved: false,
@@ -75,48 +75,48 @@ export function newDraftItem(): DraftItem {
     perChainSupply: {},
     perChainSupplyOpen: false,
     moreOpen: false,
-  }
+  };
 }
 
 export function itemPriceOk(price: string): boolean {
-  const n = Number(price)
-  return Number.isFinite(n) && n > 0
+  const n = Number(price);
+  return Number.isFinite(n) && n > 0;
 }
 
 export function itemSupplyOk(supply: string): boolean {
-  if (supply.trim() === '') return true
-  const n = Number(supply)
-  return Number.isInteger(n) && n >= 1 && n <= 999_999_998
+  if (supply.trim() === "") return true;
+  const n = Number(supply);
+  return Number.isInteger(n) && n >= 1 && n <= 999_999_998;
 }
 
 export function itemDiscountOk(discountPct: string): boolean {
-  if (discountPct.trim() === '') return true
-  const n = Number(discountPct)
-  return Number.isFinite(n) && n >= 0 && n <= 100
+  if (discountPct.trim() === "") return true;
+  const n = Number(discountPct);
+  return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
 export function itemReserveOk(item: DraftItem): boolean {
-  if (item.reserveN.trim() === '') return true
-  const n = Number(item.reserveN)
+  if (item.reserveN.trim() === "") return true;
+  const n = Number(item.reserveN);
   return (
     Number.isInteger(n) &&
     n >= 1 &&
     n <= 65_535 &&
     resolvedAddress(item.reserveBeneficiary) !== null
-  )
+  );
 }
 
 export function itemSplitsOk(item: DraftItem): boolean {
   return (
-    item.splits.every(s => splitOk(s, 'percent')) &&
-    splitsTotal(item.splits, 'percent') <= 100
-  )
+    item.splits.every((s) => splitOk(s, "percent")) &&
+    splitsTotal(item.splits, "percent") <= 100
+  );
 }
 
 export function itemVotingOk(item: DraftItem): boolean {
-  if (item.votingUnits.trim() === '') return true
-  const n = Number(item.votingUnits)
-  return Number.isInteger(n) && n >= 0 && n <= 4_294_967_295
+  if (item.votingUnits.trim() === "") return true;
+  const n = Number(item.votingUnits);
+  return Number.isInteger(n) && n >= 0 && n <= 4_294_967_295;
 }
 
 export function itemOk(item: DraftItem): boolean {
@@ -129,30 +129,30 @@ export function itemOk(item: DraftItem): boolean {
     itemSplitsOk(item) &&
     itemVotingOk(item) &&
     Object.values(item.perChainSupply).every(
-      v => v.trim() === '' || v.trim() === 'unlimited' || itemSupplyOk(v),
+      (v) => v.trim() === "" || v.trim() === "unlimited" || itemSupplyOk(v),
     )
-  )
+  );
 }
 
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 function mediaAllowed(file: File): boolean {
-  const type = file.type
+  const type = file.type;
   return (
-    type.startsWith('image/') ||
-    type.startsWith('video/') ||
-    type.startsWith('audio/') ||
-    type === 'application/pdf' ||
-    type.startsWith('text/') ||
+    type.startsWith("image/") ||
+    type.startsWith("video/") ||
+    type.startsWith("audio/") ||
+    type === "application/pdf" ||
+    type.startsWith("text/") ||
     /\.(md|markdown|txt)$/i.test(file.name)
-  )
+  );
 }
 
 /** A friendly tile for non-image media. */
 function mediaEmoji(type: string): string {
-  if (type.startsWith('video/')) return '🎬'
-  if (type.startsWith('audio/')) return '🎵'
-  return '📄'
+  if (type.startsWith("video/")) return "🎬";
+  if (type.startsWith("audio/")) return "🎵";
+  return "📄";
 }
 
 export function StoreEditor({
@@ -165,40 +165,42 @@ export function StoreEditor({
   chainIds,
   isRevnet = false,
 }: {
-  items: DraftItem[]
-  onChange: (items: DraftItem[]) => void
-  currencyLabel: string
-  disabled: boolean
-  categories: StoreCategory[]
-  onAddCategory: (name: string) => number
-  chainIds: number[]
+  items: DraftItem[];
+  onChange: (items: DraftItem[]) => void;
+  currencyLabel: string;
+  disabled: boolean;
+  categories: StoreCategory[];
+  onAddCategory: (name: string) => number;
+  chainIds: number[];
   /** Revnet items cannot opt into ruleset-controlled transfer pauses. */
-  isRevnet?: boolean
+  isRevnet?: boolean;
 }) {
   const update = (id: string, patch: Partial<DraftItem>) => {
-    onChange(items.map(item => (item.id === id ? { ...item, ...patch } : item)))
-  }
+    onChange(
+      items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  };
 
   const remove = (id: string) => {
-    const item = items.find(i => i.id === id)
-    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
-    onChange(items.filter(i => i.id !== id))
-  }
+    const item = items.find((i) => i.id === id);
+    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview);
+    onChange(items.filter((i) => i.id !== id));
+  };
 
   const onMediaChange = (id: string, file: File | null) => {
-    const item = items.find(i => i.id === id)
-    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
+    const item = items.find((i) => i.id === id);
+    if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview);
     if (!file || !mediaAllowed(file) || file.size > MAX_MEDIA_BYTES) {
-      update(id, { mediaFile: null, mediaPreview: null })
-      return
+      update(id, { mediaFile: null, mediaPreview: null });
+      return;
     }
     update(id, {
       mediaFile: file,
-      mediaPreview: file.type.startsWith('image/')
+      mediaPreview: file.type.startsWith("image/")
         ? URL.createObjectURL(file)
         : null,
-    })
-  }
+    });
+  };
 
   return (
     <div>
@@ -232,7 +234,9 @@ export function StoreEditor({
                   title={item.mediaFile.name}
                   className="flex h-20 w-20 flex-col items-center justify-center gap-1 overflow-hidden rounded-lg border border-smoke-200 bg-white px-1 text-center"
                 >
-                  <span className="text-2xl">{mediaEmoji(item.mediaFile.type)}</span>
+                  <span className="text-2xl">
+                    {mediaEmoji(item.mediaFile.type)}
+                  </span>
                   <span className="w-full truncate text-[10px] text-smoke-700">
                     {item.mediaFile.name}
                   </span>
@@ -243,13 +247,15 @@ export function StoreEditor({
                 </span>
               )}
               <label className="btn-secondary min-h-[32px] cursor-pointer px-2.5 text-[11px]">
-                {item.mediaFile ? 'Change media' : 'Upload media'}
+                {item.mediaFile ? "Change media" : "Upload media"}
                 <input
                   type="file"
                   accept="image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown"
                   disabled={disabled}
                   className="sr-only"
-                  onChange={e => onMediaChange(item.id, e.target.files?.[0] ?? null)}
+                  onChange={(e) =>
+                    onMediaChange(item.id, e.target.files?.[0] ?? null)
+                  }
                 />
               </label>
             </div>
@@ -258,7 +264,9 @@ export function StoreEditor({
               <input
                 type="text"
                 value={item.name}
-                onChange={e => update(item.id, { name: e.target.value.slice(0, 100) })}
+                onChange={(e) =>
+                  update(item.id, { name: e.target.value.slice(0, 100) })
+                }
                 disabled={disabled}
                 placeholder="Item name"
                 className="input-well min-h-[44px] px-3.5 text-sm font-medium placeholder:font-normal disabled:opacity-60"
@@ -274,7 +282,7 @@ export function StoreEditor({
                   htmlFor={`item-quantity-${item.id}`}
                   className="field-label min-w-0"
                 >
-                  Quantity{' '}
+                  Quantity{" "}
                   <span className="font-normal text-smoke-500">
                     (on each chain)
                   </span>
@@ -284,15 +292,15 @@ export function StoreEditor({
                   type="text"
                   inputMode="decimal"
                   value={item.price}
-                  onChange={e =>
+                  onChange={(e) =>
                     update(item.id, { price: e.target.value.slice(0, 20) })
                   }
                   disabled={disabled}
-                  placeholder={currencyLabel === 'USD' ? '25' : '0.01'}
+                  placeholder={currencyLabel === "USD" ? "25" : "0.01"}
                   className={`input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
                     item.price && !itemPriceOk(item.price)
-                      ? '!border-red-400'
-                      : ''
+                      ? "!border-red-400"
+                      : ""
                   }`}
                 />
                 <input
@@ -300,7 +308,7 @@ export function StoreEditor({
                   type="text"
                   inputMode="numeric"
                   value={item.supply}
-                  onChange={e =>
+                  onChange={(e) =>
                     update(item.id, {
                       supply: e.target.value.slice(0, 9),
                     })
@@ -308,7 +316,7 @@ export function StoreEditor({
                   disabled={disabled}
                   placeholder="Unlimited"
                   className={`input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
-                    !itemSupplyOk(item.supply) ? '!border-red-400' : ''
+                    !itemSupplyOk(item.supply) ? "!border-red-400" : ""
                   }`}
                 />
                 {chainIds.length > 1 ? (
@@ -325,21 +333,24 @@ export function StoreEditor({
                       className="whitespace-nowrap text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
                     >
                       {item.perChainSupplyOpen
-                        ? 'Use same quantity on all chains'
-                        : 'Set per chain'}
+                        ? "Use same quantity on all chains"
+                        : "Set per chain"}
                     </button>
                     {item.perChainSupplyOpen ? (
                       <div className="mt-2 space-y-2">
-                        {chainIds.map(chainId => (
-                          <div key={chainId} className="flex items-center gap-2">
+                        {chainIds.map((chainId) => (
+                          <div
+                            key={chainId}
+                            className="flex items-center gap-2"
+                          >
                             <span className="mt-1 flex w-9 shrink-0 items-center justify-center">
                               <ChainIcon chainId={chainId} size={28} />
                             </span>
                             <input
                               type="text"
                               inputMode="numeric"
-                              value={item.perChainSupply[chainId] ?? ''}
-                              onChange={e =>
+                              value={item.perChainSupply[chainId] ?? ""}
+                              onChange={(e) =>
                                 update(item.id, {
                                   perChainSupply: {
                                     ...item.perChainSupply,
@@ -348,7 +359,7 @@ export function StoreEditor({
                                 })
                               }
                               disabled={disabled}
-                              placeholder={item.supply.trim() || 'Unlimited'}
+                              placeholder={item.supply.trim() || "Unlimited"}
                               aria-label={`Quantity on ${chainName(chainId)}`}
                               className="input-well min-h-[40px] w-28 px-2.5 text-xs tabular-nums disabled:opacity-60"
                             />
@@ -365,7 +376,7 @@ export function StoreEditor({
           <input
             type="text"
             value={item.description}
-            onChange={e =>
+            onChange={(e) =>
               update(item.id, { description: e.target.value.slice(0, 1000) })
             }
             disabled={disabled}
@@ -379,7 +390,7 @@ export function StoreEditor({
             aria-expanded={item.moreOpen}
             className="mt-3 text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
           >
-            {item.moreOpen ? 'Fewer options' : 'More options'}
+            {item.moreOpen ? "Fewer options" : "More options"}
           </button>
 
           {item.moreOpen ? (
@@ -391,22 +402,22 @@ export function StoreEditor({
                 </p>
                 <select
                   value={String(item.category)}
-                  onChange={e => {
-                    if (e.target.value === 'new') {
-                      const name = window.prompt('New category name')?.trim()
+                  onChange={(e) => {
+                    if (e.target.value === "new") {
+                      const name = window.prompt("New category name")?.trim();
                       if (name) {
-                        const id = onAddCategory(name)
-                        update(item.id, { category: id })
+                        const id = onAddCategory(name);
+                        update(item.id, { category: id });
                       }
                     } else {
-                      update(item.id, { category: Number(e.target.value) })
+                      update(item.id, { category: Number(e.target.value) });
                     }
                   }}
                   disabled={disabled}
                   className="input-well select-caret mt-2 min-h-[44px] w-56 px-3 pr-8 text-sm disabled:opacity-60"
                 >
                   <option value="0">Default</option>
-                  {categories.map(cat => (
+                  {categories.map((cat) => (
                     <option key={cat.id} value={String(cat.id)}>
                       {cat.name}
                     </option>
@@ -423,7 +434,7 @@ export function StoreEditor({
                 </p>
                 <SplitsEditor
                   splits={item.splits}
-                  onChange={splits => update(item.id, { splits })}
+                  onChange={(splits) => update(item.id, { splits })}
                   disabled={disabled}
                   bucketLabel="sale proceeds"
                   remainderNote="stay with the project"
@@ -431,9 +442,9 @@ export function StoreEditor({
                 />
                 {item.splits.length > 0 && item.allowCredits ? (
                   <p className="mt-2 rounded-lg bg-split-50 px-3 py-2 text-[11px] leading-relaxed text-split-800">
-                    Shop credit purchases may bring in no new payment to
-                    divide. Turn off credit purchases below if every sale
-                    must honor this split.
+                    Shop credit purchases may bring in no new payment to divide.
+                    Turn off credit purchases below if every sale must honor
+                    this split.
                   </p>
                 ) : null}
               </div>
@@ -441,21 +452,23 @@ export function StoreEditor({
               <div>
                 <span className="field-label">Discount</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Launch the item at a discount off its price — you can end
-                  the discount later.
+                  Launch the item at a discount off its price — you can end the
+                  discount later.
                 </p>
                 <div className="mt-2 flex items-center gap-2.5">
                   <input
                     type="text"
                     inputMode="decimal"
                     value={item.discountPct}
-                    onChange={e =>
-                      update(item.id, { discountPct: e.target.value.slice(0, 5) })
+                    onChange={(e) =>
+                      update(item.id, {
+                        discountPct: e.target.value.slice(0, 5),
+                      })
                     }
                     disabled={disabled}
                     placeholder="0"
                     className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      itemDiscountOk(item.discountPct) ? '' : '!border-red-400'
+                      itemDiscountOk(item.discountPct) ? "" : "!border-red-400"
                     }`}
                   />
                   <span className="text-sm text-smoke-700">% off</span>
@@ -474,19 +487,19 @@ export function StoreEditor({
                     type="text"
                     inputMode="numeric"
                     value={item.reserveN}
-                    onChange={e =>
+                    onChange={(e) =>
                       update(item.id, { reserveN: e.target.value.slice(0, 5) })
                     }
                     disabled={disabled}
                     placeholder="—"
                     className={`input-well min-h-[44px] w-16 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      itemReserveOk(item) ? '' : '!border-red-400'
+                      itemReserveOk(item) ? "" : "!border-red-400"
                     }`}
                   />
                   <span className="text-sm text-smoke-700">sold goes to</span>
                   <AddressField
                     value={item.reserveBeneficiary}
-                    onChange={reserveBeneficiary =>
+                    onChange={(reserveBeneficiary) =>
                       update(item.id, { reserveBeneficiary })
                     }
                     disabled={disabled}
@@ -506,7 +519,7 @@ export function StoreEditor({
                     type="text"
                     inputMode="numeric"
                     value={item.votingUnits}
-                    onChange={e =>
+                    onChange={(e) =>
                       update(item.id, {
                         votingUnits: e.target.value.slice(0, 10),
                       })
@@ -514,7 +527,7 @@ export function StoreEditor({
                     disabled={disabled}
                     placeholder="0"
                     className={`input-well min-h-[44px] w-28 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      itemVotingOk(item) ? '' : '!border-red-400'
+                      itemVotingOk(item) ? "" : "!border-red-400"
                     }`}
                   />
                   <span className="text-sm text-smoke-700">votes each</span>
@@ -526,33 +539,33 @@ export function StoreEditor({
                 {(
                   [
                     [
-                      'allowOwnerMint',
-                      'Owner can mint for free',
-                      'The project owner (or revnet operator) can mint this item without paying.',
+                      "allowOwnerMint",
+                      "Project owner can mint for free",
+                      "The project owner (or revnet project operator) can mint this item without paying.",
                     ],
                     ...(isRevnet
                       ? []
                       : ([
                           [
-                            'transfersPausable',
-                            'Transfers pausable',
-                            'Rulesets can pause transfers of this item.',
+                            "transfersPausable",
+                            "Transfers pausable",
+                            "Rulesets can pause transfers of this item.",
                           ],
                         ] as const)),
                     [
-                      'cantBeRemoved',
-                      'Permanent',
-                      'This item can never be removed from the store.',
+                      "cantBeRemoved",
+                      "Permanent",
+                      "This item can never be removed from the store.",
                     ],
                     [
-                      'allowCredits',
-                      'Allow credit purchases',
-                      'Buyers can spend leftover pay credits on this item.',
+                      "allowCredits",
+                      "Allow credit purchases",
+                      "Buyers can spend leftover pay credits on this item.",
                     ],
                     [
-                      'ownerCanEditDiscount',
-                      'Discounts can change later',
-                      'The owner can raise or end the discount after launch.',
+                      "ownerCanEditDiscount",
+                      "Discounts can change later",
+                      "The project owner can raise or end the discount after launch.",
                     ],
                   ] as const
                 ).map(([key, title, blurb]) => (
@@ -566,7 +579,6 @@ export function StoreEditor({
                   />
                 ))}
               </div>
-
             </div>
           ) : null}
         </div>
@@ -581,5 +593,5 @@ export function StoreEditor({
         </AddButton>
       </div>
     </div>
-  )
+  );
 }

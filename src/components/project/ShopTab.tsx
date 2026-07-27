@@ -104,8 +104,8 @@ type ShopTier = {
 const FLAG_DESCRIPTIONS: [keyof ShopTierFlags, string, string][] = [
   [
     'allowOwnerMint',
-    'Operator can mint',
-    "The project's operator can mint this item for free, without a payment.",
+    'Project operator can mint',
+    "The project operator can mint this item for free, without a payment.",
   ],
   [
     'transfersPausable',

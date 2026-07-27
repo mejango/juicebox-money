@@ -1,16 +1,18 @@
 'use client'
 
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { BsActivityEvent } from '@/lib/bendystraw'
+import { explorerHostname } from '@/lib/chainDisplay'
 import {
   formatCompactTokenAmount,
   formatDate,
   timeAgo,
 } from '@/lib/format'
+import { chainName } from '@/lib/urn'
 import { ActivityMeta } from './ActivityMeta'
 
 const IDENT_COLORS = [
@@ -24,12 +26,12 @@ const IDENT_COLORS = [
 ]
 
 function txUrl(chainId: number, txHash: string): string | null {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${txHash}` : null
 }
 
 function addressUrl(chainId: number, address: string): string | null {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const host = explorerHostname(chainId)
   return host ? `https://${host}/address/${address}` : null
 }
 
@@ -234,8 +236,7 @@ function Row({
       <span className="font-medium text-bluebs-600">
         {tokenCount} {tokenUnit}
       </span>{' '}
-      from {JB_CHAINS[event.bridgeClaimEvent.peerChainId as JBChainId]?.name ??
-        `chain ${event.bridgeClaimEvent.peerChainId}`}
+      from {chainName(event.bridgeClaimEvent.peerChainId)}
     </>
   ) : (
     <>updated the project</>

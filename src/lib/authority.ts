@@ -10,6 +10,8 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
+import { requireTransactionReview } from '@/lib/transaction-review'
+import { connectedWallet } from '@/lib/wallet-core'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
@@ -35,11 +37,12 @@ export type AuthorityCall = {
 }
 
 export type AuthorityProgress = {
-  kind: 'checking' | 'relayr' | 'safe'
+  kind: 'checking' | 'direct' | 'relayr' | 'safe'
   message: string
 }
 
 export type AuthorityResult = {
+  directResults: Hex[]
   relayrGroups: number
   relayrResults: Array<{
     bundleUuid: string
@@ -126,9 +129,10 @@ export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
 }
 
 /**
- * Route reviewed owner/operator calls by the controlling account on each
- * chain. An EOA signs ERC-2771 requests and pays Relayr once; a Safe signer
- * queues or approves the exact call through that chain's Safe path.
+ * Route reviewed project owner/operator calls by the controlling account on
+ * each chain. A one-chain EOA action is sent directly; a genuinely
+ * multi-chain EOA action signs ERC-2771 requests and pays Relayr once. A Safe
+ * signer queues or approves the exact call through that chain's Safe path.
  */
 export async function runAuthorityCalls({
   calls,
@@ -140,6 +144,7 @@ export async function runAuthorityCalls({
   if (!calls.length) throw new Error('Choose at least one chain.')
   const connected = getAccount(wagmiConfig).address
   if (!connected) throw new Error('Connect a wallet first.')
+  const isMultiChain = new Set(calls.map(call => call.chainId)).size > 1
 
   const groups = new Map<string, AuthorityCall[]>()
   for (const call of calls) {
@@ -149,7 +154,7 @@ export async function runAuthorityCalls({
 
   type ReviewedGroup = {
     calls: AuthorityCall[]
-    mode: 'safe' | 'relayr'
+    mode: 'direct' | 'safe' | 'relayr'
     relayrCalls?: RelayrCall[]
     pendingScope?: string
     recovered?: boolean
@@ -206,6 +211,11 @@ export async function runAuthorityCalls({
           .join(', ')}. Switch to ${authority}.`,
       )
     }
+    if (!isMultiChain) {
+      reviewedGroups.push({ calls: group, mode: 'direct' })
+      continue
+    }
+
     const relayrCalls: RelayrCall[] = group.map(call => ({
       chainId: call.chainId,
       target: call.target,
@@ -256,6 +266,7 @@ export async function runAuthorityCalls({
   }
 
   let relayrGroups = 0
+  const directResults: Hex[] = []
   const relayrResults: AuthorityResult['relayrResults'] = []
   const safeResults: SafeCallResult[] = []
 
@@ -357,6 +368,71 @@ export async function runAuthorityCalls({
       continue
     }
 
+    if (reviewed.mode === 'direct') {
+      await requireTransactionReview({
+        title: group.length === 1 ? 'Review transaction' : 'Review transactions',
+        description:
+          'These calls affect one chain, so they will be sent directly without Relayr.',
+        calls: group.map(call => ({
+          chainId: call.chainId,
+          from: call.authority,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+          label: call.label,
+          abi: call.abi,
+          functionName: call.functionName,
+          args: call.args,
+          contractName: call.contractName,
+        })),
+      })
+
+      for (let index = 0; index < group.length; index++) {
+        const call = group[index]
+        const { wallet, account } = await connectedWallet(call.chainId, {
+          expected: call.authority,
+          requireUnchanged: true,
+          changedError:
+            'Connected account changed. Review this project action again.',
+        })
+        const client = clientFor(call.chainId)
+        onProgress?.({
+          kind: 'direct',
+          message: `Confirming ${index + 1}/${group.length} directly on ${
+            JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+          }…`,
+        })
+        await client.call({
+          account,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+        })
+        const live = getAccount(wagmiConfig).address
+        if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
+          throw new Error(
+            'Connected account changed. Review this project action again.',
+          )
+        }
+        const hash = await wallet.sendTransaction({
+          account,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+        })
+        const receipt = await client.waitForTransactionReceipt({ hash })
+        if (receipt.status !== 'success') {
+          throw new Error(
+            `${call.label ?? 'Project action'} reverted on ${
+              JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+            }.`,
+          )
+        }
+        directResults.push(hash)
+      }
+      continue
+    }
+
     const relayrCalls = reviewed.relayrCalls
     const pendingScope = reviewed.pendingScope
     if (!relayrCalls || !pendingScope) {
@@ -376,5 +452,5 @@ export async function runAuthorityCalls({
     relayrGroups += 1
   }
 
-  return { relayrGroups, relayrResults, safeResults }
+  return { directResults, relayrGroups, relayrResults, safeResults }
 }

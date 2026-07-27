@@ -332,8 +332,21 @@ for (const viewport of viewports) {
             }),
           ).toBeVisible()
           await expect(
-            page.getByRole('link', { name: 'Open Browser Fixture Project' }),
+            page.getByRole('link', {
+              name: 'Open Browser Fixture Project',
+              exact: true,
+            }),
           ).toBeVisible()
+          if (viewport.width < 1024) {
+            await page
+              .getByRole('radio', { name: 'Fresh activity', exact: true })
+              .evaluate(element => {
+                const input = element as HTMLInputElement
+                input.checked = true
+                input.dispatchEvent(new Event('input', { bubbles: true }))
+                input.dispatchEvent(new Event('change', { bubbles: true }))
+              })
+          }
           await expect(
             page.getByText('5 token credits', { exact: false }),
           ).toBeVisible()
