@@ -37,7 +37,9 @@ describe('project stat breakdowns', () => {
     })
 
     const card = renderer.root.find(
-      node => node.type === 'div' && node.props['aria-describedby'] === 'raised-breakdown',
+      node =>
+        node.type === 'button' &&
+        node.props['aria-describedby'] === 'raised-breakdown',
     )
     const tooltip = () => renderer.root.findByProps({ role: 'tooltip' })
     expect(card.props['aria-expanded']).toBe(false)
