@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
@@ -44,15 +45,25 @@ export function WalletButton() {
       {menuOpen ? (
         <div className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {connected ? (
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                disconnect()
-              }}
-              className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
-            >
-              Sign out
-            </button>
+            <>
+              <Link
+                href={`/account/${address}`}
+                onClick={() => setMenuOpen(false)}
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+              >
+                View account
+              </Link>
+              <div className="mx-4 my-1 border-t border-smoke-200" />
+              <button
+                onClick={() => {
+                  setMenuOpen(false)
+                  disconnect()
+                }}
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+              >
+                Sign out
+              </button>
+            </>
           ) : (
             <>
               <button

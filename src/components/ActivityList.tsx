@@ -1,6 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import type { ReactNode } from 'react'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
@@ -36,7 +37,7 @@ function addressUrl(chainId: number, address: string): string | null {
 }
 
 /** The deterministic two-color identity bubbles used by website/'s feed. */
-function identityGradient(seed: string): string {
+export function identityGradient(seed: string): string {
   let hash = 0
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0
@@ -68,13 +69,21 @@ export function ActorLink({
   )
 }
 
-function Row({
-  event,
-  tokenUnit,
-}: {
-  event: BsActivityEvent
-  tokenUnit: string
-}) {
+/**
+ * Interpret one indexed event as feed-row parts: who acted, what they did,
+ * the flow direction, and any memo — shared by the project feed and the
+ * account view.
+ */
+export function activityParts(
+  event: BsActivityEvent,
+  tokenUnit: string,
+): {
+  actor: string
+  action: ReactNode
+  direction: 'in' | 'out' | null
+  memo: string | null
+  amountUsd: string | null | undefined
+} {
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
   const mint = event.mintTokensEvent
@@ -102,8 +111,6 @@ function Row({
     event.swapEvent?.caller ??
     event.buybackPoolEvent?.caller ??
     event.from
-  const actorLink = actor ? addressUrl(event.chainId, actor) : null
-  const link = txUrl(event.chainId, event.txHash)
   const rawTokenCount =
     pay?.newlyIssuedTokenCount ??
     cashOut?.cashOutCount ??
@@ -121,7 +128,6 @@ function Row({
       return false
     }
   })()
-  const relativeTime = timeAgo(event.timestamp)
   const direction =
     pay || event.addToBalanceEvent
       ? 'in'
@@ -137,7 +143,6 @@ function Row({
           ? 'in'
           : null
 
-  const actorNode = <ActorLink href={actorLink} actor={actor} />
   const action = pay ? (
     issuedTokens ? (
       <>
@@ -243,6 +248,34 @@ function Row({
   )
   const memo = pay?.memo ?? event.addToBalanceEvent?.memo ?? null
 
+  return {
+    actor,
+    action,
+    direction,
+    memo,
+    amountUsd:
+      pay?.amountUsd ??
+      cashOut?.reclaimAmountUsd ??
+      event.sendPayoutsEvent?.amountPaidOutUsd,
+  }
+}
+
+function Row({
+  event,
+  tokenUnit,
+}: {
+  event: BsActivityEvent
+  tokenUnit: string
+}) {
+  const { actor, action, direction, memo, amountUsd } = activityParts(
+    event,
+    tokenUnit,
+  )
+  const actorLink = actor ? addressUrl(event.chainId, actor) : null
+  const link = txUrl(event.chainId, event.txHash)
+  const relativeTime = timeAgo(event.timestamp)
+  const actorNode = <ActorLink href={actorLink} actor={actor} />
+
   return (
     <li className="flex gap-3 py-3.5">
       <span
@@ -271,11 +304,7 @@ function Row({
           <ActivityMeta
             chainId={event.chainId}
             txHash={event.txHash}
-            amountUsd={
-              pay?.amountUsd ??
-              cashOut?.reclaimAmountUsd ??
-              event.sendPayoutsEvent?.amountPaidOutUsd
-            }
+            amountUsd={amountUsd}
             direction={direction}
           />
         </div>

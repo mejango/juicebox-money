@@ -283,6 +283,36 @@ export function safeTxLink(
     : null
 }
 
+/**
+ * Every Safe the address signs for on one chain, from the hosted Safe
+ * Transaction Service. Chains without a service (and service errors) resolve
+ * to an empty list — the account view degrades to EOA-owned projects only.
+ */
+export async function safesForOwner(
+  address: Address,
+  chainId: number,
+): Promise<Address[]> {
+  const base = txBase(chainId)
+  if (!base) return []
+  try {
+    const response = await safeFetch(
+      `${base}/api/v1/owners/${getAddress(address)}/safes/`,
+      { headers: requestHeaders() },
+    )
+    if (!response.ok) return []
+    const data = (await response.json()) as { safes?: string[] }
+    return (data.safes ?? []).flatMap(safe => {
+      try {
+        return [getAddress(safe)]
+      } catch {
+        return []
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 export async function fetchSafeInfo(
   chainId: JBChainId,
   safe: Address,
