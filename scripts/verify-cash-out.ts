@@ -4,11 +4,16 @@
  * Run: npx -y tsx scripts/verify-cash-out.ts
  *
  * 1. eth:3 (Revnet Network, native accounting): resolve the accounting
- *    context, quote a 1e18-token cash-out, assemble the tx request.
+ *    context, quote a 1e18-token cash-out through the hook-aware route,
+ *    assemble the tx request.
  * 2. base:6 (Artizen, USDC accounting): prove context resolution returns the
  *    USDC token/decimals/currency — never assume native.
  */
-import { resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
+import {
+  getHookAwareCashOutQuote,
+  resolvePaymentTerminal,
+  type CashOutRoute,
+} from '@bananapus/nana-sdk-core/v6'
 import { createPublicClient, http, type PublicClient } from 'viem'
 import { base, mainnet } from 'viem/chains'
 import {
@@ -16,18 +21,17 @@ import {
   getCashOutContext,
   getContextCashOutQuote,
   isNativeToken,
-  minReclaimedFloor,
 } from '../src/lib/cashOut'
 
 const HOLDER = '0x000000000000000000000000000000000000dEaD' as const
 
-/** Assemble a cash-out tx request and check the slippage-floor invariants. */
+/** Assemble a cash-out tx request and check the route's floor invariants. */
 function assembleAndCheck(
   chainId: 1 | 8453,
   terminal: `0x${string}`,
   projectId: bigint,
   tokenToReclaim: `0x${string}`,
-  quote: { reclaimAmount: bigint; reclaimAmountAfterFee: bigint },
+  route: CashOutRoute,
 ) {
   const request = buildCashOutRequest({
     chainId,
@@ -36,7 +40,7 @@ function assembleAndCheck(
     projectId,
     cashOutCount: 10n ** 18n,
     tokenToReclaim,
-    quote,
+    route,
     beneficiary: HOLDER,
   })
   console.log(`${chainId}:${projectId} tx request:`, {
@@ -45,11 +49,22 @@ function assembleAndCheck(
     functionName: request.functionName,
     args: request.args.map(String),
   })
-  if (request.args[4] !== minReclaimedFloor(quote)) {
-    throw new Error('minTokensReclaimed does not match the 97.5% floor')
+  if (request.args[4] !== route.terminalMinimum) {
+    throw new Error('minTokensReclaimed does not match the route minimum')
   }
-  if (request.args[4] === 0n) {
-    throw new Error('minTokensReclaimed must never be 0')
+  if (request.args[6] !== route.metadata) {
+    throw new Error('metadata does not match the route metadata')
+  }
+  if (route.route === 'treasury') {
+    if (request.args[4] !== route.minimumReturn || request.args[4] === 0n) {
+      throw new Error('treasury route must carry a non-zero terminal minimum')
+    }
+  } else {
+    // On the pool route the terminal reclaims nothing — the floor lives in
+    // the buyback hook metadata and the terminal minimum must be zero.
+    if (request.args[4] !== 0n || request.args[6] === '0x') {
+      throw new Error('amm route must carry a zero terminal minimum + metadata')
+    }
   }
 }
 
@@ -68,21 +83,6 @@ async function main() {
   console.log('eth:3 accounting context:', ethContext)
   console.log('eth:3 token is native:', isNativeToken(ethContext.token))
 
-  const quote = await getContextCashOutQuote(eth, {
-    chainId: 1,
-    projectId: 3n,
-    cashOutCount: 10n ** 18n,
-    context: ethContext,
-  })
-  console.log('eth:3 quote for 1e18 tokens:', {
-    reclaimAmount: quote.reclaimAmount.toString(),
-    reclaimAmountAfterFee: quote.reclaimAmountAfterFee.toString(),
-  })
-  console.log(
-    'eth:3 min reclaimed floor (97.5%):',
-    minReclaimedFloor(quote).toString(),
-  )
-
   const terminal = await resolvePaymentTerminal(eth, {
     chainId: 1,
     projectId: 3n,
@@ -90,10 +90,25 @@ async function main() {
   })
   console.log('eth:3 terminal:', terminal)
 
-  if (minReclaimedFloor(quote) > 0n) {
-    assembleAndCheck(1, terminal.address, 3n, ethContext.token, quote)
+  const route = await getHookAwareCashOutQuote(eth, {
+    chainId: 1,
+    projectId: 3n,
+    holder: HOLDER,
+    cashOutCount: 10n ** 18n,
+    tokenToReclaim: ethContext.token,
+    terminal: terminal.address,
+  })
+  console.log('eth:3 route for 1e18 tokens:', {
+    route: route.route,
+    expectedReturn: route.expectedReturn.toString(),
+    minimumReturn: route.minimumReturn.toString(),
+    terminalMinimum: route.terminalMinimum.toString(),
+  })
+
+  if (route.minimumReturn > 0n) {
+    assembleAndCheck(1, terminal.address, 3n, ethContext.token, route)
   } else {
-    // A zero quote must never produce a tx with minTokensReclaimed = 0.
+    // A zero floor must never produce an unprotected tx.
     let threw = false
     try {
       buildCashOutRequest({
@@ -103,7 +118,7 @@ async function main() {
         projectId: 3n,
         cashOutCount: 10n ** 18n,
         tokenToReclaim: ethContext.token,
-        quote,
+        route,
         beneficiary: HOLDER,
       })
     } catch {
@@ -111,8 +126,8 @@ async function main() {
     }
     if (!threw) throw new Error('zero-floor request must throw, not send 0')
     console.log(
-      'eth:3 quote is 0 (V6 treasury is empty) — buildCashOutRequest',
-      'correctly refused to assemble a tx with minTokensReclaimed = 0.',
+      'eth:3 route floor is 0 (V6 treasury is empty) — buildCashOutRequest',
+      'correctly refused to assemble an unprotected tx.',
     )
   }
 
@@ -121,25 +136,29 @@ async function main() {
   const jbContext = await getCashOutContext(eth, { chainId: 1, projectId: 1n })
   if (!jbContext) throw new Error('eth:1 has no accounting context')
   console.log('eth:1 accounting context:', jbContext)
-  const jbQuote = await getContextCashOutQuote(eth, {
+  const jbTerminal = await resolvePaymentTerminal(eth, {
     chainId: 1,
     projectId: 1n,
+    token: jbContext.token,
+  })
+  const jbRoute = await getHookAwareCashOutQuote(eth, {
+    chainId: 1,
+    projectId: 1n,
+    holder: HOLDER,
     cashOutCount: 10n ** 18n,
-    context: jbContext,
+    tokenToReclaim: jbContext.token,
+    terminal: jbTerminal.address,
   })
-  console.log('eth:1 quote for 1e18 tokens:', {
-    reclaimAmount: jbQuote.reclaimAmount.toString(),
-    reclaimAmountAfterFee: jbQuote.reclaimAmountAfterFee.toString(),
+  console.log('eth:1 route for 1e18 tokens:', {
+    route: jbRoute.route,
+    expectedReturn: jbRoute.expectedReturn.toString(),
+    minimumReturn: jbRoute.minimumReturn.toString(),
+    terminalMinimum: jbRoute.terminalMinimum.toString(),
   })
-  if (jbQuote.reclaimAmountAfterFee > 0n) {
-    const jbTerminal = await resolvePaymentTerminal(eth, {
-      chainId: 1,
-      projectId: 1n,
-      token: jbContext.token,
-    })
-    assembleAndCheck(1, jbTerminal.address, 1n, jbContext.token, jbQuote)
+  if (jbRoute.minimumReturn > 0n) {
+    assembleAndCheck(1, jbTerminal.address, 1n, jbContext.token, jbRoute)
   } else {
-    console.log('eth:1 quote is 0 — skipping tx assembly.')
+    console.log('eth:1 route floor is 0 — skipping tx assembly.')
   }
 
   // ---- base:6 — Artizen (USDC accounting) ----
@@ -173,7 +192,7 @@ async function main() {
     cashOutCount: 10n ** 18n,
     context: artizenContext,
   })
-  console.log('base:6 quote for 1e18 tokens (USDC, 6 decimals):', {
+  console.log('base:6 display quote for 1e18 tokens (USDC, 6 decimals):', {
     reclaimAmount: artizenQuote.reclaimAmount.toString(),
     reclaimAmountAfterFee: artizenQuote.reclaimAmountAfterFee.toString(),
   })

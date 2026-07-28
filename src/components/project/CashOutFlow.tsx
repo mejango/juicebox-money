@@ -8,6 +8,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  getHookAwareCashOutQuote,
   getTokenAddress,
   resolvePaymentTerminal,
 } from '@bananapus/nana-sdk-core/v6'
@@ -28,17 +29,19 @@ import { TxError } from '@/components/ui/TxError'
 import {
   buildCashOutRequest,
   getCashOutContext,
-  getContextCashOutQuote,
   isNativeToken,
-  minReclaimedFloor,
 } from '@/lib/cashOut'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
+
+/** Max-slippage presets in basis points; 1% is the cross-client default. */
+const SLIPPAGE_PRESETS_BPS = [50, 100, 300]
+const DEFAULT_SLIPPAGE_BPS = 100
 
 /**
  * The cash-out flow (JBMultiTerminal.cashOutTokensOf), extracted from
  * TreasuryCard so both the treasury card and the Accounts (YOU) card render
  * the same panel. Every write goes through useSafeTx (simulate-first) and the
- * min-reclaimed slippage floor from cashOut.ts — a zero floor never sends.
+ * SDK's hook-aware slippage-protected route — a zero floor never sends.
  *
  * Rendered bare (no card chrome): the caller wraps it.
  */
@@ -66,6 +69,7 @@ export function CashOutPanel({
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
+  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   useEffect(() => {
@@ -145,20 +149,32 @@ export function CashOutPanel({
       }),
   })
 
+  // Hook-aware quote: previewCashOutFrom simulates the REAL cash-out path
+  // (data hook, buyback routing) and yields a slippage-protected route.
   const {
-    data: quote,
+    data: route,
     isFetching: quoteLoading,
     isError: quoteFailed,
   } = useQuery({
-    queryKey: ['cashOutQuote', chainId, projectId, cashOutCount.toString()],
-    enabled: !!publicClient && !!context && cashOutCount > 0n,
+    queryKey: [
+      'cashOutQuote',
+      chainId,
+      projectId,
+      cashOutCount.toString(),
+      address ?? zeroAddress,
+      slippageBps,
+    ],
+    enabled: !!publicClient && !!context && !!terminal && cashOutCount > 0n,
     retry: false,
     queryFn: () =>
-      getContextCashOutQuote(publicClient!, {
+      getHookAwareCashOutQuote(publicClient!, {
         chainId,
         projectId: BigInt(projectId),
+        holder: address ?? zeroAddress,
         cashOutCount,
-        context: context!,
+        tokenToReclaim: context!.token,
+        terminal: terminal!.address,
+        slippageBps: BigInt(slippageBps),
       }),
   })
 
@@ -180,8 +196,8 @@ export function CashOutPanel({
   const nothingToReclaim =
     cashOutCount > 0n &&
     !quoteLoading &&
-    quote !== undefined &&
-    quote.reclaimAmountAfterFee <= 0n
+    route !== undefined &&
+    route.expectedReturn <= 0n
 
   const busy = tx.busy
   const success = tx.phase === 'success'
@@ -207,8 +223,8 @@ export function CashOutPanel({
     if (
       !terminal ||
       !context ||
-      !quote ||
-      quote.reclaimAmountAfterFee <= 0n ||
+      !route ||
+      route.expectedReturn <= 0n ||
       cashOutCount <= 0n ||
       exceedsBalance ||
       busy
@@ -224,7 +240,7 @@ export function CashOutPanel({
         projectId: BigInt(projectId),
         cashOutCount,
         tokenToReclaim: context.token,
-        quote,
+        route,
         beneficiary: address,
       })
       await tx.send({ ...request, abi: request.abi as Abi })
@@ -349,11 +365,29 @@ export function CashOutPanel({
           'This project currently has nothing to reclaim for cash-outs.'
         ) : cashOutCount > 0n && quoteFailed ? (
           'Couldn’t get a quote right now — try again shortly.'
-        ) : cashOutCount > 0n && quote && quote.reclaimAmountAfterFee > 0n ? (
-          `You'll receive ~${formatTokenAmount(quote.reclaimAmountAfterFee, receiveDecimals)} ${receiveSymbol}`
+        ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (
+          `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}`
         ) : cashOutCount > 0n && quoteLoading ? (
           'Getting your quote…'
         ) : null}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <span className="text-xs font-medium text-smoke-700">Max slippage</span>
+        {SLIPPAGE_PRESETS_BPS.map(bps => (
+          <button
+            key={bps}
+            onClick={() => setSlippageBps(bps)}
+            aria-pressed={slippageBps === bps}
+            className={`px-2.5 py-0.5 text-[11px] ${
+              slippageBps === bps
+                ? 'inline-flex items-center justify-center rounded-lg border border-bluebs-500 bg-bluebs-25 font-medium text-bluebs-700'
+                : 'btn-secondary'
+            }`}
+          >
+            {bps / 100}%
+          </button>
+        ))}
       </div>
 
       <button
@@ -363,8 +397,8 @@ export function CashOutPanel({
           (isConnected &&
             (cashOutCount <= 0n ||
               exceedsBalance ||
-              !quote ||
-              quote.reclaimAmountAfterFee <= 0n))
+              !route ||
+              route.expectedReturn <= 0n))
         }
         className="btn-primary mt-5 min-h-[52px] w-full text-sm"
       >
@@ -381,11 +415,11 @@ export function CashOutPanel({
       {!exceedsBalance &&
       !nothingToReclaim &&
       cashOutCount > 0n &&
-      quote &&
-      quote.reclaimAmountAfterFee > 0n ? (
+      route &&
+      route.expectedReturn > 0n ? (
         <p className="mt-3 text-center text-xs text-smoke-700">
           You&apos;ll receive at least{' '}
-          {formatTokenAmount(minReclaimedFloor(quote), receiveDecimals)}{' '}
+          {formatTokenAmount(route.minimumReturn, receiveDecimals)}{' '}
           {receiveSymbol}, or the transaction reverts.
         </p>
       ) : null}

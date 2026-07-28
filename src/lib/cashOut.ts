@@ -4,6 +4,7 @@ import {
   getAccountingContexts,
   getCashOutQuote,
   type CashOutQuote,
+  type CashOutRoute,
   type JBAccountingContext,
   type V6CashOutTxRequest,
 } from '@bananapus/nana-sdk-core/v6'
@@ -12,15 +13,9 @@ import { formatUnits, type Address, type PublicClient } from 'viem'
 /**
  * Pure cash-out plumbing shared by the TreasuryCard client island and the
  * verification scripts: accounting-context resolution, quoting in the
- * project's own accounting terms, and tx-request assembly with a slippage
- * floor.
+ * project's own accounting terms, and tx-request assembly from an SDK
+ * slippage-protected route (getHookAwareCashOutQuote/resolveCashOutRoute).
  */
-
-/** Slippage floor on cash-out quotes, in thousandths: 975 = 97.5%. */
-const CASH_OUT_SLIPPAGE_FLOOR = 975n
-
-/** The protocol takes 2.5% of feeable terminal cash outs. */
-const CASH_OUT_PROTOCOL_FEE_DENOMINATOR = 40n
 
 export function isNativeToken(token: string): boolean {
   return token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
@@ -42,6 +37,9 @@ export async function getCashOutContext(
 /**
  * Quote a cash-out in the accounting context's own terms (its decimals and
  * token-keyed currency), so no price-feed conversion is involved.
+ *
+ * Hook-blind (`currentReclaimableSurplusOf` skips data hooks) — display-only.
+ * Transactions must quote through the SDK's `getHookAwareCashOutQuote`.
  */
 export function getContextCashOutQuote(
   client: PublicClient,
@@ -162,51 +160,12 @@ export function shouldShowCashOutAsymptote(
   )
 }
 
-/** The least the holder will accept: quote × 97.5% (2.5% slippage floor). */
-export function minReclaimedFloor(quote: CashOutQuote): bigint {
-  return (quote.reclaimAmountAfterFee * CASH_OUT_SLIPPAGE_FLOOR) / 1000n
-}
-
 /**
- * Terminal protocol fee after previewCashOutFrom. A non-zero cash-out tax
- * fees the whole reclaim; a zero tax only fees fee-free surplus. Unknown
- * feeless/surplus reads conservatively assume the full fee, keeping the
- * submitted minimum safely below what the terminal can deliver.
- */
-export function cashOutProtocolFee({
-  reclaimAmount,
-  cashOutTaxRate,
-  feeless,
-  feeFreeSurplus,
-}: {
-  reclaimAmount: bigint
-  cashOutTaxRate: bigint
-  feeless: boolean | null
-  feeFreeSurplus: bigint | null
-}): bigint {
-  if (reclaimAmount <= 0n || feeless === true) return 0n
-  if (cashOutTaxRate > 0n || feeFreeSurplus === null || feeless === null) {
-    return reclaimAmount / CASH_OUT_PROTOCOL_FEE_DENOMINATOR
-  }
-  const feeable =
-    reclaimAmount < feeFreeSurplus ? reclaimAmount : feeFreeSurplus
-  return feeable / CASH_OUT_PROTOCOL_FEE_DENOMINATOR
-}
-
-/** Floor a reviewed output by basis points, returning at least one unit. */
-export function quotedOutputFloor(
-  quoted: bigint,
-  basisPoints = 9900n,
-): bigint {
-  if (quoted <= 0n) return 0n
-  const floor = (quoted * basisPoints) / 10_000n
-  return floor > 0n ? floor : 1n
-}
-
-/**
- * Assemble the `cashOutTokensOf` request with the slippage floor applied.
- * Throws when the floor would be zero — a zero `minTokensReclaimed` must
- * never be sent.
+ * Assemble the `cashOutTokensOf` request from an SDK slippage-protected
+ * route: the route's terminal minimum and metadata carry the floor (in
+ * `minTokensReclaimed` on the treasury route, in the buyback hook metadata
+ * on the pool route). Throws when the route's floor is zero — an
+ * unprotected cash-out must never be sent.
  */
 export function buildCashOutRequest({
   chainId,
@@ -215,7 +174,7 @@ export function buildCashOutRequest({
   projectId,
   cashOutCount,
   tokenToReclaim,
-  quote,
+  route,
   beneficiary,
 }: {
   chainId: JBChainId
@@ -225,11 +184,10 @@ export function buildCashOutRequest({
   /** Project tokens to cash out, fixed-point 18 decimals. */
   cashOutCount: bigint
   tokenToReclaim: Address
-  quote: CashOutQuote
+  route: CashOutRoute
   beneficiary: Address
 }): V6CashOutTxRequest {
-  const minTokensReclaimed = minReclaimedFloor(quote)
-  if (minTokensReclaimed <= 0n) {
+  if (route.minimumReturn <= 0n) {
     throw new Error('Nothing to reclaim for this cash-out.')
   }
   return buildCashOutTx({
@@ -239,7 +197,8 @@ export function buildCashOutRequest({
     projectId,
     cashOutCount,
     tokenToReclaim,
-    minTokensReclaimed,
+    minTokensReclaimed: route.terminalMinimum,
     beneficiary,
+    metadata: route.metadata,
   })
 }

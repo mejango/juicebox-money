@@ -1,15 +1,18 @@
-import type { CashOutQuote } from '@bananapus/nana-sdk-core/v6'
+import {
+  DEFAULT_CASH_OUT_SLIPPAGE_BPS,
+  cashOutProtocolFee,
+  resolveCashOutRoute,
+  slippageFloor,
+  type CashOutRoute,
+} from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionData, encodeFunctionData, type Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   buildCashOutRequest,
   cashOutPriceFromTotals,
-  cashOutProtocolFee,
   isNativeToken,
-  minReclaimedFloor,
   minimumCashOutPriceAtIssuancePrice,
   minimumCashOutPriceFromTotals,
-  quotedOutputFloor,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 
@@ -38,24 +41,18 @@ describe('cash-out arithmetic', () => {
     expect(isNativeToken(TOKEN)).toBe(false)
   })
 
-  it('uses integer floors for the displayed and submitted minimum', () => {
-    const quote: CashOutQuote = {
-      reclaimAmount: 10_257n,
-      reclaimAmountAfterFee: 10_001n,
-    }
-
-    expect(minReclaimedFloor(quote)).toBe(9_750n)
-    expect(quotedOutputFloor(10_001n)).toBe(9_900n)
-    expect(quotedOutputFloor(1n)).toBe(1n)
-    expect(quotedOutputFloor(0n)).toBe(0n)
+  it('keeps the cross-client 1% default and its integer floors', () => {
+    expect(DEFAULT_CASH_OUT_SLIPPAGE_BPS).toBe(100n)
+    expect(slippageFloor(10_001n)).toBe(9_900n)
+    expect(slippageFloor(1n)).toBe(1n)
+    expect(slippageFloor(0n)).toBe(0n)
   })
 
-  it('matches the protocol fee branches, including conservative unknown reads', () => {
+  it('matches the exact /40 protocol fee branches the UI relies on', () => {
     expect(
       cashOutProtocolFee({
         reclaimAmount: 4_000n,
         cashOutTaxRate: 5_000n,
-        feeless: false,
         feeFreeSurplus: 1_000n,
       }),
     ).toBe(100n)
@@ -63,7 +60,6 @@ describe('cash-out arithmetic', () => {
       cashOutProtocolFee({
         reclaimAmount: 4_000n,
         cashOutTaxRate: 0n,
-        feeless: false,
         feeFreeSurplus: 1_000n,
       }),
     ).toBe(25n)
@@ -71,16 +67,16 @@ describe('cash-out arithmetic', () => {
       cashOutProtocolFee({
         reclaimAmount: 4_000n,
         cashOutTaxRate: 0n,
-        feeless: true,
+        beneficiaryIsFeeless: true,
         feeFreeSurplus: 4_000n,
       }),
     ).toBe(0n)
+    // Unknown surplus reads pass the full reclaim as feeable (conservative).
     expect(
       cashOutProtocolFee({
         reclaimAmount: 4_000n,
         cashOutTaxRate: 0n,
-        feeless: null,
-        feeFreeSurplus: null,
+        feeFreeSurplus: 4_000n,
       }),
     ).toBe(100n)
   })
@@ -135,7 +131,16 @@ describe('cash-out arithmetic', () => {
 })
 
 describe('cash-out transaction request', () => {
-  it('round-trips the exact holder, token, beneficiary, count, and minimum', () => {
+  it('round-trips the treasury route: exact fee, 1% floor, empty metadata', () => {
+    const route = resolveCashOutRoute({
+      reclaimAmount: 10_000n,
+      cashOutTaxRate: 5_000n,
+      hookSpecifications: [],
+    })
+    expect(route.route).toBe('treasury')
+    expect(route.treasuryProtocolFee).toBe(250n)
+    expect(route.expectedReturn).toBe(9_750n)
+
     const request = buildCashOutRequest({
       chainId: 1,
       terminal: TERMINAL,
@@ -143,7 +148,7 @@ describe('cash-out transaction request', () => {
       projectId: 42n,
       cashOutCount: 3n * 10n ** 18n,
       tokenToReclaim: TOKEN,
-      quote: { reclaimAmount: 10_000n, reclaimAmountAfterFee: 9_750n },
+      route,
       beneficiary: HOLDER,
     })
     const data = encodeFunctionData(request)
@@ -156,13 +161,39 @@ describe('cash-out transaction request', () => {
       42n,
       3n * 10n ** 18n,
       TOKEN,
-      9_506n,
+      9_652n,
       HOLDER,
       '0x',
     ])
   })
 
-  it('fails closed instead of sending a zero minimum', () => {
+  it('keeps a zero terminal minimum and the metadata floor on the amm route', () => {
+    const route: CashOutRoute = {
+      route: 'amm',
+      expectedReturn: 12_000n,
+      minimumReturn: 11_880n,
+      terminalMinimum: 0n,
+      metadata: '0xabcdef',
+      treasuryGross: 10_000n,
+      treasuryProtocolFee: 250n,
+      treasuryNet: 9_750n,
+      buyback: null,
+    }
+    const request = buildCashOutRequest({
+      chainId: 1,
+      terminal: TERMINAL,
+      holder: HOLDER,
+      projectId: 42n,
+      cashOutCount: 3n * 10n ** 18n,
+      tokenToReclaim: TOKEN,
+      route,
+      beneficiary: HOLDER,
+    })
+    expect(request.args[4]).toBe(0n)
+    expect(request.args[6]).toBe('0xabcdef')
+  })
+
+  it('fails closed instead of sending an unprotected request', () => {
     expect(() =>
       buildCashOutRequest({
         chainId: 1,
@@ -171,7 +202,11 @@ describe('cash-out transaction request', () => {
         projectId: 42n,
         cashOutCount: 1n,
         tokenToReclaim: TOKEN,
-        quote: { reclaimAmount: 0n, reclaimAmountAfterFee: 0n },
+        route: resolveCashOutRoute({
+          reclaimAmount: 0n,
+          cashOutTaxRate: 5_000n,
+          hookSpecifications: [],
+        }),
         beneficiary: HOLDER,
       }),
     ).toThrow(/Nothing to reclaim/)

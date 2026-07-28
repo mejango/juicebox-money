@@ -10,8 +10,10 @@ import {
 import {
   build721CashOutMetadata,
   buildCashOutTx,
+  cashOutProtocolFee,
   getAccountingContexts,
   resolvePaymentTerminal,
+  slippageFloor,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
@@ -28,10 +30,6 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import {
-  cashOutProtocolFee,
-  quotedOutputFloor,
-} from '@/lib/cashOut'
 import {
   etherscanTxUrl,
   formatTokenAmount,
@@ -238,11 +236,13 @@ export function RedeemShopItemsModal({
               })
               .catch(() => null)
           : null
+      // Unknown feeless/surplus reads conservatively assume the full fee,
+      // keeping the submitted minimum safely below what the terminal pays.
       const fee = cashOutProtocolFee({
         reclaimAmount: gross,
         cashOutTaxRate,
-        feeless,
-        feeFreeSurplus,
+        beneficiaryIsFeeless: feeless === true,
+        feeFreeSurplus: feeFreeSurplus ?? gross,
       })
       const net = gross > fee ? gross - fee : 0n
       const native =
@@ -333,7 +333,7 @@ export function RedeemShopItemsModal({
       ) {
         throw new Error('Your account or item selection changed. Review again.')
       }
-      const minReclaimed = quotedOutputFloor(reviewed.net, 9900n)
+      const minReclaimed = slippageFloor(reviewed.net)
       await tx.send(
         buildCashOutTx({
           chainId: reviewed.chainId,
@@ -511,10 +511,7 @@ export function RedeemShopItemsModal({
       {quote && quote.net > 0n && tx.phase !== 'success' ? (
         <p className="mt-3 text-center text-xs text-smoke-700">
           You&apos;ll receive at least{' '}
-          {formatTokenAmount(
-            quotedOutputFloor(quote.net, 9900n),
-            quote.decimals,
-          )}{' '}
+          {formatTokenAmount(slippageFloor(quote.net), quote.decimals)}{' '}
           {quote.symbol}, or the transaction reverts.
         </p>
       ) : null}
