@@ -1583,16 +1583,32 @@ export function PayPanel({
                   </div>
                 ) : null}
                 {restrictedCartTotal > 0n ? (
-                  <div className="flex items-center justify-between gap-3 text-smoke-500">
-                    <span>Fresh payment required</span>
-                    <span className="tabular-nums">
-                      {formatTokenAmount(
-                        restrictedCartTotal,
-                        shop?.pricingDecimals ?? 18,
-                      )}{" "}
-                      {shopPricingSymbol}
-                    </span>
-                  </div>
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-smoke-500">
+                      <span>
+                        {restrictedCartTotal === cartTotal
+                          ? 'Shop credit not accepted'
+                          : 'Shop credit not accepted by some items'}
+                      </span>
+                      <span className="tabular-nums">
+                        {formatTokenAmount(
+                          restrictedCartTotal,
+                          shop?.pricingDecimals ?? 18,
+                        )}{" "}
+                        {shopPricingSymbol}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 text-smoke-500">
+                      <span>Fresh payment required</span>
+                      <span className="tabular-nums">
+                        {formatTokenAmount(
+                          restrictedCartTotal,
+                          shop?.pricingDecimals ?? 18,
+                        )}{" "}
+                        {shopPricingSymbol}
+                      </span>
+                    </div>
+                  </>
                 ) : null}
                 <div className="flex items-center justify-between gap-3 pt-0.5 font-medium">
                   <span className="text-ink">Amount due</span>

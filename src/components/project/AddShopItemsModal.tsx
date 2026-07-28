@@ -1,12 +1,13 @@
 'use client'
 
 import {
-  JBCoreContracts,
-  jbContractAddress,
-  jbProjectsAbi,
+  jb721TiersHookAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { isRevnetOperator } from '@bananapus/nana-sdk-core/v6'
+import {
+  hasPermissions,
+  JBPermissionIdsV6,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Address, type PublicClient } from 'viem'
@@ -230,7 +231,6 @@ export function AddShopItemsModal({
         config,
         selectedTargets,
         address,
-        isRevnet,
       )
       const frozenItems = items.map(cloneDraftItem)
       const frozenCategories = categories.map(category => ({ ...category }))
@@ -276,7 +276,6 @@ export function AddShopItemsModal({
         config,
         selectedTargets,
         address,
-        isRevnet,
       )
 
       if (!pinnedRef.current) {
@@ -326,7 +325,7 @@ export function AddShopItemsModal({
             error: undefined,
           })
           setMessage(`Confirm the items on ${chainName(target.chainId)}…`)
-          await assertAuthority(client, target, address, isRevnet)
+          await assertAuthority(client, target, address)
 
           const storeItems = storeItemsForChain(
             pinnedRef.current,
@@ -509,8 +508,8 @@ export function AddShopItemsModal({
             <>
               <div className="callout callout-info text-xs">
                 {isConnected
-                  ? `Your wallet will be checked as this project’s ${isRevnet ? 'operator' : 'owner'} before anything is pinned or sent.`
-                  : `Sign in with the project’s ${isRevnet ? 'operator' : 'owner'} wallet to add items.`}
+                  ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
+                  : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
               </div>
 
               <StoreEditor
@@ -733,14 +732,13 @@ async function assertAuthorityAcrossTargets(
   config: ReturnType<typeof useConfig>,
   targets: ShopWriteTarget[],
   account: Address,
-  isRevnet: boolean,
 ) {
   for (const target of targets) {
     const client = getPublicClient(config, {
       chainId: target.chainId as SupportedChainId,
     }) as PublicClient
     if (!client) throw new Error(`${chainName(target.chainId)} is unavailable.`)
-    await assertAuthority(client, target, account, isRevnet)
+    await assertAuthority(client, target, account)
   }
 }
 
@@ -748,34 +746,29 @@ async function assertAuthority(
   client: PublicClient,
   target: ShopWriteTarget,
   account: Address,
-  isRevnet: boolean,
 ) {
-  if (isRevnet) {
-    const allowed = await isRevnetOperator(client, {
-      chainId: target.chainId,
-      revnetId: BigInt(target.projectId),
-      operator: account,
-    })
-    if (!allowed) {
-      throw new Error(
-        `This wallet is not the revnet operator on ${chainName(target.chainId)}.`,
-      )
-    }
-    return
+  if (!target.hook) {
+    throw new Error(`The shop on ${chainName(target.chainId)} is unavailable.`)
   }
 
-  const projects = jbContractAddress['6'][JBCoreContracts.JBProjects][
-    target.chainId
-  ] as Address
   const owner = await client.readContract({
-    address: projects,
-    abi: jbProjectsAbi,
-    functionName: 'ownerOf',
-    args: [BigInt(target.projectId)],
+    address: target.hook,
+    abi: jb721TiersHookAbi,
+    functionName: 'owner',
+    args: [],
   })
-  if (owner.toLowerCase() !== account.toLowerCase()) {
+  if (owner.toLowerCase() === account.toLowerCase()) return
+
+  const allowed = await hasPermissions(client, {
+    chainId: target.chainId,
+    operator: account,
+    account: owner,
+    projectId: BigInt(target.projectId),
+    permissionIds: [JBPermissionIdsV6.ADJUST_721_TIERS],
+  })
+  if (!allowed) {
     throw new Error(
-      `This wallet does not own the project on ${chainName(target.chainId)}.`,
+      `This wallet cannot manage the shop on ${chainName(target.chainId)}.`,
     )
   }
 }
