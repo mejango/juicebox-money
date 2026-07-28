@@ -39,6 +39,7 @@ import {
   type RelayrCall,
   type RelayrPayment,
 } from '@/lib/relayr'
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -98,6 +99,23 @@ beforeEach(() => {
 })
 
 describe('Relayr quote and payment boundaries', () => {
+  it('refuses to run or pay while view-as is active', async () => {
+    setViewAs(TARGET)
+    try {
+      await expect(
+        runRelayrCalls({
+          calls: [{ chainId: 1, target: TARGET, data: '0x1234' }],
+          account: ALICE,
+        }),
+      ).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
+      expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
+    } finally {
+      clearViewAs()
+    }
+  })
+
+
   it('assigns virtual nonces independently and preserves ordered calls', async () => {
     const fetchMock = vi.mocked(fetch).mockResolvedValueOnce(
       response({ bundle_uuid: 'bundle', payment_info: [] }),

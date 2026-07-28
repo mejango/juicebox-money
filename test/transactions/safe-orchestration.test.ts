@@ -34,6 +34,7 @@ import {
   simulateSafeExecution,
   type SafeQueuedTx,
 } from '@/lib/safe'
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -80,6 +81,22 @@ beforeEach(() => {
 })
 
 describe('Safe execution boundary', () => {
+  it('refuses to run or execute Safe calls while view-as is active', async () => {
+    setViewAs(BOB)
+    try {
+      await expect(
+        runSafeCalls({ calls: [], signer: ALICE }),
+      ).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
+      await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+        VIEW_AS_WRITE_BLOCKED,
+      )
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    } finally {
+      clearViewAs()
+    }
+  })
+
+
   it('reviews the inner context, simulates, rechecks the account, and confirms', async () => {
     await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({
       hash: HASH,

@@ -4,6 +4,7 @@ import './globals.css'
 import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
+import { ViewAsBanner } from '@/components/ViewAsBanner'
 import { Providers } from '@/providers/Providers'
 
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
@@ -83,6 +84,7 @@ export default function RootLayout({
       <body className="flex min-h-screen flex-col">
         <Providers>
           <header className="sticky top-0 z-40 border-b border-smoke-200 bg-bone/90 backdrop-blur">
+            <ViewAsBanner />
             <SiteNavigation />
           </header>
 

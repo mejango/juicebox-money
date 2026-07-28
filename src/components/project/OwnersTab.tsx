@@ -54,6 +54,7 @@ import { TxError } from '@/components/ui/TxError'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import type { BsParticipant } from '@/lib/bendystraw'
 import {
   compactTokenTotal,
@@ -203,14 +204,15 @@ function YouCard({
   isRevnet: boolean
   chains: [number, number][]
 }) {
-  const { isConnected, address, openSignIn } = useWallet()
+  const { openSignIn } = useWallet()
+  const { address } = useViewedAccount()
 
   // Wallet state only exists client-side; keep SSR + first client render
   // identical so hydration always matches (OwnerPanel pattern).
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const connected = mounted && isConnected && !!address
+  const connected = mounted && !!address
 
   const [action, setAction] = useState<YouAction | null>(null)
 

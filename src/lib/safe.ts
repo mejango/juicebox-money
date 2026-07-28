@@ -14,6 +14,7 @@ import {
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import type { RelayrEntry } from '@/lib/relayr'
+import { assertNoViewAs } from '@/lib/viewAs'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
@@ -513,6 +514,7 @@ export async function proposeSafeTx({
   args,
   contractName,
 }: SafeCall & { signer: Address; nonce?: number }): Promise<SafeQueuedTx> {
+  assertNoViewAs()
   const base = txBase(chainId)
   if (!base) throw new Error('No hosted Safe service is configured for this chain.')
   const selectedNonce = nonce ?? (await getSafeNextNonce(chainId, safe))
@@ -584,6 +586,7 @@ export async function confirmSafeTx(
     'label' | 'abi' | 'functionName' | 'args' | 'contractName'
   >,
 ): Promise<void> {
+  assertNoViewAs()
   const base = txBase(chainId)
   if (!base) throw new Error('No hosted Safe service is configured for this chain.')
   const hash = tx.safeTxHash ?? tx.contractTransactionHash
@@ -669,6 +672,7 @@ async function sendContractAndConfirm({
   args: readonly unknown[]
   review?: TransactionReviewRequest
 }): Promise<ConfirmedContractWrite> {
+  assertNoViewAs()
   const reviewAccount = getAccount(wagmiConfig).address
   if (!reviewAccount) throw new Error('Connect a wallet first.')
   if (review) {
@@ -771,6 +775,7 @@ export async function executeSafeTx(
   safe: Address,
   tx: SafeQueuedTx,
 ): Promise<ConfirmedContractWrite> {
+  assertNoViewAs()
   const info = await fetchSafeInfo(chainId, safe)
   if (!info) throw new Error('Could not verify this Safe onchain.')
   if (safeUsableConfirmationCount(tx) < info.threshold) {
@@ -983,6 +988,7 @@ export async function runSafeCalls({
   signer: Address
   onProgress?: (message: string) => void
 }): Promise<SafeCallResult[]> {
+  assertNoViewAs()
   const results: SafeCallResult[] = []
   for (let index = 0; index < calls.length; index++) {
     const call = calls[index]

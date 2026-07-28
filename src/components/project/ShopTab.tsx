@@ -43,6 +43,7 @@ import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
 import { useWallet } from '@/hooks/useWallet'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import type {
   BsOwnedShopItem,
   BsShopPurchase,
@@ -160,7 +161,7 @@ export function ShopTab({
   chains?: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { isConnected, address } = useWallet()
+  const { address } = useViewedAccount()
   const { quantities: cart, count: cartCount } = useShopCart()
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
@@ -338,7 +339,7 @@ export function ShopTab({
         <div className="flex justify-end">{addItemsButton}</div>
       ) : null}
 
-      {isConnected && (credits ?? 0n) > 0n ? (
+      {!!address && (credits ?? 0n) > 0n ? (
         <p className="callout callout-info text-sm">
           Your shop credit:{' '}
           <span className="font-medium">
@@ -592,13 +593,14 @@ function ShopCustomers({
   primaryShop: Shop
   mediaById: Record<number, TierMedia> | undefined
 }) {
-  const { isConnected, address, openSignIn } = useWallet()
+  const { openSignIn } = useWallet()
+  const { address } = useViewedAccount()
   const [mounted, setMounted] = useState(false)
   const [redeemTargets, setRedeemTargets] = useState<
     RedeemableShopTarget[] | null
   >(null)
   useEffect(() => setMounted(true), [])
-  const connected = mounted && isConnected && !!address
+  const connected = mounted && !!address
 
   const projectKey = useMemo(() => projectsParam(chains), [chains])
   const names = useMemo(

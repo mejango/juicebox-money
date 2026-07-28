@@ -45,6 +45,7 @@ vi.mock('@/lib/safe-connector', () => ({
 }))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -94,6 +95,28 @@ beforeEach(() => {
 })
 
 describe('useSafeTx', () => {
+  it('refuses to send while view-as is active', async () => {
+    setViewAs(BOB)
+    try {
+      const hook = await renderHook()
+      let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
+
+      await act(async () => {
+        result = await hook.ref.current!.send(request)
+      })
+
+      expect(result).toBeNull()
+      expect(hook.ref.current).toMatchObject({
+        phase: 'error',
+        error: VIEW_AS_WRITE_BLOCKED,
+      })
+      expect(mocks.requestReview).not.toHaveBeenCalled()
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+    } finally {
+      clearViewAs()
+    }
+  })
+
   it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
     const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null

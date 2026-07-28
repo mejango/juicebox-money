@@ -12,6 +12,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
+import { assertNoViewAs } from '@/lib/viewAs'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
@@ -141,6 +142,7 @@ export async function runAuthorityCalls({
   calls: AuthorityCall[]
   onProgress?: (progress: AuthorityProgress) => void
 }): Promise<AuthorityResult> {
+  assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
   const connected = getAccount(wagmiConfig).address
   if (!connected) throw new Error('Connect a wallet first.')

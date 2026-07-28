@@ -19,6 +19,7 @@ import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { TxError } from '@/components/ui/TxError'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
@@ -125,7 +126,7 @@ function LoansTables({
   contexts: readonly JBAccountingContext[]
   collateralSymbol: string
 }) {
-  const { address } = useWallet()
+  const { address } = useViewedAccount()
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
