@@ -12,6 +12,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import {
   decodeFunctionData,
+  encodeAbiParameters,
   encodeFunctionData,
   zeroAddress,
   type Abi,
@@ -246,6 +247,54 @@ describe('project launch encoding', () => {
     expect(ruleset.metadata.cashOutTaxRate).toBe(5_000)
   })
 
+  it('denominates the surplus allowance in each accounting context own decimals', () => {
+    // The single form field means "this amount in each context's own
+    // currency": a 1.0 cap (parsed at the ETH-led 18 decimals) must reach
+    // the 6-decimal USDC context as 1e6, not 1e18.
+    const stage: StageRules = {
+      ...createSimpleProjectStage(),
+      surplusAllowanceOn: true,
+      surplusAllowanceAmount: 10n ** 18n,
+    }
+    const ruleset = projectConfig(
+      requestFor(
+        plan({ accounting: { tokens: ['eth', 'usdc'], custom: null }, stages: [stage] }),
+      ),
+    ).rulesetConfigurations[0]
+    const eth = ruleset.fundAccessLimitGroups.find(
+      group => group.token.toLowerCase() === NATIVE_TOKEN.toLowerCase(),
+    )
+    const usdc = ruleset.fundAccessLimitGroups.find(
+      group => group.token.toLowerCase() === USDC_ADDRESSES[1].toLowerCase(),
+    )
+
+    expect(eth?.surplusAllowances).toEqual([
+      { amount: 10n ** 18n, currency: tokenCurrencyId(NATIVE_TOKEN) },
+    ])
+    expect(usdc?.surplusAllowances).toEqual([
+      { amount: 10n ** 6n, currency: tokenCurrencyId(USDC_ADDRESSES[1]) },
+    ])
+  })
+
+  it('keeps the unlimited surplus allowance sentinel un-scaled in every context', () => {
+    const stage: StageRules = {
+      ...createSimpleProjectStage(),
+      surplusAllowanceOn: true,
+      surplusAllowanceAmount: null,
+    }
+    const ruleset = projectConfig(
+      requestFor(
+        plan({ accounting: { tokens: ['eth', 'usdc'], custom: null }, stages: [stage] }),
+      ),
+    ).rulesetConfigurations[0]
+
+    for (const group of ruleset.fundAccessLimitGroups) {
+      expect(group.surplusAllowances).toEqual([
+        expect.objectContaining({ amount: 2n ** 224n - 1n }),
+      ])
+    }
+  })
+
   it('disables cash outs when an unlimited routed payout consumes all funds', () => {
     const stage: StageRules = {
       ...createSimpleProjectStage(),
@@ -297,6 +346,133 @@ describe('project launch encoding', () => {
     expect(request.functionName).toBe('deployFor')
     expect(decoded.functionName).toBe('deployFor')
     expect(data).toMatch(/^0x[0-9a-f]+$/)
+  })
+
+  // deployFor(revnetId, config, ...): the union's tuple branch is pinned
+  // by the functionName assertion in the revnet encoding test above.
+  const autoIssuancesOn = (revnetPlan: LaunchPlan, chainId: JBChainId) => {
+    const request = requestFor(revnetPlan, chainId)
+    const config = request.args[1] as unknown as {
+      stageConfigurations: readonly {
+        autoIssuances: readonly {
+          chainId: number
+          count: bigint
+          beneficiary: Address
+        }[]
+      }[]
+    }
+    return config.stageConfigurations[0].autoIssuances
+  }
+
+  it('encodes every auto-issuance in every chain of a multichain revnet', () => {
+    // A row mints on ITS chosen chain, but every chain's config must carry
+    // the full row list: REVDeployer folds all rows into
+    // encodedConfiguration (which must hash identically across chains) and
+    // mints only rows whose chainId matches the local chain. An unset row
+    // chainId defaults to the first selected chain.
+    const chains = [1, 10, 8453] as const
+    const count = 1_000n * 10n ** 18n
+    const revnetPlan = plan({
+      flavor: 'revnet',
+      operator: BOB,
+      ticker: 'REV',
+      chains: [...chains],
+      linkChains: true,
+      stages: [
+        {
+          ...createSimpleProjectStage(),
+          autoIssuances: [{ count, beneficiary: ALICE }],
+        },
+      ],
+    })
+
+    for (const chainId of chains) {
+      expect(autoIssuancesOn(revnetPlan, chainId)).toEqual([
+        { chainId: 1, count, beneficiary: ALICE },
+      ])
+    }
+
+    // Only the chosen chain's deployer mints the row: 1,000 tokens total.
+    const minted = chains
+      .flatMap(chainId =>
+        autoIssuancesOn(revnetPlan, chainId).filter(a => a.chainId === chainId),
+      )
+      .reduce((sum, issuance) => sum + issuance.count, 0n)
+    expect(minted).toBe(count)
+  })
+
+  it('keeps stage configs byte-identical with rows minting on different chains', () => {
+    const chains = [1, 10, 8453] as const
+    const revnetPlan = plan({
+      flavor: 'revnet',
+      operator: BOB,
+      ticker: 'REV',
+      chains: [...chains],
+      linkChains: true,
+      stages: [
+        {
+          ...createSimpleProjectStage(),
+          autoIssuances: [
+            { count: 1_000n * 10n ** 18n, beneficiary: ALICE, chainId: 1 },
+            { count: 5n * 10n ** 18n, beneficiary: CUSTOM, chainId: 8453 },
+          ],
+        },
+      ],
+    })
+
+    // Every chain carries BOTH rows, each pinned to its chosen chain.
+    for (const chainId of chains) {
+      expect(
+        autoIssuancesOn(revnetPlan, chainId).map(a => a.chainId),
+      ).toEqual([1, 8453])
+    }
+
+    // The abi-encoded stage tuples must be byte-identical across chains —
+    // REVDeployer hashes them into the cross-chain revnet identity.
+    const encodedStagesOn = (chainId: JBChainId) => {
+      const request = requestFor(revnetPlan, chainId)
+      const deployFor = (request.abi as Abi).find(
+        entry => entry.type === 'function' && entry.name === 'deployFor',
+      ) as Extract<Abi[number], { type: 'function' }>
+      const configParam = deployFor.inputs[1] as {
+        components: readonly { name?: string }[]
+      }
+      const stagesParam = configParam.components.find(
+        component => component.name === 'stageConfigurations',
+      )!
+      const config = request.args[1] as { stageConfigurations: unknown }
+      return encodeAbiParameters(
+        [stagesParam] as Parameters<typeof encodeAbiParameters>[0],
+        [config.stageConfigurations],
+      )
+    }
+    const reference = encodedStagesOn(1)
+    expect(reference).toMatch(/^0x[0-9a-f]+$/)
+    expect(encodedStagesOn(10)).toBe(reference)
+    expect(encodedStagesOn(8453)).toBe(reference)
+  })
+
+  it('falls back to the first selected chain for a row pinned to an unselected chain', () => {
+    // A draft import can carry a chainId the user has since deselected —
+    // the encode falls back rather than minting nowhere.
+    const revnetPlan = plan({
+      flavor: 'revnet',
+      operator: BOB,
+      ticker: 'REV',
+      chains: [10, 8453],
+      linkChains: true,
+      stages: [
+        {
+          ...createSimpleProjectStage(),
+          autoIssuances: [{ count: 7n, beneficiary: ALICE, chainId: 1 }],
+        },
+      ],
+    })
+    for (const chainId of [10, 8453] as const) {
+      expect(autoIssuancesOn(revnetPlan, chainId)).toEqual([
+        { chainId: 10, count: 7n, beneficiary: ALICE },
+      ])
+    }
   })
 })
 

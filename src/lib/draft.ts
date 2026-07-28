@@ -165,6 +165,15 @@ function sanitizeStage(raw: unknown): DraftStage {
           id: crypto.randomUUID(),
           count: numStr(a.count, 15),
           address: str(a.address, 64),
+          // The row's mint chain survives import verbatim; a chainId that
+          // isn't in the selected chain set falls back to the first
+          // selected chain at encode (autoIssuanceMintChain).
+          chainId:
+            typeof a.chainId === 'number' &&
+            Number.isSafeInteger(a.chainId) &&
+            a.chainId > 0
+              ? a.chainId
+              : null,
           perChain: sanitizeChainMap(a.perChain),
         }
       }),

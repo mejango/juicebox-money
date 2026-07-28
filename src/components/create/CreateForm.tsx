@@ -39,9 +39,18 @@ import {
   type CreateDraft,
 } from "@/lib/draft";
 import {
+  completeLaunchSession,
+  loadLaunchSession,
+  recordLaunchChainStatus,
+  remainingLaunchChains,
+  saveLaunchSession,
+  type LaunchSession,
+} from "@/lib/launch-session";
+import {
   DEFAULT_STORE_FLAGS,
   FOREVER_SECONDS,
   LP_SPLIT_HOOK,
+  autoIssuanceMintChain,
   buildLaunchRequest,
   createSimpleProjectStage,
   nativeBridgeViable,
@@ -335,6 +344,10 @@ export function CreateForm() {
     salt: `0x${string}`;
     plans: Record<number, LaunchPlan>;
   } | null>(null);
+  // A multichain launch restored from localStorage after a refresh. Its
+  // salt/plans MUST be reused verbatim so the remaining chains pair with the
+  // already-launched ones instead of minting a duplicate project.
+  const restoredSessionRef = useRef<LaunchSession | null>(null);
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -528,19 +541,23 @@ export function CreateForm() {
     bridge !== "native" ||
     selected.length < 2 ||
     nativeBridgeViable(selected, accepts, customOn);
+  // A restored multichain session resumes on its persisted plans; the form
+  // (validated when the launch originally started) no longer gates it.
+  const canResume = phase === "failed" && restoredSessionRef.current !== null;
   const canLaunch =
-    nameOk &&
-    tosAccepted &&
-    accountingOk &&
-    approvalOk &&
-    ownerOk &&
-    tickerOk &&
-    bridgeOk &&
-    selected.length > 0 &&
-    stagesOk &&
-    badStage === -1 &&
-    itemsOk &&
-    (phase === "form" || phase === "failed");
+    canResume ||
+    (nameOk &&
+      tosAccepted &&
+      accountingOk &&
+      approvalOk &&
+      ownerOk &&
+      tickerOk &&
+      bridgeOk &&
+      selected.length > 0 &&
+      stagesOk &&
+      badStage === -1 &&
+      itemsOk &&
+      (phase === "form" || phase === "failed"));
 
   const toggleChain = (id: number) => {
     if (busy) return;
@@ -550,10 +567,23 @@ export function CreateForm() {
   };
 
   const updateStatus = (chainId: number, patch: Partial<ChainStatus>) => {
-    setStatuses((prev) => ({
-      ...prev,
-      [chainId]: { ...(prev[chainId] ?? { phase: "pending" }), ...patch },
-    }));
+    // Update the ref synchronously (runChains reads it between renders) and
+    // mirror durable progress into the persisted launch session so a refresh
+    // can resume instead of re-launching every chain.
+    const next: ChainStatus = {
+      ...(statusesRef.current[chainId] ?? { phase: "pending" }),
+      ...patch,
+    };
+    statusesRef.current = { ...statusesRef.current, [chainId]: next };
+    setStatuses(statusesRef.current);
+    recordLaunchChainStatus(chainId, {
+      phase: next.phase,
+      ...(next.txHash ? { txHash: next.txHash } : {}),
+      ...(next.safeProposalHash
+        ? { safeProposalHash: next.safeProposalHash }
+        : {}),
+      ...(next.projectId !== undefined ? { projectId: next.projectId } : {}),
+    });
   };
 
   /** Recipient tail of a split row for one chain: an address (per-chain
@@ -790,18 +820,27 @@ export function CreateForm() {
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
+      // Each row's beneficiary resolves against the ROW's mint chain (where
+      // the tokens land), never the config chain — every chain must encode
+      // the SAME row list for the cross-chain configuration hash to match.
       autoIssuances: stage.autoIssuances
-        .filter(
-          (a) =>
+        .filter((a) => {
+          const mintChain = autoIssuanceMintChain(selected, a.chainId);
+          return (
             Number(a.count) > 0 &&
-            resolvedAddress(a.perChain[chainId]?.trim() || a.address) !== null,
-        )
-        .map((a) => ({
-          count: parseUnits(a.count, 18),
-          beneficiary: resolvedAddress(
-            a.perChain[chainId]?.trim() || a.address,
-          )!,
-        })),
+            resolvedAddress(a.perChain[mintChain]?.trim() || a.address) !== null
+          );
+        })
+        .map((a) => {
+          const mintChain = autoIssuanceMintChain(selected, a.chainId);
+          return {
+            chainId: mintChain,
+            count: parseUnits(a.count, 18),
+            beneficiary: resolvedAddress(
+              a.perChain[mintChain]?.trim() || a.address,
+            )!,
+          };
+        }),
       allowSetTerminals: false,
       allowSetController: false,
       allowTerminalMigration: false,
@@ -1221,8 +1260,28 @@ export function CreateForm() {
       }
     }
     if (selected.every((id) => statusesRef.current[id]?.phase === "done")) {
+      // Nothing left to resume: drop the persisted progress record and the
+      // saved draft it was built from.
+      completeLaunchSession();
+      restoredSessionRef.current = null;
       setPhase("done");
     }
+  };
+
+  /** The pinned payload for this run: the in-memory one, or the restored
+   *  session's after a refresh — reused verbatim (same salt, same plans),
+   *  never rebuilt. */
+  const resumablePinned = () => {
+    if (pinnedRef.current) return pinnedRef.current;
+    const session = restoredSessionRef.current;
+    if (!session) return null;
+    pinnedRef.current = {
+      projectUri: session.projectUri,
+      store: session.store,
+      salt: session.salt,
+      plans: session.plans,
+    };
+    return pinnedRef.current;
   };
 
   const launch = async () => {
@@ -1233,16 +1292,33 @@ export function CreateForm() {
     if (!canLaunch) return;
     setLaunchError(null);
     try {
-      if (!pinnedRef.current) {
+      let pinned = resumablePinned();
+      if (!pinned) {
         setPhase("pinning");
         // Initialize the checklist before the first signature request.
-        setStatuses(
-          Object.fromEntries(selected.map((id) => [id, { phase: "pending" }])),
+        const initial: Record<number, ChainStatus> = Object.fromEntries(
+          selected.map((id) => [id, { phase: "pending" as const }]),
         );
-        const pinned = await pinAll();
-        pinnedRef.current = { ...pinned, plans: buildPlans(pinned.store) };
+        statusesRef.current = initial;
+        setStatuses(initial);
+        const result = await pinAll();
+        pinned = { ...result, plans: buildPlans(result.store) };
+        pinnedRef.current = pinned;
+        // Persist multichain progress up front so a refresh between chains
+        // resumes with the SAME salt instead of re-launching everything.
+        if (selected.length > 1) {
+          saveLaunchSession({
+            salt: pinned.salt,
+            projectUri: pinned.projectUri,
+            store: pinned.store,
+            plans: pinned.plans,
+            chains: selected,
+            statuses: initial,
+            createdAt: Date.now(),
+          });
+        }
       }
-      await runChains(pinnedRef.current);
+      await runChains(pinned);
     } catch (e) {
       setLaunchError(friendlyError(e));
       setPhase("form");
@@ -1250,7 +1326,8 @@ export function CreateForm() {
   };
 
   const retry = () => {
-    if (pinnedRef.current) void runChains(pinnedRef.current);
+    const pinned = resumablePinned();
+    if (pinned) void runChains(pinned);
   };
 
   // Poll bendystraw for freshly launched projects until they're indexed.
@@ -1390,11 +1467,36 @@ export function CreateForm() {
   useEffect(() => {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
+    let draftFlavor: CreateDraft["flavor"] | null = null;
     try {
       const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) applyDraft(parseDraft(saved));
+      if (saved) {
+        const draft = parseDraft(saved);
+        applyDraft(draft);
+        draftFlavor = draft.flavor;
+      }
     } catch {
       // Corrupt draft — start fresh.
+    }
+    // An interrupted multichain launch takes over: restore its progress,
+    // lock the form (busy), and resume from the first un-launched chain
+    // with the SAME salt when the user presses the launch button again.
+    const session = loadLaunchSession();
+    if (!session) return;
+    restoredSessionRef.current = session;
+    setSelected(session.chains);
+    statusesRef.current = session.statuses;
+    setStatuses(session.statuses);
+    setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
+    if (remainingLaunchChains(session).length === 0) {
+      completeLaunchSession();
+      restoredSessionRef.current = null;
+      setPhase("done");
+    } else {
+      setPhase("failed");
+      setLaunchError(
+        "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
+      );
     }
   }, []);
   useEffect(() => {

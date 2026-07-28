@@ -24,18 +24,19 @@ import { TermsTab } from "@/components/project/TermsTab";
 import {
   BsActivityEvent,
   BsProject,
-  getProject,
   getProjectActivity,
   getRevnetOperator,
   getSuckerGroupProjects,
   resolveProjectDeployments,
+  suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
+import { getProjectPageData } from "@/lib/project-fallback";
 import { formatDate, ipfsUrl } from "@/lib/format";
-import { parseUrn, toUrn } from "@/lib/urn";
+import { chainName, parseUrn, toUrn } from "@/lib/urn";
 
-// getProject is a POST, which Next's fetch cache doesn't dedupe — memoize per
-// request so generateMetadata + page share one call.
-const getProjectCached = cache(getProject);
+// getProjectPageData is backed by a POST, which Next's fetch cache doesn't
+// dedupe — memoize per request so generateMetadata + page share one call.
+const getPageDataCached = cache(getProjectPageData);
 const getRevnetOperatorCached = cache(getRevnetOperator);
 
 type ProjectMetadata = {
@@ -113,8 +114,9 @@ export async function generateMetadata({
   // streaming starts — metadata is awaited ahead of the response shell.
   const urn = parseUrn((await params).urn);
   if (!urn) notFound();
-  const project = await getProjectCached(urn.chainId, urn.projectId);
-  if (!project) notFound();
+  const result = await getPageDataCached(urn.chainId, urn.projectId);
+  if (!result) notFound();
+  const project = result.project;
   const name = project.name ?? `Project ${project.projectId}`;
   return {
     title: name,
@@ -128,6 +130,76 @@ export async function generateMetadata({
   };
 }
 
+/**
+ * Reduced project page for the indexer-fallback path: the project provably
+ * exists onchain, but indexed stats are unavailable (fresh launch that the
+ * indexer hasn't caught up with, or an indexer outage). Renders identity
+ * from on-chain metadata with a plain-language notice instead of a 404/500.
+ */
+async function DegradedProjectShell({
+  urnChainId,
+  project,
+  reason,
+}: {
+  urnChainId: JBChainId;
+  project: BsProject;
+  reason: "not-indexed" | "indexer-error";
+}) {
+  const metadata = await fetchProjectMetadata(project.metadataUri);
+  const name = metadata?.name ?? `Project ${project.projectId}`;
+  const etherscan = JB_CHAINS[urnChainId]?.etherscanHostname;
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
+        <ProjectLogo
+          name={name}
+          logoUri={metadata?.logoUri ?? null}
+          size={112}
+          className="rounded-xl"
+        />
+        <div className="min-w-0">
+          <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
+            {name}
+          </h1>
+          {metadata?.projectTagline ? (
+            <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
+              {metadata.projectTagline}
+            </p>
+          ) : null}
+          <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
+            {project.owner ? (
+              <>
+                <span>
+                  <span className="text-smoke-500">Project owner:</span>{" "}
+                  <AddressLink
+                    address={project.owner}
+                    host={etherscan}
+                    className="text-smoke-700"
+                  />
+                </span>
+                <span aria-hidden className="mx-2.5 text-smoke-300">
+                  |
+                </span>
+              </>
+            ) : null}
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-smoke-500">On:</span>
+              <ChainIcon chainId={urnChainId} />
+              <span>{chainName(urnChainId)}</span>
+            </span>
+          </div>
+        </div>
+      </header>
+      <div className="mt-8 rounded-xl border border-smoke-200 bg-smoke-50 p-6 text-sm text-smoke-700">
+        {reason === "not-indexed"
+          ? "This project exists onchain, but its indexed data isn't available yet — it may have just launched. Stats, activity, and actions will appear once indexing catches up."
+          : "Project stats are temporarily unavailable — the data indexer isn't responding. The project itself is unaffected onchain."}{" "}
+        Refresh in a few minutes.
+      </div>
+    </div>
+  );
+}
+
 export default async function ProjectPage({
   params,
 }: {
@@ -136,8 +208,18 @@ export default async function ProjectPage({
   const urn = parseUrn((await params).urn);
   if (!urn) notFound();
 
-  const project = await getProjectCached(urn.chainId, urn.projectId);
-  if (!project) notFound();
+  const result = await getPageDataCached(urn.chainId, urn.projectId);
+  if (!result) notFound();
+  if (result.degraded) {
+    return (
+      <DegradedProjectShell
+        urnChainId={urn.chainId}
+        project={result.project}
+        reason={result.reason}
+      />
+    );
+  }
+  const project = result.project;
 
   const isRevnet = !!project.isRevnet;
   const [metadata, activity, siblings, operator] = await Promise.all([
@@ -159,6 +241,7 @@ export default async function ProjectPage({
 
   const name = project.name ?? `Project ${project.projectId}`;
   const chains = resolveProjectDeployments(project, siblings);
+  const accountingToken = suckerGroupAccountingToken(chains);
   const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname;
   const description = metadata?.description?.trim() ?? "";
   const descriptionFallback = description ? toParagraphs(description) : [];
@@ -386,6 +469,7 @@ export default async function ProjectPage({
                 events={activity}
                 chainId={urn.chainId}
                 projectId={project.projectId}
+                accountingToken={accountingToken}
               />
             </section>
           }

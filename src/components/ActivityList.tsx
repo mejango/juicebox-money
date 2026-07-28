@@ -14,7 +14,7 @@ import {
   timeAgo,
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
-import { ActivityMeta } from './ActivityMeta'
+import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
 
 const IDENT_COLORS = [
   '#1A8A8A',
@@ -83,6 +83,7 @@ export function activityParts(
   direction: 'in' | 'out' | null
   memo: string | null
   amountUsd: string | null | undefined
+  amountRaw: string | null | undefined
 } {
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
@@ -96,6 +97,8 @@ export function activityParts(
     loan?.beneficiary ??
     event.mintNftEvent?.beneficiary ??
     event.bridgeClaimEvent?.beneficiary ??
+    event.sendPayoutToSplitEvent?.beneficiary ??
+    event.sendReservedTokensToSplitEvent?.beneficiary ??
     event.projectCreateEvent?.from ??
     event.addToBalanceEvent?.from ??
     event.deployErc20Event?.from ??
@@ -117,6 +120,7 @@ export function activityParts(
     mint?.beneficiaryTokenCount ??
     event.autoIssueEvent?.count ??
     event.sendReservedTokensToSplitsEvent?.tokenCount ??
+    event.sendReservedTokensToSplitEvent?.tokenCount ??
     event.swapEvent?.projectTokenAmount ??
     event.bridgeClaimEvent?.projectTokenCount ??
     '0'
@@ -139,7 +143,9 @@ export function activityParts(
         : event.repayLoanEvent ||
             event.mintNftEvent ||
             event.swapEvent ||
-            event.bridgeClaimEvent
+            event.bridgeClaimEvent ||
+            event.sendPayoutToSplitEvent ||
+            event.sendReservedTokensToSplitEvent
           ? 'in'
           : null
 
@@ -243,6 +249,16 @@ export function activityParts(
       </span>{' '}
       from {chainName(event.bridgeClaimEvent.peerChainId)}
     </>
+  ) : event.sendPayoutToSplitEvent ? (
+    <>received a payout split</>
+  ) : event.sendReservedTokensToSplitEvent ? (
+    <>
+      received{' '}
+      <span className="font-medium text-bluebs-600">
+        {tokenCount} {tokenUnit}
+      </span>{' '}
+      from a reserved split
+    </>
   ) : (
     <>updated the project</>
   )
@@ -256,21 +272,27 @@ export function activityParts(
     amountUsd:
       pay?.amountUsd ??
       cashOut?.reclaimAmountUsd ??
-      event.sendPayoutsEvent?.amountPaidOutUsd,
+      event.sendPayoutsEvent?.amountPaidOutUsd ??
+      event.sendPayoutToSplitEvent?.amountUsd,
+    amountRaw:
+      pay?.amount ??
+      cashOut?.reclaimAmount ??
+      event.sendPayoutsEvent?.amountPaidOut ??
+      event.sendPayoutToSplitEvent?.amount,
   }
 }
 
 function Row({
   event,
   tokenUnit,
+  accountingToken,
 }: {
   event: BsActivityEvent
   tokenUnit: string
+  accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
-  const { actor, action, direction, memo, amountUsd } = activityParts(
-    event,
-    tokenUnit,
-  )
+  const { actor, action, direction, memo, amountUsd, amountRaw } =
+    activityParts(event, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
@@ -305,6 +327,9 @@ function Row({
             chainId={event.chainId}
             txHash={event.txHash}
             amountUsd={amountUsd}
+            amountToken={
+              accountingToken ? { raw: amountRaw, ...accountingToken } : null
+            }
             direction={direction}
           />
         </div>
@@ -325,10 +350,16 @@ export function ActivityList({
   events,
   chainId,
   projectId,
+  accountingToken,
 }: {
   events: BsActivityEvent[]
   chainId: JBChainId
   projectId: number
+  /**
+   * Set when the project's verified deployments agree on one accounting-token
+   * kind — rows then show raw token amounts instead of indexed USD.
+   */
+  accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
   const visible = events.filter(
     e =>
@@ -373,7 +404,12 @@ export function ActivityList({
   return (
     <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[601px]:h-[max(780px,82vh)] min-[601px]:max-h-[max(780px,82vh)]">
       {visible.map(event => (
-        <Row key={event.id} event={event} tokenUnit={tokenUnit} />
+        <Row
+          key={event.id}
+          event={event}
+          tokenUnit={tokenUnit}
+          accountingToken={accountingToken}
+        />
       ))}
     </ul>
   )

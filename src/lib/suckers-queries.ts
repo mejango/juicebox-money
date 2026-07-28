@@ -179,12 +179,23 @@ export async function getBridgeMovements(args: {
     )
     if (claimed) continue
 
-    // Delivered: the destination inbox received this move's tree root.
+    // Delivered: the destination inbox received a tree root that INCLUDES
+    // this leaf. Each outbox leaf stores the root as of its own insertion
+    // and a toRemote ships only the LATEST root, so resolve the received
+    // root back to the outbox leaf that produced it and compare indexes —
+    // any root minted at or after this leaf's index covers it.
     const delivered = inbox.some(
       i =>
         i.chainId === o.peerChainId &&
         eq(i.sucker, destSucker) &&
-        eq(i.root, o.root),
+        outbox.some(
+          sibling =>
+            sibling.chainId === o.chainId &&
+            eq(sibling.sucker, o.sucker) &&
+            eq(sibling.token, o.token) &&
+            eq(sibling.root, i.root) &&
+            sibling.index >= o.index,
+        ),
     )
 
     // Shipped: a toRemote on the source carried this leaf. Exact root match

@@ -140,6 +140,49 @@ describe('Bendystraw pagination and trust boundaries', () => {
     )
   })
 
+  it('resolves ticker matches with explicit AND groups and a version-6 event filter', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { projects: { items: [] } } }),
+      )
+      .mockResolvedValueOnce(
+        graphqlResponse({
+          data: {
+            deployErc20Events: {
+              items: [
+                { chainId: 84532, projectId: 11, symbol: 'BEN' },
+                { chainId: 1, projectId: 3, symbol: 'BENT' },
+              ],
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        graphqlResponse({ data: { projects: { items: [] } } }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await searchProjects('BEN')
+
+    // Per-version event rows: a v4/v5 token deploy must not resolve
+    // against the v6 project with the same (chainId, projectId).
+    const eventQuery = bodyOf(fetchMock.mock.calls[1]?.[1] as RequestInit).query
+    expect(eventQuery).toContain('version: 6')
+
+    // Bendystraw ORs sibling fields inside one OR branch, so each ticker
+    // deployment must be an explicit AND group (same as getProjectsByRefs).
+    const projectQuery = bodyOf(fetchMock.mock.calls[2]?.[1] as RequestInit)
+      .query
+    expect(projectQuery).toContain(
+      '{ AND: [{ chainId: 84532 }, { projectId: 11 }, { version: 6 }] }',
+    )
+    expect(projectQuery).toContain(
+      '{ AND: [{ chainId: 1 }, { projectId: 3 }, { version: 6 }] }',
+    )
+    expect(projectQuery).not.toMatch(/\{ chainId: \d+, projectId: \d+ \}/)
+  })
+
   it('adds a safe numeric project-id filter and skips the ticker lookup fetch when empty', async () => {
     const fetchMock = vi
       .fn()

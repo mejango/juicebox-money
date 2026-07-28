@@ -16,12 +16,12 @@ export function tabSlug(label: string): string {
 }
 
 /**
- * The shared tab machinery both variants render: the tablist row and the
- * lazily-mounted panels. A tab's content mounts on first activation and then
- * stays mounted (hidden) so its reads don't re-fire; each variant passes its
- * own spacing classes.
+ * The shared tab machinery every variant renders (SubTabs here, AccountTabs
+ * on the account view): the tablist row and the lazily-mounted panels. A
+ * tab's content mounts on first activation and then stays mounted (hidden)
+ * so its reads don't re-fire; each variant passes its own spacing classes.
  */
-function TabShell({
+export function TabShell({
   tabs,
   active,
   onSelect,

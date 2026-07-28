@@ -1,6 +1,7 @@
 "use client";
 
-import { FOREVER_SECONDS } from "@/lib/launch";
+import { FOREVER_SECONDS, autoIssuanceMintChain } from "@/lib/launch";
+import { chainName } from "@/lib/urn";
 import { CashOutCurve } from "./CashOutCurve";
 import {
   SplitsEditor,
@@ -58,11 +59,17 @@ export type DraftStage = {
   ownerMinting: boolean;
   acceptPayments: boolean;
   pauseCreditTransfers: boolean;
-  /** Revnet: tokens minted to beneficiaries when the stage starts. */
+  /** Revnet: tokens minted to beneficiaries when the stage starts. Each
+   *  row mints once, on ITS chosen chain (null = first selected chain);
+   *  every chain's config encodes the full list byte-identically. */
   autoIssuances: {
     id: string;
     count: string;
     address: string;
+    /** The ONE chain this row mints on; null defaults to the first
+     *  selected chain at encode. Kept verbatim while unselected so a
+     *  chain toggle doesn't lose the pick. */
+    chainId: number | null;
     perChain: Record<number, string>;
   }[];
   powers: {
@@ -778,6 +785,9 @@ export function StageRulesEditor({
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                 Mint {tokenLabel} to specific wallets the moment this stage
                 starts — no payment involved. Visible to everyone up front.
+                {chainIds.length > 1
+                  ? " Each mint happens once for the whole launch, on the chain you pick per row."
+                  : ""}
               </p>
               {stage.autoIssuances.map((row) => (
                 <div key={row.id} className="mt-2 flex items-start gap-2">
@@ -815,6 +825,34 @@ export function StageRulesEditor({
                     ariaLabel="Auto-issuance beneficiary"
                     className="flex-1"
                   />
+                  {chainIds.length > 1 ? (
+                    <>
+                      <span className="mt-3 shrink-0 text-xs text-smoke-700">
+                        on
+                      </span>
+                      <select
+                        value={autoIssuanceMintChain(chainIds, row.chainId)}
+                        onChange={(e) =>
+                          set({
+                            autoIssuances: stage.autoIssuances.map((a) =>
+                              a.id === row.id
+                                ? { ...a, chainId: Number(e.target.value) }
+                                : a,
+                            ),
+                          })
+                        }
+                        disabled={disabled}
+                        aria-label="Auto-issuance chain"
+                        className="input-well select-caret min-h-[44px] shrink-0 pl-3 pr-8 text-sm disabled:opacity-60"
+                      >
+                        {chainIds.map((chainId) => (
+                          <option key={chainId} value={chainId}>
+                            {chainName(chainId)}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  ) : null}
                   <button
                     onClick={() =>
                       set({
@@ -841,6 +879,7 @@ export function StageRulesEditor({
                           id: crypto.randomUUID(),
                           count: "",
                           address: "",
+                          chainId: null,
                           perChain: {},
                         },
                       ],

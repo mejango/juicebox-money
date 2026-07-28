@@ -133,7 +133,7 @@ export async function searchProjects(
     }>(
       `query($text: String!) {
         deployErc20Events(
-          where: { symbol_contains_nocase: $text }
+          where: { symbol_contains_nocase: $text, version: 6 }
           limit: 100
         ) {
           items { chainId projectId symbol }
@@ -151,9 +151,11 @@ export async function searchProjects(
       event.symbol,
     )
   }
+  // Bendystraw does not AND sibling fields inside one OR branch, so each
+  // ticker deployment becomes an explicit AND group (see getProjectsByRefs).
   const tickerPairs = Array.from(tickerByDeployment.keys()).map(pair => {
     const [chainId, projectId] = pair.split(':').map(Number)
-    return `{ chainId: ${chainId}, projectId: ${projectId} }`
+    return `{ AND: [{ chainId: ${chainId} }, { projectId: ${projectId} }, { version: 6 }] }`
   })
   const tickerProjects =
     tickerPairs.length > 0
@@ -161,10 +163,7 @@ export async function searchProjects(
           await bendystraw<{ projects: { items: BsProject[] } }>(
             `query($limit: Int!) {
               projects(
-                where: {
-                  version: 6
-                  OR: [${tickerPairs.join('\n')}]
-                }
+                where: { OR: [${tickerPairs.join('\n')}] }
                 orderBy: "volume"
                 orderDirection: "desc"
                 limit: $limit
@@ -230,6 +229,19 @@ export type BsActivityEvent = {
     amountPaidOut: string
     amountPaidOutUsd: string | null
     caller: string
+    from: string
+  } | null
+  sendPayoutToSplitEvent?: {
+    amount: string
+    amountUsd: string | null
+    beneficiary: string
+    splitProjectId: number
+    from: string
+  } | null
+  sendReservedTokensToSplitEvent?: {
+    tokenCount: string
+    beneficiary: string
+    splitProjectId: number
     from: string
   } | null
   sendReservedTokensToSplitsEvent?: {
@@ -342,6 +354,12 @@ const ACTIVITY_EVENT_FIELDS = `
     amount amountPaidOut amountPaidOutUsd caller from
   }
   sendReservedTokensToSplitsEvent { tokenCount from }
+  sendPayoutToSplitEvent {
+    amount amountUsd beneficiary splitProjectId from
+  }
+  sendReservedTokensToSplitEvent {
+    tokenCount beneficiary splitProjectId from
+  }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent {
     borrowAmount collateral beneficiary token from
@@ -900,6 +918,27 @@ export function resolveProjectDeployments(
   return [...byChain.values()].sort((a, b) => a.chainId - b.chainId)
 }
 
+/**
+ * The single accounting-token kind a verified deployment set agrees on, or
+ * null when the chains account in different tokens (or the kind is unknown).
+ * Kind means symbol + decimals: canonical stablecoin deployments differ by
+ * address per chain but denominate amounts identically, so addresses do not
+ * disqualify a group.
+ */
+export function suckerGroupAccountingToken(
+  deployments: readonly BsProject[],
+): { symbol: string; decimals: number } | null {
+  const [first] = deployments
+  if (!first?.tokenSymbol || first.decimals == null) return null
+  return deployments.every(
+    row =>
+      row.tokenSymbol === first.tokenSymbol &&
+      row.decimals === first.decimals,
+  )
+    ? { symbol: first.tokenSymbol, decimals: first.decimals }
+    : null
+}
+
 export type BsPriceMoment = {
   timestamp: number
   balance: string
@@ -1121,24 +1160,120 @@ export type BsAccountActivityEvent = BsActivityEvent & {
 }
 
 /**
+ * activityEvents can only be filtered by `from` (the transaction sender):
+ * beneficiary lives on the per-type event tables. Events where the account is
+ * only the beneficiary — payments to them, mints, split receipts — are read
+ * from those tables directly and re-wrapped into activity-shaped rows. Each
+ * source lists the fields its activity sub-object carries.
+ */
+const BENEFICIARY_EVENT_SOURCES = [
+  {
+    list: 'payEvents',
+    field: 'payEvent',
+    selection: 'amount amountUsd beneficiary memo newlyIssuedTokenCount',
+  },
+  {
+    list: 'cashOutTokensEvents',
+    field: 'cashOutTokensEvent',
+    selection: 'cashOutCount reclaimAmount reclaimAmountUsd beneficiary',
+  },
+  {
+    list: 'mintTokensEvents',
+    field: 'mintTokensEvent',
+    selection: 'beneficiary beneficiaryTokenCount caller',
+  },
+  {
+    list: 'autoIssueEvents',
+    field: 'autoIssueEvent',
+    selection: 'beneficiary count stageId',
+  },
+  {
+    list: 'borrowLoanEvents',
+    field: 'borrowLoanEvent',
+    selection: 'borrowAmount collateral beneficiary token',
+  },
+  {
+    list: 'mintNftEvents',
+    field: 'mintNftEvent',
+    selection: 'tierId tokenId beneficiary totalAmountPaid',
+  },
+  {
+    list: 'bridgeClaimEvents',
+    field: 'bridgeClaimEvent',
+    selection:
+      'peerChainId token beneficiary projectTokenCount terminalTokenAmount caller',
+  },
+  {
+    list: 'sendPayoutToSplitEvents',
+    field: 'sendPayoutToSplitEvent',
+    selection: 'amount amountUsd beneficiary splitProjectId',
+  },
+  {
+    list: 'sendReservedTokensToSplitEvents',
+    field: 'sendReservedTokensToSplitEvent',
+    selection: 'tokenCount beneficiary splitProjectId',
+  },
+] as const
+
+/** Bendystraw rejects limits above 1000. */
+const ACCOUNT_ACTIVITY_WINDOW_MAX = 1000
+
+type BsBeneficiaryEventRow = {
+  id: string
+  chainId: number
+  projectId: number
+  timestamp: number
+  txHash: string
+  from: string
+  version: number
+  project: BsAccountActivityEvent['project']
+} & Record<string, unknown>
+
+/**
  * Everything an account did across all projects, chains, and protocol
  * versions, newest first. One page per call — the account view's load-more
  * grows the offset instead of paginating to exhaustion.
+ *
+ * Two branches merge into a page: activityEvents the account sent, plus
+ * beneficiary-side rows from the per-type event tables (which exclude
+ * self-sent rows at the source, so the branches are disjoint). Every branch
+ * is read from the head down to offset + limit and the merged, deduped
+ * window is sliced — offset pagination spans the union exactly.
  */
 export async function getAccountActivity(
   address: string,
   { limit = 25, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
-  const data = await bendystraw<{
-    activityEvents: { items: BsAccountActivityEvent[]; totalCount: number }
-  }>(
-    `query($address: String!, $limit: Int!, $offset: Int!) {
+  const windowLimit = Math.min(offset + limit, ACCOUNT_ACTIVITY_WINDOW_MAX)
+  const beneficiaryQueries = BENEFICIARY_EVENT_SOURCES.map(
+    source => `${source.list}(
+        where: { AND: [{ beneficiary: $address }, { from_not: $address }] }
+        orderBy: "timestamp"
+        orderDirection: "desc"
+        limit: $limit
+      ) {
+        totalCount
+        items {
+          id chainId projectId timestamp txHash from version
+          project { name logoUri tokenSymbol decimals }
+          ${source.selection}
+        }
+      }`,
+  ).join('\n')
+  const data = await bendystraw<
+    {
+      activityEvents: { items: BsAccountActivityEvent[]; totalCount: number }
+    } & Record<
+      string,
+      { items: BsBeneficiaryEventRow[]; totalCount: number }
+    >
+  >(
+    `query($address: String!, $limit: Int!) {
       activityEvents(
         where: { from: $address }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
-        offset: $offset
       ) {
         totalCount
         items {
@@ -1147,11 +1282,54 @@ export async function getAccountActivity(
           ${ACTIVITY_EVENT_FIELDS}
         }
       }
+      ${beneficiaryQueries}
     }`,
-    { address: address.toLowerCase(), limit, offset },
+    { address: address.toLowerCase(), limit: windowLimit },
     { revalidate: 15 },
   )
-  return data.activityEvents
+
+  let totalCount = data.activityEvents.totalCount
+  const merged: BsAccountActivityEvent[] = [...data.activityEvents.items]
+  for (const source of BENEFICIARY_EVENT_SOURCES) {
+    const page = data[source.list]
+    if (!page) continue
+    totalCount += page.totalCount
+    for (const row of page.items) {
+      const {
+        id,
+        chainId,
+        projectId,
+        timestamp,
+        txHash,
+        from,
+        version,
+        project,
+        ...eventFields
+      } = row
+      merged.push({
+        id,
+        chainId,
+        projectId,
+        timestamp,
+        txHash,
+        from,
+        version,
+        project,
+        [source.field]: { ...eventFields, from },
+      } as unknown as BsAccountActivityEvent)
+    }
+  }
+
+  merged.sort(
+    (a, b) => b.timestamp - a.timestamp || (a.id < b.id ? -1 : 1),
+  )
+  const seen = new Set<string>()
+  const deduped = merged.filter(event => {
+    if (seen.has(event.id)) return false
+    seen.add(event.id)
+    return true
+  })
+  return { items: deduped.slice(offset, offset + limit), totalCount }
 }
 
 /**
@@ -1258,6 +1436,110 @@ export async function getProjectsByRefs(
     { revalidate: 60 },
   )
   return data.projects.items
+}
+
+/**
+ * Bendystraw indexes some deployments under more than one protocol version,
+ * repeating the same underlying row (identical balances, identical tokens)
+ * per version. Collapse to one row per identity, preferring the highest
+ * version — the row the V6-first site should link and label.
+ */
+export function dedupeVersionedRows<T extends { version: number }>(
+  rows: T[],
+  identity: (row: T) => string,
+): T[] {
+  const byKey = new Map<string, T>()
+  for (const row of rows) {
+    const key = identity(row)
+    const kept = byKey.get(key)
+    if (!kept || row.version > kept.version) byKey.set(key, row)
+  }
+  return [...byKey.values()]
+}
+
+export type BsAccountTokenHolding = {
+  chainId: number
+  projectId: number
+  version: number
+  /** 18-decimal fixed-point token balance. */
+  balance: string
+}
+
+/**
+ * Every positive project-token balance held by an account, across chains and
+ * protocol versions, largest first. Rows repeat per indexed version —
+ * callers collapse them with `dedupeVersionedRows`.
+ */
+export async function getAccountTokenHoldings(
+  account: string,
+): Promise<BsAccountTokenHolding[]> {
+  const page = await getPagedItems<BsAccountTokenHolding>(
+    `query($address: String!, $limit: Int!, $offset: Int!) {
+      participants(
+        where: { address: $address, balance_gt: "0" }
+        orderBy: "balance"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) { items { chainId projectId version balance } totalCount }
+    }`,
+    'participants',
+    { address: account.toLowerCase() },
+    { pageSize: 200, max: 400 },
+  )
+  return page.items
+}
+
+export type BsAccountNft = {
+  chainId: number
+  projectId: number
+  version: number
+  tokenId: string
+  tierId: number
+  createdAt: number
+  hook: { address: string } | null
+  /** Indexed tier display metadata; either field may be missing. */
+  tier: {
+    resolvedUri: string | null
+    metadata: Record<string, unknown> | null
+  } | null
+}
+
+/**
+ * Every indexed 721 shop item an account currently owns, across chains and
+ * versions, newest first. Rows can repeat per indexed version — callers
+ * collapse them with `dedupeVersionedRows` keyed by chain + hook + tokenId.
+ */
+export async function getAccountNfts(
+  account: string,
+): Promise<BsAccountNft[]> {
+  const page = await getPagedItems<BsAccountNft>(
+    `query($owner: String!, $limit: Int!, $offset: Int!) {
+      nfts(
+        where: { owner: $owner }
+        orderBy: "createdAt"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items {
+          chainId projectId version tokenId tierId createdAt
+          hook { address }
+          tier { resolvedUri metadata }
+        }
+        totalCount
+      }
+    }`,
+    'nfts',
+    { owner: account.toLowerCase() },
+    { pageSize: 200, max: 600 },
+  )
+  return page.items.map(row => ({
+    ...row,
+    tokenId: String(row.tokenId),
+    tierId: Number(row.tierId),
+    createdAt: Number(row.createdAt),
+  }))
 }
 
 export async function getPermissionHoldersAcrossDeployments(

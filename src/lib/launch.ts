@@ -147,7 +147,10 @@ export type StageRules = {
   /** Owner surplus access: on for 'flexible'; optional alongside
    *  fixed-amount routed payouts. */
   surplusAllowanceOn: boolean
-  /** Cap on owner surplus withdrawals (accounting units); null = unlimited. */
+  /** Cap on owner surplus withdrawals, parsed at the primary accounting
+   *  token's decimals. Applied to EACH accounting context as that amount in
+   *  the context's own currency (re-denominated at encode). null =
+   *  unlimited. */
   surplusAllowanceAmount: bigint | null
   /** Hold payout/allowance fees in the project instead of processing them,
    *  so they can be unlocked if the funds come back. */
@@ -168,8 +171,13 @@ export type StageRules = {
   allowAddPriceFeed: boolean
   /** Revnet only: seconds between issuance cuts (0 = no cuts). */
   issuanceCutFrequency: number
-  /** Revnet only: tokens minted to beneficiaries when the stage starts. */
-  autoIssuances: { count: bigint; beneficiary: Address }[]
+  /** Revnet only: tokens minted to beneficiaries when the stage starts.
+   *  Each entry mints ONCE per launch, on its chosen chain (unset/unselected
+   *  falls back to the first selected chain). EVERY chain's config encodes
+   *  the FULL list byte-identically — REVDeployer folds all rows into the
+   *  cross-chain configuration hash and mints only rows whose chainId
+   *  matches the local chain. */
+  autoIssuances: { count: bigint; beneficiary: Address; chainId?: number | null }[]
 }
 
 /** What the treasury holds: standard tokens (ETH and/or USDC), or one
@@ -348,6 +356,34 @@ function treasuryToken(
   return currency === 'usdc' ? USDC_ADDRESSES[chainId] : NATIVE_TOKEN
 }
 
+/** The ONE chain an auto-issuance row mints on: the row's stored choice
+ *  while it's still a selected chain, else the first selected chain. Must
+ *  be config-chain independent — every chain encodes the SAME row list and
+ *  REVDeployer mints only rows whose chainId matches the local chain. */
+export function autoIssuanceMintChain(
+  chains: number[],
+  chainId?: number | null,
+): number {
+  return chainId != null && chains.includes(chainId) ? chainId : chains[0]
+}
+
+/** The decimals stage amounts are parsed with in the create form (its
+ *  primary accounting token): the custom token's, else 18 when ETH is
+ *  accepted, else USDC's 6. */
+function planAmountDecimals(accounting: AccountingConfig): number {
+  if (accounting.custom) return accounting.custom.decimals
+  return accounting.tokens.includes('eth') ? 18 : 6
+}
+
+/** Re-denominate a fixed-point amount from `from` decimals to `to` decimals
+ *  (flooring when precision shrinks). */
+function scaleDecimals(amount: bigint, from: number, to: number): bigint {
+  if (to === from) return amount
+  return to > from
+    ? amount * 10n ** BigInt(to - from)
+    : amount / 10n ** BigInt(from - to)
+}
+
 /**
  * Assemble the launch request for one chain. Pure — no wallet, no network —
  * so it's directly testable via `simulateContract`.
@@ -417,8 +453,12 @@ export function buildLaunchRequest(args: {
       }
       return buildRevnetStageConfig({
         startsAtOrAfter: stage.mustStartAtOrAfter,
+        // The SAME full row list on every chain, each row pinned to ITS
+        // mint chain — REVDeployer hashes all rows into the cross-chain
+        // configuration and mints only rows matching the local chain, so
+        // the encoding must be independent of the config chain.
         autoIssuances: stage.autoIssuances.map(a => ({
-          chainId,
+          chainId: autoIssuanceMintChain(plan.chains, a.chainId),
           count: a.count,
           beneficiary: a.beneficiary,
         })),
@@ -553,10 +593,20 @@ export function buildLaunchRequest(args: {
                       },
                     ]
                   : [],
+              // The single allowance amount means "this much in each
+              // context's own currency" — re-denominate it from the form's
+              // parse decimals into the context's.
               surplusAllowances: stage.surplusAllowanceOn
                 ? [
                     {
-                      amount: stage.surplusAllowanceAmount ?? UNLIMITED_PAYOUT,
+                      amount:
+                        stage.surplusAllowanceAmount === null
+                          ? UNLIMITED_PAYOUT
+                          : scaleDecimals(
+                              stage.surplusAllowanceAmount,
+                              planAmountDecimals(accounting),
+                              ctx.decimals,
+                            ),
                       currency: ctx.currency,
                     },
                   ]

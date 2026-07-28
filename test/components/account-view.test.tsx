@@ -97,6 +97,13 @@ vi.mock('@/providers/Providers', () => ({
 import { AccountActivity } from '@/components/account/AccountActivity'
 import { AccountHeader } from '@/components/account/AccountHeader'
 import {
+  AccountTokenHoldings,
+  groupNftHoldings,
+  groupTokenHoldings,
+  nftHoldingIdentity,
+} from '@/components/account/AccountHoldings'
+import { AccountTabs } from '@/components/account/AccountTabs'
+import {
   AccountOperatedProjects,
   groupOperatorGrants,
 } from '@/components/account/AccountOperatedProjects'
@@ -110,6 +117,8 @@ import {
 } from '@/components/account/AccountSafeProjects'
 import type {
   BsAccountActivityEvent,
+  BsAccountNft,
+  BsAccountTokenHolding,
   BsOperatorGrant,
   BsProject,
 } from '@/lib/bendystraw'
@@ -563,6 +572,242 @@ describe('AccountOperatedProjects', () => {
     })
     expect(renderedText(renderer.root)).toContain(
       'No projects have granted this account permissions',
+    )
+  })
+})
+
+/** A minimal window for the hash-linked tab row (node test environment). */
+function fakeTabWindow(hash = '') {
+  const listeners = new Set<() => void>()
+  const win = {
+    location: { hash },
+    addEventListener: (type: string, listener: () => void) => {
+      if (type === 'hashchange') listeners.add(listener)
+    },
+    removeEventListener: (_type: string, listener: () => void) => {
+      listeners.delete(listener)
+    },
+    history: {
+      replaceState: vi.fn((_state: unknown, _title: string, url: string) => {
+        win.location.hash = url
+      }),
+    },
+  }
+  return win
+}
+
+describe('AccountTabs', () => {
+  const tabs = [
+    { label: 'Activity', content: 'activity-body' },
+    { label: 'Holdings', content: 'holdings-body' },
+    { label: 'Projects', content: 'projects-body' },
+    { label: 'Roles', content: 'roles-body' },
+  ]
+
+  function panelFor(
+    renderer: TestRenderer.ReactTestRenderer,
+    body: string,
+  ): ReactTestInstance | undefined {
+    return renderer.root.findAll(
+      node =>
+        node.type === 'div' &&
+        'hidden' in node.props &&
+        renderedText(node).includes(body),
+    )[0]
+  }
+
+  it('renders all four tabs and switches panels, deep-linking via the hash', async () => {
+    const win = fakeTabWindow()
+    vi.stubGlobal('window', win)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountTabs, { tabs }))
+    })
+
+    const buttons = renderer.root.findAll(
+      node => node.type === 'button' && node.props.role === 'tab',
+    )
+    expect(buttons.map(button => renderedText(button))).toEqual([
+      'Activity',
+      'Holdings',
+      'Projects',
+      'Roles',
+    ])
+    expect(buttons[0].props['aria-selected']).toBe(true)
+    // Tabs are lazy: only the active panel has mounted.
+    expect(panelFor(renderer, 'activity-body')?.props.hidden).toBe(false)
+    expect(panelFor(renderer, 'holdings-body')).toBeUndefined()
+
+    await act(async () => buttonWith(renderer, 'Holdings').props.onClick())
+
+    expect(panelFor(renderer, 'holdings-body')?.props.hidden).toBe(false)
+    // The previous panel stays mounted but hidden.
+    expect(panelFor(renderer, 'activity-body')?.props.hidden).toBe(true)
+    expect(win.history.replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      '#holdings',
+    )
+
+    await act(async () => buttonWith(renderer, 'Roles').props.onClick())
+    expect(panelFor(renderer, 'roles-body')?.props.hidden).toBe(false)
+    expect(win.location.hash).toBe('#roles')
+  })
+
+  it('opens on the tab named by the URL hash', async () => {
+    vi.stubGlobal('window', fakeTabWindow('#projects'))
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountTabs, { tabs }))
+    })
+
+    expect(panelFor(renderer, 'projects-body')?.props.hidden).toBe(false)
+    expect(buttonWith(renderer, 'Projects').props['aria-selected']).toBe(true)
+  })
+})
+
+describe('account holdings grouping', () => {
+  const holding = (
+    overrides: Partial<BsAccountTokenHolding>,
+  ): BsAccountTokenHolding => ({
+    chainId: 1,
+    projectId: 4,
+    version: 6,
+    balance: '1000000000000000000',
+    ...overrides,
+  })
+
+  it('collapses per-version duplicates and merges linked chains by sucker group', () => {
+    const groups = groupTokenHoldings(
+      [
+        // The same deployment indexed under v5 AND v6 — one row survives.
+        holding({ version: 5, balance: '3000000000000000000' }),
+        holding({ version: 6, balance: '3000000000000000000' }),
+        holding({ chainId: 8453, balance: '1000000000000000000' }),
+        // Unlinked project without an indexed row: falls back gracefully.
+        holding({ chainId: 10, projectId: 77, balance: '5' }),
+      ],
+      [
+        project({
+          chainId: 1,
+          projectId: 4,
+          name: 'Rev',
+          tokenSymbol: 'REV',
+          suckerGroupId: 'sg-1',
+        }),
+        project({
+          chainId: 8453,
+          projectId: 4,
+          name: 'Rev',
+          tokenSymbol: 'REV',
+          suckerGroupId: 'sg-1',
+        }),
+      ],
+    )
+
+    expect(groups).toHaveLength(2)
+    const [rev, solo] = groups
+    expect(rev.front.chainId).toBe(1)
+    expect(rev.front.project?.name).toBe('Rev')
+    expect(rev.symbol).toBe('REV')
+    expect(rev.total).toBe(4000000000000000000n)
+    expect(rev.rows.map(row => row.chainId)).toEqual([1, 8453])
+    expect(solo.front.projectId).toBe(77)
+    expect(solo.project ?? solo.front.project).toBeNull()
+  })
+
+  const nft = (overrides: Partial<BsAccountNft>): BsAccountNft => ({
+    chainId: 1,
+    projectId: 4,
+    version: 6,
+    tokenId: '49000000145',
+    tierId: 49,
+    createdAt: 100,
+    hook: { address: '0xHOOK' },
+    tier: { resolvedUri: null, metadata: { name: 'Dagger' } },
+    ...overrides,
+  })
+
+  it('dedupes nfts by chain + hook + tokenId across version aliases', () => {
+    // Bendystraw can index the same NFT under per-version projectId aliases.
+    expect(nftHoldingIdentity(nft({ version: 5, projectId: 119 }))).toBe(
+      nftHoldingIdentity(nft({ version: 6, projectId: 4 })),
+    )
+    // Same tokenId under a different hook on the same chain is a different item.
+    expect(
+      nftHoldingIdentity(nft({ hook: { address: '0xother' } })),
+    ).not.toBe(nftHoldingIdentity(nft({})))
+
+    const groups = groupNftHoldings(
+      [
+        nft({ version: 5, projectId: 119 }),
+        nft({ version: 6, projectId: 4 }),
+        nft({ tokenId: '49000000146' }),
+        nft({
+          tokenId: '7000000001',
+          tierId: 7,
+          tier: { resolvedUri: null, metadata: null },
+        }),
+      ],
+      [project({ chainId: 1, projectId: 4, name: 'Banny Retail' })],
+    )
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0].project?.name).toBe('Banny Retail')
+    expect(groups[0].count).toBe(3)
+    expect(groups[0].tiers).toEqual([
+      { tierId: 49, count: 2, name: 'Dagger', image: null },
+      { tierId: 7, count: 1, name: 'Item #7', image: null },
+    ])
+  })
+
+  it('renders token holding cards with totals and chain rows', async () => {
+    const groups = groupTokenHoldings(
+      [
+        holding({ balance: '3000000000000000000' }),
+        holding({ chainId: 8453, balance: '1000000000000000000' }),
+      ],
+      [
+        project({
+          chainId: 1,
+          projectId: 4,
+          name: 'Rev',
+          tokenSymbol: 'REV',
+          suckerGroupId: 'sg-1',
+        }),
+        project({
+          chainId: 8453,
+          projectId: 4,
+          name: 'Rev',
+          tokenSymbol: 'REV',
+          suckerGroupId: 'sg-1',
+        }),
+      ],
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, { groups }),
+      )
+    })
+    const text = renderedText(renderer.root)
+    expect(text).toContain('Rev')
+    expect(text).toContain('4 REV')
+    expect(text).toContain('Ethereum')
+    expect(text).toContain('Base')
+  })
+
+  it('shows the tokens empty state', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, { groups: [] }),
+      )
+    })
+    expect(renderedText(renderer.root)).toContain(
+      "doesn't hold any project tokens",
     )
   })
 })
