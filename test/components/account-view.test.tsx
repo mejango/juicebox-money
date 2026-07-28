@@ -715,7 +715,7 @@ describe('account holdings grouping', () => {
     expect(rev.total).toBe(4000000000000000000n)
     expect(rev.rows.map(row => row.chainId)).toEqual([1, 8453])
     expect(solo.front.projectId).toBe(77)
-    expect(solo.project ?? solo.front.project).toBeNull()
+    expect(solo.front.project).toBeNull()
   })
 
   const nft = (overrides: Partial<BsAccountNft>): BsAccountNft => ({
