@@ -191,6 +191,59 @@ describe('IPFS pinning boundary', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('round-trips tags and unknown projectUri fields through pin-json', async () => {
+    enablePinning()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({ Hash: CID }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await pinMetadata(
+      pinRequest(
+        'pin-json',
+        JSON.stringify({
+          name: 'League',
+          tags: ['games', 'league'],
+          leagueID: 42,
+          extensions: { scoreboard: { live: true } },
+        }),
+      ),
+    )
+    expect(response.status).toBe(200)
+
+    const form = fetchMock.mock.calls[0][1].body as FormData
+    const pinned = JSON.parse(await (form.get('file') as Blob).text())
+    expect(pinned).toEqual({
+      name: 'League',
+      tags: ['games', 'league'],
+      leagueID: 42,
+      extensions: { scoreboard: { live: true } },
+    })
+  })
+
+  it('leaves headroom for a realistic Advanced custom-properties object', async () => {
+    enablePinning()
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ Hash: CID }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // ~4 KB of custom properties: far more than any hand-authored set, and
+    // well inside the 16 KB body cap the pin route enforces.
+    const roster = Array.from({ length: 60 }, (_, index) => ({
+      id: index,
+      handle: `player-${index}`,
+      joinedAt: '2026-07-28T00:00:00.000Z',
+    }))
+    const body = JSON.stringify({ name: 'League', leagueID: 42, roster })
+    expect(body.length).toBeGreaterThan(4000)
+    expect(body.length).toBeLessThan(16 * 1024)
+
+    const response = await pinMetadata(pinRequest('pin-json', body))
+    expect(response.status).toBe(200)
+    const form = fetchMock.mock.calls[0][1].body as FormData
+    const pinned = JSON.parse(await (form.get('file') as Blob).text())
+    expect(pinned.roster).toEqual(roster)
+  })
+
   it('requires CIDv0 for item metadata encoded into the 721 hook', async () => {
     enablePinning()
     vi.stubGlobal(

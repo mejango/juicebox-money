@@ -248,8 +248,10 @@ export function RevnetPriceCard({
     staleTime: 30_000,
     retry: 1,
     queryFn: async (): Promise<BsRevnetPriceHistory> => {
+      // chainId is an endpoint-routing hint (testnet groups live on the
+      // testnet indexer); it never filters the group.
       const response = await fetch(
-        `/api/price-history?suckerGroupId=${encodeURIComponent(suckerGroupId!)}`,
+        `/api/price-history?suckerGroupId=${encodeURIComponent(suckerGroupId!)}&chainId=${chainId}`,
       )
       if (!response.ok) throw new Error('Price history is unavailable.')
       return response.json() as Promise<BsRevnetPriceHistory>

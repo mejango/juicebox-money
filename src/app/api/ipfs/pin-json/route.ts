@@ -10,11 +10,12 @@ import { isIpfsUri } from '@/lib/ipfs-cid'
 export const runtime = 'nodejs'
 
 /**
- * Pin a project-metadata JSON. Fields are whitelisted and length-capped, so
- * the pinned object is always small and exactly the shape project pages
- * expect: { name, projectTagline?, description?, logoUri?, infoUri?,
- * twitter?, discord? }. The link fields exist so owner edits can carry a
- * project's existing links forward instead of dropping them.
+ * Pin a project-metadata JSON. Known fields are validated and length-capped
+ * ({ name, projectTagline?, description?, logoUri?, infoUri?, twitter?,
+ * discord?, … }); every OTHER key is pinned verbatim so owner edits
+ * round-trip custom fields (a project's `leagueID`, nested extensions, …)
+ * instead of destroying them. `readLimitedJson` caps the whole object, and
+ * project pages sanitize on render, so the passthrough stays bounded.
  */
 export async function POST(req: NextRequest) {
   const unavailable = requirePinningAccess(req)
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     telegram,
     whatsapp,
     instagram,
+    ...unknownFields
   } = body as Record<string, unknown>
 
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
@@ -96,8 +98,12 @@ export async function POST(req: NextRequest) {
     if (invalid) return invalid
   }
 
+  // Unknown keys round-trip verbatim; validated fields always win a name
+  // collision (none is possible — they were destructured out above).
+  const pinned: Record<string, unknown> = { ...unknownFields, ...metadata }
+
   try {
-    const cid = await pinToIpfs(JSON.stringify(metadata), 'metadata.json')
+    const cid = await pinToIpfs(JSON.stringify(pinned), 'metadata.json')
     return NextResponse.json({ cid })
   } catch {
     return NextResponse.json({ error: 'Failed to pin metadata' }, { status: 502 })

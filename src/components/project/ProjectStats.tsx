@@ -294,8 +294,10 @@ export function ProjectStats({
       // available, as can happen while the indexer catches up to a new group.
       if (suckerGroupId) {
         try {
+          // The chainId rides along as an endpoint-routing hint (testnet
+          // groups live on the testnet indexer).
           const grouped = await fetchParticipants(
-            `suckerGroupId=${encodeURIComponent(suckerGroupId)}`,
+            `suckerGroupId=${encodeURIComponent(suckerGroupId)}&chainId=${chains[0]?.[0] ?? ''}`,
           )
           if (grouped.items.length > 0) return grouped
         } catch {

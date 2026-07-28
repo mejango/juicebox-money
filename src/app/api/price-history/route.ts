@@ -10,9 +10,16 @@ export async function GET(request: Request) {
       { status: 400 },
     )
   }
+  // chainId (when sent) is only an endpoint-routing hint — testnet sucker
+  // groups live on the testnet indexer.
+  const chainId = Number(searchParams.get('chainId'))
 
   try {
-    return NextResponse.json(await getRevnetPriceHistory(suckerGroupId))
+    return NextResponse.json(
+      await getRevnetPriceHistory(suckerGroupId, {
+        chainId: Number.isInteger(chainId) && chainId > 0 ? chainId : undefined,
+      }),
+    )
   } catch {
     return NextResponse.json(
       { error: 'Price history is unavailable.' },

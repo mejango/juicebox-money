@@ -11,9 +11,11 @@ import {
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import {
+  JBPermissionIdsV6,
   RESERVED_TOKEN_SPLIT_GROUP_ID,
   getAccountingContexts,
   getCurrentRuleset,
+  hasPermissions,
   payoutSplitGroupId,
   v6Address,
   type JBAccountingContext,
@@ -25,13 +27,14 @@ import { formatUnits, parseUnits, type Address, type PublicClient } from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
 import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
-import { txPhaseLabel, useSafeTx } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
+import { runAuthorityCalls, safeOutcomeMessage } from "@/lib/authority";
 import { billionthsToPct, etherscanTxUrl, formatDuration } from "@/lib/format";
+import { fetchSafeInfo } from "@/lib/safe";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
-import { buildQueueRulesetsRequest } from "@/lib/transaction-builders";
+import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -111,8 +114,9 @@ function pctTo1e9(pct: string): number {
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.min(SPLITS_TOTAL_PERCENT, Math.round((n / 100) * 1e9));
 }
-/** 0-100 percent string → basis-points-of-10000 integer, clamped. */
-function pctToBp(pct: string): number {
+/** 0-100 percent string → basis-points-of-10000 integer, clamped. 0 (or a
+ *  blank field) is a valid share — queuing 0% reserved turns reserving off. */
+export function pctToBp(pct: string): number {
   const n = Number(pct);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.min(PERCENT_OUT_OF_10000_MAX, Math.round(n * 100));
@@ -124,17 +128,53 @@ function currencyLabel(currency: number, symbol: string): string {
 }
 
 /**
+ * Who can queue rules, and through whom. Returns the AUTHORITY the queue call
+ * routes through (the account `runAuthorityCalls` simulates and sends as):
+ * the owner itself when the connected wallet IS the owner or signs for the
+ * owning Safe (the Safe path proposes the exact call through that Safe), the
+ * wallet when it holds QUEUE_RULESETS from the owner, and null for everyone
+ * else — including while the owner/Safe/permission reads are still pending,
+ * so the editor stays hidden rather than flashing for non-editors.
+ */
+export function queueRulesetAuthority({
+  address,
+  owner,
+  safeSigners,
+  hasQueuePermission,
+}: {
+  address: Address | undefined;
+  owner: Address | undefined;
+  /** The owning Safe's signers; undefined/empty when the owner is not a Safe. */
+  safeSigners: readonly Address[] | undefined;
+  hasQueuePermission: boolean | undefined;
+}): Address | null {
+  if (!address || !owner) return null;
+  if (owner.toLowerCase() === address.toLowerCase()) return owner;
+  if (
+    safeSigners?.some(
+      (signer) => signer.toLowerCase() === address.toLowerCase(),
+    )
+  ) {
+    return owner;
+  }
+  if (hasQueuePermission === true) return address;
+  return null;
+}
+
+/**
  * Queue new rules for a CUSTOM project (website/ parity: the owner's
  * ruleset editor). Renders nothing for revnets (their stages are fixed) and
- * nothing unless the connected wallet is the on-chain owner and the project's
- * controller is one jbm can drive.
+ * nothing unless the connected wallet can queue — as the on-chain owner, as
+ * a signer of the owning Safe, or as a QUEUE_RULESETS operator — and the
+ * project's controller is one jbm can drive.
  *
  * The current ruleset + its metadata, per-token fund-access limits, and
  * payout/reserved splits are read live and prefilled. Editing builds ONE
  * JBRulesetConfig that carries forward everything untouched (approval hook,
  * data hook, splits, surplus allowances) and only changes what the owner
  * edited. A diff of just the changed rows is shown before sending
- * `queueRulesetsOf` to the resolved controller through useSafeTx.
+ * `queueRulesetsOf` to the resolved controller through the simulation-first
+ * Safe/Relayr authority router (runAuthorityCalls, like EditSplitsFlow).
  */
 export function QueueRulesetFlow({
   chainId,
@@ -160,13 +200,57 @@ export function QueueRulesetFlow({
   const isOwner =
     !!address && !!owner && owner.toLowerCase() === address.toLowerCase();
 
+  // The owner may be a Safe: any of its signers can queue THROUGH the Safe
+  // (runAuthorityCalls proposes the exact call there, like EditSplitsFlow).
+  const { data: ownerSafe } = useQuery({
+    queryKey: ["queueRulesetOwnerSafe", chainId, owner, address],
+    enabled: !isRevnet && !!owner && !!address && !isOwner,
+    staleTime: 30_000,
+    queryFn: () => fetchSafeInfo(chainId, owner as Address),
+  });
+  const isOwnerSafeSigner =
+    !!address &&
+    !!ownerSafe?.owners.some(
+      (signer) => signer.toLowerCase() === address.toLowerCase(),
+    );
+
+  // Or the wallet holds QUEUE_RULESETS granted from the owner — the same
+  // permission JBController's queueRulesetsOf checks onchain.
+  const { data: canOperate } = useQuery({
+    queryKey: ["queueRulesetPerm", chainId, projectId, address, owner],
+    enabled:
+      !isRevnet &&
+      !!address &&
+      !!owner &&
+      !isOwner &&
+      !isOwnerSafeSigner &&
+      !!publicClient,
+    staleTime: 60_000,
+    queryFn: () =>
+      hasPermissions(publicClient!, {
+        chainId,
+        operator: address!,
+        account: owner!,
+        projectId: BigInt(projectId),
+        permissionIds: [JBPermissionIdsV6.QUEUE_RULESETS],
+      }),
+  });
+
+  const authority = queueRulesetAuthority({
+    address: address as Address | undefined,
+    owner: owner as Address | undefined,
+    safeSigners: ownerSafe?.owners,
+    hasQueuePermission: canOperate,
+  });
+  const canEdit = authority !== null;
+
   const { data: controller } = useReadContract({
     abi: jbDirectoryAbi,
     address: jbContractAddress["6"][JBCoreContracts.JBDirectory][chainId],
     functionName: "controllerOf",
     args: [BigInt(projectId)],
     chainId,
-    query: { enabled: isOwner, staleTime: 60_000 },
+    query: { enabled: canEdit, staleTime: 60_000 },
   });
 
   const canonicalController = jbContractAddress["6"][
@@ -177,11 +261,11 @@ export function QueueRulesetFlow({
     !!canonicalController &&
     controller.toLowerCase() === canonicalController.toLowerCase();
 
-  // Load everything the editor prefills from, once we know the wallet owns
-  // the project (avoid the reads for everyone else).
+  // Load everything the editor prefills from, once we know the wallet can
+  // queue for the project (avoid the reads for everyone else).
   const { data, isLoading, isError } = useQuery({
     queryKey: ["queueRulesetPrefill", chainId, projectId],
-    enabled: !isRevnet && isOwner && !!publicClient,
+    enabled: !isRevnet && canEdit && !!publicClient,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () => {
@@ -252,7 +336,7 @@ export function QueueRulesetFlow({
     },
   });
 
-  if (isRevnet || !isOwner || controller === undefined) return null;
+  if (isRevnet || !canEdit || controller === undefined) return null;
 
   if (!knownController) {
     return (
@@ -287,6 +371,7 @@ export function QueueRulesetFlow({
       chainId={chainId}
       projectId={projectId}
       controller={controller as Address}
+      authority={authority}
       data={data}
     />
   );
@@ -315,15 +400,18 @@ function RulesetEditor({
   chainId,
   projectId,
   controller,
+  authority,
   data,
 }: {
   chainId: JBChainId;
   projectId: number;
   controller: Address;
+  /** The account the queue call routes through: the owner (possibly a Safe
+   *  the connected wallet signs for) or a QUEUE_RULESETS operator. */
+  authority: Address;
   data: PrefillData;
 }) {
   const { isConnected, address, openSignIn } = useWallet();
-  const tx = useSafeTx(chainId);
 
   const { current, terminal, access, reservedSplits, payoutSplits } = data;
   const r = current.ruleset;
@@ -355,6 +443,10 @@ function RulesetEditor({
   const [state, setState] = useState<EditorState>(baseline);
   const [review, setReview] = useState<Reviewed | null>(null);
   const [flowError, setFlowError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
 
   const set = <K extends keyof EditorState>(key: K, value: EditorState[K]) => {
     setState((s) => ({ ...s, [key]: value }));
@@ -370,8 +462,7 @@ function RulesetEditor({
     setFlowError(null);
   };
 
-  const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null;
-  const busy = tx.busy;
+  const txUrl = txHash ? etherscanTxUrl(chainId, txHash) : null;
 
   // Which rows changed (old → new), for the confirm diff.
   const changes = useMemo(() => diffRows(baseline, state), [baseline, state]);
@@ -469,7 +560,7 @@ function RulesetEditor({
     setFlowError(null);
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!review || busy) return;
     if (address?.toLowerCase() !== review.account.toLowerCase()) {
       setReview(null);
@@ -478,22 +569,52 @@ function RulesetEditor({
       );
       return;
     }
-    tx.send(
-      buildQueueRulesetsRequest({
-        chainId,
-        controller,
-        projectId: BigInt(projectId),
-        rulesetConfigurations: [review.config],
-        memo: "",
-      }),
-    );
+    // Route by the controlling account: the owner EOA sends directly, an
+    // owner Safe gets the exact call proposed/approved through the Safe, an
+    // operator sends as itself — all simulation-first via runAuthorityCalls.
+    const call = buildQueueRulesetsAuthorityCall({
+      chainId,
+      authority,
+      controller,
+      projectId: BigInt(projectId),
+      rulesetConfigurations: [review.config],
+      memo: "",
+      label: "Queue new rules",
+    });
+    setBusy(true);
+    setFlowError(null);
+    setStatus("Reviewing the queued rules…");
+    try {
+      const result = await runAuthorityCalls({
+        calls: [call],
+        onProgress: (progress) => setStatus(progress.message),
+      });
+      setTxHash(result.directResults[0] ?? null);
+      setStatus(
+        safeOutcomeMessage(
+          result,
+          "New rules queued. They take effect at the start of the next cycle.",
+        ),
+      );
+      setSuccess(true);
+    } catch (submitError) {
+      setStatus(null);
+      setFlowError(
+        submitError instanceof Error
+          ? submitError.message
+          : "Could not queue the rules.",
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
-  if (tx.phase === "success") {
+  if (success) {
     return (
       <div className="card p-5">
         <p className="text-sm font-medium text-ink">
-          New rules queued. They take effect at the start of the next cycle.
+          {status ??
+            "New rules queued. They take effect at the start of the next cycle."}
         </p>
         <div className="mt-2 flex gap-3 text-sm font-semibold">
           {txUrl ? (
@@ -692,36 +813,25 @@ function RulesetEditor({
       ) : null}
 
       <button
-        onClick={review ? handleConfirm : handleReview}
+        onClick={review ? () => void handleConfirm() : handleReview}
         disabled={busy || (isConnected && (!weightValid || !limitsValid))}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {txPhaseLabel(tx.phase, {
-          pending: "Queueing…",
-          idle: !isConnected
+        {busy
+          ? "Queueing…"
+          : !isConnected
             ? "Sign in to continue"
             : review
               ? "Confirm and queue"
-              : "Review changes",
-        })}
+              : "Review changes"}
       </button>
 
-      {tx.phase === "pending" && txUrl ? (
-        <p className="mt-2 text-center text-xs text-smoke-700">
-          Waiting for confirmation —{" "}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
+      {busy && status ? (
+        <p className="mt-2 text-center text-xs text-smoke-700">{status}</p>
       ) : null}
 
       <TxError
-        error={flowError ?? tx.error}
+        error={flowError}
         className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
       />
     </div>

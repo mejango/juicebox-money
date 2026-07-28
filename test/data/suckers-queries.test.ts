@@ -137,3 +137,104 @@ describe('bridge movement delivery detection', () => {
     expect(statusByIndex(movements)).toEqual({ 0: 'sent' })
   })
 })
+
+describe('bridge movement claim matching', () => {
+  const ERC20 = '0xdddddddddddddddddddddddddddddddddddddddd'
+  const REMOTE_ERC20 = '0xeeeeeeeeeeeeeeeeeeeeeeee000000000000dddd'
+
+  /** The destination-side claim row for a leaf; `token` is the LOCAL token
+   *  on the claiming chain. */
+  function claimAt(index: number, token: string) {
+    return {
+      chainId: 10,
+      sucker: DEST_SUCKER,
+      peerChainId: 1,
+      token,
+      beneficiary: packed(BENEFICIARY),
+      projectTokenCount: '1000',
+      terminalTokenAmount: '10',
+      index,
+    }
+  }
+
+  it('selects the claim token so same-index leaves in other token trees are inspectable', async () => {
+    stubBridgeEvents({ outbox: [] })
+
+    await getBridgeMovements({ suckerGroupId: 'group-1' })
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit)?.body)) as {
+      query: string
+    }
+    const claimsSection = body.query.split('bridgeClaimEvents')[1] ?? ''
+    expect(claimsSection.split('inboxRootReceivedEvents')[0]).toContain('token')
+  })
+
+  it('never lets a native-tree claim mask the same-index leaf of an ERC-20 tree', async () => {
+    // Two token trees on the same sucker pair, identical index, amounts, and
+    // beneficiary. Only the native leaf was claimed.
+    stubBridgeEvents({
+      outbox: [outboxLeaf(0), { ...outboxLeaf(0), token: ERC20 }],
+      claims: [claimAt(0, TOKEN)],
+    })
+
+    const movements = await getBridgeMovements({ suckerGroupId: 'group-1' })
+
+    expect(movements).toHaveLength(1)
+    expect(movements[0].token).toBe(ERC20)
+    expect(movements[0].status).toBe('pending')
+  })
+
+  it('matches an ERC-20 claim across differing local addresses when the pair bridges one ERC-20', async () => {
+    // The destination chain's local token address differs from the source
+    // token (e.g. USDC), but the sucker bridges a single ERC-20 — the claim
+    // is unambiguous.
+    stubBridgeEvents({
+      outbox: [outboxLeaf(0), { ...outboxLeaf(0), token: ERC20 }],
+      claims: [claimAt(0, REMOTE_ERC20)],
+    })
+
+    const movements = await getBridgeMovements({ suckerGroupId: 'group-1' })
+
+    expect(movements).toHaveLength(1)
+    expect(movements[0].token).toBe(TOKEN)
+  })
+
+  it('matches ERC-20 claims by exact address when several ERC-20 trees exist', async () => {
+    const OTHER_ERC20 = '0xffffffffffffffffffffffffffffffffffffffff'
+    stubBridgeEvents({
+      outbox: [
+        { ...outboxLeaf(0), token: ERC20 },
+        { ...outboxLeaf(0), token: OTHER_ERC20 },
+      ],
+      claims: [claimAt(0, ERC20)],
+    })
+
+    const movements = await getBridgeMovements({ suckerGroupId: 'group-1' })
+
+    expect(movements).toHaveLength(1)
+    expect(movements[0].token).toBe(OTHER_ERC20)
+  })
+})
+
+describe('bridge movement endpoint routing', () => {
+  it('routes suckerGroup-keyed reads to the testnet endpoint via the chainId hint', async () => {
+    stubBridgeEvents({})
+
+    await getBridgeMovements({ suckerGroupId: 'group-1', chainId: 84532 })
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://testnet.bendystraw.xyz/graphql',
+    )
+  })
+
+  it('stays on the default endpoint without a hint', async () => {
+    stubBridgeEvents({})
+
+    await getBridgeMovements({ suckerGroupId: 'group-1' })
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://bendystraw.xyz/graphql')
+  })
+})

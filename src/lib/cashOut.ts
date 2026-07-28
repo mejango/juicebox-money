@@ -1,6 +1,7 @@
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildCashOutTx,
+  cashOutProtocolFee,
   getAccountingContexts,
   getCashOutQuote,
   type CashOutQuote,
@@ -19,6 +20,30 @@ import { formatUnits, type Address, type PublicClient } from 'viem'
 
 export function isNativeToken(token: string): boolean {
   return token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+}
+
+/**
+ * Net an ambient (display-only) reclaim quote of the exact protocol fee the
+ * terminal deducts: with a non-zero cash-out tax the 2.5% fee (floor of
+ * `gross / 40`) applies to the full reclaim; with a zero tax it applies only
+ * up to the project's `feeFreeSurplusOf` counter. Callers that could not
+ * read that counter should pass `gross` (conservative: full fee).
+ */
+export function netOfCashOutFee({
+  gross,
+  cashOutTaxRate,
+  feeFreeSurplus,
+}: {
+  gross: bigint
+  cashOutTaxRate: bigint
+  feeFreeSurplus: bigint
+}): bigint {
+  const fee = cashOutProtocolFee({
+    reclaimAmount: gross,
+    cashOutTaxRate,
+    feeFreeSurplus,
+  })
+  return gross > fee ? gross - fee : 0n
 }
 
 /**

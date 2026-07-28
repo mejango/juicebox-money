@@ -527,6 +527,38 @@ export function buildQueueRulesetsRequest({
   return { ...buildQueueRulesetsTx(args), address: controller }
 }
 
+/** SDK-derived queue request wrapped for Safe/Relayr authority routing, so a
+ *  Safe-owned project's signer (or a QUEUE_RULESETS operator) can queue. */
+export function buildQueueRulesetsAuthorityCall({
+  authority,
+  controller,
+  gas = 1_500_000n,
+  label,
+  ...args
+}: Parameters<typeof buildQueueRulesetsTx>[0] & {
+  authority: Address
+  controller: Address
+  gas?: bigint
+  label: string
+}): AuthorityCall {
+  const request = {
+    ...buildQueueRulesetsTx(args),
+    address: controller,
+  }
+  return {
+    chainId: request.chainId,
+    authority,
+    target: request.address,
+    data: encodeFunctionData(request),
+    abi: request.abi,
+    functionName: request.functionName,
+    args: request.args,
+    contractName: 'JBController',
+    gas,
+    label,
+  }
+}
+
 /** SDK-derived split request wrapped for Safe/Relayr authority routing. */
 export function buildSplitGroupsAuthorityCall({
   authority,

@@ -186,6 +186,32 @@ describe('multichain launch session persistence', () => {
     })
   })
 
+  it('supports single-chain sessions with the same resume semantics (refresh mid-confirm must not duplicate the project)', () => {
+    const store = pinnedStore()
+    saveLaunchSession(
+      session({
+        chains: [1],
+        plans: { 1: planFor(1, store) },
+        statuses: { 1: { phase: 'pending' } },
+        store,
+      }),
+    )
+    recordLaunchChainStatus(1, {
+      phase: 'confirming',
+      txHash: `0x${'33'.repeat(32)}`,
+    })
+
+    const restored = loadLaunchSession()
+    expect(restored?.salt).toBe(SALT)
+    expect(restored?.chains).toEqual([1])
+    // The submitted hash is kept: a resume waits on it instead of re-sending.
+    expect(restored?.statuses[1]).toEqual({
+      phase: 'confirming',
+      txHash: `0x${'33'.repeat(32)}`,
+    })
+    expect(remainingLaunchChains(restored!)).toEqual([1])
+  })
+
   it('clears the session and the persisted draft on full completion', () => {
     storage.setItem(DRAFT_KEY, '{"v":1}')
     saveLaunchSession(session())

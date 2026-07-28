@@ -3,6 +3,7 @@ import {
   bendystraw,
   getPagedItems,
   getParticipants,
+  getRevnetPriceHistory,
   getShopPurchases,
   searchProjects,
 } from '@/lib/bendystraw'
@@ -235,6 +236,62 @@ describe('Bendystraw pagination and trust boundaries', () => {
       expect.objectContaining({ chainId: 1, projectId: 7, limit: 250, offset: 0 }),
       expect.objectContaining({ chainId: 1, projectId: 7, limit: 50, offset: 250 }),
     ])
+  })
+
+  it('routes suckerGroup-keyed participant reads to the testnet endpoint via the chainId hint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      graphqlResponse({
+        data: { participants: { items: [], totalCount: 0 } },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getParticipants({ suckerGroupId: 'group-1', chainId: 84532 })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://testnet.bendystraw.xyz/graphql',
+    )
+    // The hint routes the endpoint only — it never narrows the group filter.
+    const { query, variables } = bodyOf(
+      fetchMock.mock.calls[0]?.[1] as RequestInit,
+    )
+    expect(query).not.toContain('chainId: $chainId')
+    expect(variables.chainId).toBeUndefined()
+  })
+
+  it('keeps suckerGroup-keyed participant reads on the default endpoint without a hint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      graphqlResponse({
+        data: { participants: { items: [], totalCount: 0 } },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getParticipants({ suckerGroupId: 'group-1' })
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://bendystraw.xyz/graphql',
+    )
+  })
+
+  it('routes revnet price history to the testnet endpoint via the chainId hint', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      graphqlResponse({
+        data: {
+          suckerGroupMoments: { items: [], totalCount: 0 },
+          swapEvents: { items: [], totalCount: 0 },
+          buybackPoolEvents: { items: [], totalCount: 0 },
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getRevnetPriceHistory('group-1', { chainId: 84532 })
+
+    expect(fetchMock).toHaveBeenCalled()
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe('https://testnet.bendystraw.xyz/graphql')
+    }
   })
 
   it('caps generic pagination even when the indexer reports more rows', async () => {

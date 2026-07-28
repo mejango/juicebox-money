@@ -31,6 +31,13 @@ import {
 } from '@/lib/authority'
 import { ipfsUrl } from '@/lib/format'
 import { TOKEN_SYMBOL_RE } from '@/lib/manage'
+import {
+  customPropertiesText,
+  fetchProjectMetadataJson,
+  mergeProjectMetadata,
+  parseCustomProperties,
+  preservedMetadataKeys,
+} from '@/lib/project-metadata'
 import { buildTokenMetadataAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
@@ -425,7 +432,7 @@ function EditChainPicker({
   )
 }
 
-function MetadataEditor({
+export function MetadataEditor({
   rows,
   initial,
   onCancel,
@@ -448,12 +455,42 @@ function MetadataEditor({
   const [telegram, setTelegram] = useState(initial.telegram ?? '')
   const [whatsapp, setWhatsapp] = useState(initial.whatsapp ?? '')
   const [instagram, setInstagram] = useState(initial.instagram ?? '')
+  const [payNotice, setPayNotice] = useState(initial.payDisclosure ?? '')
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  // The Advanced box holds the metadata's UNRECOGNIZED keys as JSON. It only
+  // replaces them once the user has actually edited it, so a save made before
+  // the live JSON lands (or with the box never opened) preserves them.
+  const [customText, setCustomText] = useState('')
+  const [customTouched, setCustomTouched] = useState(false)
   const [reviewed, setReviewed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // The CURRENT pinned projectUri JSON. Saving merges the edited fields into
+  // this object so tags and custom fields round-trip untouched; the fetch is
+  // repeated at pin time (fail-closed) if this read hasn't landed yet.
+  const metadataUri = rows.find(row => row.uri)?.uri ?? null
+  const currentMetadata = useQuery({
+    queryKey: ['authorityEditCurrentUriJson', metadataUri],
+    enabled: !!metadataUri,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () => fetchProjectMetadataJson(metadataUri!),
+  })
+  const otherKeys = preservedMetadataKeys(currentMetadata.data ?? null)
+  const customLoading = !!metadataUri && currentMetadata.isLoading
+  // A blank box after a failed read would read as "no custom properties" —
+  // say so instead, and keep it locked (the save fails closed anyway).
+  const customUnreadable = !!metadataUri && currentMetadata.isError
+  const parsedCustom = parseCustomProperties(customText)
+
+  // Prefill from the live JSON, and stop as soon as the user owns the box.
+  useEffect(() => {
+    if (customTouched) return
+    setCustomText(customPropertiesText(currentMetadata.data ?? null))
+  }, [currentMetadata.data, customTouched])
 
   useEffect(
     () => () => {
@@ -495,10 +532,19 @@ function MetadataEditor({
       setError('Choose at least one chain.')
       return
     }
+    if (!parsedCustom.ok) {
+      setError(parsedCustom.error)
+      return
+    }
     setReviewed(true)
   }
 
   const pinMetadata = async (): Promise<string> => {
+    // Re-parse rather than trust the reviewed state: an unparseable box must
+    // never reach the pin, and the user's JSON is never silently dropped.
+    const custom = parseCustomProperties(customText)
+    if (!custom.ok) throw new Error(custom.error)
+
     let logoUri = initial.logoUri ?? undefined
     if (logoFile) {
       setStatus('Uploading the logo…')
@@ -515,24 +561,41 @@ function MetadataEditor({
       logoUri = `ipfs://${body.cid}`
     }
 
+    // Merge over the CURRENT pinned JSON so fields this form doesn't edit —
+    // tags, coverImageUri, custom fields — survive the save. If the project
+    // has a uri that can't be read right now, fail the save rather than
+    // silently rebuilding the profile from only the known fields.
+    setStatus('Reading the current profile…')
+    const existing = metadataUri
+      ? (currentMetadata.data ?? (await fetchProjectMetadataJson(metadataUri)))
+      : {}
+
     setStatus('Pinning the project profile…')
     const response = await fetch('/api/ipfs/pin-json', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.trim(),
-        projectTagline: tagline.trim() || undefined,
-        description: description.trim() || undefined,
-        logoUri,
-        infoUri: infoUri.trim() || undefined,
-        twitter: twitter.trim() || undefined,
-        discord: discord.trim() || undefined,
-        telegram: telegram.trim() || undefined,
-        whatsapp: whatsapp.trim() || undefined,
-        instagram: instagram.trim() || undefined,
-        coverImageUri: initial.coverImageUri,
-        payDisclosure: initial.payDisclosure,
-      }),
+      body: JSON.stringify(
+        mergeProjectMetadata(
+          existing,
+          {
+            name: name.trim(),
+            projectTagline: tagline.trim(),
+            description: description.trim(),
+            infoUri: infoUri.trim(),
+            twitter: twitter.trim(),
+            discord: discord.trim(),
+            telegram: telegram.trim(),
+            whatsapp: whatsapp.trim(),
+            instagram: instagram.trim(),
+            payDisclosure: payNotice.trim(),
+            // Only ever set or keep a logo — there's no removal control here.
+            ...(logoUri ? { logoUri } : {}),
+          },
+          // An untouched box leaves the existing custom properties alone; an
+          // edited one replaces them, so a removed key is removed on-chain.
+          customTouched ? custom.properties : undefined,
+        ),
+      ),
     })
     const body = (await response.json()) as { cid?: string; error?: string }
     if (!response.ok || !body.cid) {
@@ -655,6 +718,20 @@ function MetadataEditor({
             className="input-well mt-1.5 w-full resize-y px-3 py-2.5 text-sm leading-relaxed disabled:opacity-60"
           />
         </label>
+        <label className="block">
+          <span className="field-label">Payment notice</span>
+          <textarea
+            value={payNotice}
+            onChange={event => {
+              setPayNotice(event.target.value.slice(0, 1000))
+              invalidate()
+            }}
+            disabled={busy}
+            rows={2}
+            placeholder="Shown to payers before they pay"
+            className="input-well mt-1.5 w-full resize-y px-3 py-2.5 text-sm leading-relaxed disabled:opacity-60"
+          />
+        </label>
       </div>
 
       <div className="mt-4">
@@ -711,6 +788,58 @@ function MetadataEditor({
             />
           ))}
         </div>
+      </details>
+
+      <details className="mt-4 rounded-lg border border-smoke-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-ink">
+          Advanced — custom properties (JSON)
+        </summary>
+        <p className="mt-2 text-xs leading-relaxed text-smoke-500">
+          Anything in this project&apos;s metadata that no field above owns.
+          Saving replaces this set exactly: remove a property here and it is
+          removed on-chain.
+        </p>
+        <textarea
+          aria-label="Custom properties (JSON)"
+          value={customText}
+          onChange={event => {
+            setCustomText(event.target.value)
+            setCustomTouched(true)
+            invalidate()
+          }}
+          disabled={busy || customLoading || customUnreadable}
+          rows={6}
+          spellCheck={false}
+          placeholder={
+            customLoading || customUnreadable ? '' : '{\n  "leagueID": 42\n}'
+          }
+          className="input-well mt-2 w-full resize-y px-3 py-2.5 font-mono text-xs leading-relaxed disabled:opacity-60"
+        />
+        {customLoading ? (
+          <p className="mt-2 text-xs text-smoke-500">
+            Loading this project&apos;s current custom properties…
+          </p>
+        ) : customUnreadable ? (
+          <p className="mt-2 text-xs text-red-700">
+            This project&apos;s current metadata could not be read, so its
+            custom properties are unknown. A save retries the read and fails
+            if it still can&apos;t load.
+          </p>
+        ) : null}
+        {!parsedCustom.ok ? (
+          <p className="mt-2 text-xs text-red-700">{parsedCustom.error}</p>
+        ) : parsedCustom.collisions.length > 0 ? (
+          <p className="mt-2 text-xs text-smoke-500">
+            The form above owns {parsedCustom.collisions.join(', ')}, so{' '}
+            {parsedCustom.collisions.length === 1 ? 'it is' : 'they are'}{' '}
+            ignored here.
+          </p>
+        ) : null}
+        {otherKeys.length > 0 ? (
+          <p className="mt-2 text-xs text-smoke-500">
+            Also kept as-is: {otherKeys.join(', ')}
+          </p>
+        ) : null}
       </details>
 
       {reviewed ? (

@@ -1304,19 +1304,19 @@ export function CreateForm() {
         const result = await pinAll();
         pinned = { ...result, plans: buildPlans(result.store) };
         pinnedRef.current = pinned;
-        // Persist multichain progress up front so a refresh between chains
-        // resumes with the SAME salt instead of re-launching everything.
-        if (selected.length > 1) {
-          saveLaunchSession({
-            salt: pinned.salt,
-            projectUri: pinned.projectUri,
-            store: pinned.store,
-            plans: pinned.plans,
-            chains: selected,
-            statuses: initial,
-            createdAt: Date.now(),
-          });
-        }
+        // Persist progress up front so a refresh resumes with the SAME salt
+        // instead of re-launching everything — single-chain included: a
+        // refresh mid-confirm would otherwise re-send and mint a duplicate
+        // project.
+        saveLaunchSession({
+          salt: pinned.salt,
+          projectUri: pinned.projectUri,
+          store: pinned.store,
+          plans: pinned.plans,
+          chains: selected,
+          statuses: initial,
+          createdAt: Date.now(),
+        });
       }
       await runChains(pinned);
     } catch (e) {

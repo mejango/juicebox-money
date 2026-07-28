@@ -141,6 +141,92 @@ function draftToSplit(row: DraftSplit): JBSplit {
   }
 }
 
+/** The ruleset JBSplits falls back to when a group is empty. */
+const FALLBACK_RULESET_ID = 0n
+
+/**
+ * The project's ruleset-0 group for the group being edited. Clearing a group
+ * is blocked unless the fallback is verified `empty`, since an unverified
+ * fallback could reroute the whole share.
+ */
+export type FallbackSplits =
+  | { status: 'empty' }
+  | { status: 'nonEmpty'; count: number }
+  | { status: 'checking' }
+  | { status: 'unknown' }
+
+/** Classify a ruleset-0 read. A missing result never reads as "empty". */
+export function describeFallbackSplits(
+  splits: readonly RawSplit[] | undefined | null,
+): FallbackSplits {
+  if (!splits) return { status: 'unknown' }
+  return splits.length > 0
+    ? { status: 'nonEmpty', count: splits.length }
+    : { status: 'empty' }
+}
+
+/**
+ * Why an empty group can't be saved, or `null` when clearing it really does
+ * leave the group unallocated. `JBSplits.splitsOf` serves the ruleset-0 group
+ * whenever the addressed group is empty, so an empty save only stops paying
+ * the listed recipients — it does not stop paying.
+ */
+export function clearBlockReason(fallback: FallbackSplits): string | null {
+  if (fallback.status === 'empty') return null
+  if (fallback.status === 'nonEmpty') {
+    return `Clearing this group would activate the project’s default splits (${fallback.count} recipient${fallback.count === 1 ? '' : 's'}), not send tokens to the owner. Keep at least one recipient here, or change the default splits first.`
+  }
+  if (fallback.status === 'checking') {
+    return 'Checking the project’s default splits, which would take over an emptied group…'
+  }
+  return 'Couldn’t verify the project’s default splits, so clearing this group is blocked — an unread default group could take over the whole share. Close and try again.'
+}
+
+/** Shown when clearing the reserved group is verified safe. */
+export const CLEARED_RESERVED_NOTE =
+  'No reserved splits — this project has no default splits for this group, so saving clears the list and the reserved share accrues to the project owner. To stop reserving tokens entirely, change the reserved share in a new ruleset.'
+
+/**
+ * The exact `setSplitGroupsOf` splits for a save: locked rows re-submitted
+ * verbatim (byte-exact, so the contract's locked-split check passes), then
+ * the editable drafts rebuilt. An EMPTY result clears the group, which only
+ * routes the share to the project owner when the ruleset-0 fallback group is
+ * verified empty — otherwise `splitsOf` starts serving those default splits,
+ * so the save is refused.
+ */
+export function assembleSplits(
+  lockedRows: readonly RawSplit[],
+  drafts: readonly DraftSplit[],
+  fallback: FallbackSplits,
+): { splits: JBSplit[] } | { error: string } {
+  if (!drafts.every(s => splitOk(s, 'percent'))) {
+    return { error: 'Fix the highlighted recipients before saving.' }
+  }
+  const editable = drafts.map(draftToSplit)
+  if (editable.some(s => s.percent <= 0)) {
+    return { error: 'Every recipient needs a share above 0%.' }
+  }
+  if (lockedRows.length === 0 && editable.length === 0) {
+    const blocked = clearBlockReason(fallback)
+    if (blocked) return { error: blocked }
+  }
+  return {
+    splits: [
+      ...lockedRows.map(
+        (s): JBSplit => ({
+          percent: s.percent,
+          projectId: s.projectId,
+          beneficiary: s.beneficiary,
+          preferAddToBalance: s.preferAddToBalance,
+          lockedUntil: s.lockedUntil,
+          hook: s.hook,
+        }),
+      ),
+      ...editable,
+    ],
+  }
+}
+
 /**
  * Edit one split group (reserved tokens, or a token's payouts) for a CUSTOM
  * project's current ruleset. Owner-gated button + modal that reuses the
@@ -338,6 +424,28 @@ function EditSplitsModal({
       })) as readonly RawSplit[],
   })
 
+  // The ruleset-0 group JBSplits serves whenever this group is empty. Editing
+  // ruleset 0 itself IS the fallback, so there's nothing behind it.
+  const { data: fallbackRows, isFetching: fallbackFetching } = useQuery({
+    queryKey: ['editSplitsFallback', chainId, projectId, groupId.toString()],
+    enabled: open && !!publicClient && rulesetId !== FALLBACK_RULESET_ID,
+    staleTime: 0,
+    retry: 1,
+    queryFn: async () =>
+      (await publicClient!.readContract({
+        address: splitsAddr,
+        abi: jbSplitsAbi,
+        functionName: 'splitsOf',
+        args: [BigInt(projectId), FALLBACK_RULESET_ID, groupId],
+      })) as readonly RawSplit[],
+  })
+  const fallback: FallbackSplits =
+    rulesetId === FALLBACK_RULESET_ID
+      ? { status: 'empty' }
+      : !fallbackRows && fallbackFetching
+        ? { status: 'checking' }
+        : describeFallbackSplits(fallbackRows)
+
   // Initialize the editor once, from the freshly loaded live splits, and
   // capture the fingerprint that the submit-time re-read is checked against.
   useEffect(() => {
@@ -364,6 +472,8 @@ function EditSplitsModal({
   const totalPercent = lockedPercent + editablePercent
   const overAllocated = totalPercent > SPLITS_TOTAL_PERCENT
   const rowsValid = drafts.every(s => splitOk(s, 'percent'))
+  const clearsGroup = drafts.length === 0 && lockedRows.length === 0
+  const clearBlocked = clearsGroup ? clearBlockReason(fallback) : null
 
   const close = () => {
     setOpen(false)
@@ -409,26 +519,33 @@ function EditSplitsModal({
       return
     }
 
-    // Locked rows are re-submitted verbatim (byte-exact, so the contract's
-    // locked-split check passes); editable drafts are rebuilt.
-    const editable = drafts.filter(s => splitOk(s, 'percent')).map(draftToSplit)
-    if (editable.some(s => s.percent <= 0)) {
-      setFlowError('Every recipient needs a share above 0%.')
+    // Re-read the fallback too: an empty save is only safe against the
+    // ruleset-0 group as it stands at send time. A failed read stays
+    // `unknown`, which blocks the clear but leaves other saves alone.
+    let freshFallback: FallbackSplits = { status: 'unknown' }
+    if (rulesetId === FALLBACK_RULESET_ID) {
+      freshFallback = { status: 'empty' }
+    } else {
+      try {
+        freshFallback = describeFallbackSplits(
+          (await publicClient.readContract({
+            address: splitsAddr,
+            abi: jbSplitsAbi,
+            functionName: 'splitsOf',
+            args: [BigInt(projectId), FALLBACK_RULESET_ID, groupId],
+          })) as readonly RawSplit[],
+        )
+      } catch {
+        freshFallback = { status: 'unknown' }
+      }
+    }
+
+    const assembled = assembleSplits(lockedRows, drafts, freshFallback)
+    if ('error' in assembled) {
+      setFlowError(assembled.error)
       return
     }
-    const splits: JBSplit[] = [
-      ...lockedRows.map(
-        (s): JBSplit => ({
-          percent: s.percent,
-          projectId: s.projectId,
-          beneficiary: s.beneficiary,
-          preferAddToBalance: s.preferAddToBalance,
-          lockedUntil: s.lockedUntil,
-          hook: s.hook,
-        }),
-      ),
-      ...editable,
-    ]
+    const { splits } = assembled
 
     const call = buildSplitGroupsAuthorityCall({
       chainId,
@@ -547,6 +664,16 @@ function EditSplitsModal({
             allowLock
           />
 
+          {clearsGroup && clearBlocked ? (
+            <p className="callout callout-warning mt-2 text-xs leading-relaxed">
+              {clearBlocked}
+            </p>
+          ) : clearsGroup && isReserved ? (
+            <p className="callout callout-info mt-2 text-xs leading-relaxed">
+              {CLEARED_RESERVED_NOTE}
+            </p>
+          ) : null}
+
           {overAllocated ? (
             <p className="mt-2 text-xs font-medium text-red-600">
               Locked plus new shares add up to{' '}
@@ -556,7 +683,7 @@ function EditSplitsModal({
 
           <button
             onClick={submit}
-            disabled={busy || !rowsValid || overAllocated}
+            disabled={busy || !rowsValid || overAllocated || !!clearBlocked}
             className="btn-primary mt-3 min-h-[44px] w-full text-sm"
           >
             {busy ? status ?? 'Saving…' : 'Save splits'}

@@ -1,9 +1,7 @@
 import Link from 'next/link'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ProjectLogo } from '@/components/ProjectLogo'
-import { accountProjectHref } from '@/components/account/AccountProjectCard'
 import {
-  dedupeVersionedRows,
   type BsAccountNft,
   type BsAccountTokenHolding,
   type BsProject,
@@ -14,32 +12,16 @@ import {
   pickTierMetadata,
   tierMediaImageUrl,
 } from '@/lib/tier-metadata'
-import { chainName } from '@/lib/urn'
-
-/** Identity for collapsing per-version duplicate participant rows. */
-export function tokenHoldingIdentity(
-  row: Pick<BsAccountTokenHolding, 'chainId' | 'projectId'>,
-): string {
-  return `${row.chainId}:${row.projectId}`
-}
-
-/**
- * Identity for collapsing per-version duplicate NFT rows. The hook contract
- * disambiguates projects whose 721 tokenIds collide on the same chain, and
- * stays stable across the per-version projectId aliases bendystraw keeps.
- */
-export function nftHoldingIdentity(
-  row: Pick<BsAccountNft, 'chainId' | 'projectId' | 'tokenId' | 'hook'>,
-): string {
-  const hook = row.hook?.address?.toLowerCase() ?? `p${row.projectId}`
-  return `${row.chainId}:${hook}:${row.tokenId}`
-}
+import { chainName, toUrn } from '@/lib/urn'
 
 type TokenHoldingRow = {
   chainId: number
   projectId: number
-  version: number
   balance: bigint
+  /** The unclaimed-credit share of `balance`. */
+  credits: bigint
+  /** The claimed ERC-20 share of `balance`. */
+  claimed: bigint
   project: BsProject | null
 }
 
@@ -48,13 +30,15 @@ export type TokenHoldingGroup = {
   front: TokenHoldingRow
   rows: TokenHoldingRow[]
   total: bigint
+  credits: bigint
+  claimed: bigint
   symbol: string | null
 }
 
 function projectLookup(projects: BsProject[]): Map<string, BsProject> {
   return new Map(
     projects.map(project => [
-      `${project.chainId}:${project.projectId}:${project.version}`,
+      `${project.chainId}:${project.projectId}`,
       project,
     ]),
   )
@@ -62,29 +46,27 @@ function projectLookup(projects: BsProject[]): Map<string, BsProject> {
 
 /**
  * Per-project token balances, linked deployments merged across chains via
- * their shared sucker group, largest total first. Accepts raw (per-version
- * duplicated) participant rows.
+ * their shared sucker group, largest total first. V6-only rows.
  */
 export function groupTokenHoldings(
   holdings: BsAccountTokenHolding[],
   projects: BsProject[],
 ): TokenHoldingGroup[] {
   const byRef = projectLookup(projects)
-  const deduped = dedupeVersionedRows(holdings, tokenHoldingIdentity)
   const groups = new Map<string, TokenHoldingRow[]>()
-  for (const raw of deduped) {
-    const project =
-      byRef.get(`${raw.chainId}:${raw.projectId}:${raw.version}`) ?? null
+  for (const raw of holdings) {
+    const project = byRef.get(`${raw.chainId}:${raw.projectId}`) ?? null
     const key = project?.suckerGroupId
       ? `group:${project.suckerGroupId}`
-      : `solo:${raw.chainId}:${raw.projectId}:${raw.version}`
+      : `solo:${raw.chainId}:${raw.projectId}`
     let rows = groups.get(key)
     if (!rows) groups.set(key, (rows = []))
     rows.push({
       chainId: raw.chainId,
       projectId: raw.projectId,
-      version: raw.version,
       balance: BigInt(raw.balance),
+      credits: BigInt(raw.creditBalance ?? '0'),
+      claimed: BigInt(raw.erc20Balance ?? '0'),
       project,
     })
   }
@@ -96,6 +78,8 @@ export function groupTokenHoldings(
         front,
         rows: sorted,
         total: sorted.reduce((sum, row) => sum + row.balance, 0n),
+        credits: sorted.reduce((sum, row) => sum + row.credits, 0n),
+        claimed: sorted.reduce((sum, row) => sum + row.claimed, 0n),
         symbol:
           sorted.find(row => row.project?.tokenSymbol)?.project
             ?.tokenSymbol ?? null,
@@ -114,7 +98,6 @@ export type NftTierHolding = {
 export type NftHoldingGroup = {
   chainId: number
   projectId: number
-  version: number
   project: BsProject | null
   tiers: NftTierHolding[]
   count: number
@@ -133,26 +116,22 @@ function tierMedia(row: BsAccountNft): { name?: string; image?: string } {
   return { name: meta.name, image: tierMediaImageUrl(meta.image) }
 }
 
-/**
- * Per-project shop-item holdings tallied by tier, most items first. Accepts
- * raw (per-version duplicated) NFT rows.
- */
+/** Per-project shop-item holdings tallied by tier, most items first. */
 export function groupNftHoldings(
   nfts: BsAccountNft[],
   projects: BsProject[],
 ): NftHoldingGroup[] {
   const byRef = projectLookup(projects)
-  const deduped = dedupeVersionedRows(nfts, nftHoldingIdentity)
   const groups = new Map<string, { rows: BsAccountNft[] }>()
-  for (const row of deduped) {
-    const key = `${row.chainId}:${row.projectId}:${row.version}`
+  for (const row of nfts) {
+    const key = `${row.chainId}:${row.projectId}`
     let group = groups.get(key)
     if (!group) groups.set(key, (group = { rows: [] }))
     group.rows.push(row)
   }
   return [...groups.values()]
     .map(({ rows }) => {
-      const { chainId, projectId, version } = rows[0]
+      const { chainId, projectId } = rows[0]
       const byTier = new Map<number, BsAccountNft[]>()
       for (const row of rows) {
         let tier = byTier.get(row.tierId)
@@ -173,8 +152,7 @@ export function groupNftHoldings(
       return {
         chainId,
         projectId,
-        version,
-        project: byRef.get(`${chainId}:${projectId}:${version}`) ?? null,
+        project: byRef.get(`${chainId}:${projectId}`) ?? null,
         tiers,
         count: rows.length,
       }
@@ -186,33 +164,58 @@ function ProjectTitle({
   project,
   chainId,
   projectId,
-  version,
 }: {
   project: BsProject | null
   chainId: number
   projectId: number
-  version: number
 }) {
   const name = project?.name ?? `Project ${projectId}`
-  const { href, external } = accountProjectHref({ chainId, projectId, version })
-  const className =
-    'min-w-0 break-words font-agrandir font-medium text-ink hover:text-bluebs-600'
-  return external ? (
-    <a href={href} className={className}>
-      {name}
-    </a>
-  ) : (
-    <Link href={href} className={className}>
+  return (
+    <Link
+      href={`/${toUrn(chainId, projectId)}`}
+      className="min-w-0 break-words font-agrandir font-medium text-ink hover:text-bluebs-600"
+    >
       {name}
     </Link>
+  )
+}
+
+/** The "fetch hit its cap" note under a holdings section. */
+function TruncationNote({
+  fetchedCount,
+  totalCount,
+  noun,
+  order,
+}: {
+  fetchedCount?: number
+  totalCount?: number
+  noun: string
+  order: string
+}) {
+  if (
+    fetchedCount === undefined ||
+    totalCount === undefined ||
+    totalCount <= fetchedCount
+  ) {
+    return null
+  }
+  return (
+    <p className="text-xs text-smoke-500">
+      Showing the {fetchedCount} {order} of {totalCount} {noun}.
+    </p>
   )
 }
 
 /** Token balances section of the Holdings tab. */
 export function AccountTokenHoldings({
   groups,
+  fetchedCount,
+  totalCount,
 }: {
   groups: TokenHoldingGroup[]
+  /** Raw participant rows fetched / indexed, for the truncation note. */
+  fetchedCount?: number
+  totalCount?: number
 }) {
   if (groups.length === 0) {
     return (
@@ -225,7 +228,7 @@ export function AccountTokenHoldings({
     <div className="space-y-4">
       {groups.map(group => (
         <div
-          key={`${group.front.chainId}:${group.front.projectId}:${group.front.version}`}
+          key={`${group.front.chainId}:${group.front.projectId}`}
           className="card p-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -240,7 +243,6 @@ export function AccountTokenHoldings({
                   project={group.front.project}
                   chainId={group.front.chainId}
                   projectId={group.front.projectId}
-                  version={group.front.version}
                 />
                 <div className="mt-1 flex items-center gap-1.5">
                   {group.rows.map(row => (
@@ -250,18 +252,23 @@ export function AccountTokenHoldings({
                       size={16}
                     />
                   ))}
-                  <span className="chip bg-smoke-100 text-smoke-700">
-                    V{group.front.version}
-                  </span>
                 </div>
               </div>
             </div>
-            <p className="shrink-0 text-sm font-medium text-ink">
-              {formatTokenAmount(group.total)}{' '}
-              <span className="text-smoke-600">
-                {group.symbol ?? 'tokens'}
-              </span>
-            </p>
+            <div className="shrink-0 text-right">
+              <p className="text-sm font-medium text-ink">
+                {formatTokenAmount(group.total)}{' '}
+                <span className="text-smoke-600">
+                  {group.symbol ?? 'tokens'}
+                </span>
+              </p>
+              {group.claimed > 0n && group.credits > 0n ? (
+                <p className="mt-0.5 text-xs text-smoke-500">
+                  {formatTokenAmount(group.claimed)} claimed ·{' '}
+                  {formatTokenAmount(group.credits)} credits
+                </p>
+              ) : null}
+            </div>
           </div>
           {group.rows.length > 1 ? (
             <div className="mt-3 divide-y divide-smoke-100">
@@ -283,6 +290,12 @@ export function AccountTokenHoldings({
           ) : null}
         </div>
       ))}
+      <TruncationNote
+        fetchedCount={fetchedCount}
+        totalCount={totalCount}
+        noun="balances"
+        order="largest"
+      />
     </div>
   )
 }
@@ -290,8 +303,13 @@ export function AccountTokenHoldings({
 /** Shop-item section of the Holdings tab. */
 export function AccountShopHoldings({
   groups,
+  fetchedCount,
+  totalCount,
 }: {
   groups: NftHoldingGroup[]
+  /** Raw NFT rows fetched / indexed, for the truncation note. */
+  fetchedCount?: number
+  totalCount?: number
 }) {
   if (groups.length === 0) {
     return (
@@ -304,7 +322,7 @@ export function AccountShopHoldings({
     <div className="space-y-4">
       {groups.map(group => (
         <div
-          key={`${group.chainId}:${group.projectId}:${group.version}`}
+          key={`${group.chainId}:${group.projectId}`}
           className="card p-4"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -319,13 +337,9 @@ export function AccountShopHoldings({
                   project={group.project}
                   chainId={group.chainId}
                   projectId={group.projectId}
-                  version={group.version}
                 />
                 <div className="mt-1 flex items-center gap-1.5">
                   <ChainIcon chainId={group.chainId} size={16} />
-                  <span className="chip bg-smoke-100 text-smoke-700">
-                    V{group.version}
-                  </span>
                 </div>
               </div>
             </div>
@@ -360,6 +374,12 @@ export function AccountShopHoldings({
           </div>
         </div>
       ))}
+      <TruncationNote
+        fetchedCount={fetchedCount}
+        totalCount={totalCount}
+        noun="items"
+        order="newest"
+      />
     </div>
   )
 }

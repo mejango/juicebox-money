@@ -12,7 +12,14 @@ export async function GET(request: Request) {
 
   try {
     if (suckerGroupId) {
-      return NextResponse.json(await getParticipants({ suckerGroupId }))
+      // chainId (when sent) is only an endpoint-routing hint — testnet
+      // sucker groups live on the testnet indexer.
+      return NextResponse.json(
+        await getParticipants({
+          suckerGroupId,
+          chainId: Number.isInteger(chainId) && chainId > 0 ? chainId : undefined,
+        }),
+      )
     }
     if (ok) {
       return NextResponse.json(await getParticipants({ chainId, projectId }))

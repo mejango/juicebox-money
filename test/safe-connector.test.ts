@@ -12,6 +12,7 @@ import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
   safeQueueUrl,
+  swapDeadline,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -30,6 +31,16 @@ describe('Safe connector transaction boundaries', () => {
     expect(SAFE_NONCE_GUIDANCE).toMatch(/next available/i)
     expect(SAFE_NONCE_GUIDANCE).toMatch(/queued nonces/i)
     expect(safeQueueUrl(8453, SAFE)).toContain(`safe=base:${SAFE}`)
+  })
+
+  it('gives swaps a 20-minute deadline for EOAs and 30 days for Safe signature collection', () => {
+    const nowMs = 1_700_000_000_000
+    const nowSec = 1_700_000_000
+    // EOA: proposal and execution are one act, so 20 minutes is plenty.
+    expect(swapDeadline(false, nowMs)).toBe(BigInt(nowSec + 20 * 60))
+    // Safe: co-signer collection routinely outlives 20 minutes — match the
+    // 30-day Permit2 windows so the executed swap doesn't revert on deadline.
+    expect(swapDeadline(true, nowMs)).toBe(BigInt(nowSec + 30 * 24 * 60 * 60))
   })
 
   it('resolves a proposal identifier to the mined execution hash before receipt polling', async () => {

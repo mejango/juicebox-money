@@ -65,11 +65,18 @@ type LimitLine = {
   remaining: bigint
 }
 
-/** Amounts in a currency use the token's decimals when the currency is the
- *  token's own accounting-context currency, and 18-dec fixed point for the
- *  standard ETH/USD base currencies. */
-function currencyDecimals(currency: number, ctx: JBAccountingContext): number {
-  return currency === ctx.currency ? ctx.decimals : 18
+/** Limit/allowance amounts are ALWAYS fixed-point scaled to the accounting
+ *  context's decimals, whatever currency they are denominated in. Ground
+ *  truth is JBTerminalStore.recordPayoutFor/recordUsedAllowanceOf: `amount`
+ *  is compared directly against the stored limit, and the cross-currency
+ *  conversion multiplies by a dimensionless price ratio whose 10^18 scaling
+ *  cancels — so the input's fixed-point scale carries straight through to the
+ *  accounting-token output. A $100 limit on a 6-dec USDC context is 100e6. */
+export function currencyDecimals(
+  _currency: number,
+  ctx: JBAccountingContext,
+): number {
+  return ctx.decimals
 }
 
 function currencyLabel(

@@ -15,6 +15,18 @@ const IS_DETERMINISTIC_BROWSER =
 
 export const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 
+/**
+ * Endpoint-routing hint for queries whose variables carry no chainId (e.g.
+ * suckerGroup-keyed reads): mirrors the chainId-variable routing in
+ * `bendystraw` below. Undefined (unknown chain or no hint) falls back to the
+ * default endpoint selection.
+ */
+export function testnetHint(chainId?: number | null): boolean | undefined {
+  return typeof chainId === 'number'
+    ? JB_CHAINS[chainId as JBChainId]?.chain?.testnet
+    : undefined
+}
+
 export async function bendystraw<T>(
   query: string,
   variables: Record<string, unknown>,
@@ -551,10 +563,13 @@ export type BsParticipant = {
  * so an omnichain holder's per-chain rows all come back — callers aggregate
  * by address — and by chain + project otherwise. Balances are 18-decimal
  * fixed-point strings.
+ *
+ * On the suckerGroup branch `chainId` is only an endpoint-routing hint
+ * (testnet groups live on the testnet indexer); it never filters the group.
  */
 export async function getParticipants(
   args:
-    | { suckerGroupId: string; chainId?: undefined; projectId?: undefined }
+    | { suckerGroupId: string; chainId?: number; projectId?: undefined }
     | { suckerGroupId?: undefined; chainId: number; projectId: number },
   limit = 1000,
 ): Promise<{ items: BsParticipant[]; totalCount: number }> {
@@ -589,7 +604,11 @@ export async function getParticipants(
     const pageLimit = Math.min(pageSize, max - items.length)
     const data = await bendystraw<{
       participants: { items: BsParticipant[]; totalCount: number }
-    }>(query, { ...scope, limit: pageLimit, offset }, { revalidate: 60 })
+    }>(
+      query,
+      { ...scope, limit: pageLimit, offset },
+      { revalidate: 60, testnet: testnetHint(args.chainId) },
+    )
 
     const page = data.participants.items ?? []
     totalCount = data.participants.totalCount ?? totalCount
@@ -979,7 +998,11 @@ export async function getPagedItems<T>(
   query: string,
   field: string,
   variables: Record<string, unknown>,
-  { pageSize = 1_000, max = 3_000 }: { pageSize?: number; max?: number } = {},
+  {
+    pageSize = 1_000,
+    max = 3_000,
+    testnet,
+  }: { pageSize?: number; max?: number; testnet?: boolean } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
   let totalCount = 0
@@ -991,7 +1014,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: items.length },
-      { revalidate: 30 },
+      { revalidate: 30, testnet },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount
@@ -1011,7 +1034,11 @@ export async function getPagedItems<T>(
  */
 export async function getRevnetPriceHistory(
   suckerGroupId: string,
+  /** `chainId` is an endpoint-routing hint only (testnet groups live on the
+   *  testnet indexer); it never filters the group. */
+  { chainId }: { chainId?: number } = {},
 ): Promise<BsRevnetPriceHistory> {
+  const testnet = testnetHint(chainId)
   const momentsPromise = getPagedItems<BsPriceMoment>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
       suckerGroupMoments(
@@ -1027,6 +1054,7 @@ export async function getRevnetPriceHistory(
     }`,
     'suckerGroupMoments',
     { suckerGroupId },
+    { testnet },
   ).then(page => page.items)
 
   const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
@@ -1047,6 +1075,7 @@ export async function getRevnetPriceHistory(
     }`,
     'swapEvents',
     { suckerGroupId },
+    { testnet },
   ).then(page => page.items)
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(
@@ -1067,6 +1096,7 @@ export async function getRevnetPriceHistory(
     }`,
     'buybackPoolEvents',
     { suckerGroupId },
+    { testnet },
   ).then(page => page.items)
 
   const marketPromise = Promise.all([enhancedSwaps(), pools()])
@@ -1092,6 +1122,7 @@ export async function getRevnetPriceHistory(
         }`,
         'swapEvents',
         { suckerGroupId },
+        { testnet },
       ).then(page => page.items)
       return { swaps, pools: [] }
     })
@@ -1215,8 +1246,10 @@ const BENEFICIARY_EVENT_SOURCES = [
   },
 ] as const
 
-/** Bendystraw rejects limits above 1000. */
-const ACCOUNT_ACTIVITY_WINDOW_MAX = 1000
+/** Bendystraw rejects limits above 1000, so the merged beneficiary-union
+ *  window cannot grow past this — offset pagination dead-ends here. The
+ *  account view hides its load-more affordance at this cap. */
+export const ACCOUNT_ACTIVITY_WINDOW_MAX = 1000
 
 type BsBeneficiaryEventRow = {
   id: string
@@ -1230,9 +1263,9 @@ type BsBeneficiaryEventRow = {
 } & Record<string, unknown>
 
 /**
- * Everything an account did across all projects, chains, and protocol
- * versions, newest first. One page per call — the account view's load-more
- * grows the offset instead of paginating to exhaustion.
+ * Everything an account did across V6 projects and chains, newest first.
+ * One page per call — the account view's load-more grows the offset instead
+ * of paginating to exhaustion.
  *
  * Two branches merge into a page: activityEvents the account sent, plus
  * beneficiary-side rows from the per-type event tables (which exclude
@@ -1247,7 +1280,7 @@ export async function getAccountActivity(
   const windowLimit = Math.min(offset + limit, ACCOUNT_ACTIVITY_WINDOW_MAX)
   const beneficiaryQueries = BENEFICIARY_EVENT_SOURCES.map(
     source => `${source.list}(
-        where: { AND: [{ beneficiary: $address }, { from_not: $address }] }
+        where: { AND: [{ beneficiary: $address }, { from_not: $address }, { version: 6 }] }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
@@ -1270,7 +1303,7 @@ export async function getAccountActivity(
   >(
     `query($address: String!, $limit: Int!) {
       activityEvents(
-        where: { from: $address }
+        where: { from: $address, version: 6 }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
@@ -1333,9 +1366,8 @@ export async function getAccountActivity(
 }
 
 /**
- * Every project owned by any of the given addresses (an account plus the
- * Safes it signs for), across all versions — the account view badges each
- * card with its version.
+ * Every V6 project owned by any of the given addresses (an account plus the
+ * Safes it signs for).
  */
 export async function getProjectsOwnedBy(
   owners: string[],
@@ -1344,7 +1376,7 @@ export async function getProjectsOwnedBy(
   const page = await getPagedItems<BsProject>(
     `query($owners: [String!]!, $limit: Int!, $offset: Int!) {
       projects(
-        where: { owner_in: $owners }
+        where: { owner_in: $owners, version: 6 }
         orderBy: "volume"
         orderDirection: "desc"
         limit: $limit
@@ -1371,14 +1403,14 @@ export type BsOperatorGrant = {
   version: number
 }
 
-/** Every live permission grant held BY an operator, across all projects. */
+/** Every live permission grant held BY an operator, across all V6 projects. */
 export async function getOperatorGrants(
   operator: string,
 ): Promise<BsOperatorGrant[]> {
   const page = await getPagedItems<BsOperatorGrant>(
     `query($operator: String!, $limit: Int!, $offset: Int!) {
       permissionHolders(
-        where: { operator: $operator }
+        where: { operator: $operator, version: 6 }
         limit: $limit
         offset: $offset
       ) {
@@ -1423,7 +1455,10 @@ export async function getProjectsByRefs(
             `{ AND: [{ chainId: ${ref.chainId} }, { projectId: ${ref.projectId} }, { version: ${ref.version} }] }`,
         ),
     ),
-  ].slice(0, 60)
+    // Beyond this slice the filter string gets unwieldy; overflow refs
+    // degrade gracefully to "Project N" rows without indexed display
+    // metadata rather than failing the whole lookup.
+  ].slice(0, 200)
   if (!pairs.length) return []
   const data = await bendystraw<{ projects: { items: BsProject[] } }>(
     `query($limit: Int!) {
@@ -1438,62 +1473,47 @@ export async function getProjectsByRefs(
   return data.projects.items
 }
 
-/**
- * Bendystraw indexes some deployments under more than one protocol version,
- * repeating the same underlying row (identical balances, identical tokens)
- * per version. Collapse to one row per identity, preferring the highest
- * version — the row the V6-first site should link and label.
- */
-export function dedupeVersionedRows<T extends { version: number }>(
-  rows: T[],
-  identity: (row: T) => string,
-): T[] {
-  const byKey = new Map<string, T>()
-  for (const row of rows) {
-    const key = identity(row)
-    const kept = byKey.get(key)
-    if (!kept || row.version > kept.version) byKey.set(key, row)
-  }
-  return [...byKey.values()]
-}
-
 export type BsAccountTokenHolding = {
   chainId: number
   projectId: number
-  version: number
-  /** 18-decimal fixed-point token balance. */
+  /** 18-decimal fixed-point token balance (credits + claimed ERC-20). */
   balance: string
+  /** The unclaimed-credit share of `balance`. */
+  creditBalance: string
+  /** The claimed ERC-20 share of `balance`. */
+  erc20Balance: string
 }
 
 /**
- * Every positive project-token balance held by an account, across chains and
- * protocol versions, largest first. Rows repeat per indexed version —
- * callers collapse them with `dedupeVersionedRows`.
+ * Positive V6 project-token balances held by an account, across chains,
+ * largest first. `totalCount` is the indexer's full count — when it exceeds
+ * `items.length` the fetch hit its cap and callers should say so.
  */
 export async function getAccountTokenHoldings(
   account: string,
-): Promise<BsAccountTokenHolding[]> {
-  const page = await getPagedItems<BsAccountTokenHolding>(
+): Promise<{ items: BsAccountTokenHolding[]; totalCount: number }> {
+  return getPagedItems<BsAccountTokenHolding>(
     `query($address: String!, $limit: Int!, $offset: Int!) {
       participants(
-        where: { address: $address, balance_gt: "0" }
+        where: { address: $address, balance_gt: "0", version: 6 }
         orderBy: "balance"
         orderDirection: "desc"
         limit: $limit
         offset: $offset
-      ) { items { chainId projectId version balance } totalCount }
+      ) {
+        items { chainId projectId balance creditBalance erc20Balance }
+        totalCount
+      }
     }`,
     'participants',
     { address: account.toLowerCase() },
     { pageSize: 200, max: 400 },
   )
-  return page.items
 }
 
 export type BsAccountNft = {
   chainId: number
   projectId: number
-  version: number
   tokenId: string
   tierId: number
   createdAt: number
@@ -1506,24 +1526,24 @@ export type BsAccountNft = {
 }
 
 /**
- * Every indexed 721 shop item an account currently owns, across chains and
- * versions, newest first. Rows can repeat per indexed version — callers
- * collapse them with `dedupeVersionedRows` keyed by chain + hook + tokenId.
+ * Every indexed V6 721 shop item an account currently owns, across chains,
+ * newest first. `totalCount` is the indexer's full count — when it exceeds
+ * `items.length` the fetch hit its cap and callers should say so.
  */
 export async function getAccountNfts(
   account: string,
-): Promise<BsAccountNft[]> {
+): Promise<{ items: BsAccountNft[]; totalCount: number }> {
   const page = await getPagedItems<BsAccountNft>(
     `query($owner: String!, $limit: Int!, $offset: Int!) {
       nfts(
-        where: { owner: $owner }
+        where: { owner: $owner, version: 6 }
         orderBy: "createdAt"
         orderDirection: "desc"
         limit: $limit
         offset: $offset
       ) {
         items {
-          chainId projectId version tokenId tierId createdAt
+          chainId projectId tokenId tierId createdAt
           hook { address }
           tier { resolvedUri metadata }
         }
@@ -1534,12 +1554,15 @@ export async function getAccountNfts(
     { owner: account.toLowerCase() },
     { pageSize: 200, max: 600 },
   )
-  return page.items.map(row => ({
-    ...row,
-    tokenId: String(row.tokenId),
-    tierId: Number(row.tierId),
-    createdAt: Number(row.createdAt),
-  }))
+  return {
+    items: page.items.map(row => ({
+      ...row,
+      tokenId: String(row.tokenId),
+      tierId: Number(row.tierId),
+      createdAt: Number(row.createdAt),
+    })),
+    totalCount: page.totalCount,
+  }
 }
 
 export async function getPermissionHoldersAcrossDeployments(

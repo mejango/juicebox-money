@@ -32,6 +32,8 @@ import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
+import { wagmiConfig } from '@/providers/Providers'
 import {
   POSITION_MANAGER_BY_CHAIN,
   alignDown,
@@ -785,9 +787,11 @@ function AddLiquidityForm({
           }),
         )
       } else {
-        // Deadline is set at send time (~20 min), like website — everything
-        // that touches funds is frozen inside unlockData.
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200)
+        // Deadline is set at send time — everything that touches funds is
+        // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
+        // gets 30 days (matching the Permit2 steps) because signature
+        // collection outlives 20 minutes and would strand the mint.
+        const deadline = swapDeadline(isSafeConnection(wagmiConfig))
         tx.send(
           buildModifyLiquiditiesRequest({
             chainId,

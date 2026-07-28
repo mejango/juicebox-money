@@ -12,6 +12,7 @@ import {
   jbControllerAbi,
   jbDirectoryAbi,
   jbOmnichainDeployerAbi,
+  jbPricesAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
@@ -150,9 +151,60 @@ export type MarketResult =
       pairIsC0: boolean
       /** Pair token per project token (market price). */
       price: number
-      /** Issuance ceiling: base-currency per token from the ruleset weight. */
+      /** Issuance ceiling in pair tokens per project token, converted from
+       *  the ruleset weight's base currency via JBPrices; null when there is
+       *  no usable feed (the ceiling is then omitted rather than guessed). */
       issuance: number | null
     }
+
+/**
+ * The issuance ceiling on the PAIR-TOKEN price axis, in pair tokens per
+ * project token. The ruleset weight prices tokens against the ruleset's
+ * `baseCurrency` (a standard id like ETH=1/USD=2 — or a token-keyed id),
+ * while the market card's axis is the accounting/pair token, so the
+ * base-per-token figure must be converted through the same project-scoped
+ * JBPrices feed the terminal itself uses on every payment
+ * (`pricePerUnitOf(projectId, pricingCurrency: pairCurrency, unitCurrency:
+ * baseCurrency)` — pair tokens per base unit). Returns null when there is no
+ * usable feed: a missing ceiling is honest, a wrongly-denominated one is not.
+ */
+export async function issuanceCeilingOf(
+  client: PublicClient,
+  {
+    chainId,
+    projectId,
+    weight,
+    baseCurrency,
+    pairCurrency,
+  }: {
+    chainId: JBChainId
+    projectId: bigint
+    /** Ruleset weight: tokens per base-currency unit, 18-dec fixed point. */
+    weight: bigint
+    baseCurrency: number
+    pairCurrency: number
+  },
+): Promise<number | null> {
+  if (weight <= 0n) return null
+  const basePerToken = 1 / (Number(weight) / 1e18)
+  if (baseCurrency === pairCurrency) return basePerToken
+  const prices = addrOf(JBCoreContracts.JBPrices, chainId)
+  if (!prices) return null
+  try {
+    const price = (await client.readContract({
+      address: prices,
+      abi: jbPricesAbi,
+      functionName: 'pricePerUnitOf',
+      args: [projectId, BigInt(pairCurrency), BigInt(baseCurrency), 18n],
+    })) as bigint
+    const pairPerBase = Number(price) / 1e18
+    if (!(pairPerBase > 0) || !isFinite(pairPerBase)) return null
+    return basePerToken * pairPerBase
+  } catch {
+    // No feed (JBPrices_PriceFeedNotFound) or a read failure: omit the line.
+    return null
+  }
+}
 
 /**
  * Resolve the project's buyback pool + live price. Port of website's
@@ -276,8 +328,15 @@ export async function resolveMarket(
   const price = poolPriceFromSqrt(sqrtP, pairIsC0, pair.decimals)
   if (price == null) return { status: 'nopool' }
 
-  const weight = ruleset.weight as bigint
-  const issuance = weight > 0n ? 1 / (Number(weight) / 1e18) : null
+  // The ceiling must land on the pair-token axis: convert the weight's
+  // base-currency denomination through JBPrices exactly like the terminal.
+  const issuance = await issuanceCeilingOf(client, {
+    chainId,
+    projectId: pid,
+    weight: ruleset.weight as bigint,
+    baseCurrency: Number(metadata.baseCurrency),
+    pairCurrency: Number(primary.currency),
+  })
 
   return {
     status: 'pool',

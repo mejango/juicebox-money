@@ -97,10 +97,10 @@ vi.mock('@/providers/Providers', () => ({
 import { AccountActivity } from '@/components/account/AccountActivity'
 import { AccountHeader } from '@/components/account/AccountHeader'
 import {
+  AccountShopHoldings,
   AccountTokenHoldings,
   groupNftHoldings,
   groupTokenHoldings,
-  nftHoldingIdentity,
 } from '@/components/account/AccountHoldings'
 import { AccountTabs } from '@/components/account/AccountTabs'
 import {
@@ -292,6 +292,34 @@ describe('AccountActivity', () => {
       )
     })
     expect(renderedText(renderer.root)).toContain('No onchain activity')
+  })
+
+  it('stops at the 1000-event window with an honest cap instead of a dead load-more', async () => {
+    // The bendystraw beneficiary-union window is clamped at 1000 rows, so a
+    // page past it can never grow the list. The next window (1000 + 25)
+    // would exceed the clamp: no Load More, an explicit cap line instead.
+    const events = Array.from({ length: 1000 }, (_, index) =>
+      activityEvent({ id: `event-${index}` }),
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountActivity, {
+          address: ALICE,
+          initialEvents: events,
+          totalCount: 1500,
+        }),
+      )
+    })
+    expect(
+      renderer.root
+        .findAllByType('button')
+        .filter(button => renderedText(button).includes('Load more')),
+    ).toHaveLength(0)
+    expect(renderedText(renderer.root)).toContain(
+      'Showing the most recent 1000 events',
+    )
+    expect(mocks.getAccountActivity).not.toHaveBeenCalled()
   })
 })
 
@@ -674,17 +702,16 @@ describe('account holdings grouping', () => {
   ): BsAccountTokenHolding => ({
     chainId: 1,
     projectId: 4,
-    version: 6,
     balance: '1000000000000000000',
+    creditBalance: '0',
+    erc20Balance: '1000000000000000000',
     ...overrides,
   })
 
-  it('collapses per-version duplicates and merges linked chains by sucker group', () => {
+  it('merges linked chains by sucker group and falls back per deployment', () => {
     const groups = groupTokenHoldings(
       [
-        // The same deployment indexed under v5 AND v6 — one row survives.
-        holding({ version: 5, balance: '3000000000000000000' }),
-        holding({ version: 6, balance: '3000000000000000000' }),
+        holding({ balance: '3000000000000000000' }),
         holding({ chainId: 8453, balance: '1000000000000000000' }),
         // Unlinked project without an indexed row: falls back gracefully.
         holding({ chainId: 10, projectId: 77, balance: '5' }),
@@ -721,7 +748,6 @@ describe('account holdings grouping', () => {
   const nft = (overrides: Partial<BsAccountNft>): BsAccountNft => ({
     chainId: 1,
     projectId: 4,
-    version: 6,
     tokenId: '49000000145',
     tierId: 49,
     createdAt: 100,
@@ -730,20 +756,10 @@ describe('account holdings grouping', () => {
     ...overrides,
   })
 
-  it('dedupes nfts by chain + hook + tokenId across version aliases', () => {
-    // Bendystraw can index the same NFT under per-version projectId aliases.
-    expect(nftHoldingIdentity(nft({ version: 5, projectId: 119 }))).toBe(
-      nftHoldingIdentity(nft({ version: 6, projectId: 4 })),
-    )
-    // Same tokenId under a different hook on the same chain is a different item.
-    expect(
-      nftHoldingIdentity(nft({ hook: { address: '0xother' } })),
-    ).not.toBe(nftHoldingIdentity(nft({})))
-
+  it('tallies nfts per project by tier', () => {
     const groups = groupNftHoldings(
       [
-        nft({ version: 5, projectId: 119 }),
-        nft({ version: 6, projectId: 4 }),
+        nft({}),
         nft({ tokenId: '49000000146' }),
         nft({
           tokenId: '7000000001',
@@ -797,6 +813,97 @@ describe('account holdings grouping', () => {
     expect(text).toContain('4 REV')
     expect(text).toContain('Ethereum')
     expect(text).toContain('Base')
+  })
+
+  it('shows the claimed/credits split only when both are nonzero, and keeps the combined headline', async () => {
+    const groups = groupTokenHoldings(
+      [
+        holding({
+          balance: '3000000000000000000',
+          creditBalance: '1000000000000000000',
+          erc20Balance: '2000000000000000000',
+        }),
+      ],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, { groups }),
+      )
+    })
+    const text = renderedText(renderer.root)
+    expect(text).toContain('3 REV')
+    expect(text).toContain('2 claimed · 1 credits')
+
+    // Credits-only balances keep the plain headline — no split line.
+    const creditsOnly = groupTokenHoldings(
+      [
+        holding({
+          creditBalance: '1000000000000000000',
+          erc20Balance: '0',
+        }),
+      ],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+    )
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, { groups: creditsOnly }),
+      )
+    })
+    expect(renderedText(renderer.root)).not.toContain('claimed')
+  })
+
+  it('surfaces truncation when more balances exist than were fetched', async () => {
+    const groups = groupTokenHoldings(
+      [holding({})],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, {
+          groups,
+          fetchedCount: 400,
+          totalCount: 900,
+        }),
+      )
+    })
+    expect(renderedText(renderer.root)).toContain(
+      'Showing the 400 largest of 900 balances',
+    )
+
+    // Complete fetches render no truncation note.
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountTokenHoldings, {
+          groups,
+          fetchedCount: 1,
+          totalCount: 1,
+        }),
+      )
+    })
+    expect(renderedText(renderer.root)).not.toContain('Showing the')
+  })
+
+  it('surfaces truncation on the store-item section too', async () => {
+    const groups = groupNftHoldings(
+      [nft({})],
+      [project({ chainId: 1, projectId: 4, name: 'Banny Retail' })],
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountShopHoldings, {
+          groups,
+          fetchedCount: 600,
+          totalCount: 750,
+        }),
+      )
+    })
+    expect(renderedText(renderer.root)).toContain(
+      'Showing the 600 newest of 750 items',
+    )
   })
 
   it('shows the tokens empty state', async () => {

@@ -9,8 +9,6 @@ import {
   AccountTokenHoldings,
   groupNftHoldings,
   groupTokenHoldings,
-  nftHoldingIdentity,
-  tokenHoldingIdentity,
 } from '@/components/account/AccountHoldings'
 import {
   AccountOperatedProjects,
@@ -24,17 +22,12 @@ import {
 import { AccountSafeProjects } from '@/components/account/AccountSafeProjects'
 import { AccountTabs } from '@/components/account/AccountTabs'
 import {
-  dedupeVersionedRows,
   getAccountActivity,
   getAccountNfts,
   getAccountTokenHoldings,
   getOperatorGrants,
   getProjectsByRefs,
   getProjectsOwnedBy,
-  type BsAccountActivityEvent,
-  type BsAccountNft,
-  type BsAccountTokenHolding,
-  type BsOperatorGrant,
   type BsProject,
 } from '@/lib/bendystraw'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
@@ -74,6 +67,15 @@ const getHoldingProjects = cache(
       : Promise.resolve([] as BsProject[]),
 )
 
+/** Degraded-state copy for a section whose fetch failed (repo convention). */
+function SectionError({ what }: { what: string }) {
+  return (
+    <p className="text-sm text-smoke-600">
+      Couldn&apos;t load {what} right now. Refresh to try again.
+    </p>
+  )
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -97,19 +99,18 @@ export default async function AccountPage({
   if (!resolved) notFound()
   const { address, ensName } = resolved
 
+  // Fetch failures degrade to per-section error states, never to a
+  // convincing-but-wrong empty state.
   const [activity, owned, grants, tokenHoldings, nftHoldings] =
     await Promise.all([
-      getFirstActivityPage(address).catch(() => ({
-        items: [] as BsAccountActivityEvent[],
-        totalCount: 0,
-      })),
-      getOwnedProjects(address).catch(() => [] as BsProject[]),
-      getGrants(address).catch(() => [] as BsOperatorGrant[]),
-      getTokenHoldings(address).catch(() => [] as BsAccountTokenHolding[]),
-      getNftHoldings(address).catch(() => [] as BsAccountNft[]),
+      getFirstActivityPage(address).catch(() => null),
+      getOwnedProjects(address).catch(() => null),
+      getGrants(address).catch(() => null),
+      getTokenHoldings(address).catch(() => null),
+      getNftHoldings(address).catch(() => null),
     ])
   const [grantProjects, tokenProjects, nftProjects] = await Promise.all([
-    grants.length
+    grants?.length
       ? getProjectsByRefs(
           grants.map(grant => ({
             chainId: grant.chainId,
@@ -119,14 +120,27 @@ export default async function AccountPage({
         ).catch(() => [] as BsProject[])
       : ([] as BsProject[]),
     getHoldingProjects(
-      dedupeVersionedRows(tokenHoldings, tokenHoldingIdentity),
+      (tokenHoldings?.items ?? []).map(row => ({
+        chainId: row.chainId,
+        projectId: row.projectId,
+        version: 6,
+      })),
     ),
-    getHoldingProjects(dedupeVersionedRows(nftHoldings, nftHoldingIdentity)),
+    getHoldingProjects(
+      (nftHoldings?.items ?? []).map(row => ({
+        chainId: row.chainId,
+        projectId: row.projectId,
+        version: 6,
+      })),
+    ),
   ])
-  const operated = groupOperatorGrants(grants, grantProjects)
-  const tokenGroups = groupTokenHoldings(tokenHoldings, tokenProjects)
-  const itemGroups = groupNftHoldings(nftHoldings, nftProjects)
-  const ownedKeys = owned.map(projectKey)
+  const operated = groupOperatorGrants(grants ?? [], grantProjects)
+  const tokenGroups = groupTokenHoldings(
+    tokenHoldings?.items ?? [],
+    tokenProjects,
+  )
+  const itemGroups = groupNftHoldings(nftHoldings?.items ?? [], nftProjects)
+  const ownedKeys = (owned ?? []).map(projectKey)
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 sm:py-12">
@@ -140,11 +154,15 @@ export default async function AccountPage({
               content: (
                 <section>
                   <AccountPendingRelayr address={address} />
-                  <AccountActivity
-                    address={address}
-                    initialEvents={activity.items}
-                    totalCount={activity.totalCount}
-                  />
+                  {activity === null ? (
+                    <SectionError what="this account&apos;s activity" />
+                  ) : (
+                    <AccountActivity
+                      address={address}
+                      initialEvents={activity.items}
+                      totalCount={activity.totalCount}
+                    />
+                  )}
                 </section>
               ),
             },
@@ -156,40 +174,65 @@ export default async function AccountPage({
                     <h2 className="mb-3 font-agrandir text-lg font-medium">
                       Tokens
                     </h2>
-                    <AccountTokenHoldings groups={tokenGroups} />
+                    {tokenHoldings === null ? (
+                      <SectionError what="token balances" />
+                    ) : (
+                      <AccountTokenHoldings
+                        groups={tokenGroups}
+                        fetchedCount={tokenHoldings.items.length}
+                        totalCount={tokenHoldings.totalCount}
+                      />
+                    )}
                   </div>
                   <div>
                     <h2 className="mb-3 font-agrandir text-lg font-medium">
                       Store items
                     </h2>
-                    <AccountShopHoldings groups={itemGroups} />
+                    {nftHoldings === null ? (
+                      <SectionError what="store items" />
+                    ) : (
+                      <AccountShopHoldings
+                        groups={itemGroups}
+                        fetchedCount={nftHoldings.items.length}
+                        totalCount={nftHoldings.totalCount}
+                      />
+                    )}
                   </div>
                 </section>
               ),
             },
             {
               label: 'Projects',
-              content: (
-                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {owned.map(project => (
-                    <AccountProjectCard
-                      key={projectKey(project)}
-                      project={project}
+              content:
+                owned === null ? (
+                  <section>
+                    <SectionError what="owned projects" />
+                  </section>
+                ) : (
+                  <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {owned.map(project => (
+                      <AccountProjectCard
+                        key={projectKey(project)}
+                        project={project}
+                      />
+                    ))}
+                    <AccountSafeProjects
+                      address={address}
+                      ownedKeys={ownedKeys}
+                      ownedCount={owned.length}
                     />
-                  ))}
-                  <AccountSafeProjects
-                    address={address}
-                    ownedKeys={ownedKeys}
-                    ownedCount={owned.length}
-                  />
-                </section>
-              ),
+                  </section>
+                ),
             },
             {
               label: 'Roles',
               content: (
                 <section>
-                  <AccountOperatedProjects groups={operated} />
+                  {grants === null ? (
+                    <SectionError what="granted roles" />
+                  ) : (
+                    <AccountOperatedProjects groups={operated} />
+                  )}
                 </section>
               ),
             },

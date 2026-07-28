@@ -63,6 +63,8 @@ import {
   buildErc20ApproveRequest,
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
+import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
+import { wagmiConfig } from "@/providers/Providers";
 import { resolveMarket } from "@/components/project/MarketSection";
 
 function payChainName(chainId: JBChainId): string {
@@ -1087,6 +1089,10 @@ export function PayPanel({
     }
     if (mode === "pay") {
       if (directSwapRoute && market?.status === "pool") {
+        // Safe signature collection outlives a 20-minute deadline; a Safe
+        // gets 30 days (matching the Permit2 window above). The min-output
+        // floor bounds the swap either way.
+        const viaSafe = isSafeConnection(wagmiConfig);
         const request = buildUniswapV4ExactInputSwapTx({
           chainId,
           poolKey: market.key,
@@ -1094,12 +1100,14 @@ export function PayPanel({
           amountIn: amountRaw,
           minimumAmountOut: bestRoute.beneficiaryTokenCount,
           recipient: address,
-          deadline: BigInt(Math.floor(Date.now() / 1000) + 20 * 60),
+          deadline: swapDeadline(viaSafe),
         });
         void tx.send({
           ...request,
           args: request.args as unknown as readonly unknown[],
-          label: "Swap for project tokens",
+          label: viaSafe
+            ? "Swap for project tokens (30-day deadline for Safe signature collection)"
+            : "Swap for project tokens",
         });
         return;
       }

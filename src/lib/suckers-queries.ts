@@ -12,8 +12,9 @@
  * reconstructs and verifies that claim payload on-chain at claim time.
  */
 
-import { bendystraw, getProject } from '@/lib/bendystraw'
+import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import { suckerBytes32ToAddress } from '@bananapus/nana-sdk-core/v6'
+import { bendystraw, getProject, testnetHint } from '@/lib/bendystraw'
 
 /** A bytes32-packed EVM address (left-padded) unpacked to its 20-byte form. */
 function unpackAddress(bytes32: string): string {
@@ -48,6 +49,8 @@ type ClaimRow = {
   chainId: number
   sucker: string
   peerChainId: number
+  /** The LOCAL terminal token on the claiming (destination) chain. */
+  token: string | null
   beneficiary: string
   projectTokenCount: string
   terminalTokenAmount: string
@@ -116,7 +119,7 @@ const BRIDGE_EVENTS_QUERY = `
       limit: 500
     ) {
       items {
-        chainId sucker peerChainId beneficiary projectTokenCount
+        chainId sucker peerChainId token beneficiary projectTokenCount
         terminalTokenAmount index
       }
     }
@@ -132,8 +135,10 @@ const BRIDGE_EVENTS_QUERY = `
 /**
  * Queued cross-chain movements for a project's sucker group, newest first,
  * with claimed movements dropped. Resolves the sucker group from the given
- * chain + project when one isn't supplied. Returns [] when the project has
- * no sucker group (nothing to bridge).
+ * chain + project when one isn't supplied; when both a suckerGroupId and a
+ * chainId are supplied the chainId is only an endpoint-routing hint (testnet
+ * groups live on the testnet indexer). Returns [] when the project has no
+ * sucker group (nothing to bridge).
  */
 export async function getBridgeMovements(args: {
   suckerGroupId?: string
@@ -152,7 +157,11 @@ export async function getBridgeMovements(args: {
     bridgeToRemoteEvents: { items: RemoteRow[] }
     bridgeClaimEvents: { items: ClaimRow[] }
     inboxRootReceivedEvents: { items: InboxRow[] }
-  }>(BRIDGE_EVENTS_QUERY, { suckerGroupId }, { revalidate: 20 })
+  }>(
+    BRIDGE_EVENTS_QUERY,
+    { suckerGroupId },
+    { revalidate: 20, testnet: testnetHint(args.chainId) },
+  )
 
   const outbox = data.bridgeToOutboxEvents.items
   const remote = data.bridgeToRemoteEvents.items
@@ -160,19 +169,49 @@ export async function getBridgeMovements(args: {
   const inbox = data.inboxRootReceivedEvents.items
 
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+  const isNative = (token: string) => eq(token, NATIVE_TOKEN)
+
+  // Distinct ERC-20 outbox trees per source sucker, for claim attribution.
+  const erc20TreesOf = new Map<string, Set<string>>()
+  for (const o of outbox) {
+    if (isNative(o.token)) continue
+    const key = `${o.chainId}:${o.sucker.toLowerCase()}`
+    let tokens = erc20TreesOf.get(key)
+    if (!tokens) erc20TreesOf.set(key, (tokens = new Set()))
+    tokens.add(o.token.toLowerCase())
+  }
+
+  // Each token tree numbers its leaves independently, so a claim only
+  // settles a leaf from ITS tree. The claim's token is the LOCAL token on
+  // the claiming chain: the native sentinel matches the native tree
+  // directly; an ERC-20 claim matches by exact address, or — when its local
+  // address differs from the source token's (e.g. USDC) — unambiguously
+  // when the sucker bridges a single ERC-20. A claim row without a token
+  // (older indexer schema) matches any tree, preserving prior behavior.
+  const sameTokenTree = (claim: ClaimRow, leaf: OutboxRow): boolean => {
+    if (!claim.token) return true
+    if (isNative(claim.token) !== isNative(leaf.token)) return false
+    if (isNative(claim.token) || eq(claim.token, leaf.token)) return true
+    return (
+      (erc20TreesOf.get(`${leaf.chainId}:${leaf.sucker.toLowerCase()}`)
+        ?.size ?? 0) <= 1
+    )
+  }
 
   const movements: BridgeMovement[] = []
   for (const o of outbox) {
     const destSucker = unpackAddress(o.peer)
     const beneficiary = unpackAddress(o.beneficiary)
 
-    // Claimed on the destination: same leaf identity landed there. Drop it —
-    // the move is finished and shows in the activity feed.
+    // Claimed on the destination: same leaf identity landed there, within
+    // the same token tree. Drop it — the move is finished and shows in the
+    // activity feed.
     const claimed = claims.some(
       c =>
         c.chainId === o.peerChainId &&
         eq(c.sucker, destSucker) &&
         c.index === o.index &&
+        sameTokenTree(c, o) &&
         c.projectTokenCount === o.projectTokenCount &&
         c.terminalTokenAmount === o.terminalTokenAmount &&
         eq(unpackAddress(c.beneficiary), beneficiary),

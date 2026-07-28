@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  dedupeVersionedRows,
   getAccountActivity,
   getAccountNfts,
   getAccountTokenHoldings,
@@ -79,7 +78,8 @@ describe('account activity query', () => {
     })
     expect(query).toContain('from: $address')
     expect(query).toContain('project { name logoUri tokenSymbol decimals }')
-    expect(query).not.toContain('version: 6')
+    // The account view is V6-only: every branch pins the version.
+    expect(query).toContain('from: $address, version: 6')
   })
 
   it('widens the fetch window to cover the requested offset', async () => {
@@ -104,7 +104,7 @@ describe('account activity query', () => {
     }
     expect(
       query.match(
-        /AND: \[\{ beneficiary: \$address \}, \{ from_not: \$address \}\]/g,
+        /AND: \[\{ beneficiary: \$address \}, \{ from_not: \$address \}, \{ version: 6 \}\]/g,
       ),
     ).toHaveLength(BENEFICIARY_LISTS.length)
   })
@@ -228,7 +228,7 @@ describe('owned projects query', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('queries owner_in with lowercased owners across all versions', async () => {
+  it('queries owner_in with lowercased owners, pinned to V6', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       graphqlResponse({
         data: {
@@ -236,7 +236,7 @@ describe('owned projects query', () => {
             totalCount: 2,
             items: [
               { chainId: 1, projectId: 3, version: 6, owner: ALICE.toLowerCase() },
-              { chainId: 10, projectId: 9, version: 4, owner: ALICE.toLowerCase() },
+              { chainId: 10, projectId: 9, version: 6, owner: ALICE.toLowerCase() },
             ],
           },
         },
@@ -249,7 +249,7 @@ describe('owned projects query', () => {
     expect(projects).toHaveLength(2)
     const { query, variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
     expect(query).toContain('owner_in: $owners')
-    expect(query).not.toContain('version:')
+    expect(query).toContain('version: 6')
     expect(variables.owners).toEqual([
       ALICE.toLowerCase(),
       '0xdef2222222222222222222222222222222222222',
@@ -296,6 +296,7 @@ describe('operator grants query', () => {
     expect(grants[0].permissions).toEqual([17, 25])
     const { query, variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
     expect(query).toContain('operator: $operator')
+    expect(query).toContain('version: 6')
     expect(variables.operator).toBe(ALICE.toLowerCase())
   })
 })
@@ -346,55 +347,21 @@ describe('projects-by-refs query', () => {
   })
 })
 
-describe('dedupeVersionedRows', () => {
-  it('keeps one row per identity, preferring the highest version', () => {
-    const rows = [
-      { chainId: 1, projectId: 4, version: 5, balance: '10' },
-      { chainId: 1, projectId: 4, version: 6, balance: '10' },
-      { chainId: 8453, projectId: 4, version: 5, balance: '7' },
-      { chainId: 1, projectId: 9, version: 4, balance: '3' },
-    ]
-
-    const deduped = dedupeVersionedRows(
-      rows,
-      row => `${row.chainId}:${row.projectId}`,
-    )
-
-    expect(deduped).toHaveLength(3)
-    expect(deduped).toContainEqual({
-      chainId: 1,
-      projectId: 4,
-      version: 6,
-      balance: '10',
-    })
-    // Distinct identities survive untouched, whatever their version.
-    expect(deduped).toContainEqual(rows[2])
-    expect(deduped).toContainEqual(rows[3])
-  })
-
-  it('is order-independent for the duplicate pair', () => {
-    const identity = (row: { chainId: number; projectId: number }) =>
-      `${row.chainId}:${row.projectId}`
-    const v6First = dedupeVersionedRows(
-      [
-        { chainId: 1, projectId: 4, version: 6 },
-        { chainId: 1, projectId: 4, version: 5 },
-      ],
-      identity,
-    )
-    expect(v6First).toEqual([{ chainId: 1, projectId: 4, version: 6 }])
-  })
-})
-
 describe('account holdings queries', () => {
-  it('reads positive balances across every version for the lowercased address', async () => {
+  it('reads positive V6 balances with the credits/ERC-20 split and reports the true total', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       graphqlResponse({
         data: {
           participants: {
-            totalCount: 1,
+            totalCount: 900,
             items: [
-              { chainId: 1, projectId: 4, version: 6, balance: '10' },
+              {
+                chainId: 1,
+                projectId: 4,
+                balance: '10',
+                creditBalance: '3',
+                erc20Balance: '7',
+              },
             ],
           },
         },
@@ -402,19 +369,23 @@ describe('account holdings queries', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const rows = await getAccountTokenHoldings(ALICE)
+    const page = await getAccountTokenHoldings(ALICE)
 
-    expect(rows).toHaveLength(1)
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0].creditBalance).toBe('3')
+    expect(page.items[0].erc20Balance).toBe('7')
+    // The fetch caps out below totalCount — callers surface the truncation.
+    expect(page.totalCount).toBe(900)
     const { query, variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
     expect(variables.address).toBe(ALICE.toLowerCase())
     expect(query).toContain('address: $address')
     expect(query).toContain('balance_gt: "0"')
     expect(query).toContain('orderBy: "balance"')
-    // Rows come back per indexed version; the caller dedupes.
-    expect(query).not.toContain('version:')
+    // The account view is V6-only.
+    expect(query).toContain('version: 6')
   })
 
-  it('reads owned nfts across every version with tier display metadata', async () => {
+  it('reads owned V6 nfts with tier display metadata and reports the true total', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       graphqlResponse({
         data: {
@@ -424,7 +395,6 @@ describe('account holdings queries', () => {
               {
                 chainId: 1,
                 projectId: 4,
-                version: 5,
                 tokenId: '49000000145',
                 tierId: 49,
                 createdAt: 1765214723,
@@ -438,13 +408,12 @@ describe('account holdings queries', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const rows = await getAccountNfts(ALICE)
+    const page = await getAccountNfts(ALICE)
 
-    expect(rows).toEqual([
+    expect(page.items).toEqual([
       {
         chainId: 1,
         projectId: 4,
-        version: 5,
         tokenId: '49000000145',
         tierId: 49,
         createdAt: 1765214723,
@@ -452,10 +421,11 @@ describe('account holdings queries', () => {
         tier: { resolvedUri: null, metadata: { name: 'Dagger' } },
       },
     ])
+    expect(page.totalCount).toBe(1)
     const { query, variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
     expect(variables.owner).toBe(ALICE.toLowerCase())
     expect(query).toContain('owner: $owner')
     expect(query).toContain('tier { resolvedUri metadata }')
-    expect(query).not.toContain('version:')
+    expect(query).toContain('version: 6')
   })
 })

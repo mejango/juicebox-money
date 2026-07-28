@@ -7,6 +7,7 @@ import {
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
+  jbMultiTerminalAbi,
   jbSplitsAbi,
   jbTerminalStoreAbi,
   jbTokensAbi,
@@ -56,6 +57,7 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import type { BsParticipant } from '@/lib/bendystraw'
+import { netOfCashOutFee } from '@/lib/cashOut'
 import {
   compactTokenTotal,
   fmtPct,
@@ -330,8 +332,9 @@ type Position = {
   erc20Balance: bigint
   /** The project's ERC-20, or null when only credits exist. */
   token: Address | null
-  /** What the full balance would reclaim from surplus right now, or null
-   *  when the project has no accounting context on this chain. */
+  /** What the full balance would reclaim from surplus right now, net of the
+   *  protocol cash-out fee, or null when the project has no accounting
+   *  context on this chain. */
   cashOutValue: bigint | null
   cashOutDecimals: number
   cashOutSymbol: string
@@ -380,7 +383,7 @@ function YourChainRow({
       if (!tokensAddress || !terminal || !store) {
         throw new Error(`Unsupported chain ${chainId}`)
       }
-      const [balance, credits, token, contexts] = await Promise.all([
+      const [balance, credits, token, contexts, ruleset] = await Promise.all([
         client.readContract({
           abi: jbTokensAbi,
           address: tokensAddress,
@@ -397,6 +400,10 @@ function YourChainRow({
           chainId,
           projectId: BigInt(projectId),
         }),
+        getCurrentRuleset(client, {
+          chainId,
+          projectId: BigInt(projectId),
+        }).catch(() => null),
       ])
       const erc20Balance = token
         ? await client.readContract({
@@ -408,7 +415,9 @@ function YourChainRow({
         : 0n
 
       // Cash-out value: what the FULL balance would reclaim from surplus
-      // right now, denominated in the primary accounting token.
+      // right now, denominated in the primary accounting token and net of
+      // the protocol's exact 2.5% cash-out fee (a non-zero tax rate fees
+      // EVERY cash out; a zero tax rate fees only the fee-free surplus).
       const primary = contexts[0]
       let cashOutValue: bigint | null = null
       let cashOutSymbol = ''
@@ -418,7 +427,7 @@ function YourChainRow({
         cashOutSymbol = await readTokenSymbol(client, primary.token, {
           chainId,
         })
-        cashOutValue =
+        const gross =
           balance > 0n
             ? ((await client.readContract({
                 abi: jbTerminalStoreAbi,
@@ -434,6 +443,27 @@ function YourChainRow({
                 ],
               })) as bigint)
             : 0n
+        // Unreadable ruleset or fee-free surplus assume the full fee, so
+        // the shown value never overstates what a cash out would pay.
+        const cashOutTaxRate = ruleset
+          ? BigInt(ruleset.metadata.cashOutTaxRate)
+          : null
+        const feeFreeSurplus =
+          gross > 0n && cashOutTaxRate === 0n
+            ? await client
+                .readContract({
+                  abi: jbMultiTerminalAbi,
+                  address: terminal,
+                  functionName: 'feeFreeSurplusOf',
+                  args: [BigInt(projectId), primary.token],
+                })
+                .catch(() => gross)
+            : gross
+        cashOutValue = netOfCashOutFee({
+          gross,
+          cashOutTaxRate: cashOutTaxRate ?? 1n,
+          feeFreeSurplus,
+        })
       }
 
       // Max loan: what the full balance can currently borrow against via
@@ -888,8 +918,10 @@ function AllHoldersCard({
     staleTime: 60_000,
     retry: 1,
     queryFn: async () => {
+      // chainId rides along on the suckerGroup branch as an endpoint-routing
+      // hint (testnet groups live on the testnet indexer).
       const qs = suckerGroupId
-        ? `suckerGroupId=${encodeURIComponent(suckerGroupId)}`
+        ? `suckerGroupId=${encodeURIComponent(suckerGroupId)}&chainId=${chainId}`
         : `chainId=${chainId}&projectId=${projectId}`
       const res = await fetch(`/api/participants?${qs}`)
       if (!res.ok) throw new Error('Holder data unavailable')
@@ -1033,6 +1065,21 @@ function effectiveSplitPercent(
   reservedPercent: number,
 ): number {
   return (reservedPercent / 100) * (splitPercent / SPLITS_TOTAL_PERCENT)
+}
+
+/**
+ * The ruleset id for one stage on one chain, from that chain's OWN ruleset
+ * history. Ruleset ids are creation timestamps and differ per chain; the
+ * stage ORDER is what omnichain deployments share, so the index over the
+ * start-sorted list identifies the stage. Null when the chain has no such
+ * stage — the caller renders an error state rather than another chain's id.
+ */
+export function stageRulesetIdOn(
+  all: readonly JBRulesetWithMetadata[],
+  stageIndex: number,
+): number | null {
+  const sorted = all.slice().sort((a, b) => a.ruleset.start - b.ruleset.start)
+  return sorted[stageIndex]?.ruleset.id ?? null
 }
 
 /**
@@ -1194,7 +1241,7 @@ function ReservedCard({
         <p className="mt-4 text-sm text-smoke-700">
           Couldn’t read splits for this stage.
         </p>
-      ) : rows.length === 0 ? (
+      ) : rows.length === 0 && chains.length <= 1 ? (
         <p className="mt-4 text-sm text-smoke-700">
           {isRevnet
             ? 'No splits are configured for this stage — split tokens go to the revnet owner.'
@@ -1214,7 +1261,12 @@ function ReservedCard({
                   key={`${rulesetId}:${cid}`}
                   chainId={cid as JBChainId}
                   projectId={pid}
-                  rows={rows}
+                  // Splits live per chain under per-chain ruleset ids; the
+                  // route chain's rows are only that chain's truth. Peers
+                  // read their own (homeRows fast path for the route chain).
+                  homeRows={cid === chainId ? rows : null}
+                  stageIndex={activeStageIndex}
+                  isRevnet={isRevnet}
                   reservedPercent={reservedPercent}
                   isCurrentStage={isCurrentStage}
                 />
@@ -1238,20 +1290,30 @@ function ReservedCard({
   )
 }
 
-/** One inline chain table, with that chain's pending balance and action. */
+/** One inline chain table, with that chain's pending balance and action.
+ *  Splits are read from THIS chain's JBSplits under THIS chain's ruleset id
+ *  for the stage — ruleset ids differ per chain, and split edits land per
+ *  chain, so rendering the route chain's rows here would misreport peers.
+ *  The route chain passes its already-read rows through `homeRows`. */
 function ChainSplitsBlock({
   chainId,
   projectId,
-  rows,
+  homeRows,
+  stageIndex,
+  isRevnet,
   reservedPercent,
   isCurrentStage,
 }: {
   chainId: JBChainId
   projectId: number
-  rows: readonly SplitRow[]
+  /** The route chain's already-read rows (fast path), null for peer chains. */
+  homeRows: readonly SplitRow[] | null
+  stageIndex: number
+  isRevnet: boolean
   reservedPercent: number
   isCurrentStage: boolean
 }) {
+  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const directoryAddress = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId
   ] as Address
@@ -1264,6 +1326,41 @@ function ChainSplitsBlock({
     chainId,
     query: { staleTime: 60_000 },
   })
+
+  const {
+    data: chainRows,
+    isLoading: chainRowsLoading,
+    isError: chainRowsError,
+  } = useQuery({
+    queryKey: ['chainStageSplits', chainId, projectId, stageIndex, isCurrentStage],
+    enabled: homeRows === null && !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: async (): Promise<readonly SplitRow[]> => {
+      const args = { chainId, projectId: BigInt(projectId) }
+      // The current stage uses this chain's own currentRulesetOf (it also
+      // absorbs cycle rollover); a browsed stage is matched by start order.
+      const rid = isCurrentStage
+        ? (await getCurrentRuleset(publicClient!, args)).ruleset.id
+        : stageRulesetIdOn(
+            await getAllRulesets(publicClient!, { ...args, size: 50n }),
+            stageIndex,
+          )
+      if (rid == null) {
+        throw new Error('This stage does not exist on this chain.')
+      }
+      return (await publicClient!.readContract({
+        address: jbContractAddress['6'][JBCoreContracts.JBSplits][
+          chainId
+        ] as Address,
+        abi: jbSplitsAbi,
+        functionName: 'splitsOf',
+        args: [BigInt(projectId), BigInt(rid), RESERVED_TOKEN_SPLIT_GROUP_ID],
+      })) as readonly SplitRow[]
+    },
+  })
+
+  const rows = homeRows ?? chainRows ?? []
 
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const symbol = projectToken?.symbol || 'tokens'
@@ -1283,12 +1380,45 @@ function ChainSplitsBlock({
 
   const availablePending = isCurrentStage ? pending : 0n
 
+  if (homeRows === null && chainRowsLoading) {
+    return (
+      <section>
+        <div className="flex items-center gap-2 text-sm font-medium text-smoke-700">
+          <ChainIcon chainId={chainId} size={18} />
+          <span>{chainName(chainId)}</span>
+        </div>
+        <SkeletonTable rows={2} columns={3} className="mt-2" />
+      </section>
+    )
+  }
+
+  if (homeRows === null && chainRowsError) {
+    return (
+      <section>
+        <div className="flex items-center gap-2 text-sm font-medium text-smoke-700">
+          <ChainIcon chainId={chainId} size={18} />
+          <span>{chainName(chainId)}</span>
+        </div>
+        <p className="mt-2 text-sm text-smoke-700">
+          Couldn’t read this stage’s splits on this chain right now.
+        </p>
+      </section>
+    )
+  }
+
   return (
     <section>
       <div className="flex items-center gap-2 text-sm font-medium text-smoke-700">
         <ChainIcon chainId={chainId} size={18} />
         <span>{chainName(chainId)}</span>
       </div>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-smoke-700">
+          {isRevnet
+            ? 'No splits are configured for this stage on this chain — split tokens go to the revnet owner.'
+            : 'No reserved recipients are configured on this chain — reserved tokens go to the project owner.'}
+        </p>
+      ) : (
       <div className="mt-2 overflow-hidden rounded-xl border border-smoke-200">
         {rows.map((split, index) => {
           const fraction = split.percent / SPLITS_TOTAL_PERCENT
@@ -1328,6 +1458,7 @@ function ChainSplitsBlock({
           )
         })}
       </div>
+      )}
       <div className="flex justify-end">
         <DistributeFlow
           chainId={chainId}

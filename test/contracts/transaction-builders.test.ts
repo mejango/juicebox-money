@@ -28,6 +28,7 @@ import {
   buildAdjustTiersRequest,
   buildErc20ApproveRequest,
   buildPermissionsAuthorityCall,
+  buildQueueRulesetsAuthorityCall,
   buildQueueRulesetsRequest,
   buildSendPayoutsRequest,
   buildSplitGroupsAuthorityCall,
@@ -307,6 +308,40 @@ describe("local transaction builders", () => {
     expect(request.args).toEqual([23n, [configuration], "next cycle"]);
     expect(data.slice(0, 10)).toBe("0x3141db70");
     expect(decodeFunctionData({ abi: request.abi, data })).toEqual({
+      functionName: "queueRulesetsOf",
+      args: [23n, [configuration], "next cycle"],
+    });
+  });
+
+  it("wraps the exact SDK queue calldata for authority routing", () => {
+    const configuration = buildRulesetConfiguration({
+      mustStartAtOrAfter: 1_800_000_000,
+      duration: 604_800,
+      weight: 1_000n * 10n ** 18n,
+      weightCutPercent: 25_000_000,
+      approvalHook: HOOK,
+    });
+    const call = buildQueueRulesetsAuthorityCall({
+      chainId: CHAIN_ID,
+      authority: AUTHORITY,
+      controller: CONTROLLER,
+      projectId: 23n,
+      rulesetConfigurations: [configuration],
+      memo: "next cycle",
+      label: "Queue new rules",
+    });
+
+    expect(call).toMatchObject({
+      chainId: CHAIN_ID,
+      authority: AUTHORITY,
+      target: CONTROLLER,
+      functionName: "queueRulesetsOf",
+      contractName: "JBController",
+      label: "Queue new rules",
+      args: [23n, [configuration], "next cycle"],
+    });
+    expect(call.data.slice(0, 10)).toBe("0x3141db70");
+    expect(decodeFunctionData({ abi: call.abi!, data: call.data })).toEqual({
       functionName: "queueRulesetsOf",
       args: [23n, [configuration], "next cycle"],
     });
