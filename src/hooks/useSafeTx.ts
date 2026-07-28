@@ -11,6 +11,7 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'
 import {
@@ -140,6 +141,11 @@ export function useSafeTx(chainId: number) {
   const send = useCallback(
     async (request: TxRequest) => {
       if (inFlightRef.current) return null
+      if (getViewAs()) {
+        setError(VIEW_AS_WRITE_BLOCKED)
+        setPhase('error')
+        return null
+      }
       if (!isConnected || !publicClient) {
         setError('Connect a wallet first.')
         setPhase('error')

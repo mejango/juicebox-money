@@ -1,15 +1,78 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { isAddress, type Address } from 'viem'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useWallet } from '@/hooks/useWallet'
+import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
+import { useViewAs } from '@/lib/viewAs'
+
+/** Inline "View as…" prompt: an address or ENS name turns on view-as mode. */
+function ViewAsPrompt({ onDone }: { onDone: () => void }) {
+  const { setViewAs } = useViewAs()
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    const input = value.trim()
+    setError(null)
+    if (isAddress(input)) {
+      setViewAs(input as Address)
+      onDone()
+      return
+    }
+    if (looksLikeEns(input)) {
+      setBusy(true)
+      try {
+        const resolved = await lookupEnsAddress(input)
+        if (resolved) {
+          setViewAs(resolved)
+          onDone()
+          return
+        }
+        setError('Could not resolve that ENS name.')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    setError('Enter an address or ENS name.')
+  }
+
+  return (
+    <form onSubmit={submit} className="px-4 py-3">
+      <label className="block text-xs font-medium text-smoke-700">
+        View the site as
+      </label>
+      <input
+        value={value}
+        onChange={event => setValue(event.target.value)}
+        placeholder="Address or ENS"
+        autoFocus
+        className="mt-1.5 h-9 w-full rounded-lg border border-smoke-200 bg-white px-2.5 text-sm text-ink placeholder:text-smoke-500 focus:border-bluebs-500 focus:outline-none"
+      />
+      {error ? <p className="mt-1.5 text-xs text-crush-600">{error}</p> : null}
+      <button
+        type="submit"
+        disabled={busy}
+        className="btn-secondary mt-2 h-9 w-full text-sm"
+      >
+        {busy ? 'Resolving…' : 'View as'}
+      </button>
+    </form>
+  )
+}
 
 export function WalletButton() {
   const { isConnected, address, connectors, connectWith, openSignIn, disconnect } =
     useWallet()
+  const { viewAs } = useViewAs()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [viewAsOpen, setViewAsOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -17,9 +80,29 @@ export function WalletButton() {
   // server so hydration always matches.
   useEffect(() => setMounted(true), [])
 
-  useOutsideClose(menuRef, () => setMenuOpen(false), menuOpen)
+  const closeMenu = () => {
+    setMenuOpen(false)
+    setViewAsOpen(false)
+  }
+
+  useOutsideClose(menuRef, closeMenu, menuOpen)
 
   const connected = mounted && isConnected && !!address
+  // While view-as is active, "View account" follows the impersonated account.
+  const accountAddress = (mounted ? viewAs : null) ?? address
+
+  const viewAsItem = (
+    <button
+      onClick={() => setViewAsOpen(open => !open)}
+      aria-expanded={viewAsOpen}
+      className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+    >
+      View as…
+      <span className="block text-xs font-normal text-smoke-700">
+        Browse the site as any address
+      </span>
+    </button>
+  )
 
   return (
     <div className="relative" ref={menuRef}>
@@ -44,19 +127,23 @@ export function WalletButton() {
 
       {menuOpen ? (
         <div className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
-          {connected ? (
+          {viewAsOpen ? (
+            <ViewAsPrompt onDone={closeMenu} />
+          ) : connected ? (
             <>
               <Link
-                href={`/account/${address}`}
-                onClick={() => setMenuOpen(false)}
+                href={`/account/${accountAddress}`}
+                onClick={closeMenu}
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
               >
                 View account
               </Link>
               <div className="mx-4 my-1 border-t border-smoke-200" />
+              {viewAsItem}
+              <div className="mx-4 my-1 border-t border-smoke-200" />
               <button
                 onClick={() => {
-                  setMenuOpen(false)
+                  closeMenu()
                   disconnect()
                 }}
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
@@ -68,7 +155,7 @@ export function WalletButton() {
             <>
               <button
                 onClick={() => {
-                  setMenuOpen(false)
+                  closeMenu()
                   openSignIn()
                 }}
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
@@ -83,7 +170,7 @@ export function WalletButton() {
                 <button
                   key={c.id}
                   onClick={() => {
-                    setMenuOpen(false)
+                    closeMenu()
                     connectWith(c.id).catch(() => {})
                   }}
                   className="block w-full px-4 py-2.5 text-left text-sm font-medium text-ink/90 hover:bg-smoke-25"
@@ -91,6 +178,8 @@ export function WalletButton() {
                   {c.name}
                 </button>
               ))}
+              <div className="mx-4 my-1 border-t border-smoke-200" />
+              {viewAsItem}
             </>
           )}
         </div>

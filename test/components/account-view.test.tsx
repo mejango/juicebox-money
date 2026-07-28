@@ -287,6 +287,34 @@ describe('AccountActivity', () => {
 })
 
 describe('AccountHeader view-as lookup', () => {
+  it('toggles site-wide view-as mode for this account', async () => {
+    const { clearViewAs, getViewAs } = await import('@/lib/viewAs')
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountHeader, { address: ALICE, ensName: null }),
+      )
+    })
+    const findToggle = () =>
+      renderer.root.findAll(
+        node =>
+          node.type === 'button' &&
+          ['View site as this account', 'Exit View as'].includes(
+            node.children.join(''),
+          ),
+      )[0]
+
+    expect(findToggle().children.join('')).toBe('View site as this account')
+    await act(async () => findToggle().props.onClick())
+    expect(getViewAs()).toBe(ALICE)
+    expect(findToggle().children.join('')).toBe('Exit View as')
+
+    await act(async () => findToggle().props.onClick())
+    expect(getViewAs()).toBeNull()
+    clearViewAs()
+  })
+
+
   it('navigates straight to a pasted address', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

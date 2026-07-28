@@ -1,15 +1,16 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState, type FormEvent } from 'react'
-import { isAddress } from 'viem'
+import { useEffect, useState, type FormEvent } from 'react'
+import { isAddress, type Address } from 'viem'
 import { identityGradient } from '@/components/ActivityList'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { useViewAs } from '@/lib/viewAs'
 
-/** The "view as" jump box: any address or ENS name navigates to its account. */
+/** The jump box: any address or ENS name navigates to its account page. */
 function AccountLookup() {
   const router = useRouter()
   const [value, setValue] = useState('')
@@ -47,16 +48,16 @@ function AccountLookup() {
         <input
           value={value}
           onChange={event => setValue(event.target.value)}
-          placeholder="View as address or ENS"
-          aria-label="View another account"
-          className="h-10 w-full min-w-0 rounded-lg border border-smoke-200 bg-white px-3 text-sm text-ink placeholder:text-smoke-500 focus:border-bluebs-500 focus:outline-none sm:w-60"
+          placeholder="Go to address or ENS"
+          aria-label="Go to another account"
+          className="h-10 w-full min-w-0 rounded-lg border border-smoke-200 bg-white px-3 text-sm text-ink placeholder:text-smoke-500 focus:border-bluebs-500 focus:outline-none sm:w-52"
         />
         <button
           type="submit"
           disabled={busy}
           className="btn-secondary h-10 shrink-0 px-4 text-sm"
         >
-          {busy ? 'Resolving…' : 'View'}
+          {busy ? 'Resolving…' : 'Go'}
         </button>
       </div>
       {error ? <p className="mt-1.5 text-xs text-crush-600">{error}</p> : null}
@@ -64,9 +65,32 @@ function AccountLookup() {
   )
 }
 
+/** Toggle site-wide "View as" mode for this account. */
+function ViewSiteAsButton({ address }: { address: string }) {
+  const { viewAs, setViewAs, clearViewAs } = useViewAs()
+  // View-as state only exists client-side; render the inactive shell on the
+  // server so hydration always matches.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
+  const active =
+    mounted && !!viewAs && viewAs.toLowerCase() === address.toLowerCase()
+
+  return (
+    <button
+      onClick={() =>
+        active ? clearViewAs() : setViewAs(address as Address)
+      }
+      className="btn-secondary h-10 shrink-0 px-4 text-sm"
+    >
+      {active ? 'Exit View as' : 'View site as this account'}
+    </button>
+  )
+}
+
 /**
  * The account view's masthead: identity bubble, ENS-aware label, explorer
- * link, and the view-as jump box.
+ * link, the site-wide view-as toggle, and the account jump box.
  */
 export function AccountHeader({
   address,
@@ -99,7 +123,10 @@ export function AccountHeader({
           </p>
         </div>
       </div>
-      <AccountLookup />
+      <div className="flex flex-col gap-3 sm:items-end">
+        <ViewSiteAsButton address={address} />
+        <AccountLookup />
+      </div>
     </header>
   )
 }

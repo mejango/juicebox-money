@@ -1,4 +1,5 @@
 import type { Address } from 'viem'
+import { assertNoViewAs } from '@/lib/viewAs'
 
 export type ReviewedWritePhase = 'review' | 'simulating' | 'signing'
 
@@ -36,6 +37,7 @@ export async function submitReviewedContractWrite<
   onPhase,
   accountChangedError = 'Connected account changed. Review the transaction again.',
 }: ReviewedContractWriteOptions<TRequest, TSimulated, THash>): Promise<THash> {
+  assertNoViewAs()
   if (!expectedAccount) throw new Error('Connect a wallet first.')
 
   onPhase?.('review')

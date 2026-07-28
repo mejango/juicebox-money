@@ -27,6 +27,7 @@ import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { txPhaseLabel, useSafeTx } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
+import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { billionthsToPct, etherscanTxUrl, formatDuration } from "@/lib/format";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
@@ -145,7 +146,7 @@ export function QueueRulesetFlow({
   isRevnet: boolean;
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
-  const { address } = useWallet();
+  const { address } = useViewedAccount();
 
   const { data: owner } = useReadContract({
     abi: jbProjectsAbi,

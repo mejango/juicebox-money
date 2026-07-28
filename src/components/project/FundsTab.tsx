@@ -38,6 +38,7 @@ import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { FlowError, shortError } from '@/lib/errors'
 import {
   USD_SCALE,
@@ -381,7 +382,7 @@ export function FundsTab({
   chains: readonly [number, number][]
 }) {
   const config = useConfig()
-  const { address } = useWallet()
+  const { address } = useViewedAccount()
   const [selectedKey, setSelectedKey] = useState('')
   const chainPairs = useMemo<readonly [number, number][]>(() => {
     const homePair: [number, number] = [chainId, projectId]

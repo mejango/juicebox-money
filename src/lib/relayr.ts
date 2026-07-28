@@ -19,6 +19,7 @@ import {
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
+import { assertNoViewAs } from '@/lib/viewAs'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -553,6 +554,7 @@ export async function relayrPay(
   expectedAccount: Address,
   onSubmitted?: (hash: Hex) => void,
 ): Promise<Hex> {
+  assertNoViewAs()
   const chainId = Number(payment.chain) as JBChainId
   if (!SUPPORTED_CHAINS.some(chain => chain.id === chainId)) {
     throw new Error('Relayr returned an unsupported payment chain.')
@@ -835,6 +837,7 @@ export async function runRelayrCalls({
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
+  assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
 
   const saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
