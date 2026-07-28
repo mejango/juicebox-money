@@ -325,6 +325,52 @@ export type BsActivityEvent = {
   } | null
 }
 
+const ACTIVITY_EVENT_FIELDS = `
+  id chainId projectId timestamp from txHash
+  payEvent {
+    amount amountUsd beneficiary memo newlyIssuedTokenCount
+  }
+  cashOutTokensEvent {
+    cashOutCount reclaimAmount reclaimAmountUsd beneficiary
+  }
+  projectCreateEvent { from }
+  addToBalanceEvent { amount memo from }
+  mintTokensEvent {
+    beneficiary beneficiaryTokenCount caller from
+  }
+  sendPayoutsEvent {
+    amount amountPaidOut amountPaidOutUsd caller from
+  }
+  sendReservedTokensToSplitsEvent { tokenCount from }
+  autoIssueEvent { beneficiary count stageId from }
+  borrowLoanEvent {
+    borrowAmount collateral beneficiary token from
+  }
+  repayLoanEvent {
+    repayBorrowAmount collateralCountToReturn from
+  }
+  liquidateLoanEvent { borrowAmount collateral from }
+  mintNftEvent {
+    tierId tokenId beneficiary totalAmountPaid from
+  }
+  deployErc20Event { symbol name token from }
+  setUriEvent { uri caller from }
+  projectTransferEvent { previousOwner owner from }
+  operatorPermissionsSetEvent {
+    account operator isRevnetOperator caller from
+  }
+  addNftTierEvent { tierId price category caller from }
+  removeNftTierEvent { tierId caller from }
+  swapEvent {
+    direction terminalTokenAmount projectTokenAmount caller from
+  }
+  buybackPoolEvent { terminalToken poolId caller from }
+  bridgeClaimEvent {
+    peerChainId token beneficiary projectTokenCount
+    terminalTokenAmount caller from
+  }
+`
+
 export async function getProjectActivity(
   suckerGroupId: string,
   limit = 20,
@@ -366,51 +412,7 @@ export async function getProjectActivity(
         orderDirection: "desc"
         limit: $limit
       ) {
-        items {
-          id chainId projectId timestamp from txHash
-          payEvent {
-            amount amountUsd beneficiary memo newlyIssuedTokenCount
-          }
-          cashOutTokensEvent {
-            cashOutCount reclaimAmount reclaimAmountUsd beneficiary
-          }
-          projectCreateEvent { from }
-          addToBalanceEvent { amount memo from }
-          mintTokensEvent {
-            beneficiary beneficiaryTokenCount caller from
-          }
-          sendPayoutsEvent {
-            amount amountPaidOut amountPaidOutUsd caller from
-          }
-          sendReservedTokensToSplitsEvent { tokenCount from }
-          autoIssueEvent { beneficiary count stageId from }
-          borrowLoanEvent {
-            borrowAmount collateral beneficiary token from
-          }
-          repayLoanEvent {
-            repayBorrowAmount collateralCountToReturn from
-          }
-          liquidateLoanEvent { borrowAmount collateral from }
-          mintNftEvent {
-            tierId tokenId beneficiary totalAmountPaid from
-          }
-          deployErc20Event { symbol name token from }
-          setUriEvent { uri caller from }
-          projectTransferEvent { previousOwner owner from }
-          operatorPermissionsSetEvent {
-            account operator isRevnetOperator caller from
-          }
-          addNftTierEvent { tierId price category caller from }
-          removeNftTierEvent { tierId caller from }
-          swapEvent {
-            direction terminalTokenAmount projectTokenAmount caller from
-          }
-          buybackPoolEvent { terminalToken poolId caller from }
-          bridgeClaimEvent {
-            peerChainId token beneficiary projectTokenCount
-            terminalTokenAmount caller from
-          }
-        }
+        items { ${ACTIVITY_EVENT_FIELDS} }
       }
     }`,
     { suckerGroupId, limit },
@@ -1107,6 +1109,157 @@ export async function getPermissionHolders(
  * local project id differs. Most sucker groups share an id, but imported or
  * migrated projects are not required to do so.
  */
+export type BsAccountActivityEvent = BsActivityEvent & {
+  /** Protocol version the event was indexed under (4, 5, or 6). */
+  version: number
+  project: {
+    name: string | null
+    logoUri: string | null
+    tokenSymbol: string | null
+    decimals: number | null
+  } | null
+}
+
+/**
+ * Everything an account did across all projects, chains, and protocol
+ * versions, newest first. One page per call — the account view's load-more
+ * grows the offset instead of paginating to exhaustion.
+ */
+export async function getAccountActivity(
+  address: string,
+  { limit = 25, offset = 0 }: { limit?: number; offset?: number } = {},
+): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
+  const data = await bendystraw<{
+    activityEvents: { items: BsAccountActivityEvent[]; totalCount: number }
+  }>(
+    `query($address: String!, $limit: Int!, $offset: Int!) {
+      activityEvents(
+        where: { from: $address }
+        orderBy: "timestamp"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        totalCount
+        items {
+          version
+          project { name logoUri tokenSymbol decimals }
+          ${ACTIVITY_EVENT_FIELDS}
+        }
+      }
+    }`,
+    { address: address.toLowerCase(), limit, offset },
+    { revalidate: 15 },
+  )
+  return data.activityEvents
+}
+
+/**
+ * Every project owned by any of the given addresses (an account plus the
+ * Safes it signs for), across all versions — the account view badges each
+ * card with its version.
+ */
+export async function getProjectsOwnedBy(
+  owners: string[],
+): Promise<BsProject[]> {
+  if (!owners.length) return []
+  const page = await getPagedItems<BsProject>(
+    `query($owners: [String!]!, $limit: Int!, $offset: Int!) {
+      projects(
+        where: { owner_in: $owners }
+        orderBy: "volume"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) { items { ${PROJECT_FIELDS} } totalCount }
+    }`,
+    'projects',
+    { owners: owners.map(owner => owner.toLowerCase()) },
+    { pageSize: 200, max: 400 },
+  )
+  return page.items
+}
+
+export type BsOperatorGrant = {
+  chainId: number
+  projectId: number
+  /** JBPermissionIds the operator holds. */
+  permissions: number[]
+  /** The account that granted the permissions. */
+  account: string
+  operator: string
+  isRevnetOperator: boolean | null
+  /** Protocol version of the granting project. */
+  version: number
+}
+
+/** Every live permission grant held BY an operator, across all projects. */
+export async function getOperatorGrants(
+  operator: string,
+): Promise<BsOperatorGrant[]> {
+  const page = await getPagedItems<BsOperatorGrant>(
+    `query($operator: String!, $limit: Int!, $offset: Int!) {
+      permissionHolders(
+        where: { operator: $operator }
+        limit: $limit
+        offset: $offset
+      ) {
+        items {
+          chainId projectId permissions account operator isRevnetOperator
+          version
+        }
+        totalCount
+      }
+    }`,
+    'permissionHolders',
+    { operator: operator.toLowerCase() },
+    { pageSize: 200, max: 400 },
+  )
+  return page.items.filter(row => (row.permissions?.length ?? 0) > 0)
+}
+
+/**
+ * Display metadata for exact (chainId, projectId, version) deployments —
+ * the operated-projects section resolves grant rows to names this way.
+ * Refs are number-validated before being inlined into the filter.
+ */
+export async function getProjectsByRefs(
+  refs: { chainId: number; projectId: number; version: number }[],
+): Promise<BsProject[]> {
+  const pairs = [
+    ...new Set(
+      refs
+        .filter(
+          ref =>
+            Number.isSafeInteger(ref.chainId) &&
+            ref.chainId > 0 &&
+            Number.isSafeInteger(ref.projectId) &&
+            ref.projectId > 0 &&
+            Number.isSafeInteger(ref.version) &&
+            ref.version > 0,
+        )
+        // Bendystraw does not AND sibling fields inside one OR branch, so
+        // each ref becomes an explicit AND group.
+        .map(
+          ref =>
+            `{ AND: [{ chainId: ${ref.chainId} }, { projectId: ${ref.projectId} }, { version: ${ref.version} }] }`,
+        ),
+    ),
+  ].slice(0, 60)
+  if (!pairs.length) return []
+  const data = await bendystraw<{ projects: { items: BsProject[] } }>(
+    `query($limit: Int!) {
+      projects(
+        where: { OR: [${pairs.join('\n')}] }
+        limit: $limit
+      ) { items { ${PROJECT_FIELDS} } }
+    }`,
+    { limit: pairs.length },
+    { revalidate: 60 },
+  )
+  return data.projects.items
+}
+
 export async function getPermissionHoldersAcrossDeployments(
   deployments: { chainId: number; projectId: number }[],
 ): Promise<BsPermissionHolder[]> {

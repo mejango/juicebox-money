@@ -306,6 +306,39 @@ export function loadRelayrPendingSession(
   }
 }
 
+/** Scopes of every persisted pending-bundle session on this device. */
+export function listRelayrPendingScopes(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const scopes: string[] = []
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (key?.startsWith(RELAYR_PENDING_PREFIX)) {
+        scopes.push(key.slice(RELAYR_PENDING_PREFIX.length))
+      }
+    }
+    return scopes
+  } catch {
+    return []
+  }
+}
+
+// Relayr is expected to ship a query-by-account API soon. When it does,
+// replace this localStorage scan with a fetch against that endpoint so
+// any viewer (and any device) sees the account's Relayr history/state.
+export async function fetchRelayrBundlesByAccount(
+  address: string,
+): Promise<{ scope: string; session: RelayrPendingSession }[]> {
+  const wanted = address.toLowerCase()
+  return listRelayrPendingScopes()
+    .map(scope => ({ scope, session: loadRelayrPendingSession(scope) }))
+    .filter(
+      (entry): entry is { scope: string; session: RelayrPendingSession } =>
+        entry.session?.account?.toLowerCase() === wanted,
+    )
+    .sort((a, b) => b.session.createdAt - a.session.createdAt)
+}
+
 export function clearRelayrPendingSession(scope: string): void {
   if (typeof window === 'undefined') return
   try {
@@ -673,6 +706,114 @@ function relayrSessionFullyFailed(
   return progress.failed === progress.total && progress.confirmed === 0
 }
 
+/** Resume a persisted, already-paid bundle: report progress, poll to done. */
+async function resumeSavedRelayrSession(
+  pendingScope: string,
+  saved: RelayrPendingSession,
+  onProgress?: (progress: RelayrProgress) => void,
+): Promise<{
+  quote: RelayrQuote
+  paymentHash: Hex | null
+  records: RelayrTransactionRecord[]
+}> {
+  const reportProgress = (records: RelayrTransactionRecord[]) => {
+    const progress = relayrProgress(records, saved.expectedCount)
+    onProgress?.({
+      phase: 'executing',
+      done: progress.confirmed,
+      total: progress.total,
+      records,
+      bundleUuid: saved.bundleUuid,
+      paymentHash: saved.paymentHash,
+    })
+  }
+  reportProgress(saved.records)
+
+  if (relayrSessionFinished(saved.records, saved.expectedCount)) {
+    clearRelayrPendingSession(pendingScope)
+    return {
+      quote: {
+        bundle_uuid: saved.bundleUuid,
+        payment_info: [],
+        transactions: saved.records,
+      },
+      paymentHash: saved.paymentHash,
+      records: saved.records,
+    }
+  }
+  if (relayrSessionFullyFailed(saved.records, saved.expectedCount)) {
+    clearRelayrPendingSession(pendingScope)
+    throw new RelayrExecutionError(
+      'Relayr could not execute this action on any selected chain.',
+      'RELAYR_FAILED',
+      saved.bundleUuid,
+      saved.records,
+      false,
+    )
+  }
+
+  try {
+    const records = await relayrPoll(saved.bundleUuid, next => {
+      saveRelayrPendingSession(pendingScope, { ...saved, records: next })
+      reportProgress(next)
+    })
+    clearRelayrPendingSession(pendingScope)
+    return {
+      quote: {
+        bundle_uuid: saved.bundleUuid,
+        payment_info: [],
+        transactions: records,
+      },
+      paymentHash: saved.paymentHash,
+      records,
+    }
+  } catch (error) {
+    const records =
+      error instanceof RelayrExecutionError ? error.records : saved.records
+    if (relayrSessionFullyFailed(records, saved.expectedCount)) {
+      clearRelayrPendingSession(pendingScope)
+    }
+    throw error
+  }
+}
+
+function requireSessionAccount(
+  saved: RelayrPendingSession,
+  account: Address,
+): void {
+  if (saved.account?.toLowerCase() !== account.toLowerCase()) {
+    throw new Error(
+      `Switch back to ${saved.account ?? 'the wallet that submitted this action'} to resume its pending Relayr bundle.`,
+    )
+  }
+}
+
+/**
+ * Resume one persisted session by its storage scope — the account view's
+ * in-flight cards re-enter the exact saved-bundle path runRelayrCalls uses,
+ * without needing the original call set.
+ */
+export async function resumeRelayrSession({
+  scope,
+  account,
+  onProgress,
+}: {
+  scope: string
+  account: Address
+  onProgress?: (progress: RelayrProgress) => void
+}): Promise<{
+  quote: RelayrQuote
+  paymentHash: Hex | null
+  records: RelayrTransactionRecord[]
+}> {
+  const saved = loadRelayrPendingSession(scope)
+  if (!saved) {
+    throw new Error('No pending Relayr bundle is saved for this action.')
+  }
+  requireSessionAccount(saved, account)
+  return resumeSavedRelayrSession(scope, saved, onProgress)
+}
+
 /**
  * Complete EOA authority path: sign every chain, pay once, then wait until
  * every destination transaction has succeeded.
@@ -698,71 +839,8 @@ export async function runRelayrCalls({
 
   const saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   if (saved && pendingScope) {
-    if (saved.account?.toLowerCase() !== account.toLowerCase()) {
-      throw new Error(
-        `Switch back to ${saved.account ?? 'the wallet that submitted this action'} to resume its pending Relayr bundle.`,
-      )
-    }
-
-    const reportProgress = (records: RelayrTransactionRecord[]) => {
-      const progress = relayrProgress(records, saved.expectedCount)
-      onProgress?.({
-        phase: 'executing',
-        done: progress.confirmed,
-        total: progress.total,
-        records,
-        bundleUuid: saved.bundleUuid,
-        paymentHash: saved.paymentHash,
-      })
-    }
-    reportProgress(saved.records)
-
-    if (relayrSessionFinished(saved.records, saved.expectedCount)) {
-      clearRelayrPendingSession(pendingScope)
-      return {
-        quote: {
-          bundle_uuid: saved.bundleUuid,
-          payment_info: [],
-          transactions: saved.records,
-        },
-        paymentHash: saved.paymentHash,
-        records: saved.records,
-      }
-    }
-    if (relayrSessionFullyFailed(saved.records, saved.expectedCount)) {
-      clearRelayrPendingSession(pendingScope)
-      throw new RelayrExecutionError(
-        'Relayr could not execute this action on any selected chain.',
-        'RELAYR_FAILED',
-        saved.bundleUuid,
-        saved.records,
-        false,
-      )
-    }
-
-    try {
-      const records = await relayrPoll(saved.bundleUuid, next => {
-        saveRelayrPendingSession(pendingScope, { ...saved, records: next })
-        reportProgress(next)
-      })
-      clearRelayrPendingSession(pendingScope)
-      return {
-        quote: {
-          bundle_uuid: saved.bundleUuid,
-          payment_info: [],
-          transactions: records,
-        },
-        paymentHash: saved.paymentHash,
-        records,
-      }
-    } catch (error) {
-      const records =
-        error instanceof RelayrExecutionError ? error.records : saved.records
-      if (relayrSessionFullyFailed(records, saved.expectedCount)) {
-        clearRelayrPendingSession(pendingScope)
-      }
-      throw error
-    }
+    requireSessionAccount(saved, account)
+    return resumeSavedRelayrSession(pendingScope, saved, onProgress)
   }
 
   const entries: RelayrEntry[] = []
