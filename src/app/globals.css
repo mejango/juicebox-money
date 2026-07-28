@@ -28,6 +28,16 @@
     outline: 2px solid theme('colors.bluebs.500');
     outline-offset: 2px;
   }
+
+  /* Tailwind 4 preflight dropped `cursor: pointer` on buttons; restore it so
+     every interactive control reads as clickable. Disabled states keep the
+     default arrow (the .btn-* cursor-not-allowed rules still win). */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 @layer components {

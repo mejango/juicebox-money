@@ -50,7 +50,17 @@ vi.mock('@tanstack/react-query', () => ({
         }
       case 'cashOutQuote':
         return {
-          data: { reclaimAmount: 10_000n, reclaimAmountAfterFee: 9_750n },
+          data: {
+            route: 'treasury',
+            expectedReturn: 9_750n,
+            minimumReturn: 9_652n,
+            terminalMinimum: 9_652n,
+            metadata: '0x',
+            treasuryGross: 10_000n,
+            treasuryProtocolFee: 250n,
+            treasuryNet: 9_750n,
+            buyback: null,
+          },
           isFetching: false,
           isError: false,
         }
@@ -324,7 +334,7 @@ describe('cash-out write flow', () => {
         42n,
         2n * 10n ** 18n,
         '0x4444444444444444444444444444444444444444',
-        9_506n,
+        9_652n,
         ALICE,
         '0x',
       ],
