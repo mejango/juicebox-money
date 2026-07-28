@@ -2,9 +2,16 @@
 
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import { isAddress, type Address } from 'viem'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
+import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
+import { truncateAddress } from '@/lib/format'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
+import { identityGradient } from './ActivityList'
 import { ProjectLogo } from './ProjectLogo'
+import { AddressLabel } from './ui/AddressLabel'
+
+type AccountResult = { address: Address; ensName: string | null }
 
 type Result = {
   projectId: number
@@ -37,6 +44,8 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Result[]>([])
+  const [account, setAccount] = useState<AccountResult | null>(null)
+  const [ensPending, setEnsPending] = useState(false)
   const [open, setOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -71,6 +80,39 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query])
 
+  // Account queries: a literal address matches immediately; a plausible ENS
+  // name debounce-resolves, showing a pending row while it's in flight.
+  useEffect(() => {
+    const text = query.trim()
+    if (isAddress(text)) {
+      setAccount({ address: text, ensName: null })
+      setEnsPending(false)
+      setOpen(true)
+      return
+    }
+    setAccount(null)
+    if (!looksLikeEns(text)) {
+      setEnsPending(false)
+      return
+    }
+    setEnsPending(true)
+    setOpen(true)
+    let stale = false
+    const t = setTimeout(async () => {
+      const address = await lookupEnsAddress(text)
+      if (stale) return
+      setEnsPending(false)
+      if (address) {
+        setAccount({ address, ensName: text.toLowerCase() })
+        setOpen(true)
+      }
+    }, 300)
+    return () => {
+      stale = true
+      clearTimeout(t)
+    }
+  }, [query])
+
   // Close on outside pointer.
   useOutsideClose(boxRef, () => {
     setOpen(false)
@@ -82,11 +124,19 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
     setMobileOpen(false)
     setQuery('')
     setResults([])
+    setAccount(null)
+    setEnsPending(false)
     router.push(path)
   }
 
+  // The route takes an ENS name as-is and resolves it server-side.
+  const accountPath = account
+    ? `/account/${account.ensName ?? account.address}`
+    : null
+
   const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
+    else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`)
   }
@@ -98,7 +148,9 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
         type="text"
         value={query}
         onChange={e => setQuery(e.target.value)}
-        onFocus={() => results.length > 0 && setOpen(true)}
+        onFocus={() =>
+          (results.length > 0 || account || ensPending) && setOpen(true)
+        }
         onKeyDown={e => {
           if (e.key === 'Enter') submit()
           if (e.key === 'Escape') {
@@ -110,8 +162,45 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
         aria-label="Search projects"
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />
-      {(open && results.length > 0) || (open && urn) ? (
+      {open && (results.length > 0 || urn || account || ensPending) ? (
         <ul className="card absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
+          {ensPending && !account ? (
+            <li className="px-4 py-2.5 text-xs text-smoke-500">
+              Resolving {query.trim()}…
+            </li>
+          ) : null}
+          {account && accountPath ? (
+            <li>
+              <button
+                onClick={() => go(accountPath)}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-smoke-25"
+              >
+                <span
+                  aria-hidden="true"
+                  className="h-8 w-8 shrink-0 rounded-full"
+                  style={{
+                    background: identityGradient(account.address.toLowerCase()),
+                  }}
+                />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-ink">
+                    {account.ensName ?? (
+                      <AddressLabel address={account.address} />
+                    )}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs text-smoke-700">
+                    {account.ensName ? (
+                      <>
+                        <span>{truncateAddress(account.address)}</span>
+                        <span aria-hidden>·</span>
+                      </>
+                    ) : null}
+                    <span>View account →</span>
+                  </span>
+                </span>
+              </button>
+            </li>
+          ) : null}
           {urn ? (
             <li>
               <button
