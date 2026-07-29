@@ -81,6 +81,7 @@ try {
   const buildEnv = {
     ...process.env,
     PLAYWRIGHT_FIXTURE_ORIGIN: runtimeFixtureOrigin,
+    NEXT_PUBLIC_SITE_URL: runtimeFixtureOrigin,
     NEXT_PUBLIC_DETERMINISTIC_BROWSER: 'true',
     NEXT_PUBLIC_TESTNET: 'false',
     NEXT_PUBLIC_INFURA_ID: '',

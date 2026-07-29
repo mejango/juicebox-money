@@ -10,8 +10,8 @@ export function GET() {
     (pinning === 'true' &&
       process.env.IPFS_PINNING_EDGE_PROTECTED === 'true' &&
       (process.env.IPFS_PINNING_INGRESS_TOKEN?.trim().length ?? 0) >= 32 &&
-      !!process.env.INFURA_IPFS_PROJECT_ID &&
-      !!process.env.INFURA_IPFS_API_SECRET)
+      !!process.env.FILEBASE_IPFS_RPC_TOKEN &&
+      !!process.env.PINATA_JWT)
 
   return NextResponse.json(
     {

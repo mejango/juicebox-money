@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
   workflow_dispatch:
 
@@ -102,6 +102,7 @@ jobs:
       - name: Build the production image
         run: |
           docker build --tag juicebox-money:ci \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.example \
             --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example/graphql \
             --build-arg NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=https://legacy.example/graphql \
             --build-arg NEXT_PUBLIC_TESTNET=false \

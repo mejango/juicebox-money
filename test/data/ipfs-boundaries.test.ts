@@ -22,8 +22,19 @@ function enablePinning() {
   vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
   vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'true')
   vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', INGRESS_TOKEN)
-  vi.stubEnv('INFURA_IPFS_PROJECT_ID', 'project-id')
-  vi.stubEnv('INFURA_IPFS_API_SECRET', 'project-secret')
+  vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
+  vi.stubEnv('PINATA_JWT', 'pinata-jwt')
+}
+
+function redundantPinFetch(cid = CID) {
+  return vi.fn((input: string | URL | Request, _init?: RequestInit) => {
+    const url = String(input)
+    return Promise.resolve(
+      url.startsWith('https://rpc.filebase.io/')
+        ? Response.json({ Hash: cid })
+        : Response.json({ data: { cid, status: 'prechecking' } }),
+    )
+  })
 }
 
 function pinRequest(
@@ -151,11 +162,7 @@ describe('IPFS pinning boundary', () => {
 
   it('requires real CIDv0 or CIDv1 values in pinned metadata URIs', async () => {
     enablePinning()
-    const fetchMock = vi
-      .fn()
-      .mockImplementation(() =>
-        Promise.resolve(Response.json({ Hash: CID })),
-      )
+    const fetchMock = redundantPinFetch()
     vi.stubGlobal('fetch', fetchMock)
 
     const invalidProject = await pinMetadata(
@@ -188,14 +195,12 @@ describe('IPFS pinning boundary', () => {
     )
     expect(validV0.status).toBe(200)
     expect(validV1.status).toBe(200)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
   it('round-trips tags and unknown projectUri fields through pin-json', async () => {
     enablePinning()
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(Response.json({ Hash: CID }))
+    const fetchMock = redundantPinFetch()
     vi.stubGlobal('fetch', fetchMock)
 
     const response = await pinMetadata(
@@ -211,7 +216,7 @@ describe('IPFS pinning boundary', () => {
     )
     expect(response.status).toBe(200)
 
-    const form = fetchMock.mock.calls[0][1].body as FormData
+    const form = fetchMock.mock.calls[0]![1]!.body as FormData
     const pinned = JSON.parse(await (form.get('file') as Blob).text())
     expect(pinned).toEqual({
       name: 'League',
@@ -223,7 +228,7 @@ describe('IPFS pinning boundary', () => {
 
   it('leaves headroom for a realistic Advanced custom-properties object', async () => {
     enablePinning()
-    const fetchMock = vi.fn().mockResolvedValue(Response.json({ Hash: CID }))
+    const fetchMock = redundantPinFetch()
     vi.stubGlobal('fetch', fetchMock)
 
     // ~4 KB of custom properties: far more than any hand-authored set, and
@@ -239,7 +244,7 @@ describe('IPFS pinning boundary', () => {
 
     const response = await pinMetadata(pinRequest('pin-json', body))
     expect(response.status).toBe(200)
-    const form = fetchMock.mock.calls[0][1].body as FormData
+    const form = fetchMock.mock.calls[0]![1]!.body as FormData
     const pinned = JSON.parse(await (form.get('file') as Blob).text())
     expect(pinned.roster).toEqual(roster)
   })
@@ -248,7 +253,7 @@ describe('IPFS pinning boundary', () => {
     enablePinning()
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(Response.json({ Hash: CID_V1 })),
+      redundantPinFetch(CID_V1),
     )
 
     const response = await pinItem(
@@ -294,6 +299,35 @@ describe('same-origin IPFS proxy boundary', () => {
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(CID),
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('falls back from Pinata to an independent read gateway', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 502 }))
+      .mockResolvedValueOnce(
+        new Response('asset', {
+          headers: { 'content-type': 'text/plain' },
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await proxyIpfs(
+      new NextRequest(`http://localhost/api/ipfs/${CID}`),
+      { params: Promise.resolve({ path: [CID] }) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      `https://gateway.pinata.cloud/ipfs/${CID}`,
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `https://dweb.link/ipfs/${CID}`,
       expect.objectContaining({ cache: 'no-store' }),
     )
   })

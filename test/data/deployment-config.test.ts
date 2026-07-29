@@ -6,6 +6,7 @@ import {
 } from '../../scripts/check-deployment-env.mjs'
 
 const buildEnv = {
+  NEXT_PUBLIC_SITE_URL: 'https://juicebox.example',
   NEXT_PUBLIC_BENDYSTRAW_URL: 'https://bendystraw.example/graphql',
   NEXT_PUBLIC_LEGACY_SUBGRAPH_URL: 'https://legacy.example/graphql',
   NEXT_PUBLIC_TESTNET: 'false',
@@ -57,8 +58,8 @@ describe('deployment configuration', () => {
       expect.arrayContaining([
         'enabled IPFS pinning requires edge quota protection',
         'IPFS_PINNING_INGRESS_TOKEN must be at least 32 characters',
-        'INFURA_IPFS_PROJECT_ID is required',
-        'INFURA_IPFS_API_SECRET is required',
+        'FILEBASE_IPFS_RPC_TOKEN is required',
+        'PINATA_JWT is required',
       ]),
     )
   })
@@ -68,8 +69,8 @@ describe('deployment configuration', () => {
       IPFS_PINNING_ENABLED: 'true',
       IPFS_PINNING_EDGE_PROTECTED: 'true',
       IPFS_PINNING_INGRESS_TOKEN: ingressToken,
-      INFURA_IPFS_PROJECT_ID: 'project-id',
-      INFURA_IPFS_API_SECRET: 'project-secret',
+      FILEBASE_IPFS_RPC_TOKEN: 'filebase-token',
+      PINATA_JWT: 'pinata-jwt',
     }
     expect(deploymentEnvErrors(runtimeEnv, 'runtime')).toEqual([])
     expect(
@@ -116,8 +117,8 @@ describe('health endpoint', () => {
     vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
     vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'true')
     vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', ingressToken)
-    vi.stubEnv('INFURA_IPFS_PROJECT_ID', 'project-id')
-    vi.stubEnv('INFURA_IPFS_API_SECRET', 'project-secret')
+    vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
+    vi.stubEnv('PINATA_JWT', 'pinata-jwt')
     expect(health().status).toBe(200)
 
     vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', 'too-short')

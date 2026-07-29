@@ -74,8 +74,7 @@ export function truncateAddress(address: string): string {
 
 export function ipfsUrl(uri: string | null | undefined): string | null {
   if (!uri) return null
-  // Juicebox's dedicated gateway — far faster and more reliable than ipfs.io.
-  return `https://jbm.infura-ipfs.io/ipfs/${uri.replace('ipfs://', '')}`
+  return `https://gateway.pinata.cloud/ipfs/${uri.replace('ipfs://', '')}`
 }
 
 /** Block-explorer transaction URL, or null when the chain has no explorer. */

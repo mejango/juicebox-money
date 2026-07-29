@@ -27,6 +27,7 @@ export function deploymentEnvErrors(env, phase = 'all') {
 
   const errors = []
   if (BUILD_PHASES.has(phase)) {
+    httpsUrl(errors, env, 'NEXT_PUBLIC_SITE_URL')
     httpsUrl(errors, env, 'NEXT_PUBLIC_BENDYSTRAW_URL')
     httpsUrl(errors, env, 'NEXT_PUBLIC_LEGACY_SUBGRAPH_URL', true)
     required(errors, env, 'NEXT_PUBLIC_PARA_API_KEY', 8)
@@ -67,8 +68,8 @@ export function deploymentEnvErrors(env, phase = 'all') {
       if ((env.IPFS_PINNING_INGRESS_TOKEN ?? '').trim().length < 32) {
         errors.push('IPFS_PINNING_INGRESS_TOKEN must be at least 32 characters')
       }
-      required(errors, env, 'INFURA_IPFS_PROJECT_ID', 8)
-      required(errors, env, 'INFURA_IPFS_API_SECRET', 8)
+      required(errors, env, 'FILEBASE_IPFS_RPC_TOKEN', 8)
+      required(errors, env, 'PINATA_JWT', 8)
     }
   }
 

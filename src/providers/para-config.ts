@@ -8,7 +8,7 @@ import type { CreateConnectorFn } from 'wagmi'
 export const PARA_APP = {
   appName: 'Juicebox',
   appDescription: 'Fund your thing. Programmable money for projects.',
-  appUrl: 'https://juicebox.money',
+  appUrl: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://juicebox.money',
 }
 
 let client: ParaWeb | undefined

@@ -84,7 +84,8 @@ module.exports = phase => ({
     minimumCacheTTL: 60 * 60 * 24 * 30,
     remotePatterns: [
       { protocol: 'https', hostname: 'ipfs.io' },
-      { protocol: 'https', hostname: '*.infura-ipfs.io' },
+      { protocol: 'https', hostname: 'gateway.pinata.cloud' },
+      { protocol: 'https', hostname: 'dweb.link' },
     ],
   },
   async headers() {

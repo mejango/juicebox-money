@@ -1,14 +1,16 @@
 /**
- * Server-side Infura IPFS pinning. Credentials never reach the client — the
- * pin routes call through here. Same auth + endpoint mechanics as the classic
- * juicebox.money site.
+ * Server-side redundant IPFS pinning. Filebase creates and retains the
+ * canonical DAG-PB CID, then Pinata pins that exact CID. Credentials never
+ * reach the client.
  */
 
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { isIpfsCid } from '@/lib/ipfs-cid'
 
-const INFURA_IPFS_API_BASE = 'https://ipfs.infura.io:5001'
+const FILEBASE_IPFS_API_BASE = 'https://rpc.filebase.io'
+const PINATA_PIN_BY_CID_URL =
+  'https://api.pinata.cloud/v3/files/public/pin_by_cid'
 const IPFS_REQUEST_TIMEOUT_MS = 20_000
 export const PINNING_INGRESS_HEADER = 'x-juicebox-pinning-ingress-token'
 
@@ -17,8 +19,8 @@ function pinningConfigured(): boolean {
     process.env.IPFS_PINNING_ENABLED === 'true' &&
     process.env.IPFS_PINNING_EDGE_PROTECTED === 'true' &&
     (process.env.IPFS_PINNING_INGRESS_TOKEN?.trim().length ?? 0) >= 32 &&
-    !!process.env.INFURA_IPFS_PROJECT_ID &&
-    !!process.env.INFURA_IPFS_API_SECRET
+    !!process.env.FILEBASE_IPFS_RPC_TOKEN &&
+    !!process.env.PINATA_JWT
   )
 }
 
@@ -125,9 +127,9 @@ export async function pinToIpfs(
   filename = 'file',
 ): Promise<string> {
   if (!pinningConfigured()) throw new Error('IPFS pinning is unavailable')
-  const projectId = process.env.INFURA_IPFS_PROJECT_ID
-  const secret = process.env.INFURA_IPFS_API_SECRET
-  if (!projectId || !secret) {
+  const filebaseToken = process.env.FILEBASE_IPFS_RPC_TOKEN
+  const pinataJwt = process.env.PINATA_JWT
+  if (!filebaseToken || !pinataJwt) {
     throw new Error('IPFS pinning is not configured')
   }
 
@@ -140,21 +142,45 @@ export async function pinToIpfs(
     filename,
   )
 
-  const res = await fetch(`${INFURA_IPFS_API_BASE}/api/v0/add?pin=true`, {
+  const filebaseResponse = await fetch(
+    `${FILEBASE_IPFS_API_BASE}/api/v0/add?pin=true&cid-version=0`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${filebaseToken}` },
+      body: form,
+      signal: AbortSignal.timeout(IPFS_REQUEST_TIMEOUT_MS),
+    },
+  )
+  if (!filebaseResponse.ok) {
+    throw new Error(`Filebase IPFS add failed: ${filebaseResponse.status}`)
+  }
+
+  const filebaseResult = (await filebaseResponse.json()) as { Hash?: string }
+  if (!filebaseResult.Hash || !isIpfsCid(filebaseResult.Hash)) {
+    throw new Error('Filebase IPFS add returned an invalid CID')
+  }
+
+  const cid = filebaseResult.Hash
+  const pinataResponse = await fetch(PINATA_PIN_BY_CID_URL, {
     method: 'POST',
     headers: {
-      Authorization: `Basic ${Buffer.from(`${projectId}:${secret}`).toString('base64')}`,
+      Authorization: `Bearer ${pinataJwt}`,
+      'Content-Type': 'application/json',
     },
-    body: form,
+    body: JSON.stringify({ cid, name: filename }),
     signal: AbortSignal.timeout(IPFS_REQUEST_TIMEOUT_MS),
   })
-  if (!res.ok) throw new Error(`ipfs add failed: ${res.status}`)
-
-  const json = (await res.json()) as { Hash?: string }
-  if (!json.Hash || !isIpfsCid(json.Hash)) {
-    throw new Error('ipfs add returned an invalid CID')
+  if (!pinataResponse.ok) {
+    throw new Error(`Pinata replication failed: ${pinataResponse.status}`)
   }
-  return json.Hash
+
+  const pinataResult = (await pinataResponse.json()) as {
+    data?: { cid?: string }
+  }
+  if (pinataResult.data?.cid !== cid) {
+    throw new Error('Pinata replication returned a mismatched CID')
+  }
+  return cid
 }
 
 /**

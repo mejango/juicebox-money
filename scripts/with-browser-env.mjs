@@ -14,6 +14,7 @@ const child = spawn(command, args, {
   shell: process.platform === 'win32',
   env: {
     ...process.env,
+    NEXT_PUBLIC_SITE_URL: fixtureOrigin,
     NEXT_PUBLIC_BENDYSTRAW_URL: `${fixtureOrigin}/graphql`,
     NEXT_PUBLIC_LEGACY_SUBGRAPH_URL: `${fixtureOrigin}/graphql`,
     NEXT_PUBLIC_BROWSER_FIXTURE_ORIGIN: fixtureOrigin,

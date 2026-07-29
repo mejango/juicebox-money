@@ -9,6 +9,23 @@ as the non-root `node` user.
 The platform decision and alternatives are recorded in
 [`docs/adr/0001-application-platform.md`](docs/adr/0001-application-platform.md).
 
+## Railway branch environments
+
+Use the repository `railway.json` for both Railway services:
+
+| Git branch | Railway environment | Public origin |
+| --- | --- | --- |
+| `staging` | staging | `https://staging.juicebox.money` |
+| `main` | production | `https://juicebox.money` |
+
+Connect staging to `staging` and production to `main`, enable automatic deploys
+only after CI succeeds, and disable overlap so an older build cannot replace a
+newer commit. Set `NEXT_PUBLIC_SITE_URL` to the matching origin and
+`NEXT_PUBLIC_VERSION=${{RAILWAY_GIT_COMMIT_SHA}}` in both environments. Keep
+all other public build values and every runtime secret environment-scoped.
+Promote by merging `staging` into `main`, never by pointing production at
+`staging`.
+
 ## Configuration contract
 
 `NEXT_PUBLIC_*` values are public and embedded at image build time. Changing
@@ -17,6 +34,7 @@ arguments or repository variables.
 
 | Variable | Phase | Requirement |
 | --- | --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | build | Canonical HTTPS origin for the selected environment |
 | `NEXT_PUBLIC_BENDYSTRAW_URL` | build | Absolute HTTPS GraphQL URL |
 | `NEXT_PUBLIC_LEGACY_SUBGRAPH_URL` | build | Optional absolute HTTPS URL |
 | `NEXT_PUBLIC_TESTNET` | build | Explicit `true` or `false` |
@@ -27,8 +45,8 @@ arguments or repository variables.
 | `IPFS_PINNING_ENABLED` | runtime | Explicit `false` by default |
 | `IPFS_PINNING_EDGE_PROTECTED` | runtime | Must be `true` when pinning is enabled |
 | `IPFS_PINNING_INGRESS_TOKEN` | runtime | Random 32+ character secret required only when pinning is enabled |
-| `INFURA_IPFS_PROJECT_ID` | runtime | Secret/scoped provider ID; required only for pinning |
-| `INFURA_IPFS_API_SECRET` | runtime | Secret; required only for pinning |
+| `FILEBASE_IPFS_RPC_TOKEN` | runtime | Secret Filebase RPC bearer token; required only for pinning |
+| `PINATA_JWT` | runtime | Secret Pinata JWT; required only for redundant pinning |
 
 Copy `.env.example` for local names, but inject real values through the
 deployment platform. `.env*` files are excluded from both git and the Docker
@@ -39,6 +57,7 @@ without printing its values.
 
 ```sh
 docker build -t juicebox-money:local \
+  --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.money \
   --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.xyz/graphql \
   --build-arg NEXT_PUBLIC_TESTNET=false \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \

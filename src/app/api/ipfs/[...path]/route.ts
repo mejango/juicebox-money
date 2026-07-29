@@ -1,9 +1,13 @@
 import { NextRequest } from 'next/server'
 import { isIpfsCid } from '@/lib/ipfs-cid'
 
-const IPFS_GATEWAY = 'https://jbm.infura-ipfs.io/ipfs'
+const IPFS_GATEWAYS = [
+  'https://gateway.pinata.cloud/ipfs',
+  'https://dweb.link/ipfs',
+  'https://ipfs.io/ipfs',
+] as const
 const MAX_PROXY_BYTES = 25 * 1024 * 1024
-const UPSTREAM_TIMEOUT_MS = 15_000
+const UPSTREAM_TIMEOUT_MS = 7_500
 const SAFE_SEGMENT = /^[A-Za-z0-9._~-]{1,128}$/
 
 const SAFE_RESPONSE_HEADERS = {
@@ -56,24 +60,29 @@ export async function GET(
     )
   }
 
-  let upstream: Response
-  try {
-    upstream = await fetch(`${IPFS_GATEWAY}/${path}`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    })
-  } catch {
-    return Response.json(
-      { error: 'IPFS gateway timed out' },
-      { status: 504, headers: SAFE_RESPONSE_HEADERS },
-    )
+  let upstream: Response | null = null
+  let lastStatus = 502
+  for (const gateway of IPFS_GATEWAYS) {
+    try {
+      const response = await fetch(`${gateway}/${path}`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      if (response.ok) {
+        upstream = response
+        break
+      }
+      lastStatus = response.status
+    } catch {
+      // Try the next independent public gateway.
+    }
   }
 
-  if (!upstream.ok) {
-    return new Response(null, {
-      status: upstream.status,
-      headers: SAFE_RESPONSE_HEADERS,
-    })
+  if (!upstream) {
+    return Response.json(
+      { error: 'IPFS gateways unavailable' },
+      { status: lastStatus, headers: SAFE_RESPONSE_HEADERS },
+    )
   }
 
   const declaredLength = Number(upstream.headers.get('content-length') ?? 0)
