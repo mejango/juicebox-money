@@ -103,6 +103,7 @@ export function OwnersTab({
         compact
       />
       <SubTabs
+        hashParent="tokens"
         tabs={[
           {
             label: 'Accounts',
@@ -124,6 +125,27 @@ export function OwnersTab({
             ),
           },
           {
+            label: 'Market',
+            content: (
+              <MarketSection
+                chainId={chainId}
+                projectId={projectId}
+                tokenSymbol={tokenSymbol}
+              />
+            ),
+          },
+          {
+            label: 'Settlement',
+            content: (
+              <SettlementSection
+                chainId={chainId}
+                projectId={projectId}
+                chains={chains}
+                isRevnet={isRevnet}
+              />
+            ),
+          },
+          {
             label: isRevnet ? 'Splits' : 'Reserved',
             content: (
               <ReservedCard
@@ -134,39 +156,8 @@ export function OwnersTab({
               />
             ),
           },
-          {
-            label: 'Market',
-            content: (
-              <MarketSection
-                chainId={chainId}
-                projectId={projectId}
-                tokenSymbol={tokenSymbol}
-              />
-            ),
-          },
-          ...(chains.length > 1
-            ? [
-                {
-                  label: 'Settlement',
-                  content: (
-                    <SettlementSection
-                      chainId={chainId}
-                      projectId={projectId}
-                      chains={chains}
-                      isRevnet={isRevnet}
-                    />
-                  ),
-                },
-              ]
-            : []),
           ...(isRevnet
             ? [
-                {
-                  label: 'Loans',
-                  content: (
-                    <LoansSection chainId={chainId} projectId={projectId} />
-                  ),
-                },
                 {
                   label: 'Auto issuance',
                   content: (
@@ -174,6 +165,12 @@ export function OwnersTab({
                       chains={chains}
                       tokenSymbol={tokenSymbol}
                     />
+                  ),
+                },
+                {
+                  label: 'Loans',
+                  content: (
+                    <LoansSection chainId={chainId} projectId={projectId} />
                   ),
                 },
               ]

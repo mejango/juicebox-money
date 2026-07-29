@@ -165,7 +165,7 @@ export function OverviewTab({
               </div>
             ))}
             <AuthorityRows
-              label={isRevnet ? "Project operator" : "Project owner"}
+              label={isRevnet ? "Revnet operator" : "Project owner"}
               authorities={authorities}
             />
           </dl>

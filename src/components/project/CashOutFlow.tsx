@@ -8,9 +8,13 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  buildPermit2ApproveTx,
+  buildUniswapV4ExactInputSwapTx,
   getHookAwareCashOutQuote,
   getTokenAddress,
+  quoteUniswapV4ExactInputSingle,
   resolvePaymentTerminal,
+  uniswapV4Deployment,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
@@ -20,6 +24,7 @@ import {
   parseEther,
   zeroAddress,
   type Abi,
+  type Address,
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
@@ -31,7 +36,10 @@ import {
   getCashOutContext,
   isNativeToken,
 } from '@/lib/cashOut'
+import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { resolveMarket } from '@/components/project/MarketSection'
+import { swapDeadline } from '@/lib/safe-connector'
 
 /** Max-slippage presets in basis points; 1% is the cross-client default. */
 const SLIPPAGE_PRESETS_BPS = [50, 100, 300]
@@ -66,11 +74,13 @@ export function CashOutPanel({
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const tx = useSafeTx(chainId)
+  const approveTx = useSafeTx(chainId)
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [usedDirectSell, setUsedDirectSell] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400)
@@ -102,7 +112,7 @@ export function CashOutPanel({
   })
 
   // The symbol of the token being cashed out (the project's ERC-20, if any).
-  const { data: erc20Symbol } = useQuery({
+  const { data: projectToken } = useQuery({
     queryKey: ['projectTokenSymbol', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
@@ -113,14 +123,15 @@ export function CashOutPanel({
         projectId: BigInt(projectId),
       })
       if (!token) return null
-      return publicClient!.readContract({
+      const symbol = await publicClient!.readContract({
         address: token,
         abi: erc20Abi,
         functionName: 'symbol',
       })
+      return { address: token, symbol }
     },
   })
-  const holdingsSymbol = erc20Symbol ?? 'tokens'
+  const holdingsSymbol = projectToken?.symbol ?? 'tokens'
 
   // The accounting context: the token reclaimed by cash-outs. Never assume
   // native — USDC-accounting projects exist.
@@ -178,6 +189,122 @@ export function CashOutPanel({
       }),
   })
 
+  // Claimed project tokens can be sold directly into the buyback pool. This
+  // bypasses the terminal fee, so compare its protected output against the
+  // hook-aware terminal route and offer it only when it is strictly better.
+  const { data: market } = useQuery({
+    queryKey: ['cashOutMarket', chainId, projectId],
+    enabled: !!publicClient && !!projectToken,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: () =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+  })
+  const directSellAvailable =
+    market?.status === 'pool' &&
+    !!projectToken &&
+    [market.key.currency0, market.key.currency1].some(
+      currency => currency.toLowerCase() === projectToken.address.toLowerCase(),
+    )
+  const { data: claimedBalance } = useQuery({
+    queryKey: ['claimedCashOutBalance', chainId, projectToken?.address, address],
+    enabled: !!publicClient && !!projectToken && !!address,
+    staleTime: 15_000,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: projectToken!.address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [address!],
+      }),
+  })
+  const { data: directSellQuote, isFetching: directSellLoading } = useQuery({
+    queryKey: [
+      'directCashOutSell',
+      chainId,
+      projectId,
+      cashOutCount.toString(),
+      market?.status === 'pool' ? market.poolId : null,
+    ],
+    enabled:
+      !!publicClient &&
+      directSellAvailable &&
+      cashOutCount > 0n &&
+      (claimedBalance ?? 0n) >= cashOutCount,
+    retry: false,
+    queryFn: () => {
+      if (market?.status !== 'pool' || !projectToken) {
+        throw new Error('No direct sell route is available.')
+      }
+      return quoteUniswapV4ExactInputSingle(publicClient!, {
+        chainId,
+        poolKey: market.key,
+        zeroForOne:
+          market.key.currency0.toLowerCase() ===
+          projectToken.address.toLowerCase(),
+        amountIn: cashOutCount,
+      })
+    },
+  })
+  const directSellMinimum =
+    directSellQuote && directSellQuote > 0n
+      ? (directSellQuote * BigInt(10_000 - slippageBps)) / 10_000n
+      : 0n
+  const directSellWins =
+    !!route &&
+    directSellMinimum > route.expectedReturn &&
+    (claimedBalance ?? 0n) >= cashOutCount
+
+  const swapDeployment = directSellWins
+    ? uniswapV4Deployment(chainId)
+    : undefined
+  const { data: tokenAllowance, refetch: refetchTokenAllowance } = useQuery({
+    queryKey: ['cashOutTokenAllowance', chainId, projectToken?.address, swapDeployment?.permit2, address],
+    enabled: !!publicClient && directSellWins && !!projectToken && !!swapDeployment?.permit2 && !!address,
+    staleTime: 15_000,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: projectToken!.address,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [address!, swapDeployment!.permit2],
+      }),
+  })
+  const { data: permit2Allowance, refetch: refetchPermit2Allowance } = useQuery({
+    queryKey: ['cashOutPermit2Allowance', chainId, projectToken?.address, swapDeployment?.universalRouter, address],
+    enabled: !!publicClient && directSellWins && !!projectToken && !!swapDeployment?.universalRouter && !!address,
+    staleTime: 15_000,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: swapDeployment!.permit2,
+        abi: [
+          {
+            type: 'function',
+            name: 'allowance',
+            stateMutability: 'view',
+            inputs: [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+            outputs: [{ type: 'uint160' }, { type: 'uint48' }, { type: 'uint48' }],
+          },
+        ],
+        functionName: 'allowance',
+        args: [address!, projectToken!.address, swapDeployment!.universalRouter as Address],
+      }),
+  })
+  const needsTokenApproval =
+    directSellWins && (tokenAllowance ?? 0n) < cashOutCount
+  const needsRouterApproval =
+    directSellWins &&
+    (!permit2Allowance ||
+      permit2Allowance[0] < cashOutCount ||
+      Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800)
+
+  useEffect(() => {
+    if (approveTx.phase === 'success') {
+      void refetchTokenAllowance()
+      void refetchPermit2Allowance()
+    }
+  }, [approveTx.phase, refetchTokenAllowance, refetchPermit2Allowance])
+
   // Only trust bendystraw's symbol when it describes the same token as the
   // on-chain accounting context (projects can register several contexts).
   const receiveSymbol = context
@@ -199,7 +326,7 @@ export function CashOutPanel({
     route !== undefined &&
     route.expectedReturn <= 0n
 
-  const busy = tx.busy
+  const busy = tx.busy || approveTx.busy
   const success = tx.phase === 'success'
 
   useEffect(() => {
@@ -232,6 +359,64 @@ export function CashOutPanel({
       return
     setErrorMsg(null)
     try {
+      if (directSellWins && market?.status === 'pool' && projectToken && swapDeployment) {
+        if (needsTokenApproval) {
+          await approveTx.send(
+            buildTokenApproval({
+              chainId,
+              token: projectToken.address,
+              spender: swapDeployment.permit2,
+              amount: cashOutCount,
+            }),
+          )
+          return
+        }
+        if (needsRouterApproval) {
+          const approval = buildPermit2ApproveTx({
+            chainId,
+            token: projectToken.address,
+            amount: cashOutCount,
+            expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+          })
+          await approveTx.send({
+            ...approval,
+            args: approval.args as unknown as readonly unknown[],
+            label: 'Approve swap router',
+          })
+          return
+        }
+        const freshQuote = await quoteUniswapV4ExactInputSingle(publicClient!, {
+          chainId,
+          poolKey: market.key,
+          zeroForOne:
+            market.key.currency0.toLowerCase() ===
+            projectToken.address.toLowerCase(),
+          amountIn: cashOutCount,
+        })
+        const freshMinimum =
+          (freshQuote * BigInt(10_000 - slippageBps)) / 10_000n
+        if (freshMinimum <= route.expectedReturn) {
+          throw new Error('The pool no longer beats the project cash-out route. Review the refreshed quote.')
+        }
+        const request = buildUniswapV4ExactInputSwapTx({
+          chainId,
+          poolKey: market.key,
+          zeroForOne:
+            market.key.currency0.toLowerCase() ===
+            projectToken.address.toLowerCase(),
+          amountIn: cashOutCount,
+          minimumAmountOut: freshMinimum,
+          recipient: address,
+          deadline: swapDeadline(tx.isSafe),
+        })
+        setUsedDirectSell(true)
+        await tx.send({
+          ...request,
+          args: request.args as unknown as readonly unknown[],
+          label: 'Sell claimed project tokens through the best available pool route',
+        })
+        return
+      }
       // holder/beneficiary read fresh from the connected account at submit.
       const request = buildCashOutRequest({
         chainId,
@@ -273,10 +458,13 @@ export function CashOutPanel({
             <path d="m5 13 4 4L19 7" />
           </svg>
         </span>
-        <h3 className="mt-4 font-agrandir text-lg font-medium">Cashed out!</h3>
+        <h3 className="mt-4 font-agrandir text-lg font-medium">
+          {usedDirectSell ? 'Sold on the pool!' : 'Cashed out!'}
+        </h3>
         <p className="mt-1 text-sm text-smoke-700">
-          Your share of {projectName ?? 'the project'}&apos;s treasury is on its
-          way.
+          {usedDirectSell
+            ? `Your claimed ${holdingsSymbol} were sold through the better direct pool route.`
+            : `Your share of ${projectName ?? 'the project'}'s treasury is on its way.`}
         </p>
         <div className="mt-5 flex gap-3 text-sm font-semibold">
           {txUrl ? (
@@ -366,7 +554,9 @@ export function CashOutPanel({
         ) : cashOutCount > 0n && quoteFailed ? (
           'Couldn’t get a quote right now — try again shortly.'
         ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (
-          `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}`
+          directSellWins
+            ? `You'll receive ~${formatTokenAmount(directSellQuote!, receiveDecimals)} ${receiveSymbol} via a direct pool sale, which beats ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol} from cashing out`
+            : `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}`
         ) : cashOutCount > 0n && quoteLoading ? (
           'Getting your quote…'
         ) : null}
@@ -398,16 +588,23 @@ export function CashOutPanel({
             (cashOutCount <= 0n ||
               exceedsBalance ||
               !route ||
+              directSellLoading ||
               route.expectedReturn <= 0n))
         }
         className="btn-primary mt-5 min-h-[52px] w-full text-sm"
       >
-        {txPhaseLabel(tx.phase, {
+        {txPhaseLabel(tx.busy ? tx.phase : approveTx.phase, {
           pending: 'Cashing out…',
           idle: !isConnected
             ? 'Sign in to cash out'
+            : needsTokenApproval
+              ? 'Approve tokens for best execution'
+              : needsRouterApproval
+                ? 'Authorize the swap router'
             : cashOutCount > 0n
-              ? `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
+              ? directSellWins
+                ? `Sell ${debouncedAmount.trim()} ${holdingsSymbol} on the pool`
+                : `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
               : 'Cash out',
         })}
       </button>

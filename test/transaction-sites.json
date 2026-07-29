@@ -18,9 +18,12 @@
       ]
     },
     "src/components/project/CashOutFlow.tsx": {
-      "hooks": 1,
-      "sends": 1,
+      "hooks": 2,
+      "sends": 4,
       "sendSites": [
+        { "id": "approve-project-token-for-direct-sell", "actions": ["Approve an ERC-20"] },
+        { "id": "authorize-direct-sell-router", "actions": ["Approve an ERC-20"] },
+        { "id": "sell-project-token-on-pool", "actions": ["Swap project tokens"] },
         { "id": "cash-out-project-tokens", "actions": ["Cash out project tokens"] }
       ]
     },
@@ -66,6 +69,13 @@
         { "id": "approve-loan-repayment", "actions": ["Approve an ERC-20"] }
       ]
     },
+    "src/components/project/MarketSection.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "remove-liquidity-position", "actions": ["Remove Uniswap V4 liquidity"] }
+      ]
+    },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
       "sends": 3,
@@ -92,13 +102,6 @@
         { "id": "swap-for-project-tokens", "actions": ["Swap for project tokens"] },
         { "id": "pay-project", "actions": ["Pay a project"] },
         { "id": "add-to-project-balance", "actions": ["Add to treasury balance"] }
-      ]
-    },
-    "src/components/project/QueueRulesetFlow.tsx": {
-      "hooks": 1,
-      "sends": 1,
-      "sendSites": [
-        { "id": "queue-rulesets", "actions": ["Queue rulesets"] }
       ]
     },
     "src/components/project/RedeemShopItemsModal.tsx": {
@@ -137,6 +140,10 @@
     "src/components/project/MultiChainBuybackRouterCard.tsx": {
       "calls": 1,
       "actions": ["Configure buyback/router"]
+    },
+    "src/components/project/QueueRulesetFlow.tsx": {
+      "calls": 1,
+      "actions": ["Queue rulesets"]
     }
   },
   "reviewedDirectWrites": {

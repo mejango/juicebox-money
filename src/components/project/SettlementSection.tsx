@@ -165,12 +165,19 @@ export function SettlementSection({
 
 // ----------------------------------------------------------- composition --
 
-type TokenBalance = { token: Address; symbol: string; decimals: number; balance: bigint }
+type TokenBalance = {
+  token: Address
+  symbol: string
+  decimals: number
+  /** null means the accounting context was found but its balance was unreadable. */
+  balance: bigint | null
+}
 type ChainComposition = {
   chainId: number
   projectId: number
   supply: bigint | null
-  balances: TokenBalance[]
+  /** null means accounting contexts were unreadable; [] is a verified empty set. */
+  balances: TokenBalance[] | null
   supported: boolean
 }
 
@@ -188,13 +195,13 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
             chainId: cid as JBChainId,
           }) as PublicClient | undefined
           if (!client) {
-            return { chainId: cid, projectId: pid, supply: null, balances: [], supported: false }
+            return { chainId: cid, projectId: pid, supply: null, balances: null, supported: false }
           }
           const directory = addrOf(JBCoreContracts.JBDirectory, cid)
           const terminal = addrOf(JBCoreContracts.JBMultiTerminal, cid)
           const store = addrOf(JBCoreContracts.JBTerminalStore, cid)
           if (!directory || !terminal || !store) {
-            return { chainId: cid, projectId: pid, supply: null, balances: [], supported: false }
+            return { chainId: cid, projectId: pid, supply: null, balances: null, supported: false }
           }
 
           // Supply comes from the project's own controller — read, never
@@ -223,9 +230,11 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
           const contexts = await getAccountingContexts(client, {
             chainId: cid as JBChainId,
             projectId: BigInt(pid),
-          }).catch(() => [])
+          }).catch(() => null)
 
-          const balances = await Promise.all(
+          const balances = contexts === null
+            ? null
+            : await Promise.all(
             contexts.map(async (ctx): Promise<TokenBalance> => {
               const balance = (await client
                 .readContract({
@@ -234,7 +243,7 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
                   functionName: 'balanceOf',
                   args: [terminal, BigInt(pid), ctx.token],
                 })
-                .catch(() => 0n)) as bigint
+                .catch(() => null)) as bigint | null
               const symbol = await tokenSymbol(client, ctx.token, {
                 chainId: cid as JBChainId,
               })
@@ -298,12 +307,16 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
                   <td className="py-1.5 text-right">
                     {!c.supported ? (
                       <span className="text-smoke-500">Unsupported chain</span>
+                    ) : c.balances === null ? (
+                      <span className="text-smoke-500">Couldn&apos;t read</span>
                     ) : c.balances.length === 0 ? (
                       <span className="text-smoke-500">None</span>
                     ) : (
                       c.balances.map(b => (
                         <div key={b.token}>
-                          {formatTokenAmount(b.balance, b.decimals)} {b.symbol}
+                          {b.balance === null
+                            ? `— ${b.symbol}`
+                            : `${formatTokenAmount(b.balance, b.decimals)} ${b.symbol}`}
                         </div>
                       ))
                     )}
@@ -312,10 +325,10 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
               ))}
             </tbody>
           </table>
-          {!supplyComplete ? (
+          {!supplyComplete || data.some(c => c.balances === null || c.balances.some(b => b.balance === null)) ? (
             <p className="mt-2 text-xs text-smoke-700">
-              Some chains use a custom controller, so shares can&apos;t be
-              computed across all of them.
+              Some supply or fund reads are unavailable, so totals and shares
+              are not shown as complete.
             </p>
           ) : null}
         </div>

@@ -32,7 +32,14 @@ vi.mock('@tanstack/react-query', () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     switch (queryKey[0]) {
       case 'projectTokenSymbol':
-        return { data: 'JBT' }
+        return {
+          data: {
+            address: '0x3333333333333333333333333333333333333333',
+            symbol: 'JBT',
+          },
+          isFetching: false,
+          isError: false,
+        }
       case 'cashOutContext':
         return {
           data: {

@@ -351,7 +351,7 @@ export default async function ProjectPage({
                       </span>
                       <span>
                         <span className="text-smoke-500">
-                          {isRevnet ? "Project operator:" : "Project owner:"}
+                          {isRevnet ? "Revnet operator:" : "Project owner:"}
                         </span>{" "}
                         <AddressLink
                           address={authority}
@@ -399,7 +399,7 @@ export default async function ProjectPage({
                     </span>
                     <span>
                       <span className="text-smoke-500">
-                        {isRevnet ? "Project operator:" : "Project owner:"}
+                        {isRevnet ? "Revnet operator:" : "Project owner:"}
                       </span>{" "}
                       <AddressLink
                         address={authority}

@@ -20,6 +20,7 @@ Legend:
 | Deploy a project payer address | `JBProjectPayerDeployer.deployProjectPayer` | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
 | Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
+| Swap project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts` |
 | Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
@@ -44,6 +45,7 @@ Legend:
 | Claim bridged funds | sucker claim call | **E** | `contracts/transaction-backlog.test.ts` |
 | Sync sucker accounting | sucker sync call | **E** | `contracts/transaction-backlog.test.ts` |
 | Add Uniswap V4 liquidity | approvals + `modifyLiquidities` | **E** | `contracts/transaction-backlog.test.ts` |
+| Remove Uniswap V4 liquidity | `modifyLiquidities` with `BURN_POSITION` + `TAKE_PAIR` | **E** | `contracts/liquidity-remove.test.ts` |
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
 | Submit a reviewed direct write | review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |

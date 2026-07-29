@@ -382,9 +382,9 @@ export function HolderDistributionSkeleton({ rows = 5 }: { rows?: number }) {
     <div
       className="mt-4 grid items-start gap-6 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]"
       role="status"
-      aria-label="Loading token owners"
+      aria-label="Loading token holders"
     >
-      <span className="sr-only">Loading token owners</span>
+      <span className="sr-only">Loading token holders</span>
       <div className="flex flex-col items-center gap-3" aria-hidden="true">
         <Skeleton className="aspect-square w-44 max-w-full rounded-full" />
         <Skeleton className="h-3 w-28 rounded" />

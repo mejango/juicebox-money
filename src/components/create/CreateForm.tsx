@@ -1946,7 +1946,7 @@ export function CreateForm() {
 
         <div className="mt-6">
           <span className="field-label">
-            {flavor === "revnet" ? "Project operator" : "Project owner"}
+            {flavor === "revnet" ? "Revnet operator" : "Project owner"}
           </span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             {flavor === "revnet"
@@ -1959,7 +1959,7 @@ export function CreateForm() {
             onChange={setOwner}
             disabled={busy}
             ariaLabel={
-              flavor === "revnet" ? "Project operator" : "Project owner"
+              flavor === "revnet" ? "Revnet operator" : "Project owner"
             }
             className="mt-2"
           />
@@ -1973,7 +1973,7 @@ export function CreateForm() {
               >
                 {ownerPerChainOpen
                   ? "Same on every chain"
-                  : `Set per chain — if the ${flavor === "revnet" ? "project operator" : "project owner"} differs by chain`}
+                  : `Set per chain — if the ${flavor === "revnet" ? "revnet operator" : "project owner"} differs by chain`}
               </button>
               {ownerPerChainOpen ? (
                 <div className="mt-2 space-y-2">
@@ -1992,7 +1992,7 @@ export function CreateForm() {
                         }
                         disabled={busy}
                         placeholder={owner.trim() || "default"}
-                        ariaLabel={`${flavor === "revnet" ? "Project operator" : "Project owner"} on ${chainName(chainId)}`}
+                        ariaLabel={`${flavor === "revnet" ? "Revnet operator" : "Project owner"} on ${chainName(chainId)}`}
                         className="flex-1"
                         compact
                       />
@@ -2712,7 +2712,7 @@ export function CreateForm() {
               {flavor === "revnet" ? (
                 <div className="space-y-2 border-t border-smoke-200 pt-4">
                   <span className="field-label">
-                    What the project operator can do after launch
+                    What the revnet operator can do after launch
                   </span>
                   {(
                     [

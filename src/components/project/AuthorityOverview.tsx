@@ -187,7 +187,7 @@ export function AuthorityOverview({
   /** Website-order cards rendered after the Safe queue and before permissions. */
   beforePermissions?: React.ReactNode;
 }) {
-  const authorityLabel = isRevnet ? "Project operator" : "Project owner";
+  const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
   const authorityQuery = useQuery({
     queryKey: [
       "authorityRows",
@@ -236,7 +236,7 @@ export function AuthorityOverview({
           <span className="field-label">Account</span>
           <p className="mt-2 text-sm leading-relaxed text-smoke-700">
             {isRevnet
-              ? "Revnets have no project owner. The project operator holds only the permissions granted at launch, and can pass that role on."
+              ? "Revnets have no project owner. The revnet operator holds only the permissions granted at launch, and can pass that role on."
               : "The project NFT is ownership. Its project owner controls owner-only actions, either directly or through a Safe."}
           </p>
         </div>
@@ -495,7 +495,7 @@ function TransferAuthorityFlow({
       setStatus(
         queued || waiting
           ? `Your Safe action is recorded${queued ? `; ${queued} queued` : ""}${waiting ? `; ${waiting} awaiting more onchain approvals` : ""}.`
-          : `${isRevnet ? "Project operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
+          : `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
       );
       onDone();
     } catch (submitError) {
@@ -516,7 +516,7 @@ function TransferAuthorityFlow({
         onClick={() => setOpen(true)}
         className="btn-secondary mt-4 min-h-[38px] px-4 text-sm"
       >
-        {isRevnet ? "Transfer project operator" : "Transfer project ownership"}
+        {isRevnet ? "Transfer revnet operator" : "Transfer project ownership"}
       </button>
     );
   }
@@ -525,7 +525,7 @@ function TransferAuthorityFlow({
     <div className="mt-4 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
-          {isRevnet ? "Transfer project operator" : "Transfer project ownership"}
+          {isRevnet ? "Transfer revnet operator" : "Transfer project ownership"}
         </p>
         <button
           type="button"
@@ -546,10 +546,10 @@ function TransferAuthorityFlow({
           disabled={busy}
           placeholder={
             isRevnet
-              ? "0x… new project operator (zero address relinquishes)"
+              ? "0x… new revnet operator (zero address relinquishes)"
               : "0x… new project owner"
           }
-          ariaLabel={isRevnet ? "New project operator" : "New project owner"}
+          ariaLabel={isRevnet ? "New revnet operator" : "New project owner"}
         />
       </div>
       <p className="mt-2 text-xs text-smoke-500">
@@ -566,8 +566,8 @@ function TransferAuthorityFlow({
         <span className="text-xs leading-relaxed text-red-700">
           {isRevnet
             ? destination.trim().toLowerCase() === zeroAddress
-              ? "I understand that relinquishing the project operator role is permanent."
-              : "I verified the new project operator. They receive every power attached to this role."
+              ? "I understand that relinquishing the revnet operator role is permanent."
+              : "I verified the new revnet operator. They receive every power attached to this role."
             : "I verified the new project owner. Transferring the project NFT hands over every owner-only power."}
         </span>
       </label>
@@ -580,7 +580,7 @@ function TransferAuthorityFlow({
         {busy
           ? (status ?? "Preparing…")
           : isRevnet
-            ? "Transfer project operator"
+            ? "Transfer revnet operator"
             : "Transfer project ownership"}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
@@ -619,8 +619,8 @@ function PermissionsAcrossChains({
       <span className="field-label">Permissions</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
-          ? "Every power the revnet’s project operator role currently holds, including any NFT powers granted at launch."
-          : "Project operators authorized to act for the project owner. Each row shows exactly what is granted and on which chains."}
+          ? "Every power the revnet’s revnet operator role currently holds, including any NFT powers granted at launch."
+          : "Revnet operators authorized to act for the project owner. Each row shows exactly what is granted and on which chains."}
       </p>
 
       {query.isLoading ? (
@@ -628,8 +628,8 @@ function PermissionsAcrossChains({
       ) : grants.length === 0 ? (
         <p className="mt-4 text-sm text-smoke-500">
           {isRevnet
-            ? "No project operator permissions found."
-            : "No project operators authorized yet."}
+            ? "No revnet operator permissions found."
+            : "No revnet operators authorized yet."}
         </p>
       ) : (
         <div className="mt-4 divide-y divide-smoke-100">
@@ -644,7 +644,7 @@ function PermissionsAcrossChains({
                 />
                 {grant.isRevnetOperator ? (
                   <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
-                    Project operator
+                    Revnet operator
                   </span>
                 ) : null}
                 {grant.differs ? (
@@ -722,7 +722,7 @@ function PermissionsAcrossChains({
             onClick={() => setEditing("new")}
             className="btn-secondary mt-4 min-h-[40px] px-4 text-sm"
           >
-            + Add project operator
+            + Add revnet operator
           </button>
         )
       ) : null}
@@ -762,7 +762,7 @@ function PermissionEditor({
   const submit = async () => {
     const operator = resolvedAddress(operatorInput);
     if (!operator || operator === zeroAddress) {
-      setError("Enter a valid non-zero project operator address or ENS name.");
+      setError("Enter a valid non-zero revnet operator address or ENS name.");
       return;
     }
     const chosen = deployments.filter((row) => selectedChains.has(row.chainId));
@@ -803,7 +803,7 @@ function PermissionEditor({
             operator,
             projectId: BigInt(deployment.projectId),
             permissionIds: finalIds,
-            label: grant ? "Edit permissions" : "Add project operator",
+            label: grant ? "Edit permissions" : "Add revnet operator",
           }),
         );
       }
@@ -835,7 +835,7 @@ function PermissionEditor({
     <div className="mt-5 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
-          {grant ? "Edit permissions" : "Add project operator"}
+          {grant ? "Edit permissions" : "Add revnet operator"}
         </p>
         <button
           type="button"
@@ -848,7 +848,7 @@ function PermissionEditor({
       </div>
 
       <label className="mt-4 block">
-        <span className="field-label">Project operator</span>
+        <span className="field-label">Revnet operator</span>
         <div className="mt-1.5">
           <AddressField
             value={operatorInput}
@@ -857,7 +857,7 @@ function PermissionEditor({
               setError(null);
             }}
             disabled={busy || !!grant}
-            ariaLabel="Project operator address"
+            ariaLabel="Revnet operator address"
           />
         </div>
       </label>
@@ -909,7 +909,7 @@ function PermissionEditor({
         />
         <span className="text-xs leading-relaxed text-red-700">
           I verified the operator address and every checked power. A malicious
-          project operator can use these permissions against the project.
+          revnet operator can use these permissions against the project.
         </span>
       </label>
 
@@ -923,7 +923,7 @@ function PermissionEditor({
           ? (status ?? "Preparing…")
           : grant
             ? "Update permissions"
-            : "Add project operator"}
+            : "Add revnet operator"}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error ? <ErrorNote message={error} /> : null}

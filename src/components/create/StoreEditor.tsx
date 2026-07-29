@@ -541,7 +541,7 @@ export function StoreEditor({
                     [
                       "allowOwnerMint",
                       "Project owner can mint for free",
-                      "The project owner (or revnet project operator) can mint this item without paying.",
+                      "The project owner (or revnet revnet operator) can mint this item without paying.",
                     ],
                     ...(isRevnet
                       ? []

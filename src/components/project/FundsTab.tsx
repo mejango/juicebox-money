@@ -230,16 +230,14 @@ async function readChainFunds(
               BigInt(ctx.decimals),
               BigInt(ctx.currency),
             ],
-          })
-          .catch(() => 0n),
+          }),
         client
           .readContract({
             address: splitsAddress,
             abi: jbSplitsAbi,
             functionName: 'splitsOf',
             args: [pid, BigInt(rulesetId), payoutSplitGroupId(ctx.token)],
-          })
-          .catch(() => [] as readonly Split[]),
+          }),
       ])
 
     const payoutUsage = await Promise.all(

@@ -228,6 +228,8 @@ export function useSafeTx(chainId: number) {
       effectivePhase === 'simulating' ||
       effectivePhase === 'signing' ||
       effectivePhase === 'pending',
+    /** Whether the connected writer is a Safe connector. */
+    isSafe: isSafeConnection(wagmiConfig),
     error: effectiveError,
     hash,
     safeProposalHash,

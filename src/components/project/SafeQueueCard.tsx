@@ -157,7 +157,7 @@ export function SafeQueueCard({
 }: {
   safe: Address;
   chains: SafeQueueChain[];
-  authorityLabel: "Project owner" | "Project operator";
+  authorityLabel: "Project owner" | "Revnet operator";
 }) {
   const { address } = useWallet();
   const [busy, setBusy] = useState<string | null>(null);
