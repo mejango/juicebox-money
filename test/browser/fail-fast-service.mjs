@@ -318,15 +318,17 @@ const contractFixtures = [
     args: [1n],
     result: zeroAddress,
   },
-  {
-    name: 'JBProjects.creationFee',
-    address: addressOf(JBCoreContracts.JBProjects),
-    abi: jbProjectsAbi,
-    functionName: 'creationFee',
-    args: [],
-    result: 0n,
-    chainIds: [1, 10, 8453, 42161],
-  },
+  ...[1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(
+    chainId => ({
+      name: 'JBProjects.creationFee',
+      address: jbContractAddress['6'][JBCoreContracts.JBProjects]?.[chainId],
+      abi: jbProjectsAbi,
+      functionName: 'creationFee',
+      args: [],
+      result: 0n,
+      chainIds: [chainId],
+    }),
+  ),
 ].map(fixture => ({
   ...fixture,
   address: fixture.address.toLowerCase(),
@@ -501,31 +503,6 @@ const graphqlFixtures = [
           },
         ],
       },
-    },
-  },
-  {
-    name: 'legacyProjects',
-    query: `query($limit: Int!) {
-      projects(
-        orderBy: trendingScore
-        orderDirection: desc
-        where: { pv_in: ["1", "2"], trendingScore_gt: 0 }
-        first: $limit
-      ) { projectId pv handle metadataUri trendingScore volume paymentsCount }
-    }`,
-    variables: { limit: 12 },
-    data: {
-      projects: [
-        {
-          projectId: 2,
-          pv: '2',
-          handle: 'Legacy Browser Fixture',
-          metadataUri: null,
-          trendingScore: '900000',
-          volume: '42000000000000000000',
-          paymentsCount: 3,
-        },
-      ],
     },
   },
 ].map(fixture => ({ ...fixture, canonical: canonicalGraphql(fixture.query) }))
@@ -805,6 +782,10 @@ const server = createServer(async (request, response) => {
       '/rpc/optimism-mainnet': 10,
       '/rpc/base-mainnet': 8453,
       '/rpc/arbitrum-mainnet': 42161,
+      '/rpc/sepolia': 11155111,
+      '/rpc/optimism-sepolia': 11155420,
+      '/rpc/base-sepolia': 84532,
+      '/rpc/arbitrum-sepolia': 421614,
     }
     const rpcChainId = rpcChainIds[request.url]
     if (rpcChainId && request.method === 'POST') {

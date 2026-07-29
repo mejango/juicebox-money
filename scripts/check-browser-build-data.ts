@@ -8,10 +8,7 @@ async function main() {
   ])
 
   const names = new Set(cards.map(card => card.name))
-  for (const required of [
-    'Browser Fixture Project',
-    'Legacy Browser Fixture',
-  ]) {
+  for (const required of ['Browser Fixture Project']) {
     if (!names.has(required)) {
       throw new Error(`Deterministic build data omitted ${required}`)
     }

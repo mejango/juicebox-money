@@ -33,7 +33,6 @@ export default async function globalTeardown() {
     'permissionHolders',
     'trending',
     'recentActivity',
-    'legacyProjects',
   ])
   const missingContracts = missingReads(status.contracts, [
     'JBMultiTerminal.accountingContextsOf',

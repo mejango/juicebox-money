@@ -29,7 +29,7 @@ export function deploymentEnvErrors(env, phase = 'all') {
   if (BUILD_PHASES.has(phase)) {
     httpsUrl(errors, env, 'NEXT_PUBLIC_SITE_URL')
     httpsUrl(errors, env, 'NEXT_PUBLIC_BENDYSTRAW_URL')
-    httpsUrl(errors, env, 'NEXT_PUBLIC_LEGACY_SUBGRAPH_URL', true)
+    httpsUrl(errors, env, 'NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL')
     required(errors, env, 'NEXT_PUBLIC_PARA_API_KEY', 8)
     const dwellirKey = env.NEXT_PUBLIC_DWELLIR_API_KEY?.trim() ?? ''
     if (!/^[A-Za-z\d_-]{8,128}$/u.test(dwellirKey)) {
@@ -42,17 +42,8 @@ export function deploymentEnvErrors(env, phase = 'all') {
       errors.push('NEXT_PUBLIC_VERSION must identify the built revision')
     }
 
-    if (!['true', 'false'].includes(env.NEXT_PUBLIC_TESTNET ?? '')) {
-      errors.push('NEXT_PUBLIC_TESTNET must be true or false')
-    }
     if (!PARA_ENVIRONMENTS.has(env.NEXT_PUBLIC_PARA_ENV ?? '')) {
       errors.push('NEXT_PUBLIC_PARA_ENV is invalid')
-    }
-    if (
-      env.NEXT_PUBLIC_TESTNET === 'false' &&
-      env.NEXT_PUBLIC_PARA_ENV !== 'PROD'
-    ) {
-      errors.push('mainnet builds require NEXT_PUBLIC_PARA_ENV=PROD')
     }
     if (env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true') {
       errors.push('deterministic browser mode cannot be deployed')

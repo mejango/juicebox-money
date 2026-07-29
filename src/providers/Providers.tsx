@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { createConfig, http, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
+import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { getDwellirRpcUrl } from '@/lib/dwellir'
 import { ParaAuthContext } from './ParaAuthContext'
 import { lazyParaConnector } from './lazy-para-connector'
@@ -27,29 +28,12 @@ import {
   sepolia,
 } from 'wagmi/chains'
 
-const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 export const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 const BROWSER_FIXTURE_ORIGIN =
   process.env.NEXT_PUBLIC_BROWSER_FIXTURE_ORIGIN ?? 'http://127.0.0.1:4399'
 
-export const SUPPORTED_CHAINS = IS_TESTNET
-  ? ([sepolia, optimismSepolia, baseSepolia, arbitrumSepolia] as const)
-  : ([mainnet, optimism, base, arbitrum] as const)
-
-// A direct project URL may target either environment. Keep all supported
-// chains available for client-side reads while preserving the environment's
-// narrower discovery/create defaults above.
-const WAGMI_CHAINS = [
-  mainnet,
-  optimism,
-  base,
-  arbitrum,
-  sepolia,
-  optimismSepolia,
-  baseSepolia,
-  arbitrumSepolia,
-] as const
+export { SUPPORTED_CHAINS } from '@/lib/chains'
 
 const rpcTransport = (chainId: number, fixtureNetwork: string) => {
   if (IS_DETERMINISTIC_BROWSER) {
@@ -86,7 +70,7 @@ const ParaModalHost = lazy(() => import('./ParaModalHost'))
  * cover browser wallets without eager vendor SDKs.
  */
 export const wagmiConfig = createConfig({
-  chains: WAGMI_CHAINS,
+  chains: SUPPORTED_CHAINS,
   transports,
   connectors: IS_DETERMINISTIC_BROWSER
     ? []

@@ -7,9 +7,8 @@ import {
 
 const buildEnv = {
   NEXT_PUBLIC_SITE_URL: 'https://juicebox.example',
-  NEXT_PUBLIC_BENDYSTRAW_URL: 'https://bendystraw.example/graphql',
-  NEXT_PUBLIC_LEGACY_SUBGRAPH_URL: 'https://legacy.example/graphql',
-  NEXT_PUBLIC_TESTNET: 'false',
+  NEXT_PUBLIC_BENDYSTRAW_URL: 'https://bendystraw.example',
+  NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL: 'https://testnet.bendystraw.example',
   NEXT_PUBLIC_PARA_API_KEY: 'public-para-key',
   NEXT_PUBLIC_PARA_ENV: 'PROD',
   NEXT_PUBLIC_DWELLIR_API_KEY: 'public-dwellir-key',
@@ -20,23 +19,23 @@ const ingressToken = 'ingress-token-with-at-least-32-characters'
 afterEach(() => vi.unstubAllEnvs())
 
 describe('deployment configuration', () => {
-  it('accepts a mainnet build and intentionally disabled runtime pinning', () => {
+  it('accepts a dual-environment build and disabled runtime pinning', () => {
     expect(() => assertDeploymentEnv(buildEnv, 'build')).not.toThrow()
     expect(() =>
       assertDeploymentEnv({ IPFS_PINNING_ENABLED: 'false' }, 'runtime'),
     ).not.toThrow()
   })
 
-  it('rejects test fixtures and a non-production Para environment on mainnet', () => {
+  it('rejects test fixtures and an invalid Para environment', () => {
     const errors = deploymentEnvErrors(
       {
         ...buildEnv,
-        NEXT_PUBLIC_PARA_ENV: 'BETA',
+        NEXT_PUBLIC_PARA_ENV: 'INVALID',
         NEXT_PUBLIC_DETERMINISTIC_BROWSER: 'true',
       },
       'build',
     )
-    expect(errors).toContain('mainnet builds require NEXT_PUBLIC_PARA_ENV=PROD')
+    expect(errors).toContain('NEXT_PUBLIC_PARA_ENV is invalid')
     expect(errors).toContain('deterministic browser mode cannot be deployed')
   })
 

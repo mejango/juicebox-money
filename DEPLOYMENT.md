@@ -36,10 +36,9 @@ arguments or repository variables.
 | --- | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | build | Canonical HTTPS origin for the selected environment |
 | `NEXT_PUBLIC_BENDYSTRAW_URL` | build | Absolute HTTPS base URL; `/graphql` is appended automatically |
-| `NEXT_PUBLIC_LEGACY_SUBGRAPH_URL` | build | Optional absolute HTTPS URL |
-| `NEXT_PUBLIC_TESTNET` | build | Explicit `true` or `false` |
+| `NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL` | build | Absolute HTTPS testnet base URL; `/graphql` is appended automatically |
 | `NEXT_PUBLIC_PARA_API_KEY` | build | Public Para application key |
-| `NEXT_PUBLIC_PARA_ENV` | build | `PROD` for a mainnet image |
+| `NEXT_PUBLIC_PARA_ENV` | build | Para application environment; normally `PROD` |
 | `NEXT_PUBLIC_DWELLIR_API_KEY` | build | Public browser RPC key; apply strict provider quotas |
 | `NEXT_PUBLIC_VERSION` | build | Commit SHA shown by the app/health endpoint |
 | `IPFS_PINNING_ENABLED` | runtime | Explicit `false` by default |
@@ -59,7 +58,7 @@ without printing its values.
 docker build -t juicebox-money:local \
   --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.money \
   --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.xyz \
-  --build-arg NEXT_PUBLIC_TESTNET=false \
+  --build-arg NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.xyz \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_PARA_ENV=PROD \
   --build-arg NEXT_PUBLIC_DWELLIR_API_KEY=PUBLIC_KEY \
@@ -129,5 +128,6 @@ known-good digest with its matching runtime configuration, then waiting for
 `/api/healthz` before restoring traffic. Never rebuild an old commit and call
 that a rollback.
 
-Mainnet and testnet public configuration should be separate images because
-those values are intentionally compiled into the browser bundle.
+The same image supports mainnet and testnet chains. Creation presents an
+explicit Production/Testnets choice, and indexed reads select the matching
+Bendystraw endpoint from each operation's chain ID.

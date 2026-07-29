@@ -152,6 +152,16 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
 
   await expect(page.locator('[data-create-ready="true"]')).toBeVisible()
   await expect(stepper.getByRole('button')).toHaveCount(4)
+  const environment = page.getByLabel('Deployment environment')
+  await expect(environment).toHaveValue('production')
+  await environment.selectOption('testnet')
+  await expect(
+    page.getByRole('group', { name: 'Chains' }).getByRole('button'),
+  ).toHaveCount(4)
+  await expect(
+    page.getByRole('button', { name: 'Remove Sepolia' }),
+  ).toBeVisible()
+  await environment.selectOption('production')
   // A state transition is a deterministic hydration handshake; changing the
   // select before React attaches would only mutate the temporary server DOM.
   await page.getByRole('button', { name: 'Next →' }).click()
@@ -324,12 +334,6 @@ for (const viewport of viewports) {
           }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] })
           await expect(
             fixtureHeading,
-          ).toBeVisible()
-          await expect(
-            page.getByRole('heading', {
-              level: 3,
-              name: 'Legacy Browser Fixture',
-            }),
           ).toBeVisible()
           await expect(
             page.getByRole('link', {

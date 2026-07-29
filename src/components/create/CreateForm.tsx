@@ -93,7 +93,13 @@ import {
 } from "@/components/TransactionInProgress";
 import { chainName, toUrn } from "@/lib/urn";
 import { requireContractTransactionReview } from "@/lib/transaction-review";
-import { SUPPORTED_CHAINS } from "@/providers/Providers";
+import {
+  PRODUCTION_CHAINS,
+  SUPPORTED_CHAINS,
+  chainsForEnvironment,
+  environmentForChainIds,
+  type ChainEnvironment,
+} from "@/lib/chains";
 import { StoreEditor, itemOk, type DraftItem } from "./StoreEditor";
 
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
@@ -278,9 +284,18 @@ export function CreateForm() {
     Record<number, string>
   >({});
   const [customChainError, setCustomChainError] = useState<string | null>(null);
+  const [environment, setEnvironment] =
+    useState<ChainEnvironment>("production");
+  const availableChains = chainsForEnvironment(environment);
   const [selected, setSelected] = useState<number[]>(
-    SUPPORTED_CHAINS.map((chain) => chain.id),
+    PRODUCTION_CHAINS.map((chain) => chain.id),
   );
+  const selectEnvironment = (next: ChainEnvironment) => {
+    setEnvironment(next);
+    setSelected(chainsForEnvironment(next).map((chain) => chain.id));
+    setOwnerPerChain({});
+    setApprovalPerChain({});
+  };
 
   // --- 0: Flavor ---
   const [flavor, setFlavor] = useState<CreateDraft["flavor"]>("simple");
@@ -474,11 +489,11 @@ export function CreateForm() {
 
   // Live creation fees, read per chain through the app's wagmi clients.
   const { data: fees } = useQuery({
-    queryKey: ["creationFees"],
+    queryKey: ["creationFees", environment],
     staleTime: 60_000,
     queryFn: async () => {
       const results = await Promise.allSettled(
-        SUPPORTED_CHAINS.map((chain) =>
+        availableChains.map((chain) =>
           getProjectCreationFee(
             getPublicClient(config, { chainId: chain.id }) as PublicClient,
             chain.id as JBChainId,
@@ -486,7 +501,7 @@ export function CreateForm() {
         ),
       );
       const byChain: Record<number, bigint | null> = {};
-      SUPPORTED_CHAINS.forEach((chain, i) => {
+      availableChains.forEach((chain, i) => {
         const r = results[i];
         byChain[chain.id] = r.status === "fulfilled" ? r.value : null;
       });
@@ -1417,10 +1432,19 @@ export function CreateForm() {
     const validChains = draft.chains.filter((id) =>
       SUPPORTED_CHAINS.some((chain) => chain.id === id),
     );
+    const nextEnvironment = environmentForChainIds(validChains);
+    const nextEnvironmentChains = chainsForEnvironment(nextEnvironment);
+    const nextEnvironmentChainIds = new Set<number>(
+      nextEnvironmentChains.map((chain) => chain.id),
+    );
+    const compatibleChains = validChains.filter((id) =>
+      nextEnvironmentChainIds.has(id),
+    );
+    setEnvironment(nextEnvironment);
     setSelected(
-      validChains.length > 0
-        ? validChains
-        : SUPPORTED_CHAINS.map((chain) => chain.id),
+      compatibleChains.length > 0
+        ? compatibleChains
+        : nextEnvironmentChains.map((chain) => chain.id),
     );
     setStages(draft.stages);
     setAfterMode(draft.afterMode);
@@ -1484,6 +1508,7 @@ export function CreateForm() {
     const session = loadLaunchSession();
     if (!session) return;
     restoredSessionRef.current = session;
+    setEnvironment(environmentForChainIds(session.chains));
     setSelected(session.chains);
     statusesRef.current = session.statuses;
     setStatuses(session.statuses);
@@ -1746,13 +1771,32 @@ export function CreateForm() {
         </div>
 
         <div className="mt-6">
+          <span className="field-label">Environment</span>
+          <select
+            aria-label="Deployment environment"
+            value={environment}
+            onChange={(e) =>
+              selectEnvironment(e.target.value as ChainEnvironment)
+            }
+            disabled={busy}
+            className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
+          >
+            <option value="production">Production</option>
+            <option value="testnet">Testnets</option>
+          </select>
+          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+            Choose the network environment before selecting chains.
+          </p>
+        </div>
+
+        <div className="mt-6">
           <span className="field-label">Chains</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             Your {flavor === "revnet" ? "revnet" : "project"} lives on every
             chain you pick. You can add more chains later.
           </p>
           <MultiChainSelect
-            options={SUPPORTED_CHAINS.map((chain) => chain.id)}
+            options={availableChains.map((chain) => chain.id)}
             values={selected}
             onToggle={toggleChain}
             disabled={busy}

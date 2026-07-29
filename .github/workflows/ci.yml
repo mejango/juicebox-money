@@ -21,7 +21,6 @@ jobs:
     env:
       CI: true
       NEXT_TELEMETRY_DISABLED: 1
-      NEXT_PUBLIC_TESTNET: 'false'
       NODE_OPTIONS: --no-experimental-webstorage
     steps:
       - name: Check out repository
@@ -103,9 +102,8 @@ jobs:
         run: |
           docker build --tag juicebox-money:ci \
             --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.example \
-            --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example/graphql \
-            --build-arg NEXT_PUBLIC_LEGACY_SUBGRAPH_URL=https://legacy.example/graphql \
-            --build-arg NEXT_PUBLIC_TESTNET=false \
+            --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example \
+            --build-arg NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.example \
             --build-arg NEXT_PUBLIC_PARA_API_KEY=ci-public-para-key \
             --build-arg NEXT_PUBLIC_PARA_ENV=PROD \
             --build-arg NEXT_PUBLIC_DWELLIR_API_KEY=ci-public-dwellir-key \

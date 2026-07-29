@@ -20,12 +20,15 @@ const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
   : normalizeBendystrawUrl(
       process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz',
     )
-const TESTNET_URL = normalizeBendystrawUrl('https://testnet.bendystraw.xyz')
+const TESTNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
+  ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
+  : normalizeBendystrawUrl(
+      process.env.NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL ??
+        'https://testnet.bendystraw.xyz',
+    )
 const REQUEST_TIMEOUT_MS = 8_000
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
-
-export const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
 
 /**
  * Endpoint-routing hint for queries whose variables carry no chainId (e.g.
@@ -50,8 +53,7 @@ export async function bendystraw<T>(
     variableChainId === null
       ? undefined
       : JB_CHAINS[variableChainId as JBChainId]?.chain
-  const useTestnet =
-    opts.testnet ?? variableChain?.testnet ?? IS_TESTNET
+  const useTestnet = opts.testnet ?? variableChain?.testnet ?? false
   const res = await fetch(useTestnet ? TESTNET_URL : MAINNET_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
