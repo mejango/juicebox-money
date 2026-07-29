@@ -84,6 +84,22 @@ type ShopTierFlags = {
   cantBuyWithCredits: boolean
 }
 
+type ShopConfigFlags = {
+  preventOverspending: boolean
+  noNewTiersWithReserves: boolean
+  noNewTiersWithVotes: boolean
+  noNewTiersWithOwnerMinting: boolean
+  issueTokensForSplits: boolean
+}
+
+const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
+  ['preventOverspending', 'Require exact payment'],
+  ['noNewTiersWithReserves', 'Lock reserved items after launch'],
+  ['noNewTiersWithVotes', 'Lock voting items after launch'],
+  ['noNewTiersWithOwnerMinting', 'Lock owner minting after launch'],
+  ['issueTokensForSplits', 'Give split recipients project tokens'],
+]
+
 type ShopTier = {
   id: number
   /** Full (undiscounted) price in the shop's pricing terms. */
@@ -138,6 +154,7 @@ type Shop = {
   cashOutEnabled: boolean
   pricing: { currency: number; decimals: number; symbol: string }
   tiers: ShopTier[]
+  configFlags: ShopConfigFlags | null
 }
 
 type TierMedia = {
@@ -425,6 +442,8 @@ export function ShopTab({
         </dl>
       </div>
 
+      <ShopConfigDetails flags={shop.configFlags} />
+
       {addItemsOpen && writeTargetsLoading ? (
         <ShopEditorLoading onClose={() => setAddItemsOpen(false)} />
       ) : null}
@@ -492,6 +511,45 @@ export function ShopTab({
         },
       ]}
     />
+  )
+}
+
+function ShopConfigDetails({
+  flags,
+}: {
+  flags: ShopConfigFlags | null
+}) {
+  return (
+    <details className="card group p-5">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-medium text-ink">
+        <span>Shop config</span>
+        <span
+          aria-hidden="true"
+          className="inline-block text-smoke-500 transition-transform group-open:rotate-90"
+        >
+          ▸
+        </span>
+      </summary>
+      {flags ? (
+        <dl className="mt-4 space-y-2 border-t border-smoke-200 pt-4 text-sm">
+          {SHOP_CONFIG_ROWS.map(([key, label]) => (
+            <div
+              key={key}
+              className="flex items-baseline justify-between gap-4"
+            >
+              <dt className="text-smoke-700">{label}</dt>
+              <dd className="font-medium text-ink">
+                {flags[key] ? 'On' : 'Off'}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="mt-4 border-t border-smoke-200 pt-4 text-sm text-smoke-700">
+          Couldn&apos;t read the current shop config.
+        </p>
+      )}
+    </details>
   )
 }
 
@@ -1717,17 +1775,28 @@ async function readShop(
     }
   }
 
-  // Stored flags come from the store directly — getProject721Shop's tier
-  // shape doesn't carry them. Cosmetic here (detail-modal facts), so a
-  // failed read just omits the flags section.
-  const rawTiers = await client
-    .readContract({
-      address: resolved.store,
-      abi: jb721TiersHookStoreAbi,
-      functionName: 'tiersOf',
-      args: [resolved.hook, [], true, 0n, 200n],
-    })
-    .catch(() => [])
+  // Tier and collection-wide flags come from the store directly —
+  // getProject721Shop's tier shape doesn't carry them. These are display-only,
+  // so failed reads leave their corresponding detail sections unavailable.
+  const [rawTiers, configFlags] = await Promise.all([
+    client
+      .readContract({
+        address: resolved.store,
+        abi: jb721TiersHookStoreAbi,
+        functionName: 'tiersOf',
+        args: [resolved.hook, [], true, 0n, 200n],
+      })
+      .catch(() => []),
+    client
+      .readContract({
+        address: resolved.store,
+        abi: jb721TiersHookStoreAbi,
+        functionName: 'flagsOf',
+        args: [resolved.hook],
+      })
+      .then(flags => ({ ...flags }))
+      .catch(() => null),
+  ])
   const flagsById = new Map(
     rawTiers.map(rawTier => [rawTier.id, rawTier.flags] as const),
   )
@@ -1752,6 +1821,7 @@ async function readShop(
     cashOutEnabled,
     pricing: { currency, decimals, symbol },
     tiers,
+    configFlags,
   }
 }
 

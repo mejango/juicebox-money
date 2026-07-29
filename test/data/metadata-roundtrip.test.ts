@@ -18,6 +18,7 @@ const existing = {
   extensions: { scoreboard: { url: 'https://scores.example', live: true } },
   coverImageUri: 'ipfs://QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR',
   payDisclosure: 'Existing notice',
+  version: 1,
 }
 
 describe('mergeProjectMetadata', () => {
@@ -70,7 +71,11 @@ describe('mergeProjectMetadata', () => {
 
 describe('preservedMetadataKeys', () => {
   it('lists the recognized fields the editor keeps but never edits, sorted', () => {
-    expect(preservedMetadataKeys(existing)).toEqual(['coverImageUri', 'tags'])
+    expect(preservedMetadataKeys(existing)).toEqual([
+      'coverImageUri',
+      'tags',
+      'version',
+    ])
   })
 
   it('is empty when everything present is editor-owned, or with no metadata', () => {
@@ -100,6 +105,7 @@ describe('customMetadataProperties', () => {
         description: 'D',
         tags: ['x'],
         coverImageUri: 'ipfs://Qm',
+        version: 1,
       }),
     ).toEqual({})
     expect(customMetadataProperties(null)).toEqual({})
@@ -155,10 +161,10 @@ describe('parseCustomProperties', () => {
 
   it('strips keys the form manages and reports them as collisions', () => {
     const parsed = parseCustomProperties(
-      '{"name":"Sneaky","tags":["a"],"leagueID":7}',
+      '{"name":"Sneaky","tags":["a"],"version":99,"leagueID":7}',
     )
     expect(parsed.ok && parsed.properties).toEqual({ leagueID: 7 })
-    expect(parsed.ok && parsed.collisions).toEqual(['name', 'tags'])
+    expect(parsed.ok && parsed.collisions).toEqual(['name', 'tags', 'version'])
   })
 })
 
@@ -182,6 +188,7 @@ describe('mergeProjectMetadata with custom properties', () => {
     // Recognized fields the form keeps are never up for deletion here.
     expect(merged.tags).toEqual(['games', 'league'])
     expect(merged.coverImageUri).toBe(existing.coverImageUri)
+    expect(merged.version).toBe(1)
     expect(merged.name).toBe('New name')
   })
 
@@ -190,6 +197,7 @@ describe('mergeProjectMetadata with custom properties', () => {
     expect(merged).not.toHaveProperty('leagueID')
     expect(merged).not.toHaveProperty('extensions')
     expect(merged.tags).toEqual(['games', 'league'])
+    expect(merged.version).toBe(1)
     expect(merged.name).toBe('New name')
   })
 
@@ -201,12 +209,14 @@ describe('mergeProjectMetadata with custom properties', () => {
         name: 'Custom name',
         description: 'Custom description',
         tags: ['hijack'],
+        version: 99,
         leagueID: 1,
       } as Record<string, unknown>,
     )
     expect(merged.name).toBe('Form name')
     expect(merged.description).toBe('Form description')
     expect(merged.tags).toEqual(['games', 'league'])
+    expect(merged.version).toBe(1)
     expect(merged.leagueID).toBe(1)
   })
 })
