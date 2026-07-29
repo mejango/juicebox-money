@@ -682,6 +682,7 @@ function PermissionsAcrossChains({
                             key={chainId}
                             chainId={chainId}
                             size={16}
+                            standalone
                           />
                         ))}
                       </span>

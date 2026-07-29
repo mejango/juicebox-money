@@ -158,3 +158,74 @@ describe('SearchBox account results', () => {
     expect(mocks.push).toHaveBeenCalledWith(`/${toUrn(1, 3)}`)
   })
 })
+
+/**
+ * Search is where a chain gets picked before any money moves, and the testnet
+ * names differ by one word. Every named chain in a result row carries its mark.
+ * The mark is decorative — the name beside it is what assistive tech reads — so
+ * the marks are counted, not read.
+ */
+function chainMarkCount(renderer: TestRenderer.ReactTestRenderer): number {
+  return renderer.root.findAll(
+    node => node.type === 'img' && node.props['aria-hidden'] === 'true',
+    { deep: true },
+  ).length
+}
+
+describe('SearchBox chain marks', () => {
+  it('marks every chain a project result lists', async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        projects: [
+          {
+            projectId: 3,
+            chainId: 1,
+            name: 'Juicebox',
+            logoUri: null,
+            projectTagline: null,
+            ticker: 'JBX',
+            chainIds: [1, 8453],
+          },
+        ],
+      }),
+    })
+    const renderer = await render()
+    await type(renderer, 'juice')
+    await settle()
+
+    // The names stay visible; the marks are added beside them, never instead.
+    const text = renderedText(renderer.root)
+    expect(text).toContain('Ethereum')
+    expect(text).toContain('Base')
+    expect(chainMarkCount(renderer)).toBe(2)
+  })
+
+  it('marks the chain on a direct urn row', async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        projects: [
+          {
+            projectId: 3,
+            chainId: 1,
+            name: 'Juicebox',
+            logoUri: null,
+            projectTagline: null,
+            ticker: 'JBX',
+            chainIds: [1],
+          },
+        ],
+      }),
+    })
+    const renderer = await render()
+    // A urn alone never opens the dropdown; it replaces an already-open list.
+    await type(renderer, 'juice')
+    await settle()
+    await type(renderer, 'basesep:5')
+    await settle()
+
+    expect(renderedText(renderer.root)).toContain('Base Sepolia')
+    expect(chainMarkCount(renderer)).toBe(1)
+  })
+})

@@ -250,6 +250,7 @@ export function AccountTokenHoldings({
                       key={`${row.chainId}:${row.projectId}`}
                       chainId={row.chainId}
                       size={16}
+                      standalone
                     />
                   ))}
                 </div>
@@ -339,7 +340,7 @@ export function AccountShopHoldings({
                   projectId={group.projectId}
                 />
                 <div className="mt-1 flex items-center gap-1.5">
-                  <ChainIcon chainId={group.chainId} size={16} />
+                  <ChainIcon chainId={group.chainId} size={16} standalone />
                 </div>
               </div>
             </div>

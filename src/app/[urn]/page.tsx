@@ -378,7 +378,7 @@ export default async function ProjectPage({
                         href={`/${toUrn(p.chainId, p.projectId)}`}
                         className="transition-opacity hover:opacity-70"
                       >
-                        <ChainIcon chainId={p.chainId} />
+                        <ChainIcon chainId={p.chainId} standalone />
                       </Link>
                     ))}
                   </span>
@@ -427,7 +427,7 @@ export default async function ProjectPage({
                       href={`/${toUrn(p.chainId, p.projectId)}`}
                       className="transition-opacity hover:opacity-70"
                     >
-                      <ChainIcon chainId={p.chainId} />
+                      <ChainIcon chainId={p.chainId} standalone />
                     </Link>
                   ))}
                 </span>

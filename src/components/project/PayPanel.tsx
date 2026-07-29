@@ -33,6 +33,7 @@ import {
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
+import { ChainIcon } from "@/components/ChainIcon";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1343,6 +1344,12 @@ export function PayPanel({
           ]}
         />
         <span>on</span>
+        {/*
+         * An <option> cannot carry an image, so the mark for the CURRENTLY
+         * selected chain sits beside the control rather than inside it. It
+         * tracks `chainId`, so it re-marks itself as the selection changes.
+         */}
+        <ChainIcon chainId={chainId} size={16} />
         {chains.length > 1 ? (
           <TextSelect
             value={String(chainId)}

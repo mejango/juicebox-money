@@ -16,30 +16,34 @@ const CHAIN_ICON: Record<number, StaticImageData> = {
   421614: arbitrumIcon,
 }
 
-/** A small round chain mark — icon only, name available on hover. */
+/**
+ * A small round chain mark. Beside a visible chain name the mark is decorative —
+ * naming it too would announce the chain twice — so set `standalone` only where
+ * the mark is the sole chain signal (a bare table cell, an icon-only link, a
+ * stack of marks) and needs to carry the name itself.
+ */
 export function ChainIcon({
   chainId,
   size = 18,
   className = '',
+  standalone = false,
 }: {
   chainId: number
   size?: number
   className?: string
+  standalone?: boolean
 }) {
   const src = CHAIN_ICON[chainId]
   const name = chainName(chainId)
   if (!src) {
-    return (
-      <span title={name} className={`text-xs text-smoke-500 ${className}`}>
-        {name}
-      </span>
-    )
+    // No mark for this chain, so the name is rendered as visible text instead.
+    return <span className={`text-xs text-smoke-500 ${className}`}>{name}</span>
   }
   return (
     <Image
       src={src}
-      alt={name}
-      title={name}
+      alt={standalone ? name : ''}
+      aria-hidden={standalone ? undefined : 'true'}
       width={size}
       height={size}
       className={`inline-block rounded-full ${className}`}

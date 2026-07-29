@@ -92,7 +92,7 @@ export function ActivityMeta({
           <ChainIcon chainId={chainId} size={18} />
         </a>
       ) : (
-        <ChainIcon chainId={chainId} size={18} />
+        <ChainIcon chainId={chainId} size={18} standalone />
       )}
     </span>
   )

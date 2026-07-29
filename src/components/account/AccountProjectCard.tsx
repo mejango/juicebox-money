@@ -53,7 +53,7 @@ export function AccountProjectCard({
             {name}
           </h3>
           <div className="mt-1.5 flex items-center gap-1.5">
-            <ChainIcon chainId={project.chainId} size={16} />
+            <ChainIcon chainId={project.chainId} size={16} standalone />
             <span className="chip bg-smoke-100 text-smoke-700">
               V{project.version}
             </span>

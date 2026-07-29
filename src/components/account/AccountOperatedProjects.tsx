@@ -131,7 +131,7 @@ export function AccountOperatedProjects({
                   ) : null}
                 </div>
                 <div className="mt-1 flex items-center gap-1.5">
-                  <ChainIcon chainId={group.chainId} size={16} />
+                  <ChainIcon chainId={group.chainId} size={16} standalone />
                   <span className="chip bg-smoke-100 text-smoke-700">
                     V{group.version}
                   </span>

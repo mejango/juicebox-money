@@ -6,6 +6,7 @@ import { isAddress, type Address } from 'viem'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { ChainIcon } from '@/components/ChainIcon'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
 import { identityGradient } from './ActivityList'
 import { ProjectLogo } from './ProjectLogo'
@@ -207,7 +208,11 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
                 onClick={() => go(`/${toUrn(urn.chainId, urn.projectId)}`)}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-smoke-25"
               >
-                Go to project {urn.projectId} on {chainName(urn.chainId)}
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span>Go to project {urn.projectId} on</span>
+                  <ChainIcon chainId={urn.chainId} size={16} />
+                  {chainName(urn.chainId)}
+                </span>
               </button>
             </li>
           ) : (
@@ -227,9 +232,14 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
                       {r.ticker && r.chainIds.length > 0 ? (
                         <span aria-hidden>·</span>
                       ) : null}
-                      <span>
-                        {r.chainIds.map(chainName).join(', ')}
-                      </span>
+                      {r.chainIds.map((id, i) => (
+                        <span key={id} className="flex items-center gap-1">
+                          <ChainIcon chainId={id} size={14} />
+                          {i < r.chainIds.length - 1
+                            ? `${chainName(id)},`
+                            : chainName(id)}
+                        </span>
+                      ))}
                     </span>
                   </span>
                 </button>

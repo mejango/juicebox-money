@@ -1600,8 +1600,10 @@ export function CreateForm() {
                   className="flex items-center justify-between gap-3 rounded-xl border border-smoke-200 bg-bone px-4 py-3.5"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium text-ink">
-                      Project #{s.projectId} on {chainName(chainId)}
+                    <p className="flex items-center gap-1.5 font-medium text-ink">
+                      <span>Project #{s.projectId} on</span>
+                      <ChainIcon chainId={chainId} size={16} />
+                      {chainName(chainId)}
                     </p>
                     <p className="text-xs text-smoke-700">
                       {s.indexed ? "Indexed and ready" : "Indexing…"}
@@ -2909,7 +2911,8 @@ export function CreateForm() {
                     <TransactionProgressImage className="h-9 w-9" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-ink">
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
+                      <ChainIcon chainId={chainId} size={16} />
                       {chainName(chainId)}
                     </p>
                     <p

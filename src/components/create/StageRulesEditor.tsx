@@ -1,5 +1,6 @@
 "use client";
 
+import { ChainIcon } from "@/components/ChainIcon";
 import { FOREVER_SECONDS, autoIssuanceMintChain } from "@/lib/launch";
 import { chainName } from "@/lib/urn";
 import { CashOutCurve } from "./CashOutCurve";
@@ -829,6 +830,16 @@ export function StageRulesEditor({
                     <>
                       <span className="mt-3 shrink-0 text-xs text-smoke-700">
                         on
+                      </span>
+                      {/*
+                       * An <option> cannot carry an image, so the mark for the
+                       * CURRENTLY selected chain sits beside the control.
+                       */}
+                      <span className="mt-2.5 shrink-0">
+                        <ChainIcon
+                          chainId={autoIssuanceMintChain(chainIds, row.chainId)}
+                          size={16}
+                        />
                       </span>
                       <select
                         value={autoIssuanceMintChain(chainIds, row.chainId)}

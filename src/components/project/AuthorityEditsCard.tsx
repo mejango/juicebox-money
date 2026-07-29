@@ -340,7 +340,7 @@ function PerChainMetadataState({
           className="inline-flex min-w-0 items-center gap-1.5 text-xs text-smoke-500"
           title={row.uri ?? 'Not set'}
         >
-          <ChainIcon chainId={row.chainId} size={16} />
+          <ChainIcon chainId={row.chainId} size={16} standalone />
           {row.uri ? truncateUri(row.uri) : 'Not set'}
         </span>
       ))}

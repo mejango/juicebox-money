@@ -15,6 +15,7 @@ import {
   type Address,
 } from 'viem'
 import { useAccount } from 'wagmi'
+import { ChainIcon } from '@/components/ChainIcon'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
   buildTransactionReviewPrompt,
@@ -197,7 +198,8 @@ function PrettyCall({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="chip bg-bluebs-50 text-bluebs-700">
+        <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
+          <ChainIcon chainId={call.chainId} size={16} />
           {chainName(call.chainId)}
         </span>
         <span className="font-mono text-[11px] text-smoke-500">

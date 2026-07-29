@@ -25,7 +25,7 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
         <div className="mt-3 flex items-center gap-1.5 text-sm text-smoke-700">
           <span>On</span>
           {card.chainIds.map(chainId => (
-            <ChainIcon key={chainId} chainId={chainId} size={18} />
+            <ChainIcon key={chainId} chainId={chainId} size={18} standalone />
           ))}
         </div>
         {card.tagline ? (

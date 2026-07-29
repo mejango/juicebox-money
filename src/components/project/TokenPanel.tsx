@@ -113,7 +113,7 @@ export function TokenPanel({
                 dd: (
                   <dd className="flex items-center gap-1">
                     {chainIds.map(id => (
-                      <ChainIcon key={id} chainId={id} size={16} />
+                      <ChainIcon key={id} chainId={id} size={16} standalone />
                     ))}
                   </dd>
                 ),

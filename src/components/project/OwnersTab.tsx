@@ -1033,6 +1033,7 @@ function AllHoldersCard({
                             chainId={id}
                             size={16}
                             className={index > 0 ? '-ml-1' : ''}
+                            standalone
                           />
                         ))}
                       </span>
