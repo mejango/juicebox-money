@@ -146,7 +146,7 @@ export function OverviewTab({
                   href={href!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn-primary min-h-10 gap-2 px-4 text-sm"
+                  className="btn-secondary min-h-10 gap-2 px-3.5 text-sm"
                 >
                   <span>{label}</span>
                   <ExternalLinkIcon />
