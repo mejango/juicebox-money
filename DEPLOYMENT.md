@@ -20,11 +20,12 @@ Use the repository `railway.json` for both Railway services:
 
 Connect staging to `staging` and production to `main`, enable automatic deploys
 only after CI succeeds, and disable overlap so an older build cannot replace a
-newer commit. Set `NEXT_PUBLIC_SITE_URL` to the matching origin and
-`NEXT_PUBLIC_VERSION=${{RAILWAY_GIT_COMMIT_SHA}}` in both environments. Keep
-all other public build values and every runtime secret environment-scoped.
-Promote by merging `staging` into `main`, never by pointing production at
-`staging`.
+newer commit. Set `NEXT_PUBLIC_SITE_URL` to the matching origin. Do not
+configure `NEXT_PUBLIC_VERSION` in Railway: the Dockerfile consumes Railway's
+automatically injected `RAILWAY_GIT_COMMIT_SHA` and exposes it to the
+application as `NEXT_PUBLIC_VERSION`. Keep all other public build values and
+every runtime secret environment-scoped. Promote by merging `staging` into
+`main`, never by pointing production at `staging`.
 
 ## Configuration contract
 
@@ -40,7 +41,7 @@ arguments or repository variables.
 | `NEXT_PUBLIC_PARA_API_KEY` | build | Public Para application key |
 | `NEXT_PUBLIC_PARA_ENV` | build | Para application environment; normally `PROD` |
 | `NEXT_PUBLIC_DWELLIR_API_KEY` | build | Public browser RPC key; apply strict provider quotas |
-| `NEXT_PUBLIC_VERSION` | build | Commit SHA shown by the app/health endpoint |
+| `NEXT_PUBLIC_VERSION` | build | Optional non-Railway override for the commit SHA shown by the app/health endpoint; Railway derives it automatically |
 | `IPFS_PINNING_ENABLED` | runtime | Explicit `false` by default |
 | `IPFS_PINNING_EDGE_PROTECTED` | runtime | Must be `true` when pinning is enabled |
 | `IPFS_PINNING_INGRESS_TOKEN` | runtime | Random 32+ character secret required only when pinning is enabled |

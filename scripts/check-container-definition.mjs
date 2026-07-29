@@ -5,6 +5,7 @@ const dockerignore = readFileSync('.dockerignore', 'utf8')
 const npmConfig = readFileSync('.npmrc', 'utf8')
 const ci = readFileSync('.github/workflows/ci.yml', 'utf8')
 const release = readFileSync('.github/workflows/release-image.yml', 'utf8')
+const productionStart = readFileSync('scripts/start-production.mjs', 'utf8')
 
 const checks = [
   [
@@ -22,6 +23,10 @@ const checks = [
   [
     /NODE_OPTIONS=--no-experimental-webstorage/,
     'the Node 26 server must not expose its experimental process-wide localStorage',
+  ],
+  [
+    /ARG RAILWAY_GIT_COMMIT_SHA[\s\S]*NEXT_PUBLIC_VERSION=\$\{NEXT_PUBLIC_VERSION:-\$\{RAILWAY_GIT_COMMIT_SHA\}\}/,
+    'Railway builds must derive NEXT_PUBLIC_VERSION from the deployed commit',
   ],
   [/output: 'standalone'/, 'Next must emit a standalone server'],
   [/^USER node$/m, 'the production container must run as non-root'],
@@ -51,6 +56,13 @@ for (const [pattern, message] of checks) {
         ? readFileSync('next.config.js', 'utf8')
         : dockerfile
   if (!pattern.test(source)) throw new Error(message)
+}
+
+if (
+  !productionStart.includes('process.env.RAILWAY_GIT_COMMIT_SHA') ||
+  !productionStart.includes('process.env.NEXT_PUBLIC_VERSION ||=')
+) {
+  throw new Error('runtime must recover the revision from Railway before validation')
 }
 
 if (
