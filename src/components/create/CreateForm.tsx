@@ -1771,30 +1771,26 @@ export function CreateForm() {
         </div>
 
         <div className="mt-6">
-          <span className="field-label">Environment</span>
-          <select
-            aria-label="Deployment environment"
-            value={environment}
-            onChange={(e) =>
-              selectEnvironment(e.target.value as ChainEnvironment)
-            }
-            disabled={busy}
-            className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
-          >
-            <option value="production">Production</option>
-            <option value="testnet">Testnets</option>
-          </select>
-          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            Choose the network environment before selecting chains.
-          </p>
-        </div>
-
-        <div className="mt-6">
           <span className="field-label">Chains</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             Your {flavor === "revnet" ? "revnet" : "project"} lives on every
             chain you pick. You can add more chains later.
           </p>
+          <label className="mt-2.5 flex w-fit items-center gap-2 text-xs text-smoke-700">
+            <span>Environment</span>
+            <select
+              aria-label="Deployment environment"
+              value={environment}
+              onChange={(e) =>
+                selectEnvironment(e.target.value as ChainEnvironment)
+              }
+              disabled={busy}
+              className="input-well select-caret min-h-9 !w-auto py-1.5 pl-3 pr-8 text-xs disabled:opacity-60"
+            >
+              <option value="production">Production</option>
+              <option value="testnet">Testnets</option>
+            </select>
+          </label>
           <MultiChainSelect
             options={availableChains.map((chain) => chain.id)}
             values={selected}
