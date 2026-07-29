@@ -46,6 +46,67 @@
     @apply rounded-xl border border-smoke-200 bg-white;
   }
 
+  /* --- Modals: one native <dialog> chrome for every overlay ---
+     `showModal()` promotes the element into the top layer, which is what makes
+     the page behind it inert and unreachable by assistive technology. The top
+     layer also paints above every stacking context, so modals need no z-index
+     at all. All this class does is strip the UA's boxed dialog defaults so the
+     element itself can be the full-viewport surface that catches backdrop
+     clicks, and paint `::backdrop` instead of a dimming overlay div. */
+  .modal-dialog {
+    display: none;
+    max-width: none;
+    max-height: none;
+    @apply fixed inset-0 m-0 h-full w-full overflow-y-auto border-0 bg-transparent p-0 text-ink;
+  }
+
+  .modal-dialog[open] {
+    display: flex;
+  }
+
+  .modal-dialog::backdrop {
+    background-color: rgb(2 6 23 / 0.55);
+  }
+
+  /* The transaction review dialog dims harder and blurs, because it can open
+     on top of another modal. */
+  .modal-dialog-blur::backdrop {
+    background-color: rgb(2 6 23 / 0.6);
+    backdrop-filter: blur(2px);
+  }
+
+  /* Host for a third-party overlay that renders its own chrome (Para's
+     sign-in). It contributes nothing but top-layer membership, so it paints
+     no backdrop and takes no space. While closed it stays `display: block`
+     rather than the UA's `display: none`: Para keeps a warm-up iframe in this
+     subtree, and hiding it would destroy that browsing context. */
+  dialog.ui-modal-host {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background-color: transparent;
+    pointer-events: none;
+  }
+
+  dialog.ui-modal-host[open] {
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+  }
+
+  dialog.ui-modal-host::backdrop {
+    background-color: transparent;
+  }
+
   .skeleton-shimmer {
     position: relative;
     overflow: hidden;

@@ -24,6 +24,14 @@ module.exports = phase => ({
     (phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next'),
   reactStrictMode: true,
   poweredByHeader: false,
+  // `page.browsertest.tsx` files are routes ONLY in the deterministic browser
+  // build the Playwright suite compiles. They never reach a production image:
+  // without the extra extension Next does not treat the file as a route at
+  // all, so nothing is emitted and nothing is reachable.
+  pageExtensions:
+    process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
+      ? ['tsx', 'ts', 'jsx', 'js', 'browsertest.tsx']
+      : ['tsx', 'ts', 'jsx', 'js'],
   webpack: (config, { webpack }) => {
     // Para dynamically imports optional peers we don't use (Farcaster
     // mini-apps, Cosmos + Solana wallets); resolve them to empty modules.

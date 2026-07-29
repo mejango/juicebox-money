@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.{ts,tsx}'],
-    setupFiles: ['./test/setup.ts'],
+    setupFiles: ['./test/setup.ts', './test/dialog-shim.ts'],
     clearMocks: true,
     restoreMocks: true,
     unstubEnvs: true,
@@ -25,7 +25,9 @@ export default defineConfig({
       reporter: ['text', 'json-summary', 'lcov'],
       reportsDirectory: './coverage',
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/**/*.d.ts'],
+      // `*.browsertest.tsx` routes only exist in the deterministic browser
+      // build; the Playwright suite is their only caller.
+      exclude: ['src/**/*.d.ts', 'src/**/*.browsertest.tsx'],
       // Global floors cover every production TS/TSX file, including currently
       // untested UI and routes. They were raised from the original ~8% floor
       // after adding real component write-flow coverage (10.61/8.16/9.24/11.10

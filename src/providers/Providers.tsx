@@ -149,6 +149,13 @@ export function Providers({ children }: PropsWithChildren) {
       >
         <ParaAuthContext.Provider value={paraAuth}>
           <TransactionReviewProvider>{children}</TransactionReviewProvider>
+          {/* Para renders its own overlay, so it must stay in the browser's
+              top layer: `openSignIn` is reachable from inside app modals
+              (AddShopItemsModal, RedeemShopItemsModal), and everything outside
+              the topmost `showModal()` dialog is inert — body-level portals
+              included. ParaModalHost owns a `showModal()` dialog for exactly
+              that reason. Any future overlay that renders to the body needs
+              the same treatment before it can be opened from a modal. */}
           {paraHostLoaded ? (
             <Suspense fallback={null}>
               <ParaModalHost

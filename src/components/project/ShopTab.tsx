@@ -41,6 +41,7 @@ import {
 } from '@/components/project/RedeemShopItemsModal'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
+import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -1009,34 +1010,9 @@ function tallyItems<T extends { tierId: number }>(
 
 function ShopEditorLoading({ onClose }: { onClose: () => void }) {
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-start justify-center bg-slate-950/55 px-3 py-10"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="loading-shop-editor-title"
-    >
-      <div className="card w-full max-w-lg p-6 shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2
-              id="loading-shop-editor-title"
-              className="font-agrandir text-xl font-medium text-ink"
-            >
-              Add items for sale
-            </h2>
-            <FormFieldsSkeleton rows={4} label="Loading shop item editor" />
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-10 w-10 items-center justify-center rounded-lg text-xl text-smoke-700 hover:bg-smoke-75"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-    </div>
+    <ModalShell title="Add items for sale" onClose={onClose} maxWidth="max-w-lg">
+      <FormFieldsSkeleton rows={4} label="Loading shop item editor" />
+    </ModalShell>
   )
 }
 
@@ -1466,14 +1442,10 @@ function TierDetailModal({
   })
 
   return (
-    <div
-      className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-slate-950/55 px-3 py-8 sm:items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="shop-item-detail-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget) onClose()
-      }}
+    <ModalDialog
+      onClose={onClose}
+      labelledBy="shop-item-detail-title"
+      className="items-start justify-center px-3 py-8 sm:items-center"
     >
       <div className="card relative w-full max-w-2xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
         <button
@@ -1626,7 +1598,7 @@ function TierDetailModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   )
 }
 

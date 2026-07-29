@@ -15,6 +15,7 @@ import {
   type Address,
 } from 'viem'
 import { useAccount } from 'wagmi'
+import { ModalDialog } from '@/components/ui/ModalShell'
 import {
   buildTransactionReviewPrompt,
   registerTransactionReviewHandler,
@@ -281,45 +282,6 @@ function ReviewModal({
   const { request } = pending
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const closeRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow
-    const previousFocus = document.activeElement as HTMLElement | null
-    document.body.style.overflow = 'hidden'
-    closeRef.current?.focus()
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onFinish(false)
-        return
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
-        ),
-      )
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = previousOverflow
-      previousFocus?.focus()
-    }
-  }, [onFinish])
 
   const copyPrompt = async () => {
     try {
@@ -339,18 +301,13 @@ function ReviewModal({
     : 'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.'
 
   return (
-    <div
-      className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-slate-950/60 px-3 py-4 backdrop-blur-[2px] sm:px-6 sm:py-8"
-      onMouseDown={event => {
-        if (event.currentTarget === event.target) onFinish(false)
-      }}
+    <ModalDialog
+      onClose={() => onFinish(false)}
+      labelledBy={titleId}
+      describedBy={descriptionId}
+      className="modal-dialog-blur items-start justify-center px-3 py-4 sm:px-6 sm:py-8"
     >
       <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
         className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl sm:max-h-[calc(100vh-4rem)]"
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-smoke-200 bg-white px-4 py-4 sm:px-6">
@@ -367,7 +324,6 @@ function ReviewModal({
             </h2>
           </div>
           <button
-            ref={closeRef}
             type="button"
             onClick={() => onFinish(false)}
             aria-label="Cancel transaction review"
@@ -478,7 +434,7 @@ function ReviewModal({
           </div>
         </footer>
       </div>
-    </div>
+    </ModalDialog>
   )
 }
 

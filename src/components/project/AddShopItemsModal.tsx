@@ -9,7 +9,7 @@ import {
   JBPermissionIdsV6,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { type Address, type PublicClient } from 'viem'
 import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import {
@@ -19,6 +19,7 @@ import {
 } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
+import { ModalShell } from '@/components/ui/ModalShell'
 import {
   TransactionProgressImage,
   usePreloadTransactionAnimation,
@@ -151,19 +152,6 @@ export function AddShopItemsModal({
     }
     onClose()
   }, [busy, hasSubmittedTransactions, items, onClose, phase])
-
-  useEffect(() => {
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.body.style.overflow = previous
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [close])
 
   const updateStatus = (chainId: number, patch: Partial<ChainStatus>) => {
     const next = {
@@ -470,261 +458,233 @@ export function AddShopItemsModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/55 px-3 py-5 sm:px-6 sm:py-10"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-shop-items-title"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget) close()
-      }}
+    <ModalShell
+      title="Add items for sale"
+      subtitle="Stage one or more items, then add them to the collection."
+      onClose={close}
+      busy={busy}
     >
-      <div className="card w-full max-w-2xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
-        <div className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
-          <div>
-            <h2
-              id="add-shop-items-title"
-              className="font-agrandir text-xl font-medium text-ink"
-            >
-              Add items for sale
-            </h2>
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Stage one or more items, then add them to the collection.
-            </p>
+      {!review ? (
+        <>
+          <div className="callout callout-info text-xs">
+            {isConnected
+              ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
+              : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
           </div>
+
+          <StoreEditor
+            items={items}
+            onChange={next => {
+              setItems(next)
+              setMessage(null)
+            }}
+            currencyLabel={activePricing.symbol}
+            disabled={busy}
+            categories={categories}
+            onAddCategory={name => {
+              const id =
+                categories.reduce(
+                  (largest, category) => Math.max(largest, category.id),
+                  0,
+                ) + 1
+              setCategories(current => [
+                ...current,
+                { id, name: name.slice(0, 40) },
+              ])
+              return id
+            }}
+            chainIds={selected}
+            isRevnet={isRevnet}
+          />
+
+          <div className="mt-6 border-t border-smoke-200 pt-5">
+            <span className="field-label">Add on</span>
+            <div
+              role="group"
+              aria-label="Chains to add items on"
+              className="mt-2.5 flex min-w-0 flex-wrap gap-2"
+            >
+              {targets.map(target => {
+                const compatible =
+                  !!target.hook &&
+                  !!target.pricing &&
+                  target.pricing.currency === activePricing.currency &&
+                  target.pricing.decimals === activePricing.decimals
+                const checked = selected.includes(target.chainId)
+                const unavailableReason =
+                  target.error ??
+                  (target.pricing
+                    ? 'Different pricing currency'
+                    : 'Shop unavailable')
+                return (
+                  <ChainPillButton
+                    key={target.chainId}
+                    chainId={target.chainId}
+                    selected={checked}
+                    ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
+                    onClick={() => toggleChain(target.chainId)}
+                    disabled={!compatible || busy}
+                    title={compatible ? undefined : unavailableReason}
+                    size="lg"
+                  >
+                    <span>{chainName(target.chainId)}</span>
+                    {!compatible ? (
+                      <span className="sr-only"> — {unavailableReason}</span>
+                    ) : null}
+                  </ChainPillButton>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      ) : phase === 'done' ? (
+        <div className="py-8 text-center">
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">
+            ✓
+          </span>
+          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">
+            Items added
+          </h3>
+          <p className="mt-2 text-sm text-smoke-700">{message}</p>
+        </div>
+      ) : (
+        <>
+          <div className="rounded-xl border border-smoke-200 bg-smoke-25 p-4">
+            <span className="field-label">
+              Items to add ({review.items.length})
+            </span>
+            <div className="mt-2 divide-y divide-smoke-200">
+              {review.items.map((item, index) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 py-2.5 text-sm"
+                >
+                  <span className="min-w-0 truncate font-medium text-ink">
+                    {index + 1}. {item.name.trim()}
+                  </span>
+                  <span className="shrink-0 text-smoke-700">
+                    {item.price} {activePricing.symbol}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-smoke-200 bg-white p-4">
+            <span className="field-label">Transactions</span>
+            <div className="mt-2 space-y-2">
+              {review.chainIds.map(chainId => {
+                const status = statuses[chainId]?.phase ?? 'pending'
+                return (
+                  <div
+                    key={chainId}
+                    className="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span className="flex items-center gap-2 font-medium text-ink">
+                      <ChainIcon chainId={chainId} size={24} />
+                      {chainName(chainId)}
+                    </span>
+                    <span
+                      className={`flex items-center gap-2 ${
+                        status === 'done'
+                          ? 'text-melon-700'
+                          : status === 'uncertain'
+                            ? 'text-split-700'
+                          : status === 'failed'
+                            ? 'text-error-600'
+                            : 'text-smoke-700'
+                      }`}
+                    >
+                      {status === 'signing' || status === 'confirming' ? (
+                        <TransactionProgressImage className="h-8 w-8" />
+                      ) : null}
+                      {chainStatusLabel(status)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {message && phase !== 'done' ? (
+        <p
+          className={`mt-4 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed ${
+            phase === 'failed' || phase === 'form'
+              ? 'bg-error-50 text-error-700'
+              : 'bg-bluebs-25 text-bluebs-700'
+          }`}
+          role={phase === 'failed' || phase === 'form' ? 'alert' : 'status'}
+        >
+          {message}
+        </p>
+      ) : null}
+
+      {/* Pinned to the bottom of the shell's scrolling body, cancelling its
+          padding so the action bar still spans the card edge to edge. */}
+      <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-smoke-200 bg-white px-5 py-4 sm:-mx-6 sm:px-6">
+      {phase === 'done' ? (
+        <button type="button" onClick={close} className="btn-primary min-h-[44px] px-5 text-sm">
+          Done
+        </button>
+      ) : review ? (
+        <>
+          {!hasSubmittedTransactions ? (
+            <button
+              type="button"
+              onClick={backToForm}
+              disabled={busy}
+              className="btn-secondary min-h-[44px] px-5 text-sm"
+            >
+              Back
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void handleConfirm()}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-5 text-sm"
+          >
+            {phase === 'checking'
+              ? 'Checking permissions…'
+              : phase === 'pinning'
+                ? 'Saving items…'
+                : phase === 'writing'
+                  ? 'Adding items…'
+                  : phase === 'failed'
+                    ? hasUncertainTransactions
+                      ? 'Check submitted transactions'
+                      : 'Retry unfinished chains'
+                    : 'Add items for sale'}
+          </button>
+        </>
+      ) : (
+        <>
           <button
             type="button"
             onClick={close}
             disabled={busy}
-            aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xl text-smoke-700 hover:bg-smoke-75 hover:text-ink disabled:opacity-50"
+            className="btn-secondary min-h-[44px] px-5 text-sm"
           >
-            ×
+            Cancel
           </button>
-        </div>
-
-        <div className="max-h-[calc(100vh-10rem)] overflow-y-auto px-5 py-5 sm:px-6">
-          {!review ? (
-            <>
-              <div className="callout callout-info text-xs">
-                {isConnected
-                  ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
-                  : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
-              </div>
-
-              <StoreEditor
-                items={items}
-                onChange={next => {
-                  setItems(next)
-                  setMessage(null)
-                }}
-                currencyLabel={activePricing.symbol}
-                disabled={busy}
-                categories={categories}
-                onAddCategory={name => {
-                  const id =
-                    categories.reduce(
-                      (largest, category) => Math.max(largest, category.id),
-                      0,
-                    ) + 1
-                  setCategories(current => [
-                    ...current,
-                    { id, name: name.slice(0, 40) },
-                  ])
-                  return id
-                }}
-                chainIds={selected}
-                isRevnet={isRevnet}
-              />
-
-              <div className="mt-6 border-t border-smoke-200 pt-5">
-                <span className="field-label">Add on</span>
-                <div
-                  role="group"
-                  aria-label="Chains to add items on"
-                  className="mt-2.5 flex min-w-0 flex-wrap gap-2"
-                >
-                  {targets.map(target => {
-                    const compatible =
-                      !!target.hook &&
-                      !!target.pricing &&
-                      target.pricing.currency === activePricing.currency &&
-                      target.pricing.decimals === activePricing.decimals
-                    const checked = selected.includes(target.chainId)
-                    const unavailableReason =
-                      target.error ??
-                      (target.pricing
-                        ? 'Different pricing currency'
-                        : 'Shop unavailable')
-                    return (
-                      <ChainPillButton
-                        key={target.chainId}
-                        chainId={target.chainId}
-                        selected={checked}
-                        ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
-                        onClick={() => toggleChain(target.chainId)}
-                        disabled={!compatible || busy}
-                        title={compatible ? undefined : unavailableReason}
-                        size="lg"
-                      >
-                        <span>{chainName(target.chainId)}</span>
-                        {!compatible ? (
-                          <span className="sr-only"> — {unavailableReason}</span>
-                        ) : null}
-                      </ChainPillButton>
-                    )
-                  })}
-                </div>
-              </div>
-            </>
-          ) : phase === 'done' ? (
-            <div className="py-8 text-center">
-              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">
-                ✓
-              </span>
-              <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">
-                Items added
-              </h3>
-              <p className="mt-2 text-sm text-smoke-700">{message}</p>
-            </div>
-          ) : (
-            <>
-              <div className="rounded-xl border border-smoke-200 bg-smoke-25 p-4">
-                <span className="field-label">
-                  Items to add ({review.items.length})
-                </span>
-                <div className="mt-2 divide-y divide-smoke-200">
-                  {review.items.map((item, index) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 py-2.5 text-sm"
-                    >
-                      <span className="min-w-0 truncate font-medium text-ink">
-                        {index + 1}. {item.name.trim()}
-                      </span>
-                      <span className="shrink-0 text-smoke-700">
-                        {item.price} {activePricing.symbol}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-xl border border-smoke-200 bg-white p-4">
-                <span className="field-label">Transactions</span>
-                <div className="mt-2 space-y-2">
-                  {review.chainIds.map(chainId => {
-                    const status = statuses[chainId]?.phase ?? 'pending'
-                    return (
-                      <div
-                        key={chainId}
-                        className="flex items-center justify-between gap-3 text-sm"
-                      >
-                        <span className="flex items-center gap-2 font-medium text-ink">
-                          <ChainIcon chainId={chainId} size={24} />
-                          {chainName(chainId)}
-                        </span>
-                        <span
-                          className={`flex items-center gap-2 ${
-                            status === 'done'
-                              ? 'text-melon-700'
-                              : status === 'uncertain'
-                                ? 'text-split-700'
-                              : status === 'failed'
-                                ? 'text-error-600'
-                                : 'text-smoke-700'
-                          }`}
-                        >
-                          {status === 'signing' || status === 'confirming' ? (
-                            <TransactionProgressImage className="h-8 w-8" />
-                          ) : null}
-                          {chainStatusLabel(status)}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </>
-          )}
-
-          {message && phase !== 'done' ? (
-            <p
-              className={`mt-4 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed ${
-                phase === 'failed' || phase === 'form'
-                  ? 'bg-error-50 text-error-700'
-                  : 'bg-bluebs-25 text-bluebs-700'
-              }`}
-              role={phase === 'failed' || phase === 'form' ? 'alert' : 'status'}
-            >
-              {message}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-smoke-200 px-5 py-4 sm:px-6">
-          {phase === 'done' ? (
-            <button type="button" onClick={close} className="btn-primary min-h-[44px] px-5 text-sm">
-              Done
-            </button>
-          ) : review ? (
-            <>
-              {!hasSubmittedTransactions ? (
-                <button
-                  type="button"
-                  onClick={backToForm}
-                  disabled={busy}
-                  className="btn-secondary min-h-[44px] px-5 text-sm"
-                >
-                  Back
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void handleConfirm()}
-                disabled={busy}
-                className="btn-primary min-h-[44px] px-5 text-sm"
-              >
-                {phase === 'checking'
-                  ? 'Checking permissions…'
-                  : phase === 'pinning'
-                    ? 'Saving items…'
-                    : phase === 'writing'
-                      ? 'Adding items…'
-                      : phase === 'failed'
-                        ? hasUncertainTransactions
-                          ? 'Check submitted transactions'
-                          : 'Retry unfinished chains'
-                        : 'Add items for sale'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={close}
-                disabled={busy}
-                className="btn-secondary min-h-[44px] px-5 text-sm"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleReview()}
-                disabled={busy}
-                className="btn-primary min-h-[44px] px-5 text-sm"
-              >
-                {!isConnected
-                  ? 'Sign in to continue'
-                  : phase === 'checking'
-                    ? 'Checking permissions…'
-                    : 'Review items'}
-              </button>
-            </>
-          )}
-        </div>
+          <button
+            type="button"
+            onClick={() => void handleReview()}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-5 text-sm"
+          >
+            {!isConnected
+              ? 'Sign in to continue'
+              : phase === 'checking'
+                ? 'Checking permissions…'
+                : 'Review items'}
+          </button>
+        </>
+      )}
       </div>
-    </div>
+    </ModalShell>
   )
 }
 
