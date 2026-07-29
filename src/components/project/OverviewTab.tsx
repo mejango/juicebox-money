@@ -18,6 +18,25 @@ function AuthorityLink({
   return <AddressLink address={address} chainId={chainId} />;
 }
 
+function ExternalLinkIcon() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 16 16"
+      fill="none"
+      className="h-3.5 w-3.5"
+    >
+      <path
+        d="M5 11 11 5m-4 0h4v4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /**
  * The owner/operator row(s). One row when every chain agrees; a per-chain
  * breakdown when they differ (a project's owner — or a revnet's operator —
@@ -127,9 +146,10 @@ export function OverviewTab({
                   href={href!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn-secondary min-h-11 px-3.5 text-xs"
+                  className="btn-primary min-h-10 gap-2 px-4 text-sm"
                 >
-                  {label}
+                  <span>{label}</span>
+                  <ExternalLinkIcon />
                 </a>
               ))}
             </div>
