@@ -70,7 +70,7 @@ function ViewAsPrompt({ onDone }: { onDone: () => void }) {
 export function WalletButton() {
   const { isConnected, address, connectors, connectWith, openSignIn, disconnect } =
     useWallet()
-  const { viewAs } = useViewAs()
+  const { viewAs, clearViewAs } = useViewAs()
   const [menuOpen, setMenuOpen] = useState(false)
   const [viewAsOpen, setViewAsOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -88,8 +88,9 @@ export function WalletButton() {
   useOutsideClose(menuRef, closeMenu, menuOpen)
 
   const connected = mounted && isConnected && !!address
+  const activeViewAs = mounted ? viewAs : null
   // While view-as is active, "View account" follows the impersonated account.
-  const accountAddress = (mounted ? viewAs : null) ?? address
+  const accountAddress = activeViewAs ?? address
 
   const viewAsItem = (
     <button
@@ -106,7 +107,17 @@ export function WalletButton() {
 
   return (
     <div className="relative" ref={menuRef}>
-      {connected ? (
+      {activeViewAs ? (
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          aria-expanded={menuOpen}
+          className="flex min-h-[44px] items-center gap-2 rounded-lg border border-amber-400 bg-amber-100 px-4 text-sm font-medium text-amber-900 hover:bg-amber-200"
+        >
+          <span className="h-2 w-2 rounded-full bg-amber-500" />
+          <span className="hidden sm:inline">Viewing as</span>
+          <AddressLabel address={activeViewAs} />
+        </button>
+      ) : connected ? (
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
@@ -129,6 +140,28 @@ export function WalletButton() {
         <div className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {viewAsOpen ? (
             <ViewAsPrompt onDone={closeMenu} />
+          ) : activeViewAs ? (
+            <>
+              <Link
+                href={`/account/${activeViewAs}`}
+                onClick={closeMenu}
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+              >
+                View account
+              </Link>
+              <div className="mx-4 my-1 border-t border-smoke-200" />
+              <button
+                onClick={() => {
+                  closeMenu()
+                  clearViewAs()
+                }}
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-amber-800 hover:bg-amber-50"
+              >
+                {connected ? 'View as connected wallet' : 'Exit View as'}
+              </button>
+              <div className="mx-4 my-1 border-t border-smoke-200" />
+              {viewAsItem}
+            </>
           ) : connected ? (
             <>
               <Link
@@ -139,8 +172,6 @@ export function WalletButton() {
                 View account
               </Link>
               <div className="mx-4 my-1 border-t border-smoke-200" />
-              {viewAsItem}
-              <div className="mx-4 my-1 border-t border-smoke-200" />
               <button
                 onClick={() => {
                   closeMenu()
@@ -150,6 +181,8 @@ export function WalletButton() {
               >
                 Sign out
               </button>
+              <div className="mx-4 my-1 border-t border-smoke-200" />
+              {viewAsItem}
             </>
           ) : (
             <>

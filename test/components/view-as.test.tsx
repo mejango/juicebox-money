@@ -11,13 +11,23 @@ vi.mock('@/hooks/useWallet', () => ({
   useWallet: () => ({
     isConnected: !!mocks.connectedAddress,
     address: mocks.connectedAddress,
+    connectors: [],
+    connectWith: vi.fn(),
+    openSignIn: vi.fn(),
+    disconnect: vi.fn(),
   }),
 }))
 vi.mock('@/hooks/useEnsName', () => ({
   useEnsName: () => ({ data: null }),
 }))
-vi.mock('@/components/ActivityList', () => ({
-  identityGradient: (seed: string) => `linear-gradient(${seed})`,
+vi.mock('next/link', () => ({
+  default: ({
+    children,
+    ...props
+  }: {
+    children: React.ReactNode
+    [key: string]: unknown
+  }) => createElement('a', props, children),
 }))
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -148,34 +158,69 @@ describe('useViewedAccount', () => {
   })
 })
 
-describe('ViewAsBanner', () => {
-  it('renders nothing while inactive, and exits the mode on Exit', async () => {
-    const { store, window } = fakeWindow()
+describe('WalletButton view-as state', () => {
+  it('keeps View as as the final separated Sign in menu action', async () => {
+    const { window } = fakeWindow()
     vi.stubGlobal('window', window)
-    const viewAs = await loadViewAs()
-    const { ViewAsBanner } = await import('@/components/ViewAsBanner')
+    vi.stubGlobal('document', {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+    await loadViewAs()
+    const { WalletButton } = await import('@/components/WalletButton')
 
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
-      renderer = TestRenderer.create(createElement(ViewAsBanner))
+      renderer = TestRenderer.create(createElement(WalletButton))
     })
-    expect(renderer.toJSON()).toBeNull()
-
-    await act(async () => viewAs.setViewAs(BOB))
-    const text = JSON.stringify(renderer.toJSON())
-    expect(text).toContain('Viewing as')
-    expect(text).toContain('transactions are disabled')
-
-    const exit = renderer.root.findAll(
+    const trigger = renderer.root.find(
       (node: ReactTestInstance) =>
-        node.type === 'button' && node.children.join('') === 'Exit',
+        node.type === 'button' && node.props['aria-expanded'] === false,
     )
-    expect(exit).toHaveLength(1)
-    await act(async () => exit[0].props.onClick())
+    await act(async () => trigger.props.onClick())
 
-    expect(renderer.toJSON()).toBeNull()
+    const menuButtons = renderer.root.findAll(
+      (node: ReactTestInstance) => node.type === 'button' && node !== trigger,
+    )
+    expect(menuButtons.at(-1)?.children[0]).toBe('View as…')
+  })
+
+  it('replaces the connected identity and returns through its dropdown', async () => {
+    const { window } = fakeWindow()
+    vi.stubGlobal('window', window)
+    vi.stubGlobal('document', {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+    const viewAs = await loadViewAs()
+    const { WalletButton } = await import('@/components/WalletButton')
+    mocks.connectedAddress = ALICE
+    viewAs.setViewAs(BOB)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(WalletButton))
+    })
+    expect(JSON.stringify(renderer.toJSON())).toContain('Viewing as')
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(
+      '0x1111111111111111111111111111111111111111',
+    )
+
+    const trigger = renderer.root.find(
+      (node: ReactTestInstance) =>
+        node.type === 'button' &&
+        node.props['aria-expanded'] === false,
+    )
+    await act(async () => trigger.props.onClick())
+    const restore = renderer.root.find(
+      (node: ReactTestInstance) =>
+        node.type === 'button' &&
+        node.children.join('') === 'View as connected wallet',
+    )
+    await act(async () => restore.props.onClick())
+
     expect(viewAs.getViewAs()).toBeNull()
-    expect(store.has(STORAGE_KEY)).toBe(false)
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Viewing as')
   })
 })
 
