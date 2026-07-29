@@ -5,10 +5,22 @@
 
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 
+export function normalizeBendystrawUrl(value: string): string {
+  const url = new URL(value.trim())
+  url.pathname = `${url.pathname
+    .replace(/\/graphql\/?$/u, '')
+    .replace(/\/$/u, '')}/graphql`
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
 const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
   ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
-  : (process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz/graphql')
-const TESTNET_URL = 'https://testnet.bendystraw.xyz/graphql'
+  : normalizeBendystrawUrl(
+      process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz',
+    )
+const TESTNET_URL = normalizeBendystrawUrl('https://testnet.bendystraw.xyz')
 const REQUEST_TIMEOUT_MS = 8_000
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'

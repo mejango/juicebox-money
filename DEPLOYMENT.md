@@ -35,7 +35,7 @@ arguments or repository variables.
 | Variable | Phase | Requirement |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | build | Canonical HTTPS origin for the selected environment |
-| `NEXT_PUBLIC_BENDYSTRAW_URL` | build | Absolute HTTPS GraphQL URL |
+| `NEXT_PUBLIC_BENDYSTRAW_URL` | build | Absolute HTTPS base URL; `/graphql` is appended automatically |
 | `NEXT_PUBLIC_LEGACY_SUBGRAPH_URL` | build | Optional absolute HTTPS URL |
 | `NEXT_PUBLIC_TESTNET` | build | Explicit `true` or `false` |
 | `NEXT_PUBLIC_PARA_API_KEY` | build | Public Para application key |
@@ -58,7 +58,7 @@ without printing its values.
 ```sh
 docker build -t juicebox-money:local \
   --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.money \
-  --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.xyz/graphql \
+  --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.xyz \
   --build-arg NEXT_PUBLIC_TESTNET=false \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_PARA_ENV=PROD \

@@ -5,6 +5,7 @@ import {
   getParticipants,
   getRevnetPriceHistory,
   getShopPurchases,
+  normalizeBendystrawUrl,
   searchProjects,
 } from '@/lib/bendystraw'
 
@@ -26,6 +27,17 @@ function bodyOf(init?: RequestInit): {
 }
 
 describe('minimal Bendystraw client', () => {
+  it('normalizes base URLs to one GraphQL endpoint', () => {
+    expect(normalizeBendystrawUrl('https://bendystraw.example')).toBe(
+      'https://bendystraw.example/graphql',
+    )
+    expect(
+      normalizeBendystrawUrl(
+        'https://bendystraw.example/base/graphql/?key=ignored#fragment',
+      ),
+    ).toBe('https://bendystraw.example/base/graphql')
+  })
+
   it('posts variables and returns only the GraphQL data payload', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       graphqlResponse({ data: { project: { projectId: 7 } } }),
