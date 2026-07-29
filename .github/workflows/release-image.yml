@@ -23,7 +23,7 @@ env:
   NEXT_PUBLIC_TESTNET: ${{ vars.NEXT_PUBLIC_TESTNET }}
   NEXT_PUBLIC_PARA_API_KEY: ${{ vars.NEXT_PUBLIC_PARA_API_KEY }}
   NEXT_PUBLIC_PARA_ENV: ${{ vars.NEXT_PUBLIC_PARA_ENV }}
-  NEXT_PUBLIC_INFURA_ID: ${{ vars.NEXT_PUBLIC_INFURA_ID }}
+  NEXT_PUBLIC_DWELLIR_API_KEY: ${{ vars.NEXT_PUBLIC_DWELLIR_API_KEY }}
   NEXT_PUBLIC_VERSION: ${{ github.sha }}
   IPFS_PINNING_ENABLED: 'false'
 
@@ -83,7 +83,7 @@ jobs:
             NEXT_PUBLIC_TESTNET=${{ env.NEXT_PUBLIC_TESTNET }}
             NEXT_PUBLIC_PARA_API_KEY=${{ env.NEXT_PUBLIC_PARA_API_KEY }}
             NEXT_PUBLIC_PARA_ENV=${{ env.NEXT_PUBLIC_PARA_ENV }}
-            NEXT_PUBLIC_INFURA_ID=${{ env.NEXT_PUBLIC_INFURA_ID }}
+            NEXT_PUBLIC_DWELLIR_API_KEY=${{ env.NEXT_PUBLIC_DWELLIR_API_KEY }}
             NEXT_PUBLIC_VERSION=${{ github.sha }}
       - name: Smoke-test the standalone image
         run: |
@@ -151,7 +151,7 @@ jobs:
             NEXT_PUBLIC_TESTNET=${{ env.NEXT_PUBLIC_TESTNET }}
             NEXT_PUBLIC_PARA_API_KEY=${{ env.NEXT_PUBLIC_PARA_API_KEY }}
             NEXT_PUBLIC_PARA_ENV=${{ env.NEXT_PUBLIC_PARA_ENV }}
-            NEXT_PUBLIC_INFURA_ID=${{ env.NEXT_PUBLIC_INFURA_ID }}
+            NEXT_PUBLIC_DWELLIR_API_KEY=${{ env.NEXT_PUBLIC_DWELLIR_API_KEY }}
             NEXT_PUBLIC_VERSION=${{ github.sha }}
       - name: Record immutable release reference
         run: |

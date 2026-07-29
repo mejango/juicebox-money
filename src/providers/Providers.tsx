@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { createConfig, http, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
+import { getDwellirRpcUrl } from '@/lib/dwellir'
 import { ParaAuthContext } from './ParaAuthContext'
 import { lazyParaConnector } from './lazy-para-connector'
 import { verifyMarkedParaSession } from './para-session'
@@ -27,7 +28,6 @@ import {
 } from 'wagmi/chains'
 
 const IS_TESTNET = process.env.NEXT_PUBLIC_TESTNET === 'true'
-const INFURA_ID = process.env.NEXT_PUBLIC_INFURA_ID ?? ''
 export const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 const BROWSER_FIXTURE_ORIGIN =
@@ -51,22 +51,29 @@ const WAGMI_CHAINS = [
   arbitrumSepolia,
 ] as const
 
-const infura = (network: string) =>
-  IS_DETERMINISTIC_BROWSER
-    ? http(`${BROWSER_FIXTURE_ORIGIN}/rpc/${network}`)
-    : INFURA_ID
-    ? http(`https://${network}.infura.io/v3/${INFURA_ID}`)
-    : http()
+const rpcTransport = (chainId: number, fixtureNetwork: string) => {
+  if (IS_DETERMINISTIC_BROWSER) {
+    return http(`${BROWSER_FIXTURE_ORIGIN}/rpc/${fixtureNetwork}`)
+  }
+  const url = getDwellirRpcUrl(chainId)
+  return url ? http(url) : http()
+}
 
 const transports = {
-  [mainnet.id]: infura('mainnet'),
-  [optimism.id]: infura('optimism-mainnet'),
-  [base.id]: infura('base-mainnet'),
-  [arbitrum.id]: infura('arbitrum-mainnet'),
-  [sepolia.id]: infura('sepolia'),
-  [optimismSepolia.id]: infura('optimism-sepolia'),
-  [baseSepolia.id]: infura('base-sepolia'),
-  [arbitrumSepolia.id]: infura('arbitrum-sepolia'),
+  [mainnet.id]: rpcTransport(mainnet.id, 'mainnet'),
+  [optimism.id]: rpcTransport(optimism.id, 'optimism-mainnet'),
+  [base.id]: rpcTransport(base.id, 'base-mainnet'),
+  [arbitrum.id]: rpcTransport(arbitrum.id, 'arbitrum-mainnet'),
+  [sepolia.id]: rpcTransport(sepolia.id, 'sepolia'),
+  [optimismSepolia.id]: rpcTransport(
+    optimismSepolia.id,
+    'optimism-sepolia',
+  ),
+  [baseSepolia.id]: rpcTransport(baseSepolia.id, 'base-sepolia'),
+  [arbitrumSepolia.id]: rpcTransport(
+    arbitrumSepolia.id,
+    'arbitrum-sepolia',
+  ),
 }
 
 const ParaModalHost = lazy(() => import('./ParaModalHost'))

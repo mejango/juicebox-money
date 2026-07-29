@@ -12,7 +12,7 @@ const buildEnv = {
   NEXT_PUBLIC_TESTNET: 'false',
   NEXT_PUBLIC_PARA_API_KEY: 'public-para-key',
   NEXT_PUBLIC_PARA_ENV: 'PROD',
-  NEXT_PUBLIC_INFURA_ID: 'public-infura-id',
+  NEXT_PUBLIC_DWELLIR_API_KEY: 'public-dwellir-key',
   NEXT_PUBLIC_VERSION: 'abcdef1234567890',
 }
 const ingressToken = 'ingress-token-with-at-least-32-characters'
@@ -47,6 +47,17 @@ describe('deployment configuration', () => {
         'build',
       ),
     ).toContain('NEXT_PUBLIC_VERSION must identify the built revision')
+  })
+
+  it('requires a URL-safe Dwellir browser key', () => {
+    expect(
+      deploymentEnvErrors(
+        { ...buildEnv, NEXT_PUBLIC_DWELLIR_API_KEY: 'bad/key' },
+        'build',
+      ),
+    ).toContain(
+      'NEXT_PUBLIC_DWELLIR_API_KEY must be an 8-128 character URL-safe API key',
+    )
   })
 
   it('requires edge protection, a strong ingress token, and credentials', () => {

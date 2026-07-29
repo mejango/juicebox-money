@@ -84,7 +84,7 @@ try {
     NEXT_PUBLIC_SITE_URL: runtimeFixtureOrigin,
     NEXT_PUBLIC_DETERMINISTIC_BROWSER: 'true',
     NEXT_PUBLIC_TESTNET: 'false',
-    NEXT_PUBLIC_INFURA_ID: '',
+    NEXT_PUBLIC_DWELLIR_API_KEY: '',
     NEXT_PUBLIC_PARA_ENV: 'BETA',
     NEXT_PUBLIC_VERSION: 'browser-test',
     NEXT_PUBLIC_PARA_API_KEY: 'deterministic-browser-key',

@@ -40,7 +40,7 @@ arguments or repository variables.
 | `NEXT_PUBLIC_TESTNET` | build | Explicit `true` or `false` |
 | `NEXT_PUBLIC_PARA_API_KEY` | build | Public Para application key |
 | `NEXT_PUBLIC_PARA_ENV` | build | `PROD` for a mainnet image |
-| `NEXT_PUBLIC_INFURA_ID` | build | Public RPC project identifier |
+| `NEXT_PUBLIC_DWELLIR_API_KEY` | build | Public browser RPC key; apply strict provider quotas |
 | `NEXT_PUBLIC_VERSION` | build | Commit SHA shown by the app/health endpoint |
 | `IPFS_PINNING_ENABLED` | runtime | Explicit `false` by default |
 | `IPFS_PINNING_EDGE_PROTECTED` | runtime | Must be `true` when pinning is enabled |
@@ -62,7 +62,7 @@ docker build -t juicebox-money:local \
   --build-arg NEXT_PUBLIC_TESTNET=false \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_PARA_ENV=PROD \
-  --build-arg NEXT_PUBLIC_INFURA_ID=PUBLIC_ID \
+  --build-arg NEXT_PUBLIC_DWELLIR_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_VERSION=$(git rev-parse HEAD) .
 
 docker run --rm \
