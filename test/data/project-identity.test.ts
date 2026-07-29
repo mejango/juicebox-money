@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  projectGroupPaymentsCount,
   resolveProjectDeployments,
   type BsProject,
 } from '@/lib/bendystraw'
@@ -88,6 +89,28 @@ describe('Bendystraw project identity is treated as untrusted input', () => {
     expect(
       resolveProjectDeployments(home, [project({ chainId: 10, projectId: 12 })]),
     ).toEqual([home])
+  })
+})
+
+describe('cross-chain payment totals', () => {
+  it('adds payments across the verified deployment set', () => {
+    expect(
+      projectGroupPaymentsCount([
+        project({ chainId: 1, paymentsCount: 7 }),
+        project({ chainId: 10, projectId: 12, paymentsCount: 4 }),
+        project({ chainId: 8453, projectId: 33, paymentsCount: 9 }),
+      ]),
+    ).toBe(20)
+  })
+
+  it('ignores malformed indexed counts instead of poisoning the total', () => {
+    expect(
+      projectGroupPaymentsCount([
+        project({ paymentsCount: -1 }),
+        project({ chainId: 10, projectId: 12, paymentsCount: Number.NaN }),
+        project({ chainId: 8453, projectId: 33, paymentsCount: 2 }),
+      ]),
+    ).toBe(2)
   })
 })
 

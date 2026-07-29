@@ -29,6 +29,7 @@ import {
   getProjectActivity,
   getRevnetOperator,
   getSuckerGroupProjects,
+  projectGroupPaymentsCount,
   resolveProjectDeployments,
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
@@ -304,6 +305,7 @@ export default async function ProjectPage({
   const totalRaisedUsd = chains
     .reduce((sum, row) => sum + BigInt(row.volumeUsd || "0"), 0n)
     .toString();
+  const paymentsCount = projectGroupPaymentsCount(chains);
 
   return (
     <ShopCartProvider>
@@ -445,7 +447,7 @@ export default async function ProjectPage({
             chainId: row.chainId,
             usd: row.volumeUsd || "0",
           }))}
-          paymentsCount={project.paymentsCount}
+          paymentsCount={paymentsCount}
           suckerGroupId={project.suckerGroupId}
           chains={chainPairs}
         />

@@ -952,6 +952,19 @@ export function resolveProjectDeployments(
 }
 
 /**
+ * Sum indexed payments over the same verified deployment set used for the
+ * project page's cross-chain volume.
+ */
+export function projectGroupPaymentsCount(
+  deployments: readonly Pick<BsProject, 'paymentsCount'>[],
+): number {
+  return deployments.reduce((total, row) => {
+    const count = Number(row.paymentsCount)
+    return total + (Number.isSafeInteger(count) && count > 0 ? count : 0)
+  }, 0)
+}
+
+/**
  * The single accounting-token kind a verified deployment set agrees on, or
  * null when the chains account in different tokens (or the kind is unknown).
  * Kind means symbol + decimals: canonical stablecoin deployments differ by
