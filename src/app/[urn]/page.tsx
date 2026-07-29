@@ -10,17 +10,19 @@ import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
 import { ProjectLogo } from "@/components/ProjectLogo";
 import { AddressLink } from "@/components/ui/AddressLink";
-import { BackOfficeTab } from "@/components/project/BackOfficeTab";
-import { ExtrasTab } from "@/components/project/ExtrasTab";
-import { FundsTab } from "@/components/project/FundsTab";
 import { OverviewTab } from "@/components/project/OverviewTab";
-import { OwnersTab } from "@/components/project/OwnersTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
 import { ProjectTabs } from "@/components/project/Tabs";
-import { RulesetsTab } from "@/components/project/RulesetsTab";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
-import { ShopTab } from "@/components/project/ShopTab";
-import { TermsTab } from "@/components/project/TermsTab";
+import {
+  BackOfficeTab,
+  ExtrasTab,
+  FundsTab,
+  OwnersTab,
+  RulesetsTab,
+  ShopTab,
+  TermsTab,
+} from "@/components/project/LazyProjectTabs";
 import {
   BsActivityEvent,
   BsProject,
