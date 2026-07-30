@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 const dockerfile = readFileSync('Dockerfile', 'utf8')
 const dockerignore = readFileSync('.dockerignore', 'utf8')
@@ -6,6 +6,7 @@ const npmConfig = readFileSync('.npmrc', 'utf8')
 const ci = readFileSync('.github/workflows/ci.yml', 'utf8')
 const release = readFileSync('.github/workflows/release-image.yml', 'utf8')
 const productionStart = readFileSync('scripts/start-production.mjs', 'utf8')
+const globalStyles = readFileSync('src/app/globals.css', 'utf8')
 
 const checks = [
   [
@@ -56,6 +57,19 @@ for (const [pattern, message] of checks) {
         ? readFileSync('next.config.js', 'utf8')
         : dockerfile
   if (!pattern.test(source)) throw new Error(message)
+}
+
+const tailwindConfigPath = globalStyles.match(
+  /^@config\s+["']\.\.\/\.\.\/([^"']+)["'];?$/m,
+)?.[1]
+if (
+  !tailwindConfigPath ||
+  !existsSync(tailwindConfigPath) ||
+  !dockerignore.split(/\r?\n/u).includes(`!${tailwindConfigPath}`)
+) {
+  throw new Error(
+    'the Docker context must include the Tailwind config referenced by the global stylesheet',
+  )
 }
 
 if (
