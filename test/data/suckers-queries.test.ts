@@ -69,10 +69,22 @@ function stubBridgeEvents(data: {
       new Response(
         JSON.stringify({
           data: {
-            bridgeToOutboxEvents: { items: data.outbox ?? [] },
-            bridgeToRemoteEvents: { items: data.remote ?? [] },
-            bridgeClaimEvents: { items: data.claims ?? [] },
-            inboxRootReceivedEvents: { items: data.inbox ?? [] },
+            bridgeToOutboxEvents: {
+              items: data.outbox ?? [],
+              totalCount: data.outbox?.length ?? 0,
+            },
+            bridgeToRemoteEvents: {
+              items: data.remote ?? [],
+              totalCount: data.remote?.length ?? 0,
+            },
+            bridgeClaimEvents: {
+              items: data.claims ?? [],
+              totalCount: data.claims?.length ?? 0,
+            },
+            inboxRootReceivedEvents: {
+              items: data.inbox ?? [],
+              totalCount: data.inbox?.length ?? 0,
+            },
           },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },

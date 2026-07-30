@@ -56,7 +56,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
       }
     }`,
     { limit },
-    { revalidate: 120 },
+    { policy: 'stable' },
   )
 
   return data.suckerGroups.items.flatMap(group => {

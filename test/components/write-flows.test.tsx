@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { zeroAddress, type Address } from 'viem'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address | undefined,
@@ -14,6 +14,12 @@ const mocks = vi.hoisted(() => ({
   clientAvailable: true,
   publicClient: { readContract: vi.fn() },
   refetchBalance: vi.fn(),
+  balance: 5n * 10n ** 18n,
+  txPhase: 'idle',
+  txBusy: false,
+  txHash: null as string | null,
+  txError: null as Error | null,
+  safeTxCall: 0,
 }))
 
 vi.mock('next/link', () => ({
@@ -24,7 +30,7 @@ vi.mock('wagmi', () => ({
   usePublicClient: () =>
     mocks.clientAvailable ? mocks.publicClient : undefined,
   useReadContract: () => ({
-    data: 5n * 10n ** 18n,
+    data: mocks.balance,
     refetch: mocks.refetchBalance,
   }),
 }))
@@ -83,21 +89,28 @@ vi.mock('@/hooks/useWallet', () => ({
     openSignIn: mocks.openSignIn,
   }),
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({
-    phase: 'idle',
-    busy: false,
-    hash: null,
-    receipt: null,
-    error: null,
-    send: mocks.send,
-    reset: mocks.reset,
-  }),
-  txPhaseLabel: (
-    phase: string,
-    labels: Record<string, string> = {},
-  ) => labels[phase] ?? phase,
-}))
+vi.mock('@/hooks/useSafeTx', () => {
+  return {
+    useSafeTx: () => {
+      const approval = mocks.safeTxCall % 2 === 1
+      mocks.safeTxCall += 1
+      return {
+        phase: approval ? 'idle' : mocks.txPhase,
+        busy: approval ? false : mocks.txBusy,
+        hash: approval ? null : mocks.txHash,
+        receipt: null,
+        error: approval ? null : mocks.txError,
+        isSafe: false,
+        send: mocks.send,
+        reset: mocks.reset,
+      }
+    },
+    txPhaseLabel: (
+      phase: string,
+      labels: Record<string, string> = {},
+    ) => labels[phase] ?? phase,
+  }
+})
 vi.mock('@/lib/ens', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/ens')>()
   return {
@@ -152,9 +165,19 @@ beforeEach(() => {
   mocks.address = ALICE
   mocks.clientAvailable = true
   mocks.connected = true
+  mocks.balance = 5n * 10n ** 18n
+  mocks.txPhase = 'idle'
+  mocks.txBusy = false
+  mocks.txHash = null
+  mocks.txError = null
+  mocks.safeTxCall = 0
   mocks.amountToAutoIssue.mockResolvedValue(10n)
   mocks.buildAutoIssue.mockReturnValue(AUTO_ISSUE_REQUEST)
   mocks.send.mockResolvedValue('0xhash')
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('project payer write flow', () => {
@@ -346,5 +369,98 @@ describe('cash-out write flow', () => {
         '0x',
       ],
     })
+  })
+
+  it('uses the full balance, changes slippage, and rejects malformed amounts', async () => {
+    vi.useFakeTimers()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+          accountingToken: '0x4444444444444444444444444444444444444444',
+          accountingTokenSymbol: 'USDC',
+        }),
+      )
+    })
+
+    await act(async () => buttonWith(renderer, 'MAX').props.onClick())
+    expect(buttonWith(renderer, 'Cash out 5 JBT')).toBeDefined()
+
+    await act(async () => buttonWith(renderer, '3%').props.onClick())
+    expect(buttonWith(renderer, '3%').props['aria-pressed']).toBe(true)
+
+    const amount = renderer.root
+      .findAllByType('input')
+      .find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => amount.props.onChange({ target: { value: '1.2.3' } }))
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(buttonWith(renderer, 'Cash out').props.disabled).toBe(true)
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('signs in before attempting a cash-out and links an empty holder to pay', async () => {
+    mocks.connected = false
+    mocks.address = undefined
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+        }),
+      )
+    })
+
+    await act(async () =>
+      buttonWith(renderer, 'Sign in to cash out').props.onClick(),
+    )
+    expect(mocks.openSignIn).toHaveBeenCalledTimes(1)
+    expect(mocks.send).not.toHaveBeenCalled()
+
+    const onGoToPay = vi.fn()
+    mocks.connected = true
+    mocks.address = ALICE
+    mocks.balance = 0n
+    await act(async () => {
+      renderer.update(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+          onGoToPay,
+        }),
+      )
+    })
+    await act(async () => buttonWith(renderer, 'pay to get some').props.onClick())
+    expect(onGoToPay).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a confirmed cash-out, links its receipt, and resets for another', async () => {
+    mocks.txPhase = 'success'
+    mocks.txHash = `0x${'1'.repeat(64)}`
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+        }),
+      )
+    })
+
+    expect(renderedText(renderer.root)).toContain('Cashed out!')
+    expect(renderedText(renderer.root)).toContain(
+      "Your share of the project's treasury is on its way.",
+    )
+    const receipt = renderer.root.findByType('a')
+    expect(receipt.props.href).toContain(mocks.txHash)
+    expect(mocks.refetchBalance).toHaveBeenCalled()
+
+    await act(async () => buttonWith(renderer, 'Cash out again').props.onClick())
+    expect(mocks.reset).toHaveBeenCalled()
   })
 })

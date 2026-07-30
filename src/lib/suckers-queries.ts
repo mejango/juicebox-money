@@ -14,7 +14,11 @@
 
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import { suckerBytes32ToAddress } from '@bananapus/nana-sdk-core/v6'
-import { bendystraw, getProject, testnetHint } from '@/lib/bendystraw'
+import {
+  bendystraw,
+  bendystrawNetworkHint,
+  getProject,
+} from '@/lib/bendystraw'
 
 /** A bytes32-packed EVM address (left-padded) unpacked to its 20-byte form. */
 function unpackAddress(bytes32: string): string {
@@ -180,7 +184,10 @@ export async function getBridgeMovements(args: {
     const data = await bendystraw<BridgePages>(
       BRIDGE_EVENTS_QUERY,
       { suckerGroupId, limit, offset },
-      { revalidate: 20, testnet: testnetHint(args.chainId) },
+      {
+        network: bendystrawNetworkHint(args.chainId),
+        policy: 'live',
+      },
     )
     for (const root of roots) {
       const page = data[root] as EventPage<OutboxRow | RemoteRow | ClaimRow | InboxRow>

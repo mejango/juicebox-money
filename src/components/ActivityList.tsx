@@ -6,7 +6,7 @@ import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
-import { BsActivityEvent } from '@/lib/bendystraw'
+import type { BsActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import {
   formatCompactTokenAmount,

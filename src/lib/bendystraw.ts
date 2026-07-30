@@ -4,27 +4,26 @@
  */
 
 import {
+  bendystrawCacheTtl,
   bendystrawProjectRefFilter as projectRefAnd,
   bendystrawProjectRefsFilters as projectRefsWheres,
   downsampleTimeSeries,
-  JB_CHAINS,
   matchesBendystrawProjectRef as matchesProjectRef,
+  normalizeBendystrawEndpoint,
   requestBendystraw,
+  resolveBendystrawNetwork,
+  selectBendystrawEndpoint,
+  type BendystrawCachePolicy,
   type BendystrawFilter,
+  type BendystrawNetwork,
   type BendystrawProjectRef,
-  type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import { compileBendystrawOperation } from '@/lib/bendystraw-operation'
 
 type VersionedProjectRef = Required<BendystrawProjectRef>
 
 export function normalizeBendystrawUrl(value: string): string {
-  const url = new URL(value.trim())
-  url.pathname = `${url.pathname
-    .replace(/\/graphql\/?$/u, '')
-    .replace(/\/$/u, '')}/graphql`
-  url.search = ''
-  url.hash = ''
-  return url.toString()
+  return normalizeBendystrawEndpoint(value.trim())
 }
 
 const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
@@ -47,33 +46,64 @@ const IS_DETERMINISTIC_BROWSER =
  * `bendystraw` below. Undefined (unknown chain or no hint) falls back to the
  * default endpoint selection.
  */
-export function testnetHint(chainId?: number | null): boolean | undefined {
+export function bendystrawNetworkHint(
+  chainId?: number | null,
+): BendystrawNetwork | undefined {
   return typeof chainId === 'number'
-    ? JB_CHAINS[chainId as JBChainId]?.chain?.testnet
+    ? resolveBendystrawNetwork({ chainId })
     : undefined
 }
 
 export async function bendystraw<T>(
   query: string,
   variables: Record<string, unknown>,
-  opts: { revalidate?: number; testnet?: boolean } = {},
+  opts: {
+    chainId?: number
+    network?: BendystrawNetwork
+    policy?: BendystrawCachePolicy
+  } = {},
 ): Promise<T> {
-  const variableChainId =
-    typeof variables.chainId === 'number' ? variables.chainId : null
-  const variableChain =
-    variableChainId === null
-      ? undefined
-      : JB_CHAINS[variableChainId as JBChainId]?.chain
-  const useTestnet = opts.testnet ?? variableChain?.testnet ?? false
+  const contract = compileBendystrawOperation(query)
+  const network = resolveBendystrawNetwork({
+    chainId: opts.chainId,
+    defaultNetwork: 'mainnet',
+    network: opts.network,
+    variables,
+  })
+  if (typeof window !== 'undefined') {
+    const { requestPersistedBendystraw } = await import(
+      '@/lib/bendystraw-browser'
+    )
+    return requestPersistedBendystraw<T>({
+      contract,
+      network,
+      query,
+      variables,
+    })
+  }
   const cacheOptions = IS_DETERMINISTIC_BROWSER
     ? { cache: 'no-store' as const }
-    : { next: { revalidate: opts.revalidate ?? 60 } }
+    : {
+        next: {
+          revalidate: bendystrawCacheTtl(opts.policy ?? 'stable') / 1_000,
+        },
+      }
   return requestBendystraw<T, Record<string, unknown>>(
-    useTestnet ? TESTNET_URL : MAINNET_URL,
+    selectBendystrawEndpoint(
+      { mainnet: MAINNET_URL, testnet: TESTNET_URL },
+      {
+        chainId: opts.chainId,
+        network,
+        variables,
+      },
+    ),
     query,
     variables,
     {
       fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
+      operationName: contract.operationName,
+      validateData: (value): value is T => contract.validateData(value),
+      validateVariables: contract.validateVariables,
     },
   )
 }
@@ -143,7 +173,7 @@ export async function getProject(
       project(chainId: $chainId, projectId: $projectId, version: 6) { ${PROJECT_FIELDS} }
     }`,
     { chainId, projectId },
-    { revalidate: 30 },
+    { policy: 'standard' },
   )
   return data.project
 }
@@ -166,7 +196,7 @@ export async function searchProjects(
     bendystraw<{ projects: { items: BsProject[] } }>(
       PROJECTS_BY_FILTER_QUERY,
       { where: { AND: [{ version: 6 }, { OR: searchBranches }] }, limit },
-      { revalidate: 30 },
+      { policy: 'standard' },
     ),
     bendystraw<{
       deployErc20Events: {
@@ -182,7 +212,7 @@ export async function searchProjects(
         }
       }`,
       { text: searchText },
-      { revalidate: 30 },
+      { policy: 'standard' },
     ),
   ])
 
@@ -208,7 +238,7 @@ export async function searchProjects(
               bendystraw<{ projects: { items: BsProject[] } }>(
                 PROJECTS_BY_FILTER_QUERY,
                 { where, limit },
-                { revalidate: 30 },
+                { policy: 'standard' },
               ),
             ),
           )
@@ -487,10 +517,7 @@ export async function getProjectActivity(
     'activityEvents',
     { suckerGroupId, limit },
     {
-      testnet:
-        chainId === undefined
-          ? undefined
-          : JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+      network: bendystrawNetworkHint(chainId),
       pageSize: limit,
       max: Number.POSITIVE_INFINITY,
     },
@@ -546,7 +573,7 @@ export async function getProjectActivityByProject(
     'activityEvents',
     { chainId, projectId },
     {
-      testnet: JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+      network: bendystrawNetworkHint(chainId),
       pageSize: limit,
       max: Number.POSITIVE_INFINITY,
     },
@@ -609,7 +636,7 @@ export async function getRecentActivity(
       }
     }`,
     { limit },
-    { revalidate: 15 },
+    { policy: 'live' },
   )
   return data.activityEvents.items
 }
@@ -701,7 +728,10 @@ export async function getParticipants(
     }>(
       PARTICIPANTS_BY_FILTER_QUERY,
       { where, limit: pageLimit, offset },
-      { revalidate: 60, testnet: testnetHint(args.chainId) },
+      {
+        network: bendystrawNetworkHint(args.chainId),
+        policy: 'stable',
+      },
     )
 
     const page = data.participants.items ?? []
@@ -839,7 +869,7 @@ export async function getShopPurchases(
           }
         }`,
         { ...project, limit, offset },
-        { revalidate: 15 },
+        { policy: 'live' },
       )
       return data.mintNftEvents
     },
@@ -906,7 +936,7 @@ export async function getOwnedShopItems(
           }
         }`,
         { ...project, owner: normalizedOwner, limit, offset },
-        { revalidate: 15 },
+        { policy: 'live' },
       )
       return data.nfts
     },
@@ -950,11 +980,8 @@ export async function getSuckerGroupProjects(
     }`,
     { id: suckerGroupId },
     {
-      revalidate: 60,
-      testnet:
-        chainId === undefined
-          ? undefined
-          : JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+      network: bendystrawNetworkHint(chainId),
+      policy: 'stable',
     },
   )
   return data.suckerGroup?.projects.items ?? []
@@ -1109,8 +1136,12 @@ export async function getPagedItems<T>(
   {
     pageSize = 1_000,
     max = Number.POSITIVE_INFINITY,
-    testnet,
-  }: { pageSize?: number; max?: number; testnet?: boolean } = {},
+    network,
+  }: {
+    pageSize?: number
+    max?: number
+    network?: BendystrawNetwork
+  } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
   let totalCount = 0
@@ -1122,7 +1153,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: items.length },
-      { revalidate: 30, testnet },
+      { network, policy: 'standard' },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount
@@ -1146,7 +1177,7 @@ export async function getRevnetPriceHistory(
    *  testnet indexer); it never filters the group. */
   { chainId }: { chainId?: number } = {},
 ): Promise<BsRevnetPriceHistory> {
-  const testnet = testnetHint(chainId)
+  const network = bendystrawNetworkHint(chainId)
   const momentsPromise = getPagedItems<BsPriceMoment>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
       suckerGroupMoments(
@@ -1162,7 +1193,7 @@ export async function getRevnetPriceHistory(
     }`,
     'suckerGroupMoments',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, testnet },
+    { max: Number.POSITIVE_INFINITY, network },
   )
 
   const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
@@ -1183,7 +1214,7 @@ export async function getRevnetPriceHistory(
     }`,
     'swapEvents',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, testnet },
+    { max: Number.POSITIVE_INFINITY, network },
   )
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(
@@ -1204,7 +1235,7 @@ export async function getRevnetPriceHistory(
     }`,
     'buybackPoolEvents',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, testnet },
+    { max: Number.POSITIVE_INFINITY, network },
   )
 
   const marketPromise = Promise.all([enhancedSwaps(), pools()])
@@ -1230,7 +1261,7 @@ export async function getRevnetPriceHistory(
         }`,
         'swapEvents',
         { suckerGroupId },
-        { max: Number.POSITIVE_INFINITY, testnet },
+        { max: Number.POSITIVE_INFINITY, network },
       )
       return {
         swaps,
@@ -1480,7 +1511,7 @@ export async function getAccountActivity(
     >(
       ACCOUNT_ACTIVITY_QUERY,
       { address: addressLower, limit: pageLimit, offset: pageOffset },
-      { revalidate: 30 },
+      { policy: 'standard' },
     )
     for (const name of listNames) {
       const root = data[name]
@@ -1621,7 +1652,7 @@ export async function getProjectsByRefs(
       bendystraw<{ projects: { items: BsProject[] } }>(
         PROJECTS_BY_FILTER_QUERY,
         { where, limit: 200 },
-        { revalidate: 60 },
+        { policy: 'stable' },
       ),
     ),
   )

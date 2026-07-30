@@ -40,16 +40,96 @@ const BENEFICIARY_LISTS = [
   'sendReservedTokensToSplitEvents',
 ]
 
+function completeActivityRow(
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: 'event',
+    chainId: 1,
+    projectId: 1,
+    timestamp: 1,
+    from: '0xfrom',
+    txHash: '0xtx',
+    version: 6,
+    project: null,
+    payEvent: null,
+    cashOutTokensEvent: null,
+    projectCreateEvent: null,
+    addToBalanceEvent: null,
+    mintTokensEvent: null,
+    sendPayoutsEvent: null,
+    sendReservedTokensToSplitsEvent: null,
+    sendPayoutToSplitEvent: null,
+    sendReservedTokensToSplitEvent: null,
+    autoIssueEvent: null,
+    borrowLoanEvent: null,
+    repayLoanEvent: null,
+    liquidateLoanEvent: null,
+    mintNftEvent: null,
+    deployErc20Event: null,
+    setUriEvent: null,
+    projectTransferEvent: null,
+    operatorPermissionsSetEvent: null,
+    addNftTierEvent: null,
+    removeNftTierEvent: null,
+    swapEvent: null,
+    buybackPoolEvent: null,
+    bridgeClaimEvent: null,
+    ...overrides,
+  }
+}
+
+function completeProjectRow(
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    projectId: 1,
+    chainId: 1,
+    version: 6,
+    name: null,
+    logoUri: null,
+    projectTagline: null,
+    volume: '0',
+    volumeUsd: '0',
+    balance: '0',
+    paymentsCount: 0,
+    contributorsCount: 0,
+    createdAt: 1,
+    suckerGroupId: null,
+    token: null,
+    tokenSymbol: null,
+    decimals: null,
+    currency: null,
+    isRevnet: null,
+    owner: null,
+    metadataUri: null,
+    ...overrides,
+  }
+}
+
 function accountActivityResponse(
   overrides: Record<string, { totalCount: number; items: unknown[] }> = {},
 ): Response {
-  const data: Record<string, unknown> = {
+  const data: Record<string, { totalCount: number; items: unknown[] }> = {
     activityEvents: { totalCount: 0, items: [] },
   }
   for (const list of BENEFICIARY_LISTS) {
     data[list] = { totalCount: 0, items: [] }
   }
-  return graphqlResponse({ data: { ...data, ...overrides } })
+  const merged = { ...data, ...overrides }
+  return graphqlResponse({
+    data: Object.fromEntries(
+      Object.entries(merged).map(([name, page]) => [
+        name,
+        {
+          ...page,
+          items: page.items.map(item =>
+            completeActivityRow(item as Record<string, unknown>),
+          ),
+        },
+      ]),
+    ),
+  })
 }
 
 describe('account activity query', () => {
@@ -236,8 +316,18 @@ describe('owned projects query', () => {
           projects: {
             totalCount: 2,
             items: [
-              { chainId: 1, projectId: 3, version: 6, owner: ALICE.toLowerCase() },
-              { chainId: 10, projectId: 9, version: 6, owner: ALICE.toLowerCase() },
+              completeProjectRow({
+                chainId: 1,
+                projectId: 3,
+                version: 6,
+                owner: ALICE.toLowerCase(),
+              }),
+              completeProjectRow({
+                chainId: 10,
+                projectId: 9,
+                version: 6,
+                owner: ALICE.toLowerCase(),
+              }),
             ],
           },
         },
@@ -322,7 +412,14 @@ describe('projects-by-refs query', () => {
       graphqlResponse({
         data: {
           projects: {
-            items: [{ chainId: 1, projectId: 5, version: 4, name: 'A' }],
+            items: [
+              completeProjectRow({
+                chainId: 1,
+                projectId: 5,
+                version: 4,
+                name: 'A',
+              }),
+            ],
           },
         },
       }),

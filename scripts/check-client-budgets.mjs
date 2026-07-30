@@ -12,7 +12,10 @@ const budgets = {
     // The root layout carries the shared Wagmi + exact-transaction-review
     // runtime on every route. Keep a narrow ceiling around its measured size;
     // aggregate and largest-chunk budgets below still catch shared regressions.
-    '/page': 385 * KIB,
+    // The shared Bendystraw client now includes fail-closed network routing.
+    // Rebaseline by one KiB; the aggregate and largest-chunk ceilings remain
+    // unchanged and still catch broader regressions.
+    '/page': 386 * KIB,
     '/[urn]/page': 570 * KIB,
     '/create/page': 465 * KIB,
   },

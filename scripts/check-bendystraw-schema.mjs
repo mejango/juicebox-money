@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import {
   buildClientSchema,
@@ -10,6 +11,8 @@ import {
 } from 'graphql'
 
 const minimumDocuments = Number(process.argv[2] ?? 1)
+const writeRegistry = process.argv.includes('--write-registry')
+const registryPath = path.resolve('src/lib/bendystraw-operation-registry.json')
 const sourceRoot = path.resolve('src')
 const extensions = new Set(['.js', '.jsx', '.mjs', '.ts', '.tsx'])
 let declarations = new Map()
@@ -129,6 +132,27 @@ for (const { file, source } of sources) {
 if (unresolved.length) throw new Error(`Unvalidated generated GraphQL documents:\n${unresolved.join('\n')}`)
 if (documents.size < minimumDocuments) {
   throw new Error(`Found ${documents.size} GraphQL documents; expected at least ${minimumDocuments}`)
+}
+
+const expectedRegistry = Object.fromEntries(
+  [...documents.keys()]
+    .map(document => [
+      createHash('sha256').update(document, 'utf8').digest('hex'),
+      document,
+    ])
+    .sort(([left], [right]) => left.localeCompare(right)),
+)
+const expectedRegistryJson = `${JSON.stringify(expectedRegistry, null, 2)}\n`
+if (writeRegistry) {
+  fs.writeFileSync(registryPath, expectedRegistryJson)
+  console.log(`Wrote ${documents.size} persisted Bendystraw operations to ${path.relative(process.cwd(), registryPath)}.`)
+} else {
+  if (!fs.existsSync(registryPath)) {
+    throw new Error('Missing persisted Bendystraw operation registry; run npm run bendystraw:registry')
+  }
+  if (fs.readFileSync(registryPath, 'utf8') !== expectedRegistryJson) {
+    throw new Error('Persisted Bendystraw operation registry is stale; run npm run bendystraw:registry')
+  }
 }
 
 const parsedDocuments = [...documents].map(([document, location]) => {

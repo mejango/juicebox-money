@@ -16,6 +16,7 @@
     "container:check": "node scripts/check-container-definition.mjs",
     "protocol:check": "node scripts/check-protocol-deployments.mjs",
     "schema:check": "node scripts/check-bendystraw-schema.mjs 27",
+    "bendystraw:registry": "node scripts/check-bendystraw-schema.mjs 27 --write-registry",
     "transaction:check": "node scripts/check-transaction-inventory.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -30,7 +31,7 @@
     "check:deploy": "npm run check && npm run env:check:all"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-core": "1.8.0",
+    "@bananapus/nana-sdk-core": "1.9.0",
     "@getpara/react-component-library": "3.8.0",
     "@getpara/react-sdk-lite": "3.8.0",
     "@getpara/wagmi-v2-connector": "3.8.0",

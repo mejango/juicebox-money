@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
         project(chainId: $chainId, projectId: $projectId, version: 6) { projectId }
       }`,
       { chainId, projectId },
-      { revalidate: 0 },
+      { policy: 'live' },
     )
     return NextResponse.json({ found: !!data.project })
   } catch {

@@ -388,6 +388,14 @@ function canonicalGraphql(document) {
   return tokens.join(' ')
 }
 
+function operationNameOf(canonical) {
+  const [operation, candidate] = canonical.split(' ')
+  return ['mutation', 'query', 'subscription'].includes(operation) &&
+    /^[_A-Za-z][_0-9A-Za-z]*$/.test(candidate ?? '')
+    ? candidate
+    : undefined
+}
+
 const graphqlFixtures = [
   {
     name: 'project',
@@ -799,8 +807,19 @@ async function handleGraphql(request, response) {
   }
 
   const payload = await readJson(request)
-  if (!exactKeys(payload, ['query', 'variables'])) {
-    recordUnknown('graphql-envelope', 'Expected exactly query and variables')
+  const hasOperationName =
+    payload !== null &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    Object.hasOwn(payload, 'operationName')
+  const envelopeKeys = hasOperationName
+    ? ['operationName', 'query', 'variables']
+    : ['query', 'variables']
+  if (!exactKeys(payload, envelopeKeys)) {
+    recordUnknown(
+      'graphql-envelope',
+      'Expected query, variables, and only an optional operationName',
+    )
     sendJson(request, response, 400, {
       errors: [{ message: 'Malformed deterministic GraphQL envelope' }],
     })
@@ -817,6 +836,19 @@ async function handleGraphql(request, response) {
     )
     sendJson(request, response, 400, {
       errors: [{ message: 'Malformed deterministic GraphQL document' }],
+    })
+    return
+  }
+  if (
+    hasOperationName &&
+    payload.operationName !== operationNameOf(canonical)
+  ) {
+    recordUnknown(
+      'graphql-operation-name',
+      'operationName does not match the selected document operation',
+    )
+    sendJson(request, response, 400, {
+      errors: [{ message: 'Invalid deterministic GraphQL operationName' }],
     })
     return
   }

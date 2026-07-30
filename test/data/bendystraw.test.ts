@@ -112,6 +112,23 @@ describe('minimal Bendystraw client', () => {
     await expect(bendystraw('query { x }', {})).rejects.toThrow(
       'missing data',
     )
+
+    fetchMock.mockImplementation(async () =>
+      graphqlResponse({ data: { project: {} } }),
+    )
+    await expect(
+      bendystraw(
+        'query Project($projectId: Int!) { project(projectId: $projectId) { projectId } }',
+        { projectId: 7 },
+      ),
+    ).rejects.toThrow('Project returned invalid data')
+
+    await expect(
+      bendystraw(
+        'query Project($projectId: Int!) { project(projectId: $projectId) { projectId } }',
+        { projectId: 'wrong' },
+      ),
+    ).rejects.toThrow('Project received invalid variables')
   })
 })
 
@@ -119,7 +136,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
   it('searches project names and tickers, then deduplicates matching deployments', async () => {
     const project = {
       projectId: 11,
-      chainId: 84532,
+      chainId: 8453,
       version: 6,
       name: 'Bounty Engine Network',
       logoUri: null,
@@ -148,7 +165,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
         graphqlResponse({
           data: {
             deployErc20Events: {
-              items: [{ chainId: 84532, projectId: 11, symbol: 'BEN' }],
+              items: [{ chainId: 8453, projectId: 11, symbol: 'BEN' }],
             },
           },
         }),
@@ -160,7 +177,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
 
     await expect(searchProjects('$BEN')).resolves.toEqual([
       expect.objectContaining({
-        chainId: 84532,
+        chainId: 8453,
         projectId: 11,
         searchTicker: 'BEN',
       }),
@@ -187,7 +204,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
           data: {
             deployErc20Events: {
               items: [
-                { chainId: 84532, projectId: 11, symbol: 'BEN' },
+                { chainId: 8453, projectId: 11, symbol: 'BEN' },
                 { chainId: 1, projectId: 3, symbol: 'BENT' },
               ],
             },
@@ -211,7 +228,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
     const projectRequest = bodyOf(fetchMock.mock.calls[2]?.[1] as RequestInit)
     expect(projectRequest.variables.where).toEqual({
       OR: [
-        { AND: [{ chainId: 84532 }, { projectId: 11 }, { version: 6 }] },
+        { AND: [{ chainId: 8453 }, { projectId: 11 }, { version: 6 }] },
         { AND: [{ chainId: 1 }, { projectId: 3 }, { version: 6 }] },
       ],
     })
