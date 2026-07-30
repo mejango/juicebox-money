@@ -6,6 +6,18 @@ import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
 import { Providers } from '@/providers/Providers'
 
+const siteOrigin =
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
+const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim()
+const assetOrigin =
+  railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
+    ? `https://${railwayDomain}`
+    : siteOrigin
+const socialImage = new URL('/assets/juicebox-social.png', assetOrigin).href
+const siteTitle = 'Juicebox - fund your thing'
+const siteDescription =
+  'Raise money from anyone, anywhere, transparently on your terms.'
+
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
 // Headings — PP Agrandir Medium.
 const agrandir = localFont({
@@ -55,14 +67,35 @@ const beatrice = localFont({
 })
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteOrigin),
   title: {
-    default: 'Juicebox — Fund your thing',
+    default: siteTitle,
     template: '%s — Juicebox',
   },
-  description:
-    'Raise funds, reward supporters, and run your treasury in the open. Juicebox is programmable money for projects.',
+  description: siteDescription,
   icons: {
     icon: logoIcon.src,
+  },
+  openGraph: {
+    title: siteTitle,
+    description: siteDescription,
+    url: '/',
+    type: 'website',
+    images: [
+      {
+        url: socialImage,
+        width: 1296,
+        height: 738,
+        alt: 'Juicebox — fund your thing',
+        type: 'image/png',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: siteTitle,
+    description: siteDescription,
+    images: [socialImage],
   },
 }
 

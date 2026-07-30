@@ -33,7 +33,6 @@ import {
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
-import { ChainIcon } from "@/components/ChainIcon";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -1340,16 +1339,14 @@ export function PayPanel({
           ariaLabel="Payment mode"
           options={[
             { value: "pay", label: "Pay" },
-            { value: "addbalance", label: "Add to balance" },
+            {
+              value: "addbalance",
+              label: "Add to balance",
+              selectedLabel: "Add",
+            },
           ]}
         />
         <span>on</span>
-        {/*
-         * An <option> cannot carry an image, so the mark for the CURRENTLY
-         * selected chain sits beside the control rather than inside it. It
-         * tracks `chainId`, so it re-marks itself as the selection changes.
-         */}
-        <ChainIcon chainId={chainId} size={16} />
         {chains.length > 1 ? (
           <TextSelect
             value={String(chainId)}
@@ -1718,7 +1715,12 @@ function TextSelect({
 }: {
   value: string;
   onChange: (value: string) => void;
-  options: { value: string; label: string; disabled?: boolean }[];
+  options: {
+    value: string;
+    label: string;
+    selectedLabel?: string;
+    disabled?: boolean;
+  }[];
   disabled?: boolean;
   ariaLabel: string;
   className?: string;
@@ -1729,7 +1731,8 @@ function TextSelect({
   // between a short label and the caret. So show the current label + caret as
   // tight visible text and overlay a transparent, full-cover select for the
   // real (native) dropdown.
-  const current = options.find((o) => o.value === value)?.label ?? "";
+  const selected = options.find((o) => o.value === value);
+  const current = selected?.selectedLabel ?? selected?.label ?? "";
   return (
     <span className={`${className} ${disabled ? "opacity-60" : ""}`}>
       <span className={labelClassName || undefined}>{current}</span>
