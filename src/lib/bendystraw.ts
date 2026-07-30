@@ -3,8 +3,11 @@
  * here, typed by hand — auditable end to end. All queries are V6-only.
  */
 
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
-import { downsampleTimeSeries } from '@/lib/downsample'
+import {
+  downsampleTimeSeries,
+  JB_CHAINS,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
 
 export function normalizeBendystrawUrl(value: string): string {
   const url = new URL(value.trim())
