@@ -139,7 +139,10 @@ export function useSafeTx(chainId: number) {
   }, [effectivePhase])
 
   const send = useCallback(
-    async (request: TxRequest) => {
+    async (
+      request: TxRequest,
+      options?: { reverify?: (request: TxRequest) => Promise<unknown> },
+    ) => {
       if (inFlightRef.current) return null
       if (getViewAs()) {
         setError(VIEW_AS_WRITE_BLOCKED)
@@ -178,6 +181,7 @@ export function useSafeTx(chainId: number) {
             })
           },
           currentAccount: () => getAccount(wagmiConfig).address,
+          reverify: options?.reverify,
           // Simulation is the safety gate: the exact reviewed call, args, and
           // value must succeed before a signature is requested. Only the
           // simulation result reaches the wallet writer.

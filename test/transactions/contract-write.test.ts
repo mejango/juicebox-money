@@ -29,6 +29,10 @@ function harness() {
         events.push(`switch:${chainId}`)
       }),
       currentAccount: vi.fn(() => current),
+      reverify: vi.fn(async reviewed => {
+        events.push('reverify')
+        expect(reviewed).toBe(request)
+      }),
       simulate: vi.fn(async reviewed => {
         events.push('simulate')
         expect(reviewed).toBe(request)
@@ -56,12 +60,26 @@ describe('reviewed direct-write boundary', () => {
       'review',
       'phase:simulating',
       'switch:10',
+      'reverify',
       'simulate',
       'phase:signing',
       'write',
     ])
-    expect(run.options.currentAccount).toHaveBeenCalledTimes(2)
+    expect(run.options.currentAccount).toHaveBeenCalledTimes(3)
     expect(run.options.write).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed before simulation when reviewed state changes', async () => {
+    const run = harness()
+    run.options.reverify.mockRejectedValueOnce(
+      new Error('The project controller changed. Review again.'),
+    )
+
+    await expect(submitReviewedContractWrite(run.options)).rejects.toThrow(
+      'controller changed',
+    )
+    expect(run.options.simulate).not.toHaveBeenCalled()
+    expect(run.options.write).not.toHaveBeenCalled()
   })
 
   it('does nothing irreversible when review fails', async () => {

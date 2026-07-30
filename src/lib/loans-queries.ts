@@ -50,13 +50,12 @@ const LOANS_QUERY = `
 export async function getLoans(
   projectId: number,
   chainId: number,
-  limit = 500,
 ): Promise<{ items: BsLoan[]; totalCount: number }> {
   return getPagedItems<BsLoan>(
     LOANS_QUERY,
     'loans',
     { projectId, chainId },
-    { pageSize: 250, max: Math.max(1, Math.min(1000, limit)) },
+    { pageSize: 250, max: Number.POSITIVE_INFINITY },
   )
 }
 
@@ -111,7 +110,7 @@ async function fetchAutoIssuePages(
     query,
     path,
     { projectId, chainId },
-    { pageSize: 250, max: 1000 },
+    { pageSize: 250, max: Number.POSITIVE_INFINITY },
   )
   return items
 }

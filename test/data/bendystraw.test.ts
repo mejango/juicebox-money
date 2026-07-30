@@ -391,6 +391,6 @@ describe('Bendystraw pagination and trust boundaries', () => {
       expect.objectContaining({ chainId: 1, projectId: 7, tokenId: '11' }),
     )
     expect(result.failedChains).toEqual([10])
-    expect(result.capped).toBe(true)
+    expect(result.capped).toBe(false)
   })
 })

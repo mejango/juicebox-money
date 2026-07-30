@@ -100,6 +100,9 @@ const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['issueTokensForSplits', 'Give split recipients project tokens'],
 ]
 
+const TIER_PAGE_SIZE = 200
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}`
+
 type ShopTier = {
   id: number
   /** Full (undiscounted) price in the shop's pricing terms. */
@@ -892,6 +895,7 @@ function CustomerAllCard({
   chainCount: number
   fallbackChainId: JBChainId
 }) {
+  const [visibleCustomers, setVisibleCustomers] = useState(100)
   if (query.isLoading) {
     return <CustomerCardSkeleton rows={6} />
   }
@@ -944,7 +948,7 @@ function CustomerAllCard({
       </p>
 
       <div className="mt-3 divide-y divide-smoke-100">
-        {customers.slice(0, 100).map(([customer, purchases]) => (
+        {customers.slice(0, visibleCustomers).map(([customer, purchases]) => (
           <div
             key={customer}
             className="flex flex-col gap-1 py-2 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4"
@@ -965,6 +969,15 @@ function CustomerAllCard({
           </div>
         ))}
       </div>
+      {visibleCustomers < customers.length ? (
+        <button
+          type="button"
+          className="btn-secondary mt-3 w-full"
+          onClick={() => setVisibleCustomers(count => count + 100)}
+        >
+          Load more customers ({customers.length - visibleCustomers} remaining)
+        </button>
+      ) : null}
 
       <h3 className="mt-5 font-agrandir text-sm font-medium text-ink">
         Recent purchases
@@ -1478,19 +1491,36 @@ function TierDetailModal({
               chainId: targetId,
               projectId: BigInt(targetProjectId),
               isRevnet,
-              tierLimit: 200,
+              tierLimit: 0,
             })
-            const targetTier = targetShop?.tiers.find(
-              candidate => candidate.id === tier.id,
-            )
-            if (!targetTier) {
+            const targetTier = targetShop
+              ? (
+                  await client.readContract({
+                    address: targetShop.store,
+                    abi: jb721TiersHookStoreAbi,
+                    functionName: 'tiersOf',
+                    args: [
+                      targetShop.hook,
+                      [],
+                      false,
+                      BigInt(tier.id),
+                      1n,
+                    ],
+                  })
+                )[0]
+              : undefined
+            const matchingTier =
+              targetTier && Number(targetTier.id) === tier.id
+                ? targetTier
+                : undefined
+            if (!matchingTier) {
               return { chainId: targetId, state: 'missing' as const }
             }
             return {
               chainId: targetId,
               state: 'ready' as const,
-              remaining: targetTier.remainingSupply,
-              initial: targetTier.initialSupply,
+              remaining: matchingTier.remainingSupply,
+              initial: matchingTier.initialSupply,
             }
           } catch {
             return { chainId: targetId, state: 'unavailable' as const }
@@ -1686,6 +1716,88 @@ function discountLabel(discountPercent: number): string {
   return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}% off`
 }
 
+async function readTierPage(
+  client: PublicClient,
+  store: Address,
+  hook: Address,
+  startingId: bigint,
+) {
+  return client.readContract({
+    address: store,
+    abi: jb721TiersHookStoreAbi,
+    functionName: 'tiersOf',
+    args: [
+      hook,
+      [],
+      false,
+      startingId,
+      BigInt(startingId === 0n ? TIER_PAGE_SIZE : TIER_PAGE_SIZE + 1),
+    ],
+  })
+}
+
+async function readAllActiveTiers(
+  client: PublicClient,
+  store: Address,
+  hook: Address,
+) {
+  const tiers: Awaited<ReturnType<typeof readTierPage>>[number][] = []
+  const seen = new Set<number>()
+  let startingId = 0n
+
+  for (;;) {
+    const page = await readTierPage(client, store, hook, startingId)
+    if (page.length === 0) break
+    if (startingId !== 0n && BigInt(page[0].id) !== startingId) {
+      throw new Error('The shop changed while its inventory was being read.')
+    }
+    const fresh = startingId === 0n ? page : page.slice(1)
+    for (const tier of fresh) {
+      if (seen.has(tier.id)) {
+        throw new Error(`The shop repeated tier ${tier.id} while loading.`)
+      }
+      seen.add(tier.id)
+      tiers.push(tier)
+    }
+    if (fresh.length < TIER_PAGE_SIZE) break
+    const next = BigInt(fresh[fresh.length - 1].id)
+    if (next === startingId) {
+      throw new Error('The shop returned a cyclic inventory cursor.')
+    }
+    startingId = next
+  }
+  return tiers
+}
+
+async function resolveLegacyTierUris(
+  client: PublicClient,
+  store: Address,
+  hook: Address,
+  tiers: Awaited<ReturnType<typeof readTierPage>>,
+) {
+  const legacy = tiers.filter(
+    tier => tier.encodedIpfsUri.toLowerCase() === ZERO_BYTES32,
+  )
+  const resolved = new Map<number, string>()
+  for (let offset = 0; offset < legacy.length; offset += 10) {
+    const batch = await Promise.all(
+      legacy.slice(offset, offset + 10).map(async tier => {
+        const row = (
+          await client.readContract({
+            address: store,
+            abi: jb721TiersHookStoreAbi,
+            functionName: 'tiersOf',
+            args: [hook, [], true, BigInt(tier.id), 1n],
+          })
+        )[0]
+        return [tier.id, row?.resolvedUri ?? ''] as const
+      }),
+    )
+    for (const entry of batch) resolved.set(...entry)
+  }
+  return resolved
+}
+
 /**
  * Resolve the project's shop: hook, store, pricing context, and tiers.
  * Returns null when the project authoritatively has no 721 shop; throws on
@@ -1698,19 +1810,31 @@ async function readShop(
   isRevnet: boolean,
   nativeSymbol: string,
 ): Promise<Shop | null> {
-  const [resolved, current] = await Promise.all([
+  const [identity, current] = await Promise.all([
     getProject721Shop(client, {
       chainId,
       projectId: BigInt(projectId),
       isRevnet,
-      tierLimit: 200,
+      tierLimit: 0,
     }),
     getCurrentRuleset(client, {
       chainId,
       projectId: BigInt(projectId),
     }).catch(() => null),
   ])
-  if (!resolved) return null
+  if (!identity) return null
+  const resolved = identity
+  const rawTiers = await readAllActiveTiers(
+    client,
+    resolved.store,
+    resolved.hook,
+  )
+  const resolvedUriById = await resolveLegacyTierUris(
+    client,
+    resolved.store,
+    resolved.hook,
+    rawTiers,
+  )
 
   const idTarget = resolved.metadataIdTarget
   if (!idTarget || idTarget === zeroAddress) {
@@ -1778,30 +1902,17 @@ async function readShop(
   // Tier and collection-wide flags come from the store directly —
   // getProject721Shop's tier shape doesn't carry them. These are display-only,
   // so failed reads leave their corresponding detail sections unavailable.
-  const [rawTiers, configFlags] = await Promise.all([
-    client
-      .readContract({
-        address: resolved.store,
-        abi: jb721TiersHookStoreAbi,
-        functionName: 'tiersOf',
-        args: [resolved.hook, [], true, 0n, 200n],
-      })
-      .catch(() => []),
-    client
-      .readContract({
+  const configFlags = await client
+    .readContract({
         address: resolved.store,
         abi: jb721TiersHookStoreAbi,
         functionName: 'flagsOf',
         args: [resolved.hook],
       })
       .then(flags => ({ ...flags }))
-      .catch(() => null),
-  ])
-  const flagsById = new Map(
-    rawTiers.map(rawTier => [rawTier.id, rawTier.flags] as const),
-  )
+    .catch(() => null)
 
-  const tiers: ShopTier[] = resolved.tiers.map(tier => ({
+  const tiers: ShopTier[] = rawTiers.map(tier => ({
     id: tier.id,
     price: tier.price,
     remaining: tier.remainingSupply,
@@ -1811,8 +1922,8 @@ async function readShop(
     reserveFrequency: tier.reserveFrequency,
     votingUnits: tier.votingUnits,
     encodedIpfsUri: tier.encodedIpfsUri,
-    resolvedUri: tier.resolvedUri ?? '',
-    flags: flagsById.get(tier.id),
+    resolvedUri: resolvedUriById.get(tier.id) ?? '',
+    flags: { ...tier.flags },
   }))
 
   return {

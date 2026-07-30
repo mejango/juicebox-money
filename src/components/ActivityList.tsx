@@ -351,6 +351,7 @@ export function ActivityList({
   chainId,
   projectId,
   accountingToken,
+  error = false,
 }: {
   events: BsActivityEvent[]
   chainId: JBChainId
@@ -360,6 +361,7 @@ export function ActivityList({
    * kind — rows then show raw token amounts instead of indexed USD.
    */
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
+  error?: boolean
 }) {
   const visible = events.filter(
     e =>
@@ -388,6 +390,14 @@ export function ActivityList({
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
 
   if (visible.length === 0) {
+    if (error) {
+      return (
+        <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-red-300 p-5 text-sm text-red-700">
+          Activity is temporarily unavailable. No events are being hidden as
+          an empty history.
+        </div>
+      )
+    }
     return (
       <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-smoke-300 p-5">
         <Image

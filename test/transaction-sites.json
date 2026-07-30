@@ -17,6 +17,13 @@
         { "id": "auto-issue-stage-allocation", "actions": ["Auto-issue tokens"] }
       ]
     },
+    "src/components/project/BurnTokensFlow.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        { "id": "burn-project-tokens", "actions": ["Burn project tokens"] }
+      ]
+    },
     "src/components/project/CashOutFlow.tsx": {
       "hooks": 2,
       "sends": 4,

@@ -294,13 +294,16 @@ describe('AccountActivity', () => {
     expect(renderedText(renderer.root)).toContain('No onchain activity')
   })
 
-  it('stops at the 1000-event window with an honest cap instead of a dead load-more', async () => {
-    // The bendystraw beneficiary-union window is clamped at 1000 rows, so a
-    // page past it can never grow the list. The next window (1000 + 25)
-    // would exceed the clamp: no Load More, an explicit cap line instead.
+  it('continues loading beyond the former 1000-event window', async () => {
     const events = Array.from({ length: 1000 }, (_, index) =>
       activityEvent({ id: `event-${index}` }),
     )
+    mocks.getAccountActivity.mockResolvedValue({
+      items: Array.from({ length: 25 }, (_, index) =>
+        activityEvent({ id: `event-${1000 + index}` }),
+      ),
+      totalCount: 1500,
+    })
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
@@ -311,15 +314,13 @@ describe('AccountActivity', () => {
         }),
       )
     })
-    expect(
-      renderer.root
-        .findAllByType('button')
-        .filter(button => renderedText(button).includes('Load more')),
-    ).toHaveLength(0)
-    expect(renderedText(renderer.root)).toContain(
-      'Showing the most recent 1000 events',
-    )
-    expect(mocks.getAccountActivity).not.toHaveBeenCalled()
+    const loadMore = buttonWith(renderer, 'Load more')
+    await act(async () => loadMore.props.onClick())
+    expect(mocks.getAccountActivity).toHaveBeenCalledWith(ALICE, {
+      limit: 25,
+      offset: 1000,
+    })
+    expect(renderedText(renderer.root)).toContain('1025 of 1500')
   })
 })
 

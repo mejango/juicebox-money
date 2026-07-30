@@ -37,6 +37,7 @@ import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
+import { BurnTokensFlow } from '@/components/project/BurnTokensFlow'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { GetLoanFlow } from '@/components/project/GetLoanFlow'
 import { LoansSection } from '@/components/project/LoansSection'
@@ -183,7 +184,7 @@ export function OwnersTab({
 
 // -------------------------------------------------------------- YOU card --
 
-type YouAction = 'cashOut' | 'loan' | 'move' | 'liquidity'
+type YouAction = 'cashOut' | 'burn' | 'loan' | 'move' | 'liquidity'
 
 /**
  * The Accounts (YOU) card (website/ parity: renderYouCard + opsActionsRow):
@@ -285,6 +286,7 @@ function YouCard({
 
           <div className="mt-4 flex flex-wrap gap-2">
             {actionBtn('cashOut', 'Cash out')}
+            {actionBtn('burn', 'Burn')}
             {isRevnet ? actionBtn('loan', 'Get a loan') : null}
             {multiChain ? actionBtn('move', 'Move between chains') : null}
             {actionBtn('liquidity', 'Add market liquidity')}
@@ -294,6 +296,12 @@ function YouCard({
             <div className="mt-4 rounded-xl border border-smoke-200 p-4">
               {action === 'cashOut' ? (
                 <CashOutPanel chainId={chainId} projectId={projectId} />
+              ) : action === 'burn' ? (
+                <BurnTokensFlow
+                  chainId={chainId}
+                  projectId={projectId}
+                  tokenSymbol={collateralSymbol}
+                />
               ) : action === 'loan' ? (
                 <GetLoanFlow
                   chainId={chainId}

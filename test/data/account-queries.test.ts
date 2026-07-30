@@ -75,6 +75,7 @@ describe('account activity query', () => {
     expect(variables).toEqual({
       address: ALICE.toLowerCase(),
       limit: 25,
+      offset: 0,
     })
     expect(query).toContain('from: $address')
     expect(query).toContain('project { name logoUri tokenSymbol decimals }')
@@ -89,7 +90,7 @@ describe('account activity query', () => {
     await getAccountActivity(ALICE, { limit: 25, offset: 50 })
 
     const { variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
-    expect(variables).toEqual({ address: ALICE.toLowerCase(), limit: 75 })
+    expect(variables).toEqual({ address: ALICE.toLowerCase(), limit: 75, offset: 0 })
   })
 
   it('spans beneficiary-side events with explicit AND groups (bendystraw does not AND siblings in OR branches)', async () => {
@@ -349,33 +350,37 @@ describe('projects-by-refs query', () => {
 
 describe('account holdings queries', () => {
   it('reads positive V6 balances with the credits/ERC-20 split and reports the true total', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      graphqlResponse({
+    const rows = Array.from({ length: 201 }, (_, index) => ({
+      chainId: 1,
+      projectId: index + 1,
+      balance: '10',
+      creditBalance: '3',
+      erc20Balance: '7',
+    }))
+    const fetchMock = vi.fn().mockImplementation((_url, init) => {
+      const { variables } = bodyOf(init)
+      const offset = Number(variables.offset)
+      const limit = Number(variables.limit)
+      return Promise.resolve(
+        graphqlResponse({
         data: {
           participants: {
-            totalCount: 900,
-            items: [
-              {
-                chainId: 1,
-                projectId: 4,
-                balance: '10',
-                creditBalance: '3',
-                erc20Balance: '7',
-              },
-            ],
+              totalCount: rows.length,
+              items: rows.slice(offset, offset + limit),
           },
         },
-      }),
-    )
+        }),
+      )
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const page = await getAccountTokenHoldings(ALICE)
 
-    expect(page.items).toHaveLength(1)
+    expect(page.items).toHaveLength(201)
     expect(page.items[0].creditBalance).toBe('3')
     expect(page.items[0].erc20Balance).toBe('7')
-    // The fetch caps out below totalCount — callers surface the truncation.
-    expect(page.totalCount).toBe(900)
+    expect(page.totalCount).toBe(201)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     const { query, variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
     expect(variables.address).toBe(ALICE.toLowerCase())
     expect(query).toContain('address: $address')

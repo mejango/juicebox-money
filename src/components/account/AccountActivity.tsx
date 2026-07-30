@@ -7,11 +7,7 @@ import { activityParts, ActorLink } from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
-import {
-  ACCOUNT_ACTIVITY_WINDOW_MAX,
-  getAccountActivity,
-  type BsAccountActivityEvent,
-} from '@/lib/bendystraw'
+import { getAccountActivity, type BsAccountActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { formatDate, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
@@ -73,27 +69,18 @@ export function AccountActivity({
         ))}
       </ul>
       {events.length < total ? (
-        events.length + ACCOUNT_ACTIVITY_PAGE > ACCOUNT_ACTIVITY_WINDOW_MAX ? (
-          // The bendystraw beneficiary-union window is clamped at 1000 rows;
-          // a deeper page can never append anything, so say so instead of
-          // offering a load-more that silently does nothing.
-          <p className="mt-4 text-center text-xs text-smoke-500">
-            Showing the most recent {ACCOUNT_ACTIVITY_WINDOW_MAX} events.
-          </p>
-        ) : (
-          <div className="mt-4 flex flex-col items-center gap-2">
-            <button
-              onClick={loadMore}
-              disabled={loading}
-              className="btn-secondary min-h-[40px] px-5 text-sm"
-            >
-              {loading
-                ? 'Loading…'
-                : `Load more (${events.length} of ${total})`}
-            </button>
-            {error ? <p className="text-xs text-crush-600">{error}</p> : null}
-          </div>
-        )
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <button
+            onClick={loadMore}
+            disabled={loading}
+            className="btn-secondary min-h-[40px] px-5 text-sm"
+          >
+            {loading
+              ? 'Loading…'
+              : `Load more (${events.length} of ${total})`}
+          </button>
+          {error ? <p className="text-xs text-crush-600">{error}</p> : null}
+        </div>
       ) : null}
     </div>
   )

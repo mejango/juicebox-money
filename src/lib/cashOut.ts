@@ -92,13 +92,13 @@ export function getContextCashOutQuote(
 
 /**
  * The current per-token cash-out price from an omnichain revnet's aggregate
- * surplus and token supply. This is the exact integer form used by the cash
- * out curve for one 18-decimal project token:
+ * surplus and token supply. This mirrors JBCashOuts.cashOutFrom's staged
+ * integer arithmetic for one 18-decimal project token:
  *
  * balance × share × ((1 - tax) + tax × share)
  *
- * Keeping the calculation in bigint avoids the zero returned by an onchain
- * one-token quote when a very small result rounds down inside the store.
+ * Keeping every division in the contract's order matters: collapsing the
+ * expression into one fraction can round up a value the contract rounds down.
  */
 export function cashOutPriceFromTotals({
   balance,
@@ -116,10 +116,17 @@ export function cashOutPriceFromTotals({
 
   const oneToken = 10n ** 18n
   const tax = BigInt(Math.max(0, Math.min(10_000, cashOutTaxRate)))
-  const factor = (10_000n - tax) * tokenSupply + tax * oneToken
+  if (tax === 10_000n) return null
+  if (oneToken >= tokenSupply) {
+    const value = Number(formatUnits(balance, balanceDecimals))
+    return Number.isFinite(value) && value > 0 ? value : null
+  }
+
+  const base = (balance * oneToken) / tokenSupply
   const rawPrice =
-    (balance * oneToken * factor) /
-    (tokenSupply * tokenSupply * 10_000n)
+    tax === 0n
+      ? base
+      : (base * (10_000n - tax + (tax * oneToken) / tokenSupply)) / 10_000n
   if (rawPrice <= 0n) return null
 
   const value = Number(formatUnits(rawPrice, balanceDecimals))

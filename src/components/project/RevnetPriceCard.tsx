@@ -418,25 +418,33 @@ export function RevnetPriceCard({
             ?.symbol ?? nativeSymbol)
 
   return (
-    <PriceChart
-      stages={stages}
-      symbol={data?.projectSymbol || 'tokens'}
-      baseSymbol={baseSymbol}
-      floorHistory={floorHistory}
-      ammHistory={ammHistory}
-      cashOutTaxHistory={cashOutTaxHistory}
-      floorPrice={
-        references?.floor
-          ? {
-              value: references.floor,
-              label: 'Cash out price',
-              cashOutTaxRate: references.cashOutTaxRate,
-            }
-          : null
-      }
-      ammPrice={
-        references?.amm ? { value: references.amm, label: 'AMM price' } : null
-      }
-    />
+    <div>
+      <PriceChart
+        stages={stages}
+        symbol={data?.projectSymbol || 'tokens'}
+        baseSymbol={baseSymbol}
+        floorHistory={floorHistory}
+        ammHistory={ammHistory}
+        cashOutTaxHistory={cashOutTaxHistory}
+        floorPrice={
+          references?.floor
+            ? {
+                value: references.floor,
+                label: 'Cash out price',
+                cashOutTaxRate: references.cashOutTaxRate,
+              }
+            : null
+        }
+        ammPrice={
+          references?.amm ? { value: references.amm, label: 'AMM price' } : null
+        }
+      />
+      {history?.sampled ? (
+        <p className="mt-2 text-xs text-grey-500">
+          Historical series are shape-preserving samples of the complete
+          indexed history. The latest observation is always included.
+        </p>
+      ) : null}
+    </div>
   )
 }

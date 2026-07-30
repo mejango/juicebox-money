@@ -74,6 +74,34 @@ const projectFields = `
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
   decimals currency isRevnet owner metadataUri
 `
+const activityEventFields = `
+  id chainId projectId timestamp from txHash
+  payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount }
+  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary }
+  projectCreateEvent { from }
+  addToBalanceEvent { amount memo from }
+  mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
+  sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from }
+  sendReservedTokensToSplitsEvent { tokenCount from }
+  sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from }
+  sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from }
+  autoIssueEvent { beneficiary count stageId from }
+  borrowLoanEvent { borrowAmount collateral beneficiary token from }
+  repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
+  liquidateLoanEvent { borrowAmount collateral from }
+  mintNftEvent { tierId tokenId beneficiary totalAmountPaid from }
+  deployErc20Event { symbol name token from }
+  setUriEvent { uri caller from }
+  projectTransferEvent { previousOwner owner from }
+  operatorPermissionsSetEvent { account operator isRevnetOperator caller from }
+  addNftTierEvent { tierId price category caller from }
+  removeNftTierEvent { tierId caller from }
+  swapEvent { direction terminalTokenAmount projectTokenAmount caller from }
+  buybackPoolEvent { terminalToken poolId caller from }
+  bridgeClaimEvent {
+    peerChainId token beneficiary projectTokenCount terminalTokenAmount caller from
+  }
+`
 
 const project = {
   projectId: PROJECT_ID,
@@ -384,26 +412,78 @@ const graphqlFixtures = [
     data: { participants },
   },
   {
+    name: 'projectActivity',
+    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+      activityEvents(
+        where: {
+          chainId: $chainId
+          projectId: $projectId
+          version: 6
+          OR: [
+            { payEvent_not: null }
+            { cashOutTokensEvent_not: null }
+            { sendPayoutsEvent_not: null }
+            { sendReservedTokensToSplitsEvent_not: null }
+            { autoIssueEvent_not: null }
+            { mintTokensEvent_not: null }
+            { borrowLoanEvent_not: null }
+            { repayLoanEvent_not: null }
+            { liquidateLoanEvent_not: null }
+            { mintNftEvent_not: null }
+            { deployErc20Event_not: null }
+            { projectCreateEvent_not: null }
+            { addToBalanceEvent_not: null }
+            { setUriEvent_not: null }
+            { projectTransferEvent_not: null }
+            { operatorPermissionsSetEvent_not: null }
+            { addNftTierEvent_not: null }
+            { removeNftTierEvent_not: null }
+            { swapEvent_not: null }
+            { buybackPoolEvent_not: null }
+            { bridgeClaimEvent_not: null }
+          ]
+        }
+        orderBy: "timestamp"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { ${activityEventFields} }
+        totalCount
+      }
+    }`,
+    variables: { chainId: 1, projectId: 1, limit: 250, offset: 0 },
+    data: { activityEvents: { items: [], totalCount: 0 } },
+  },
+  {
     name: 'revnetOperator',
-    query: `query($chainId: Int!, $projectId: Int!) {
+    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
       permissionHolders(
         where: { chainId: $chainId, projectId: $projectId, version: 6, isRevnetOperator: true }
-        limit: 10
-      ) { items { operator permissions } }
+        limit: $limit
+        offset: $offset
+      ) {
+        items { operator permissions }
+        totalCount
+      }
     }`,
-    variables: { chainId: 1, projectId: 1 },
-    data: { permissionHolders: { items: [] } },
+    variables: { chainId: 1, projectId: 1, limit: 200, offset: 0 },
+    data: { permissionHolders: { items: [], totalCount: 0 } },
   },
   {
     name: 'permissionHolders',
-    query: `query($chainId: Int!, $projectId: Int!) {
+    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
       permissionHolders(
         where: { chainId: $chainId, projectId: $projectId, version: 6 }
-        limit: 100
-      ) { items { chainId account operator permissions isRevnetOperator } }
+        limit: $limit
+        offset: $offset
+      ) {
+        items { chainId account operator permissions isRevnetOperator }
+        totalCount
+      }
     }`,
-    variables: { chainId: 1, projectId: 1 },
-    data: { permissionHolders: { items: [] } },
+    variables: { chainId: 1, projectId: 1, limit: 200, offset: 0 },
+    data: { permissionHolders: { items: [], totalCount: 0 } },
   },
   {
     name: 'trending',

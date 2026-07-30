@@ -27,6 +27,7 @@ import {
   BsActivityEvent,
   BsProject,
   getProjectActivity,
+  getProjectActivityByProject,
   getRevnetOperator,
   getSuckerGroupProjects,
   projectGroupPaymentsCount,
@@ -225,13 +226,14 @@ export default async function ProjectPage({
   const project = result.project;
 
   const isRevnet = !!project.isRevnet;
-  const [metadata, activity, siblings, operator] = await Promise.all([
+  const [metadata, activityResult, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
-    project.suckerGroupId
-      ? getProjectActivity(project.suckerGroupId, 100, urn.chainId).catch(
-          () => [] as BsActivityEvent[],
-        )
-      : Promise.resolve([] as BsActivityEvent[]),
+    (project.suckerGroupId
+      ? getProjectActivity(project.suckerGroupId, 250, urn.chainId)
+      : getProjectActivityByProject(urn.chainId, project.projectId, 250)
+    )
+      .then(events => ({ events, error: false }))
+      .catch(() => ({ events: [] as BsActivityEvent[], error: true })),
     project.suckerGroupId
       ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId).catch(
           () => [] as BsProject[],
@@ -241,6 +243,7 @@ export default async function ProjectPage({
       ? getRevnetOperatorCached(urn.chainId, urn.projectId)
       : Promise.resolve(null),
   ]);
+  const activity = activityResult.events;
 
   const name = project.name ?? `Project ${project.projectId}`;
   const chains = resolveProjectDeployments(project, siblings);
@@ -471,6 +474,7 @@ export default async function ProjectPage({
               </h2>
               <ActivityList
                 events={activity}
+                error={activityResult.error}
                 chainId={urn.chainId}
                 projectId={project.projectId}
                 accountingToken={accountingToken}

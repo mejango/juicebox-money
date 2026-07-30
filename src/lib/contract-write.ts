@@ -10,6 +10,7 @@ type ReviewedContractWriteOptions<TRequest extends { chainId: number }, TSimulat
   switchChain: (chainId: number) => Promise<unknown>
   currentAccount: () => Address | undefined
   simulate: (request: TRequest) => Promise<TSimulated>
+  reverify?: (request: TRequest) => Promise<unknown>
   write: (simulated: TSimulated) => Promise<THash>
   onPhase?: (phase: ReviewedWritePhase) => void
   accountChangedError?: string
@@ -33,6 +34,7 @@ export async function submitReviewedContractWrite<
   switchChain,
   currentAccount,
   simulate,
+  reverify,
   write,
   onPhase,
   accountChangedError = 'Connected account changed. Review the transaction again.',
@@ -45,6 +47,8 @@ export async function submitReviewedContractWrite<
 
   onPhase?.('simulating')
   await switchChain(request.chainId)
+  assertExpectedAccount(currentAccount(), expectedAccount, accountChangedError)
+  await reverify?.(request)
   assertExpectedAccount(currentAccount(), expectedAccount, accountChangedError)
 
   const simulated = await simulate(request)

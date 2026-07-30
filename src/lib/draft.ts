@@ -250,7 +250,7 @@ export function parseDraft(text: string): CreateDraft {
   ]) {
     links[key] = str(rawLinks[key], 300)
   }
-  const stages = d.stages.slice(0, 20).map(sanitizeStage)
+  const stages = d.stages.map(sanitizeStage)
   if (stages.length === 0) throw new Error('No stages found in that file.')
   stages[0].expanded = true
   return {

@@ -9,6 +9,7 @@ import {
 import {
   decodeFunctionData,
   encodeFunctionData,
+  formatUnits,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -159,7 +160,7 @@ describe('cash-out arithmetic', () => {
         cashOutTaxRate: 10_000,
         balanceDecimals: 18,
       }),
-    ).toBe(0.01)
+    ).toBeNull()
     expect(
       cashOutPriceFromTotals({
         balance: 0n,
@@ -168,6 +169,23 @@ describe('cash-out arithmetic', () => {
         balanceDecimals: 18,
       }),
     ).toBeNull()
+  })
+
+  it('matches the contract staging instead of a single-fraction approximation', () => {
+    const one = 10n ** 18n
+    const balance = 1013906664594272n
+    const supply = 10138952920494645629n
+    const base = (balance * one) / supply
+    const expected = (base * (6_000n + (4_000n * one) / supply)) / 10_000n
+
+    expect(
+      cashOutPriceFromTotals({
+        balance,
+        tokenSupply: supply,
+        cashOutTaxRate: 4_000,
+        balanceDecimals: 18,
+      }),
+    ).toBe(Number(formatUnits(expected, 18)))
   })
 
   it('returns null rather than a bogus price when the curve underflows or overflows', () => {

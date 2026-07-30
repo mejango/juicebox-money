@@ -24,6 +24,7 @@ Legend:
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts` |
 | Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
+| Burn project tokens | active `JBController.burnTokensOf` | **E** | `contracts/burn-tokens.test.ts` |
 | Redeem shop NFTs | `cashOutTokensOf` + 721 metadata | **E** | `contracts/transaction-backlog.test.ts` |
 | Distribute payouts | `JBMultiTerminal.sendPayoutsOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Use surplus allowance | `JBMultiTerminal.useAllowanceOf` | **E** | `contracts/transaction-builders.test.ts` |
@@ -34,7 +35,7 @@ Legend:
 | Update project metadata | `JBController.setUriOf` | **E** | `contracts/manage.test.ts` |
 | Deploy project ERC-20 | `JBController.deployERC20For` | **E** | `contracts/manage.test.ts` |
 | Rename project ERC-20 | `setTokenMetadataOf` | **E** | `contracts/transaction-backlog.test.ts` |
-| Mint or burn project tokens | active `mintTokensOf`; no standalone burn action | **E/—** | `contracts/transaction-backlog.test.ts`; burn is intentionally not exposed |
+| Mint project tokens | active `mintTokensOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Transfer project ownership | `JBProjects.transferFrom` | **E** | `contracts/transaction-backlog.test.ts` |
 | Add or revoke permissions | `JBPermissions.setPermissionsFor` | **E** | `contracts/transaction-builders.test.ts` |
 | Change owner/operator powers | controller/directory/terminal setters + `REVOwner.setOperatorOf` | **E** | `contracts/transaction-backlog.test.ts` |
@@ -73,9 +74,6 @@ Legend:
   project-owner/operator calls are reviewed and submitted directly; Safe-owned
   calls remain in the Safe path.
 
-The remaining direct-burn **—** is intentional: the active UI exposes minting,
-while burns happen through separately reviewed cash-out, loan, and reserved-split
-paths. Adding a standalone burn transaction would be a product change, not a test
-extraction. A selector-only row is not complete money-path coverage: promote it to
-**E** by extracting a behavior-preserving pure builder where necessary and asserting
-every decoded argument.
+Standalone burns use the project’s freshly read active controller and recheck the
+holder’s total balance immediately before the reviewed write. A selector-only row
+is not complete money-path coverage: every decoded argument must be asserted.

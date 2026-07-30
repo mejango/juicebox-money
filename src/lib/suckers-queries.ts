@@ -96,13 +96,15 @@ export type BridgeMovement = {
 }
 
 const BRIDGE_EVENTS_QUERY = `
-  query($suckerGroupId: String!) {
+  query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
     bridgeToOutboxEvents(
       where: { suckerGroupId: $suckerGroupId, version: 6 }
       orderBy: "timestamp"
       orderDirection: "desc"
-      limit: 500
+      limit: $limit
+      offset: $offset
     ) {
+      totalCount
       items {
         chainId timestamp txHash sucker peer peerChainId token beneficiary
         projectTokenCount terminalTokenAmount index root
@@ -110,14 +112,18 @@ const BRIDGE_EVENTS_QUERY = `
     }
     bridgeToRemoteEvents(
       where: { suckerGroupId: $suckerGroupId, version: 6 }
-      limit: 500
+      limit: $limit
+      offset: $offset
     ) {
+      totalCount
       items { chainId sucker peerChainId token index root }
     }
     bridgeClaimEvents(
       where: { suckerGroupId: $suckerGroupId, version: 6 }
-      limit: 500
+      limit: $limit
+      offset: $offset
     ) {
+      totalCount
       items {
         chainId sucker peerChainId token beneficiary projectTokenCount
         terminalTokenAmount index
@@ -125,8 +131,10 @@ const BRIDGE_EVENTS_QUERY = `
     }
     inboxRootReceivedEvents(
       where: { suckerGroupId: $suckerGroupId, version: 6 }
-      limit: 500
+      limit: $limit
+      offset: $offset
     ) {
+      totalCount
       items { chainId sucker peerChainId root }
     }
   }
@@ -152,21 +160,49 @@ export async function getBridgeMovements(args: {
   }
   if (!suckerGroupId) return []
 
-  const data = await bendystraw<{
-    bridgeToOutboxEvents: { items: OutboxRow[] }
-    bridgeToRemoteEvents: { items: RemoteRow[] }
-    bridgeClaimEvents: { items: ClaimRow[] }
-    inboxRootReceivedEvents: { items: InboxRow[] }
-  }>(
-    BRIDGE_EVENTS_QUERY,
-    { suckerGroupId },
-    { revalidate: 20, testnet: testnetHint(args.chainId) },
-  )
+  type EventPage<T> = { items: T[]; totalCount?: number }
+  type BridgePages = {
+    bridgeToOutboxEvents: EventPage<OutboxRow>
+    bridgeToRemoteEvents: EventPage<RemoteRow>
+    bridgeClaimEvents: EventPage<ClaimRow>
+    inboxRootReceivedEvents: EventPage<InboxRow>
+  }
+  const rows: BridgePages = {
+    bridgeToOutboxEvents: { items: [] },
+    bridgeToRemoteEvents: { items: [] },
+    bridgeClaimEvents: { items: [] },
+    inboxRootReceivedEvents: { items: [] },
+  }
+  const roots = Object.keys(rows) as (keyof BridgePages)[]
+  let offset = 0
+  const limit = 250
+  while (true) {
+    const data = await bendystraw<BridgePages>(
+      BRIDGE_EVENTS_QUERY,
+      { suckerGroupId, limit, offset },
+      { revalidate: 20, testnet: testnetHint(args.chainId) },
+    )
+    for (const root of roots) {
+      const page = data[root] as EventPage<OutboxRow | RemoteRow | ClaimRow | InboxRow>
+      const target = rows[root] as EventPage<OutboxRow | RemoteRow | ClaimRow | InboxRow>
+      const totalCount = page.totalCount ?? target.items.length + page.items.length
+      if (target.totalCount != null && target.totalCount !== totalCount) {
+        throw new Error('Bridge activity changed while loading')
+      }
+      if (!page.items.length && offset < totalCount) {
+        throw new Error('Bridge activity ended before its reported total')
+      }
+      target.items.push(...page.items)
+      target.totalCount = totalCount
+    }
+    offset += limit
+    if (roots.every(root => rows[root].items.length >= (rows[root].totalCount ?? 0))) break
+  }
 
-  const outbox = data.bridgeToOutboxEvents.items
-  const remote = data.bridgeToRemoteEvents.items
-  const claims = data.bridgeClaimEvents.items
-  const inbox = data.inboxRootReceivedEvents.items
+  const outbox = rows.bridgeToOutboxEvents.items
+  const remote = rows.bridgeToRemoteEvents.items
+  const claims = rows.bridgeClaimEvents.items
+  const inbox = rows.inboxRootReceivedEvents.items
 
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
   const isNative = (token: string) => eq(token, NATIVE_TOKEN)

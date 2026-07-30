@@ -4,6 +4,7 @@
  */
 
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import { downsampleTimeSeries } from '@/lib/downsample'
 
 export function normalizeBendystrawUrl(value: string): string {
   const url = new URL(value.trim())
@@ -420,10 +421,8 @@ export async function getProjectActivity(
   limit = 20,
   chainId?: number,
 ): Promise<BsActivityEvent[]> {
-  const data = await bendystraw<{
-    activityEvents: { items: BsActivityEvent[] }
-  }>(
-    `query($suckerGroupId: String!, $limit: Int!) {
+  const page = await getPagedItems<BsActivityEvent>(
+    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
       activityEvents(
         where: {
           suckerGroupId: $suckerGroupId
@@ -455,20 +454,80 @@ export async function getProjectActivity(
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
+        offset: $offset
       ) {
         items { ${ACTIVITY_EVENT_FIELDS} }
+        totalCount
       }
     }`,
+    'activityEvents',
     { suckerGroupId, limit },
     {
-      revalidate: 15,
       testnet:
         chainId === undefined
           ? undefined
           : JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+      pageSize: limit,
+      max: Number.POSITIVE_INFINITY,
     },
   )
-  return data.activityEvents.items
+  return page.items
+}
+
+export async function getProjectActivityByProject(
+  chainId: number,
+  projectId: number,
+  limit = 20,
+): Promise<BsActivityEvent[]> {
+  const page = await getPagedItems<BsActivityEvent>(
+    `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+      activityEvents(
+        where: {
+          chainId: $chainId
+          projectId: $projectId
+          version: 6
+          OR: [
+            { payEvent_not: null }
+            { cashOutTokensEvent_not: null }
+            { sendPayoutsEvent_not: null }
+            { sendReservedTokensToSplitsEvent_not: null }
+            { autoIssueEvent_not: null }
+            { mintTokensEvent_not: null }
+            { borrowLoanEvent_not: null }
+            { repayLoanEvent_not: null }
+            { liquidateLoanEvent_not: null }
+            { mintNftEvent_not: null }
+            { deployErc20Event_not: null }
+            { projectCreateEvent_not: null }
+            { addToBalanceEvent_not: null }
+            { setUriEvent_not: null }
+            { projectTransferEvent_not: null }
+            { operatorPermissionsSetEvent_not: null }
+            { addNftTierEvent_not: null }
+            { removeNftTierEvent_not: null }
+            { swapEvent_not: null }
+            { buybackPoolEvent_not: null }
+            { bridgeClaimEvent_not: null }
+          ]
+        }
+        orderBy: "timestamp"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { ${ACTIVITY_EVENT_FIELDS} }
+        totalCount
+      }
+    }`,
+    'activityEvents',
+    { chainId, projectId },
+    {
+      testnet: JB_CHAINS[chainId as JBChainId]?.chain.testnet,
+      pageSize: limit,
+      max: Number.POSITIVE_INFINITY,
+    },
+  )
+  return page.items
 }
 
 export type BsFreshActivityEvent = {
@@ -541,21 +600,25 @@ export async function getRevnetOperator(
   projectId: number,
 ): Promise<string | null> {
   try {
-    const data = await bendystraw<{
-      permissionHolders: {
-        items: { operator: string; permissions: number[] }[]
-      }
+    const page = await getPagedItems<{
+      operator: string
+      permissions: number[]
     }>(
-      `query($chainId: Int!, $projectId: Int!) {
+      `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
         permissionHolders(
           where: { chainId: $chainId, projectId: $projectId, version: 6, isRevnetOperator: true }
-          limit: 10
-        ) { items { operator permissions } }
+          limit: $limit
+          offset: $offset
+        ) {
+          items { operator permissions }
+          totalCount
+        }
       }`,
+      'permissionHolders',
       { chainId, projectId },
-      { revalidate: 60 },
+      { pageSize: 200, max: Number.POSITIVE_INFINITY },
     )
-    const rows = data.permissionHolders?.items ?? []
+    const rows = page.items
     const live = rows.filter(r => r.permissions?.length > 0)
     const pick = live[0] ?? rows[0]
     return pick?.operator ?? null
@@ -670,18 +733,17 @@ type BsOwnedShopItemRow = Omit<BsOwnedShopItem, 'hook'> & {
 export type BsShopRows<T> = {
   items: T[]
   totalCount: number
-  /** At least one chain had more rows than the per-chain safety cap. */
+  /** Retained for API compatibility; complete pagination keeps this false. */
   capped: boolean
   /** Chains whose indexer request failed. Successful chains remain usable. */
   failedChains: number[]
 }
 
 const SHOP_ROWS_PAGE_SIZE = 200
-const SHOP_ROWS_MAX_PER_CHAIN = 1000
 
 /**
  * The shared per-chain scaffold for shop-row queries: paginate each
- * deployment up to the per-chain cap, flag failed chains without losing the
+ * deployment to completion, flag failed chains without losing the
  * successful ones, then merge and sort newest-first by `sortKey`.
  */
 async function fetchShopRowsPerChain<Row, Item>(
@@ -702,17 +764,13 @@ async function fetchShopRowsPerChain<Row, Item>(
       let failed = false
 
       try {
-        while (items.length < SHOP_ROWS_MAX_PER_CHAIN) {
-          const limit = Math.min(
-            SHOP_ROWS_PAGE_SIZE,
-            SHOP_ROWS_MAX_PER_CHAIN - items.length,
-          )
-          const data = await fetchPage(project, limit, offset)
+        while (offset < totalCount || offset === 0) {
+          const data = await fetchPage(project, SHOP_ROWS_PAGE_SIZE, offset)
           const page = data?.items ?? []
           totalCount = data?.totalCount ?? totalCount
           items.push(...page.flatMap(row => mapRow(row, project)))
           offset += page.length
-          if (page.length === 0 || items.length >= totalCount) break
+          if (page.length === 0 || offset >= totalCount) break
         }
       } catch {
         failed = true
@@ -728,7 +786,7 @@ async function fetchShopRowsPerChain<Row, Item>(
   return {
     items,
     totalCount: perChain.reduce((sum, result) => sum + result.totalCount, 0),
-    capped: perChain.some(result => result.totalCount > result.items.length),
+    capped: false,
     failedChains: perChain
       .filter(result => result.failed)
       .map(result => result.project.chainId),
@@ -1014,6 +1072,12 @@ export type BsRevnetPriceHistory = {
   moments: BsPriceMoment[]
   swaps: BsSwapEvent[]
   pools: BsBuybackPoolEvent[]
+  sourceCounts: {
+    moments: number
+    swaps: number
+    pools: number
+  }
+  sampled: boolean
 }
 
 /**
@@ -1027,7 +1091,7 @@ export async function getPagedItems<T>(
   variables: Record<string, unknown>,
   {
     pageSize = 1_000,
-    max = 3_000,
+    max = Number.POSITIVE_INFINITY,
     testnet,
   }: { pageSize?: number; max?: number; testnet?: boolean } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
@@ -1046,7 +1110,7 @@ export async function getPagedItems<T>(
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount
     items.push(...page)
-    if (page.length === 0 || items.length >= totalCount || page.length < pageLimit) {
+    if (page.length === 0 || items.length >= totalCount) {
       break
     }
   }
@@ -1081,8 +1145,8 @@ export async function getRevnetPriceHistory(
     }`,
     'suckerGroupMoments',
     { suckerGroupId },
-    { testnet },
-  ).then(page => page.items)
+    { max: Number.POSITIVE_INFINITY, testnet },
+  )
 
   const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
@@ -1102,8 +1166,8 @@ export async function getRevnetPriceHistory(
     }`,
     'swapEvents',
     { suckerGroupId },
-    { testnet },
-  ).then(page => page.items)
+    { max: Number.POSITIVE_INFINITY, testnet },
+  )
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
@@ -1123,8 +1187,8 @@ export async function getRevnetPriceHistory(
     }`,
     'buybackPoolEvents',
     { suckerGroupId },
-    { testnet },
-  ).then(page => page.items)
+    { max: Number.POSITIVE_INFINITY, testnet },
+  )
 
   const marketPromise = Promise.all([enhancedSwaps(), pools()])
     .then(([swaps, poolEvents]) => ({ swaps, pools: poolEvents }))
@@ -1149,13 +1213,58 @@ export async function getRevnetPriceHistory(
         }`,
         'swapEvents',
         { suckerGroupId },
-        { testnet },
-      ).then(page => page.items)
-      return { swaps, pools: [] }
+        { max: Number.POSITIVE_INFINITY, testnet },
+      )
+      return {
+        swaps,
+        pools: { items: [], totalCount: 0 },
+      }
     })
 
-  const [moments, market] = await Promise.all([momentsPromise, marketPromise])
-  return { moments, ...market }
+  const [momentsPage, market] = await Promise.all([
+    momentsPromise,
+    marketPromise,
+  ])
+  const moments = downsampleTimeSeries(
+    momentsPage.items,
+    3_000,
+    row => row.timestamp,
+    row =>
+      BigInt(row.tokenSupply) === 0n
+        ? 0
+        : Number(row.balance) / Number(row.tokenSupply),
+  )
+  const swaps = downsampleTimeSeries(
+    market.swaps.items,
+    3_000,
+    row => row.timestamp,
+    row =>
+      BigInt(row.projectTokenAmount) === 0n
+        ? 0
+        : Number(row.terminalTokenAmount) / Number(row.projectTokenAmount),
+  )
+  const poolEvents = downsampleTimeSeries(
+    market.pools.items,
+    3_000,
+    row => row.timestamp,
+    row => Number(row.initialSqrtPriceX96 ?? 0),
+  )
+  const sourceCounts = {
+    moments: momentsPage.totalCount,
+    swaps: market.swaps.totalCount,
+    pools: market.pools.totalCount,
+  }
+
+  return {
+    moments,
+    swaps,
+    pools: poolEvents,
+    sourceCounts,
+    sampled:
+      moments.length < sourceCounts.moments ||
+      swaps.length < sourceCounts.swaps ||
+      poolEvents.length < sourceCounts.pools,
+  }
 }
 
 export type BsPermissionHolder = {
@@ -1180,25 +1289,22 @@ export async function getPermissionHolders(
   chainId: number,
   projectId: number,
 ): Promise<BsPermissionHolder[]> {
-  try {
-    const data = await bendystraw<{
-      permissionHolders: { items: BsPermissionHolder[] }
-    }>(
-      `query($chainId: Int!, $projectId: Int!) {
+  const page = await getPagedItems<BsPermissionHolder>(
+    `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
         permissionHolders(
           where: { chainId: $chainId, projectId: $projectId, version: 6 }
-          limit: 100
-        ) { items { chainId account operator permissions isRevnetOperator } }
+          limit: $limit
+          offset: $offset
+        ) {
+          items { chainId account operator permissions isRevnetOperator }
+          totalCount
+        }
       }`,
-      { chainId, projectId },
-      { revalidate: 60 },
-    )
-    return (data.permissionHolders?.items ?? []).filter(
-      row => (row.permissions?.length ?? 0) > 0,
-    )
-  } catch {
-    return []
-  }
+    'permissionHolders',
+    { chainId, projectId },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
+  )
+  return page.items.filter(row => (row.permissions?.length ?? 0) > 0)
 }
 
 /**
@@ -1273,11 +1379,6 @@ const BENEFICIARY_EVENT_SOURCES = [
   },
 ] as const
 
-/** Bendystraw rejects limits above 1000, so the merged beneficiary-union
- *  window cannot grow past this — offset pagination dead-ends here. The
- *  account view hides its load-more affordance at this cap. */
-export const ACCOUNT_ACTIVITY_WINDOW_MAX = 1000
-
 type BsBeneficiaryEventRow = {
   id: string
   chainId: number
@@ -1304,13 +1405,16 @@ export async function getAccountActivity(
   address: string,
   { limit = 25, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
-  const windowLimit = Math.min(offset + limit, ACCOUNT_ACTIVITY_WINDOW_MAX)
+  const addressLower = address.toLowerCase()
+  const targetCount = offset + limit
   const beneficiaryQueries = BENEFICIARY_EVENT_SOURCES.map(
-    source => `${source.list}(
+    source => `
+      ${source.list}(
         where: { AND: [{ beneficiary: $address }, { from_not: $address }, { version: 6 }] }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
+        offset: $offset
       ) {
         totalCount
         items {
@@ -1320,20 +1424,13 @@ export async function getAccountActivity(
         }
       }`,
   ).join('\n')
-  const data = await bendystraw<
-    {
-      activityEvents: { items: BsAccountActivityEvent[]; totalCount: number }
-    } & Record<
-      string,
-      { items: BsBeneficiaryEventRow[]; totalCount: number }
-    >
-  >(
-    `query($address: String!, $limit: Int!) {
+  const query = `query($address: String!, $limit: Int!, $offset: Int!) {
       activityEvents(
         where: { from: $address, version: 6 }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
+        offset: $offset
       ) {
         totalCount
         items {
@@ -1343,18 +1440,49 @@ export async function getAccountActivity(
         }
       }
       ${beneficiaryQueries}
-    }`,
-    { address: address.toLowerCase(), limit: windowLimit },
-    { revalidate: 15 },
-  )
+    }`
+  const listNames = [
+    'activityEvents',
+    ...BENEFICIARY_EVENT_SOURCES.map(source => source.list),
+  ]
+  const pages = Object.fromEntries(
+    listNames.map(name => [name, { items: [] as unknown[], totalCount: 0 }]),
+  ) as Record<string, { items: unknown[]; totalCount: number }>
 
-  let totalCount = data.activityEvents.totalCount
-  const merged: BsAccountActivityEvent[] = [...data.activityEvents.items]
-  for (const source of BENEFICIARY_EVENT_SOURCES) {
-    const page = data[source.list]
-    if (!page) continue
+  let pageOffset = 0
+  while (pageOffset < targetCount) {
+    const pageLimit = Math.min(500, targetCount - pageOffset)
+    const data = await bendystraw<
+      Record<string, { items: unknown[]; totalCount: number }>
+    >(
+      query,
+      { address: addressLower, limit: pageLimit, offset: pageOffset },
+      { revalidate: 30 },
+    )
+    for (const name of listNames) {
+      const root = data[name]
+      pages[name].items.push(...(root?.items ?? []))
+      pages[name].totalCount = root?.totalCount ?? pages[name].items.length
+    }
+    pageOffset += pageLimit
+    if (
+      listNames.every(
+        name => pages[name].items.length >= pages[name].totalCount,
+      )
+    ) {
+      break
+    }
+  }
+
+  let totalCount = pages.activityEvents.totalCount
+  const merged = [
+    ...(pages.activityEvents.items as BsAccountActivityEvent[]),
+  ]
+  for (let index = 0; index < BENEFICIARY_EVENT_SOURCES.length; index += 1) {
+    const source = BENEFICIARY_EVENT_SOURCES[index]
+    const page = pages[source.list]
     totalCount += page.totalCount
-    for (const row of page.items) {
+    for (const row of page.items as BsBeneficiaryEventRow[]) {
       const {
         id,
         chainId,
@@ -1412,7 +1540,7 @@ export async function getProjectsOwnedBy(
     }`,
     'projects',
     { owners: owners.map(owner => owner.toLowerCase()) },
-    { pageSize: 200, max: 400 },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
   )
   return page.items
 }
@@ -1450,7 +1578,7 @@ export async function getOperatorGrants(
     }`,
     'permissionHolders',
     { operator: operator.toLowerCase() },
-    { pageSize: 200, max: 400 },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
   )
   return page.items.filter(row => (row.permissions?.length ?? 0) > 0)
 }
@@ -1482,22 +1610,27 @@ export async function getProjectsByRefs(
             `{ AND: [{ chainId: ${ref.chainId} }, { projectId: ${ref.projectId} }, { version: ${ref.version} }] }`,
         ),
     ),
-    // Beyond this slice the filter string gets unwieldy; overflow refs
-    // degrade gracefully to "Project N" rows without indexed display
-    // metadata rather than failing the whole lookup.
-  ].slice(0, 200)
+  ]
   if (!pairs.length) return []
-  const data = await bendystraw<{ projects: { items: BsProject[] } }>(
-    `query($limit: Int!) {
-      projects(
-        where: { OR: [${pairs.join('\n')}] }
-        limit: $limit
-      ) { items { ${PROJECT_FIELDS} } }
-    }`,
-    { limit: pairs.length },
-    { revalidate: 60 },
+  const chunks: string[][] = []
+  for (let index = 0; index < pairs.length; index += 100) {
+    chunks.push(pairs.slice(index, index + 100))
+  }
+  const pages = await Promise.all(
+    chunks.map(chunk =>
+      bendystraw<{ projects: { items: BsProject[] } }>(
+        `query($limit: Int!) {
+          projects(
+            where: { OR: [${chunk.join('\n')}] }
+            limit: $limit
+          ) { items { ${PROJECT_FIELDS} } }
+        }`,
+        { limit: chunk.length },
+        { revalidate: 60 },
+      ),
+    ),
   )
-  return data.projects.items
+  return pages.flatMap(data => data.projects.items)
 }
 
 export type BsAccountTokenHolding = {
@@ -1513,8 +1646,7 @@ export type BsAccountTokenHolding = {
 
 /**
  * Positive V6 project-token balances held by an account, across chains,
- * largest first. `totalCount` is the indexer's full count — when it exceeds
- * `items.length` the fetch hit its cap and callers should say so.
+ * largest first, paginated to completion.
  */
 export async function getAccountTokenHoldings(
   account: string,
@@ -1534,7 +1666,7 @@ export async function getAccountTokenHoldings(
     }`,
     'participants',
     { address: account.toLowerCase() },
-    { pageSize: 200, max: 400 },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
   )
 }
 
@@ -1554,8 +1686,7 @@ export type BsAccountNft = {
 
 /**
  * Every indexed V6 721 shop item an account currently owns, across chains,
- * newest first. `totalCount` is the indexer's full count — when it exceeds
- * `items.length` the fetch hit its cap and callers should say so.
+ * newest first, paginated to completion.
  */
 export async function getAccountNfts(
   account: string,
@@ -1579,7 +1710,7 @@ export async function getAccountNfts(
     }`,
     'nfts',
     { owner: account.toLowerCase() },
-    { pageSize: 200, max: 600 },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
   )
   return {
     items: page.items.map(row => ({
