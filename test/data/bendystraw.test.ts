@@ -8,6 +8,7 @@ import {
   normalizeBendystrawUrl,
   searchProjects,
 } from '@/lib/bendystraw'
+import { bendystrawProjectRefsFilters } from '@bananapus/nana-sdk-core'
 
 function graphqlResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -27,6 +28,23 @@ function bodyOf(init?: RequestInit): {
 }
 
 describe('minimal Bendystraw client', () => {
+  it('builds bounded exact-ref batches and rejects malformed identities', () => {
+    expect(
+      bendystrawProjectRefsFilters(
+        Array.from({ length: 201 }, (_, index) => ({
+          chainId: 1,
+          projectId: index + 1,
+          version: 6,
+        })),
+      ).map(where => (where.OR as unknown[]).length),
+    ).toEqual([200, 1])
+    expect(() =>
+      bendystrawProjectRefsFilters([
+        { chainId: 1, projectId: 0, version: 6 },
+      ]),
+    ).toThrow('Invalid Bendystraw project reference')
+  })
+
   it('normalizes base URLs to one GraphQL endpoint', () => {
     expect(normalizeBendystrawUrl('https://bendystraw.example')).toBe(
       'https://bendystraw.example/graphql',
@@ -78,21 +96,21 @@ describe('minimal Bendystraw client', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    fetchMock.mockResolvedValueOnce(graphqlResponse({}, 503))
+    fetchMock.mockImplementation(async () => graphqlResponse({}, 503))
     await expect(bendystraw('query { x }', {})).rejects.toThrow(
-      'bendystraw 503',
+      'Bendystraw request failed (503)',
     )
 
-    fetchMock.mockResolvedValueOnce(
+    fetchMock.mockImplementation(async () =>
       graphqlResponse({ errors: [{ message: 'schema mismatch' }] }),
     )
     await expect(bendystraw('query { x }', {})).rejects.toThrow(
       'schema mismatch',
     )
 
-    fetchMock.mockResolvedValueOnce(graphqlResponse({}))
+    fetchMock.mockImplementation(async () => graphqlResponse({}))
     await expect(bendystraw('query { x }', {})).rejects.toThrow(
-      'empty response',
+      'missing data',
     )
   })
 })
@@ -149,7 +167,12 @@ describe('Bendystraw pagination and trust boundaries', () => {
     ])
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(bodyOf(fetchMock.mock.calls[0]?.[1] as RequestInit).variables).toEqual(
-      { text: 'BEN', limit: 24 },
+      {
+        where: {
+          AND: [{ version: 6 }, { OR: [{ name_contains_nocase: 'BEN' }] }],
+        },
+        limit: 24,
+      },
     )
   })
 
@@ -184,16 +207,14 @@ describe('Bendystraw pagination and trust boundaries', () => {
     expect(eventQuery).toContain('version: 6')
 
     // Bendystraw ORs sibling fields inside one OR branch, so each ticker
-    // deployment must be an explicit AND group (same as getProjectsByRefs).
-    const projectQuery = bodyOf(fetchMock.mock.calls[2]?.[1] as RequestInit)
-      .query
-    expect(projectQuery).toContain(
-      '{ AND: [{ chainId: 84532 }, { projectId: 11 }, { version: 6 }] }',
-    )
-    expect(projectQuery).toContain(
-      '{ AND: [{ chainId: 1 }, { projectId: 3 }, { version: 6 }] }',
-    )
-    expect(projectQuery).not.toMatch(/\{ chainId: \d+, projectId: \d+ \}/)
+    // deployment must be an explicit AND group in the typed filter variable.
+    const projectRequest = bodyOf(fetchMock.mock.calls[2]?.[1] as RequestInit)
+    expect(projectRequest.variables.where).toEqual({
+      OR: [
+        { AND: [{ chainId: 84532 }, { projectId: 11 }, { version: 6 }] },
+        { AND: [{ chainId: 1 }, { projectId: 3 }, { version: 6 }] },
+      ],
+    })
   })
 
   it('adds a safe numeric project-id filter and skips the ticker lookup fetch when empty', async () => {
@@ -209,8 +230,10 @@ describe('Bendystraw pagination and trust boundaries', () => {
 
     await expect(searchProjects('11', 3)).resolves.toEqual([])
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    const query = bodyOf(fetchMock.mock.calls[0]?.[1] as RequestInit).query
-    expect(query).toContain('{ projectId: 11 }')
+    const variables = bodyOf(fetchMock.mock.calls[0]?.[1] as RequestInit).variables
+    expect(variables.where).toEqual({
+      AND: [{ version: 6 }, { OR: [{ name_contains_nocase: '11' }, { projectId: 11 }] }],
+    })
   })
 
   it('paginates participants with bounded page sizes and offsets', async () => {
@@ -245,8 +268,17 @@ describe('Bendystraw pagination and trust boundaries', () => {
     expect(
       fetchMock.mock.calls.map(call => bodyOf(call[1] as RequestInit).variables),
     ).toEqual([
-      expect.objectContaining({ chainId: 1, projectId: 7, limit: 250, offset: 0 }),
-      expect.objectContaining({ chainId: 1, projectId: 7, limit: 50, offset: 250 }),
+      expect.objectContaining({
+        where: {
+          AND: [
+            { AND: [{ chainId: 1 }, { projectId: 7 }, { version: 6 }] },
+            { balance_gt: '0' },
+          ],
+        },
+        limit: 250,
+        offset: 0,
+      }),
+      expect.objectContaining({ limit: 50, offset: 250 }),
     ])
   })
 

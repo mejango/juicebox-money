@@ -399,16 +399,29 @@ const graphqlFixtures = [
   },
   {
     name: 'participants',
-    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+    query: `query ParticipantsByFilter(
+      $where: participantFilter!
+      $limit: Int!
+      $offset: Int!
+    ) {
       participants(
-        where: { chainId: $chainId, projectId: $projectId, version: 6, balance_gt: "0" }
+        where: $where
         orderBy: "balance"
         orderDirection: "desc"
         limit: $limit
         offset: $offset
       ) { items { address balance chainId volumeUsd } totalCount }
     }`,
-    variables: { chainId: 1, projectId: 1, limit: 250, offset: 0 },
+    variables: {
+      where: {
+        AND: [
+          { AND: [{ chainId: 1 }, { projectId: 1 }, { version: 6 }] },
+          { balance_gt: '0' },
+        ],
+      },
+      limit: 250,
+      offset: 0,
+    },
     data: { participants },
   },
   {

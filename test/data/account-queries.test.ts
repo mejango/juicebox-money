@@ -313,7 +313,7 @@ describe('projects-by-refs query', () => {
         { chainId: 1, projectId: -4, version: 6 },
         { chainId: 1.5, projectId: 1, version: 6 },
       ]),
-    ).resolves.toEqual([])
+    ).rejects.toThrow('Invalid Bendystraw project reference')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -336,15 +336,15 @@ describe('projects-by-refs query', () => {
     ])
 
     expect(projects).toHaveLength(1)
-    const { query } = bodyOf(fetchMock.mock.calls[0]?.[1])
-    expect(query).toContain(
-      '{ AND: [{ chainId: 1 }, { projectId: 5 }, { version: 4 }] }',
-    )
-    expect(query).toContain(
-      '{ AND: [{ chainId: 8453 }, { projectId: 2 }, { version: 6 }] }',
-    )
+    const { variables } = bodyOf(fetchMock.mock.calls[0]?.[1])
+    expect(variables.where).toEqual({
+      OR: [
+        { AND: [{ chainId: 1 }, { projectId: 5 }, { version: 4 }] },
+        { AND: [{ chainId: 8453 }, { projectId: 2 }, { version: 6 }] },
+      ],
+    })
     // Duplicate refs collapse to one branch.
-    expect(query.match(/AND:/g)).toHaveLength(2)
+    expect((variables.where as { OR: unknown[] }).OR).toHaveLength(2)
   })
 })
 

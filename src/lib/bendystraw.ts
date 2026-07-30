@@ -4,10 +4,18 @@
  */
 
 import {
+  bendystrawProjectRefFilter as projectRefAnd,
+  bendystrawProjectRefsFilters as projectRefsWheres,
   downsampleTimeSeries,
   JB_CHAINS,
+  matchesBendystrawProjectRef as matchesProjectRef,
+  requestBendystraw,
+  type BendystrawFilter,
+  type BendystrawProjectRef,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+
+type VersionedProjectRef = Required<BendystrawProjectRef>
 
 export function normalizeBendystrawUrl(value: string): string {
   const url = new URL(value.trim())
@@ -30,7 +38,6 @@ const TESTNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
       process.env.NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL ??
         'https://testnet.bendystraw.xyz',
     )
-const REQUEST_TIMEOUT_MS = 8_000
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 
@@ -58,23 +65,17 @@ export async function bendystraw<T>(
       ? undefined
       : JB_CHAINS[variableChainId as JBChainId]?.chain
   const useTestnet = opts.testnet ?? variableChain?.testnet ?? false
-  const res = await fetch(useTestnet ? TESTNET_URL : MAINNET_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    ...(IS_DETERMINISTIC_BROWSER
-      ? { cache: 'no-store' as const }
-      : { next: { revalidate: opts.revalidate ?? 60 } }),
-  })
-  if (!res.ok) throw new Error(`bendystraw ${res.status}`)
-  const json = (await res.json()) as {
-    data?: T
-    errors?: { message: string }[]
-  }
-  if (json.errors?.length) throw new Error(json.errors[0].message)
-  if (!json.data) throw new Error('bendystraw: empty response')
-  return json.data
+  const cacheOptions = IS_DETERMINISTIC_BROWSER
+    ? { cache: 'no-store' as const }
+    : { next: { revalidate: opts.revalidate ?? 60 } }
+  return requestBendystraw<T, Record<string, unknown>>(
+    useTestnet ? TESTNET_URL : MAINNET_URL,
+    query,
+    variables,
+    {
+      fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
+    },
+  )
 }
 
 export type BsProject = {
@@ -110,6 +111,29 @@ const PROJECT_FIELDS = `
   decimals currency isRevnet owner metadataUri
 `
 
+export const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
+  projects(
+    where: $where
+    orderBy: "volume"
+    orderDirection: "desc"
+    limit: $limit
+  ) { items { ${PROJECT_FIELDS} } }
+}`
+
+export const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
+  $where: participantFilter!
+  $limit: Int!
+  $offset: Int!
+) {
+  participants(
+    where: $where
+    orderBy: "balance"
+    orderDirection: "desc"
+    limit: $limit
+    offset: $offset
+  ) { items { address balance chainId volumeUsd } totalCount }
+}`
+
 export async function getProject(
   chainId: number,
   projectId: number,
@@ -130,30 +154,18 @@ export async function searchProjects(
 ): Promise<BsSearchProject[]> {
   const searchText = text.trim().replace(/^\$/, '')
   const numericId = /^\d+$/.test(searchText) ? Number(searchText) : null
-  const idFilter =
+  const idFilter: BendystrawFilter | null =
     numericId !== null && Number.isSafeInteger(numericId) && numericId > 0
-      ? `{ projectId: ${numericId} }`
+      ? { projectId: numericId }
       : null
-  const filters = [
-    '{ name_contains_nocase: $text }',
+  const searchBranches: BendystrawFilter[] = [
+    { name_contains_nocase: searchText },
     ...(idFilter ? [idFilter] : []),
-  ].join('\n')
+  ]
   const [projectData, tickerData] = await Promise.all([
     bendystraw<{ projects: { items: BsProject[] } }>(
-      `query($text: String!, $limit: Int!) {
-        projects(
-          where: {
-            version: 6
-            OR: [
-              ${filters}
-            ]
-          }
-          orderBy: "volume"
-          orderDirection: "desc"
-          limit: $limit
-        ) { items { ${PROJECT_FIELDS} } }
-      }`,
-      { text: searchText, limit },
+      PROJECTS_BY_FILTER_QUERY,
+      { where: { AND: [{ version: 6 }, { OR: searchBranches }] }, limit },
       { revalidate: 30 },
     ),
     bendystraw<{
@@ -183,26 +195,35 @@ export async function searchProjects(
   }
   // Bendystraw does not AND sibling fields inside one OR branch, so each
   // ticker deployment becomes an explicit AND group (see getProjectsByRefs).
-  const tickerPairs = Array.from(tickerByDeployment.keys()).map(pair => {
+  const tickerRefs = Array.from(tickerByDeployment.keys()).map(pair => {
     const [chainId, projectId] = pair.split(':').map(Number)
-    return `{ AND: [{ chainId: ${chainId} }, { projectId: ${projectId} }, { version: 6 }] }`
+    return { chainId, projectId, version: 6 }
   })
+  const tickerWheres = projectRefsWheres(tickerRefs)
   const tickerProjects =
-    tickerPairs.length > 0
+    tickerWheres.length > 0
       ? (
-          await bendystraw<{ projects: { items: BsProject[] } }>(
-            `query($limit: Int!) {
-              projects(
-                where: { OR: [${tickerPairs.join('\n')}] }
-                orderBy: "volume"
-                orderDirection: "desc"
-                limit: $limit
-              ) { items { ${PROJECT_FIELDS} } }
-            }`,
-            { limit },
-            { revalidate: 30 },
+          await Promise.all(
+            tickerWheres.map(where =>
+              bendystraw<{ projects: { items: BsProject[] } }>(
+                PROJECTS_BY_FILTER_QUERY,
+                { where, limit },
+                { revalidate: 30 },
+              ),
+            ),
           )
-        ).projects.items
+        ).flatMap(page =>
+          page.projects.items.filter(project =>
+            matchesProjectRef(
+              {
+                chainId: project.chainId,
+                projectId: project.projectId,
+                version: project.version,
+              },
+              tickerRefs,
+            ),
+          ),
+        )
       : []
 
   const projects = new Map<string, BsProject>()
@@ -659,34 +680,27 @@ export async function getParticipants(
   let totalCount = 0
   let offset = 0
 
-  const [params, where, scope] = args.suckerGroupId
-    ? [
-        '$suckerGroupId: String!',
-        'suckerGroupId: $suckerGroupId',
-        { suckerGroupId: args.suckerGroupId },
-      ]
-    : [
-        '$chainId: Int!, $projectId: Int!',
-        'chainId: $chainId, projectId: $projectId',
-        { chainId: args.chainId, projectId: args.projectId },
-      ]
-  const query = `query(${params}, $limit: Int!, $offset: Int!) {
-    participants(
-      where: { ${where}, version: 6, balance_gt: "0" }
-      orderBy: "balance"
-      orderDirection: "desc"
-      limit: $limit
-      offset: $offset
-    ) { items { address balance chainId volumeUsd } totalCount }
-  }`
+  const where: BendystrawFilter =
+    args.suckerGroupId !== undefined
+      ? { suckerGroupId: args.suckerGroupId, version: 6, balance_gt: '0' }
+      : {
+        AND: [
+          projectRefAnd({
+            chainId: args.chainId as number,
+            projectId: args.projectId as number,
+            version: 6,
+          }),
+          { balance_gt: '0' },
+        ],
+        }
 
   while (items.length < max) {
     const pageLimit = Math.min(pageSize, max - items.length)
     const data = await bendystraw<{
       participants: { items: BsParticipant[]; totalCount: number }
     }>(
-      query,
-      { ...scope, limit: pageLimit, offset },
+      PARTICIPANTS_BY_FILTER_QUERY,
+      { where, limit: pageLimit, offset },
       { revalidate: 60, testnet: testnetHint(args.chainId) },
     )
 
@@ -1382,6 +1396,46 @@ const BENEFICIARY_EVENT_SOURCES = [
   },
 ] as const
 
+const BENEFICIARY_ACTIVITY_FIELDS = BENEFICIARY_EVENT_SOURCES.map(
+  source => `
+    ${source.list}(
+      where: { AND: [{ beneficiary: $address }, { from_not: $address }, { version: 6 }] }
+      orderBy: "timestamp"
+      orderDirection: "desc"
+      limit: $limit
+      offset: $offset
+    ) {
+      totalCount
+      items {
+        id chainId projectId timestamp txHash from version
+        project { name logoUri tokenSymbol decimals }
+        ${source.selection}
+      }
+    }`,
+).join('\n')
+
+export const ACCOUNT_ACTIVITY_QUERY = `query AccountActivity(
+  $address: String!
+  $limit: Int!
+  $offset: Int!
+) {
+  activityEvents(
+    where: { from: $address, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "desc"
+    limit: $limit
+    offset: $offset
+  ) {
+    totalCount
+    items {
+      version
+      project { name logoUri tokenSymbol decimals }
+      ${ACTIVITY_EVENT_FIELDS}
+    }
+  }
+  ${BENEFICIARY_ACTIVITY_FIELDS}
+}`
+
 type BsBeneficiaryEventRow = {
   id: string
   chainId: number
@@ -1410,40 +1464,6 @@ export async function getAccountActivity(
 ): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
   const addressLower = address.toLowerCase()
   const targetCount = offset + limit
-  const beneficiaryQueries = BENEFICIARY_EVENT_SOURCES.map(
-    source => `
-      ${source.list}(
-        where: { AND: [{ beneficiary: $address }, { from_not: $address }, { version: 6 }] }
-        orderBy: "timestamp"
-        orderDirection: "desc"
-        limit: $limit
-        offset: $offset
-      ) {
-        totalCount
-        items {
-          id chainId projectId timestamp txHash from version
-          project { name logoUri tokenSymbol decimals }
-          ${source.selection}
-        }
-      }`,
-  ).join('\n')
-  const query = `query($address: String!, $limit: Int!, $offset: Int!) {
-      activityEvents(
-        where: { from: $address, version: 6 }
-        orderBy: "timestamp"
-        orderDirection: "desc"
-        limit: $limit
-        offset: $offset
-      ) {
-        totalCount
-        items {
-          version
-          project { name logoUri tokenSymbol decimals }
-          ${ACTIVITY_EVENT_FIELDS}
-        }
-      }
-      ${beneficiaryQueries}
-    }`
   const listNames = [
     'activityEvents',
     ...BENEFICIARY_EVENT_SOURCES.map(source => source.list),
@@ -1458,7 +1478,7 @@ export async function getAccountActivity(
     const data = await bendystraw<
       Record<string, { items: unknown[]; totalCount: number }>
     >(
-      query,
+      ACCOUNT_ACTIVITY_QUERY,
       { address: addressLower, limit: pageLimit, offset: pageOffset },
       { revalidate: 30 },
     )
@@ -1592,48 +1612,31 @@ export async function getOperatorGrants(
  * Refs are number-validated before being inlined into the filter.
  */
 export async function getProjectsByRefs(
-  refs: { chainId: number; projectId: number; version: number }[],
+  refs: VersionedProjectRef[],
 ): Promise<BsProject[]> {
-  const pairs = [
-    ...new Set(
-      refs
-        .filter(
-          ref =>
-            Number.isSafeInteger(ref.chainId) &&
-            ref.chainId > 0 &&
-            Number.isSafeInteger(ref.projectId) &&
-            ref.projectId > 0 &&
-            Number.isSafeInteger(ref.version) &&
-            ref.version > 0,
-        )
-        // Bendystraw does not AND sibling fields inside one OR branch, so
-        // each ref becomes an explicit AND group.
-        .map(
-          ref =>
-            `{ AND: [{ chainId: ${ref.chainId} }, { projectId: ${ref.projectId} }, { version: ${ref.version} }] }`,
-        ),
-    ),
-  ]
-  if (!pairs.length) return []
-  const chunks: string[][] = []
-  for (let index = 0; index < pairs.length; index += 100) {
-    chunks.push(pairs.slice(index, index + 100))
-  }
+  const wheres = projectRefsWheres(refs)
+  if (!wheres.length) return []
   const pages = await Promise.all(
-    chunks.map(chunk =>
+    wheres.map(where =>
       bendystraw<{ projects: { items: BsProject[] } }>(
-        `query($limit: Int!) {
-          projects(
-            where: { OR: [${chunk.join('\n')}] }
-            limit: $limit
-          ) { items { ${PROJECT_FIELDS} } }
-        }`,
-        { limit: chunk.length },
+        PROJECTS_BY_FILTER_QUERY,
+        { where, limit: 200 },
         { revalidate: 60 },
       ),
     ),
   )
-  return pages.flatMap(data => data.projects.items)
+  return pages.flatMap(data =>
+    data.projects.items.filter(project =>
+      matchesProjectRef(
+        {
+          chainId: project.chainId,
+          projectId: project.projectId,
+          version: project.version,
+        },
+        refs,
+      ),
+    ),
+  )
 }
 
 export type BsAccountTokenHolding = {
