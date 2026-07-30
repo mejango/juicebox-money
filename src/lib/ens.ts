@@ -1,5 +1,5 @@
+import { JB_CHAINS } from '@bananapus/nana-sdk-core'
 import { createPublicClient, http, isAddress, type Address } from 'viem'
-import { mainnet } from 'viem/chains'
 import { normalize } from 'viem/ens'
 
 /**
@@ -10,7 +10,7 @@ import { normalize } from 'viem/ens'
  */
 
 const ensClient = createPublicClient({
-  chain: mainnet,
+  chain: JB_CHAINS[1].chain,
   // CORS-friendly public RPC (several big providers block browser origins).
   transport: http('https://ethereum-rpc.publicnode.com'),
 })
