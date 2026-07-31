@@ -27,8 +27,12 @@ export function useMobileWallet(): MobileWalletState {
 
     setState('checking')
     let settled = false
+    let timer: number | undefined
     const stopListening = () => {
-      window.clearTimeout(timer)
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+        timer = undefined
+      }
       window.removeEventListener('ethereum#initialized', providerReady)
       window.removeEventListener('eip6963:announceProvider', providerReady)
     }
@@ -40,7 +44,7 @@ export function useMobileWallet(): MobileWalletState {
     }
     window.addEventListener('ethereum#initialized', providerReady)
     window.addEventListener('eip6963:announceProvider', providerReady)
-    const timer = window.setTimeout(() => {
+    timer = window.setTimeout(() => {
       settled = true
       stopListening()
       setState(browserWindow.ethereum ? 'injected' : 'handoff')

@@ -17,27 +17,22 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  encodeAbiParameters,
   type Address,
   type PublicClient,
 } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { TxError } from '@/components/ui/TxError'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import {
   LiquidityBodySkeleton,
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
-import { useWallet } from '@/hooks/useWallet'
 import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { buildModifyLiquiditiesRequest } from '@/lib/transaction-builders'
 import {
   MODIFY_LIQUIDITY_TOPIC,
   INITIALIZE_TOPIC,
@@ -716,7 +711,6 @@ export function MarketSection({
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
-    refetch: refetchLp,
   } = useQuery({
     queryKey: ['marketLp', chainId, projectId],
     enabled: !!publicClient && hasPool,
@@ -824,15 +818,7 @@ export function MarketSection({
 
       {/* LP composition + depth */}
       <div className="card p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="field-label">Liquidity</span>
-          <span
-            className="rounded-full bg-bluebs-50 px-2 py-0.5 text-[11px] font-medium text-bluebs-700"
-            title="Pooled Uniswap V4 liquidity"
-          >
-            LP
-          </span>
-        </div>
+        <span className="field-label">Liquidity</span>
 
         {lpLoading ? (
           <LiquidityBodySkeleton />
@@ -860,233 +846,9 @@ export function MarketSection({
               issuance={market.issuance}
               cashout={floor ?? null}
             />
-            <RemoveLiquidityPanel
-              chainId={chainId}
-              projectId={projectId}
-              pool={market}
-              positions={lp.positions}
-              tokenSymbol={sym}
-              onRemoved={() => void refetchLp()}
-            />
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-// ------------------------------------------------------- remove liquidity --
-
-export type RemovePlan = {
-  position: LpPosition
-  unlockData: `0x${string}`
-  deadline: bigint
-  pairMin: bigint
-  tokenMin: bigint
-}
-
-export function outputFloor(value: bigint, retainedBps = 9_500n): bigint {
-  if (value <= 0n) return 0n
-  const floor = (value * retainedBps) / 10_000n
-  return floor > 0n ? floor : 1n
-}
-
-export function buildRemoveLiquidityPlan(
-  position: LpPosition,
-  pool: Extract<MarketResult, { status: 'pool' }>,
-  recipient: Address,
-): RemovePlan {
-  const pairMin = outputFloor(position.pair)
-  const tokenMin = outputFloor(position.tok)
-  const amount0Min = pool.pairIsC0 ? pairMin : tokenMin
-  const amount1Min = pool.pairIsC0 ? tokenMin : pairMin
-  const burn = encodeAbiParameters(
-    [
-      { type: 'uint256' },
-      { type: 'uint128' },
-      { type: 'uint128' },
-      { type: 'bytes' },
-    ],
-    [position.tokenId, amount0Min, amount1Min, '0x'],
-  )
-  const takePair = encodeAbiParameters(
-    [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
-    [pool.key.currency0, pool.key.currency1, recipient],
-  )
-  return {
-    position,
-    unlockData: encodeAbiParameters(
-      [{ type: 'bytes' }, { type: 'bytes[]' }],
-      ['0x0311', [burn, takePair]],
-    ),
-    deadline: BigInt(Math.floor(Date.now() / 1000) + 1_200),
-    pairMin,
-    tokenMin,
-  }
-}
-
-function RemoveLiquidityPanel({
-  chainId,
-  projectId,
-  pool,
-  positions,
-  tokenSymbol,
-  onRemoved,
-}: {
-  chainId: JBChainId
-  projectId: number
-  pool: Extract<MarketResult, { status: 'pool' }>
-  positions: LpPosition[]
-  tokenSymbol: string
-  onRemoved: () => void
-}) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { address, isConnected, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
-  const [review, setReview] = useState<RemovePlan | null>(null)
-  const [preparing, setPreparing] = useState<bigint | null>(null)
-  const [prepareError, setPrepareError] = useState<string | null>(null)
-  const mine = address
-    ? positions.filter(position => lc(position.owner) === lc(address))
-    : []
-
-  const prepare = async (position: LpPosition) => {
-    if (!address || !publicClient) return
-    setPreparing(position.tokenId)
-    setReview(null)
-    setPrepareError(null)
-    try {
-      const currentPool = await resolveMarket(
-        publicClient,
-        chainId,
-        projectId,
-        JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
-      )
-      if (currentPool.status !== 'pool' || lc(currentPool.poolId) !== lc(pool.poolId)) {
-        throw new Error('The pool changed while loading this position.')
-      }
-      const [fresh] = await readPositionDetails(
-        publicClient,
-        POSITION_MANAGER_BY_CHAIN[chainId]!,
-        [position.tokenId],
-        pool.poolId,
-      )
-      if (!fresh?.owner || lc(fresh.owner) !== lc(address) || fresh.liquidity <= 0n) {
-        throw new Error('This position is no longer owned by the connected wallet.')
-      }
-      const tickLower = tickLowerOf(fresh.info)
-      const tickUpper = tickUpperOf(fresh.info)
-      const amounts = getAmountsForLiquidity(
-        currentPool.sqrtP,
-        sqrtAtTick(tickLower),
-        sqrtAtTick(tickUpper),
-        fresh.liquidity,
-      )
-      setReview(
-        buildRemoveLiquidityPlan(
-          {
-            tokenId: fresh.tokenId,
-            owner: fresh.owner,
-            liquidity: fresh.liquidity,
-            tickLower,
-            tickUpper,
-            pair: currentPool.pairIsC0 ? amounts.amount0 : amounts.amount1,
-            tok: currentPool.pairIsC0 ? amounts.amount1 : amounts.amount0,
-          },
-          currentPool,
-          address,
-        ),
-      )
-    } catch (error) {
-      setPrepareError(error instanceof Error ? error.message : 'Could not refresh this position.')
-    } finally {
-      setPreparing(null)
-    }
-  }
-
-  useEffect(() => {
-    if (tx.phase === 'success') onRemoved()
-    // onRemoved is a refetch callback created by the parent render; key this
-    // effect to the receipt transition so a refetch cannot loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase])
-
-  const send = async () => {
-    const positionManager = POSITION_MANAGER_BY_CHAIN[chainId]
-    if (!review || !positionManager) return
-    const hash = await tx.send({
-      ...buildModifyLiquiditiesRequest({
-        chainId,
-        positionManager,
-        unlockData: review.unlockData,
-        deadline: review.deadline,
-        value: 0n,
-      }),
-      label: `Burn LP position #${review.position.tokenId} and return both tokens`,
-    })
-    if (hash) setReview(null)
-  }
-
-  if (!isConnected) {
-    return (
-      <button type="button" className="btn-secondary px-3 py-2 text-sm" onClick={openSignIn}>
-        Sign in to manage liquidity
-      </button>
-    )
-  }
-  if (!mine.length) {
-    return (
-      <p className="text-xs text-smoke-600">
-        The connected wallet has no removable positions in this pool.
-      </p>
-    )
-  }
-
-  return (
-    <div className="border-t border-smoke-100 pt-4">
-      <p className="field-label">Your positions</p>
-      <div className="mt-2 space-y-2">
-        {mine.map(position => (
-          <div key={position.tokenId.toString()} className="flex flex-wrap items-center justify-between gap-3 text-sm">
-            <span>
-              #{position.tokenId.toString()} · {formatTokenAmount(position.tok)} {tokenSymbol} +{' '}
-              {formatTokenAmount(position.pair, pool.pair.decimals)} {pool.pair.symbol}
-            </span>
-            <button
-              type="button"
-              className="btn-secondary px-3 py-1.5 text-xs"
-              disabled={tx.busy || preparing !== null || review !== null}
-              onClick={() => void prepare(position)}
-            >
-              {preparing === position.tokenId ? 'Refreshing…' : 'Remove'}
-            </button>
-          </div>
-        ))}
-      </div>
-      {review ? (
-        <div className="input-well mt-3 p-3 text-xs text-smoke-700">
-          <p>
-            Burn position #{review.position.tokenId.toString()} for at least{' '}
-            {formatTokenAmount(review.tokenMin)} {tokenSymbol} +{' '}
-            {formatTokenAmount(review.pairMin, pool.pair.decimals)} {pool.pair.symbol}.
-          </p>
-          <div className="mt-3 flex gap-2">
-            <button type="button" className="btn-primary px-3 py-1.5 text-xs" onClick={() => void send()}>
-              Confirm &amp; remove
-            </button>
-            <button type="button" className="btn-secondary px-3 py-1.5 text-xs" onClick={() => setReview(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {tx.busy ? (
-        <p className="mt-2 text-xs text-smoke-700" aria-live="polite">
-          {txPhaseLabel(tx.phase, { idle: '', pending: 'Removing liquidity…' })}
-        </p>
-      ) : null}
-      {tx.phase === 'success' ? <p className="mt-2 text-xs text-green-700">Liquidity removed.</p> : null}
-      <TxError error={prepareError ?? tx.error} className="mt-2" />
     </div>
   )
 }
