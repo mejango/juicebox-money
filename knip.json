@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "scripts/check-browser-build-data.ts",
+    "scripts/check-deployment-env.d.mts",
+    "scripts/start-production.mjs",
+    "scripts/verify-cash-out.ts",
+    "scripts/verify-manage.ts",
+    "src/app/modal-proof/page.browsertest.tsx",
+    "src/vendor/HeartbeatWorker.js",
+    "test/browser/fail-fast-service.mjs"
+  ],
+  "ignoreDependencies": [
+    "@getpara/core-sdk",
+    "tsx"
+  ],
+  "ignoreUnresolved": [
+    "../server.js"
+  ]
+}

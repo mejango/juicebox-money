@@ -13,7 +13,7 @@ import { ipfsUrl } from '@/lib/format'
  */
 
 /** The projectUri fields the metadata editor edits (and may clear). */
-export const EDITED_METADATA_KEYS = [
+const EDITED_METADATA_KEYS = [
   'name',
   'projectTagline',
   'description',
@@ -35,14 +35,14 @@ export type EditedMetadataKey = (typeof EDITED_METADATA_KEYS)[number]
  * here can change them. They stay out of the custom-properties box so a save
  * can't delete them by omission.
  */
-export const RETAINED_METADATA_KEYS = [
+const RETAINED_METADATA_KEYS = [
   'tags',
   'coverImageUri',
   'version',
 ] as const
 
 /** Every field the form manages — edited plus retained. */
-export const MANAGED_METADATA_KEYS: readonly string[] = [
+const MANAGED_METADATA_KEYS: readonly string[] = [
   ...EDITED_METADATA_KEYS,
   ...RETAINED_METADATA_KEYS,
 ]

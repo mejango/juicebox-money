@@ -69,7 +69,7 @@ function pinnedStore(): LaunchPlan['store'] {
 
 /** The exact per-chain plan the launch run was built with — resumes must
  *  reuse it verbatim (same deploy start, same resolved recipients). */
-function planFor(chainId: number, store: LaunchPlan['store']): LaunchPlan {
+function planFor(store: LaunchPlan['store']): LaunchPlan {
   return {
     accounting: { tokens: ['eth'], custom: null },
     issuanceBase: null,
@@ -110,7 +110,7 @@ function session(overrides: Partial<LaunchSession> = {}): LaunchSession {
     projectUri: 'ipfs://QmProjectMetadata',
     store,
     plans: Object.fromEntries(
-      [1, 10, 8453].map(chainId => [chainId, planFor(chainId, store)]),
+      [1, 10, 8453].map(chainId => [chainId, planFor(store)]),
     ),
     chains: [1, 10, 8453],
     statuses: {
@@ -191,7 +191,7 @@ describe('multichain launch session persistence', () => {
     saveLaunchSession(
       session({
         chains: [1],
-        plans: { 1: planFor(1, store) },
+        plans: { 1: planFor(store) },
         statuses: { 1: { phase: 'pending' } },
         store,
       }),

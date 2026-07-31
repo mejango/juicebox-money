@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 import { assertNoViewAs } from '@/lib/viewAs'
 
-export type ReviewedWritePhase = 'review' | 'simulating' | 'signing'
+type ReviewedWritePhase = 'review' | 'simulating' | 'signing'
 
 type ReviewedContractWriteOptions<TRequest extends { chainId: number }, TSimulated, THash> = {
   request: TRequest

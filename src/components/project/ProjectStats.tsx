@@ -136,10 +136,10 @@ async function readChainTreasury(
 
 function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="card min-w-[160px] flex-1 px-4 py-3.5">
-      <dt className="field-label">{label}</dt>
-      <dd className="mt-1 font-agrandir text-xl font-medium text-ink sm:text-2xl">
-        {value}
+    <div className="text-base sm:text-lg">
+      <dd>
+        <span className="font-agrandir font-medium text-ink">{value}</span>{" "}
+        <span className="text-smoke-600">{label}</span>
       </dd>
     </div>
   )
@@ -194,13 +194,12 @@ export function HoverBreakdownStat({
   return (
     <div
       ref={cardRef}
-      className="group relative card min-w-[160px] flex-1 px-4 py-3.5"
+      className="group relative text-base sm:text-lg"
     >
-      <dt className="field-label">{label}</dt>
-      <dd className="mt-1">
+      <dd>
         <button
           type="button"
-          className="cursor-help font-agrandir text-xl font-medium text-ink underline decoration-smoke-300 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500 sm:text-2xl"
+          className="cursor-help font-agrandir font-medium text-ink underline decoration-smoke-300 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500"
           aria-describedby={tooltipId}
           aria-expanded={isMobile ? mobileOpen : undefined}
           onClick={() => {
@@ -209,6 +208,7 @@ export function HoverBreakdownStat({
         >
           {value}
         </button>
+        <span className="text-smoke-600"> {label}</span>
         <div
           id={tooltipId}
           role="tooltip"
@@ -350,9 +350,9 @@ export function ProjectStats({
       : '—'
 
   return (
-    <dl className="scrollbar-none -mx-4 mt-8 flex gap-3 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
+    <dl className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 [&>div:not(:first-child)]:border-l [&>div:not(:first-child)]:border-smoke-200 [&>div:not(:first-child)]:pl-4">
       <HoverBreakdownStat
-        label="Total raised"
+        label="raised"
         value={formatUsd18(totalRaisedUsd)}
         tooltipId={raisedTooltipId}
         align="left"
@@ -384,7 +384,7 @@ export function ProjectStats({
 
       {hasBreakdown ? (
         <HoverBreakdownStat
-          label="In Juicebox"
+          label="balance"
           value={treasuryValue}
           tooltipId={treasuryTooltipId}
         >
@@ -434,14 +434,14 @@ export function ProjectStats({
           </div>
         </HoverBreakdownStat>
       ) : (
-        <Stat label="In Juicebox" value={treasuryValue} />
+        <Stat label="balance" value={treasuryValue} />
       )}
 
       <Stat
-        label="Payments"
+        label={paymentsCount === 1 ? "payment" : "payments"}
         value={paymentsCount.toLocaleString('en-US')}
       />
-      <Stat label="Holders" value={holderValue} />
+      <Stat label="token holders" value={holderValue} />
     </dl>
   )
 }

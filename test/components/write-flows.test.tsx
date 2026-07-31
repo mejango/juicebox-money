@@ -181,13 +181,26 @@ afterEach(() => {
 })
 
 describe('project payer write flow', () => {
+  const extrasProps = {
+    chainId: 1 as const,
+    projectId: 42,
+    isRevnet: false,
+    profile: {
+      name: 'Test project',
+      ticker: 'TEST',
+      tagline: '',
+      description: '',
+    },
+    chains: [[1, 42] as [number, number]],
+    authorities: [[1, ALICE] as [number, string]],
+  }
+
   it('freezes the edited payer settings at review and sends that exact request', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
         createElement(ExtrasTab, {
-          chainId: 1,
-          projectId: 42,
+          ...extrasProps,
           chains: [[1, 42], [10, 84]],
         }),
       )
@@ -224,13 +237,7 @@ describe('project payer write flow', () => {
     mocks.address = undefined
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
-      renderer = TestRenderer.create(
-        createElement(ExtrasTab, {
-          chainId: 1,
-          projectId: 42,
-          chains: [[1, 42]],
-        }),
-      )
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
     })
 
     await act(async () =>
@@ -243,14 +250,15 @@ describe('project payer write flow', () => {
 
   it('invalidates a reviewed write when the connected account changes', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
-    const props = { chainId: 1 as const, projectId: 42, chains: [[1, 42] as [number, number]] }
     await act(async () => {
-      renderer = TestRenderer.create(createElement(ExtrasTab, props))
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
     })
     await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
 
     mocks.address = '0x3333333333333333333333333333333333333333'
-    await act(async () => renderer.update(createElement(ExtrasTab, props)))
+    await act(async () =>
+      renderer.update(createElement(ExtrasTab, extrasProps)),
+    )
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()

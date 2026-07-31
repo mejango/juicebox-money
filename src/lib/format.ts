@@ -83,15 +83,6 @@ export function etherscanTxUrl(chainId: number, hash: string): string | null {
   return host ? `https://${host}/tx/${hash}` : null
 }
 
-/** Block-explorer address URL, or null when the chain has no explorer. */
-export function etherscanAddressUrl(
-  chainId: number,
-  address: string,
-): string | null {
-  const host = explorerHostname(chainId)
-  return host ? `https://${host}/address/${address}` : null
-}
-
 /** A 0-100 percent → trimmed display percent: 38 → "38%", 2.5 → "2.5%". */
 export function fmtPct(pct: number): string {
   if (!Number.isFinite(pct) || pct === 0) return '0%'

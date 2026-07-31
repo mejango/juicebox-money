@@ -88,7 +88,7 @@ export function groupTokenHoldings(
     .sort((a, b) => (a.total < b.total ? 1 : -1))
 }
 
-export type NftTierHolding = {
+type NftTierHolding = {
   tierId: number
   count: number
   name: string

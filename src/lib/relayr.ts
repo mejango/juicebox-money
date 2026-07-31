@@ -77,7 +77,7 @@ export type RelayrPayment = {
   payment_deadline?: number
 }
 
-export type RelayrTransactionStatus = {
+type RelayrTransactionStatus = {
   state?: string
   data?: {
     hash?: Hex

@@ -8,7 +8,6 @@ import {
   pickTierMetadata,
   tierMediaAssetUrl as sdkTierMediaAssetUrl,
   tierMediaImageUrl as sdkTierMediaImageUrl,
-  type TierMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 
 const APP_IPFS_GATEWAY = '/api/ipfs/'
@@ -18,8 +17,6 @@ export {
   parseTierMetadataJson,
   pickTierMetadata,
 }
-
-export type PickedTierMetadata = TierMetadata
 
 export function tierMediaAssetUrl(value: unknown): string | undefined {
   return sdkTierMediaAssetUrl(value, APP_IPFS_GATEWAY)

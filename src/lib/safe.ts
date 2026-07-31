@@ -34,7 +34,7 @@ export type SafeInfo = {
   threshold: number
 }
 
-export type SafeConfirmation = {
+type SafeConfirmation = {
   owner: Address
   signature?: Hex | null
 }
@@ -84,7 +84,7 @@ export type ConfirmedContractWrite = {
   status: 'confirmed' | 'submitted'
 }
 
-export const SAFE_ABI = [
+const SAFE_ABI = [
   {
     type: 'function',
     name: 'getThreshold',
@@ -187,7 +187,7 @@ const SAFE_TX_BASE: Partial<Record<number, string>> = {
   11155111: 'https://safe-transaction-sepolia.safe.global',
 }
 
-export const SAFE_PREFIX: Partial<Record<number, string>> = {
+const SAFE_PREFIX: Partial<Record<number, string>> = {
   1: 'eth',
   10: 'oeth',
   8453: 'base',
@@ -500,7 +500,7 @@ export async function listPendingSafeTxs(
   throw lastError ?? new Error('Safe service unavailable')
 }
 
-export async function proposeSafeTx({
+async function proposeSafeTx({
   chainId,
   safe,
   target,
@@ -880,7 +880,7 @@ export function safeExecRelayrEntry(
   }
 }
 
-export async function safeOnChainContext(
+async function safeOnChainContext(
   chainId: JBChainId,
   safe: Address,
 ): Promise<{ nonce: number; threshold: number; owners: Address[] }> {
@@ -901,7 +901,7 @@ export async function safeOnChainContext(
   }
 }
 
-export async function safeApprovalsOf(
+async function safeApprovalsOf(
   chainId: JBChainId,
   safe: Address,
   hash: Hex,
@@ -924,7 +924,7 @@ export async function safeApprovalsOf(
   return owners.filter((_, index) => approved[index])
 }
 
-export async function approveSafeHashOnChain(
+async function approveSafeHashOnChain(
   chainId: JBChainId,
   safe: Address,
   hash: Hex,

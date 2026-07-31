@@ -174,7 +174,7 @@ async function DegradedProjectShell({
             {project.owner ? (
               <>
                 <span>
-                  <span className="text-smoke-500">Project owner:</span>{" "}
+                  <span className="text-smoke-500">Owner:</span>{" "}
                   <AddressLink
                     address={project.owner}
                     host={etherscan}
@@ -342,6 +342,16 @@ export default async function ProjectPage({
                 {project.projectTagline}
               </p>
             ) : null}
+            <ProjectStats
+              totalRaisedUsd={totalRaisedUsd}
+              raisedByChain={chains.map((row) => ({
+                chainId: row.chainId,
+                usd: row.volumeUsd || "0",
+              }))}
+              paymentsCount={paymentsCount}
+              suckerGroupId={project.suckerGroupId}
+              chains={chainPairs}
+            />
             <div className="mt-2 text-sm text-smoke-700">
               <div className="space-y-1 lg:hidden">
                 <div className="flex items-center">
@@ -358,7 +368,7 @@ export default async function ProjectPage({
                       </span>
                       <span>
                         <span className="text-smoke-500">
-                          {isRevnet ? "Revnet operator:" : "Project owner:"}
+                          {isRevnet ? "Operator:" : "Owner:"}
                         </span>{" "}
                         <AddressLink
                           address={authority}
@@ -406,7 +416,7 @@ export default async function ProjectPage({
                     </span>
                     <span>
                       <span className="text-smoke-500">
-                        {isRevnet ? "Revnet operator:" : "Project owner:"}
+                        {isRevnet ? "Operator:" : "Owner:"}
                       </span>{" "}
                       <AddressLink
                         address={authority}
@@ -442,18 +452,6 @@ export default async function ProjectPage({
             </div>
           </div>
         </header>
-
-        {/* Stats */}
-        <ProjectStats
-          totalRaisedUsd={totalRaisedUsd}
-          raisedByChain={chains.map((row) => ({
-            chainId: row.chainId,
-            usd: row.volumeUsd || "0",
-          }))}
-          paymentsCount={paymentsCount}
-          suckerGroupId={project.suckerGroupId}
-          chains={chainPairs}
-        />
 
         {/* Content + pay card */}
         <ProjectTabs
@@ -565,7 +563,23 @@ export default async function ProjectPage({
                 <ExtrasTab
                   chainId={urn.chainId}
                   projectId={project.projectId}
+                  isRevnet={isRevnet}
                   chains={chainPairs}
+                  authorities={authorities}
+                  profile={{
+                    name: metadata?.name ?? name,
+                    ticker: project.tokenSymbol ?? "",
+                    tagline:
+                      metadata?.projectTagline ?? project.projectTagline ?? "",
+                    description: metadata?.description ?? "",
+                    payNotice: metadata?.payDisclosure ?? "",
+                    infoUri: metadata?.infoUri,
+                    twitter: metadata?.twitter,
+                    discord: metadata?.discord,
+                    telegram: metadata?.telegram,
+                    whatsapp: metadata?.whatsapp,
+                    instagram: metadata?.instagram,
+                  }}
                 />
               ),
             },

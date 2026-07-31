@@ -12,7 +12,7 @@ import { explorerHostname } from '@/lib/chainDisplay'
 import { formatDate, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 
-export const ACCOUNT_ACTIVITY_PAGE = 25
+const ACCOUNT_ACTIVITY_PAGE = 25
 
 /**
  * Everything the account did, across projects and chains, with a load-more

@@ -1572,16 +1572,7 @@ export function PayPanel({
                     {shopPricingSymbol}
                   </span>
                 </div>
-                {address && shopCreditsLoading ? (
-                  <div className="flex items-center justify-between gap-3 text-smoke-500">
-                    <span>Shop credit</span>
-                    <Skeleton
-                      className="h-4 w-16 rounded"
-                      role="status"
-                      aria-label="Loading shop credit"
-                    />
-                  </div>
-                ) : shopCreditApplied > 0n ? (
+                {!shopCreditsLoading && shopCreditApplied > 0n ? (
                   <div className="flex items-center justify-between gap-3 text-emerald-700">
                     <span>Shop credit applied</span>
                     <span className="tabular-nums">
@@ -1593,14 +1584,26 @@ export function PayPanel({
                       {shopPricingSymbol}
                     </span>
                   </div>
+                ) : !shopCreditsLoading && shopCredits > 0n ? (
+                  <div className="flex items-center justify-between gap-3 text-smoke-500">
+                    <span>Shop credit available</span>
+                    <span className="tabular-nums">
+                      {formatTokenAmount(
+                        shopCredits,
+                        shop?.pricingDecimals ?? 18,
+                      )}{" "}
+                      {shopPricingSymbol}
+                    </span>
+                  </div>
                 ) : null}
-                {restrictedCartTotal > 0n ? (
-                  <>
+                {!shopCreditsLoading &&
+                shopCredits > 0n &&
+                restrictedCartTotal > 0n ? (
                     <div className="flex items-center justify-between gap-3 text-smoke-500">
                       <span>
                         {restrictedCartTotal === cartTotal
-                          ? 'Shop credit not accepted'
-                          : 'Shop credit not accepted by some items'}
+                          ? 'These items require fresh payment'
+                          : 'Some items require fresh payment'}
                       </span>
                       <span className="tabular-nums">
                         {formatTokenAmount(
@@ -1610,17 +1613,6 @@ export function PayPanel({
                         {shopPricingSymbol}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between gap-3 text-smoke-500">
-                      <span>Fresh payment required</span>
-                      <span className="tabular-nums">
-                        {formatTokenAmount(
-                          restrictedCartTotal,
-                          shop?.pricingDecimals ?? 18,
-                        )}{" "}
-                        {shopPricingSymbol}
-                      </span>
-                    </div>
-                  </>
                 ) : null}
                 <div className="flex items-center justify-between gap-3 pt-0.5 font-medium">
                   <span className="text-ink">Amount due</span>
