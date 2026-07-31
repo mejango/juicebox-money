@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   txHash: null as string | null,
   txError: null as Error | null,
   safeTxCall: 0,
+  buildProjectDraftExport: vi.fn(),
 }))
 
 vi.mock('next/link', () => ({
@@ -119,6 +120,9 @@ vi.mock('@/lib/ens', async importOriginal => {
     lookupEnsName: vi.fn(),
   }
 })
+vi.mock('@/lib/project-draft-export', () => ({
+  buildProjectDraftExport: mocks.buildProjectDraftExport,
+}))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   const original = await importOriginal<
     typeof import('@bananapus/nana-sdk-core/v6')
@@ -161,6 +165,26 @@ function buttonWith(renderer: TestRenderer.ReactTestRenderer, text: string) {
     .find(button => renderedText(button).includes(text))!
 }
 
+function stubDraftDownload() {
+  const anchor = {
+    href: '',
+    download: '',
+    click: vi.fn(),
+  }
+  const confirm = vi.fn(() => true)
+  vi.stubGlobal('document', {
+    createElement: vi.fn(() => anchor),
+  })
+  vi.stubGlobal('window', { confirm })
+  const createObjectURL = vi
+    .spyOn(URL, 'createObjectURL')
+    .mockReturnValue('blob:project-draft')
+  const revokeObjectURL = vi
+    .spyOn(URL, 'revokeObjectURL')
+    .mockImplementation(() => undefined)
+  return { anchor, confirm, createObjectURL, revokeObjectURL }
+}
+
 beforeEach(() => {
   mocks.address = ALICE
   mocks.clientAvailable = true
@@ -174,10 +198,117 @@ beforeEach(() => {
   mocks.amountToAutoIssue.mockResolvedValue(10n)
   mocks.buildAutoIssue.mockReturnValue(AUTO_ISSUE_REQUEST)
   mocks.send.mockResolvedValue('0xhash')
+  mocks.buildProjectDraftExport.mockReset()
 })
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('project draft export', () => {
+  const extrasProps = {
+    chainId: 1 as const,
+    projectId: 42,
+    isRevnet: false,
+    profile: {
+      name: 'Test project',
+      ticker: 'TEST',
+      tagline: '',
+      description: '',
+    },
+    chains: [
+      [1, 42],
+      [10, 84],
+    ] as [number, number][],
+    authorities: [
+      [1, ALICE],
+      [10, null],
+    ] as [number, string | null][],
+  }
+
+  it('downloads a verified draft with the available chain authority', async () => {
+    const download = stubDraftDownload()
+    mocks.buildProjectDraftExport.mockResolvedValue({
+      draft: { name: 'Test project', stages: [] },
+      warnings: [],
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
+    })
+
+    await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
+
+    expect(mocks.buildProjectDraftExport).toHaveBeenCalledWith({
+      client: mocks.publicClient,
+      chainId: 1,
+      projectId: 42,
+      isRevnet: false,
+      profile: extrasProps.profile,
+      chains: [1, 10],
+      authorityByChain: { 1: ALICE },
+    })
+    expect(download.confirm).not.toHaveBeenCalled()
+    expect(download.createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(download.anchor.download).toBe('test-project.jb')
+    expect(download.anchor.click).toHaveBeenCalledTimes(1)
+    expect(download.revokeObjectURL).toHaveBeenCalledWith('blob:project-draft')
+    expect(renderedText(renderer.root)).toContain('Exported .jb')
+  })
+
+  it('honors cancellation when reconstructing the draft produces warnings', async () => {
+    const download = stubDraftDownload()
+    download.confirm.mockReturnValue(false)
+    mocks.buildProjectDraftExport.mockResolvedValue({
+      draft: { name: 'Test project', stages: [] },
+      warnings: ['Review the reconstructed rules.'],
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
+    })
+
+    await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
+
+    expect(download.confirm).toHaveBeenCalledWith(
+      'Review the reconstructed rules.\n\nExport this editable .jb anyway?',
+    )
+    expect(download.createObjectURL).not.toHaveBeenCalled()
+    expect(download.anchor.click).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('Cancelled')
+  })
+
+  it('shows a verified reconstruction error without creating a download', async () => {
+    const download = stubDraftDownload()
+    mocks.buildProjectDraftExport.mockRejectedValue(
+      new Error('No live ruleset could be verified.'),
+    )
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
+    })
+
+    await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
+
+    expect(download.createObjectURL).not.toHaveBeenCalled()
+    expect(download.anchor.click).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain(
+      'No live ruleset could be verified.',
+    )
+  })
+
+  it('keeps export disabled when no public client is available', async () => {
+    mocks.clientAvailable = false
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
+    })
+
+    const exportButton = buttonWith(renderer, 'Export .jb')
+    expect(exportButton.props.disabled).toBe(true)
+    await act(async () => exportButton.props.onClick())
+    expect(mocks.buildProjectDraftExport).not.toHaveBeenCalled()
+  })
 })
 
 describe('project payer write flow', () => {
