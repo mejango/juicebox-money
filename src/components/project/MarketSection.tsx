@@ -1089,15 +1089,20 @@ function DepthChart({
       const mid = Math.exp(lmin + ((i + 0.5) / DN) * span)
       const pLo = Math.exp(lmin + (i / DN) * span)
       const pHi = Math.exp(lmin + ((i + 1) / DN) * span)
-      // price = 1/1.0001^tick falls as price rises, so band tick range flips.
-      const bTickLo = tickAtPrice(pHi)
-      const bTickHi = tickAtPrice(pLo)
+      // Pair/token price falls with tick when pair is currency0 and rises when
+      // it is currency1. Normalize both orientations before intersecting.
+      const bandTickA = tickAtPrice(pLo)
+      const bandTickB = tickAtPrice(pHi)
+      const bTickLo = Math.min(bandTickA, bandTickB)
+      const bTickHi = Math.max(bandTickA, bandTickB)
       let liq = 0
       let pairW = 0n
       let tokW = 0n
       for (const p of positions) {
-        const plo = priceAtTick(p.tickUpper)
-        const phi = priceAtTick(p.tickLower)
+        const positionPriceA = priceAtTick(p.tickLower)
+        const positionPriceB = priceAtTick(p.tickUpper)
+        const plo = Math.min(positionPriceA, positionPriceB)
+        const phi = Math.max(positionPriceA, positionPriceB)
         if (mid >= plo && mid <= phi) liq += Number(p.liquidity)
         const oLo = Math.max(bTickLo, p.tickLower)
         const oHi = Math.min(bTickHi, p.tickUpper)
