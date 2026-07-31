@@ -41,7 +41,13 @@ function MagnifierIcon({ className }: { className?: string }) {
   )
 }
 
-export function SearchBox({ expanded = false }: { expanded?: boolean }) {
+export function SearchBox({
+  expanded = false,
+  placeholder = 'Search projects',
+}: {
+  expanded?: boolean
+  placeholder?: string
+}) {
   const router = useRouter()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Result[]>([])
@@ -159,7 +165,7 @@ export function SearchBox({ expanded = false }: { expanded?: boolean }) {
             setMobileOpen(false)
           }
         }}
-        placeholder="Search projects"
+        placeholder={placeholder}
         aria-label="Search projects"
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />

@@ -48,7 +48,7 @@ function MobileNavigation() {
     <nav className="mx-auto grid h-[72px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 md:hidden">
       <Logo iconOnly={false} />
       <div className="w-full max-w-[280px] min-w-0 justify-self-center">
-        <SearchBox expanded />
+        <SearchBox expanded placeholder="Search" />
       </div>
       <div className="justify-self-end">
         <WalletButton />

@@ -80,6 +80,18 @@ afterEach(() => {
 })
 
 describe('SearchBox account results', () => {
+  it('supports the compact mobile placeholder without changing its accessible label', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(SearchBox, { expanded: true, placeholder: 'Search' }),
+      )
+    })
+    const input = renderer.root.findByType('input')
+    expect(input.props.placeholder).toBe('Search')
+    expect(input.props['aria-label']).toBe('Search projects')
+  })
+
   it('shows an account row for a pasted address and navigates on Enter', async () => {
     const renderer = await render()
     await type(renderer, ` ${BOB} `)
