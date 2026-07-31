@@ -354,7 +354,7 @@ export default async function ProjectPage({
               isRevnet={isRevnet}
             />
             <div className="mt-2 text-sm text-smoke-700">
-              <div className="space-y-1 lg:hidden">
+              <div className="space-y-1 md:hidden">
                 <div className="flex items-center">
                   <span>
                     <span className="text-smoke-500">Flavor:</span>{" "}
@@ -403,7 +403,10 @@ export default async function ProjectPage({
                 </div>
               </div>
 
-              <div className="hidden items-center whitespace-nowrap lg:flex">
+              <div
+                data-project-metadata-inline
+                className="hidden items-center whitespace-nowrap md:flex"
+              >
                 <span>
                   <span className="text-smoke-500">Flavor:</span>{" "}
                   <span className="font-medium text-ink">

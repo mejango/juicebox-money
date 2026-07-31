@@ -230,9 +230,19 @@ async function exerciseProjectSurfaces(
   ).toHaveCount(0)
 
   await expect(page.getByText('2 owners', { exact: true })).toBeVisible()
-  const metadataIndex = viewport.width >= 1024 ? 1 : 0
+  const metadataIndex = viewport.width >= 768 ? 1 : 0
   await expect(page.getByText('Flavor:', { exact: true }).nth(metadataIndex)).toBeVisible()
   await expect(page.getByText('Created:', { exact: true }).nth(metadataIndex)).toBeVisible()
+  const inlineMetadata = page.locator('[data-project-metadata-inline]')
+  if (viewport.width >= 768) {
+    await expect(inlineMetadata).toBeVisible()
+    const metadataRows = await inlineMetadata.locator(':scope > span').evaluateAll(nodes =>
+      new Set(nodes.map(node => Math.round(node.getBoundingClientRect().top))).size,
+    )
+    expect(metadataRows).toBe(1)
+  } else {
+    await expect(inlineMetadata).toBeHidden()
+  }
 
   const statSeparators = await page
     .locator('header [data-project-stats] [data-project-stat]')
@@ -252,7 +262,7 @@ async function exerciseProjectSurfaces(
     const sameLine = !!previous && Math.abs(statSeparators[index].middle - previous.middle) <= 1
     expect(statSeparators[index].hasLeadingSeparator).toBe(sameLine)
   }
-  if (viewport.width < 1024) {
+  if (viewport.width < 768) {
     const firstRowGap = statSeparators[1].left - statSeparators[0].right
     const secondRowGap = statSeparators[3].left - statSeparators[2].right
     expect(Math.abs(firstRowGap - secondRowGap)).toBeLessThanOrEqual(1)

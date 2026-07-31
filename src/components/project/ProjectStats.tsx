@@ -365,9 +365,9 @@ export function ProjectStats({
   return (
     <div
       data-project-stats
-      className="mt-2 space-y-1 lg:flex lg:items-center lg:gap-x-4 lg:space-y-0"
+      className="mt-2 space-y-1 md:flex md:items-center md:gap-x-4 md:space-y-0"
     >
-      <div className="flex items-center gap-x-4 lg:contents">
+      <div className="flex items-center gap-x-4 md:contents">
         <HoverBreakdownStat
           label="raised"
           value={formatUsd18(totalRaisedUsd)}
@@ -460,11 +460,11 @@ export function ProjectStats({
         )}
       </div>
 
-      <div className="flex items-center gap-x-4 lg:contents">
+      <div className="flex items-center gap-x-4 md:contents">
         <Stat
           label={paymentsCount === 1 ? "payment" : "payments"}
           value={paymentsCount.toLocaleString('en-US')}
-          className="lg:border-l lg:border-smoke-200 lg:pl-4"
+          className="md:border-l md:border-smoke-200 md:pl-4"
         />
         <Stat
           label={
