@@ -134,13 +134,21 @@ async function readChainTreasury(
   }
 }
 
-function Stat({ label, value }: { label: string; value: ReactNode }) {
+function Stat({
+  label,
+  value,
+  className = '',
+}: {
+  label: string
+  value: ReactNode
+  className?: string
+}) {
   return (
-    <div className="text-base sm:text-lg">
-      <dd>
+    <div data-project-stat className={`text-base sm:text-lg ${className}`}>
+      <div>
         <span className="font-agrandir font-medium text-ink">{value}</span>{" "}
         <span className="text-smoke-600">{label}</span>
-      </dd>
+      </div>
     </div>
   )
 }
@@ -150,12 +158,14 @@ export function HoverBreakdownStat({
   value,
   tooltipId,
   align = 'right',
+  className = '',
   children,
 }: {
   label: string
   value: ReactNode
   tooltipId: string
   align?: 'left' | 'right'
+  className?: string
   children: ReactNode
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
@@ -194,9 +204,10 @@ export function HoverBreakdownStat({
   return (
     <div
       ref={cardRef}
-      className="group relative text-base sm:text-lg"
+      data-project-stat
+      className={`group relative text-base sm:text-lg ${className}`}
     >
-      <dd>
+      <div>
         <button
           type="button"
           className="cursor-help font-agrandir font-medium text-ink underline decoration-smoke-300 decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-bluebs-500"
@@ -221,7 +232,7 @@ export function HoverBreakdownStat({
         >
           {children}
         </div>
-      </dd>
+      </div>
     </div>
   )
 }
@@ -352,109 +363,123 @@ export function ProjectStats({
       : '—'
 
   return (
-    <dl className="mt-2 grid grid-cols-[max-content_max-content] items-center gap-x-4 gap-y-1 [&>div:nth-child(even)]:border-l [&>div:nth-child(even)]:border-smoke-200 [&>div:nth-child(even)]:pl-4 lg:grid-cols-[repeat(4,max-content)] lg:[&>div:not(:first-child)]:border-l lg:[&>div:not(:first-child)]:border-smoke-200 lg:[&>div:not(:first-child)]:pl-4">
-      <HoverBreakdownStat
-        label="raised"
-        value={formatUsd18(totalRaisedUsd)}
-        tooltipId={raisedTooltipId}
-        align="left"
-      >
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
-          Raised by chain
-        </p>
-        <div className="space-y-2">
-          {raisedByChain.map(row => (
-            <div
-              key={row.chainId}
-              className="flex items-center justify-between gap-4 text-xs"
-            >
-              <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
-                <ChainIcon chainId={row.chainId} size={17} />
-                <span className="truncate">{chainName(row.chainId)}</span>
-              </span>
-              <span className="shrink-0 tabular-nums text-ink">
-                {formatUsd18(row.usd)}
-              </span>
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-4 border-t border-smoke-200 pt-2 text-xs font-medium text-ink">
-          <span>All chains</span>
-          <span className="tabular-nums">{formatUsd18(totalRaisedUsd)}</span>
-        </div>
-      </HoverBreakdownStat>
-
-      {hasBreakdown ? (
+    <div
+      data-project-stats
+      className="mt-2 space-y-1 lg:flex lg:items-center lg:gap-x-4 lg:space-y-0"
+    >
+      <div className="flex items-center gap-x-4 lg:contents">
         <HoverBreakdownStat
-          label="balance"
-          value={treasuryValue}
-          tooltipId={treasuryTooltipId}
+          label="raised"
+          value={formatUsd18(totalRaisedUsd)}
+          tooltipId={raisedTooltipId}
+          align="left"
         >
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
-            Balance breakdown
+            Raised by chain
           </p>
           <div className="space-y-2">
-            {data?.rows.map((row, index) => (
+            {raisedByChain.map(row => (
               <div
-                key={`${row.chainId}-${row.symbol}-${index}`}
-                className={`flex items-start justify-between gap-4 text-xs ${
-                  row.balance === 0n ? 'opacity-50' : ''
-                }`}
+                key={row.chainId}
+                className="flex items-center justify-between gap-4 text-xs"
               >
                 <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
                   <ChainIcon chainId={row.chainId} size={17} />
                   <span className="truncate">{chainName(row.chainId)}</span>
                 </span>
-                <span className="shrink-0 text-right tabular-nums text-ink">
-                  <span className="block">
-                    {formatTokenAmount(row.balance, row.decimals)} {row.symbol}
-                  </span>
-                  <span className="block text-[11px] text-smoke-500">
-                    {row.usd == null
-                      ? 'No USD price'
-                      : formatUsd18(row.usd)}
-                  </span>
+                <span className="shrink-0 tabular-nums text-ink">
+                  {formatUsd18(row.usd)}
                 </span>
-              </div>
-            ))}
-            {data?.failedChainIds.map(chainId => (
-              <div
-                key={`failed-${chainId}`}
-                className="flex items-center justify-between gap-4 text-xs text-smoke-500"
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  <ChainIcon chainId={chainId} size={17} />
-                  {chainName(chainId)}
-                </span>
-                <span>Unavailable</span>
               </div>
             ))}
           </div>
           <div className="mt-2 flex items-center justify-between gap-4 border-t border-smoke-200 pt-2 text-xs font-medium text-ink">
             <span>All chains</span>
-            <span className="tabular-nums">{treasuryValue}</span>
+            <span className="tabular-nums">{formatUsd18(totalRaisedUsd)}</span>
           </div>
         </HoverBreakdownStat>
-      ) : (
-        <Stat label="balance" value={treasuryValue} />
-      )}
 
-      <Stat
-        label={paymentsCount === 1 ? "payment" : "payments"}
-        value={paymentsCount.toLocaleString('en-US')}
-      />
-      <Stat
-        label={
-          isRevnet
-            ? holderCountIsExact && holderCount === 1
-              ? "owner"
-              : "owners"
-            : holderCountIsExact && holderCount === 1
-              ? "token holder"
-              : "token holders"
-        }
-        value={holderValue}
-      />
-    </dl>
+        {hasBreakdown ? (
+          <HoverBreakdownStat
+            label="balance"
+            value={treasuryValue}
+            tooltipId={treasuryTooltipId}
+            className="border-l border-smoke-200 pl-4"
+          >
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
+              Balance breakdown
+            </p>
+            <div className="space-y-2">
+              {data?.rows.map((row, index) => (
+                <div
+                  key={`${row.chainId}-${row.symbol}-${index}`}
+                  className={`flex items-start justify-between gap-4 text-xs ${
+                    row.balance === 0n ? 'opacity-50' : ''
+                  }`}
+                >
+                  <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
+                    <ChainIcon chainId={row.chainId} size={17} />
+                    <span className="truncate">{chainName(row.chainId)}</span>
+                  </span>
+                  <span className="shrink-0 text-right tabular-nums text-ink">
+                    <span className="block">
+                      {formatTokenAmount(row.balance, row.decimals)} {row.symbol}
+                    </span>
+                    <span className="block text-[11px] text-smoke-500">
+                      {row.usd == null
+                        ? 'No USD price'
+                        : formatUsd18(row.usd)}
+                    </span>
+                  </span>
+                </div>
+              ))}
+              {data?.failedChainIds.map(chainId => (
+                <div
+                  key={`failed-${chainId}`}
+                  className="flex items-center justify-between gap-4 text-xs text-smoke-500"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <ChainIcon chainId={chainId} size={17} />
+                    {chainName(chainId)}
+                  </span>
+                  <span>Unavailable</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-4 border-t border-smoke-200 pt-2 text-xs font-medium text-ink">
+              <span>All chains</span>
+              <span className="tabular-nums">{treasuryValue}</span>
+            </div>
+          </HoverBreakdownStat>
+        ) : (
+          <Stat
+            label="balance"
+            value={treasuryValue}
+            className="border-l border-smoke-200 pl-4"
+          />
+        )}
+      </div>
+
+      <div className="flex items-center gap-x-4 lg:contents">
+        <Stat
+          label={paymentsCount === 1 ? "payment" : "payments"}
+          value={paymentsCount.toLocaleString('en-US')}
+          className="lg:border-l lg:border-smoke-200 lg:pl-4"
+        />
+        <Stat
+          label={
+            isRevnet
+              ? holderCountIsExact && holderCount === 1
+                ? "owner"
+                : "owners"
+              : holderCountIsExact && holderCount === 1
+                ? "token holder"
+                : "token holders"
+          }
+          value={holderValue}
+          className="border-l border-smoke-200 pl-4"
+        />
+      </div>
+    </div>
   )
 }

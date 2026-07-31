@@ -235,12 +235,14 @@ async function exerciseProjectSurfaces(
   await expect(page.getByText('Created:', { exact: true }).nth(metadataIndex)).toBeVisible()
 
   const statSeparators = await page
-    .locator('header dl > div')
+    .locator('header [data-project-stats] [data-project-stat]')
     .evaluateAll(nodes =>
       nodes.map(node => {
         const rect = node.getBoundingClientRect()
         return {
           middle: Math.round(rect.top + rect.height / 2),
+          left: rect.left,
+          right: rect.right,
           hasLeadingSeparator: parseFloat(getComputedStyle(node).borderLeftWidth) > 0,
         }
       }),
@@ -249,6 +251,11 @@ async function exerciseProjectSurfaces(
     const previous = statSeparators[index - 1]
     const sameLine = !!previous && Math.abs(statSeparators[index].middle - previous.middle) <= 1
     expect(statSeparators[index].hasLeadingSeparator).toBe(sameLine)
+  }
+  if (viewport.width < 1024) {
+    const firstRowGap = statSeparators[1].left - statSeparators[0].right
+    const secondRowGap = statSeparators[3].left - statSeparators[2].right
+    expect(Math.abs(firstRowGap - secondRowGap)).toBeLessThanOrEqual(1)
   }
 
   const shopPreview = payCard.getByText('Shop', { exact: true })
