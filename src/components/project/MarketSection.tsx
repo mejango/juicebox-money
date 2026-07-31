@@ -397,10 +397,12 @@ type RawLog = {
 }
 
 const LP_LOG_WINDOW = 45_000n
+const LP_LOG_BATCH_WINDOWS = 8
+const LP_LOG_REORG_OVERLAP = 128n
 // Bounds RPC load: the buyback pools are recent, so their Initialize event sits
 // well within this many windows of the chain tip. Beyond it, we degrade to a
 // note rather than issue an unbounded number of eth_getLogs requests.
-const LP_MAX_WINDOWS = 40
+const LP_MAX_WINDOWS = 80
 
 function hexBlock(n: bigint): string {
   return '0x' + n.toString(16)
@@ -438,6 +440,14 @@ type ScanState = {
   ids: Map<string, { id: bigint; block: bigint }>
 }
 
+type PoolHistoryCache = {
+  initBlock: bigint
+  throughBlock: bigint
+  entries: { id: bigint; block: bigint }[]
+}
+
+const poolHistoryCache = new Map<string, PoolHistoryCache>()
+
 function collectPoolLog(log: RawLog, posm: Address, state: ScanState): void {
   const t0 = lc(String(log.topics?.[0] ?? ''))
   if (t0 === INITIALIZE_TOPIC) {
@@ -463,6 +473,39 @@ function collectPoolLog(log: RawLog, posm: Address, state: ScanState): void {
   }
 }
 
+async function scanKnownPoolRange(
+  client: PublicClient,
+  pm: Address,
+  posm: Address,
+  poolId: `0x${string}`,
+  fromBlock: bigint,
+  toBlock: bigint,
+  state: ScanState,
+): Promise<void> {
+  let cursor = fromBlock
+  while (cursor <= toBlock) {
+    const spans: { lo: bigint; hi: bigint }[] = []
+    for (
+      let n = 0;
+      n < LP_LOG_BATCH_WINDOWS && cursor <= toBlock;
+      n++
+    ) {
+      const end = cursor + LP_LOG_WINDOW - 1n
+      const hi = end > toBlock ? toBlock : end
+      spans.push({ lo: cursor, hi })
+      cursor = hi + 1n
+    }
+    const batches = await Promise.all(
+      spans.map(({ lo, hi }) =>
+        getPoolLogs(client, pm, poolId, lo, hi, false),
+      ),
+    )
+    for (const logs of batches) {
+      for (const log of logs) collectPoolLog(log, posm, state)
+    }
+  }
+}
+
 /**
  * Every PositionManager NFT id ever used in this pool. Port of website
  * lpPoolPositionTokenIds: try one wide eth_getLogs (works on archive providers
@@ -477,39 +520,99 @@ async function scanPoolTokenIds(
   poolId: `0x${string}`,
 ): Promise<bigint[]> {
   const latest = await client.getBlockNumber()
-  const state: ScanState = { initBlock: null, ids: new Map() }
-
-  let wideOk = false
-  try {
-    const logs = await getPoolLogs(client, pm, poolId, 0n, latest, false)
-    for (const log of logs) collectPoolLog(log, posm, state)
-    wideOk = state.initBlock != null
-  } catch {
-    wideOk = false
+  const cacheKey = `${client.chain?.id ?? 'unknown'}:${pm.toLowerCase()}:${posm.toLowerCase()}:${poolId.toLowerCase()}`
+  let cached = poolHistoryCache.get(cacheKey)
+  if (cached && latest < cached.throughBlock) {
+    poolHistoryCache.delete(cacheKey)
+    cached = undefined
+  }
+  const state: ScanState = {
+    initBlock: cached?.initBlock ?? null,
+    ids: new Map(),
   }
 
-  if (!wideOk) {
-    // Reset any partial wide-scan collection before the windowed scan.
-    state.initBlock = null
-    state.ids.clear()
-    let cursor = latest
-    for (let n = 0; n < LP_MAX_WINDOWS; n++) {
-      const lo = cursor >= LP_LOG_WINDOW ? cursor - LP_LOG_WINDOW + 1n : 0n
-      const logs = await getPoolLogs(client, pm, poolId, lo, cursor, false)
+  if (cached) {
+    const overlap =
+      cached.throughBlock > LP_LOG_REORG_OVERLAP
+        ? cached.throughBlock - LP_LOG_REORG_OVERLAP + 1n
+        : cached.initBlock
+    const overlapStart = overlap < cached.initBlock ? cached.initBlock : overlap
+    for (const entry of cached.entries) {
+      if (entry.block < overlapStart) state.ids.set(entry.id.toString(), entry)
+    }
+    await scanKnownPoolRange(
+      client,
+      pm,
+      posm,
+      poolId,
+      overlapStart,
+      latest,
+      state,
+    )
+  } else {
+    // Find the single indexed Initialize event first. Unlike an all-history
+    // ModifyLiquidity request, this remains cheap even for an old pool.
+    try {
+      const logs = await getPoolLogs(client, pm, poolId, 0n, latest, true)
       for (const log of logs) collectPoolLog(log, posm, state)
-      if (state.initBlock != null) break
-      if (lo === 0n) {
-        throw new Error('Pool initialization log not found')
+    } catch {
+      state.initBlock = null
+    }
+
+    if (state.initBlock != null) {
+      await scanKnownPoolRange(
+        client,
+        pm,
+        posm,
+        poolId,
+        state.initBlock,
+        latest,
+        state,
+      )
+    } else {
+      // Range-limited RPC: walk backwards in parallel batches until the
+      // Initialize event proves that the accumulated history is complete.
+      let cursor = latest
+      let windows = 0
+      while (state.initBlock == null && windows < LP_MAX_WINDOWS) {
+        const spans: { lo: bigint; hi: bigint }[] = []
+        for (
+          let n = 0;
+          n < LP_LOG_BATCH_WINDOWS && windows < LP_MAX_WINDOWS;
+          n++
+        ) {
+          const lo = cursor >= LP_LOG_WINDOW ? cursor - LP_LOG_WINDOW + 1n : 0n
+          spans.push({ lo, hi: cursor })
+          windows++
+          if (lo === 0n) break
+          cursor = lo - 1n
+        }
+        const batches = await Promise.all(
+          spans.map(({ lo, hi }) =>
+            getPoolLogs(client, pm, poolId, lo, hi, false),
+          ),
+        )
+        for (const logs of batches) {
+          for (const log of logs) collectPoolLog(log, posm, state)
+        }
+        if (spans.at(-1)?.lo === 0n && state.initBlock == null) {
+          throw new Error('Pool initialization log not found')
+        }
       }
-      cursor = lo - 1n
     }
   }
 
   if (state.initBlock == null) {
     throw new Error('Could not verify the complete LP history')
   }
-  return [...state.ids.values()]
-    .map(e => e.id)
+  const entries = [...state.ids.values()]
+  poolHistoryCache.set(cacheKey, {
+    initBlock: state.initBlock,
+    throughBlock: latest,
+    entries,
+  })
+  return entries
+    .map(entry => entry.id)
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
