@@ -1,13 +1,14 @@
 import type { HTMLAttributes } from 'react'
 
 export function Skeleton({
+  as: Component = 'div',
   className = '',
   ...props
-}: HTMLAttributes<HTMLDivElement>) {
+}: HTMLAttributes<HTMLElement> & { as?: 'div' | 'span' }) {
   const ariaHidden = props['aria-hidden'] ?? (props.role ? undefined : true)
 
   return (
-    <div
+    <Component
       {...props}
       aria-hidden={ariaHidden}
       className={`skeleton-shimmer ${className}`}

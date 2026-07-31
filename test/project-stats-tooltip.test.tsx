@@ -1,4 +1,5 @@
 import { HoverBreakdownStat } from '@/components/project/ProjectStats'
+import { Skeleton } from '@/components/ui/Skeleton'
 import TestRenderer, { act } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,5 +53,17 @@ describe('project stat breakdowns', () => {
     await act(async () => card.props.onClick())
     expect(card.props['aria-expanded']).toBe(false)
     expect(tooltip().props['aria-hidden']).toBe(true)
+  })
+
+  it('uses inline skeletons for unresolved stat values', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <Skeleton as="span" className="inline-block h-7 w-24" />,
+      )
+    })
+
+    const skeleton = renderer.root.findByType('span')
+    expect(skeleton.props.className).toContain('inline-block')
   })
 })

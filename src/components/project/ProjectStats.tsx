@@ -349,7 +349,7 @@ export function ProjectStats({
     !!participantData &&
     participantData.totalCount <= participantData.items.length
   const holderValue = holdersLoading
-    ? <Skeleton className="h-7 w-20 rounded" />
+    ? <Skeleton as="span" className="inline-block h-7 w-20 rounded align-middle" />
     : holdersError || !participantData
       ? '—'
       : `${holderCount.toLocaleString('en-US')}${holderCountIsExact ? '' : '+'}`
@@ -357,7 +357,7 @@ export function ProjectStats({
   const hasBreakdown =
     !!data && (data.rows.length > 0 || data.failedChainIds.length > 0)
   const treasuryValue = isLoading
-    ? <Skeleton className="h-7 w-24 rounded" />
+    ? <Skeleton as="span" className="inline-block h-7 w-24 rounded align-middle" />
     : data?.totalUsd != null
       ? formatUsd18(data.totalUsd)
       : '—'
