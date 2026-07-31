@@ -33,8 +33,11 @@ import { useWallet } from '@/hooks/useWallet'
 import { TxError } from '@/components/ui/TxError'
 import {
   buildCashOutRequest,
+  cashOutExecutionErrorMessage,
+  cashOutPoolBufferBps,
   getCashOutContext,
   isNativeToken,
+  protectHookAwareCashOutRoute,
 } from '@/lib/cashOut'
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -166,6 +169,7 @@ export function CashOutPanel({
     data: route,
     isFetching: quoteLoading,
     isError: quoteFailed,
+    refetch: refetchCashOutRoute,
   } = useQuery({
     queryKey: [
       'cashOutQuote',
@@ -177,16 +181,19 @@ export function CashOutPanel({
     ],
     enabled: !!publicClient && !!context && !!terminal && cashOutCount > 0n,
     retry: false,
-    queryFn: () =>
-      getHookAwareCashOutQuote(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        holder: address ?? zeroAddress,
-        cashOutCount,
-        tokenToReclaim: context!.token,
-        terminal: terminal!.address,
-        slippageBps: BigInt(slippageBps),
-      }),
+    queryFn: async () =>
+      protectHookAwareCashOutRoute(
+        await getHookAwareCashOutQuote(publicClient!, {
+          chainId,
+          projectId: BigInt(projectId),
+          holder: address ?? zeroAddress,
+          cashOutCount,
+          tokenToReclaim: context!.token,
+          terminal: terminal!.address,
+          slippageBps: BigInt(slippageBps),
+        }),
+        BigInt(slippageBps),
+      ),
   })
 
   // Claimed project tokens can be sold directly into the buyback pool. This
@@ -254,6 +261,7 @@ export function CashOutPanel({
     !!route &&
     directSellMinimum > route.expectedReturn &&
     (claimedBalance ?? 0n) >= cashOutCount
+  const poolBufferBps = cashOutPoolBufferBps(route)
 
   const swapDeployment = directSellWins
     ? uniswapV4Deployment(chainId)
@@ -418,6 +426,16 @@ export function CashOutPanel({
         return
       }
       // holder/beneficiary read fresh from the connected account at submit.
+      const refreshedRoute = await refetchCashOutRoute()
+      if (
+        refreshedRoute.isError ||
+        !refreshedRoute.data ||
+        refreshedRoute.data.expectedReturn <= 0n
+      ) {
+        throw new Error(
+          'The cash-out quote is no longer available. Review and try again.',
+        )
+      }
       const request = buildCashOutRequest({
         chainId,
         terminal: terminal.address,
@@ -425,12 +443,12 @@ export function CashOutPanel({
         projectId: BigInt(projectId),
         cashOutCount,
         tokenToReclaim: context.token,
-        route,
+        route: refreshedRoute.data,
         beneficiary: address,
       })
       await tx.send({ ...request, abi: request.abi as Abi })
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'Something went wrong.')
+      setErrorMsg(cashOutExecutionErrorMessage(e))
     }
   }
 
@@ -578,7 +596,35 @@ export function CashOutPanel({
             {bps / 100}%
           </button>
         ))}
+        <label className="input-well flex h-7 items-center px-2 text-[11px] text-smoke-700">
+          <span className="sr-only">Custom max slippage percent</span>
+          <input
+            type="number"
+            min="0"
+            max="99.99"
+            step="0.1"
+            inputMode="decimal"
+            value={slippageBps / 100}
+            onChange={(event) => {
+              const percent = Number(event.target.value)
+              if (Number.isFinite(percent) && percent >= 0 && percent < 100) {
+                setSlippageBps(Math.round(percent * 100))
+              }
+            }}
+            className="w-12 bg-transparent text-right outline-none"
+          />
+          <span>%</span>
+        </label>
       </div>
+
+      {!directSellWins && poolBufferBps !== null ? (
+        <p className="mt-2 text-xs text-smoke-700">
+          This pool&apos;s preview already allows about{' '}
+          {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for its fee
+          and price impact. Your {slippageBps / 100}% setting additionally
+          covers movement before the transaction lands.
+        </p>
+      ) : null}
 
       <button
         onClick={cashOut}
