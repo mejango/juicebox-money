@@ -10,11 +10,14 @@ import {
 import {
   buildPermit2ApproveTx,
   buildUniswapV4ExactInputSwapTx,
+  chooseBestCashOutRoute,
   getHookAwareCashOutQuote,
   getTokenAddress,
+  prepareHookAwareCashOut,
   quoteUniswapV4ExactInputSingle,
   resolvePaymentTerminal,
   uniswapV4Deployment,
+  uniswapV4SwapDirection,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
@@ -32,12 +35,10 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { TxError } from '@/components/ui/TxError'
 import {
-  buildCashOutRequest,
   cashOutExecutionErrorMessage,
   cashOutPoolBufferBps,
   getCashOutContext,
   isNativeToken,
-  protectHookAwareCashOutRoute,
 } from '@/lib/cashOut'
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -181,19 +182,16 @@ export function CashOutPanel({
     ],
     enabled: !!publicClient && !!context && !!terminal && cashOutCount > 0n,
     retry: false,
-    queryFn: async () =>
-      protectHookAwareCashOutRoute(
-        await getHookAwareCashOutQuote(publicClient!, {
-          chainId,
-          projectId: BigInt(projectId),
-          holder: address ?? zeroAddress,
-          cashOutCount,
-          tokenToReclaim: context!.token,
-          terminal: terminal!.address,
-          slippageBps: BigInt(slippageBps),
-        }),
-        BigInt(slippageBps),
-      ),
+    queryFn: () =>
+      getHookAwareCashOutQuote(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+        holder: address ?? zeroAddress,
+        cashOutCount,
+        tokenToReclaim: context!.token,
+        terminal: terminal!.address,
+        slippageBps: BigInt(slippageBps),
+      }),
   })
 
   // Claimed project tokens can be sold directly into the buyback pool. This
@@ -207,12 +205,15 @@ export function CashOutPanel({
     queryFn: () =>
       resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
   })
-  const directSellAvailable =
-    market?.status === 'pool' &&
-    !!projectToken &&
-    [market.key.currency0, market.key.currency1].some(
-      currency => currency.toLowerCase() === projectToken.address.toLowerCase(),
-    )
+  const directSellDirection =
+    market?.status === 'pool' && projectToken && context
+      ? uniswapV4SwapDirection({
+          poolKey: market.key,
+          tokenIn: projectToken.address,
+          tokenOut: context.token,
+        })
+      : null
+  const directSellAvailable = directSellDirection !== null
   const { data: claimedBalance } = useQuery({
     queryKey: ['claimedCashOutBalance', chainId, projectToken?.address, address],
     enabled: !!publicClient && !!projectToken && !!address,
@@ -232,6 +233,8 @@ export function CashOutPanel({
       projectId,
       cashOutCount.toString(),
       market?.status === 'pool' ? market.poolId : null,
+      context?.token,
+      directSellDirection,
     ],
     enabled:
       !!publicClient &&
@@ -246,21 +249,26 @@ export function CashOutPanel({
       return quoteUniswapV4ExactInputSingle(publicClient!, {
         chainId,
         poolKey: market.key,
-        zeroForOne:
-          market.key.currency0.toLowerCase() ===
-          projectToken.address.toLowerCase(),
+        zeroForOne: directSellDirection!,
         amountIn: cashOutCount,
       })
     },
   })
-  const directSellMinimum =
-    directSellQuote && directSellQuote > 0n
-      ? (directSellQuote * BigInt(10_000 - slippageBps)) / 10_000n
-      : 0n
-  const directSellWins =
-    !!route &&
-    directSellMinimum > route.expectedReturn &&
-    (claimedBalance ?? 0n) >= cashOutCount
+  const bestRoute =
+    route && market?.status === 'pool'
+      ? chooseBestCashOutRoute({
+          cashOut: route,
+          directSwapQuote: directSellQuote,
+          directSwapPoolKey: market.key,
+          directSwapZeroForOne: directSellDirection ?? undefined,
+          spendableProjectTokenCount: claimedBalance ?? 0n,
+          cashOutCount,
+          slippageBps: BigInt(slippageBps),
+        })
+      : route
+        ? chooseBestCashOutRoute({ cashOut: route, cashOutCount })
+        : null
+  const directSellWins = bestRoute?.kind === 'direct-swap'
   const poolBufferBps = cashOutPoolBufferBps(route)
 
   const swapDeployment = directSellWins
@@ -393,27 +401,40 @@ export function CashOutPanel({
           })
           return
         }
+        const refreshedCashOut = await refetchCashOutRoute()
+        if (
+          refreshedCashOut.isError ||
+          !refreshedCashOut.data ||
+          refreshedCashOut.data.expectedReturn <= 0n
+        ) {
+          throw new Error(
+            'The cash-out quote is no longer available. Review and try again.',
+          )
+        }
         const freshQuote = await quoteUniswapV4ExactInputSingle(publicClient!, {
           chainId,
           poolKey: market.key,
-          zeroForOne:
-            market.key.currency0.toLowerCase() ===
-            projectToken.address.toLowerCase(),
+          zeroForOne: directSellDirection!,
           amountIn: cashOutCount,
         })
-        const freshMinimum =
-          (freshQuote * BigInt(10_000 - slippageBps)) / 10_000n
-        if (freshMinimum <= route.expectedReturn) {
+        const refreshedBest = chooseBestCashOutRoute({
+          cashOut: refreshedCashOut.data,
+          directSwapQuote: freshQuote,
+          directSwapPoolKey: market.key,
+          directSwapZeroForOne: directSellDirection!,
+          spendableProjectTokenCount: claimedBalance ?? 0n,
+          cashOutCount,
+          slippageBps: BigInt(slippageBps),
+        })
+        if (refreshedBest.kind !== 'direct-swap') {
           throw new Error('The pool no longer beats the project cash-out route. Review the refreshed quote.')
         }
         const request = buildUniswapV4ExactInputSwapTx({
           chainId,
           poolKey: market.key,
-          zeroForOne:
-            market.key.currency0.toLowerCase() ===
-            projectToken.address.toLowerCase(),
+          zeroForOne: directSellDirection!,
           amountIn: cashOutCount,
-          minimumAmountOut: freshMinimum,
+          minimumAmountOut: refreshedBest.minimumReturn,
           recipient: address,
           deadline: swapDeadline(tx.isSafe),
         })
@@ -425,27 +446,23 @@ export function CashOutPanel({
         })
         return
       }
-      // holder/beneficiary read fresh from the connected account at submit.
-      const refreshedRoute = await refetchCashOutRoute()
-      if (
-        refreshedRoute.isError ||
-        !refreshedRoute.data ||
-        refreshedRoute.data.expectedReturn <= 0n
-      ) {
+      // Quote, lock and build one matching request from fresh protocol state.
+      const prepared = await prepareHookAwareCashOut(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+        holder: address,
+        cashOutCount,
+        tokenToReclaim: context.token,
+        terminal: terminal.address,
+        beneficiary: address,
+        slippageBps: BigInt(slippageBps),
+      })
+      if (prepared.route.expectedReturn <= 0n) {
         throw new Error(
           'The cash-out quote is no longer available. Review and try again.',
         )
       }
-      const request = buildCashOutRequest({
-        chainId,
-        terminal: terminal.address,
-        holder: address,
-        projectId: BigInt(projectId),
-        cashOutCount,
-        tokenToReclaim: context.token,
-        route: refreshedRoute.data,
-        beneficiary: address,
-      })
+      const request = prepared.transaction
       await tx.send({ ...request, abi: request.abi as Abi })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
@@ -662,7 +679,10 @@ export function CashOutPanel({
       route.expectedReturn > 0n ? (
         <p className="mt-3 text-center text-xs text-smoke-700">
           You&apos;ll receive at least{' '}
-          {formatTokenAmount(route.minimumReturn, receiveDecimals)}{' '}
+          {formatTokenAmount(
+            bestRoute?.minimumReturn ?? route.minimumReturn,
+            receiveDecimals,
+          )}{' '}
           {receiveSymbol}, or the transaction reverts.
         </p>
       ) : null}

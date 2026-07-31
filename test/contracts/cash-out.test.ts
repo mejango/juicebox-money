@@ -42,7 +42,6 @@ import {
   minimumCashOutPriceAtIssuancePrice,
   minimumCashOutPriceFromTotals,
   netOfCashOutFee,
-  protectHookAwareCashOutRoute,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 
@@ -354,11 +353,11 @@ describe('cash-out transaction request', () => {
     ).toMatch(/pool moved below your protected minimum/i)
   })
 
-  it('bases a buyback hard floor on the hook executable quote, not its optimistic raw quote', () => {
+  it('reports the SDK buyback quote buffer in display basis points', () => {
     const route: CashOutRoute = {
       route: 'amm',
       expectedReturn: 16_419_630n,
-      minimumReturn: 16_255_433n,
+      minimumReturn: 15_840_000n,
       terminalMinimum: 0n,
       metadata: '0xabcdef',
       treasuryGross: 1_546_940n,
@@ -377,43 +376,7 @@ describe('cash-out transaction request', () => {
       },
     }
 
-    const protectedRoute = protectHookAwareCashOutRoute(route, 100n)
-    expect(protectedRoute.route).toBe('amm')
-    expect(protectedRoute.expectedReturn).toBe(16_419_630n)
-    expect(protectedRoute.minimumReturn).toBe(15_840_000n)
-    expect(protectedRoute.metadata).not.toBe(route.metadata)
-    expect(cashOutPoolBufferBps(protectedRoute)).toBe(256)
-  })
-
-  it('uses the treasury route when a protected pool floor would no longer beat it', () => {
-    const route: CashOutRoute = {
-      route: 'amm',
-      expectedReturn: 1_050n,
-      minimumReturn: 1_039n,
-      terminalMinimum: 0n,
-      metadata: '0xabcdef',
-      treasuryGross: 1_020n,
-      treasuryProtocolFee: 25n,
-      treasuryNet: 995n,
-      buyback: {
-        hook: '0x4444444444444444444444444444444444444444',
-        minimumSwapAmountOut: 1_000n,
-        cashOutCountToSell: 1n,
-        netDirectCashOutAmount: 995n,
-        twapTick: 0,
-        twapLiquidity: 1n,
-        poolId: `0x${'11'.repeat(32)}`,
-        rawSwapQuote: 1_050n,
-        hasUserSpecifiedMinimumSwapAmountOut: false,
-      },
-    }
-
-    const protectedRoute = protectHookAwareCashOutRoute(route, 100n)
-    expect(protectedRoute.route).toBe('treasury')
-    expect(protectedRoute.expectedReturn).toBe(995n)
-    expect(protectedRoute.minimumReturn).toBe(985n)
-    expect(protectedRoute.terminalMinimum).toBe(985n)
-    expect(protectedRoute.metadata).toBe('0x')
+    expect(cashOutPoolBufferBps(route)).toBe(256)
   })
 
   it('round-trips the treasury route: exact fee, 1% floor, empty metadata', () => {

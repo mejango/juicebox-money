@@ -1,11 +1,11 @@
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  buildBuybackCashOutMetadata,
   buildCashOutTx,
+  cashOutPoolBufferBps as sdkCashOutPoolBufferBps,
   cashOutProtocolFee,
+  classifyCashOutExecutionError,
   getAccountingContexts,
   getCashOutQuote,
-  slippageFloor,
   type CashOutQuote,
   type CashOutRoute,
   type JBAccountingContext,
@@ -24,91 +24,21 @@ export function isNativeToken(token: string): boolean {
   return token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
 }
 
-/**
- * Turn the buyback hook's preview into an executable user floor.
- *
- * The hook's `rawSwapQuote` is an oracle quote, not an amount the pool promises
- * to deliver. Its `minimumSwapAmountOut` already accounts for the pool fee,
- * liquidity and price impact. Applying the user's quote-to-inclusion tolerance
- * to the raw quote can therefore produce an impossible minimum and make
- * `cashOutTokensOf` revert with `JBBuybackHook_SpecifiedSlippageExceeded`.
- */
-export function protectHookAwareCashOutRoute(
-  route: CashOutRoute,
-  slippageBps: bigint,
-): CashOutRoute {
-  const buyback = route.buyback
-  if (route.route !== 'amm' || !buyback) return route
-
-  const executableMinimum = slippageFloor(
-    buyback.minimumSwapAmountOut,
-    slippageBps,
-  )
-
-  // An explicit hook minimum at or below the direct reclaim tells the hook to
-  // use the deterministic treasury route. Keep the request and its display in
-  // agreement instead of presenting it as an AMM cash-out.
-  if (
-    executableMinimum <= 0n ||
-    executableMinimum <= buyback.netDirectCashOutAmount
-  ) {
-    const treasuryMinimum = slippageFloor(route.treasuryNet, slippageBps)
-    return {
-      ...route,
-      route: 'treasury',
-      expectedReturn: route.treasuryNet,
-      minimumReturn: treasuryMinimum,
-      terminalMinimum: treasuryMinimum,
-      metadata: '0x',
-    }
-  }
-
-  return {
-    ...route,
-    minimumReturn: executableMinimum,
-    metadata: buildBuybackCashOutMetadata({
-      hook: buyback.hook,
-      minimumSwapAmountOut: executableMinimum,
-    }),
-  }
-}
-
 /** Pool fee/impact buffer already reflected in the hook's executable quote. */
 export function cashOutPoolBufferBps(
   route: CashOutRoute | undefined,
 ): number | null {
-  const buyback = route?.route === 'amm' ? route.buyback : null
-  if (!buyback || buyback.rawSwapQuote <= 0n) return null
-  const boundedMinimum =
-    buyback.minimumSwapAmountOut > buyback.rawSwapQuote
-      ? buyback.rawSwapQuote
-      : buyback.minimumSwapAmountOut
-  return Number(
-    ((buyback.rawSwapQuote - boundedMinimum) * 10_000n +
-      buyback.rawSwapQuote -
-      1n) /
-      buyback.rawSwapQuote,
-  )
+  const buffer = sdkCashOutPoolBufferBps(route)
+  return buffer === null ? null : Number(buffer)
 }
 
 export function cashOutExecutionErrorMessage(error: unknown): string {
-  const details: string[] = []
-  let current: unknown = error
-  for (let depth = 0; current && depth < 5; depth += 1) {
-    if (current instanceof Error) {
-      details.push(current.message)
-      current = current.cause
-    } else {
-      details.push(String(current))
-      break
-    }
-  }
-  const message = details.join(' ')
-  if (
-    message.includes('0xe2d708a9') ||
-    message.includes('JBBuybackHook_SpecifiedSlippageExceeded')
-  ) {
+  const classified = classifyCashOutExecutionError(error)
+  if (classified?.code === 'BUYBACK_SLIPPAGE_EXCEEDED') {
     return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.'
+  }
+  if (classified?.code === 'TERMINAL_UNDER_MIN') {
+    return 'The project cash-out fell below your protected minimum. Refresh the quote and try again.'
   }
   return error instanceof Error ? error.message : 'Something went wrong.'
 }
