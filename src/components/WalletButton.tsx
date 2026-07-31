@@ -5,8 +5,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { isAddress, type Address } from 'viem'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
+import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { useWallet } from '@/hooks/useWallet'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
+import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
 import { useViewAs } from '@/lib/viewAs'
 
 /** Inline "View as…" prompt: an address or ENS name turns on view-as mode. */
@@ -75,6 +77,7 @@ export function WalletButton() {
   const [viewAsOpen, setViewAsOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const mobileWallet = useMobileWallet()
 
   // Wallet state only exists client-side; render the signed-out shell on the
   // server so hydration always matches.
@@ -91,6 +94,47 @@ export function WalletButton() {
   const activeViewAs = mounted ? viewAs : null
   // While view-as is active, "View account" follows the impersonated account.
   const accountAddress = activeViewAs ?? address
+  const externalConnectors =
+    mobileWallet === 'checking' || mobileWallet === 'handoff'
+      ? connectors.filter(connector => connector.id !== 'injected')
+      : connectors
+
+  const mobileWalletOptions =
+    mobileWallet === 'checking' ? (
+      <p className="px-4 py-3 text-xs text-smoke-700">
+        Checking this browser for MetaMask…
+      </p>
+    ) : mobileWallet === 'handoff' && typeof window !== 'undefined' ? (
+      <div className="px-2 py-2">
+        <p className="px-2 pb-1.5 text-xs text-smoke-700">
+          Open this page inside a wallet app to connect.
+        </p>
+        {mobileWalletLinks(window.location.href).map(link => (
+          <a
+            key={link.name}
+            href={link.url}
+            onClick={closeMenu}
+            className="block min-h-11 w-full px-2 py-2.5 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+          >
+            Open in {link.name}
+          </a>
+        ))}
+        {typeof navigator.share === 'function' ? (
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.share({
+                title: document.title,
+                url: walletDappUrl(window.location.href),
+              })
+            }}
+            className="block min-h-11 w-full px-2 py-2.5 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+          >
+            Open in another wallet…
+          </button>
+        ) : null}
+      </div>
+    ) : null
 
   const viewAsItem = (
     <button
@@ -199,7 +243,7 @@ export function WalletButton() {
                 </span>
               </button>
               <div className="mx-4 my-1 border-t border-smoke-200" />
-              {connectors.map(c => (
+              {externalConnectors.map(c => (
                 <button
                   key={c.id}
                   onClick={() => {
@@ -211,6 +255,12 @@ export function WalletButton() {
                   {c.name}
                 </button>
               ))}
+              {mobileWalletOptions ? (
+                <>
+                  <div className="mx-4 my-1 border-t border-smoke-200" />
+                  {mobileWalletOptions}
+                </>
+              ) : null}
               <div className="mx-4 my-1 border-t border-smoke-200" />
               {viewAsItem}
             </>
