@@ -580,8 +580,8 @@ export function CashOutPanel({
         ) : null}
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        <span className="text-xs font-medium text-smoke-700">Max slippage</span>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="shrink-0 text-xs font-medium text-smoke-700">Max slippage</span>
         {SLIPPAGE_PRESETS_BPS.map(bps => (
           <button
             key={bps}
@@ -596,7 +596,7 @@ export function CashOutPanel({
             {bps / 100}%
           </button>
         ))}
-        <label className="input-well flex h-7 items-center px-2 text-[11px] text-smoke-700">
+        <label className="input-well !flex !h-7 !w-[76px] shrink-0 items-center px-2 text-[11px] text-smoke-700">
           <span className="sr-only">Custom max slippage percent</span>
           <input
             type="number"
@@ -611,7 +611,7 @@ export function CashOutPanel({
                 setSlippageBps(Math.round(percent * 100))
               }
             }}
-            className="w-12 bg-transparent text-right outline-none"
+            className="min-w-0 flex-1 border-0 bg-transparent p-0 text-right outline-none ring-0 focus:border-0 focus:ring-0"
           />
           <span>%</span>
         </label>
