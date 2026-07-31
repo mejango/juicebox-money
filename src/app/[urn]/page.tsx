@@ -351,12 +351,13 @@ export default async function ProjectPage({
               paymentsCount={paymentsCount}
               suckerGroupId={project.suckerGroupId}
               chains={chainPairs}
+              isRevnet={isRevnet}
             />
             <div className="mt-2 text-sm text-smoke-700">
               <div className="space-y-1 lg:hidden">
                 <div className="flex items-center">
                   <span>
-                    <span className="text-smoke-500">Type:</span>{" "}
+                    <span className="text-smoke-500">Flavor:</span>{" "}
                     <span className="font-medium text-ink">
                       {isRevnet ? "Revnet" : "Project"}
                     </span>
@@ -404,7 +405,7 @@ export default async function ProjectPage({
 
               <div className="hidden items-center whitespace-nowrap lg:flex">
                 <span>
-                  <span className="text-smoke-500">Type:</span>{" "}
+                  <span className="text-smoke-500">Flavor:</span>{" "}
                   <span className="font-medium text-ink">
                     {isRevnet ? "Revnet" : "Project"}
                   </span>

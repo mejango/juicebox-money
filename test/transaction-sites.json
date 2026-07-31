@@ -76,13 +76,6 @@
         { "id": "approve-loan-repayment", "actions": ["Approve an ERC-20"] }
       ]
     },
-    "src/components/project/MarketSection.tsx": {
-      "hooks": 1,
-      "sends": 1,
-      "sendSites": [
-        { "id": "remove-liquidity-position", "actions": ["Remove Uniswap V4 liquidity"] }
-      ]
-    },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
       "sends": 3,

@@ -46,7 +46,6 @@ Legend:
 | Claim bridged funds | sucker claim call | **E** | `contracts/transaction-backlog.test.ts` |
 | Sync sucker accounting | sucker sync call | **E** | `contracts/transaction-backlog.test.ts` |
 | Add Uniswap V4 liquidity | approvals + `modifyLiquidities` | **E** | `contracts/transaction-backlog.test.ts` |
-| Remove Uniswap V4 liquidity | `modifyLiquidities` with `BURN_POSITION` + `TAKE_PAIR` | **E** | `contracts/liquidity-remove.test.ts` |
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
 | Submit a reviewed direct write | review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |

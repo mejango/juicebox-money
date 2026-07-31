@@ -229,7 +229,10 @@ async function exerciseProjectSurfaces(
     payCard.getByText("This project doesn't list the direct payment terminal"),
   ).toHaveCount(0)
 
-  await expect(page.getByText('2 token holders', { exact: true })).toBeVisible()
+  await expect(page.getByText('2 owners', { exact: true })).toBeVisible()
+  const metadataIndex = viewport.width >= 1024 ? 1 : 0
+  await expect(page.getByText('Flavor:', { exact: true }).nth(metadataIndex)).toBeVisible()
+  await expect(page.getByText('Created:', { exact: true }).nth(metadataIndex)).toBeVisible()
 
   if (viewport.width <= 600) {
     const activity = projectTabs.getByRole('tab', {

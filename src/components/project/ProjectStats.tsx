@@ -232,6 +232,7 @@ export function ProjectStats({
   paymentsCount,
   suckerGroupId,
   chains,
+  isRevnet,
 }: {
   /** Bendystraw's indexed, 18-decimal fixed-point USD volume. */
   totalRaisedUsd: string
@@ -241,6 +242,7 @@ export function ProjectStats({
   suckerGroupId: string | null
   /** [chainId, projectId] pairs across the sucker group. */
   chains: [number, number][]
+  isRevnet: boolean
 }) {
   const config = useConfig()
   const raisedTooltipId = useId()
@@ -441,7 +443,18 @@ export function ProjectStats({
         label={paymentsCount === 1 ? "payment" : "payments"}
         value={paymentsCount.toLocaleString('en-US')}
       />
-      <Stat label="token holders" value={holderValue} />
+      <Stat
+        label={
+          isRevnet
+            ? holderCountIsExact && holderCount === 1
+              ? "owner"
+              : "owners"
+            : holderCountIsExact && holderCount === 1
+              ? "token holder"
+              : "token holders"
+        }
+        value={holderValue}
+      />
     </dl>
   )
 }

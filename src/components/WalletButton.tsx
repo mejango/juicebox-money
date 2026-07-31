@@ -123,10 +123,17 @@ export function WalletButton() {
           <button
             type="button"
             onClick={() => {
-              void navigator.share({
-                title: document.title,
-                url: walletDappUrl(window.location.href),
-              })
+              void navigator
+                .share({
+                  title: document.title,
+                  url: walletDappUrl(window.location.href),
+                })
+                .catch(error => {
+                  if (error instanceof Error && error.name === 'AbortError') {
+                    return
+                  }
+                  console.error('Wallet handoff share failed:', error)
+                })
             }}
             className="block min-h-11 w-full px-2 py-2.5 text-left text-sm font-medium text-ink hover:bg-smoke-25"
           >
