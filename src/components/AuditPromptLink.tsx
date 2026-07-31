@@ -1,7 +1,6 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { AUDIT_PROMPT } from '@/lib/audit-prompt'
 
 /**
  * "All open source, audit the code with your AI." — the link copies the
@@ -18,6 +17,7 @@ export function AuditPromptLink({ className }: { className?: string }) {
         type="button"
         onClick={async () => {
           try {
+            const { AUDIT_PROMPT } = await import('@/lib/audit-prompt')
             await navigator.clipboard.writeText(AUDIT_PROMPT)
             setCopied(true)
             if (timer.current) clearTimeout(timer.current)
