@@ -234,6 +234,42 @@ async function exerciseProjectSurfaces(
   await expect(page.getByText('Flavor:', { exact: true }).nth(metadataIndex)).toBeVisible()
   await expect(page.getByText('Created:', { exact: true }).nth(metadataIndex)).toBeVisible()
 
+  const statSeparators = await page
+    .locator('header dl > div')
+    .evaluateAll(nodes =>
+      nodes.map(node => {
+        const rect = node.getBoundingClientRect()
+        return {
+          middle: Math.round(rect.top + rect.height / 2),
+          hasLeadingSeparator: parseFloat(getComputedStyle(node).borderLeftWidth) > 0,
+        }
+      }),
+    )
+  for (let index = 0; index < statSeparators.length; index += 1) {
+    const previous = statSeparators[index - 1]
+    const sameLine = !!previous && Math.abs(statSeparators[index].middle - previous.middle) <= 1
+    expect(statSeparators[index].hasLeadingSeparator).toBe(sameLine)
+  }
+
+  const shopPreview = payCard.getByText('Shop', { exact: true })
+  if ((await shopPreview.count()) === 0) {
+    const paySpacing = await payCard.evaluate(card => {
+      const select = card.querySelector<HTMLSelectElement>('select[aria-label="Payment mode"]')
+      const label = select?.previousElementSibling
+      const note = card.querySelector<HTMLInputElement>('input[aria-label="Note"]')
+      if (!label || !note) return null
+      const cardRect = card.getBoundingClientRect()
+      const labelRect = label.getBoundingClientRect()
+      const noteRect = note.getBoundingClientRect()
+      return {
+        top: labelRect.top - cardRect.top,
+        bottom: cardRect.bottom - noteRect.bottom,
+      }
+    })
+    expect(paySpacing).not.toBeNull()
+    expect(Math.abs(paySpacing!.top - paySpacing!.bottom)).toBeLessThanOrEqual(6)
+  }
+
   if (viewport.width <= 600) {
     const activity = projectTabs.getByRole('tab', {
       name: 'Activity',

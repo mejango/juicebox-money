@@ -1203,10 +1203,12 @@ export function PayPanel({
     );
   }
 
+  const hasShopPreview = !!shop && shop.tiers.length > 0 && mode === "pay";
+
   return (
-    <div>
+    <div className={hasShopPreview ? undefined : "-mt-3"}>
       {/* Shop strip */}
-      {shop && shop.tiers.length > 0 && mode === "pay" ? (
+      {hasShopPreview ? (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-3">
             <span className="field-label">Shop</span>
@@ -1330,7 +1332,7 @@ export function PayPanel({
 
       {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
       <div
-        className={`${shop && shop.tiers.length > 0 && mode === "pay" ? "mt-4" : ""} flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700`}
+        className={`${hasShopPreview ? "mt-4" : ""} flex flex-wrap items-center gap-x-1.5 gap-y-1 text-base text-smoke-700`}
       >
         <TextSelect
           value={mode}
