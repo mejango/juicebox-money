@@ -19,7 +19,7 @@ import {
  */
 
 export const ISSUANCE_COLOR = '#5777EB'
-export const NOW_COLOR = '#F5A312'
+const NOW_COLOR = '#F5A312'
 
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320

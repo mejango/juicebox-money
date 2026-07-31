@@ -11,7 +11,7 @@ export type PowerFlag =
   | 'allowSetCustomToken'
   | 'allowAddAccountingContext'
 
-export type FieldKind = 'address' | 'amount' | 'uint' | 'decimals' | 'bool'
+type FieldKind = 'address' | 'amount' | 'uint' | 'decimals' | 'bool'
 
 export type FlowField = {
   name: string

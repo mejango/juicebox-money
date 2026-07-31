@@ -1,7 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import { useEffect, type ReactNode } from 'react'
+import { useEffect } from 'react';
 import transactionPending from '@/assets/illustrations/transaction-pending.webp'
 
 let transactionAnimationPreloadStarted = false
@@ -33,26 +33,5 @@ export function TransactionProgressImage({
       aria-hidden
       className={`shrink-0 object-contain ${className}`}
     />
-  )
-}
-
-export function TransactionInProgress({
-  children,
-  className = '',
-}: {
-  children?: ReactNode
-  className?: string
-}) {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`flex items-center gap-3 rounded-xl border border-bluebs-100 bg-bluebs-25 px-3.5 py-3 ${className}`}
-    >
-      <TransactionProgressImage />
-      <div className="min-w-0 text-sm leading-relaxed text-smoke-700">
-        {children ?? 'Transaction submitted — waiting for confirmation.'}
-      </div>
-    </div>
   )
 }

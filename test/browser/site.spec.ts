@@ -174,7 +174,9 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
   ).toBeVisible()
   await flavor.selectOption('project')
   await expect(stepper.getByRole('button')).toHaveCount(5)
-  await expect(page.getByText('You set the rules', { exact: false })).toBeVisible()
+  await expect(
+    page.getByText('The project owner sets the rules', { exact: false }),
+  ).toBeVisible()
   await flavor.selectOption('revnet')
   await expect(stepper.getByRole('button')).toHaveCount(5)
   await expect(page.getByText('Fixed rules that run forever', { exact: false })).toBeVisible()
@@ -198,7 +200,9 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
     await expectSurface(page, `${viewport} create ${step.label}`)
   }
 
-  await expect(page.getByText('Your connected wallet', { exact: true })).toBeVisible()
+  await expect(
+    page.getByText('Wallet connected at launch', { exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sign in to launch' })).toBeVisible()
 }
 
@@ -225,8 +229,7 @@ async function exerciseProjectSurfaces(
     payCard.getByText("This project doesn't list the direct payment terminal"),
   ).toHaveCount(0)
 
-  const holdersStat = page.locator('dt', { hasText: 'Holders' }).locator('..')
-  await expect(holdersStat.locator('dd')).toHaveText('2')
+  await expect(page.getByText('2 token holders', { exact: true })).toBeVisible()
 
   if (viewport.width <= 600) {
     const activity = projectTabs.getByRole('tab', {

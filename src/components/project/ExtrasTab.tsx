@@ -7,21 +7,152 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { zeroAddress, type Address } from 'viem'
+import { zeroAddress, type Address, type PublicClient } from 'viem'
+import { usePublicClient } from 'wagmi'
 import { AddressField } from '@/components/create/AddressField'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
+import { draftFileName } from '@/lib/draft'
 import { truncateAddress } from '@/lib/format'
+import {
+  buildProjectDraftExport,
+  type ExportProjectProfile,
+} from '@/lib/project-draft-export'
 import { chainName, toUrn } from '@/lib/urn'
 
 /**
- * Extras tab (website/ parity: renderExtrasSection): the payer-address
- * deployer (tx #32, JBProjectPayerDeployer.deployProjectPayer). Deploys go
- * through useSafeTx (simulate-first) on the current page chain only; other
- * chains link to their own Extras tab.
+ * Extras tab: export a verified create-flow draft, plus the payer-address
+ * deployer (tx #32, JBProjectPayerDeployer.deployProjectPayer).
  */
+
+type ExtrasTabProps = {
+  chainId: JBChainId
+  projectId: number
+  isRevnet: boolean
+  profile: ExportProjectProfile
+  /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
+  chains: [number, number][]
+  /** Per-chain project owner or revnet operator. */
+  authorities: [number, string | null][]
+}
+
+export function ExtrasTab(props: ExtrasTabProps) {
+  return (
+    <div className="space-y-5">
+      <ProjectDraftExportCard {...props} />
+      <PayerAddressCard
+        chainId={props.chainId}
+        projectId={props.projectId}
+        chains={props.chains}
+      />
+    </div>
+  )
+}
+
+function ProjectDraftExportCard({
+  chainId,
+  projectId,
+  isRevnet,
+  profile,
+  chains,
+  authorities,
+}: ExtrasTabProps) {
+  const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<{
+    kind: 'idle' | 'success' | 'error'
+    text: string
+  }>({ kind: 'idle', text: '' })
+
+  const download = async () => {
+    if (!client || busy) return
+    setBusy(true)
+    setStatus({ kind: 'idle', text: 'Verifying live rules, funds, and splits…' })
+    try {
+      const authorityByChain = Object.fromEntries(
+        authorities.flatMap(([id, authority]) =>
+          authority ? [[id, authority]] : [],
+        ),
+      )
+      const result = await buildProjectDraftExport({
+        client,
+        chainId,
+        projectId,
+        isRevnet,
+        profile,
+        chains: chains.map(([id]) => id),
+        authorityByChain,
+      })
+      if (
+        result.warnings.length &&
+        !window.confirm(
+          `${result.warnings.join('\n\n')}\n\nExport this editable .jb anyway?`,
+        )
+      ) {
+        setStatus({ kind: 'idle', text: 'Cancelled' })
+        return
+      }
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(result.draft, null, 2)], {
+          type: 'application/json',
+        }),
+      )
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = draftFileName(profile.name)
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setStatus({
+        kind: 'success',
+        text: 'Exported .jb. Import it from Start a project to review and edit.',
+      })
+    } catch (error) {
+      setStatus({
+        kind: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Could not safely reconstruct this project.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card p-5">
+      <h2 className="font-agrandir text-lg font-medium">Export deployment</h2>
+      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+        Download this project&apos;s deployed configuration as a .jb file.
+        Import it from Start a project to review the reconstructed rules and
+        make changes before deploying. No transaction is required.
+      </p>
+      {status.text ? (
+        <p
+          className={`mt-3 text-sm ${
+            status.kind === 'error'
+              ? 'text-red-700'
+              : status.kind === 'success'
+                ? 'text-green-700'
+                : 'text-smoke-700'
+          }`}
+        >
+          {status.text}
+        </p>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={busy || !client}
+        className="btn-secondary mt-4 min-h-[40px] px-4 text-sm disabled:opacity-50"
+      >
+        {busy ? 'Verifying…' : 'Export .jb'}
+      </button>
+    </div>
+  )
+}
 
 /** A reviewed, ready-to-send deploy: the exact args are frozen here so what
  *  the user confirms is what's sent. */
@@ -43,7 +174,7 @@ type ReviewedDeploy = {
  * an opt-in editable mode owned by the connected wallet, and metadata is
  * always 0x. Deploys are permissionless.
  */
-export function ExtrasTab({
+function PayerAddressCard({
   chainId,
   projectId,
   chains,

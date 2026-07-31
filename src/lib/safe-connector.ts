@@ -31,11 +31,11 @@ export function isSafeConnection(config: Config): boolean {
 
 /** Swap/mint execution deadline seconds: 20 minutes for an EOA, whose review
  *  and signature are one sitting. */
-export const SWAP_DEADLINE_SECONDS = 20 * 60
+const SWAP_DEADLINE_SECONDS = 20 * 60
 /** Safe deadline seconds: co-signer collection routinely outlives 20 minutes,
  *  so match the 30-day Permit2 approval windows. The longer window widens MEV
  *  exposure only within the swap's already-frozen slippage floor. */
-export const SAFE_SWAP_DEADLINE_SECONDS = 30 * 24 * 60 * 60
+const SAFE_SWAP_DEADLINE_SECONDS = 30 * 24 * 60 * 60
 
 /** The unix deadline for a swap/liquidity transaction proposed now. */
 export function swapDeadline(isSafe: boolean, nowMs: number = Date.now()): bigint {

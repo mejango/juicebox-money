@@ -1203,16 +1203,16 @@ export function CreateForm() {
             // `buildLaunchRequest` is a union of deployer ABIs; viem cannot
             // infer its tuple branch after runtime chain selection.
             simulate: async (reviewed) => {
-              /* eslint-disable @typescript-eslint/no-explicit-any */
               const { request: simulated } = await client.simulateContract({
                 ...reviewed,
                 account: address,
-              } as any);
-              /* eslint-enable @typescript-eslint/no-explicit-any */
+              } as unknown as Parameters<typeof client.simulateContract>[0]);
               return simulated;
             },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            write: (simulated) => writeContractAsync(simulated as any),
+            write: (simulated) =>
+              writeContractAsync(
+                simulated as Parameters<typeof writeContractAsync>[0],
+              ),
             accountChangedError:
               "Connected account changed. Review the launch again.",
           });
@@ -1763,10 +1763,10 @@ export function CreateForm() {
           </select>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
             {flavor === "simple"
-              ? "Launch with flexible defaults that you can adjust at any time."
+              ? "Launch with flexible defaults the project owner can adjust at any time."
               : flavor === "revnet"
                 ? "Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability."
-                : "You set the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything."}
+                : "The project owner sets the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything."}
           </p>
         </div>
 
@@ -1774,10 +1774,12 @@ export function CreateForm() {
           <span className="field-label">Chains</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             Your {flavor === "revnet" ? "revnet" : "project"} lives on every
-            chain you pick. You can add more chains later.
+            chain you pick. The{" "}
+            {flavor === "revnet" ? "revnet operator" : "project owner"} can add
+            more chains later.
           </p>
-          <label className="mt-2.5 flex w-fit items-center gap-2 text-xs text-smoke-700">
-            <span>Environment</span>
+          <label className="mt-2.5 block w-fit">
+            <span className="sr-only">Deployment environment</span>
             <select
               aria-label="Deployment environment"
               value={environment}
@@ -1787,8 +1789,8 @@ export function CreateForm() {
               disabled={busy}
               className="input-well select-caret min-h-9 !w-auto py-1.5 pl-3 pr-8 text-xs disabled:opacity-60"
             >
-              <option value="production">Production</option>
-              <option value="testnet">Testnets</option>
+              <option value="production">For real</option>
+              <option value="testnet">Testing</option>
             </select>
           </label>
           <MultiChainSelect
@@ -1933,8 +1935,8 @@ export function CreateForm() {
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 Must be deployed at the same address on every selected chain.
                 Everything — issuance, payouts, store prices — is denominated in
-                this token itself, so no price feed is needed. You can add a
-                feed later to price in ETH or USD instead.
+                this token itself, so no price feed is needed. The project
+                owner can add a feed later to price in ETH or USD instead.
               </p>
             </div>
           ) : null}
@@ -1959,6 +1961,19 @@ export function CreateForm() {
             }
             className="mt-2"
           />
+          <p className="mt-1.5 text-xs text-smoke-700">
+            Currently set to{" "}
+            <span className="font-medium text-ink">
+              {Object.values(ownerPerChain).some((value) => value.trim())
+                ? "the per-chain addresses below"
+                : owner.trim()
+                ? owner.trim()
+                : connected && address
+                  ? `${address} (connected wallet)`
+                  : "the wallet connected at launch"}
+            </span>
+            .
+          </p>
           {selected.length > 1 ? (
             <div className="mt-2">
               <button
@@ -2287,7 +2302,7 @@ export function CreateForm() {
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           {flavor === "revnet"
             ? "Revnet stages are locked in at launch and can never be changed — supporters know exactly what they get, forever."
-            : "The defaults make a simple, flexible project. Rules live in rulesets — give one a duration and you can queue what comes next."}
+            : "The defaults make a simple, flexible project. Rules live in rulesets — give one a duration and the project owner can queue what comes next."}
         </p>
 
         <div className="mt-5">
@@ -2412,10 +2427,10 @@ export function CreateForm() {
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {afterMode === "wait"
-                  ? "The project idles — payments and issuance pause until you queue more rules."
+                  ? "The project idles — payments and issuance pause until the project owner queues more rules."
                   : afterMode === "terminal"
                     ? "These terms are locked in forever — they can never be changed again."
-                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and you can still queue changes."}
+                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes."}
               </p>
             </div>
           ) : null}
@@ -2519,7 +2534,8 @@ export function CreateForm() {
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           Sell things right from your project page. Each sale pays your
           treasury, and the buyer gets the item plus {tokenLabel}. Optional —
-          you can stock your shop any time after launch.
+          the {flavor === "revnet" ? "revnet operator" : "project owner"} can
+          stock the shop any time after launch.
         </p>
         <div className="mt-4">
           <span className="field-label">Pricing currency</span>
@@ -2598,7 +2614,8 @@ export function CreateForm() {
           {storeConfigOpen ? (
             <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4">
               <p className="text-xs leading-relaxed text-smoke-700">
-                You can set or change most of these any time after launch.
+                The {flavor === "revnet" ? "revnet operator" : "project owner"} can
+                set or change most of these after launch.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="block">
@@ -2749,12 +2766,20 @@ export function CreateForm() {
 
         <dl className="mt-5 space-y-2.5 text-sm">
           <div className="flex items-center justify-between gap-3">
-            <dt className="text-smoke-700">Project owner</dt>
+            <dt className="text-smoke-700">
+              {flavor === "revnet" ? "Revnet operator" : "Project owner"}
+            </dt>
             <dd className="font-medium text-ink">
-              {connected ? (
+              {Object.values(ownerPerChain).some((value) => value.trim()) ? (
+                "Set per chain"
+              ) : resolvedAddress(owner.trim()) ? (
+                <AddressLabel address={resolvedAddress(owner.trim())!} />
+              ) : owner.trim() ? (
+                owner.trim()
+              ) : connected ? (
                 <AddressLabel address={address!} />
               ) : (
-                <span className="text-smoke-700">Your connected wallet</span>
+                <span className="text-smoke-700">Wallet connected at launch</span>
               )}
             </dd>
           </div>

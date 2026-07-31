@@ -133,7 +133,7 @@ export function newDraftStage(
   };
 }
 
-export const DURATION_PRESETS: [number, string][] = [
+const DURATION_PRESETS: [number, string][] = [
   [86_400, "1 day"],
   [3 * 86_400, "3 days"],
   [7 * 86_400, "7 days"],
@@ -161,7 +161,7 @@ export function stageDurationSeconds(stage: DraftStage): number {
   return Number(stage.durationValue) || 0;
 }
 
-export function secondsLabel(seconds: number): string {
+function secondsLabel(seconds: number): string {
   if (seconds % 31_536_000 === 0 && seconds >= 31_536_000)
     return `${seconds / 31_536_000} year${seconds === 31_536_000 ? "" : "s"}`;
   if (seconds % 604_800 === 0 && seconds >= 604_800)
@@ -181,7 +181,7 @@ export function stageCashOutTax(stage: DraftStage): number {
   return stage.cashOutTax;
 }
 
-export function stageTaxOk(stage: DraftStage): boolean {
+function stageTaxOk(stage: DraftStage): boolean {
   if (!stage.taxCustomOn) return true;
   const n = Number(stage.taxCustomPct);
   return Number.isFinite(n) && n >= 0 && n <= 99.99;
@@ -192,7 +192,7 @@ const numOk = (value: string, max = Infinity) => {
   return Number.isFinite(n) && n >= 0 && n <= max;
 };
 
-export function stageIssuanceOk(stage: DraftStage, isFirst: boolean): boolean {
+function stageIssuanceOk(stage: DraftStage, isFirst: boolean): boolean {
   if (stage.issuanceRate.trim() === "") return !isFirst; // later stages inherit
   return numOk(stage.issuanceRate);
 }
@@ -502,7 +502,7 @@ export function StageRulesEditor({
       : stage.payouts === "flexible"
         ? `Flexible withdrawals${stage.surplusCapOn ? " (capped)" : ""}`
         : validPayoutSplits === 0
-          ? "Routing all funds to you"
+          ? "Routing all funds to the project owner"
           : stage.routedMode === "all"
             ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`
             : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
@@ -581,9 +581,9 @@ export function StageRulesEditor({
             </div>
             <span className="field-label">Duration</span>
             <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              How long these rules run. Flexible rules last until you change
-              them; a fixed duration locks them in, and the next ruleset starts
-              when it ends.
+              How long these rules run. Flexible rules last until the project
+              owner changes them; a fixed duration locks them in, and the next
+              ruleset starts when it ends.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
               <select
@@ -960,14 +960,14 @@ export function StageRulesEditor({
               onSelect={() => set({ payouts: "flexible" })}
               disabled={disabled}
               title="Flexible withdrawals"
-              blurb="You can withdraw any amount from the project's surplus, any time."
+              blurb="The project owner can withdraw any amount from the project's surplus, any time."
             />
             <OptionRow
               checked={stage.payouts === "routed"}
               onSelect={() => set({ payouts: "routed" })}
               disabled={disabled}
               title="Routed payouts"
-              blurb="Incoming funds route automatically to recipients you set — anyone can trigger the payout."
+              blurb="Incoming funds route automatically to recipients the project owner sets — anyone can trigger the payout."
             />
           </div>
           {stage.payouts === "routed" ? (
@@ -1010,7 +1010,7 @@ export function StageRulesEditor({
               />
               {stage.payoutSplits.length === 0 ? (
                 <p className="mt-2 text-xs text-smoke-700">
-                  No recipients yet — payouts go to you, the project owner.
+                  No recipients yet — payouts go to the project owner.
                 </p>
               ) : null}
 
@@ -1047,7 +1047,7 @@ export function StageRulesEditor({
                   />
                   {stage.payoutSplitsUsdc.length === 0 ? (
                     <p className="mt-2 text-xs text-smoke-700">
-                      No recipients yet — USDC payouts go to you, the project owner.
+                      No recipients yet — USDC payouts go to the project owner.
                     </p>
                   ) : null}
                 </div>
@@ -1066,7 +1066,7 @@ export function StageRulesEditor({
                   }
                   disabled={disabled}
                   title="Project owner can also withdraw surplus"
-                  blurb="Beyond the routed amounts, you can pull from whatever surplus remains."
+                  blurb="Beyond the routed amounts, the project owner can withdraw whatever surplus remains."
                 />
               ) : null}
               {stage.payouts === "flexible" || stage.routedSurplusOn ? (
@@ -1207,7 +1207,7 @@ export function StageRulesEditor({
             onToggle={() => set({ ownerMinting: !stage.ownerMinting })}
             disabled={disabled}
             title={`Project owner can mint ${tokenLabel} any time`}
-            blurb="Mint any amount without payment. Supporters can see this power on your project, so leave it off unless you need it."
+            blurb="The project owner can mint any amount without payment. Supporters can see this power, so leave it off unless it is needed."
           />
           <div className="mt-5 border-t border-smoke-200 pt-4">
             <span className="field-label">Superpowers</span>

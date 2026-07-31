@@ -64,7 +64,7 @@ export function newDraftSplit(): DraftSplit {
   }
 }
 
-export function splitValueOk(value: string, mode: SplitsMode): boolean {
+function splitValueOk(value: string, mode: SplitsMode): boolean {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return false
   return mode === 'percent' ? n <= 100 : true
@@ -124,7 +124,7 @@ export function SplitsEditor({
   bucketLabel,
   mode = 'percent',
   amountLabel = '',
-  remainderNote = 'go to you',
+  remainderNote = 'go to the project owner',
   chainIds,
   addLabel = 'Add a recipient',
   allocatedLabel = 'allocated',
@@ -141,7 +141,7 @@ export function SplitsEditor({
   mode?: SplitsMode
   /** Currency label for 'amount' mode, e.g. "ETH". */
   amountLabel?: string
-  /** Where the unallocated remainder goes, e.g. "go to you". */
+  /** Where the unallocated remainder goes, e.g. "go to the project owner". */
   remainderNote?: string
   /** Selected launch chains; >1 enables per-chain recipient overrides. */
   chainIds?: number[]

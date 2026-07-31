@@ -5,7 +5,7 @@ import { CID } from 'multiformats'
 // length, and complete input consumption.
 const CID_ENVELOPE = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{20,160})$/
 
-export function parseIpfsCid(value: string): CID | null {
+function parseIpfsCid(value: string): CID | null {
   if (!CID_ENVELOPE.test(value)) return null
 
   try {

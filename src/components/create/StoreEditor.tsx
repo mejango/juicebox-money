@@ -78,24 +78,24 @@ export function newDraftItem(): DraftItem {
   };
 }
 
-export function itemPriceOk(price: string): boolean {
+function itemPriceOk(price: string): boolean {
   const n = Number(price);
   return Number.isFinite(n) && n > 0;
 }
 
-export function itemSupplyOk(supply: string): boolean {
+function itemSupplyOk(supply: string): boolean {
   if (supply.trim() === "") return true;
   const n = Number(supply);
   return Number.isInteger(n) && n >= 1 && n <= 999_999_998;
 }
 
-export function itemDiscountOk(discountPct: string): boolean {
+function itemDiscountOk(discountPct: string): boolean {
   if (discountPct.trim() === "") return true;
   const n = Number(discountPct);
   return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
-export function itemReserveOk(item: DraftItem): boolean {
+function itemReserveOk(item: DraftItem): boolean {
   if (item.reserveN.trim() === "") return true;
   const n = Number(item.reserveN);
   return (
@@ -106,14 +106,14 @@ export function itemReserveOk(item: DraftItem): boolean {
   );
 }
 
-export function itemSplitsOk(item: DraftItem): boolean {
+function itemSplitsOk(item: DraftItem): boolean {
   return (
     item.splits.every((s) => splitOk(s, "percent")) &&
     splitsTotal(item.splits, "percent") <= 100
   );
 }
 
-export function itemVotingOk(item: DraftItem): boolean {
+function itemVotingOk(item: DraftItem): boolean {
   if (item.votingUnits.trim() === "") return true;
   const n = Number(item.votingUnits);
   return Number.isInteger(n) && n >= 0 && n <= 4_294_967_295;
@@ -452,7 +452,8 @@ export function StoreEditor({
               <div>
                 <span className="field-label">Discount</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Launch the item at a discount off its price — you can end the
+                  Launch the item at a discount off its price — the{" "}
+                  {isRevnet ? "revnet operator" : "project owner"} can end the
                   discount later.
                 </p>
                 <div className="mt-2 flex items-center gap-2.5">

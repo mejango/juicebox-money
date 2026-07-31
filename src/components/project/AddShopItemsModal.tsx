@@ -356,8 +356,10 @@ export function AddShopItemsModal({
             },
             // wagmi's generated union cannot retain tuple inference after a
             // runtime chain switch, but this is the exact simulated request.
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            write: simulated => writeContractAsync(simulated as any),
+            write: simulated =>
+              writeContractAsync(
+                simulated as Parameters<typeof writeContractAsync>[0],
+              ),
             accountChangedError:
               'Connected account changed. Review the shop items again.',
           })

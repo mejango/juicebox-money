@@ -19,9 +19,16 @@ function sourceFiles(root) {
 }
 
 for (const path of sourceFiles("src")) {
-  if (/from\s+["']viem\/chains["']/.test(read(path))) {
+  const source = read(path);
+
+  if (/from\s+["']viem\/chains["']/.test(source)) {
     failures.push(
       `${path}: production code must use the SDK's supported chain definitions, not the all-chain viem barrel`,
+    );
+  }
+  if (/\bas\s+any\s*[\),;\]}]|:\s*any\s*[,)=;]/.test(source)) {
+    failures.push(
+      `${path}: production code must narrow unknown values or use a precise boundary type instead of any`,
     );
   }
 }

@@ -141,7 +141,7 @@ const PROJECT_FIELDS = `
   decimals currency isRevnet owner metadataUri
 `
 
-export const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
+const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
   projects(
     where: $where
     orderBy: "volume"
@@ -150,7 +150,7 @@ export const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectF
   ) { items { ${PROJECT_FIELDS} } }
 }`
 
-export const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
+const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
   $where: participantFilter!
   $limit: Int!
   $offset: Int!
@@ -1087,13 +1087,13 @@ export function suckerGroupAccountingToken(
     : null
 }
 
-export type BsPriceMoment = {
+type BsPriceMoment = {
   timestamp: number
   balance: string
   tokenSupply: string
 }
 
-export type BsSwapEvent = {
+type BsSwapEvent = {
   timestamp: number
   direction: string
   terminalTokenAmount: string
@@ -1104,7 +1104,7 @@ export type BsSwapEvent = {
   projectTokenIsCurrency0: boolean | null
 }
 
-export type BsBuybackPoolEvent = {
+type BsBuybackPoolEvent = {
   timestamp: number
   poolId: string
   chainId: number
@@ -1333,7 +1333,7 @@ export type BsPermissionHolder = {
  * getRevnetOperator reads, without the revnet filter). Revoked rows
  * (empty permission sets) are dropped.
  */
-export async function getPermissionHolders(
+async function getPermissionHolders(
   chainId: number,
   projectId: number,
 ): Promise<BsPermissionHolder[]> {
@@ -1445,7 +1445,7 @@ const BENEFICIARY_ACTIVITY_FIELDS = BENEFICIARY_EVENT_SOURCES.map(
     }`,
 ).join('\n')
 
-export const ACCOUNT_ACTIVITY_QUERY = `query AccountActivity(
+const ACCOUNT_ACTIVITY_QUERY = `query AccountActivity(
   $address: String!
   $limit: Int!
   $offset: Int!
