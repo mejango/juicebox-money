@@ -352,7 +352,7 @@ export function ProjectStats({
       : '—'
 
   return (
-    <dl className="mt-2 grid grid-cols-2 items-center gap-x-4 gap-y-1 [&>div:nth-child(even)]:border-l [&>div:nth-child(even)]:border-smoke-200 [&>div:nth-child(even)]:pl-4 sm:grid-cols-4 sm:[&>div:not(:first-child)]:border-l sm:[&>div:not(:first-child)]:border-smoke-200 sm:[&>div:not(:first-child)]:pl-4">
+    <dl className="mt-2 grid grid-cols-[max-content_max-content] items-center gap-x-4 gap-y-1 [&>div:nth-child(even)]:border-l [&>div:nth-child(even)]:border-smoke-200 [&>div:nth-child(even)]:pl-4 lg:grid-cols-[repeat(4,max-content)] lg:[&>div:not(:first-child)]:border-l lg:[&>div:not(:first-child)]:border-smoke-200 lg:[&>div:not(:first-child)]:pl-4">
       <HoverBreakdownStat
         label="raised"
         value={formatUsd18(totalRaisedUsd)}
