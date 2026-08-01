@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { stageRulesetIdOn } from '@/components/project/OwnersTab'
+import {
+  ownerPageWindow,
+  stageRulesetIdOn,
+} from '@/components/project/OwnersTab'
 import type { JBRulesetWithMetadata } from '@bananapus/nana-sdk-core/v6'
 
 function stage(id: number, start: number): JBRulesetWithMetadata {
@@ -20,5 +23,32 @@ describe('stageRulesetIdOn', () => {
   it('returns null when the chain has no matching stage instead of guessing', () => {
     expect(stageRulesetIdOn([stage(700, 1_000)], 1)).toBeNull()
     expect(stageRulesetIdOn([], 0)).toBeNull()
+  })
+})
+
+describe('ownerPageWindow', () => {
+  const owners = Array.from({ length: 75 }, (_, index) => index)
+
+  it('matches Juicescan\'s 30-row pages', () => {
+    expect(ownerPageWindow(owners, 0)).toEqual({
+      items: owners.slice(0, 30),
+      page: 0,
+      pageCount: 3,
+    })
+    expect(ownerPageWindow(owners, 1)).toEqual({
+      items: owners.slice(30, 60),
+      page: 1,
+      pageCount: 3,
+    })
+    expect(ownerPageWindow(owners, 2)).toEqual({
+      items: owners.slice(60),
+      page: 2,
+      pageCount: 3,
+    })
+  })
+
+  it('clamps first and last pages', () => {
+    expect(ownerPageWindow(owners, -1).page).toBe(0)
+    expect(ownerPageWindow(owners, 99).page).toBe(2)
   })
 })

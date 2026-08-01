@@ -25,7 +25,7 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -185,6 +185,23 @@ export function OwnersTab({
 // -------------------------------------------------------------- YOU card --
 
 type YouAction = 'cashOut' | 'burn' | 'loan' | 'move' | 'liquidity'
+const OWNERS_PAGE_SIZE = 30
+
+export function ownerPageWindow<T>(
+  items: readonly T[],
+  requestedPage: number,
+  pageSize = OWNERS_PAGE_SIZE,
+) {
+  const safePageSize = Math.max(1, Math.floor(pageSize))
+  const pageCount = Math.max(1, Math.ceil(items.length / safePageSize))
+  const page = Math.max(0, Math.min(pageCount - 1, Math.floor(requestedPage)))
+  const start = page * safePageSize
+  return {
+    items: items.slice(start, start + safePageSize),
+    page,
+    pageCount,
+  }
+}
 
 /**
  * The Accounts (YOU) card (website/ parity: renderYouCard + opsActionsRow):
@@ -286,10 +303,10 @@ function YouCard({
 
           <div className="mt-4 flex flex-wrap gap-2">
             {actionBtn('cashOut', 'Cash out')}
-            {actionBtn('burn', 'Burn')}
             {isRevnet ? actionBtn('loan', 'Get a loan') : null}
             {multiChain ? actionBtn('move', 'Move between chains') : null}
             {actionBtn('liquidity', 'Add market liquidity')}
+            {actionBtn('burn', 'Burn')}
           </div>
 
           {action ? (
@@ -971,7 +988,16 @@ function AllHoldersCard({
   }, [data])
 
   const total = holders.reduce((sum, h) => sum + h.balance, 0n)
-  const top = holders.slice(0, 10)
+  const [requestedPage, setRequestedPage] = useState(0)
+  const paginationRef = useRef<HTMLElement>(null)
+  const { items: visibleHolders, page, pageCount } = ownerPageWindow(
+    holders,
+    requestedPage,
+  )
+  const goToPage = (nextPage: number) => {
+    setRequestedPage(Math.max(0, Math.min(pageCount - 1, nextPage)))
+    paginationRef.current?.scrollIntoView?.({ block: 'nearest' })
+  }
   // All rows fetched = the aggregated count is the real holder count;
   // truncated = we only know it's at least that many.
   const exact = !!data && data.totalCount <= data.items.length
@@ -1008,58 +1034,117 @@ function AllHoldersCard({
               countLabel={holderCount}
               tokenUnit={tokenUnit}
             />
-            <div className="min-w-0 overflow-x-auto rounded-xl border border-smoke-200">
-              <div className="min-w-[520px]">
-                <div className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] gap-3 bg-smoke-75 px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-smoke-500">
-                  <span>Account</span>
-                  <span>Share</span>
-                  <span>Chains</span>
-                  <span>Paid</span>
-                </div>
-                <div className="divide-y divide-smoke-100">
-                  {top.map(holder => (
-                    <div
-                      key={holder.address}
-                      className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] items-center gap-3 px-4 py-3 text-sm"
-                    >
-                      <span className="min-w-0">
-                        <AddressLink
-                          address={holder.address}
-                          host={etherscanHost}
-                        />
-                      </span>
-                      <span className="font-medium text-ink">
-                        {holderPercentLabel(holder.balance, total)}
-                      </span>
-                      <span className="flex items-center pl-1">
-                        {holder.chains.map((id, index) => (
-                          <ChainIcon
-                            key={id}
-                            chainId={id}
-                            size={16}
-                            className={index > 0 ? '-ml-1' : ''}
-                            standalone
+            <div className="min-w-0">
+              <div className="overflow-x-auto rounded-xl border border-smoke-200">
+                <div className="min-w-[520px]">
+                  <div className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] gap-3 bg-smoke-75 px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-smoke-500">
+                    <span>Account</span>
+                    <span>Share</span>
+                    <span>Chains</span>
+                    <span>Paid</span>
+                  </div>
+                  <div className="divide-y divide-smoke-100">
+                    {visibleHolders.map(holder => (
+                      <div
+                        key={holder.address}
+                        className="grid grid-cols-[minmax(150px,1.5fr)_80px_100px_90px] items-center gap-3 px-4 py-3 text-sm"
+                      >
+                        <span className="min-w-0">
+                          <AddressLink
+                            address={holder.address}
+                            host={etherscanHost}
                           />
-                        ))}
-                      </span>
-                      <span className="text-smoke-700">
-                        {indexedPaidLabel(holder.volumeUsd)}
-                      </span>
-                    </div>
-                  ))}
+                        </span>
+                        <span className="font-medium text-ink">
+                          {holderPercentLabel(holder.balance, total)}
+                        </span>
+                        <span className="flex items-center pl-1">
+                          {holder.chains.map((id, index) => (
+                            <ChainIcon
+                              key={id}
+                              chainId={id}
+                              size={16}
+                              className={index > 0 ? '-ml-1' : ''}
+                              standalone
+                            />
+                          ))}
+                        </span>
+                        <span className="text-smoke-700">
+                          {indexedPaidLabel(holder.volumeUsd)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
+              {pageCount > 1 ? (
+                <nav
+                  ref={paginationRef}
+                  aria-label="Owners table pages"
+                  className="mt-2.5 flex flex-wrap items-center justify-center gap-1.5"
+                >
+                  <OwnerPageButton
+                    disabled={page === 0}
+                    onClick={() => goToPage(0)}
+                  >
+                    « First
+                  </OwnerPageButton>
+                  <OwnerPageButton
+                    disabled={page === 0}
+                    onClick={() => goToPage(page - 1)}
+                  >
+                    ‹ Prev
+                  </OwnerPageButton>
+                  <span
+                    aria-live="polite"
+                    className="px-1 text-xs text-smoke-500"
+                  >
+                    {page + 1} / {pageCount}
+                  </span>
+                  <OwnerPageButton
+                    disabled={page === pageCount - 1}
+                    onClick={() => goToPage(page + 1)}
+                  >
+                    Next ›
+                  </OwnerPageButton>
+                  <OwnerPageButton
+                    disabled={page === pageCount - 1}
+                    onClick={() => goToPage(pageCount - 1)}
+                  >
+                    Last »
+                  </OwnerPageButton>
+                </nav>
+              ) : null}
             </div>
           </div>
           <p className="mt-3 text-xs text-smoke-700">
-            {holderCountLine}
-            {holders.length > top.length || !exact
-              ? ' — showing the 10 largest, as shares of the balances tracked here'
-              : ''}
+            {holderCountLine} — ranked by balance, as shares of the balances
+            tracked here
           </p>
         </>
       )}
     </div>
+  )
+}
+
+function OwnerPageButton({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: ReactNode
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="px-2 py-1 text-xs text-smoke-500 transition-colors hover:text-bluebs-600 disabled:cursor-default disabled:opacity-35"
+    >
+      {children}
+    </button>
   )
 }
 
