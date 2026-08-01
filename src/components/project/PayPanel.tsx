@@ -34,8 +34,9 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  encodeFunctionData,
   erc20Abi,
   formatUnits,
   parseUnits,
@@ -46,7 +47,7 @@ import {
 } from "viem";
 import { usePublicClient } from "wagmi";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
-import { useSafeTx } from "@/hooks/useSafeTx";
+import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
@@ -66,12 +67,6 @@ import { chainName } from "@/lib/urn";
 import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { resolveMarket } from "@/components/project/MarketSection";
-import {
-  registerTransactionReviewHandler,
-  transactionReviewJson,
-  type TransactionReviewCall,
-  type TransactionReviewRequest,
-} from "@/lib/transaction-review";
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -91,6 +86,12 @@ type PayContext = {
    *  JBRouterTerminalRegistry, which swaps it into the project's accounting
    *  token. False for the project's own directly-accepted accounting tokens. */
   viaRouter: boolean;
+};
+
+type PaymentSequenceAction = {
+  kind: "token-approval" | "router-approval" | "payment";
+  label: string;
+  request: TxRequest;
 };
 
 type PaySurface = {
@@ -313,35 +314,8 @@ export function PayPanel({
   const [sequenceSafeStage, setSequenceSafeStage] = useState<
     "token-approval" | "router-approval" | "payment" | null
   >(null);
-  const [sequenceReview, setSequenceReview] = useState<TransactionReviewRequest | null>(null);
-  const sequenceReviewResolver = useRef<((approved: boolean) => void) | null>(null);
-
-  useEffect(() => {
-    if (!sequenceOpen) return;
-    return registerTransactionReviewHandler(
-      request =>
-        new Promise<boolean>(resolve => {
-          sequenceReviewResolver.current?.(false);
-          sequenceReviewResolver.current = resolve;
-          setSequenceReview(request);
-        }),
-    );
-  }, [sequenceOpen]);
-
-  useEffect(
-    () => () => {
-      sequenceReviewResolver.current?.(false);
-      sequenceReviewResolver.current = null;
-    },
-    [],
-  );
-
-  const finishSequenceReview = useCallback((approved: boolean) => {
-    const resolve = sequenceReviewResolver.current;
-    sequenceReviewResolver.current = null;
-    setSequenceReview(null);
-    resolve?.(approved);
-  }, []);
+  const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
+  const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400);
     return () => clearTimeout(t);
@@ -1155,14 +1129,111 @@ export function PayPanel({
     !!sequenceSafeStage;
 
   useEffect(() => {
-    if (!sequenceOpen || sequenceReview) return;
+    if (!sequenceOpen) return;
     const activePhase = [tx.phase, routerApproveTx.phase, approveTx.phase].find(
       phase => phase === "simulating" || phase === "signing" || phase === "pending",
     );
     if (activePhase === "simulating") setSequenceStatus("Checking the reviewed wallet action…");
     else if (activePhase === "signing") setSequenceStatus("Confirm this action in your wallet.");
     else if (activePhase === "pending") setSequenceStatus("Submitted. Confirming onchain…");
-  }, [approveTx.phase, routerApproveTx.phase, sequenceOpen, sequenceReview, tx.phase]);
+  }, [approveTx.phase, routerApproveTx.phase, sequenceOpen, tx.phase]);
+
+  const preparePaymentSequence = (): PaymentSequenceAction[] => {
+    if (!address || !context || !terminalAddress) return [];
+    const actions: PaymentSequenceAction[] = [];
+    if (needsApproval && approvalSpender) {
+      actions.push({
+        kind: "token-approval",
+        label: `Approve ${symbol} access`,
+        request: buildErc20ApproveRequest({
+          chainId,
+          token: context.token,
+          spender: approvalSpender,
+          amount: amountRaw,
+        }),
+      });
+    }
+    if (needsPermit2Approval) {
+      const request = buildPermit2ApproveTx({
+        chainId,
+        token: context.token,
+        amount: amountRaw,
+        expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+      });
+      actions.push({
+        kind: "router-approval",
+        label: "Authorize the Uniswap swap router",
+        request: {
+          ...request,
+          args: request.args as unknown as readonly unknown[],
+          label: "Authorize Uniswap swap router",
+        },
+      });
+    }
+    let paymentRequest: TxRequest;
+    if (mode === "pay") {
+      if (directSwapRoute && market?.status === "pool" && bestRoute) {
+        const viaSafe = isSafeConnection(wagmiConfig);
+        const request = buildUniswapV4ExactInputSwapTx({
+          chainId,
+          poolKey: market.key,
+          zeroForOne: market.pairIsC0,
+          amountIn: amountRaw,
+          minimumAmountOut: bestRoute.beneficiaryTokenCount,
+          recipient: address,
+          deadline: swapDeadline(viaSafe),
+        });
+        paymentRequest = {
+          ...request,
+          args: request.args as unknown as readonly unknown[],
+          label: viaSafe
+            ? "Swap for project tokens (30-day deadline for Safe signature collection)"
+            : "Swap for project tokens",
+        };
+      } else {
+        const request = buildPayTx({
+          chainId,
+          terminal: terminalAddress,
+          projectId: BigInt(projectId),
+          token: context.token,
+          amount: amountRaw,
+          beneficiary: address,
+          minReturnedTokens: minReturned,
+          memo: memo.trim() || undefined,
+          metadata,
+        });
+        paymentRequest = {
+          chainId,
+          address: request.address,
+          abi: request.abi,
+          functionName: request.functionName,
+          args: request.args as unknown as readonly unknown[],
+          value: request.value,
+          label: "Pay project",
+        };
+      }
+    } else {
+      paymentRequest = buildAddToBalanceRequest({
+        chainId,
+        terminal: terminalAddress,
+        projectId: BigInt(projectId),
+        token: context.token,
+        amount: amountRaw,
+        memo: memo.trim(),
+      });
+    }
+    actions.push({
+      kind: "payment",
+      label:
+        mode === "pay"
+          ? directSwapRoute
+            ? "Execute the swap"
+            : "Execute the payment"
+          : "Add to the project balance",
+      request: paymentRequest,
+    });
+    return actions;
+  };
 
   const submit = () => {
     if (!isConnected || !address) {
@@ -1183,29 +1254,45 @@ export function PayPanel({
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return;
+    const actions = preparePaymentSequence();
+    if (!actions.length) return;
     setSequenceError(null);
     setSequenceStatus(null);
     setSequenceComplete(false);
     setSequenceStarted(false);
     setSequenceSafeStage(null);
+    setSequenceActions(actions);
+    setSequenceActionIndex(0);
     setSequenceOpen(true);
   };
 
   const runPaymentSequence = async () => {
-    if (!address || !context || !terminalAddress || !publicClient || sequenceStarted) return;
+    if (
+      !address ||
+      !context ||
+      !terminalAddress ||
+      !publicClient ||
+      !sequenceActions.length ||
+      sequenceStarted
+    ) return;
     setSequenceStarted(true);
     setSequenceError(null);
     let latestApprovalBlock = approvalBlock;
+    const actionOf = (kind: PaymentSequenceAction["kind"]) =>
+      sequenceActions.find(action => action.kind === kind);
+    const showAction = async (kind: PaymentSequenceAction["kind"]) => {
+      const index = sequenceActions.findIndex(action => action.kind === kind);
+      if (index >= 0) setSequenceActionIndex(index);
+      await nextUiPaint();
+    };
     try {
-      if (needsApproval) {
+      const tokenApproval = actionOf("token-approval");
+      if (tokenApproval) {
+        await showAction("token-approval");
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: context.token,
-            spender: approvalSpender!,
-            amount: amountRaw,
-          }),
+          tokenApproval.request,
+          { reviewedInParent: true },
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1220,21 +1307,13 @@ export function PayPanel({
         approveTx.reset();
         await refetchAllowance();
       }
-      if (needsPermit2Approval) {
+      const routerApproval = actionOf("router-approval");
+      if (routerApproval) {
+        await showAction("router-approval");
         setSequenceStatus("Review and authorize the Uniswap swap router.");
-        const request = buildPermit2ApproveTx({
-          chainId,
-          token: context.token,
-          amount: amountRaw,
-          expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-        });
         const approvalHash = await routerApproveTx.send(
-          {
-            ...request,
-            args: request.args as unknown as readonly unknown[],
-            label: "Authorize Uniswap swap router",
-          },
-          { simulationBlockNumber: latestApprovalBlock },
+          routerApproval.request,
+          { simulationBlockNumber: latestApprovalBlock, reviewedInParent: true },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1254,71 +1333,13 @@ export function PayPanel({
         await refetchPermit2Allowance();
       }
 
+      await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
-      let paymentHash: `0x${string}` | null = null;
-      if (mode === "pay") {
-      if (directSwapRoute && market?.status === "pool") {
-        // Safe signature collection outlives a 20-minute deadline; a Safe
-        // gets 30 days (matching the Permit2 window above). The min-output
-        // floor bounds the swap either way.
-        const viaSafe = isSafeConnection(wagmiConfig);
-        const request = buildUniswapV4ExactInputSwapTx({
-          chainId,
-          poolKey: market.key,
-          zeroForOne: market.pairIsC0,
-          amountIn: amountRaw,
-          minimumAmountOut: bestRoute.beneficiaryTokenCount,
-          recipient: address,
-          deadline: swapDeadline(viaSafe),
-        });
-          paymentHash = await tx.send(
-            {
-              ...request,
-              args: request.args as unknown as readonly unknown[],
-              label: viaSafe
-                ? "Swap for project tokens (30-day deadline for Safe signature collection)"
-                : "Swap for project tokens",
-            },
-            { simulationBlockNumber: latestApprovalBlock },
-          );
-        } else {
-          const request = buildPayTx({
-            chainId,
-            terminal: terminalAddress,
-            projectId: BigInt(projectId),
-            token: context.token,
-            amount: amountRaw,
-            beneficiary: address,
-            minReturnedTokens: minReturned,
-            memo: memo.trim() || undefined,
-            metadata,
-          });
-          paymentHash = await tx.send(
-            {
-              chainId,
-              address: request.address,
-              abi: request.abi,
-              functionName: request.functionName,
-              args: request.args as unknown as readonly unknown[],
-              value: request.value,
-              label: "Pay project",
-            },
-            { simulationBlockNumber: latestApprovalBlock },
-          );
-        }
-      } else {
-        paymentHash = await tx.send(
-          buildAddToBalanceRequest({
-            chainId,
-            terminal: terminalAddress,
-            projectId: BigInt(projectId),
-            token: context.token,
-            amount: amountRaw,
-            memo: memo.trim(),
-          }),
-          { simulationBlockNumber: latestApprovalBlock },
-        );
-      }
+      const paymentRequest = actionOf("payment")!.request;
+      const paymentHash = await tx.send(paymentRequest, {
+        simulationBlockNumber: latestApprovalBlock,
+        reviewedInParent: true,
+      });
       if (!paymentHash) throw new Error("Payment was cancelled.");
       if (tx.isSafe) {
         setSequenceSafeStage("payment");
@@ -1344,6 +1365,8 @@ export function PayPanel({
     setSequenceOpen(false);
     setSequenceStarted(false);
     setSequenceComplete(false);
+    setSequenceActions([]);
+    setSequenceActionIndex(0);
     setSequenceSafeStage(null);
     setSequenceStatus(null);
     setSequenceError(null);
@@ -1926,26 +1949,21 @@ export function PayPanel({
               ? `${formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)} ${projectTokenLabel}`
               : null
           }
-          steps={[
-            ...(needsApproval ? [`Approve ${symbol} access`] : []),
-            ...(needsPermit2Approval ? ["Authorize the Uniswap swap router"] : []),
-            mode === "pay"
-              ? directSwapRoute
-                ? "Execute the swap"
-                : "Execute the payment"
-              : "Add to the project balance",
-          ]}
-          review={sequenceReview}
+          actions={sequenceActions}
+          activeActionIndex={sequenceActionIndex}
+          beneficiary={address ?? null}
+          memo={memo.trim() || null}
           status={sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
           started={sequenceStarted}
           waitingForSafe={!!sequenceSafeStage}
           complete={sequenceComplete}
           onStart={() => void runPaymentSequence()}
-          onReview={finishSequenceReview}
           onClose={() => {
-            if (sequenceStarted || sequenceReview) return;
+            if (sequenceStarted) return;
             setSequenceOpen(false);
+            setSequenceActions([]);
+            setSequenceActionIndex(0);
             setSequenceStatus(null);
             setSequenceError(null);
           }}
@@ -1960,35 +1978,35 @@ function PaymentSequenceDialog({
   chainName: paymentChainName,
   amount,
   tokenReturn,
-  steps,
-  review,
+  actions,
+  activeActionIndex,
+  beneficiary,
+  memo,
   status,
   error,
   started,
   waitingForSafe,
   complete,
   onStart,
-  onReview,
   onClose,
 }: {
   mode: "pay" | "addbalance";
   chainName: string;
   amount: string;
   tokenReturn: string | null;
-  steps: string[];
-  review: TransactionReviewRequest | null;
+  actions: PaymentSequenceAction[];
+  activeActionIndex: number;
+  beneficiary: Address | null;
+  memo: string | null;
   status: string | null;
   error: string | null;
   started: boolean;
   waitingForSafe: boolean;
   complete: boolean;
   onStart: () => void;
-  onReview: (approved: boolean) => void;
   onClose: () => void;
 }) {
-  const [agreed, setAgreed] = useState(false);
-  useEffect(() => setAgreed(false), [review]);
-  const activeStep = sequenceActiveStep(steps, review, status, complete);
+  const activeAction = actions[activeActionIndex] ?? null;
   return (
     <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/50 px-3 py-6 sm:items-center">
       <section
@@ -2007,17 +2025,15 @@ function PaymentSequenceDialog({
                 ? mode === "pay"
                   ? "Payment confirmed"
                   : "Added to the balance"
-                : review
-                  ? "Review the next wallet action"
-                  : mode === "pay"
-                    ? "Confirm payment"
-                    : "Confirm add to balance"}
+                : mode === "pay"
+                  ? "Confirm payment"
+                  : "Confirm add to balance"}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            disabled={started || !!review}
+            disabled={started}
             aria-label="Close payment"
             className="icon-button -mr-2 -mt-2 disabled:opacity-40"
           >
@@ -2040,79 +2056,47 @@ function PaymentSequenceDialog({
 
           <div className="rounded-xl border border-smoke-200 bg-white p-3">
             <p className="text-xs leading-relaxed text-smoke-600">
-              Your wallet will ask for {steps.length} action{steps.length === 1 ? "" : "s"}. This
+              Your wallet will ask for {actions.length} action{actions.length === 1 ? "" : "s"}. This
               dialog stays open and advances through each one.
             </p>
             <ol className="mt-3 space-y-2">
-              {steps.map((step, index) => (
-                <li key={step} className="flex items-center gap-2 text-sm">
+              {actions.map((action, index) => (
+                <li key={`${action.kind}:${action.label}`} className="flex items-center gap-2 text-sm">
                   <span
                     className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                      complete || index < activeStep
+                      complete || index < activeActionIndex
                         ? "border-melon-400 bg-melon-400 text-ink"
-                        : index === activeStep
+                        : index === activeActionIndex
                           ? "border-bluebs-500 bg-bluebs-25 text-bluebs-700"
                           : "border-smoke-300 text-smoke-500"
                     }`}
                   >
-                    {complete || index < activeStep ? "✓" : index + 1}
+                    {complete || index < activeActionIndex ? "✓" : index + 1}
                   </span>
-                  <span className={index === activeStep && !complete ? "font-medium text-ink" : "text-smoke-600"}>
-                    {step}
+                  <span className={index === activeActionIndex && !complete ? "font-medium text-ink" : "text-smoke-600"}>
+                    {action.label}
                   </span>
                 </li>
               ))}
             </ol>
           </div>
 
-          {review ? (
-            <div className="rounded-xl border border-bluebs-200 bg-white p-4">
-              <p className="font-medium text-ink">
-                {review.calls[0]?.label ?? humanPaymentAction(review.calls[0]?.functionName)}
-              </p>
-              <p className="mt-1 break-all text-xs text-smoke-600">
-                {review.calls[0] ? paymentCallDestination(review.calls[0]) : null}
-              </p>
-              {review.calls[0]?.functionName ? (
-                <p className="mt-3 font-mono text-xs text-ink">{review.calls[0].functionName}(…)</p>
-              ) : null}
-              <details className="mt-3 border-t border-smoke-200 pt-3">
-                <summary className="cursor-pointer text-xs text-smoke-600">Raw transaction data</summary>
-                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-grey-900 p-3 font-mono text-[10px] leading-relaxed text-grey-25">
-                  {transactionReviewJson(review)}
-                </pre>
-              </details>
-              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-smoke-200 bg-grey-25 p-3 text-sm leading-relaxed text-ink">
-                <input
-                  type="checkbox"
-                  checked={agreed}
-                  onChange={event => setAgreed(event.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                />
-                <span>I reviewed this wallet action and agree to continue with the payment.</span>
-              </label>
-            </div>
+          {activeAction ? (
+            <PaymentCallReview
+              action={activeAction}
+              chainLabel={paymentChainName}
+              amount={amount}
+              tokenReturn={tokenReturn}
+              beneficiary={beneficiary}
+              memo={memo}
+            />
           ) : null}
 
           {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </div>
         <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-white px-5 py-4">
-          {review ? (
-            <>
-              <button type="button" className="btn-secondary min-h-[44px] px-5 text-sm" onClick={() => onReview(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={!agreed}
-                onClick={() => onReview(true)}
-              >
-                Continue to wallet
-              </button>
-            </>
-          ) : complete ? (
+          {complete ? (
             <button type="button" className="btn-primary min-h-[44px] px-5 text-sm" onClick={onClose}>
               Done
             </button>
@@ -2141,29 +2125,167 @@ function PaymentSequenceDialog({
   );
 }
 
+function PaymentCallReview({
+  action,
+  chainLabel,
+  amount,
+  tokenReturn,
+  beneficiary,
+  memo,
+}: {
+  action: PaymentSequenceAction;
+  chainLabel: string;
+  amount: string;
+  tokenReturn: string | null;
+  beneficiary: Address | null;
+  memo: string | null;
+}) {
+  const request = action.request;
+  const destination = paymentRequestDestination(request);
+  const actionName = action.label || humanPaymentAction(request.functionName);
+  return (
+    <div className="rounded-xl border border-bluebs-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
+            Exact wallet action
+          </p>
+          <p className="mt-1 font-medium text-ink">{actionName}</p>
+        </div>
+        <span className="text-xs text-smoke-500">{chainLabel}</span>
+      </div>
+      <dl className="mt-3 space-y-2 text-xs">
+        <div>
+          <dt className="text-smoke-500">Destination</dt>
+          <dd className="mt-0.5 break-all text-ink">
+            <span className="font-medium">{destination.name}</span> · {request.address}
+          </dd>
+        </div>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+          <dt className="text-smoke-500">
+            {action.kind === "payment" ? "Amount in" : "Amount authorized"}
+          </dt>
+          <dd className="text-right text-ink">{amount}</dd>
+          {action.kind === "token-approval" ? (
+            <>
+              <dt className="text-smoke-500">Spender</dt>
+              <dd className="break-all text-right font-mono text-[10px] text-ink">
+                {paymentArgumentAddress(request.args[0], request.chainId)}
+              </dd>
+            </>
+          ) : null}
+          {action.kind === "router-approval" ? (
+            <>
+              <dt className="text-smoke-500">Token</dt>
+              <dd className="break-all text-right font-mono text-[10px] text-ink">
+                {String(request.args[0] ?? "")}
+              </dd>
+              <dt className="text-smoke-500">Spender</dt>
+              <dd className="break-all text-right font-mono text-[10px] text-ink">
+                {paymentArgumentAddress(request.args[1], request.chainId)}
+              </dd>
+              <dt className="text-smoke-500">Expires</dt>
+              <dd className="text-right text-ink">
+                {formatApprovalExpiration(request.args[3])}
+              </dd>
+            </>
+          ) : null}
+          {tokenReturn && action.kind === "payment" ? (
+            <>
+              <dt className="text-smoke-500">Minimum received</dt>
+              <dd className="text-right text-ink">{tokenReturn}</dd>
+            </>
+          ) : null}
+          {beneficiary && action.kind === "payment" ? (
+            <>
+              <dt className="text-smoke-500">Beneficiary</dt>
+              <dd className="break-all text-right font-mono text-[10px] text-ink">{beneficiary}</dd>
+            </>
+          ) : null}
+          {memo && action.kind === "payment" ? (
+            <>
+              <dt className="text-smoke-500">Note</dt>
+              <dd className="text-right text-ink">{memo}</dd>
+            </>
+          ) : null}
+        </div>
+      </dl>
+      <details className="mt-3 border-t border-smoke-200 pt-3">
+        <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-grey-900 p-3 font-mono text-[10px] leading-relaxed text-grey-25">
+          {paymentRequestJson(request, chainLabel, destination.name)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
 function humanPaymentAction(functionName?: string): string {
   if (functionName === "approve") return "Approve token access";
-  if (functionName === "execute") return "Execute swap";
-  if (functionName === "pay") return "Execute payment";
+  if (functionName === "execute") return "Direct AMM swap";
+  if (functionName === "pay") return "Pay project";
   if (functionName === "addToBalanceOf") return "Add to project balance";
   return "Review wallet action";
 }
 
-function paymentCallDestination(call: TransactionReviewCall): string {
-  const deployment = uniswapV4Deployment(call.chainId);
+function paymentRequestDestination(request: TxRequest): { name: string } {
+  const deployment = uniswapV4Deployment(request.chainId);
   const name =
-    call.contractName ??
-    (call.to.toLowerCase() === deployment?.permit2.toLowerCase()
+    request.address.toLowerCase() === deployment?.permit2.toLowerCase()
       ? "Permit2"
       : deployment?.universalRouter &&
-          call.to.toLowerCase() === deployment.universalRouter.toLowerCase()
+          request.address.toLowerCase() === deployment.universalRouter.toLowerCase()
         ? "Uniswap Universal Router"
-        : call.functionName === "approve"
+        : request.functionName === "approve"
           ? "Payment token"
-          : call.functionName === "pay" || call.functionName === "addToBalanceOf"
+          : request.functionName === "pay" || request.functionName === "addToBalanceOf"
             ? "Juicebox payment terminal"
-            : null);
-  return name ? `${name} · ${call.to}` : call.to;
+            : "Contract";
+  return { name };
+}
+
+function paymentArgumentAddress(value: unknown, chainId: number): string {
+  const address = typeof value === "string" ? value : String(value ?? "");
+  const deployment = uniswapV4Deployment(chainId);
+  if (address.toLowerCase() === deployment?.permit2.toLowerCase()) {
+    return `Permit2 · ${address}`;
+  }
+  if (
+    deployment?.universalRouter &&
+    address.toLowerCase() === deployment.universalRouter.toLowerCase()
+  ) {
+    return `Uniswap Universal Router · ${address}`;
+  }
+  return address;
+}
+
+function formatApprovalExpiration(value: unknown): string {
+  try {
+    return new Date(Number(value) * 1000).toLocaleString();
+  } catch {
+    return String(value ?? "");
+  }
+}
+
+function paymentRequestJson(request: TxRequest, chainLabel: string, contractName: string): string {
+  return JSON.stringify(
+    {
+      chain: chainLabel,
+      chainId: request.chainId,
+      contract: contractName,
+      address: request.address,
+      function: request.functionName,
+      args: request.args,
+      value: request.value ?? 0n,
+      calldata: encodeFunctionData({
+        abi: request.abi,
+        functionName: request.functionName,
+        args: request.args,
+      }),
+    },
+    (_, value) => (typeof value === "bigint" ? value.toString() : value),
+    2,
+  );
 }
 
 async function waitForPaymentReceipt(client: PublicClient, hash: Hex) {
@@ -2181,18 +2303,10 @@ async function waitForPaymentReceipt(client: PublicClient, hash: Hex) {
   }
 }
 
-function sequenceActiveStep(
-  steps: string[],
-  review: TransactionReviewRequest | null,
-  status: string | null,
-  complete: boolean,
-): number {
-  if (complete) return steps.length;
-  const text = `${review?.calls[0]?.label ?? ""} ${review?.calls[0]?.functionName ?? ""} ${status ?? ""}`.toLowerCase();
-  const routerIndex = steps.findIndex(step => step.toLowerCase().includes("router"));
-  if (routerIndex >= 0 && /router|permit2/.test(text)) return routerIndex;
-  if (/execute|payment|balance/.test(text)) return Math.max(0, steps.length - 1);
-  return 0;
+function nextUiPaint(): Promise<void> {
+  return new Promise(resolve => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+  });
 }
 
 /** A subtle underlined-text dropdown (website/ parity: sizeSelectToText) —

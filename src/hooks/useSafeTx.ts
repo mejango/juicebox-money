@@ -42,6 +42,12 @@ export type TxRequest = {
 export type TxSendOptions = {
   reverify?: (request: TxRequest) => Promise<unknown>
   /**
+   * The exact request was already rendered in a parent confirmation surface.
+   * This skips only the second app-owned review; account checks, revalidation,
+   * simulation, duplicate protection, and the wallet confirmation still run.
+   */
+  reviewedInParent?: boolean
+  /**
    * Simulate against a confirmed prerequisite block instead of a load
    * balancer's potentially lagging `latest` view. This is required when the
    * reviewed write immediately follows an ERC-20 or Permit2 approval.
@@ -171,6 +177,7 @@ export function useSafeTx(chainId: number) {
           request,
           expectedAccount: address,
           review: async reviewed => {
+            if (options?.reviewedInParent) return
             const approved = await requestContractTransactionReview(
               { ...reviewed, account: address },
               {

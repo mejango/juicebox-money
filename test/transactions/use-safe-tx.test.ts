@@ -161,6 +161,21 @@ describe('useSafeTx', () => {
     )
   })
 
+  it('skips only the duplicate app review when the parent already showed the exact call', async () => {
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { reviewedInParent: true })
+    })
+
+    expect(mocks.requestReview).not.toHaveBeenCalled()
+    expect(mocks.switchChain).toHaveBeenCalledWith({ chainId: 10 })
+    expect(mocks.publicClient.simulateContract).toHaveBeenCalledWith(
+      expect.objectContaining({ address: BOB, account: ALICE }),
+    )
+    expect(mocks.writeContract).toHaveBeenCalled()
+  })
+
   it('cancels without switching, simulating, or signing', async () => {
     mocks.requestReview.mockResolvedValueOnce(false)
     const hook = await renderHook()
