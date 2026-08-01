@@ -2213,7 +2213,7 @@ function PaymentCallReview({
             <>
               <dt className="text-smoke-500">Token</dt>
               <dd className="break-all text-right font-mono text-xs text-ink">
-                {String(request.args[0] ?? "")}
+                {paymentTokenAddress(request.args[0], request.chainId)}
               </dd>
               <dt className="text-smoke-500">Spender</dt>
               <dd className="break-all text-right font-mono text-xs text-ink">
@@ -2286,6 +2286,7 @@ function humanPaymentAction(functionName?: string): string {
 
 function paymentRequestDestination(request: TxRequest): { name: string } {
   const deployment = uniswapV4Deployment(request.chainId);
+  const knownToken = paymentTokenName(request.address, request.chainId);
   const name =
     request.address.toLowerCase() === deployment?.permit2.toLowerCase()
       ? "Permit2"
@@ -2293,11 +2294,24 @@ function paymentRequestDestination(request: TxRequest): { name: string } {
           request.address.toLowerCase() === deployment.universalRouter.toLowerCase()
         ? "Uniswap Universal Router"
         : request.functionName === "approve"
-          ? "Payment token"
+          ? knownToken
+            ? `${knownToken} token`
+            : "Payment token"
           : request.functionName === "pay" || request.functionName === "addToBalanceOf"
             ? "Juicebox payment terminal"
             : "Contract";
   return { name };
+}
+
+function paymentTokenName(value: unknown, chainId: number): string | null {
+  const address = typeof value === "string" ? value.toLowerCase() : "";
+  return USDC_ADDRESSES[chainId as JBChainId]?.toLowerCase() === address ? "USDC" : null;
+}
+
+function paymentTokenAddress(value: unknown, chainId: number): string {
+  const address = typeof value === "string" ? value : String(value ?? "");
+  const name = paymentTokenName(address, chainId);
+  return name ? `${name} | ${address}` : address;
 }
 
 function paymentArgumentAddress(value: unknown, chainId: number): string {
