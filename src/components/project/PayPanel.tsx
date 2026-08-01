@@ -2017,7 +2017,7 @@ function PaymentSequenceDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-sequence-title"
-        className="w-full max-w-lg rounded-2xl border border-smoke-300 bg-bone shadow-2xl"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl"
       >
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
           <div>
@@ -2039,7 +2039,7 @@ function PaymentSequenceDialog({
             onClick={onClose}
             disabled={started}
             aria-label="Close payment"
-            className="icon-button -mr-2 -mt-2 shrink-0 disabled:opacity-40"
+            className="icon-button -mr-2 -mt-2 shrink-0 transition-transform hover:scale-110 hover:bg-transparent disabled:opacity-40"
           >
             <svg
               aria-hidden="true"
@@ -2093,6 +2093,11 @@ function PaymentSequenceDialog({
               ))}
             </ol>
           </div>
+
+          <p className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm leading-relaxed text-error-800">
+            This is the exact wallet action that will be sent to your wallet. Review it before
+            signing.
+          </p>
 
           {activeAction ? (
             <PaymentCallReview
@@ -2180,70 +2185,60 @@ function PaymentCallReview({
   };
   return (
     <div className="rounded-xl border border-bluebs-200 bg-white p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
-            Exact wallet action
-          </p>
-          <p className="mt-1 font-medium text-ink">{actionName}</p>
-        </div>
-        <span className="text-xs text-smoke-500">{chainLabel}</span>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
+          {chainLabel}
+        </p>
+        <p className="mt-1 break-all text-xs text-smoke-600">
+          <span className="font-medium">{destination.name}</span> | {request.address}
+        </p>
+        <p className="mt-2 font-medium text-ink">{actionName}</p>
       </div>
-      <dl className="mt-3 space-y-2 text-xs">
-        <div>
-          <dt className="text-smoke-500">Destination</dt>
-          <dd className="mt-0.5 break-all text-ink">
-            <span className="font-medium">{destination.name}</span> | {request.address}
-          </dd>
-        </div>
-        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-          <dt className="text-smoke-500">
-            {action.kind === "payment" ? "Amount in" : "Amount authorized"}
-          </dt>
-          <dd className="text-right text-ink">{amount}</dd>
-          {action.kind === "token-approval" ? (
-            <>
-              <dt className="text-smoke-500">Spender</dt>
-              <dd className="break-all text-right font-mono text-xs text-ink">
-                {paymentArgumentAddress(request.args[0], request.chainId)}
-              </dd>
-            </>
-          ) : null}
-          {action.kind === "router-approval" ? (
-            <>
-              <dt className="text-smoke-500">Token</dt>
-              <dd className="break-all text-right font-mono text-xs text-ink">
-                {paymentTokenAddress(request.args[0], request.chainId)}
-              </dd>
-              <dt className="text-smoke-500">Spender</dt>
-              <dd className="break-all text-right font-mono text-xs text-ink">
-                {paymentArgumentAddress(request.args[1], request.chainId)}
-              </dd>
-              <dt className="text-smoke-500">Expires</dt>
-              <dd className="text-right text-ink">
-                {formatApprovalExpiration(request.args[3])}
-              </dd>
-            </>
-          ) : null}
-          {tokenReturn && action.kind === "payment" ? (
-            <>
-              <dt className="text-smoke-500">Minimum received</dt>
-              <dd className="text-right text-ink">{tokenReturn}</dd>
-            </>
-          ) : null}
-          {beneficiary && action.kind === "payment" ? (
-            <>
-              <dt className="text-smoke-500">Beneficiary</dt>
-              <dd className="break-all text-right font-mono text-xs text-ink">{beneficiary}</dd>
-            </>
-          ) : null}
-          {memo && action.kind === "payment" ? (
-            <>
-              <dt className="text-smoke-500">Note</dt>
-              <dd className="text-right text-ink">{memo}</dd>
-            </>
-          ) : null}
-        </div>
+      <dl className="mt-2 grid grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-2 gap-y-1 text-xs">
+        <dt className="text-smoke-500">
+          {action.kind === "payment" ? "Amount in:" : "Amount authorized:"}
+        </dt>
+        <dd className="text-ink">{amount}</dd>
+        {action.kind === "token-approval" ? (
+          <>
+            <dt className="text-smoke-500">Spender:</dt>
+            <dd className="break-all font-mono text-xs text-ink">
+              {paymentArgumentAddress(request.args[0], request.chainId)}
+            </dd>
+          </>
+        ) : null}
+        {action.kind === "router-approval" ? (
+          <>
+            <dt className="text-smoke-500">Token:</dt>
+            <dd className="break-all font-mono text-xs text-ink">
+              {paymentTokenAddress(request.args[0], request.chainId)}
+            </dd>
+            <dt className="text-smoke-500">Spender:</dt>
+            <dd className="break-all font-mono text-xs text-ink">
+              {paymentArgumentAddress(request.args[1], request.chainId)}
+            </dd>
+            <dt className="text-smoke-500">Expires:</dt>
+            <dd className="text-ink">{formatApprovalExpiration(request.args[3])}</dd>
+          </>
+        ) : null}
+        {tokenReturn && action.kind === "payment" ? (
+          <>
+            <dt className="text-smoke-500">Minimum received:</dt>
+            <dd className="text-ink">{tokenReturn}</dd>
+          </>
+        ) : null}
+        {beneficiary && action.kind === "payment" ? (
+          <>
+            <dt className="text-smoke-500">Beneficiary:</dt>
+            <dd className="break-all font-mono text-xs text-ink">{beneficiary}</dd>
+          </>
+        ) : null}
+        {memo && action.kind === "payment" ? (
+          <>
+            <dt className="text-smoke-500">Note:</dt>
+            <dd className="break-words text-ink">{memo}</dd>
+          </>
+        ) : null}
       </dl>
       <details className="mt-3 border-t border-smoke-200 pt-3">
         <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
