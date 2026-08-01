@@ -69,7 +69,8 @@ function textOf(node: unknown): string {
   }
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (Array.isArray(node)) return node.map(textOf).join('')
-  const children = (node as { children?: unknown }).children
+  const value = node as { children?: unknown; props?: { children?: unknown } }
+  const children = value.children ?? value.props?.children
   return textOf(children ?? [])
 }
 
@@ -229,5 +230,27 @@ describe('activityParts raw amounts', () => {
       'tokens',
     )
     expect(payouts.amountRaw).toBe('4200000')
+  })
+
+  it('attributes buyback swaps to the payer instead of PoolManager', () => {
+    const parts = activityParts(
+      {
+        ...base,
+        from: '0x823b92d6a4b2aed4b15675c7917c9f922ea8adad',
+        swapEvent: {
+          direction: 'buy',
+          terminalTokenAmount: '50000000',
+          projectTokenAmount: '468829854500197524612724',
+          caller: '0x498581ff718922c3f8e6a244956af099b2652b2b',
+          from: '0x823b92d6a4b2aed4b15675c7917c9f922ea8adad',
+        },
+      } as BsActivityEvent,
+      'ART',
+    )
+
+    expect(parts.actor).toBe('0x823b92d6a4b2aed4b15675c7917c9f922ea8adad')
+    expect(textOf(parts.action)).toContain('bought 469k ART via the buyback pool')
+    expect(parts.direction).toBe('in')
+    expect(parts.amountRaw).toBe('50000000')
   })
 })

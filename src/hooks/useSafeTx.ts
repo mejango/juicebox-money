@@ -39,6 +39,16 @@ export type TxRequest = {
   label?: string
 }
 
+export type TxSendOptions = {
+  reverify?: (request: TxRequest) => Promise<unknown>
+  /**
+   * Simulate against a confirmed prerequisite block instead of a load
+   * balancer's potentially lagging `latest` view. This is required when the
+   * reviewed write immediately follows an ERC-20 or Permit2 approval.
+   */
+  simulationBlockNumber?: bigint
+}
+
 /**
  * The shared in-flight button copy: the fixed simulating/signing strings every
  * flow uses, the caller's `pending` progress text, and its `idle` label
@@ -141,7 +151,7 @@ export function useSafeTx(chainId: number) {
   const send = useCallback(
     async (
       request: TxRequest,
-      options?: { reverify?: (request: TxRequest) => Promise<unknown> },
+      options?: TxSendOptions,
     ) => {
       if (inFlightRef.current) return null
       if (getViewAs()) {
@@ -193,6 +203,9 @@ export function useSafeTx(chainId: number) {
               args: reviewed.args as unknown[],
               value: reviewed.value,
               account: address,
+              ...(options?.simulationBlockNumber !== undefined
+                ? { blockNumber: options.simulationBlockNumber }
+                : {}),
             })
             return simulated
           },

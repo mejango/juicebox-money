@@ -395,7 +395,7 @@ export type BsActivityEvent = {
     from: string
   } | null
   swapEvent?: {
-    direction: boolean
+    direction: string
     terminalTokenAmount: string
     projectTokenAmount: string
     caller: string

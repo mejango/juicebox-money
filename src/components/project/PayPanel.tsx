@@ -272,6 +272,14 @@ export function PayPanel({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
+  // Once an approval is confirmed, every dependent allowance read and final
+  // simulation is anchored to that receipt block. Base providers are load
+  // balanced, so an unpinned `latest` call can otherwise land on a sibling
+  // backend that still sees an expired Permit2 allowance.
+  const approvalBlock =
+    approveTx.receipt?.status === "success"
+      ? approveTx.receipt.blockNumber
+      : undefined;
 
   const [mode, setMode] = useState<"pay" | "addbalance">("pay");
   const [amount, setAmount] = useState("");
@@ -958,6 +966,7 @@ export function PayPanel({
       context?.token,
       approvalSpender,
       address,
+      approvalBlock?.toString(),
     ],
     enabled:
       !!publicClient &&
@@ -973,6 +982,7 @@ export function PayPanel({
         abi: erc20Abi,
         functionName: "allowance",
         args: [address!, approvalSpender!],
+        blockNumber: approvalBlock,
       }),
   });
   const needsApproval = !isNative && (allowance ?? 0n) < amountRaw;
@@ -984,6 +994,7 @@ export function PayPanel({
         context?.token,
         swapDeployment?.universalRouter,
         address,
+        approvalBlock?.toString(),
       ],
       enabled:
         !!publicClient &&
@@ -1003,6 +1014,7 @@ export function PayPanel({
             context!.token,
             swapDeployment!.universalRouter as Address,
           ],
+          blockNumber: approvalBlock,
         }),
     },
   );
@@ -1108,6 +1120,8 @@ export function PayPanel({
           label: viaSafe
             ? "Swap for project tokens (30-day deadline for Safe signature collection)"
             : "Swap for project tokens",
+        }, {
+          simulationBlockNumber: approvalBlock,
         });
         return;
       }
@@ -1122,14 +1136,17 @@ export function PayPanel({
         memo: memo.trim() || undefined,
         metadata,
       });
-      void tx.send({
-        chainId,
-        address: request.address,
-        abi: request.abi,
-        functionName: request.functionName,
-        args: request.args as unknown as readonly unknown[],
-        value: request.value,
-      });
+      void tx.send(
+        {
+          chainId,
+          address: request.address,
+          abi: request.abi,
+          functionName: request.functionName,
+          args: request.args as unknown as readonly unknown[],
+          value: request.value,
+        },
+        { simulationBlockNumber: approvalBlock },
+      );
     } else {
       void tx.send(
         buildAddToBalanceRequest({
@@ -1140,6 +1157,7 @@ export function PayPanel({
           amount: amountRaw,
           memo: memo.trim(),
         }),
+        { simulationBlockNumber: approvalBlock },
       );
     }
   };

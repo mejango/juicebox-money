@@ -65,6 +65,8 @@ export function activityParts(
   const cashOut = event.cashOutTokensEvent
   const mint = event.mintTokensEvent
   const loan = event.borrowLoanEvent
+  const swap = event.swapEvent
+  const swapIsSell = swap?.direction.toLowerCase() === 'sell'
   const actor =
     pay?.beneficiary ??
     cashOut?.beneficiary ??
@@ -87,6 +89,10 @@ export function activityParts(
     event.operatorPermissionsSetEvent?.caller ??
     event.addNftTierEvent?.caller ??
     event.removeNftTierEvent?.caller ??
+    // PoolManager emits the swap, so `caller` is infrastructure. Bendystraw's
+    // swap `from` is the transaction origin/payer and is the human actor the
+    // activity row must attribute.
+    event.swapEvent?.from ??
     event.swapEvent?.caller ??
     event.buybackPoolEvent?.caller ??
     event.from
@@ -118,11 +124,13 @@ export function activityParts(
         ? 'out'
         : event.repayLoanEvent ||
             event.mintNftEvent ||
-            event.swapEvent ||
+          (swap && !swapIsSell) ||
             event.bridgeClaimEvent ||
             event.sendPayoutToSplitEvent ||
             event.sendReservedTokensToSplitEvent
           ? 'in'
+          : swapIsSell
+            ? 'out'
           : null
 
   const action = pay ? (
@@ -207,9 +215,9 @@ export function activityParts(
     <>added shop item #{event.addNftTierEvent.tierId}</>
   ) : event.removeNftTierEvent ? (
     <>removed shop item #{event.removeNftTierEvent.tierId}</>
-  ) : event.swapEvent ? (
+  ) : swap ? (
     <>
-      bought{' '}
+      {swapIsSell ? 'sold' : 'bought'}{' '}
       <span className="font-medium text-bluebs-600">
         {tokenCount} {tokenUnit}
       </span>{' '}
@@ -255,7 +263,8 @@ export function activityParts(
       cashOut?.reclaimAmount ??
       event.addToBalanceEvent?.amount ??
       event.sendPayoutsEvent?.amountPaidOut ??
-      event.sendPayoutToSplitEvent?.amount,
+      event.sendPayoutToSplitEvent?.amount ??
+      swap?.terminalTokenAmount,
   }
 }
 

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   connected: true,
   publicClient: { simulateContract: vi.fn() },
   receipt: { data: undefined, isError: false } as {
-    data?: { status: 'success' | 'reverted' }
+    data?: { status: 'success' | 'reverted'; blockNumber?: bigint }
     isError: boolean
   },
   getAccount: vi.fn(),
@@ -147,6 +147,18 @@ describe('useSafeTx', () => {
       busy: true,
       hash: HASH,
     })
+  })
+
+  it('anchors a dependent simulation to its confirmed prerequisite block', async () => {
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { simulationBlockNumber: 12_345n })
+    })
+
+    expect(mocks.publicClient.simulateContract).toHaveBeenCalledWith(
+      expect.objectContaining({ blockNumber: 12_345n }),
+    )
   })
 
   it('cancels without switching, simulating, or signing', async () => {
