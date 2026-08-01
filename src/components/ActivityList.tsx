@@ -1,30 +1,39 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
-import type { BsActivityEvent } from '@/lib/bendystraw'
+import {
+  getProjectActivity,
+  getProjectActivityByProject,
+  type BsActivityEvent,
+} from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import {
   formatCompactTokenAmount,
   formatDate,
   timeAgo,
 } from '@/lib/format'
+import { identityGradient } from '@/lib/identityGradient'
 import { chainName } from '@/lib/urn'
+import { ActorLink } from './ActorLink'
 import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
 
-const IDENT_COLORS = [
-  '#1A8A8A',
-  '#3D7A5A',
-  '#C43550',
-  '#2C2018',
-  '#B8602E',
-  '#6EC4C4',
-  '#82B89E',
-]
+const ACTIVITY_POLL_MS = 15_000
+
+export function mergeActivityEvents<T extends BsActivityEvent>(
+  current: T[],
+  incoming: T[],
+): T[] {
+  const incomingIds = new Set(incoming.map(event => event.id))
+  return [
+    ...incoming,
+    ...current.filter(event => !incomingIds.has(event.id)),
+  ]
+}
 
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
@@ -34,39 +43,6 @@ function txUrl(chainId: number, txHash: string): string | null {
 function addressUrl(chainId: number, address: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/address/${address}` : null
-}
-
-/** The deterministic two-color identity bubbles used by website/'s feed. */
-export function identityGradient(seed: string): string {
-  let hash = 0
-  for (let i = 0; i < seed.length; i++) {
-    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0
-  }
-  const a = IDENT_COLORS[Math.abs(hash) % IDENT_COLORS.length]
-  const b = IDENT_COLORS[Math.abs(hash >> 3) % IDENT_COLORS.length]
-  return `linear-gradient(135deg, ${a}, ${b})`
-}
-
-/** An activity row's actor: an explorer link when one resolves, else plain text. */
-export function ActorLink({
-  href,
-  actor,
-}: {
-  href: string | null
-  actor: string
-}) {
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
-    >
-      <AddressLabel address={actor} />
-    </a>
-  ) : (
-    <AddressLabel address={actor} className="text-smoke-700" />
-  )
 }
 
 /**
@@ -277,6 +253,7 @@ export function activityParts(
     amountRaw:
       pay?.amount ??
       cashOut?.reclaimAmount ??
+      event.addToBalanceEvent?.amount ??
       event.sendPayoutsEvent?.amountPaidOut ??
       event.sendPayoutToSplitEvent?.amount,
   }
@@ -350,12 +327,14 @@ export function ActivityList({
   events,
   chainId,
   projectId,
+  suckerGroupId,
   accountingToken,
   error = false,
 }: {
   events: BsActivityEvent[]
   chainId: JBChainId
   projectId: number
+  suckerGroupId?: string | null
   /**
    * Set when the project's verified deployments agree on one accounting-token
    * kind — rows then show raw token amounts instead of indexed USD.
@@ -363,7 +342,46 @@ export function ActivityList({
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
   error?: boolean
 }) {
-  const visible = events.filter(
+  const [liveEvents, setLiveEvents] = useState(events)
+  const [liveError, setLiveError] = useState(error)
+
+  useEffect(() => {
+    setLiveEvents(events)
+    setLiveError(error)
+  }, [error, events])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    let stopped = false
+
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const incoming = await (suckerGroupId
+          ? getProjectActivity(suckerGroupId, 250, chainId)
+          : getProjectActivityByProject(chainId, projectId, 250))
+        if (stopped) return
+        setLiveEvents(current => mergeActivityEvents(current, incoming))
+        setLiveError(false)
+      } catch {
+        // Keep the last known-good feed; the next poll retries.
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), ACTIVITY_POLL_MS)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [chainId, projectId, suckerGroupId])
+
+  const visible = liveEvents.filter(
     e =>
       e.payEvent ||
       e.cashOutTokensEvent ||
@@ -390,7 +408,7 @@ export function ActivityList({
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
 
   if (visible.length === 0) {
-    if (error) {
+    if (liveError) {
       return (
         <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-red-300 p-5 text-sm text-red-700">
           Activity is temporarily unavailable. No events are being hidden as

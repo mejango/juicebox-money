@@ -52,6 +52,7 @@ import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressText } from '@/components/ui/AddressLabel'
+import { ModalShell } from '@/components/ui/ModalShell'
 import { TxError } from '@/components/ui/TxError'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
@@ -208,7 +209,7 @@ export function ownerPageWindow<T>(
  * the connected holder's per-chain position (balance, cash-out value, and — for
  * revnets — max loan), plus every token-holder action in one place: Cash out,
  * Get a loan (revnet), and Move between chains (multichain). Each action opens
- * its flow inline. Every write runs through useSafeTx (simulate-first).
+ * its flow in a modal. Every write runs through useSafeTx (simulate-first).
  */
 function YouCard({
   chainId,
@@ -246,17 +247,28 @@ function YouCard({
 
   const actionBtn = (id: YouAction, label: string) => (
     <button
-      onClick={() => setAction(a => (a === id ? null : id))}
-      className={`min-h-[40px] rounded-lg px-4 text-sm font-medium transition-colors ${
-        action === id
-          ? 'bg-bluebs-25 text-bluebs-700'
-          : 'btn-secondary'
-      }`}
-      aria-pressed={action === id}
+      type="button"
+      onClick={() => setAction(id)}
+      className="btn-secondary min-h-[40px] px-4 text-sm"
+      aria-haspopup="dialog"
+      aria-expanded={action === id}
     >
       {label}
     </button>
   )
+
+  const actionTitle =
+    action === 'cashOut'
+      ? 'Cash out'
+      : action === 'burn'
+        ? 'Burn tokens'
+        : action === 'loan'
+          ? 'Get a loan'
+          : action === 'move'
+            ? 'Move between chains'
+            : action === 'liquidity'
+              ? 'Add market liquidity'
+              : null
 
   return (
     <div className="card p-5">
@@ -309,15 +321,24 @@ function YouCard({
             {actionBtn('burn', 'Burn')}
           </div>
 
-          {action ? (
-            <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+          {action && actionTitle ? (
+            <ModalShell
+              title={actionTitle}
+              onClose={() => setAction(null)}
+              maxWidth={action === 'liquidity' ? 'max-w-3xl' : 'max-w-xl'}
+            >
               {action === 'cashOut' ? (
-                <CashOutPanel chainId={chainId} projectId={projectId} />
+                <CashOutPanel
+                  chainId={chainId}
+                  projectId={projectId}
+                  showHeading={false}
+                />
               ) : action === 'burn' ? (
                 <BurnTokensFlow
                   chainId={chainId}
                   projectId={projectId}
                   tokenSymbol={collateralSymbol}
+                  showHeading={false}
                 />
               ) : action === 'loan' ? (
                 <GetLoanFlow
@@ -336,9 +357,11 @@ function YouCard({
                   chainId={chainId}
                   projectId={projectId}
                   tokenSymbol={collateralSymbol}
+                  framed={false}
+                  showHeading={false}
                 />
               )}
-            </div>
+            </ModalShell>
           ) : null}
         </>
       )}

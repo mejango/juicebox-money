@@ -64,6 +64,7 @@ export function CashOutPanel({
   accountingToken,
   accountingTokenSymbol,
   onGoToPay,
+  showHeading = true,
 }: {
   chainId: JBChainId
   projectId: number
@@ -74,6 +75,8 @@ export function CashOutPanel({
   accountingTokenSymbol?: string | null
   /** Switch to the Pay tab, when the host has one. */
   onGoToPay?: () => void
+  /** The modal host supplies the dialog title. */
+  showHeading?: boolean
 }) {
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
@@ -522,7 +525,11 @@ export function CashOutPanel({
 
   return (
     <div>
-      <h3 className="font-agrandir text-lg font-medium">Cash out your tokens</h3>
+      {showHeading ? (
+        <h3 className="font-agrandir text-lg font-medium">
+          Cash out your tokens
+        </h3>
+      ) : null}
 
       <div className="mt-2 min-h-[20px] text-sm text-smoke-700" aria-live="polite">
         {!isConnected ? (
@@ -643,34 +650,36 @@ export function CashOutPanel({
         </p>
       ) : null}
 
-      <button
-        onClick={cashOut}
-        disabled={
-          busy ||
-          (isConnected &&
-            (cashOutCount <= 0n ||
-              exceedsBalance ||
-              !route ||
-              directSellLoading ||
-              route.expectedReturn <= 0n))
-        }
-        className="btn-primary mt-5 min-h-[52px] w-full text-sm"
-      >
-        {txPhaseLabel(tx.busy ? tx.phase : approveTx.phase, {
-          pending: 'Cashing out…',
-          idle: !isConnected
-            ? 'Sign in to cash out'
-            : needsTokenApproval
-              ? 'Approve tokens for best execution'
-              : needsRouterApproval
-                ? 'Authorize the swap router'
-            : cashOutCount > 0n
-              ? directSellWins
-                ? `Sell ${debouncedAmount.trim()} ${holdingsSymbol} on the pool`
-                : `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
-              : 'Cash out',
-        })}
-      </button>
+      <div className="mt-5 flex justify-end">
+        <button
+          onClick={cashOut}
+          disabled={
+            busy ||
+            (isConnected &&
+              (cashOutCount <= 0n ||
+                exceedsBalance ||
+                !route ||
+                directSellLoading ||
+                route.expectedReturn <= 0n))
+          }
+          className="btn-primary min-h-[44px] px-5 text-sm"
+        >
+          {txPhaseLabel(tx.busy ? tx.phase : approveTx.phase, {
+            pending: 'Cashing out…',
+            idle: !isConnected
+              ? 'Sign in to cash out'
+              : needsTokenApproval
+                ? 'Approve tokens for best execution'
+                : needsRouterApproval
+                  ? 'Authorize the swap router'
+                  : cashOutCount > 0n
+                    ? directSellWins
+                      ? `Sell ${debouncedAmount.trim()} ${holdingsSymbol} on the pool`
+                      : `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
+                    : 'Cash out',
+          })}
+        </button>
+      </div>
 
       {!exceedsBalance &&
       !nothingToReclaim &&

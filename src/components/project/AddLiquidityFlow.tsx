@@ -390,10 +390,16 @@ export function AddLiquidityFlow({
   chainId,
   projectId,
   tokenSymbol,
+  framed = true,
+  showHeading = true,
 }: {
   chainId: JBChainId
   projectId: number
   tokenSymbol: string
+  /** Card chrome is unnecessary when the form is hosted by a modal. */
+  framed?: boolean
+  /** The modal host supplies the dialog title. */
+  showHeading?: boolean
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const chainMeta = JB_CHAINS[chainId]
@@ -421,8 +427,10 @@ export function AddLiquidityFlow({
 
   if (!posm) {
     return (
-      <div className="card p-5">
-        <span className="field-label">Add market liquidity</span>
+      <div className={framed ? 'card p-5' : ''}>
+        {showHeading ? (
+          <span className="field-label">Add market liquidity</span>
+        ) : null}
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
           Adding liquidity isn&apos;t available on this chain yet.
         </p>
@@ -431,7 +439,9 @@ export function AddLiquidityFlow({
   }
 
   if (marketLoading) {
-    return <FormCardSkeleton label="Loading liquidity form" />
+    return (
+      <FormCardSkeleton label="Loading liquidity form" framed={framed} />
+    )
   }
 
   // No buyback hook at all, or no deployed project ERC-20: nothing to seed.
@@ -441,8 +451,10 @@ export function AddLiquidityFlow({
 
   if (market.status !== 'pool') {
     return (
-      <div className="card p-5">
-        <span className="field-label">Add market liquidity</span>
+      <div className={framed ? 'card p-5' : ''}>
+        {showHeading ? (
+          <span className="field-label">Add market liquidity</span>
+        ) : null}
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
           No market pool yet — liquidity can be added once the pool is live.
         </p>
@@ -459,6 +471,8 @@ export function AddLiquidityFlow({
       sym={sym}
       nativeSymbol={nativeSymbol}
       floor={floor ?? null}
+      framed={framed}
+      showHeading={showHeading}
     />
   )
 }
@@ -471,6 +485,8 @@ function AddLiquidityForm({
   sym,
   nativeSymbol,
   floor,
+  framed,
+  showHeading,
 }: {
   chainId: JBChainId
   projectId: number
@@ -479,6 +495,8 @@ function AddLiquidityForm({
   sym: string
   nativeSymbol: string
   floor: number | null
+  framed: boolean
+  showHeading: boolean
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
@@ -880,8 +898,10 @@ function AddLiquidityForm({
   if (done) {
     const url = mintHash ? etherscanTxUrl(chainId, mintHash) : null
     return (
-      <div className="card p-5">
-        <span className="field-label">Add market liquidity</span>
+      <div className={framed ? 'card p-5' : ''}>
+        {showHeading ? (
+          <span className="field-label">Add market liquidity</span>
+        ) : null}
         <p className="mt-2 text-sm font-medium text-ink">
           Liquidity added to the {sym} / {pairSym} pool.
         </p>
@@ -907,9 +927,13 @@ function AddLiquidityForm({
   const disabledCol = (active: boolean) => (active ? '' : 'opacity-45')
 
   return (
-    <div className="card p-5">
+    <div className={framed ? 'card p-5' : ''}>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="field-label">Add market liquidity</span>
+        {showHeading ? (
+          <span className="field-label">Add market liquidity</span>
+        ) : (
+          <span />
+        )}
         <span className="text-xs text-smoke-500">{chainName}</span>
       </div>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
@@ -1086,41 +1110,42 @@ function AddLiquidityForm({
         </p>
       ) : null}
 
-      <button
-        onClick={
-          !plan
-            ? handleReview
-            : running
-              ? undefined
-              : tx.phase === 'error'
-                ? resume // resume at the step that failed, not from the start
-                : startRun
-        }
-        disabled={busy}
-        className="btn-primary mt-4 min-h-[44px] w-full text-sm"
-      >
-        {quoting
-          ? 'Checking amounts…'
-          : running
-            ? 'Adding liquidity…'
-            : !isConnected
-              ? 'Sign in to continue'
-              : plan
-                ? tx.phase === 'error'
-                  ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
-                  : 'Confirm & add liquidity'
-                : 'Review'}
-      </button>
-
-      {plan && !running ? (
+      <div className="mt-4 flex flex-wrap justify-end gap-3">
+        {plan && !running ? (
+          <button
+            onClick={startOver}
+            disabled={busy}
+            className="btn-secondary min-h-[44px] px-5 text-sm"
+          >
+            Edit amounts
+          </button>
+        ) : null}
         <button
-          onClick={startOver}
+          onClick={
+            !plan
+              ? handleReview
+              : running
+                ? undefined
+                : tx.phase === 'error'
+                  ? resume // resume at the step that failed, not from the start
+                  : startRun
+          }
           disabled={busy}
-          className="mt-2 w-full text-xs text-smoke-500 hover:text-ink disabled:opacity-50"
+          className="btn-primary min-h-[44px] px-5 text-sm"
         >
-          Edit amounts
+          {quoting
+            ? 'Checking amounts…'
+            : running
+              ? 'Adding liquidity…'
+              : !isConnected
+                ? 'Sign in to continue'
+                : plan
+                  ? tx.phase === 'error'
+                    ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
+                    : 'Confirm & add liquidity'
+                  : 'Review'}
         </button>
-      ) : null}
+      </div>
 
       <TxError
         error={reviewError ?? tx.error}

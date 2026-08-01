@@ -2,8 +2,9 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import Link from 'next/link'
-import { useState } from 'react'
-import { activityParts, ActorLink } from '@/components/ActivityList'
+import { useEffect, useState } from 'react'
+import { ActorLink } from '@/components/ActorLink'
+import { activityParts, mergeActivityEvents } from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
@@ -13,6 +14,7 @@ import { formatDate, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 
 const ACCOUNT_ACTIVITY_PAGE = 25
+const ACTIVITY_POLL_MS = 15_000
 
 /**
  * Everything the account did, across projects and chains, with a load-more
@@ -32,6 +34,37 @@ export function AccountActivity({
   const [total, setTotal] = useState(totalCount)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    let stopped = false
+
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const page = await getAccountActivity(address, {
+          limit: ACCOUNT_ACTIVITY_PAGE,
+          offset: 0,
+        })
+        if (stopped) return
+        setEvents(current => mergeActivityEvents(current, page.items))
+        setTotal(page.totalCount)
+      } catch {
+        // Keep the last known-good page; the next poll retries.
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    const timer = window.setInterval(() => void refresh(), ACTIVITY_POLL_MS)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [address])
 
   const loadMore = async () => {
     setLoading(true)

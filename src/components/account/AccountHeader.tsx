@@ -3,11 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, type FormEvent } from 'react'
 import { isAddress, type Address } from 'viem'
-import { identityGradient } from '@/components/ActivityList'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { identityGradient } from '@/lib/identityGradient'
 import { useViewAs } from '@/lib/viewAs'
 
 /** The jump box: any address or ENS name navigates to its account page. */

@@ -480,27 +480,29 @@ export function GetLoanFlow({
             </div>
           ) : null}
 
-          <button
-            onClick={review ? handleConfirm : handleReview}
-            disabled={busy || (isConnected && collateral <= 0n)}
-            className="btn-primary min-h-[44px] w-full text-sm"
-          >
-            {quoting
-              ? 'Checking the live quote…'
-              : permTx.phase === 'simulating' || permTx.phase === 'signing'
-                ? 'Step 1 of 2 — approve in your wallet…'
-                : permTx.phase === 'pending'
-                  ? 'Step 1 of 2 — approving…'
-                  : txPhaseLabel(borrowTx.phase, {
-                      idle: !isConnected
-                        ? 'Sign in to continue'
-                        : review
-                          ? 'Confirm loan'
-                          : 'Review',
-                      pending: 'Opening your loan…',
-                      confirm: 'Confirm the loan in your wallet…',
-                    })}
-          </button>
+          <div className="flex justify-end">
+            <button
+              onClick={review ? handleConfirm : handleReview}
+              disabled={busy || (isConnected && collateral <= 0n)}
+              className="btn-primary min-h-[44px] px-5 text-sm"
+            >
+              {quoting
+                ? 'Checking the live quote…'
+                : permTx.phase === 'simulating' || permTx.phase === 'signing'
+                  ? 'Step 1 of 2 — approve in your wallet…'
+                  : permTx.phase === 'pending'
+                    ? 'Step 1 of 2 — approving…'
+                    : txPhaseLabel(borrowTx.phase, {
+                        idle: !isConnected
+                          ? 'Sign in to continue'
+                          : review
+                            ? 'Confirm loan'
+                            : 'Review',
+                        pending: 'Opening your loan…',
+                        confirm: 'Confirm the loan in your wallet…',
+                      })}
+            </button>
+          </div>
 
           <TxError
             error={flowError ?? permTx.error ?? borrowTx.error}

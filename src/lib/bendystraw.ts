@@ -519,7 +519,8 @@ export async function getProjectActivity(
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
-      max: Number.POSITIVE_INFINITY,
+      max: limit,
+      policy: 'live',
     },
   )
   return page.items
@@ -575,7 +576,8 @@ export async function getProjectActivityByProject(
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
-      max: Number.POSITIVE_INFINITY,
+      max: limit,
+      policy: 'live',
     },
   )
   return page.items
@@ -1137,10 +1139,12 @@ export async function getPagedItems<T>(
     pageSize = 1_000,
     max = Number.POSITIVE_INFINITY,
     network,
+    policy = 'standard',
   }: {
     pageSize?: number
     max?: number
     network?: BendystrawNetwork
+    policy?: BendystrawCachePolicy
   } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
@@ -1153,7 +1157,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: items.length },
-      { network, policy: 'standard' },
+      { network, policy },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount

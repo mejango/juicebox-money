@@ -16,7 +16,7 @@ vi.mock('@/hooks/useProjectTokenUnit', () => ({
   useProjectTokenUnit: () => 'tokens',
 }))
 
-import { activityParts } from '@/components/ActivityList'
+import { activityParts, mergeActivityEvents } from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import {
   suckerGroupAccountingToken,
@@ -49,6 +49,19 @@ function projectRow(overrides: Partial<BsProject>): BsProject {
     ...overrides,
   }
 }
+
+describe('live activity merging', () => {
+  it('prepends newly indexed events without duplicating refreshed rows', () => {
+    const old = { id: 'old' } as BsActivityEvent
+    const refreshed = { id: 'old', timestamp: 2 } as BsActivityEvent
+    const newest = { id: 'new' } as BsActivityEvent
+
+    expect(mergeActivityEvents([old], [newest, refreshed])).toEqual([
+      newest,
+      refreshed,
+    ])
+  })
+})
 
 function textOf(node: unknown): string {
   if (node === null || node === undefined || typeof node === 'boolean') {

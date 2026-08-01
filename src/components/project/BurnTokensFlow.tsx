@@ -20,10 +20,13 @@ export function BurnTokensFlow({
   chainId,
   projectId,
   tokenSymbol = 'tokens',
+  showHeading = true,
 }: {
   chainId: JBChainId
   projectId: number
   tokenSymbol?: string
+  /** The modal host supplies the dialog title. */
+  showHeading?: boolean
 }) {
   const { address, isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
@@ -111,7 +114,9 @@ export function BurnTokensFlow({
 
   return (
     <div>
-      <h3 className="font-agrandir text-lg font-medium">Burn tokens</h3>
+      {showHeading ? (
+        <h3 className="font-agrandir text-lg font-medium">Burn tokens</h3>
+      ) : null}
       <p className="mt-1 text-sm text-smoke-700">
         Permanently remove tokens from supply without receiving treasury funds.
         Internal credits are burned before claimed ERC-20 tokens.
@@ -152,17 +157,22 @@ export function BurnTokensFlow({
         <p className="mt-2 text-sm text-red-600">That is more than you hold.</p>
       ) : null}
       <TxError error={error} />
-      <button
-        type="button"
-        className="btn-primary mt-4 min-h-[48px] w-full"
-        disabled={tx.busy || (isConnected && (!controller || tokenCount <= 0n || exceedsBalance))}
-        onClick={burn}
-      >
-        {txPhaseLabel(tx.phase, {
-          idle: isConnected ? 'Burn tokens permanently' : 'Sign in to burn',
-          pending: 'Burning tokens…',
-        })}
-      </button>
+      <div className="mt-4 flex justify-end">
+        <button
+          type="button"
+          className="btn-primary min-h-[44px] px-5 text-sm"
+          disabled={
+            tx.busy ||
+            (isConnected && (!controller || tokenCount <= 0n || exceedsBalance))
+          }
+          onClick={burn}
+        >
+          {txPhaseLabel(tx.phase, {
+            idle: isConnected ? 'Burn tokens permanently' : 'Sign in to burn',
+            pending: 'Burning tokens…',
+          })}
+        </button>
+      </div>
     </div>
   )
 }

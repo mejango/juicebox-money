@@ -338,9 +338,19 @@ export function MarketSectionSkeleton() {
   )
 }
 
-export function FormCardSkeleton({ label = 'Loading form' }: { label?: string }) {
+export function FormCardSkeleton({
+  label = 'Loading form',
+  framed = true,
+}: {
+  label?: string
+  framed?: boolean
+}) {
   return (
-    <div className="card p-5" role="status" aria-label={label}>
+    <div
+      className={framed ? 'card p-5' : ''}
+      role="status"
+      aria-label={label}
+    >
       <span className="sr-only">{label}</span>
       <Skeleton className="h-3 w-28 rounded" />
       <div className="mt-5 grid gap-4 sm:grid-cols-2" aria-hidden="true">

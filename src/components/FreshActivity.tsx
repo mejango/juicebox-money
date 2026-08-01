@@ -8,8 +8,8 @@ import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { formatCompactTokenAmount, timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
+import { ActorLink } from './ActorLink'
 import { ActivityMeta } from './ActivityMeta'
-import { ActorLink } from './ActivityList'
 import { ProjectLogo } from './ProjectLogo'
 
 const POLL_MS = 15_000

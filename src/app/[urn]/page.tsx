@@ -479,6 +479,7 @@ export default async function ProjectPage({
                 error={activityResult.error}
                 chainId={urn.chainId}
                 projectId={project.projectId}
+                suckerGroupId={project.suckerGroupId}
                 accountingToken={accountingToken}
               />
             </section>

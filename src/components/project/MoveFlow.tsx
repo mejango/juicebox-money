@@ -589,13 +589,15 @@ function MoveFlow({
 
       {/* Step buttons */}
       {step === 0 ? (
-        <button
-          onClick={handleReview}
-          disabled={busy}
-          className="btn-primary min-h-[44px] w-full text-sm"
-        >
-          {checking ? 'Checking the route…' : 'Review move'}
-        </button>
+        <div className="flex justify-end">
+          <button
+            onClick={handleReview}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-5 text-sm"
+          >
+            {checking ? 'Checking the route…' : 'Review move'}
+          </button>
+        </div>
       ) : null}
 
       {step === 1 ? (
@@ -691,13 +693,15 @@ function StepButton({
   return (
     <div>
       <p className="mb-2 text-sm font-medium text-ink">{label}</p>
-      <button
-        onClick={onClick}
-        disabled={busy}
-        className="btn-primary min-h-[44px] w-full text-sm"
-      >
-        {txPhaseLabel(phase, { pending: 'Submitting…', idle: idleText })}
-      </button>
+      <div className="flex justify-end">
+        <button
+          onClick={onClick}
+          disabled={busy}
+          className="btn-primary min-h-[44px] px-5 text-sm"
+        >
+          {txPhaseLabel(phase, { pending: 'Submitting…', idle: idleText })}
+        </button>
+      </div>
       <p className="mt-1.5 text-xs text-smoke-700">{note}</p>
     </div>
   )
