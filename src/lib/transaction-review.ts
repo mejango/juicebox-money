@@ -52,7 +52,7 @@ type TransactionReviewHandler = (
   request: TransactionReviewRequest,
 ) => Promise<boolean>
 
-let transactionReviewHandler: TransactionReviewHandler | null = null
+const transactionReviewHandlers: TransactionReviewHandler[] = []
 
 /**
  * The provider registers the only UI capable of approving a transaction.
@@ -62,9 +62,10 @@ let transactionReviewHandler: TransactionReviewHandler | null = null
 export function registerTransactionReviewHandler(
   handler: TransactionReviewHandler,
 ): () => void {
-  transactionReviewHandler = handler
+  transactionReviewHandlers.push(handler)
   return () => {
-    if (transactionReviewHandler === handler) transactionReviewHandler = null
+    const index = transactionReviewHandlers.lastIndexOf(handler)
+    if (index >= 0) transactionReviewHandlers.splice(index, 1)
   }
 }
 
@@ -74,6 +75,8 @@ async function requestTransactionReview(
   if (!request.calls.length) {
     throw new Error('There is no transaction to review.')
   }
+  const transactionReviewHandler =
+    transactionReviewHandlers[transactionReviewHandlers.length - 1]
   if (!transactionReviewHandler) {
     throw new Error(
       'Transaction review is unavailable. Reload the page before continuing.',

@@ -5,11 +5,16 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   JB_CHAINS,
+  JBCoreContracts,
   USDC_ADDRESSES,
+  jbContractAddress,
+  jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import { useQuery } from '@tanstack/react-query'
 import { erc20Abi, formatUnits, isAddress, type Address } from 'viem'
-import { useAccount, useBalance, useReadContract } from 'wagmi'
+import { useAccount, useBalance, useConfig, useReadContract } from 'wagmi'
+import { getBalance, readContract } from 'wagmi/actions'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
@@ -19,6 +24,11 @@ import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
 import { parseUrn } from '@/lib/urn'
 import { useViewAs } from '@/lib/viewAs'
+import {
+  getProject,
+  getSuckerGroupProjects,
+  resolveProjectDeployments,
+} from '@/lib/bendystraw'
 
 function formatWalletBalance(
   value: bigint | undefined,
@@ -40,7 +50,7 @@ function BalanceRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ProjectWalletBalance({
+function ProjectWalletBalances({
   address,
   chainId,
   projectId,
@@ -49,43 +59,127 @@ function ProjectWalletBalance({
   chainId: JBChainId
   projectId: number
 }) {
+  const config = useConfig()
   const { data: projectToken, isLoading: projectTokenLoading } =
     useProjectTokenSymbol(chainId, projectId)
-  const { data: projectBalance } = useReadContract({
-    abi: erc20Abi,
-    address: projectToken?.address,
-    chainId,
-    functionName: 'balanceOf',
-    args: [address],
-    query: { enabled: !!projectToken?.address },
+  const deployments = useQuery({
+    queryKey: ['walletProjectDeployments', chainId, projectId],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const home = await getProject(chainId, projectId)
+      if (!home) return [{ chainId, projectId }]
+      const peers = home.suckerGroupId
+        ? await getSuckerGroupProjects(home.suckerGroupId, chainId)
+        : []
+      return resolveProjectDeployments(home, peers).map(project => ({
+        chainId: project.chainId as JBChainId,
+        projectId: project.projectId,
+      }))
+    },
   })
+  const deploymentKey = (deployments.data ?? [])
+    .map(project => `${project.chainId}:${project.projectId}`)
+    .join(',')
+  const balances = useQuery({
+    queryKey: ['walletProjectBalances', address, deploymentKey],
+    enabled: !!deploymentKey,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const rows = await Promise.all(
+        (deployments.data ?? []).map(async project => {
+          const tokens = jbContractAddress['6'][JBCoreContracts.JBTokens][
+            project.chainId
+          ] as Address | undefined
+          if (!tokens) throw new Error(`Unsupported chain ${project.chainId}`)
+          const usdc = USDC_ADDRESSES[project.chainId]
+          const [nativeBalance, usdcBalance, projectBalance] = await Promise.all([
+            getBalance(config, { address, chainId: project.chainId }),
+            usdc
+              ? readContract(config, {
+                  abi: erc20Abi,
+                  address: usdc,
+                  chainId: project.chainId,
+                  functionName: 'balanceOf',
+                  args: [address],
+                })
+              : Promise.resolve(0n),
+            readContract(config, {
+              abi: jbTokensAbi,
+              address: tokens,
+              chainId: project.chainId,
+              functionName: 'totalBalanceOf',
+              args: [address, BigInt(project.projectId)],
+            }),
+          ])
+          return { nativeBalance, usdcBalance, projectBalance }
+        }),
+      )
+      return {
+        native: rows.reduce((sum, row) => sum + row.nativeBalance.value, 0n),
+        nativeSymbol: rows[0]?.nativeBalance.symbol ?? 'ETH',
+        project: rows.reduce((sum, row) => sum + row.projectBalance, 0n),
+        usdc: rows.reduce((sum, row) => sum + row.usdcBalance, 0n),
+      }
+    },
+  })
+  const chainCount = deployments.data?.length ?? 0
+  const loading = deployments.isLoading || balances.isLoading
 
   return (
-    <BalanceRow
-      label={projectToken?.symbol ?? 'Project token'}
-      value={
-        projectTokenLoading
-          ? 'Loading…'
-          : projectToken
-          ? formatWalletBalance(
-              projectBalance,
-              18,
-              projectToken.symbol,
-            )
-          : 'Not deployed'
-      }
-    />
+    <div className="border-b border-smoke-200 px-4 py-3 text-xs">
+      <div className="mb-2 text-smoke-600">
+        {chainCount ? `Across ${chainCount} project chains` : 'Across project chains'}
+      </div>
+      <dl className="space-y-1.5">
+        <BalanceRow
+          label={balances.data?.nativeSymbol ?? 'ETH'}
+          value={
+            loading
+              ? 'Loading…'
+              : balances.data
+                ? formatWalletBalance(
+                    balances.data.native,
+                    18,
+                    balances.data.nativeSymbol,
+                  )
+                : 'Unavailable'
+          }
+        />
+        <BalanceRow
+          label="USDC"
+          value={
+            loading
+              ? 'Loading…'
+              : balances.data
+                ? formatWalletBalance(balances.data.usdc, 6, 'USDC')
+                : 'Unavailable'
+          }
+        />
+        <BalanceRow
+          label={projectToken?.symbol ?? 'Project token'}
+          value={
+            loading || projectTokenLoading
+              ? 'Loading…'
+              : balances.data && projectToken
+                ? formatWalletBalance(
+                    balances.data.project,
+                    18,
+                    projectToken.symbol,
+                  )
+                : 'Unavailable'
+          }
+        />
+      </dl>
+    </div>
   )
 }
 
-function WalletBalances({
+function SingleChainWalletBalances({
   address,
   chainId,
-  projectId,
 }: {
   address: Address
   chainId: JBChainId
-  projectId?: number
 }) {
   const chain = JB_CHAINS[chainId]
   const nativeSymbol = chain?.nativeTokenSymbol ?? 'ETH'
@@ -115,15 +209,28 @@ function WalletBalances({
               : 'Unavailable'
           }
         />
-        {projectId ? (
-          <ProjectWalletBalance
-            address={address}
-            chainId={chainId}
-            projectId={projectId}
-          />
-        ) : null}
       </dl>
     </div>
+  )
+}
+
+function WalletBalances({
+  address,
+  chainId,
+  projectId,
+}: {
+  address: Address
+  chainId: JBChainId
+  projectId?: number
+}) {
+  return projectId ? (
+    <ProjectWalletBalances
+      address={address}
+      chainId={chainId}
+      projectId={projectId}
+    />
+  ) : (
+    <SingleChainWalletBalances address={address} chainId={chainId} />
   )
 }
 
