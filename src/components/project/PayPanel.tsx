@@ -2194,50 +2194,60 @@ function PaymentCallReview({
         </p>
         <p className="mt-2 font-medium text-ink">{actionName}</p>
       </div>
-      <dl className="mt-2 grid grid-cols-[max-content_minmax(0,1fr)] items-start gap-x-2 gap-y-1 text-xs">
-        <dt className="text-smoke-500">
-          {action.kind === "payment" ? "Amount in:" : "Amount authorized:"}
-        </dt>
-        <dd className="text-ink">{amount}</dd>
+      <dl className="mt-2 space-y-1 text-xs">
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">
+            {action.kind === "payment" ? "Amount in:" : "Amount authorized:"}
+          </dt>
+          <dd className="min-w-0 text-ink">{amount}</dd>
+        </div>
         {action.kind === "token-approval" ? (
-          <>
-            <dt className="text-smoke-500">Spender:</dt>
-            <dd className="break-all font-mono text-xs text-ink">
+          <div className="flex items-start gap-1">
+            <dt className="shrink-0 text-smoke-500">Spender:</dt>
+            <dd className="min-w-0 break-all font-mono text-xs text-ink">
               {paymentArgumentAddress(request.args[0], request.chainId)}
             </dd>
-          </>
+          </div>
         ) : null}
         {action.kind === "router-approval" ? (
           <>
-            <dt className="text-smoke-500">Token:</dt>
-            <dd className="break-all font-mono text-xs text-ink">
-              {paymentTokenAddress(request.args[0], request.chainId)}
-            </dd>
-            <dt className="text-smoke-500">Spender:</dt>
-            <dd className="break-all font-mono text-xs text-ink">
-              {paymentArgumentAddress(request.args[1], request.chainId)}
-            </dd>
-            <dt className="text-smoke-500">Expires:</dt>
-            <dd className="text-ink">{formatApprovalExpiration(request.args[3])}</dd>
+            <div className="flex items-start gap-1">
+              <dt className="shrink-0 text-smoke-500">Token:</dt>
+              <dd className="min-w-0 break-all font-mono text-xs text-ink">
+                {paymentTokenAddress(request.args[0], request.chainId)}
+              </dd>
+            </div>
+            <div className="flex items-start gap-1">
+              <dt className="shrink-0 text-smoke-500">Spender:</dt>
+              <dd className="min-w-0 break-all font-mono text-xs text-ink">
+                {paymentArgumentAddress(request.args[1], request.chainId)}
+              </dd>
+            </div>
+            <div className="flex items-start gap-1">
+              <dt className="shrink-0 text-smoke-500">Expires:</dt>
+              <dd className="min-w-0 text-ink">
+                {formatApprovalExpiration(request.args[3])}
+              </dd>
+            </div>
           </>
         ) : null}
         {tokenReturn && action.kind === "payment" ? (
-          <>
-            <dt className="text-smoke-500">Minimum received:</dt>
-            <dd className="text-ink">{tokenReturn}</dd>
-          </>
+          <div className="flex items-start gap-1">
+            <dt className="shrink-0 text-smoke-500">Minimum received:</dt>
+            <dd className="min-w-0 text-ink">{tokenReturn}</dd>
+          </div>
         ) : null}
         {beneficiary && action.kind === "payment" ? (
-          <>
-            <dt className="text-smoke-500">Beneficiary:</dt>
-            <dd className="break-all font-mono text-xs text-ink">{beneficiary}</dd>
-          </>
+          <div className="flex items-start gap-1">
+            <dt className="shrink-0 text-smoke-500">Beneficiary:</dt>
+            <dd className="min-w-0 break-all font-mono text-xs text-ink">{beneficiary}</dd>
+          </div>
         ) : null}
         {memo && action.kind === "payment" ? (
-          <>
-            <dt className="text-smoke-500">Note:</dt>
-            <dd className="break-words text-ink">{memo}</dd>
-          </>
+          <div className="flex items-start gap-1">
+            <dt className="shrink-0 text-smoke-500">Note:</dt>
+            <dd className="min-w-0 break-words text-ink">{memo}</dd>
+          </div>
         ) : null}
       </dl>
       <details className="mt-3 border-t border-smoke-200 pt-3">
