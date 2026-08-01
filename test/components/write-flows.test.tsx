@@ -11,10 +11,11 @@ const mocks = vi.hoisted(() => ({
   reset: vi.fn(),
   amountToAutoIssue: vi.fn(),
   buildAutoIssue: vi.fn(),
+  prepareCashOut: vi.fn(),
   clientAvailable: true,
   publicClient: { readContract: vi.fn() },
   refetchBalance: vi.fn(),
-  balance: 5n * 10n ** 18n,
+  balance: 5n * 10n ** 18n as bigint | undefined,
   txPhase: 'idle',
   txBusy: false,
   txHash: null as string | null,
@@ -131,6 +132,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
     ...original,
     getAmountToAutoIssue: mocks.amountToAutoIssue,
     buildAutoIssueTx: mocks.buildAutoIssue,
+    prepareHookAwareCashOut: mocks.prepareCashOut,
   }
 })
 
@@ -197,6 +199,34 @@ beforeEach(() => {
   mocks.safeTxCall = 0
   mocks.amountToAutoIssue.mockResolvedValue(10n)
   mocks.buildAutoIssue.mockReturnValue(AUTO_ISSUE_REQUEST)
+  mocks.prepareCashOut.mockResolvedValue({
+    route: {
+      route: 'treasury',
+      expectedReturn: 9_750n,
+      minimumReturn: 9_652n,
+      terminalMinimum: 9_652n,
+      metadata: '0x',
+      treasuryGross: 10_000n,
+      treasuryProtocolFee: 250n,
+      treasuryNet: 9_750n,
+      buyback: null,
+    },
+    transaction: {
+      chainId: 1,
+      address: '0x5555555555555555555555555555555555555555',
+      abi: [],
+      functionName: 'cashOutTokensOf',
+      args: [
+        ALICE,
+        42n,
+        2n * 10n ** 18n,
+        '0x4444444444444444444444444444444444444444',
+        9_652n,
+        ALICE,
+        '0x',
+      ],
+    },
+  })
   mocks.send.mockResolvedValue('0xhash')
   mocks.buildProjectDraftExport.mockReset()
 })
@@ -542,6 +572,72 @@ describe('cash-out write flow', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
+  it('accepts a valid custom slippage and ignores invalid custom values', async () => {
+    vi.useFakeTimers()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+        }),
+      )
+    })
+
+    const customSlippage = renderer.root
+      .findAllByType('input')
+      .find(input => input.props.type === 'number')!
+    for (const value of ['invalid', '-1', '100', '2.5']) {
+      await act(async () => customSlippage.props.onChange({ target: { value } }))
+    }
+
+    const amount = renderer.root
+      .findAllByType('input')
+      .find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => amount.props.onChange({ target: { value: '2' } }))
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
+
+    expect(mocks.prepareCashOut).toHaveBeenCalledWith(
+      mocks.publicClient,
+      expect.objectContaining({ slippageBps: 250n }),
+    )
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when the freshly prepared route has no return', async () => {
+    vi.useFakeTimers()
+    mocks.prepareCashOut.mockResolvedValueOnce({
+      route: { expectedReturn: 0n },
+      transaction: {},
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+        }),
+      )
+    })
+
+    const amount = renderer.root
+      .findAllByType('input')
+      .find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => amount.props.onChange({ target: { value: '2' } }))
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
+
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain(
+      'The cash-out quote is no longer available.',
+    )
+  })
+
   it('signs in before attempting a cash-out and links an empty holder to pay', async () => {
     mocks.connected = false
     mocks.address = undefined
@@ -578,6 +674,21 @@ describe('cash-out write flow', () => {
     expect(onGoToPay).toHaveBeenCalledTimes(1)
   })
 
+  it('shows the balance loading state before the holder query resolves', async () => {
+    mocks.balance = undefined
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+        }),
+      )
+    })
+
+    expect(renderedText(renderer.root)).toContain('Checking your balance…')
+  })
+
   it('shows a confirmed cash-out, links its receipt, and resets for another', async () => {
     mocks.txPhase = 'success'
     mocks.txHash = `0x${'1'.repeat(64)}`
@@ -598,6 +709,19 @@ describe('cash-out write flow', () => {
     const receipt = renderer.root.findByType('a')
     expect(receipt.props.href).toContain(mocks.txHash)
     expect(mocks.refetchBalance).toHaveBeenCalled()
+
+    await act(async () => {
+      renderer.update(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+          projectName: 'Safe Project',
+        }),
+      )
+    })
+    expect(renderedText(renderer.root)).toContain(
+      "Your share of Safe Project's treasury is on its way.",
+    )
 
     await act(async () => buttonWith(renderer, 'Cash out again').props.onClick())
     expect(mocks.reset).toHaveBeenCalled()
