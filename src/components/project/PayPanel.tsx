@@ -67,6 +67,10 @@ import { chainName } from "@/lib/urn";
 import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { resolveMarket } from "@/components/project/MarketSection";
+import {
+  buildTransactionReviewPrompt,
+  type TransactionReviewRequest,
+} from "@/lib/transaction-review";
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -2015,7 +2019,7 @@ function PaymentSequenceDialog({
         aria-labelledby="payment-sequence-title"
         className="w-full max-w-lg rounded-2xl border border-smoke-300 bg-bone shadow-2xl"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-white px-5 py-4">
+        <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
               Payment sequence
@@ -2095,7 +2099,7 @@ function PaymentSequenceDialog({
           {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </div>
-        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-white px-5 py-4">
+        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
           {complete ? (
             <button type="button" className="btn-primary min-h-[44px] px-5 text-sm" onClick={onClose}>
               Done
@@ -2140,9 +2144,31 @@ function PaymentCallReview({
   beneficiary: Address | null;
   memo: string | null;
 }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const request = action.request;
   const destination = paymentRequestDestination(request);
   const actionName = action.label || humanPaymentAction(request.functionName);
+  const reviewRequest: TransactionReviewRequest = {
+    title: actionName,
+    calls: [
+      {
+        chainId: request.chainId,
+        to: request.address,
+        from: beneficiary ?? undefined,
+        value: request.value,
+        data: encodeFunctionData({
+          abi: request.abi,
+          functionName: request.functionName,
+          args: request.args,
+        }),
+        abi: request.abi,
+        functionName: request.functionName,
+        args: request.args,
+        label: actionName,
+        contractName: destination.name,
+      },
+    ],
+  };
   return (
     <div className="rounded-xl border border-bluebs-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
@@ -2158,7 +2184,7 @@ function PaymentCallReview({
         <div>
           <dt className="text-smoke-500">Destination</dt>
           <dd className="mt-0.5 break-all text-ink">
-            <span className="font-medium">{destination.name}</span> · {request.address}
+            <span className="font-medium">{destination.name}</span> | {request.address}
           </dd>
         </div>
         <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
@@ -2169,7 +2195,7 @@ function PaymentCallReview({
           {action.kind === "token-approval" ? (
             <>
               <dt className="text-smoke-500">Spender</dt>
-              <dd className="break-all text-right font-mono text-[10px] text-ink">
+              <dd className="break-all text-right font-mono text-xs text-ink">
                 {paymentArgumentAddress(request.args[0], request.chainId)}
               </dd>
             </>
@@ -2177,11 +2203,11 @@ function PaymentCallReview({
           {action.kind === "router-approval" ? (
             <>
               <dt className="text-smoke-500">Token</dt>
-              <dd className="break-all text-right font-mono text-[10px] text-ink">
+              <dd className="break-all text-right font-mono text-xs text-ink">
                 {String(request.args[0] ?? "")}
               </dd>
               <dt className="text-smoke-500">Spender</dt>
-              <dd className="break-all text-right font-mono text-[10px] text-ink">
+              <dd className="break-all text-right font-mono text-xs text-ink">
                 {paymentArgumentAddress(request.args[1], request.chainId)}
               </dd>
               <dt className="text-smoke-500">Expires</dt>
@@ -2199,7 +2225,7 @@ function PaymentCallReview({
           {beneficiary && action.kind === "payment" ? (
             <>
               <dt className="text-smoke-500">Beneficiary</dt>
-              <dd className="break-all text-right font-mono text-[10px] text-ink">{beneficiary}</dd>
+              <dd className="break-all text-right font-mono text-xs text-ink">{beneficiary}</dd>
             </>
           ) : null}
           {memo && action.kind === "payment" ? (
@@ -2212,10 +2238,31 @@ function PaymentCallReview({
       </dl>
       <details className="mt-3 border-t border-smoke-200 pt-3">
         <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
-        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-grey-900 p-3 font-mono text-[10px] leading-relaxed text-grey-25">
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
           {paymentRequestJson(request, chainLabel, destination.name)}
         </pre>
       </details>
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          className="btn-link min-h-[36px] text-xs"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(buildTransactionReviewPrompt(reviewRequest));
+              setCopyState("copied");
+            } catch {
+              setCopyState("failed");
+            }
+            window.setTimeout(() => setCopyState("idle"), 2200);
+          }}
+        >
+          {copyState === "copied"
+            ? "Prompt copied — paste into your LLM"
+            : copyState === "failed"
+              ? "Could not copy prompt"
+              : "[copy tx audit prompt]"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2248,13 +2295,13 @@ function paymentArgumentAddress(value: unknown, chainId: number): string {
   const address = typeof value === "string" ? value : String(value ?? "");
   const deployment = uniswapV4Deployment(chainId);
   if (address.toLowerCase() === deployment?.permit2.toLowerCase()) {
-    return `Permit2 · ${address}`;
+    return `Permit2 | ${address}`;
   }
   if (
     deployment?.universalRouter &&
     address.toLowerCase() === deployment.universalRouter.toLowerCase()
   ) {
-    return `Uniswap Universal Router · ${address}`;
+    return `Uniswap Universal Router | ${address}`;
   }
   return address;
 }
