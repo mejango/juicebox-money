@@ -2039,9 +2039,18 @@ function PaymentSequenceDialog({
             onClick={onClose}
             disabled={started}
             aria-label="Close payment"
-            className="icon-button -mr-2 -mt-2 disabled:opacity-40"
+            className="icon-button -mr-2 -mt-2 shrink-0 disabled:opacity-40"
           >
-            ×
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-6 w-6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
+            </svg>
           </button>
         </header>
         <div className="space-y-4 px-5 py-5">
