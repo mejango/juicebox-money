@@ -1485,6 +1485,35 @@ export function PayPanel({
             Starts in {formatStartCountdown(startsAt - now)}.
           </p>
         ) : null}
+        {mode === "pay" &&
+        amountRaw > 0n &&
+        !previewError &&
+        (previewLoading || (bestRoute && bestRoute.beneficiaryTokenCount > 0n)) ? (
+          <div className="mt-3">
+            <p className="text-xs text-smoke-500">You get at least</p>
+            {bestRoute && bestRoute.beneficiaryTokenCount > 0n ? (
+              <p
+                aria-live="polite"
+                aria-busy={previewLoading}
+                className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
+                  previewLoading ? "text-smoke-500" : "text-ink"
+                }`}
+              >
+                {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)}{" "}
+                {projectTokenLabel}
+                <span className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-bluebs-700">
+                  {bestRoute.settlement === "swap" ? "Swap" : "Issuance"}
+                </span>
+              </p>
+            ) : (
+              <Skeleton
+                className="mt-1 h-7 w-28 rounded"
+                role="status"
+                aria-label="Calculating token return"
+              />
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* Note — always present, optional */}
@@ -1498,37 +1527,9 @@ export function PayPanel({
         className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
       />
 
-      {/* One receipt for project tokens and every selected shop item. */}
-      {mode === "pay" &&
-      (cartCount > 0 ||
-        (amountRaw > 0n &&
-          !previewError &&
-          (previewLoading ||
-            (preview && preview.beneficiaryTokenCount > 0n)))) ? (
+      {/* Selected shop items share the payment receipt shown above. */}
+      {mode === "pay" && cartCount > 0 ? (
         <div className="mt-4">
-          <p className="text-xs text-smoke-500">You get</p>
-          {bestRoute && bestRoute.beneficiaryTokenCount > 0n ? (
-            <p
-              aria-live="polite"
-              aria-busy={previewLoading}
-              className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
-                previewLoading ? "text-smoke-500" : "text-ink"
-              }`}
-            >
-              {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)}{" "}
-              {projectTokenLabel}
-              <span className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-bluebs-700">
-                {bestRoute.settlement === "swap" ? "Swap" : "Issuance"}
-              </span>
-            </p>
-          ) : amountRaw > 0n && previewLoading ? (
-            <Skeleton
-              className="mt-1 h-7 w-28 rounded"
-              role="status"
-              aria-label="Calculating token return"
-            />
-          ) : null}
-
           {selectedCartRows.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
               {selectedCartRows.map((row) => (

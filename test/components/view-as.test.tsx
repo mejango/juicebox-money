@@ -17,6 +17,15 @@ vi.mock('@/hooks/useWallet', () => ({
     disconnect: vi.fn(),
   }),
 }))
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+}))
+vi.mock('wagmi', () => ({
+  useAccount: () => ({ chainId: 1 }),
+  useBalance: () => ({ data: undefined }),
+  useReadContract: () => ({ data: undefined }),
+  usePublicClient: () => undefined,
+}))
 vi.mock('@/hooks/useEnsName', () => ({
   useEnsName: () => ({ data: null }),
 }))

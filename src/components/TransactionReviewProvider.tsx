@@ -15,6 +15,12 @@ import {
   type Address,
 } from 'viem'
 import { useAccount } from 'wagmi'
+import {
+  USDC_ADDRESSES,
+  jbContractAddress,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
+import { uniswapV4Deployment } from '@bananapus/nana-sdk-core/v6'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
@@ -32,8 +38,32 @@ type PendingReview = {
   resolve: (approved: boolean) => void
 }
 
+function knownAddressName(chainId: number, value: unknown): string | null {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]{40}$/iu.test(value)) return null
+  const address = value.toLowerCase()
+  try {
+    const deployment = uniswapV4Deployment(chainId as JBChainId)
+    if (deployment?.permit2?.toLowerCase() === address) return 'Permit2'
+    if (deployment?.universalRouter?.toLowerCase() === address) {
+      return 'Uniswap Universal Router'
+    }
+  } catch {
+    // Unsupported chains can still be reviewed as raw addresses below.
+  }
+  if (USDC_ADDRESSES[chainId as JBChainId]?.toLowerCase() === address) return 'USDC'
+  const contracts = jbContractAddress['6'] as unknown as Record<
+    string,
+    Partial<Record<number, Address>>
+  >
+  return (
+    Object.entries(contracts).find(
+      ([, addresses]) => addresses[chainId]?.toLowerCase() === address,
+    )?.[0] ?? null
+  )
+}
+
 function knownContractName(call: TransactionReviewCall): string | null {
-  return call.contractName ?? null
+  return call.contractName ?? knownAddressName(call.chainId, call.to)
 }
 
 function stringify(value: unknown): string {
@@ -50,12 +80,15 @@ function stringify(value: unknown): string {
   }
 }
 
-function readableValue(type: string, value: unknown): string {
+function readableValue(type: string, value: unknown, chainId: number): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'bigint') return value.toString()
   if (typeof value === 'boolean' || typeof value === 'number') return String(value)
   if (typeof value === 'string') {
-    if (type === 'address') return value
+    if (type === 'address') {
+      const name = knownAddressName(chainId, value)
+      return name ? `${name} | ${value}` : value
+    }
     if (type.startsWith('bytes') && value.length > 50) {
       return `${value.slice(0, 22)}…${value.slice(-12)}`
     }
@@ -82,10 +115,12 @@ function hasComponents(
 function ArgumentValue({
   parameter,
   value,
+  chainId,
   depth = 0,
 }: {
   parameter: AbiParameter
   value: unknown
+  chainId: number
   depth?: number
 }) {
   const arrayMatch = parameter.type.match(/^(.*)\[(\d*)\]$/)
@@ -105,6 +140,7 @@ function ArgumentValue({
               <ArgumentValue
                 parameter={itemParameter}
                 value={item}
+                chainId={chainId}
                 depth={depth + 1}
               />
             </div>
@@ -124,6 +160,7 @@ function ArgumentValue({
             key={`${component.name || 'field'}-${index}`}
             parameter={component}
             value={namedValue(value, component.name ?? '', index)}
+            chainId={chainId}
             depth={depth + 1}
           />
         ))}
@@ -133,7 +170,7 @@ function ArgumentValue({
 
   return (
     <p className="break-all font-mono text-xs leading-relaxed text-ink">
-      {readableValue(parameter.type, value)}
+      {readableValue(parameter.type, value, chainId)}
     </p>
   )
 }
@@ -141,10 +178,12 @@ function ArgumentValue({
 function ArgumentRow({
   parameter,
   value,
+  chainId,
   depth = 0,
 }: {
   parameter: AbiParameter
   value: unknown
+  chainId: number
   depth?: number
 }) {
   return (
@@ -155,7 +194,7 @@ function ArgumentRow({
           {parameter.type}
         </span>
       </p>
-      <ArgumentValue parameter={parameter} value={value} depth={depth} />
+      <ArgumentValue parameter={parameter} value={value} chainId={chainId} depth={depth} />
     </div>
   )
 }
@@ -250,6 +289,7 @@ function PrettyCall({
                   key={`${parameter.name || 'argument'}-${argumentIndex}`}
                   parameter={parameter}
                   value={args[argumentIndex]}
+                  chainId={call.chainId}
                 />
               ))}
             </div>

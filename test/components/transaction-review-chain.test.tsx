@@ -10,6 +10,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { encodeFunctionData } from 'viem'
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined, chainId: undefined }),
@@ -81,6 +82,52 @@ describe('transaction review chain identity', () => {
     // story — the visible name must still be present.
     expect(document.querySelector('dialog .chip')?.textContent).toContain(
       'Base Sepolia',
+    )
+  })
+
+  it('names Permit2, USDC, and the Uniswap router beside their addresses', async () => {
+    const abi = [
+      {
+        type: 'function',
+        name: 'approve',
+        stateMutability: 'nonpayable',
+        inputs: [
+          { name: 'token', type: 'address' },
+          { name: 'spender', type: 'address' },
+          { name: 'amount', type: 'uint160' },
+          { name: 'expiration', type: 'uint48' },
+        ],
+        outputs: [],
+      },
+    ] as const
+    const args = [
+      '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      '0x6fF5693b99212Da76ad316178A184AB56D299b43',
+      50_000_000n,
+      1_800_000_000,
+    ] as const
+    act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
+    await act(async () => {
+      requireTransactionReview({
+        calls: [
+          {
+            chainId: 8453,
+            to: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+            data: encodeFunctionData({ abi, functionName: 'approve', args }),
+            abi,
+            functionName: 'approve',
+            args,
+          },
+        ],
+      }).catch(() => {})
+    })
+
+    expect(document.querySelector('dialog')?.textContent).toContain(
+      'Destination · Permit2',
+    )
+    expect(document.querySelector('dialog')?.textContent).toContain('USDC |')
+    expect(document.querySelector('dialog')?.textContent).toContain(
+      'Uniswap Universal Router |',
     )
   })
 })

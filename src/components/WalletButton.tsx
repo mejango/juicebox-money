@@ -1,15 +1,131 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { isAddress, type Address } from 'viem'
+import {
+  JB_CHAINS,
+  USDC_ADDRESSES,
+  type JBChainId,
+} from '@bananapus/nana-sdk-core'
+import { erc20Abi, formatUnits, isAddress, type Address } from 'viem'
+import { useAccount, useBalance, useReadContract } from 'wagmi'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
+import { parseUrn } from '@/lib/urn'
 import { useViewAs } from '@/lib/viewAs'
+
+function formatWalletBalance(
+  value: bigint | undefined,
+  decimals: number,
+  symbol: string,
+) {
+  if (value === undefined) return 'Loading…'
+  return `${Number(formatUnits(value, decimals)).toLocaleString(undefined, {
+    maximumFractionDigits: 4,
+  })} ${symbol}`
+}
+
+function BalanceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-5">
+      <dt className="text-smoke-600">{label}</dt>
+      <dd className="whitespace-nowrap font-medium text-ink">{value}</dd>
+    </div>
+  )
+}
+
+function ProjectWalletBalance({
+  address,
+  chainId,
+  projectId,
+}: {
+  address: Address
+  chainId: JBChainId
+  projectId: number
+}) {
+  const { data: projectToken, isLoading: projectTokenLoading } =
+    useProjectTokenSymbol(chainId, projectId)
+  const { data: projectBalance } = useReadContract({
+    abi: erc20Abi,
+    address: projectToken?.address,
+    chainId,
+    functionName: 'balanceOf',
+    args: [address],
+    query: { enabled: !!projectToken?.address },
+  })
+
+  return (
+    <BalanceRow
+      label={projectToken?.symbol ?? 'Project token'}
+      value={
+        projectTokenLoading
+          ? 'Loading…'
+          : projectToken
+          ? formatWalletBalance(
+              projectBalance,
+              18,
+              projectToken.symbol,
+            )
+          : 'Not deployed'
+      }
+    />
+  )
+}
+
+function WalletBalances({
+  address,
+  chainId,
+  projectId,
+}: {
+  address: Address
+  chainId: JBChainId
+  projectId?: number
+}) {
+  const chain = JB_CHAINS[chainId]
+  const nativeSymbol = chain?.nativeTokenSymbol ?? 'ETH'
+  const usdc = USDC_ADDRESSES[chainId]
+  const { data: nativeBalance } = useBalance({ address, chainId })
+  const { data: usdcBalance } = useReadContract({
+    abi: erc20Abi,
+    address: usdc,
+    chainId,
+    functionName: 'balanceOf',
+    args: [address],
+    query: { enabled: !!usdc },
+  })
+  return (
+    <div className="border-b border-smoke-200 px-4 py-3 text-xs">
+      <div className="mb-2 text-smoke-600">{chain?.name ?? `Chain ${chainId}`}</div>
+      <dl className="space-y-1.5">
+        <BalanceRow
+          label={nativeSymbol}
+          value={formatWalletBalance(nativeBalance?.value, 18, nativeSymbol)}
+        />
+        <BalanceRow
+          label="USDC"
+          value={
+            usdc
+              ? formatWalletBalance(usdcBalance, 6, 'USDC')
+              : 'Unavailable'
+          }
+        />
+        {projectId ? (
+          <ProjectWalletBalance
+            address={address}
+            chainId={chainId}
+            projectId={projectId}
+          />
+        ) : null}
+      </dl>
+    </div>
+  )
+}
 
 /** Inline "View as…" prompt: an address or ENS name turns on view-as mode. */
 function ViewAsPrompt({ onDone }: { onDone: () => void }) {
@@ -78,6 +194,11 @@ export function WalletButton() {
   const [mounted, setMounted] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const mobileWallet = useMobileWallet()
+  const pathname = usePathname()
+  const { chainId: connectedChainId } = useAccount()
+  const routeProject = parseUrn(pathname.split('/')[1] ?? '')
+  const balanceChainId =
+    routeProject?.chainId ?? (connectedChainId as JBChainId | undefined)
 
   // Wallet state only exists client-side; render the signed-out shell on the
   // server so hydration always matches.
@@ -193,6 +314,13 @@ export function WalletButton() {
             <ViewAsPrompt onDone={closeMenu} />
           ) : activeViewAs ? (
             <>
+              {accountAddress && balanceChainId ? (
+                <WalletBalances
+                  address={accountAddress}
+                  chainId={balanceChainId}
+                  projectId={routeProject?.projectId}
+                />
+              ) : null}
               <Link
                 href={`/account/${activeViewAs}`}
                 onClick={closeMenu}
@@ -215,6 +343,13 @@ export function WalletButton() {
             </>
           ) : connected ? (
             <>
+              {accountAddress && balanceChainId ? (
+                <WalletBalances
+                  address={accountAddress}
+                  chainId={balanceChainId}
+                  projectId={routeProject?.projectId}
+                />
+              ) : null}
               <Link
                 href={`/account/${accountAddress}`}
                 onClick={closeMenu}
