@@ -79,6 +79,7 @@ export function StepChartBase({
   renderSeries,
   renderOverlay,
   renderInspection,
+  inspectionPlacement = 'below',
 }: {
   resolved: ResolvedStage[]
   t0: number
@@ -100,8 +101,14 @@ export function StepChartBase({
     timestamp: number
     isHovering: boolean
   }) => ReactNode
+  /** PriceChart uses a cursor-following tooltip; issuance-only charts retain the caption below. */
+  inspectionPlacement?: 'below' | 'tooltip'
 }) {
   const [hoverT, setHoverT] = useState<number | null>(null)
+  const [hoverPosition, setHoverPosition] = useState<{
+    x: number
+    y: number
+  } | null>(null)
 
   // Price points: invert the rate steps; rate 0 → null (no mint price).
   const points = useMemo(
@@ -146,19 +153,36 @@ export function StepChartBase({
     const viewX = ((e.clientX - rect.left) / rect.width) * VW
     const frac = Math.min(1, Math.max(0, (viewX - PL) / (VW - PL - PR)))
     setHoverT(t0 + frac * (t1 - t0))
+    setHoverPosition({
+      x: Math.min(0.98, Math.max(0.02, (e.clientX - rect.left) / rect.width)),
+      y: Math.min(0.98, Math.max(0.02, (e.clientY - rect.top) / rect.height)),
+    })
+  }
+
+  const clearInspection = () => {
+    setHoverT(null)
+    setHoverPosition(null)
   }
 
   return (
     <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
       {header}
-      <svg
-        viewBox={`0 0 ${VW} ${VH}`}
-        className="mt-2 h-auto w-full cursor-crosshair touch-none"
-        role="img"
-        aria-label={ariaLabel}
-        onPointerMove={onPointerMove}
-        onPointerLeave={() => setHoverT(null)}
-      >
+      <div className="relative">
+        <svg
+          viewBox={`0 0 ${VW} ${VH}`}
+          className="mt-2 h-auto w-full cursor-crosshair touch-none rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400"
+          role="img"
+          aria-label={ariaLabel}
+          tabIndex={inspectionPlacement === 'tooltip' ? 0 : undefined}
+          onPointerMove={onPointerMove}
+          onPointerLeave={clearInspection}
+          onFocus={() => {
+            if (inspectionPlacement !== 'tooltip') return
+            setHoverT(Math.min(now, t1))
+            setHoverPosition({ x: 0.72, y: 0.25 })
+          }}
+          onBlur={clearInspection}
+        >
         {/* Axes */}
         <line x1={PL} y1={VH - PB} x2={VW - PR} y2={VH - PB} stroke="#D4D1C7" strokeWidth="1" />
         <line x1={PL} y1={VH - PB} x2={PL} y2={PT} stroke="#D4D1C7" strokeWidth="1" />
@@ -257,22 +281,46 @@ export function StepChartBase({
         <text x={VW - PR} y={VH - 6} textAnchor="end" fontSize="7.5" fill="#9C9580">
           {chartDateLabel(t1, span)}
         </text>
-      </svg>
-      <p className="mt-2 text-xs leading-relaxed text-smoke-700" aria-live="polite">
-        <span className="font-medium text-ink">{chartDateLabel(t, span)}</span>
-        {' — '}
-        {price !== null ? (
-          <>
-            <span className="font-medium text-ink">
-              {formatPrice(price)} {baseSymbol}
-            </span>{' '}
-            per {symbol}
-          </>
-        ) : (
-          'no issuance'
-        )}
-      </p>
-      {renderInspection?.({ timestamp: t, isHovering: hoverT !== null })}
+        </svg>
+        {inspectionPlacement === 'tooltip' && hoverPosition && hoverT !== null ? (
+          <div
+            role="tooltip"
+            aria-live="polite"
+            className={`pointer-events-none absolute z-20 w-max min-w-52 max-w-[calc(100%-1rem)] rounded-lg bg-grey-900 px-3 py-2.5 text-grey-25 shadow-xl ${
+              hoverPosition.x > 0.58 ? '-ml-3 -translate-x-full' : 'ml-3'
+            } ${hoverPosition.y > 0.58 ? '-mt-3 -translate-y-full' : 'mt-3'}`}
+            style={{
+              left: `${hoverPosition.x * 100}%`,
+              top: `${hoverPosition.y * 100}%`,
+            }}
+          >
+            {renderInspection?.({ timestamp: t, isHovering: true })}
+          </div>
+        ) : null}
+      </div>
+      {inspectionPlacement === 'below' ? (
+        <>
+          <p
+            data-chart-caption
+            className="mt-2 text-xs leading-relaxed text-smoke-700"
+            aria-live="polite"
+          >
+            <span className="font-medium text-ink">{chartDateLabel(t, span)}</span>
+            {' — '}
+            {price !== null ? (
+              <>
+                <span className="font-medium text-ink">
+                  {formatPrice(price)} {baseSymbol}
+                </span>{' '}
+                per {symbol}
+              </>
+            ) : (
+              'no issuance'
+            )}
+          </p>
+          {renderInspection?.({ timestamp: t, isHovering: hoverT !== null })}
+        </>
+      ) : null}
     </div>
   )
 }

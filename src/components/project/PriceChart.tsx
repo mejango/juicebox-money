@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import {
   buildStepPoints,
+  chartDateLabel,
   formatPrice,
   rateAtTime,
   resolveStages,
@@ -106,6 +107,73 @@ function pointAt(points: PricePoint[], timestamp: number): PricePoint | null {
     found = point
   }
   return found
+}
+
+function interpolatedPointAt(
+  points: PricePoint[],
+  timestamp: number,
+): PricePoint | null {
+  if (!points.length) return null
+  let previous = points[0]
+  if (timestamp <= previous.timestamp) return previous
+  for (let index = 1; index < points.length; index += 1) {
+    const next = points[index]
+    if (timestamp > next.timestamp) {
+      previous = next
+      continue
+    }
+    if (next.timestamp === previous.timestamp) return next
+    const progress =
+      (timestamp - previous.timestamp) / (next.timestamp - previous.timestamp)
+    return {
+      timestamp,
+      value: previous.value + (next.value - previous.value) * progress,
+    }
+  }
+  return previous
+}
+
+function inspectionDateLabel(timestamp: number, span: number): string {
+  if (span > 2 * DAY) return chartDateLabel(timestamp, span)
+  return new Date(timestamp * 1000).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function TooltipPriceRow({
+  label,
+  color,
+  value,
+  baseSymbol,
+  symbol,
+}: {
+  label: string
+  color: string
+  value: number | null
+  baseSymbol: string
+  symbol: string
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 whitespace-nowrap">
+      <span className="flex items-center gap-2 text-grey-300">
+        <span
+          aria-hidden="true"
+          className="h-2 w-2 shrink-0 rounded-full"
+          style={{ backgroundColor: color }}
+        />
+        {label}
+      </span>
+      <span className="font-medium text-white">
+        {value && value > 0
+          ? `${formatPrice(value)} ${baseSymbol}/${symbol}`
+          : '—'}
+      </span>
+    </div>
+  )
 }
 
 function PriceSummary({
@@ -353,28 +421,54 @@ export function PriceChart({
           ) : null}
         </>
       )}
+      inspectionPlacement="tooltip"
       renderInspection={({ timestamp, isHovering }) => {
         if (!isHovering) return null
-        const point = pointAt(floorSeries, timestamp)
-        if (!point) return null
+        const issuanceRate = rateAtTime(resolved, timestamp)
+        const issuance = issuanceRate > 0 ? 1 / issuanceRate : null
+        const floorPoint = pointAt(floorSeries, timestamp)
+        const ammPoint = interpolatedPointAt(ammSeries, timestamp)
         const minimum = pointAt(visibleMinimumSeries, timestamp)?.value
         return (
-          <div className="mt-1 space-y-0.5 text-xs leading-relaxed text-smoke-700">
-            <p className="whitespace-nowrap">
-              Cash out:{' '}
-              <span className="font-medium text-ink">
-                {formatPrice(point.value)} {baseSymbol}/{symbol}
-              </span>
-              {minimum ? (
-                <>
-                  {' · Min cash out '}
-                  <span className="font-medium text-ink">
-                    {formatPrice(minimum)} {baseSymbol}/{symbol}
-                  </span>
-                </>
-              ) : null}
+          <div className="space-y-1.5 text-xs leading-relaxed">
+            <p className="border-b border-grey-700 pb-1.5 font-medium text-white">
+              {inspectionDateLabel(timestamp, t1 - t0)}
             </p>
-            {point.reason ? <p>{point.reason}</p> : null}
+            <TooltipPriceRow
+              label="Issuance"
+              color={ISSUANCE_COLOR}
+              value={issuance}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+            <TooltipPriceRow
+              label="AMM"
+              color={AMM_COLOR}
+              value={ammPoint?.value ?? null}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+            <TooltipPriceRow
+              label="Cash out"
+              color={CASH_OUT_COLOR}
+              value={floorPoint?.value ?? null}
+              baseSymbol={baseSymbol}
+              symbol={symbol}
+            />
+            {minimum ? (
+              <TooltipPriceRow
+                label="Min cash out"
+                color={CASH_OUT_COLOR}
+                value={minimum}
+                baseSymbol={baseSymbol}
+                symbol={symbol}
+              />
+            ) : null}
+            {floorPoint?.reason ? (
+              <p className="border-t border-grey-700 pt-1.5 text-grey-300">
+                {floorPoint.reason}
+              </p>
+            ) : null}
           </div>
         )
       }}
