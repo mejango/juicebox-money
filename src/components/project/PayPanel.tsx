@@ -76,6 +76,7 @@ import {
   PERMIT2_ADDRESS,
   permit2SignatureNeedsOnchainFallback,
   permit2TypedData,
+  shouldUsePermit2Signature,
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";
 import { useReviewedPermit2Signature } from "@/hooks/useReviewedPermit2Signature";
@@ -1082,12 +1083,13 @@ export function PayPanel({
     staleTime: Number.POSITIVE_INFINITY,
     queryFn: () => publicClient!.getBytecode({ address: address! }),
   });
-  const canSignPermit2 =
-    needsPermit2Approval &&
-    connectedWalletCodeFetched &&
-    !connectedWalletCodeError &&
-    !connectedWalletBytecode &&
-    !isSafeConnection(wagmiConfig);
+  const canSignPermit2 = shouldUsePermit2Signature({
+    needsApproval: needsPermit2Approval,
+    walletLookupSettled:
+      connectedWalletCodeFetched || connectedWalletCodeError,
+    walletBytecode: connectedWalletBytecode,
+    isSafe: isSafeConnection(wagmiConfig),
+  });
   const permit2WalletKindLoading =
     needsPermit2Approval &&
     !connectedWalletCodeFetched &&

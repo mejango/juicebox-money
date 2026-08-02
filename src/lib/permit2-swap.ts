@@ -28,6 +28,25 @@ export type Permit2SignatureAuthorization = {
   sigDeadline: bigint
 }
 
+export function shouldUsePermit2Signature({
+  needsApproval,
+  walletLookupSettled,
+  walletBytecode,
+  isSafe,
+}: {
+  needsApproval: boolean
+  walletLookupSettled: boolean
+  walletBytecode?: Hex
+  isSafe: boolean
+}): boolean {
+  return (
+    needsApproval &&
+    walletLookupSettled &&
+    !walletBytecode &&
+    !isSafe
+  )
+}
+
 export function permit2TypedData(
   authorization: Permit2SignatureAuthorization,
 ) {

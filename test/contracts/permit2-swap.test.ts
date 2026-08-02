@@ -5,6 +5,7 @@ import {
   addPermit2SignatureToSwap,
   permit2SignatureNeedsOnchainFallback,
   permit2TypedData,
+  shouldUsePermit2Signature,
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";
 
@@ -73,5 +74,32 @@ describe("Permit2 direct-pay signatures", () => {
     expect(
       permit2SignatureNeedsOnchainFallback({ code: -32602, message: "Invalid parameters" }),
     ).toBe(true);
+  });
+
+  it("prefers a gasless signature when an EOA bytecode lookup fails", () => {
+    expect(
+      shouldUsePermit2Signature({
+        needsApproval: true,
+        walletLookupSettled: true,
+        walletBytecode: undefined,
+        isSafe: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUsePermit2Signature({
+        needsApproval: true,
+        walletLookupSettled: true,
+        walletBytecode: "0x6000",
+        isSafe: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUsePermit2Signature({
+        needsApproval: true,
+        walletLookupSettled: true,
+        walletBytecode: undefined,
+        isSafe: true,
+      }),
+    ).toBe(false);
   });
 });
