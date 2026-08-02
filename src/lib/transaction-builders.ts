@@ -20,6 +20,7 @@ import {
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
 import {
+  encodeAbiParameters,
   encodeFunctionData,
   erc20Abi,
   type Abi,
@@ -533,6 +534,59 @@ export function buildPermit2ApproveRequest({
 }
 
 /** Exact final Uniswap V4 PositionManager call with frozen mint bytes/value. */
+/** v4-periphery `Actions`: BURN_POSITION, DECREASE_LIQUIDITY, TAKE_PAIR. */
+const ACTION_BURN_POSITION = '03'
+const ACTION_TAKE_PAIR = '11'
+
+/**
+ * Full-exit remove: BURN_POSITION(tokenId) + TAKE_PAIR(c0, c1, recipient).
+ *
+ * Both sides carry a 95% floor derived from the amounts the caller just
+ * displayed, so a large adverse price move reverts instead of returning
+ * materially less than was reviewed. No approval is needed — the NFT owner
+ * burns their own position.
+ */
+export function buildRemoveLiquidityUnlockData({
+  tokenId,
+  currency0,
+  currency1,
+  recipient,
+  amount0Min,
+  amount1Min,
+}: {
+  tokenId: bigint
+  currency0: Address
+  currency1: Address
+  recipient: Address
+  amount0Min: bigint
+  amount1Min: bigint
+}): Hex {
+  const burnParams = encodeAbiParameters(
+    [
+      { type: 'uint256' },
+      { type: 'uint128' },
+      { type: 'uint128' },
+      { type: 'bytes' },
+    ],
+    [tokenId, amount0Min, amount1Min, '0x'],
+  )
+  const takeParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+    [currency0, currency1, recipient],
+  )
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [`0x${ACTION_BURN_POSITION}${ACTION_TAKE_PAIR}`, [burnParams, takeParams]],
+  )
+}
+
+/** Keep 95% of a displayed amount as the on-chain floor; never floor to 0. */
+export function retainedFloor(value: bigint): bigint {
+  if (value <= 0n) return 0n
+  const floor = (value * 9_500n) / 10_000n
+  return floor > 0n ? floor : 1n
+}
+
 export function buildModifyLiquiditiesRequest({
   chainId,
   positionManager,

@@ -24,6 +24,7 @@ import {
   type JBClaim,
 } from '@bananapus/nana-sdk-core/v6'
 import {
+  decodeAbiParameters,
   decodeFunctionData,
   encodeFunctionData,
   pad,
@@ -44,8 +45,10 @@ import {
   buildProjectPowerAuthorityCall,
   buildRevnetOperatorAuthorityCall,
   buildRouterTerminalAuthorityCall,
+  buildRemoveLiquidityUnlockData,
   buildSendReservedTokensRequest,
   buildSetBuybackTwapAuthorityCall,
+  retainedFloor,
   buildTokenMetadataAuthorityCall,
 } from '@/lib/transaction-builders'
 
@@ -372,6 +375,50 @@ describe('remaining local transaction builders', () => {
       functionName: 'setTwapWindowOf',
       args: [46n, TOKEN, 1800n],
     })
+  })
+
+  it('pins the LP burn payload and its per-currency floors', () => {
+    // The floors are keyed by CURRENCY order, not by pair/token: mapping them to
+    // the wrong side would let a position exit for far less than reviewed.
+    const unlockData = buildRemoveLiquidityUnlockData({
+      tokenId: 2864727n,
+      currency0: TOKEN,
+      currency1: TERMINAL,
+      recipient: ALICE,
+      amount0Min: 100n,
+      amount1Min: 200n,
+    })
+    const [actions, params] = decodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      unlockData,
+    )
+    // BURN_POSITION (0x03) then TAKE_PAIR (0x11).
+    expect(actions).toBe('0x0311')
+    const [tokenId, amount0Min, amount1Min] = decodeAbiParameters(
+      [
+        { type: 'uint256' },
+        { type: 'uint128' },
+        { type: 'uint128' },
+        { type: 'bytes' },
+      ],
+      params[0],
+    )
+    expect(tokenId).toBe(2864727n)
+    expect(amount0Min).toBe(100n)
+    expect(amount1Min).toBe(200n)
+    expect(
+      decodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+        params[1],
+      ),
+    ).toEqual([TOKEN, TERMINAL, ALICE])
+  })
+
+  it('never floors a non-zero LP amount to zero', () => {
+    // A 1-wei dust side must not become an unbounded 0 minimum.
+    expect(retainedFloor(0n)).toBe(0n)
+    expect(retainedFloor(1n)).toBe(1n)
+    expect(retainedFloor(1_000n)).toBe(950n)
   })
 
   it('pins Permit2 approval and final PositionManager bytes, deadline, and value', () => {

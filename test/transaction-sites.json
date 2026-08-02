@@ -5,40 +5,90 @@
       "hooks": 1,
       "sends": 3,
       "sendSites": [
-        { "id": "approve-token-for-permit2", "actions": ["Approve an ERC-20"] },
-        { "id": "authorize-position-manager", "actions": ["Authorize the Uniswap position manager"] },
-        { "id": "mint-liquidity-position", "actions": ["Add Uniswap V4 liquidity"] }
+        {
+          "id": "approve-token-for-permit2",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-position-manager",
+          "actions": [
+            "Authorize the Uniswap position manager"
+          ]
+        },
+        {
+          "id": "mint-liquidity-position",
+          "actions": [
+            "Add Uniswap V4 liquidity"
+          ]
+        }
       ]
     },
     "src/components/project/AutoIssuanceSection.tsx": {
       "hooks": 1,
       "sends": 1,
       "sendSites": [
-        { "id": "auto-issue-stage-allocation", "actions": ["Auto-issue tokens"] }
+        {
+          "id": "auto-issue-stage-allocation",
+          "actions": [
+            "Auto-issue tokens"
+          ]
+        }
       ]
     },
     "src/components/project/BurnTokensFlow.tsx": {
       "hooks": 1,
       "sends": 1,
       "sendSites": [
-        { "id": "burn-project-tokens", "actions": ["Burn project tokens"] }
+        {
+          "id": "burn-project-tokens",
+          "actions": [
+            "Burn project tokens"
+          ]
+        }
       ]
     },
     "src/components/project/CashOutFlow.tsx": {
       "hooks": 2,
       "sends": 4,
       "sendSites": [
-        { "id": "approve-project-token-for-direct-sell", "actions": ["Approve an ERC-20"] },
-        { "id": "authorize-direct-sell-router", "actions": ["Approve an ERC-20"] },
-        { "id": "sell-project-token-on-pool", "actions": ["Swap project tokens"] },
-        { "id": "cash-out-project-tokens", "actions": ["Cash out project tokens"] }
+        {
+          "id": "approve-project-token-for-direct-sell",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-direct-sell-router",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "sell-project-token-on-pool",
+          "actions": [
+            "Swap project tokens"
+          ]
+        },
+        {
+          "id": "cash-out-project-tokens",
+          "actions": [
+            "Cash out project tokens"
+          ]
+        }
       ]
     },
     "src/components/project/ExtrasTab.tsx": {
       "hooks": 1,
       "sends": 1,
       "sendSites": [
-        { "id": "deploy-project-payer", "actions": ["Deploy a project payer address"] }
+        {
+          "id": "deploy-project-payer",
+          "actions": [
+            "Deploy a project payer address"
+          ]
+        }
       ]
     },
     "src/components/project/FundsTab.tsx": {
@@ -47,7 +97,10 @@
       "sendSites": [
         {
           "id": "send-fund-access-action",
-          "actions": ["Distribute payouts", "Use surplus allowance"]
+          "actions": [
+            "Distribute payouts",
+            "Use surplus allowance"
+          ]
         }
       ]
     },
@@ -55,53 +108,145 @@
       "hooks": 2,
       "sends": 2,
       "sendSites": [
-        { "id": "borrow-after-permission", "actions": ["Borrow or repay"] },
-        { "id": "grant-loan-burn-permission", "actions": ["Add or revoke permissions"] }
+        {
+          "id": "borrow-after-permission",
+          "actions": [
+            "Borrow or repay"
+          ]
+        },
+        {
+          "id": "grant-loan-burn-permission",
+          "actions": [
+            "Add or revoke permissions"
+          ]
+        }
       ]
     },
     "src/components/project/GossipCard.tsx": {
       "hooks": 1,
       "sends": 1,
       "sendSites": [
-        { "id": "sync-sucker-accounting", "actions": ["Sync sucker accounting"] }
+        {
+          "id": "sync-sucker-accounting",
+          "actions": [
+            "Sync sucker accounting"
+          ]
+        }
+      ]
+    },
+    "src/components/project/LiquidityPositions.tsx": {
+      "hooks": 1,
+      "sends": 2,
+      "sendSites": [
+        {
+          "id": "claim-liquidity-fees",
+          "actions": [
+            "Claim Uniswap V4 LP fees"
+          ]
+        },
+        {
+          "id": "remove-liquidity-position",
+          "actions": [
+            "Remove Uniswap V4 liquidity"
+          ]
+        }
       ]
     },
     "src/components/project/LoansSection.tsx": {
       "hooks": 2,
       "sends": 4,
       "sendSites": [
-        { "id": "repay-after-approval", "actions": ["Borrow or repay"] },
-        { "id": "repay-native-loan", "actions": ["Borrow or repay"] },
-        { "id": "repay-approved-erc20-loan", "actions": ["Borrow or repay"] },
-        { "id": "approve-loan-repayment", "actions": ["Approve an ERC-20"] }
+        {
+          "id": "repay-after-approval",
+          "actions": [
+            "Borrow or repay"
+          ]
+        },
+        {
+          "id": "repay-native-loan",
+          "actions": [
+            "Borrow or repay"
+          ]
+        },
+        {
+          "id": "repay-approved-erc20-loan",
+          "actions": [
+            "Borrow or repay"
+          ]
+        },
+        {
+          "id": "approve-loan-repayment",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        }
       ]
     },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
       "sends": 3,
       "sendSites": [
-        { "id": "approve-project-token-for-sucker", "actions": ["Approve an ERC-20"] },
-        { "id": "prepare-token-move", "actions": ["Prepare/move tokens cross-chain"] },
-        { "id": "send-prepared-token-move", "actions": ["Prepare/move tokens cross-chain"] }
+        {
+          "id": "approve-project-token-for-sucker",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "prepare-token-move",
+          "actions": [
+            "Prepare/move tokens cross-chain"
+          ]
+        },
+        {
+          "id": "send-prepared-token-move",
+          "actions": [
+            "Prepare/move tokens cross-chain"
+          ]
+        }
       ]
     },
     "src/components/project/OwnersTab.tsx": {
       "hooks": 2,
       "sends": 2,
       "sendSites": [
-        { "id": "claim-project-token-credits", "actions": ["Claim project-token credits"] },
-        { "id": "distribute-reserved-tokens", "actions": ["Distribute reserved tokens"] }
+        {
+          "id": "claim-project-token-credits",
+          "actions": [
+            "Claim project-token credits"
+          ]
+        },
+        {
+          "id": "distribute-reserved-tokens",
+          "actions": [
+            "Distribute reserved tokens"
+          ]
+        }
       ]
     },
     "src/components/project/PayPanel.tsx": {
       "hooks": 3,
       "sends": 3,
       "sendSites": [
-        { "id": "approve-payment-token", "actions": ["Approve an ERC-20"] },
-        { "id": "authorize-swap-router", "actions": ["Approve an ERC-20"] },
+        {
+          "id": "approve-payment-token",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-swap-router",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
         {
           "id": "execute-payment-route",
-          "actions": ["Swap for project tokens", "Pay a project", "Add to treasury balance"]
+          "actions": [
+            "Swap for project tokens",
+            "Pay a project",
+            "Add to treasury balance"
+          ]
         }
       ]
     },
@@ -109,56 +254,93 @@
       "hooks": 1,
       "sends": 1,
       "sendSites": [
-        { "id": "redeem-shop-items", "actions": ["Redeem shop NFTs"] }
+        {
+          "id": "redeem-shop-items",
+          "actions": [
+            "Redeem shop NFTs"
+          ]
+        }
       ]
     },
     "src/components/project/SettlementSection.tsx": {
       "hooks": 2,
       "sends": 2,
       "sendSites": [
-        { "id": "send-prepared-settlement", "actions": ["Prepare/move tokens cross-chain"] },
-        { "id": "claim-bridged-funds", "actions": ["Claim bridged funds"] }
+        {
+          "id": "send-prepared-settlement",
+          "actions": [
+            "Prepare/move tokens cross-chain"
+          ]
+        },
+        {
+          "id": "claim-bridged-funds",
+          "actions": [
+            "Claim bridged funds"
+          ]
+        }
       ]
     }
   },
   "authorityCalls": {
     "src/components/project/AuthorityEditsCard.tsx": {
       "calls": 2,
-      "actions": ["Transfer project ownership", "Change owner/operator powers"]
+      "actions": [
+        "Transfer project ownership",
+        "Change owner/operator powers"
+      ]
     },
     "src/components/project/AuthorityOverview.tsx": {
       "calls": 2,
-      "actions": ["Add or revoke permissions", "Transfer project ownership"]
+      "actions": [
+        "Add or revoke permissions",
+        "Transfer project ownership"
+      ]
     },
     "src/components/project/AuthorityPowersCard.tsx": {
       "calls": 1,
-      "actions": ["Change owner/operator powers"]
+      "actions": [
+        "Change owner/operator powers"
+      ]
     },
     "src/components/project/EditSplitsFlow.tsx": {
       "calls": 1,
-      "actions": ["Edit split groups"]
+      "actions": [
+        "Edit split groups"
+      ]
     },
     "src/components/project/MultiChainBuybackRouterCard.tsx": {
       "calls": 1,
-      "actions": ["Configure buyback/router"]
+      "actions": [
+        "Configure buyback/router"
+      ]
     },
     "src/components/project/QueueRulesetFlow.tsx": {
       "calls": 1,
-      "actions": ["Queue rulesets"]
+      "actions": [
+        "Queue rulesets"
+      ]
     }
   },
   "reviewedDirectWrites": {
     "src/components/create/CreateForm.tsx": {
       "calls": 1,
-      "actions": ["Launch a project", "Launch linked chains", "Deploy a revnet"]
+      "actions": [
+        "Launch a project",
+        "Launch linked chains",
+        "Deploy a revnet"
+      ]
     },
     "src/components/project/AddShopItemsModal.tsx": {
       "calls": 1,
-      "actions": ["Add shop tiers"]
+      "actions": [
+        "Add shop tiers"
+      ]
     },
     "src/hooks/useSafeTx.ts": {
       "calls": 1,
-      "actions": ["Submit a reviewed direct write"]
+      "actions": [
+        "Submit a reviewed direct write"
+      ]
     }
   },
   "rawWalletCalls": {

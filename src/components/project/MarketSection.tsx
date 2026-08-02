@@ -25,6 +25,7 @@ import {
 import { usePublicClient } from 'wagmi'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import { LiquidityPositions } from './LiquidityPositions'
 import {
   LiquidityBodySkeleton,
   MarketSectionSkeleton,
@@ -773,6 +774,64 @@ async function readLpPositions(
   }
 }
 
+/** One of the connected wallet's own positions in a pool. */
+export interface UserLpPosition {
+  tokenId: bigint
+  tickLower: number
+  tickUpper: number
+  liquidity: bigint
+  /** Pair-token amount at the current price (raw, pair decimals). */
+  pairAmount: bigint
+  /** Project-token amount at the current price (raw, 18 decimals). */
+  tokenAmount: bigint
+}
+
+/**
+ * The positions in this pool owned by one wallet, freshly read.
+ *
+ * Shares the pool-wide scan: tokenIds come from ModifyLiquidity logs (salt ==
+ * tokenId), and every position is verified to belong to this pool before it is
+ * shown. An incomplete log scan throws rather than presenting a short list as
+ * "you have no positions".
+ */
+export async function readUserLpPositions(
+  client: PublicClient,
+  chainId: JBChainId,
+  pool: Extract<MarketResult, { status: 'pool' }>,
+  owner: Address,
+): Promise<UserLpPosition[]> {
+  const posm = POSITION_MANAGER_BY_CHAIN[chainId]
+  const pm = POOL_MANAGER_BY_CHAIN[chainId]
+  if (!posm || !pm) return []
+
+  const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
+  if (!tokenIds.length) return []
+  const details = await readPositionDetails(client, posm, tokenIds, pool.poolId)
+
+  const mine: UserLpPosition[] = []
+  for (const p of details) {
+    if (!p.owner || p.liquidity <= 0n || p.info === 0n) continue
+    if (lc(p.owner) !== lc(owner)) continue
+    const tickLower = tickLowerOf(p.info)
+    const tickUpper = tickUpperOf(p.info)
+    const amounts = getAmountsForLiquidity(
+      pool.sqrtP,
+      sqrtAtTick(tickLower),
+      sqrtAtTick(tickUpper),
+      p.liquidity,
+    )
+    mine.push({
+      tokenId: p.tokenId,
+      tickLower,
+      tickUpper,
+      liquidity: p.liquidity,
+      pairAmount: pool.pairIsC0 ? amounts.amount0 : amounts.amount1,
+      tokenAmount: pool.pairIsC0 ? amounts.amount1 : amounts.amount0,
+    })
+  }
+  return mine
+}
+
 // ------------------------------------------------------------- component --
 
 export function MarketSection({
@@ -807,6 +866,7 @@ export function MarketSection({
   })
 
   const hasPool = market?.status === 'pool'
+  const marketPositionManager = POSITION_MANAGER_BY_CHAIN[chainId]
 
   const { data: floor } = useCashOutFloor(chainId, projectId, hasPool)
 
@@ -814,6 +874,7 @@ export function MarketSection({
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
+    refetch: refetchLp,
   } = useQuery({
     queryKey: ['marketLp', chainId, projectId],
     enabled: !!publicClient && hasPool,
@@ -951,6 +1012,15 @@ export function MarketSection({
             />
           </div>
         )}
+        {marketPositionManager ? (
+          <LiquidityPositions
+            chainId={chainId}
+            pool={market}
+            positionManager={marketPositionManager}
+            sym={sym}
+            onChanged={() => void refetchLp()}
+          />
+        ) : null}
       </div>
     </div>
   )

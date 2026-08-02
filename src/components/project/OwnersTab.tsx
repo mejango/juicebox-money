@@ -624,7 +624,7 @@ function YourChainRow({
               )}
             </td>
             <td className="whitespace-nowrap px-4 py-3 text-right align-top text-smoke-700">
-              Manage below
+              See Market
             </td>
           </>
         )}
