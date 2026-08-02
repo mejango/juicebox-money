@@ -19,6 +19,7 @@ import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
+import { ModalShell } from '@/components/ui/ModalShell'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
@@ -455,15 +456,21 @@ function ActionRow({
       )}
 
       {open ? (
-        <BuybackActionForm
-          kind={kind}
-          rows={rows}
-          onCancel={() => setOpen(false)}
-          onDone={() => {
-            onDone()
-            setOpen(false)
-          }}
-        />
+        <ModalShell
+          title={action.title}
+          subtitle={action.description}
+          onClose={() => setOpen(false)}
+          maxWidth="max-w-xl"
+        >
+          <BuybackActionForm
+            kind={kind}
+            rows={rows}
+            onDone={() => {
+              onDone()
+              setOpen(false)
+            }}
+          />
+        </ModalShell>
       ) : null}
     </div>
   )
@@ -472,12 +479,10 @@ function ActionRow({
 function BuybackActionForm({
   kind,
   rows,
-  onCancel,
   onDone,
 }: {
   kind: ActionKind
   rows: BuybackChainState[]
-  onCancel: () => void
   onDone: () => void
 }) {
   const action = ACTIONS[kind]
@@ -701,27 +706,13 @@ function BuybackActionForm({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-ink">{action.title}</p>
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={busy}
-          className="text-xs text-smoke-700 hover:text-ink"
-        >
-          Cancel
-        </button>
-      </div>
-
+    <div>
       <ChainPicker
-        className="mt-4"
         label="Run on"
         rows={rows.map(row => ({
           chainId: row.chainId,
           name: row.name,
-          disabled:
-            kind === 'terminal' ? !row.routerAvailable : !row.buybackAvailable,
+          disabled: !isKindAvailable(kind, row),
         }))}
         selected={selected}
         onChange={setSelected}
