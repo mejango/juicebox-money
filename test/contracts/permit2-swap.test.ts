@@ -110,6 +110,7 @@ describe("Permit2 direct-pay signatures", () => {
 
   it("prepends Permit2 without changing a reviewed USDC to ETH to V4 route", () => {
     const quote: DirectPaySwapQuote = {
+      kind: "direct-swap",
       poolKey: {
         currency0: zeroAddress,
         currency1: OUTPUT,
@@ -120,6 +121,8 @@ describe("Permit2 direct-pay signatures", () => {
       zeroForOne: true,
       quotedTokenCount: 101n,
       minimumTokenCount: 100n,
+      beneficiaryTokenCount: 100n,
+      reservedTokenCount: 0n,
       inputRoute: {
         kind: "erc20-v3-native-v4",
         inputToken: BASE_USDC,

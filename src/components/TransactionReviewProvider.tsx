@@ -20,7 +20,7 @@ import {
   jbContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { uniswapV4Deployment } from '@bananapus/nana-sdk-core/v6'
+import { uniswapV4Deployment } from '@bananapus/nana-sdk-core/v6/uniswap-v4-deployments'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {

@@ -12,6 +12,7 @@ const MAINNET_CHAIN_IDS = [1, 10, 8453, 42161] as const;
 describe("native direct-pay routing", () => {
   it("chains Base ETH through USDC into the hooked V4 pool atomically", () => {
     const quote: DirectPaySwapQuote = {
+      kind: "direct-swap",
       poolKey: {
         currency0: "0x2222222222222222222222222222222222222222",
         currency1: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -22,6 +23,8 @@ describe("native direct-pay routing", () => {
       zeroForOne: false,
       quotedTokenCount: 101n,
       minimumTokenCount: 100n,
+      beneficiaryTokenCount: 100n,
+      reservedTokenCount: 0n,
       inputRoute: {
         kind: "native-v3-v4",
         wrappedNative: "0x4200000000000000000000000000000000000006",
@@ -52,6 +55,7 @@ describe("native direct-pay routing", () => {
 
   it("chains Base USDC through ETH into a native-paired hooked V4 pool atomically", () => {
     const quote: DirectPaySwapQuote = {
+      kind: "direct-swap",
       poolKey: {
         currency0: "0x0000000000000000000000000000000000000000",
         currency1: "0x2222222222222222222222222222222222222222",
@@ -62,6 +66,8 @@ describe("native direct-pay routing", () => {
       zeroForOne: true,
       quotedTokenCount: 101n,
       minimumTokenCount: 100n,
+      beneficiaryTokenCount: 100n,
+      reservedTokenCount: 0n,
       inputRoute: {
         kind: "erc20-v3-native-v4",
         inputToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -97,6 +103,7 @@ describe("native direct-pay routing", () => {
       if (!config) continue;
 
       const nativeQuote: DirectPaySwapQuote = {
+        kind: "direct-swap",
         poolKey: {
           currency0: "0x2222222222222222222222222222222222222222",
           currency1: config.bridgeToken,
@@ -107,6 +114,8 @@ describe("native direct-pay routing", () => {
         zeroForOne: false,
         quotedTokenCount: 101n,
         minimumTokenCount: 100n,
+        beneficiaryTokenCount: 100n,
+        reservedTokenCount: 0n,
         inputRoute: {
           kind: "native-v3-v4",
           wrappedNative: config.wrappedNative,

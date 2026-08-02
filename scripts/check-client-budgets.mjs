@@ -14,13 +14,15 @@ const budgets = {
     // aggregate and largest-chunk budgets below still catch shared regressions.
     // The shared Bendystraw client includes fail-closed network routing, and
     // canonical SDK chain metadata replaces the warning-prone viem barrel.
-    // Keep the route ceiling within one KiB of its measured size; aggregate
-    // and largest-chunk ceilings below still catch broader regressions.
-    '/page': 387 * KIB,
+    // The shared all-chain direct-pay and Permit2 review paths add ~6 KiB to
+    // the landing route after package-import optimization. Keep the ceiling
+    // close to that reviewed feature cost; aggregate and largest-chunk budgets
+    // below still catch broader regressions.
+    '/page': 394 * KIB,
     '/[urn]/page': 570 * KIB,
     '/create/page': 465 * KIB,
   },
-  allScripts: 1500 * KIB,
+  allScripts: 1510 * KIB,
   largestChunk: 450 * KIB,
   styles: 32 * KIB,
 }

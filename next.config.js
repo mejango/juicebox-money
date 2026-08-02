@@ -24,6 +24,11 @@ module.exports = phase => ({
     (phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next'),
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    // Preserve the SDK's ergonomic barrels while compiling client routes from
+    // the narrow v6 modules they actually use.
+    optimizePackageImports: ['@bananapus/nana-sdk-core'],
+  },
   // `page.browsertest.tsx` files are routes ONLY in the deterministic browser
   // build the Playwright suite compiles. They never reach a production image:
   // without the extra extension Next does not treat the file as a route at
