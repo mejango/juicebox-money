@@ -21,14 +21,11 @@ import {
   build721PayMetadata,
   buildPermit2ApproveTx,
   buildPayTx,
-  buildUniswapV4ExactInputSwapTx,
-  chooseBestPayRoute,
   effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
   getProject721Shop,
   previewPay,
-  quoteUniswapV4ExactInputSingle,
   tokenCurrencyId,
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
@@ -80,6 +77,11 @@ import {
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";
 import { useReviewedPermit2Signature } from "@/hooks/useReviewedPermit2Signature";
+import {
+  buildDirectPaySwapTx,
+  quoteDirectPaySwap,
+  type DirectPaySwapQuote,
+} from "@/lib/direct-pay-swap";
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -105,6 +107,7 @@ type PaymentTransactionAction = {
   kind: "token-approval" | "router-approval" | "payment";
   label: string;
   request: TxRequest;
+  swapInputRoute?: DirectPaySwapQuote["inputRoute"];
 };
 
 type PaymentSignatureAction = {
@@ -917,11 +920,6 @@ export function PayPanel({
     queryFn: () =>
       resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
   });
-  const directInputMatches =
-    market?.status === "pool" &&
-    !!context &&
-    (context.token.toLowerCase() === market.pair.tokenOrig.toLowerCase() ||
-      (isNative && market.pair.isNative));
   const {
     data: directSwapQuote,
     isFetching: directSwapQuoteLoading,
@@ -938,7 +936,8 @@ export function PayPanel({
     enabled:
       !!publicClient &&
       !!preview &&
-      directInputMatches &&
+      market?.status === "pool" &&
+      !!context &&
       amountRaw > 0n &&
       mode === "pay" &&
       cartCount === 0,
@@ -948,35 +947,39 @@ export function PayPanel({
       if (market?.status !== "pool") {
         throw new Error("No direct swap pool is available.");
       }
-      return quoteUniswapV4ExactInputSingle(publicClient!, {
+      return quoteDirectPaySwap({
+        client: publicClient!,
         chainId,
         poolKey: market.key,
-        zeroForOne: market.pairIsC0,
-        amountIn: amountRaw,
+        pairIsCurrency0: market.pairIsC0,
+        paymentToken: context!.token,
+        amount: amountRaw,
+        payPreview: preview!,
+        paySettlement: context?.viaRouter ? "swap" : "issuance",
       });
     },
   });
+  const directSwapRoute = !!directSwapQuote && !directSwapQuoteError;
   const bestRoute = useMemo(
     () =>
-      preview
-        ? chooseBestPayRoute({
-            pay: preview,
-            paySettlement: context?.viaRouter ? "swap" : "issuance",
-            directSwapQuote:
-              directInputMatches && !directSwapQuoteError
-                ? directSwapQuote
-                : null,
-          })
-        : null,
-    [
-      preview,
-      context?.viaRouter,
-      directInputMatches,
-      directSwapQuote,
-      directSwapQuoteError,
-    ],
+      directSwapRoute && directSwapQuote
+        ? {
+            kind: "direct-swap" as const,
+            settlement: "swap" as const,
+            beneficiaryTokenCount: directSwapQuote.minimumTokenCount,
+            reservedTokenCount: 0n,
+          }
+        : preview
+          ? {
+              kind: "pay" as const,
+              settlement: context?.viaRouter
+                ? ("swap" as const)
+                : ("issuance" as const),
+              ...preview,
+            }
+          : null,
+    [context?.viaRouter, directSwapQuote, directSwapRoute, preview],
   );
-  const directSwapRoute = bestRoute?.kind === "direct-swap";
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
@@ -986,13 +989,13 @@ export function PayPanel({
       !previewError &&
       !previewLoading &&
       !previewIsPrevious &&
-      (!directInputMatches || !directSwapQuoteLoading));
+      !directSwapQuoteLoading);
   // Floor the guaranteed minimum at 99% of the preview (website parity): a
   // buyback-routed or USD-issuance pay legitimately drifts between preview
   // and inclusion, and an exact min would make ordinary pays revert. A
   // verified zero stays zero.
   const minReturned = directSwapRoute
-    ? bestRoute.beneficiaryTokenCount
+    ? directSwapQuote.minimumTokenCount
     : ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n;
 
   // ---- ERC-20 allowance ----
@@ -1250,14 +1253,12 @@ export function PayPanel({
     }
     let paymentRequest: TxRequest;
     if (mode === "pay") {
-      if (directSwapRoute && market?.status === "pool" && bestRoute) {
+      if (directSwapRoute && directSwapQuote) {
         const viaSafe = isSafeConnection(wagmiConfig);
-        const request = buildUniswapV4ExactInputSwapTx({
+        const request = buildDirectPaySwapTx({
           chainId,
-          poolKey: market.key,
-          zeroForOne: market.pairIsC0,
-          amountIn: amountRaw,
-          minimumAmountOut: bestRoute.beneficiaryTokenCount,
+          quote: directSwapQuote,
+          amount: amountRaw,
           recipient: address,
           deadline: swapDeadline(viaSafe),
         });
@@ -1309,6 +1310,7 @@ export function PayPanel({
             : "Execute the payment"
           : "Add to the project balance",
       request: paymentRequest,
+      swapInputRoute: directSwapQuote?.inputRoute,
     });
     return actions;
   };
@@ -2102,10 +2104,12 @@ export function PayPanel({
           chainName={chainName(chainId)}
           amount={`${formatTokenAmount(amountRaw, decimals)} ${symbol}`}
           tokenReturn={
-            mode === "pay" && bestRoute
-              ? `${formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)} ${projectTokenLabel}`
+            mode === "pay" && preview
+              ? `${formatTokenAmount(minReturned, 18)} ${projectTokenLabel}`
               : null
           }
+          projectTokenSymbol={projectTokenLabel}
+          paymentTokenSymbol={symbol}
           actions={sequenceActions}
           activeActionIndex={sequenceActionIndex}
           completedKinds={sequenceCompletedKinds}
@@ -2137,6 +2141,8 @@ function PaymentSequenceDialog({
   chainName: paymentChainName,
   amount,
   tokenReturn,
+  projectTokenSymbol,
+  paymentTokenSymbol,
   actions,
   activeActionIndex,
   completedKinds,
@@ -2154,6 +2160,8 @@ function PaymentSequenceDialog({
   chainName: string;
   amount: string;
   tokenReturn: string | null;
+  projectTokenSymbol: string;
+  paymentTokenSymbol: string;
   actions: PaymentSequenceAction[];
   activeActionIndex: number;
   completedKinds: PaymentSequenceAction["kind"][];
@@ -2222,6 +2230,18 @@ function PaymentSequenceDialog({
                 <span className="text-right font-medium text-ink">{tokenReturn}</span>
               </>
             ) : null}
+            {activeAction?.kind === "payment" &&
+            activeAction.swapInputRoute &&
+            activeAction.swapInputRoute.kind !== "single-v4" ? (
+              <>
+                <span className="text-smoke-500">Route</span>
+                <span className="text-right text-ink">
+                  {paymentTokenSymbol} →{" "}
+                  {activeAction.swapInputRoute.bridgeTokenSymbol} →{" "}
+                  {projectTokenSymbol}
+                </span>
+              </>
+            ) : null}
           </div>
 
           <div className="rounded-xl border border-smoke-200 bg-white p-3">
@@ -2264,6 +2284,8 @@ function PaymentSequenceDialog({
               tokenReturn={tokenReturn}
               beneficiary={beneficiary}
               memo={memo}
+              projectTokenSymbol={projectTokenSymbol}
+              paymentTokenSymbol={paymentTokenSymbol}
             />
           ) : null}
 
@@ -2307,6 +2329,8 @@ function PaymentCallReview({
   tokenReturn,
   beneficiary,
   memo,
+  projectTokenSymbol,
+  paymentTokenSymbol,
 }: {
   action: PaymentSequenceAction;
   chainLabel: string;
@@ -2314,6 +2338,8 @@ function PaymentCallReview({
   tokenReturn: string | null;
   beneficiary: Address | null;
   memo: string | null;
+  projectTokenSymbol: string;
+  paymentTokenSymbol: string;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   if (action.kind === "router-signature") {
@@ -2398,10 +2424,23 @@ function PaymentCallReview({
           </>
         ) : null}
         {tokenReturn && action.kind === "payment" ? (
-          <div className="flex items-start gap-1">
-            <dt className="shrink-0 text-smoke-500">Minimum received:</dt>
-            <dd className="min-w-0 text-ink">{tokenReturn}</dd>
-          </div>
+          <>
+            {action.swapInputRoute &&
+            action.swapInputRoute.kind !== "single-v4" ? (
+              <div className="flex items-start gap-1">
+                <dt className="shrink-0 text-smoke-500">Route:</dt>
+                <dd className="min-w-0 text-ink">
+                  {paymentTokenSymbol} →{" "}
+                  {action.swapInputRoute.bridgeTokenSymbol} →{" "}
+                  {projectTokenSymbol}
+                </dd>
+              </div>
+            ) : null}
+            <div className="flex items-start gap-1">
+              <dt className="shrink-0 text-smoke-500">Minimum received:</dt>
+              <dd className="min-w-0 text-ink">{tokenReturn}</dd>
+            </div>
+          </>
         ) : null}
         {beneficiary && action.kind === "payment" ? (
           <div className="flex items-start gap-1">

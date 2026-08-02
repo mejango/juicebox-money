@@ -8,11 +8,16 @@ import {
   shouldUsePermit2Signature,
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";
+import {
+  buildDirectPaySwapTx,
+  type DirectPaySwapQuote,
+} from "@/lib/direct-pay-swap";
 
 const TOKEN = "0x1111111111111111111111111111111111111111" as Address;
 const OUTPUT = "0x2222222222222222222222222222222222222222" as Address;
 const RECIPIENT = "0x3333333333333333333333333333333333333333" as Address;
 const HOOK = "0x4444444444444444444444444444444444444444" as Address;
+const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 const SIGNATURE = `0x${"55".repeat(65)}` as Hex;
 
 function fixture() {
@@ -101,5 +106,50 @@ describe("Permit2 direct-pay signatures", () => {
         isSafe: true,
       }),
     ).toBe(false);
+  });
+
+  it("prepends Permit2 without changing a reviewed USDC to ETH to V4 route", () => {
+    const quote: DirectPaySwapQuote = {
+      poolKey: {
+        currency0: zeroAddress,
+        currency1: OUTPUT,
+        fee: 10_000,
+        tickSpacing: 200,
+        hooks: HOOK,
+      },
+      zeroForOne: true,
+      quotedTokenCount: 101n,
+      minimumTokenCount: 100n,
+      inputRoute: {
+        kind: "erc20-v3-native-v4",
+        inputToken: BASE_USDC,
+        wrappedNative: "0x4200000000000000000000000000000000000006",
+        bridgeTokenSymbol: "ETH",
+        bridgeTokenDecimals: 18,
+        v3Fee: 500,
+        quotedBridgeAmount: 10_000_000_000_000_000n,
+      },
+    };
+    const request = buildDirectPaySwapTx({
+      chainId: 8453,
+      quote,
+      amount: 25_000_000n,
+      recipient: RECIPIENT,
+      deadline: 1_800_000_000n,
+    });
+    const authorization: Permit2SignatureAuthorization = {
+      chainId: 8453,
+      token: BASE_USDC,
+      spender: request.address,
+      amount: 25_000_000n,
+      expiration: 1_799_999_900,
+      nonce: 7,
+      sigDeadline: 1_799_999_900n,
+    };
+    const signed = addPermit2SignatureToSwap(request, authorization, SIGNATURE);
+
+    expect(signed.args[0]).toBe("0x0a000c10");
+    expect(signed.args[1]).toHaveLength(4);
+    expect(signed.value).toBe(0n);
   });
 });

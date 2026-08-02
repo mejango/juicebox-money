@@ -71,7 +71,7 @@ export function permit2TypedData(
   }
 }
 
-/** Prepend Universal Router's PERMIT2_PERMIT command to an exact V4 swap. */
+/** Prepend Universal Router's PERMIT2_PERMIT command to a reviewed swap. */
 export function addPermit2SignatureToSwap(
   request: TxRequest,
   authorization: Permit2SignatureAuthorization,
@@ -88,7 +88,11 @@ export function addPermit2SignatureToSwap(
     readonly Hex[],
     bigint,
   ]
-  if (commands.toLowerCase() !== '0x10' || inputs.length !== 1) {
+  const commandShape = commands.toLowerCase()
+  const supportedShape =
+    (commandShape === '0x10' && inputs.length === 1) ||
+    (commandShape === '0x000c10' && inputs.length === 3)
+  if (!supportedShape) {
     throw new Error('The reviewed swap has an unsupported Universal Router shape.')
   }
   const permitInput = encodeAbiParameters(
@@ -127,7 +131,11 @@ export function addPermit2SignatureToSwap(
   )
   return {
     ...request,
-    args: ['0x0a10', [permitInput, ...inputs], deadline],
+    args: [
+      `0x0a${commands.slice(2)}` as Hex,
+      [permitInput, ...inputs],
+      deadline,
+    ],
   }
 }
 
