@@ -45,6 +45,7 @@ import {
   buildRevnetOperatorAuthorityCall,
   buildRouterTerminalAuthorityCall,
   buildSendReservedTokensRequest,
+  buildSetBuybackTwapAuthorityCall,
   buildTokenMetadataAuthorityCall,
 } from '@/lib/transaction-builders'
 
@@ -347,6 +348,29 @@ describe('remaining local transaction builders', () => {
         TOKEN,
         79_228_162_514_264_337_593_543_950_336n,
       ],
+    })
+
+    // setTwapWindowOf targets the HOOK, not the registry — the registry has no
+    // forwarder, so a registry target here would revert for every project.
+    const twap = buildSetBuybackTwapAuthorityCall({
+      chainId: CHAIN_ID,
+      authority: AUTHORITY,
+      hook: HOOK,
+      projectId: 46n,
+      terminalToken: TOKEN,
+      twapWindow: 1800n,
+    })
+    expect(twap).toMatchObject({
+      target: HOOK,
+      authority: AUTHORITY,
+      functionName: 'setTwapWindowOf',
+      args: [46n, TOKEN, 1800n],
+      gas: 150_000n,
+    })
+    expect(twap.data.slice(0, 10)).toBe('0xb7433b35')
+    expect(decodeFunctionData({ abi: twap.abi!, data: twap.data })).toEqual({
+      functionName: 'setTwapWindowOf',
+      args: [46n, TOKEN, 1800n],
     })
   })
 

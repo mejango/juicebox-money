@@ -2,6 +2,7 @@ import {
   JBCoreContracts,
   NATIVE_TOKEN,
   RevnetCoreContracts,
+  jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
   jb721TiersHookAbi,
   jbControllerAbi,
@@ -467,6 +468,42 @@ export function buildInitializeBuybackPoolAuthorityCall({
     functionName: 'initializePoolFor',
     args: [projectId, fee, tickSpacing, twapWindow, pairToken, sqrtPriceX96],
     contractName: 'JBBuybackHookRegistry',
+    gas,
+    label,
+  })
+}
+
+/**
+ * `setTwapWindowOf` lives on the buyback hook itself — the registry has no
+ * forwarder — so this targets the project's resolved hook, not a registry.
+ */
+export function buildSetBuybackTwapAuthorityCall({
+  chainId,
+  authority,
+  hook,
+  projectId,
+  terminalToken,
+  twapWindow,
+  gas = 150_000n,
+  label = 'Set TWAP window',
+}: {
+  chainId: JBChainId
+  authority: Address
+  hook: Address
+  projectId: bigint
+  terminalToken: Address
+  twapWindow: bigint
+  gas?: bigint
+  label?: string
+}): AuthorityCall {
+  return buildAuthorityCall({
+    chainId,
+    authority,
+    target: hook,
+    abi: jbBuybackHookAbi,
+    functionName: 'setTwapWindowOf',
+    args: [projectId, terminalToken, twapWindow],
+    contractName: 'JBBuybackHook',
     gas,
     label,
   })

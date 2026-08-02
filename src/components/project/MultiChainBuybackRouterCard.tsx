@@ -34,6 +34,7 @@ import {
   buildBuybackHookAuthorityCall,
   buildInitializeBuybackPoolAuthorityCall,
   buildRouterTerminalAuthorityCall,
+  buildSetBuybackTwapAuthorityCall,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
@@ -46,11 +47,17 @@ type BuybackChainState = AuthorityDeployment & {
   routerAvailable: boolean
   hook: Address | null
   terminal: Address | null
+  /** Pair tokens with an initialized pool on this chain, and their TWAP window. */
+  pools: { label: string; token: Address; twap: number }[]
   poolSummary: string
   readError: string | null
 }
 
-type ActionKind = 'hook' | 'terminal' | 'pool'
+type ActionKind = 'hook' | 'terminal' | 'pool' | 'twap'
+
+/** `JBBuybackHook._requireValidTwapWindow`: 5 minutes to 2 days. */
+const MIN_TWAP_WINDOW = 300
+const MAX_TWAP_WINDOW = 172_800
 
 type Review = {
   calls: AuthorityCall[]
@@ -94,6 +101,15 @@ const ACTIONS: Record<
       'A wrong initial price lets arbitrageurs extract value. Verify the price, fee, tick spacing, pair token, and every selected chain.',
     fieldLabel: 'Pair token',
     gas: 500_000n,
+  },
+  twap: {
+    title: 'Set TWAP window',
+    description:
+      'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. Written straight to the project’s hook.',
+    danger:
+      'A window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate. 300–172800 seconds.',
+    fieldLabel: 'Pair token',
+    gas: 150_000n,
   },
 }
 
@@ -180,6 +196,7 @@ async function readChainState(
     (defaultTerminal as Address) !== zeroAddress
 
   let poolSummary = resolvedHook ? 'Not initialized' : 'Set the hook first'
+  let pools: BuybackChainState['pools'] = []
   if (resolvedHook) {
     const probes: { label: string; token: Address }[] = [
       { label: 'Native', token: zeroAddress },
@@ -201,11 +218,9 @@ async function readChainState(
         ),
       })),
     )
-    const initialized = windows.filter(row => row.twap > 0)
-    poolSummary = initialized.length
-      ? initialized
-          .map(row => `${row.label} pool · TWAP ${row.twap}s`)
-          .join(', ')
+    pools = windows.filter(row => row.twap > 0)
+    poolSummary = pools.length
+      ? pools.map(row => `${row.label} pool · TWAP ${row.twap}s`).join(', ')
       : 'Not initialized'
   }
 
@@ -227,9 +242,18 @@ async function readChainState(
     routerAvailable,
     hook: resolvedHook,
     terminal: resolvedTerminal,
+    pools,
     poolSummary,
     readError,
   }
+}
+
+/** A chain can run the action only where its target contract resolves. */
+function isKindAvailable(kind: ActionKind, row: BuybackChainState): boolean {
+  if (kind === 'terminal') return row.routerAvailable
+  // The TWAP window lives on the hook itself, and only for an initialized pool.
+  if (kind === 'twap') return row.buybackAvailable && !!row.hook && row.pools.length > 0
+  return row.buybackAvailable
 }
 
 function stateDiffers(
@@ -269,9 +293,10 @@ export function MultiChainBuybackRouterCard({
     <section className="card p-5">
       <span className="field-label">Buyback &amp; swap router</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Wire up the project’s buyback hook and swap router, then initialize its
-        Uniswap pool. Select every intended chain; EOA actions use one Relayr
-        payment, while Safe actions are proposed to each chain’s multisig.
+        Wire up the project’s buyback hook and swap router, initialize its
+        Uniswap pool, and tune the pool’s TWAP window. Select every intended
+        chain; EOA actions use one Relayr payment, while Safe actions are
+        proposed to each chain’s multisig.
       </p>
 
       {query.isLoading ? (
@@ -303,6 +328,13 @@ export function MultiChainBuybackRouterCard({
             current={row => row.poolSummary}
             onDone={() => query.refetch()}
           />
+          <ActionRow
+            kind="twap"
+            rows={rows}
+            differs={poolDiffers}
+            current={row => row.poolSummary}
+            onDone={() => query.refetch()}
+          />
         </div>
       )}
     </section>
@@ -324,9 +356,7 @@ function ActionRow({
 }) {
   const action = ACTIONS[kind]
   const [open, setOpen] = useState(false)
-  const availableRows = rows.filter(row =>
-    kind === 'terminal' ? row.routerAvailable : row.buybackAvailable,
-  )
+  const availableRows = rows.filter(row => isKindAvailable(kind, row))
   const availabilityMixed = availableRows.length !== rows.length
   const showPerChain =
     differs || availabilityMixed || rows.some(row => !!row.readError)
@@ -361,8 +391,7 @@ function ActionRow({
       {showPerChain ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {rows.map(row => {
-            const available =
-              kind === 'terminal' ? row.routerAvailable : row.buybackAvailable
+            const available = isKindAvailable(kind, row)
             const value = current(row)
             return (
               <div
@@ -374,11 +403,13 @@ function ActionRow({
                   <p className="text-xs font-medium text-smoke-700">{row.name}</p>
                   {!available ? (
                     <p className="text-xs text-smoke-500">
-                      No Uniswap v4 registry here
+                      {kind === 'twap'
+                        ? 'No initialized buyback pool here'
+                        : 'No Uniswap v4 registry here'}
                     </p>
                   ) : row.readError ? (
                     <p className="text-xs text-red-700">{row.readError}</p>
-                  ) : kind === 'pool' ? (
+                  ) : kind === 'pool' || kind === 'twap' ? (
                     <p className="text-xs text-smoke-700">{value ?? 'Unknown'}</p>
                   ) : value &&
                     typeof value === 'string' &&
@@ -401,6 +432,7 @@ function ActionRow({
         <p className="mt-3 text-xs text-smoke-700">
           <span className="text-smoke-500">Current:</span>{' '}
           {kind !== 'pool' &&
+          kind !== 'twap' &&
           uniformValue &&
           typeof uniformValue === 'string' &&
           uniformValue.startsWith('0x') ? (
@@ -450,10 +482,7 @@ function BuybackActionForm({
 }) {
   const action = ACTIONS[kind]
   const available = useMemo(
-    () =>
-      rows.filter(row =>
-        kind === 'terminal' ? row.routerAvailable : row.buybackAvailable,
-      ),
+    () => rows.filter(row => isKindAvailable(kind, row)),
     [kind, rows],
   )
   const [selected, setSelected] = useState<Set<number>>(
@@ -467,13 +496,17 @@ function BuybackActionForm({
           ? row.hook ?? ''
           : kind === 'terminal'
             ? row.terminal ?? ''
-            : NATIVE_TOKEN,
+            : // Pre-select the pool the chain already has, so a TWAP edit targets
+              // an initialized pair instead of a native pool that may not exist.
+              (kind === 'twap' ? row.pools[0]?.token : undefined) ?? NATIVE_TOKEN,
       ]),
     ),
   )
   const [fee, setFee] = useState('3000')
   const [tickSpacing, setTickSpacing] = useState('60')
-  const [twapWindow, setTwapWindow] = useState('1800')
+  const [twapWindow, setTwapWindow] = useState(() =>
+    kind === 'twap' ? String(available[0]?.pools[0]?.twap ?? 1800) : '1800',
+  )
   const [sqrtPriceX96, setSqrtPriceX96] = useState('')
   const [ack, setAck] = useState(false)
   const [review, setReview] = useState<Review | null>(null)
@@ -524,6 +557,18 @@ function BuybackActionForm({
         }
         poolValues = parsed
       }
+      let newTwapWindow = 0
+      if (kind === 'twap') {
+        if (!/^\d+$/.test(twapWindow)) {
+          throw new Error('Enter the TWAP window in whole seconds.')
+        }
+        newTwapWindow = Number(twapWindow)
+        if (newTwapWindow < MIN_TWAP_WINDOW || newTwapWindow > MAX_TWAP_WINDOW) {
+          throw new Error(
+            `The hook only accepts a TWAP window between ${MIN_TWAP_WINDOW} and ${MAX_TWAP_WINDOW} seconds.`,
+          )
+        }
+      }
 
       const calls: AuthorityCall[] = []
       const lines: string[] = []
@@ -563,6 +608,22 @@ function BuybackActionForm({
               label: action.title,
             }),
           )
+        } else if (kind === 'twap') {
+          // The registry has no setTwapWindowOf forwarder — the write goes to
+          // the project's resolved hook.
+          if (!row.hook) throw new Error(`${row.name}: no buyback hook set.`)
+          calls.push(
+            buildSetBuybackTwapAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              hook: row.hook,
+              projectId: BigInt(row.projectId),
+              terminalToken: address,
+              twapWindow: BigInt(newTwapWindow),
+              gas: action.gas,
+              label: action.title,
+            }),
+          )
         } else {
           if (!row.buybackRegistry || !poolValues) {
             throw new Error(`${row.name}: no buyback registry.`)
@@ -587,7 +648,13 @@ function BuybackActionForm({
           `${row.name}: ${truncateAddress(address)}${
             kind === 'pool'
               ? ` · fee ${fee} · spacing ${tickSpacing} · TWAP ${twapWindow}s · price ${sqrtPriceX96}`
-              : ''
+              : kind === 'twap'
+                ? ` · TWAP ${
+                    row.pools.find(
+                      pool => pool.token.toLowerCase() === address.toLowerCase(),
+                    )?.twap ?? '—'
+                  }s → ${twapWindow}s`
+                : ''
           }`,
         )
       }
@@ -667,13 +734,25 @@ function BuybackActionForm({
         onChange={setAddresses}
         disabled={busy}
       >
-        {kind === 'pool' ? (
+        {kind === 'pool' || kind === 'twap' ? (
           <p className="mt-2 text-xs leading-relaxed text-smoke-500">
             Use the native-token sentinel for native ETH pools. USDC and other
             pair-token addresses may differ by chain.
           </p>
         ) : null}
       </PerChainAddressField>
+
+      {kind === 'twap' ? (
+        <div className="mt-4 sm:max-w-xs">
+          <NumberField
+            label="TWAP window (seconds)"
+            value={twapWindow}
+            onChange={setTwapWindow}
+            disabled={busy}
+            placeholder="1800 = 30 min"
+          />
+        </div>
+      ) : null}
 
       {kind === 'pool' ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
