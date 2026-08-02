@@ -66,6 +66,7 @@ import {
   formatTokenAmount,
 } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
+import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
 import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
@@ -291,11 +292,24 @@ function YouCard({
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-smoke-50">
                 <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
-                  <th className="px-4 py-3 font-normal">Chain</th>
-                  <th className="px-4 py-3 text-right font-normal">Balance</th>
-                  <th className="px-4 py-3 text-right font-normal">Cash out</th>
-                  <th className="px-4 py-3 text-right font-normal">Max loan</th>
-                  <th className="px-4 py-3 text-right font-normal">LP</th>
+                  <th className="whitespace-nowrap px-4 py-3 font-normal">
+                    Chain
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-3 text-right font-normal">
+                    Balance
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-3 text-right font-normal">
+                    Cash out
+                  </th>
+                  <th
+                    className="whitespace-nowrap px-4 py-3 text-right font-normal"
+                    title="Estimated proceeds after the protocol, REV, and minimum source fees"
+                  >
+                    Max loan
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-3 text-right font-normal">
+                    LP
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -383,9 +397,9 @@ type Position = {
   cashOutValue: bigint | null
   cashOutDecimals: number
   cashOutSymbol: string
-  /** Currently-borrowable amount against the full balance (revnet only), in the
-   *  accounting token's decimals; null when not a revnet or unreadable. 0 while
-   *  the revnet's cash-out delay is active. */
+  /** Minimum-fee proceeds from the currently-borrowable amount against the
+   *  full balance (revnet only), in the accounting token's decimals; null when
+   *  not a revnet or unreadable. 0 while the cash-out delay is active. */
   maxLoan: bigint | null
 }
 
@@ -524,7 +538,7 @@ function YourChainRow({
           decimals: BigInt(primary.decimals),
           currency: BigInt(primary.currency),
         })
-          .then(r => r.borrowableNow)
+          .then(r => netLoanProceeds(r.borrowableNow))
           .catch(() => null)
       }
 
@@ -544,7 +558,7 @@ function YourChainRow({
   return (
     <>
       <tr className="border-b border-smoke-100 last:border-0">
-        <td className="px-4 py-3">
+        <td className="whitespace-nowrap px-4 py-3">
           <span className="flex items-center gap-2 text-sm text-smoke-700">
             <ChainIcon chainId={chainId} size={16} />
             {chainName(chainId)}
@@ -564,20 +578,22 @@ function YourChainRow({
           </td>
         ) : (
           <>
-            <td className="px-4 py-3 text-right align-top">
+            <td className="whitespace-nowrap px-4 py-3 text-right align-top">
               <p className="font-medium text-ink">
                 {formatTokenAmount(position.balance)} {tokenSymbol}
               </p>
               {position.token ? (
                 <p className="mt-0.5 text-xs text-smoke-500">
-                  {formatTokenAmount(position.credits)} credits ·{' '}
+                  {!isRevnet ? (
+                    <>{formatTokenAmount(position.credits)} credits · </>
+                  ) : null}
                   {formatTokenAmount(position.erc20Balance)} ERC-20
                 </p>
-              ) : position.credits > 0n ? (
+              ) : !isRevnet && position.credits > 0n ? (
                 <p className="mt-0.5 text-xs text-smoke-500">Credits only</p>
               ) : null}
             </td>
-            <td className="px-4 py-3 text-right align-top font-medium text-ink">
+            <td className="whitespace-nowrap px-4 py-3 text-right align-top font-medium text-ink">
               {position.cashOutValue === null ? (
                 '—'
               ) : (
@@ -591,7 +607,7 @@ function YourChainRow({
                 </>
               )}
             </td>
-            <td className="px-4 py-3 text-right align-top font-medium text-ink">
+            <td className="whitespace-nowrap px-4 py-3 text-right align-top font-medium text-ink">
               {!isRevnet || position.maxLoan === null ? (
                 '—'
               ) : position.maxLoan > 0n ? (
@@ -607,13 +623,13 @@ function YourChainRow({
                 'Locked'
               )}
             </td>
-            <td className="px-4 py-3 text-right align-top text-smoke-700">
+            <td className="whitespace-nowrap px-4 py-3 text-right align-top text-smoke-700">
               Manage below
             </td>
           </>
         )}
       </tr>
-      {position?.token && position.credits > 0n ? (
+      {!isRevnet && position?.token && position.credits > 0n ? (
         <tr className="border-b border-smoke-100 last:border-0">
           <td colSpan={5} className="px-4 pb-3">
             <ClaimFlow
@@ -877,6 +893,7 @@ function OwnersDonut({
   countLabel: string
   tokenUnit: string
 }) {
+  const [activeHolder, setActiveHolder] = useState<AggregatedHolder | null>(null)
   const drawable = holders.filter(holder => holder.balance > 0n).reverse()
   const slices: { holder: AggregatedHolder; path: string }[] = []
   let angle = 0
@@ -899,7 +916,7 @@ function OwnersDonut({
   }
 
   return (
-    <div className="min-w-0 text-center">
+    <div className="relative min-w-0 text-center">
       <svg
         viewBox="0 0 240 218"
         role="img"
@@ -913,6 +930,12 @@ function OwnersDonut({
             className="fill-crush-300 transition-colors hover:fill-crush-400"
             stroke="white"
             strokeWidth="0.8"
+            tabIndex={0}
+            aria-label={`${holder.address}, ${formatTokenAmount(holder.balance)} ${tokenUnit}, ${holderPercentLabel(holder.balance, total)}`}
+            onPointerEnter={() => setActiveHolder(holder)}
+            onPointerLeave={() => setActiveHolder(null)}
+            onFocus={() => setActiveHolder(holder)}
+            onBlur={() => setActiveHolder(null)}
           >
             <title>
               <AddressText address={holder.address} /> —{' '}
@@ -937,6 +960,20 @@ function OwnersDonut({
           owners
         </text>
       </svg>
+      {activeHolder ? (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute left-1/2 top-2 z-10 min-w-[180px] -translate-x-1/2 rounded-lg bg-ink px-3 py-2 text-left text-xs text-white shadow-lg"
+        >
+          <p className="font-medium">
+            <AddressText address={activeHolder.address} />
+          </p>
+          <p className="mt-0.5 whitespace-nowrap text-white/80">
+            {formatTokenAmount(activeHolder.balance)} {tokenUnit} ·{' '}
+            {holderPercentLabel(activeHolder.balance, total)}
+          </p>
+        </div>
+      ) : null}
       <p className="mt-1 text-xs text-smoke-500">
         Total: {compactTokenTotal(total)} {tokenUnit}
       </p>

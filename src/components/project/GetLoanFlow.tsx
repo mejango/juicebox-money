@@ -31,6 +31,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
+import { netLoanProceeds } from '@/lib/loanFees'
 
 const BURN_TOKENS = JBPermissionIdsV6.BURN_TOKENS
 
@@ -431,7 +432,7 @@ export function GetLoanFlow({
                 : borrowableNow === undefined
                   ? 'Could not read the live loan quote — try again shortly.'
                   : borrowableNow > 0n
-                    ? `You can borrow up to ~${formatTokenAmount(borrowableNow, meta.decimals)} ${meta.symbol}.`
+                    ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
                     : 'Loans are locked until this revnet’s cash-out delay passes.'}
             </p>
           ) : null}
@@ -462,8 +463,14 @@ export function GetLoanFlow({
           {review ? (
             <div className="callout callout-info text-xs">
               <p>
-                Borrowing ~{formatTokenAmount(review.quote, meta.decimals)}{' '}
-                {meta.symbol} against {formatTokenAmount(review.collateral)}{' '}
+                You receive ~
+                {formatTokenAmount(
+                  netLoanProceeds(review.quote, BigInt(review.prepaid)),
+                  meta.decimals,
+                )}{' '}
+                {meta.symbol} after fees from a ~
+                {formatTokenAmount(review.quote, meta.decimals)} {meta.symbol}{' '}
+                loan against {formatTokenAmount(review.collateral)}{' '}
                 {collateralSymbol}.
               </p>
               <p className="mt-1">
