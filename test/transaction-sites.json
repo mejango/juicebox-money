@@ -179,6 +179,12 @@
       "src/lib/authority.ts": 1,
       "src/lib/relayr.ts": 1
     },
+    "useSignTypedData": {
+      "src/hooks/useReviewedPermit2Signature.ts": 1
+    },
+    "signTypedDataAsync": {
+      "src/hooks/useReviewedPermit2Signature.ts": 1
+    },
     "signTypedData": {
       "src/lib/relayr.ts": 1,
       "src/lib/safe.ts": 1

@@ -72,7 +72,7 @@ export function registerTransactionReviewHandler(
 async function requestTransactionReview(
   request: TransactionReviewRequest,
 ): Promise<boolean> {
-  if (!request.calls.length) {
+  if (!request.calls.length && !request.authorization) {
     throw new Error('There is no transaction to review.')
   }
   const transactionReviewHandler =
@@ -171,7 +171,9 @@ export function transactionReviewJson(
   }))
   const calls = transactions.length === 1 ? transactions[0] : { transactions }
   const payload = request.authorization
-    ? { authorization: request.authorization, resultingCall: calls }
+    ? transactions.length > 0
+      ? { authorization: request.authorization, resultingCall: calls }
+      : { authorization: request.authorization }
     : calls
   return JSON.stringify(
     payload,

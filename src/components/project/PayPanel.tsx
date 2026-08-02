@@ -71,6 +71,14 @@ import {
   buildTransactionReviewPrompt,
   type TransactionReviewRequest,
 } from "@/lib/transaction-review";
+import {
+  addPermit2SignatureToSwap,
+  PERMIT2_ADDRESS,
+  permit2SignatureNeedsOnchainFallback,
+  permit2TypedData,
+  type Permit2SignatureAuthorization,
+} from "@/lib/permit2-swap";
+import { useReviewedPermit2Signature } from "@/hooks/useReviewedPermit2Signature";
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -92,11 +100,19 @@ type PayContext = {
   viaRouter: boolean;
 };
 
-type PaymentSequenceAction = {
+type PaymentTransactionAction = {
   kind: "token-approval" | "router-approval" | "payment";
   label: string;
   request: TxRequest;
 };
+
+type PaymentSignatureAction = {
+  kind: "router-signature";
+  label: string;
+  authorization: Permit2SignatureAuthorization;
+};
+
+type PaymentSequenceAction = PaymentTransactionAction | PaymentSignatureAction;
 
 type PaySurface = {
   contexts: PayContext[];
@@ -284,6 +300,9 @@ export function PayPanel({
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
   const routerApproveTx = useSafeTx(chainId);
+  const { signPermit2Async } = useReviewedPermit2Signature({
+    reviewedInParent: true,
+  });
   // Once an approval is confirmed, every dependent allowance read and final
   // simulation is anchored to that receipt block. Base providers are load
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
@@ -320,6 +339,9 @@ export function PayPanel({
   >(null);
   const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
+  const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
+    PaymentSequenceAction["kind"][]
+  >([]);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400);
     return () => clearTimeout(t);
@@ -1050,6 +1072,26 @@ export function PayPanel({
     (!permit2Allowance ||
       permit2Allowance[0] < amountRaw ||
       Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800);
+  const {
+    data: connectedWalletBytecode,
+    isFetched: connectedWalletCodeFetched,
+    isError: connectedWalletCodeError,
+  } = useQuery({
+    queryKey: ["payWalletBytecode", chainId, address],
+    enabled: !!publicClient && !!address && directSwapRoute && !isNative,
+    staleTime: Number.POSITIVE_INFINITY,
+    queryFn: () => publicClient!.getBytecode({ address: address! }),
+  });
+  const canSignPermit2 =
+    needsPermit2Approval &&
+    connectedWalletCodeFetched &&
+    !connectedWalletCodeError &&
+    !connectedWalletBytecode &&
+    !isSafeConnection(wagmiConfig);
+  const permit2WalletKindLoading =
+    needsPermit2Approval &&
+    !connectedWalletCodeFetched &&
+    !connectedWalletCodeError;
 
   // ---- Terminal-surface safety (website/ renderTerminalNotice parity) ----
   // Fail closed: the target terminal MUST be listed among the project's
@@ -1094,11 +1136,22 @@ export function PayPanel({
       return;
     }
     if (sequenceSafePhase !== "success") return;
+    setSequenceCompletedKinds(current =>
+      current.includes(sequenceSafeStage)
+        ? current
+        : [...current, sequenceSafeStage],
+    );
     if (sequenceSafeStage === "payment") {
       setSequenceSafeStage(null);
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } else {
+      const completedIndex = sequenceActions.findIndex(
+        action => action.kind === sequenceSafeStage,
+      );
+      if (completedIndex >= 0 && completedIndex + 1 < sequenceActions.length) {
+        setSequenceActionIndex(completedIndex + 1);
+      }
       setSequenceStatus("Safe action confirmed. Refreshing approvals…");
       void Promise.all([refetchAllowance(), refetchPermit2Allowance()])
         .then(() => {
@@ -1117,6 +1170,7 @@ export function PayPanel({
     sequenceSafeError,
     sequenceSafePhase,
     sequenceSafeStage,
+    sequenceActions,
   ]);
 
   const busy =
@@ -1157,22 +1211,40 @@ export function PayPanel({
         }),
       });
     }
-    if (needsPermit2Approval) {
-      const request = buildPermit2ApproveTx({
+    if (needsPermit2Approval && swapDeployment?.universalRouter) {
+      const now = Math.floor(Date.now() / 1000);
+      const authorization: Permit2SignatureAuthorization = {
         chainId,
         token: context.token,
+        spender: swapDeployment.universalRouter,
         amount: amountRaw,
-        expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-      });
-      actions.push({
-        kind: "router-approval",
-        label: "Authorize the Uniswap swap router",
-        request: {
-          ...request,
-          args: request.args as unknown as readonly unknown[],
-          label: "Authorize Uniswap swap router",
-        },
-      });
+        expiration: now + 1_800,
+        nonce: Number(permit2Allowance?.[2] ?? 0),
+        sigDeadline: BigInt(now + 1_800),
+      };
+      if (canSignPermit2) {
+        actions.push({
+          kind: "router-signature",
+          label: "Sign the swap authorization",
+          authorization,
+        });
+      } else {
+        const request = buildPermit2ApproveTx({
+          chainId,
+          token: context.token,
+          amount: amountRaw,
+          expiration: now + 30 * 24 * 60 * 60,
+        });
+        actions.push({
+          kind: "router-approval",
+          label: "Authorize the Uniswap swap router",
+          request: {
+            ...request,
+            args: request.args as unknown as readonly unknown[],
+            label: "Authorize Uniswap swap router",
+          },
+        });
+      }
     }
     let paymentRequest: TxRequest;
     if (mode === "pay") {
@@ -1251,6 +1323,7 @@ export function PayPanel({
       !terminalAddress ||
       (amountRaw <= 0n && !creditOnlyCheckout) ||
       busy ||
+      permit2WalletKindLoading ||
       (cartCount > 0 && shopCreditsLoading)
     ) {
       return;
@@ -1267,6 +1340,7 @@ export function PayPanel({
     setSequenceSafeStage(null);
     setSequenceActions(actions);
     setSequenceActionIndex(0);
+    setSequenceCompletedKinds([]);
     setSequenceOpen(true);
   };
 
@@ -1283,7 +1357,9 @@ export function PayPanel({
     setSequenceError(null);
     let latestApprovalBlock = approvalBlock;
     const actionOf = (kind: PaymentSequenceAction["kind"]) =>
-      sequenceActions.find(action => action.kind === kind);
+      sequenceCompletedKinds.includes(kind)
+        ? undefined
+        : sequenceActions.find(action => action.kind === kind);
     const showAction = async (kind: PaymentSequenceAction["kind"]) => {
       const index = sequenceActions.findIndex(action => action.kind === kind);
       if (index >= 0) setSequenceActionIndex(index);
@@ -1291,7 +1367,7 @@ export function PayPanel({
     };
     try {
       const tokenApproval = actionOf("token-approval");
-      if (tokenApproval) {
+      if (tokenApproval?.kind === "token-approval") {
         await showAction("token-approval");
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
@@ -1310,9 +1386,75 @@ export function PayPanel({
         latestApprovalBlock = receipt.blockNumber;
         approveTx.reset();
         await refetchAllowance();
+        setSequenceCompletedKinds(current =>
+          current.includes("token-approval")
+            ? current
+            : [...current, "token-approval"],
+        );
       }
-      const routerApproval = actionOf("router-approval");
-      if (routerApproval) {
+      const paymentAction = actionOf("payment");
+      if (paymentAction?.kind !== "payment") {
+        throw new Error("The reviewed payment action is unavailable.");
+      }
+      let paymentRequest = paymentAction.request;
+      let routerApproval = actionOf("router-approval");
+      const routerSignature = actionOf("router-signature");
+      if (routerSignature?.kind === "router-signature") {
+        await showAction("router-signature");
+        setSequenceStatus("Sign the gasless swap authorization in your wallet.");
+        try {
+          const signature = await signPermit2Async({
+            expectedAccount: address,
+            authorization: routerSignature.authorization,
+          });
+          paymentRequest = addPermit2SignatureToSwap(
+            paymentRequest,
+            routerSignature.authorization,
+            signature,
+          );
+          setSequenceActions(current =>
+            current.map(action =>
+              action.kind === "payment"
+                ? { ...action, request: paymentRequest }
+                : action,
+            ),
+          );
+          setSequenceCompletedKinds(current =>
+            current.includes("router-signature")
+              ? current
+              : [...current, "router-signature"],
+          );
+          setSequenceStatus("Swap authorization signed. Next: execute the swap.");
+        } catch (reason) {
+          if (!permit2SignatureNeedsOnchainFallback(reason)) throw reason;
+          const request = buildPermit2ApproveTx({
+            chainId,
+            token: routerSignature.authorization.token,
+            amount: routerSignature.authorization.amount,
+            expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+          });
+          routerApproval = {
+            kind: "router-approval",
+            label: "Authorize the Uniswap swap router",
+            request: {
+              ...request,
+              args: request.args as unknown as readonly unknown[],
+              label: "Authorize Uniswap swap router",
+            },
+          };
+          setSequenceActions(current =>
+            current.map(action =>
+              action.kind === "router-signature" ? routerApproval! : action,
+            ),
+          );
+          setSequenceStatus(
+            "This wallet cannot sign Permit2 authorizations. Review the onchain fallback, then confirm again.",
+          );
+          await nextUiPaint();
+          return;
+        }
+      }
+      if (routerApproval?.kind === "router-approval") {
         await showAction("router-approval");
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
@@ -1335,11 +1477,15 @@ export function PayPanel({
         }
         routerApproveTx.reset();
         await refetchPermit2Allowance();
+        setSequenceCompletedKinds(current =>
+          current.includes("router-approval")
+            ? current
+            : [...current, "router-approval"],
+        );
       }
 
       await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
-      const paymentRequest = actionOf("payment")!.request;
       const paymentHash = await tx.send(paymentRequest, {
         simulationBlockNumber: latestApprovalBlock,
         reviewedInParent: true,
@@ -1353,6 +1499,9 @@ export function PayPanel({
       setSequenceStatus("Payment submitted. Confirming onchain…");
       const paymentReceipt = await waitForPaymentReceipt(publicClient, paymentHash);
       if (paymentReceipt.status !== "success") throw new Error("Payment reverted onchain.");
+      setSequenceCompletedKinds(current =>
+        current.includes("payment") ? current : [...current, "payment"],
+      );
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
@@ -1371,6 +1520,7 @@ export function PayPanel({
     setSequenceComplete(false);
     setSequenceActions([]);
     setSequenceActionIndex(0);
+    setSequenceCompletedKinds([]);
     setSequenceSafeStage(null);
     setSequenceStatus(null);
     setSequenceError(null);
@@ -1659,6 +1809,7 @@ export function PayPanel({
             onClick={submit}
             disabled={
               busy ||
+              permit2WalletKindLoading ||
               notStarted ||
               surfaceError ||
               terminalBlocked ||
@@ -1955,6 +2106,7 @@ export function PayPanel({
           }
           actions={sequenceActions}
           activeActionIndex={sequenceActionIndex}
+          completedKinds={sequenceCompletedKinds}
           beneficiary={address ?? null}
           memo={memo.trim() || null}
           status={sequenceStatus}
@@ -1968,6 +2120,7 @@ export function PayPanel({
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);
+            setSequenceCompletedKinds([]);
             setSequenceStatus(null);
             setSequenceError(null);
           }}
@@ -1984,6 +2137,7 @@ function PaymentSequenceDialog({
   tokenReturn,
   actions,
   activeActionIndex,
+  completedKinds,
   beneficiary,
   memo,
   status,
@@ -2000,6 +2154,7 @@ function PaymentSequenceDialog({
   tokenReturn: string | null;
   actions: PaymentSequenceAction[];
   activeActionIndex: number;
+  completedKinds: PaymentSequenceAction["kind"][];
   beneficiary: Address | null;
   memo: string | null;
   status: string | null;
@@ -2077,14 +2232,14 @@ function PaymentSequenceDialog({
                 <li key={`${action.kind}:${action.label}`} className="flex items-center gap-2 text-sm">
                   <span
                     className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                      complete || index < activeActionIndex
+                      complete || completedKinds.includes(action.kind)
                         ? "border-melon-400 bg-melon-400 text-ink"
                         : index === activeActionIndex
                           ? "border-bluebs-500 bg-bluebs-25 text-bluebs-700"
                           : "border-smoke-300 text-smoke-500"
                     }`}
                   >
-                    {complete || index < activeActionIndex ? "✓" : index + 1}
+                    {complete || completedKinds.includes(action.kind) ? "✓" : index + 1}
                   </span>
                   <span className={index === activeActionIndex && !complete ? "font-medium text-ink" : "text-smoke-600"}>
                     {action.label}
@@ -2159,6 +2314,15 @@ function PaymentCallReview({
   memo: string | null;
 }) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  if (action.kind === "router-signature") {
+    return (
+      <Permit2SignatureReview
+        action={action}
+        chainLabel={chainLabel}
+        amount={amount}
+      />
+    );
+  }
   const request = action.request;
   const destination = paymentRequestDestination(request);
   const actionName = action.label || humanPaymentAction(request.functionName);
@@ -2254,6 +2418,99 @@ function PaymentCallReview({
         <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
         <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
           {paymentRequestJson(request, chainLabel, destination.name)}
+        </pre>
+      </details>
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          className="btn-link min-h-[36px] text-xs"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(buildTransactionReviewPrompt(reviewRequest));
+              setCopyState("copied");
+            } catch {
+              setCopyState("failed");
+            }
+            window.setTimeout(() => setCopyState("idle"), 2200);
+          }}
+        >
+          {copyState === "copied"
+            ? "Prompt copied — paste into your LLM"
+            : copyState === "failed"
+              ? "Could not copy prompt"
+              : "[copy tx audit prompt]"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Permit2SignatureReview({
+  action,
+  chainLabel,
+  amount,
+}: {
+  action: PaymentSignatureAction;
+  chainLabel: string;
+  amount: string;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const typedData = permit2TypedData(action.authorization);
+  const reviewRequest: TransactionReviewRequest = {
+    title: action.label,
+    calls: [],
+    kind: "authorization",
+    authorization: typedData,
+  };
+  return (
+    <div className="rounded-xl border border-bluebs-200 bg-white p-4">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
+          {chainLabel}
+        </p>
+        <p className="mt-1 break-all text-xs text-smoke-600">
+          <span className="font-medium">Permit2</span> | {PERMIT2_ADDRESS}
+        </p>
+        <p className="mt-2 font-medium text-ink">{action.label}</p>
+      </div>
+      <dl className="mt-2 space-y-1 text-xs">
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">Token:</dt>
+          <dd className="min-w-0 break-all font-mono text-xs text-ink">
+            {paymentTokenAddress(action.authorization.token, action.authorization.chainId)}
+          </dd>
+        </div>
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">Spender:</dt>
+          <dd className="min-w-0 break-all font-mono text-xs text-ink">
+            {paymentArgumentAddress(action.authorization.spender, action.authorization.chainId)}
+          </dd>
+        </div>
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">Amount:</dt>
+          <dd className="min-w-0 text-ink">{amount}</dd>
+        </div>
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">Expires:</dt>
+          <dd className="min-w-0 text-ink">
+            {new Date(action.authorization.expiration * 1000).toLocaleString()}
+          </dd>
+        </div>
+        <div className="flex items-start gap-1">
+          <dt className="shrink-0 text-smoke-500">Gas:</dt>
+          <dd className="min-w-0 text-ink">
+            No transaction fee — this is an EIP-712 signature
+          </dd>
+        </div>
+      </dl>
+      <details className="mt-3 border-t border-smoke-200 pt-3">
+        <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
+          {JSON.stringify(
+            typedData,
+            (_, value) => (typeof value === "bigint" ? value.toString() : value),
+            2,
+          )}
         </pre>
       </details>
       <div className="mt-3 flex justify-end">
