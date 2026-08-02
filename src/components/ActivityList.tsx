@@ -35,6 +35,35 @@ export function mergeActivityEvents<T extends BsActivityEvent>(
   ]
 }
 
+/** Holder permission grants are useful in account history, not project feeds. */
+export function isProjectFeedActivity(event: BsActivityEvent): boolean {
+  return (
+    !event.operatorPermissionsSetEvent &&
+    !!(
+      event.payEvent ||
+      event.cashOutTokensEvent ||
+      event.projectCreateEvent ||
+      event.addToBalanceEvent ||
+      event.mintTokensEvent ||
+      event.deployErc20Event ||
+      event.sendPayoutsEvent ||
+      event.sendReservedTokensToSplitsEvent ||
+      event.autoIssueEvent ||
+      event.borrowLoanEvent ||
+      event.repayLoanEvent ||
+      event.liquidateLoanEvent ||
+      event.mintNftEvent ||
+      event.setUriEvent ||
+      event.projectTransferEvent ||
+      event.addNftTierEvent ||
+      event.removeNftTierEvent ||
+      event.swapEvent ||
+      event.buybackPoolEvent ||
+      event.bridgeClaimEvent
+    )
+  )
+}
+
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${txHash}` : null
@@ -390,30 +419,7 @@ export function ActivityList({
     }
   }, [chainId, projectId, suckerGroupId])
 
-  const visible = liveEvents.filter(
-    e =>
-      e.payEvent ||
-      e.cashOutTokensEvent ||
-      e.projectCreateEvent ||
-      e.addToBalanceEvent ||
-      e.mintTokensEvent ||
-      e.deployErc20Event ||
-      e.sendPayoutsEvent ||
-      e.sendReservedTokensToSplitsEvent ||
-      e.autoIssueEvent ||
-      e.borrowLoanEvent ||
-      e.repayLoanEvent ||
-      e.liquidateLoanEvent ||
-      e.mintNftEvent ||
-      e.setUriEvent ||
-      e.projectTransferEvent ||
-      e.operatorPermissionsSetEvent ||
-      e.addNftTierEvent ||
-      e.removeNftTierEvent ||
-      e.swapEvent ||
-      e.buybackPoolEvent ||
-      e.bridgeClaimEvent,
-  )
+  const visible = liveEvents.filter(isProjectFeedActivity)
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
 
   if (visible.length === 0) {

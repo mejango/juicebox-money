@@ -446,7 +446,7 @@ export function GetLoanFlow({
                 setPrepaid(Number(e.target.value))
                 resetInputs()
               }}
-              className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+              className="input-well select-caret mt-1.5 min-h-[40px] w-32 py-2 pl-3 pr-9 text-sm"
             >
               {PREPAID_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>

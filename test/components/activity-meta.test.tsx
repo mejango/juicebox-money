@@ -16,7 +16,11 @@ vi.mock('@/hooks/useProjectTokenUnit', () => ({
   useProjectTokenUnit: () => 'tokens',
 }))
 
-import { activityParts, mergeActivityEvents } from '@/components/ActivityList'
+import {
+  activityParts,
+  isProjectFeedActivity,
+  mergeActivityEvents,
+} from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import {
   suckerGroupAccountingToken,
@@ -60,6 +64,26 @@ describe('live activity merging', () => {
       newest,
       refreshed,
     ])
+  })
+})
+
+describe('project activity filtering', () => {
+  it('keeps holder permission grants out of project feeds', () => {
+    expect(
+      isProjectFeedActivity({
+        id: 'permission',
+        operatorPermissionsSetEvent: {
+          account: '0x1',
+          operator: '0x2',
+          caller: '0x1',
+          from: '0x1',
+          isRevnetOperator: false,
+        },
+      } as BsActivityEvent),
+    ).toBe(false)
+    expect(
+      isProjectFeedActivity({ id: 'pay', payEvent: {} } as BsActivityEvent),
+    ).toBe(true)
   })
 })
 
