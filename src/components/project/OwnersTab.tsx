@@ -253,11 +253,16 @@ function YouCard({
 
   const multiChain = chains.length > 1
 
+  // Every holder action is a primary control except Burn: it is the one
+  // destructive option here, so it stays visually quieter (revnet.money
+  // parity).
   const actionBtn = (id: YouAction, label: string) => (
     <button
       type="button"
       onClick={() => setAction(id)}
-      className="btn-secondary min-h-[40px] px-4 text-sm"
+      className={`${
+        id === 'burn' ? 'btn-secondary' : 'btn-primary'
+      } min-h-[40px] px-4 text-sm`}
       aria-haspopup="dialog"
       aria-expanded={action === id}
     >
