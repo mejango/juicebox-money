@@ -26,6 +26,10 @@ import { usePublicClient } from 'wagmi'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import {
+  fetchIndexedLpPositions,
+  type BsLpPosition,
+} from '@/lib/lp-positions-queries'
+import {
   LiquidityBodySkeleton,
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
@@ -621,6 +625,9 @@ type PositionDetail = {
   info: bigint
   owner: Address | null
   liquidity: bigint
+  /** Set when the row came from the index, where ticks are already decoded. */
+  tickLower?: number
+  tickUpper?: number
 }
 
 /** Read each position (info, owner, liquidity) and verify it belongs to the
@@ -704,9 +711,25 @@ async function readLpPositions(
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return { status: 'unavailable' }
 
-  const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
-  if (!tokenIds.length) return { status: 'empty' }
-  const details = await readPositionDetails(client, posm, tokenIds, pool.poolId)
+  // One indexed query replaces the walk back to the pool's Initialize. Nothing
+  // indexed reads the same as a pool with no positions, so it falls through to
+  // the scan rather than rendering an empty pool.
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId })
+  const details: PositionDetail[] = indexed
+    ? indexed.map(row => ({
+        tokenId: BigInt(row.tokenId),
+        info: 1n,
+        owner: row.owner as Address,
+        liquidity: BigInt(row.liquidity),
+        tickLower: row.tickLower,
+        tickUpper: row.tickUpper,
+      }))
+    : await (async () => {
+        const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
+        if (!tokenIds.length) return []
+        return readPositionDetails(client, posm, tokenIds, pool.poolId)
+      })()
+  if (!details.length) return { status: 'empty' }
 
   const { sqrtP, pairIsC0, pair, price } = pool
   const pairScale = Math.pow(10, pair.decimals)
@@ -717,8 +740,8 @@ async function readLpPositions(
 
   for (const p of details) {
     if (!p.owner || p.liquidity <= 0n || p.info === 0n) continue
-    const tickUpper = tickUpperOf(p.info)
-    const tickLower = tickLowerOf(p.info)
+    const tickUpper = p.tickUpper ?? tickUpperOf(p.info)
+    const tickLower = p.tickLower ?? tickLowerOf(p.info)
     const amounts = getAmountsForLiquidity(
       sqrtP,
       sqrtAtTick(tickLower),
@@ -783,6 +806,35 @@ export interface UserLpPosition {
   pairAmount: bigint
   /** Project-token amount at the current price (raw, 18 decimals). */
   tokenAmount: bigint
+  /** Fees already taken, from the index; undefined when it hasn't indexed this pool. */
+  claimedPairFees?: bigint
+  claimedTokenFees?: bigint
+}
+
+/** Map an indexed row onto the same shape the on-chain scan produces. */
+function lpPositionFromIndex(
+  pool: Extract<MarketResult, { status: 'pool' }>,
+  row: BsLpPosition,
+): UserLpPosition {
+  const liquidity = BigInt(row.liquidity)
+  const amounts = getAmountsForLiquidity(
+    pool.sqrtP,
+    sqrtAtTick(row.tickLower),
+    sqrtAtTick(row.tickUpper),
+    liquidity,
+  )
+  const claimed0 = BigInt(row.feesClaimed0)
+  const claimed1 = BigInt(row.feesClaimed1)
+  return {
+    tokenId: BigInt(row.tokenId),
+    tickLower: row.tickLower,
+    tickUpper: row.tickUpper,
+    liquidity,
+    pairAmount: pool.pairIsC0 ? amounts.amount0 : amounts.amount1,
+    tokenAmount: pool.pairIsC0 ? amounts.amount1 : amounts.amount0,
+    claimedPairFees: pool.pairIsC0 ? claimed0 : claimed1,
+    claimedTokenFees: pool.pairIsC0 ? claimed1 : claimed0,
+  }
 }
 
 /**
@@ -802,6 +854,14 @@ export async function readUserLpPositions(
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return []
+
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId })
+  if (indexed) {
+    return indexed
+      .filter(row => lc(row.owner) === lc(owner))
+      .map(row => lpPositionFromIndex(pool, row))
+      .filter(position => position.liquidity > 0n)
+  }
 
   const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
   if (!tokenIds.length) return []

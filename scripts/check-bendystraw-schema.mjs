@@ -192,11 +192,37 @@ async function liveSchema(endpoint) {
   return buildClientSchema(envelope.data)
 }
 
+// Documents that query fields an unmerged indexer PR adds. They run behind a
+// fallback — a schema error degrades to the on-chain read — so shipping them
+// ahead of the indexer is safe, but they cannot be validated until it deploys.
+// Each entry names the PR that removes it, and the check FAILS once the field
+// exists, so the list cannot quietly rot after the feature lands.
+const PENDING_SCHEMA_FIELDS = [
+  {
+    field: 'buybackPoolPositions',
+    reason: 'peripheralist/bendystraw#24 — LP positions and lifetime fees',
+  },
+]
+
 for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
   const schema = await liveSchema(endpoint)
   const errors = parsedDocuments.flatMap(({ parsed, location }) =>
     validate(schema, parsed).map(error => `${location}: ${error.message}`),
   )
-  if (errors.length) throw new Error(`${endpoint} schema mismatch:\n${errors.join('\n')}`)
+  const live = new Set(Object.keys(schema.getQueryType()?.getFields() ?? {}))
+  const shipped = PENDING_SCHEMA_FIELDS.filter(({ field }) => live.has(field))
+  if (shipped.length) {
+    throw new Error(
+      `${endpoint} now serves ${shipped.map(({ field }) => field).join(', ')} — ` +
+        'drop it from PENDING_SCHEMA_FIELDS so the document is validated again',
+    )
+  }
+  const blocking = errors.filter(
+    error => !PENDING_SCHEMA_FIELDS.some(({ field }) => error.includes(`"${field}"`)),
+  )
+  if (blocking.length) throw new Error(`${endpoint} schema mismatch:\n${blocking.join('\n')}`)
+  for (const { field, reason } of PENDING_SCHEMA_FIELDS) {
+    console.log(`Pending on ${endpoint}: ${field} (${reason})`)
+  }
 }
 console.log(`Validated ${documents.size} production GraphQL documents against both Bendystraw schemas.`)

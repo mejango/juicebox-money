@@ -272,6 +272,7 @@ export function LiquidityPositions({
                 <th className="py-1.5 pr-3 font-normal">Position</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Holdings</th>
                 <th className="py-1.5 pr-3 text-right font-normal">Unclaimed fees</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Lifetime fees</th>
                 <th className="py-1.5 font-normal" />
               </tr>
             </thead>
@@ -311,6 +312,30 @@ export function LiquidityPositions({
                           </span>
                         </>
                       )}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+                      {(() => {
+                        // The pool forgets what a position already took, so
+                        // lifetime is only knowable where the index has been
+                        // accumulating it.
+                        if (position.claimedPairFees === undefined || !owed) {
+                          return <span className="text-smoke-500">—</span>
+                        }
+                        const lifetimeToken = position.claimedTokenFees! + owed.tokenFees
+                        const lifetimePair = position.claimedPairFees + owed.pairFees
+                        if (lifetimeToken <= 0n && lifetimePair <= 0n) {
+                          return <span className="text-smoke-500">None yet</span>
+                        }
+                        return (
+                          <>
+                            {formatTokenAmount(lifetimeToken, 18)} {sym}
+                            <span className="block text-xs text-smoke-500">
+                              {formatTokenAmount(lifetimePair, pool.pair.decimals)}{' '}
+                              {pool.pair.symbol}
+                            </span>
+                          </>
+                        )
+                      })()}
                     </td>
                     <td className="whitespace-nowrap py-2 text-right">
                       <span className="inline-flex gap-2">
