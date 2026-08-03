@@ -139,6 +139,7 @@ export function OwnersTab({
                 chainId={chainId}
                 projectId={projectId}
                 tokenSymbol={tokenSymbol}
+                suckerGroupId={suckerGroupId}
               />
             ),
           },

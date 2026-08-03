@@ -29,7 +29,6 @@ import { useConfig, usePublicClient } from 'wagmi'
 import {
   PriceChart,
   type CashOutTaxPoint,
-  type PricePoint,
 } from '@/components/project/PriceChart'
 import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
 import type { ChartStage } from '@/components/project/chartUtils'
@@ -42,8 +41,8 @@ import {
   explainCashOutChange,
   type CashOutObservation,
 } from '@/lib/cashOutChange'
+import { ammSeriesFrom, type PricePoint } from '@/lib/price-series'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { poolPriceFromSqrt } from '@/lib/uniswap-v4'
 
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
@@ -319,81 +318,16 @@ export function RevnetPriceCard({
     }))
   }, [data?.all])
 
-  const ammHistory = useMemo<PricePoint[]>(() => {
-    if (
-      !references?.poolId ||
-      references.pairDecimals === null ||
-      (!history?.swaps.length && !history?.pools?.length)
-    ) {
-      return []
-    }
-
-    const poolId = references.poolId.toLowerCase()
-    const pairScale = 10 ** references.pairDecimals
-    const spotPrice = (
-      sqrtPriceX96: string | null,
-      projectTokenIsCurrency0: boolean | null,
-    ) => {
-      if (!sqrtPriceX96 || projectTokenIsCurrency0 === null) return null
-      try {
-        return poolPriceFromSqrt(
-          BigInt(sqrtPriceX96),
-          !projectTokenIsCurrency0,
-          references.pairDecimals!,
-        )
-      }
-      catch {
-        return null
-      }
-    }
-    const initial = (history.pools ?? []).flatMap(pool => {
-      if (
-        pool.chainId !== chainId ||
-        pool.poolId.toLowerCase() !== poolId
-      ) {
-        return []
-      }
-      const value = spotPrice(
-        pool.initialSqrtPriceX96,
-        pool.projectTokenIsCurrency0,
-      )
-      return value ? [{ timestamp: Number(pool.timestamp), value }] : []
-    })
-    const swaps = history.swaps.flatMap(swap => {
-      if (
-        swap.chainId !== chainId ||
-        swap.direction === 'mint' ||
-        swap.poolId.toLowerCase() !== poolId
-      ) {
-        return []
-      }
-      try {
-        const spot = spotPrice(
-          swap.sqrtPriceX96,
-          swap.projectTokenIsCurrency0,
-        )
-        if (spot) return [{ timestamp: Number(swap.timestamp), value: spot }]
-
-        // Compatibility for pre-sqrtPriceX96 rows while Bendystraw reindexes.
-        const terminalAmount =
-          Number(BigInt(swap.terminalTokenAmount)) / pairScale
-        const projectAmount = Number(BigInt(swap.projectTokenAmount)) / 1e18
-        const value = terminalAmount / projectAmount
-        return Number.isFinite(value) && value > 0
-          ? [{ timestamp: Number(swap.timestamp), value }]
-          : []
-      } catch {
-        return []
-      }
-    })
-    return [...initial, ...swaps].sort((a, b) => a.timestamp - b.timestamp)
-  }, [
-    chainId,
-    history?.pools,
-    history?.swaps,
-    references?.pairDecimals,
-    references?.poolId,
-  ])
+  const ammHistory = useMemo<PricePoint[]>(
+    () =>
+      ammSeriesFrom({
+        history,
+        chainId,
+        poolId: references?.poolId ?? null,
+        pairDecimals: references?.pairDecimals ?? null,
+      }),
+    [chainId, history, references?.pairDecimals, references?.poolId],
+  )
 
   const stages: ChartStage[] = (data?.all ?? []).map(s => ({
     start: s.ruleset.start,

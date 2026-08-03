@@ -34,6 +34,7 @@ import {
   LiquidityBodySkeleton,
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
+import { MarketPriceChart } from '@/components/project/MarketPriceChart'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -898,10 +899,12 @@ export function MarketSection({
   chainId,
   projectId,
   tokenSymbol,
+  suckerGroupId,
 }: {
   chainId: JBChainId
   projectId: number
   tokenSymbol: string
+  suckerGroupId: string | null
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const chainMeta = JB_CHAINS[chainId]
@@ -982,11 +985,21 @@ export function MarketSection({
 
   return (
     <div className="space-y-5">
+      <MarketPriceChart
+        chainId={chainId}
+        suckerGroupId={suckerGroupId}
+        poolId={market.poolId}
+        pairDecimals={market.pair.decimals}
+        pairSymbol={pairSym}
+        symbol={sym}
+        livePrice={market.price}
+      />
+
       {/* AMM price */}
       <div className="card p-5">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="field-label">Market price</span>
+            <span className="field-label">Pool</span>
             <span
               className="rounded-full bg-bluebs-50 px-2 py-0.5 text-[11px] font-medium text-bluebs-700"
               title="Uniswap V4 buyback pool"

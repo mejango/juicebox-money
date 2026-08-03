@@ -18,6 +18,7 @@ import {
   minimumCashOutPriceAtIssuancePrice,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
+import { visibleSeries, type PricePoint } from '@/lib/price-series'
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
@@ -33,11 +34,7 @@ type ReferenceLine = {
   label: string
   cashOutTaxRate?: number
 } | null
-export type PricePoint = {
-  timestamp: number
-  value: number
-  reason?: string
-}
+export type { PricePoint }
 export type CashOutTaxPoint = {
   timestamp: number
   cashOutTaxRate: number
@@ -55,40 +52,6 @@ const PRICE_RANGES = [
   { label: '1Y', seconds: 365 * DAY },
   { label: 'All', seconds: 0 },
 ] as const
-
-function visibleSeries(
-  points: PricePoint[],
-  live: number | null,
-  t0: number,
-  t1: number,
-): PricePoint[] {
-  const sorted = points
-    .filter(
-      point =>
-        Number.isFinite(point.timestamp) &&
-        Number.isFinite(point.value) &&
-        point.value > 0 &&
-        point.timestamp <= t1,
-    )
-    .sort((a, b) => a.timestamp - b.timestamp)
-
-  const before = sorted.filter(point => point.timestamp < t0).at(-1)
-  const visible = sorted.filter(
-    point => point.timestamp >= t0 && point.timestamp <= t1,
-  )
-  const out = before
-    ? [{ ...before, timestamp: t0 }, ...visible]
-    : visible
-
-  if (live && live > 0) {
-    const last = out.at(-1)
-    if (last?.timestamp === t1) {
-      out[out.length - 1] = { ...out[out.length - 1], timestamp: t1, value: live }
-    }
-    else out.push({ timestamp: t1, value: live })
-  }
-  return out
-}
 
 function asStepSeries(points: PricePoint[]): PricePoint[] {
   if (points.length < 2) return points
