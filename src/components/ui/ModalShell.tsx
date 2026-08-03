@@ -143,8 +143,8 @@ export function ModalShell({
         className={`card w-full ${maxWidth} overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
-          <div>
-            <h2 id={titleId} className="font-agrandir text-xl font-medium text-ink">
+          <div className="min-w-0 flex-1 text-left">
+            <h2 id={titleId} className="font-agrandir text-left text-xl font-medium text-ink">
               {title}
             </h2>
             {subtitle ? (

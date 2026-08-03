@@ -936,27 +936,26 @@ function AddLiquidityForm({
         )}
         <span className="text-xs text-smoke-500">{chainName}</span>
       </div>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Seed the buyback pool so payers can route through the AMM. Liquidity is
-        added at the current pool price.
-      </p>
-
-      <p className="mt-3 text-sm text-smoke-700">
-        Pool price:{' '}
+      <p className="mt-1 text-xs leading-relaxed text-smoke-500">
+        Seed the buyback pool so payers can route through the AMM, at the
+        current pool price of{' '}
         <span className="font-medium text-ink">
-          {poolP > 0 ? `~${formatPrice(poolP)} ${pairSym} / ${sym}` : '—'}
+          {poolP > 0 ? `~${formatPrice(poolP)} ${pairSym}/${sym}` : '—'}
         </span>
+        .
       </p>
 
       {/* Price range */}
-      <div className="mt-4">
-        <span className="field-label">
-          Price range ({pairSym} per {sym})
-        </span>
-        <p className="mt-1 text-xs text-smoke-500">
-          Defaults span the current cash-out floor to the issuance ceiling.
-        </p>
-        <div className="mt-2 flex items-center gap-2">
+      <div className="mt-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="field-label">
+            Price range ({pairSym} per {sym})
+          </span>
+          <span className="text-[11px] text-smoke-500">
+            cash-out floor → issuance ceiling
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-2">
           <input
             type="number"
             inputMode="decimal"
@@ -982,7 +981,7 @@ function AddLiquidityForm({
       </div>
 
       {/* Deposit amounts */}
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="mt-3 grid grid-cols-2 gap-3">
         <div className={disabledCol(sides.tok)}>
           <div className="flex items-baseline justify-between">
             <span className="field-label">{sym} to add</span>
@@ -1042,9 +1041,9 @@ function AddLiquidityForm({
         </div>
       </div>
 
-      <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-        Enter either amount; the other is calculated at the pool price. Near Min
-        uses more {sym}; near Max uses more {pairSym}.
+      <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
+        Enter either amount; the other follows at the pool price. Near Min uses
+        more {sym}; near Max uses more {pairSym}.
       </p>
 
       {!sides.tok || !sides.pair ? (
@@ -1056,7 +1055,7 @@ function AddLiquidityForm({
       ) : null}
 
       {balances ? (
-        <p className="mt-2 text-xs text-smoke-500">
+        <p className="mt-1 text-xs text-smoke-500">
           Your balance: {formatTokenAmount(balances.tok, 18)} {sym} ·{' '}
           {formatTokenAmount(balances.pair, pairDec)} {pairSym}
         </p>
@@ -1064,7 +1063,7 @@ function AddLiquidityForm({
 
       {/* Review panel */}
       {plan ? (
-        <div className="callout callout-info mt-4 text-xs">
+        <div className="callout callout-info mt-3 text-xs">
           <p className="font-medium">
             You add ~{formatTokenAmount(plan.display.needTok, 18)} {sym} +{' '}
             {formatTokenAmount(plan.display.needPair, plan.display.pairDecimals)}{' '}
@@ -1110,7 +1109,7 @@ function AddLiquidityForm({
         </p>
       ) : null}
 
-      <div className="mt-4 flex flex-wrap justify-end gap-3">
+      <div className="mt-3 flex flex-wrap justify-end gap-3">
         {plan && !running ? (
           <button
             onClick={startOver}

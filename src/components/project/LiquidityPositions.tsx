@@ -251,73 +251,100 @@ export function LiquidityPositions({
   if (!address || !pool || !positionManager) return null
 
   return (
-    <div className="mt-5 border-t border-smoke-200 pt-4">
-      <span className="text-xs font-medium text-smoke-700">Your positions</span>
+    <div>
 
       {summary.isLoading ? (
-        <p className="mt-2 text-sm text-smoke-500">Reading your positions…</p>
+        <p className="text-sm text-smoke-500">Reading your positions…</p>
       ) : summary.isError ? (
-        <p className="mt-2 text-sm text-red-700">
+        <p className="text-sm text-red-700">
           Could not verify the complete position history — nothing has been hidden
           as an empty result.
         </p>
       ) : !summary.positions.length ? (
-        <p className="mt-2 text-sm text-smoke-500">
+        <p className="text-sm text-smoke-500">
           You have no LP positions in this pool.
         </p>
       ) : (
-        <div className="mt-2 space-y-2">
-          {summary.positions.map(position => {
-            const owed = summary.feesByToken[position.tokenId.toString()]
-            const nothingOwed =
-              !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
-            return (
-              <div
-                key={position.tokenId.toString()}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-smoke-200 p-3 text-xs"
-              >
-                <div className="min-w-0">
-                  <p className="font-medium text-ink">
-                    #{position.tokenId.toString()}
-                  </p>
-                  <p className="text-smoke-700">
-                    {formatTokenAmount(position.tokenAmount, 18)} {sym} +{' '}
-                    {formatTokenAmount(position.pairAmount, pool.pair.decimals)}{' '}
-                    {pool.pair.symbol}
-                  </p>
-                  <p className="text-smoke-500">
-                    {owed === undefined
-                      ? 'unclaimed fees: reading…'
-                      : owed === null
-                        ? 'unclaimed fees: unavailable on this chain'
-                        : nothingOwed
-                          ? 'unclaimed fees: none yet'
-                          : `unclaimed fees: ${formatTokenAmount(owed.tokenFees, 18)} ${sym} + ${formatTokenAmount(owed.pairFees, pool.pair.decimals)} ${pool.pair.symbol}`}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-secondary min-h-[32px] px-3 text-xs"
-                    disabled={tx.busy || nothingOwed || isViewAs}
-                    onClick={() => claim(position)}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-smoke-500">
+                <th className="py-1.5 pr-3 font-normal">Position</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Holdings</th>
+                <th className="py-1.5 pr-3 text-right font-normal">Unclaimed fees</th>
+                <th className="py-1.5 font-normal" />
+              </tr>
+            </thead>
+            <tbody>
+              {summary.positions.map(position => {
+                const owed = summary.feesByToken[position.tokenId.toString()]
+                const nothingOwed =
+                  !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
+                return (
+                  <tr
+                    key={position.tokenId.toString()}
+                    className="border-t border-smoke-100 align-top"
                   >
-                    Claim fees
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary min-h-[32px] px-3 text-xs"
-                    disabled={tx.busy || reviewing !== null || isViewAs}
-                    onClick={() => void remove(position)}
-                  >
-                    {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
+                    <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
+                      #{position.tokenId.toString()}
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+                      {formatTokenAmount(position.tokenAmount, 18)} {sym}
+                      <span className="block text-xs text-smoke-500">
+                        {formatTokenAmount(position.pairAmount, pool.pair.decimals)}{' '}
+                        {pool.pair.symbol}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+                      {owed === undefined ? (
+                        <span className="text-smoke-500">Reading…</span>
+                      ) : owed === null ? (
+                        <span className="text-smoke-500">Unavailable</span>
+                      ) : nothingOwed ? (
+                        <span className="text-smoke-500">None yet</span>
+                      ) : (
+                        <>
+                          {formatTokenAmount(owed.tokenFees, 18)} {sym}
+                          <span className="block text-xs text-smoke-500">
+                            {formatTokenAmount(owed.pairFees, pool.pair.decimals)}{' '}
+                            {pool.pair.symbol}
+                          </span>
+                        </>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap py-2 text-right">
+                      <span className="inline-flex gap-2">
+                        <button
+                          type="button"
+                          className="btn-secondary min-h-[32px] px-3 text-xs"
+                          disabled={tx.busy || nothingOwed || isViewAs}
+                          onClick={() => claim(position)}
+                        >
+                          Claim fees
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary min-h-[32px] px-3 text-xs"
+                          disabled={tx.busy || reviewing !== null || isViewAs}
+                          onClick={() => void remove(position)}
+                        >
+                          {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
+      {isViewAs ? (
+        <p className="mt-2 text-xs text-smoke-500">
+          You&apos;re viewing another account — connect as its owner to claim or
+          remove.
+        </p>
+      ) : null}
       {error ?? tx.error ? <ErrorNote message={error ?? tx.error!} /> : null}
     </div>
   )
