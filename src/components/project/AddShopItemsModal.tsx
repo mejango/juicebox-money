@@ -499,7 +499,7 @@ export function AddShopItemsModal({
             isRevnet={isRevnet}
           />
 
-          <div className="mt-6 border-t border-smoke-200 pt-5">
+          <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
             <span className="field-label">Add on</span>
             <div
               role="group"

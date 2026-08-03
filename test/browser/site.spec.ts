@@ -344,25 +344,23 @@ async function exerciseProjectSurfaces(
 
   for (const tab of tabs) {
     const overflow = tab.label === 'Extras' || tab.label === 'Operator'
-    const button = overflow
-      ? page.getByRole('button', { name: /^More project sections/ })
-      : projectTabs.getByRole('tab', {
-          name: tab.label,
-          exact: true,
-        })
+    const moreButton = page.getByRole('button', { name: /^More project sections/ })
+    let button = projectTabs.getByRole('tab', {
+      name: tab.label,
+      exact: true,
+    })
     if (overflow) {
       await expect(
-        button.locator('[data-project-tab-icon="more"]'),
+        moreButton.locator('[data-project-tab-icon="more"]'),
       ).toHaveCount(1)
-      await button.click()
-      const menuItem = page
-        .getByRole('menu', { name: 'More project sections' })
-        .getByRole('menuitem', { name: tab.label, exact: true })
+      if ((await button.count()) === 0) await moreButton.click()
+      button = projectTabs.getByRole('tab', { name: tab.label, exact: true })
       await expect(
-        menuItem.locator(`[data-project-tab-icon="${tab.icon}"]`),
+        button.locator(`[data-project-tab-icon="${tab.icon}"]`),
       ).toHaveCount(1)
-      await menuItem.click()
-      await expect(button).toHaveAttribute(
+      await expect(moreButton.locator('[data-overflow-orientation="horizontal"]')).toHaveCount(1)
+      await button.click()
+      await expect(moreButton).toHaveAttribute(
         'aria-label',
         `More project sections, current: ${tab.label}`,
       )
@@ -377,6 +375,16 @@ async function exerciseProjectSurfaces(
     await expectVisibleFocus(page, button, `${viewport.label} project ${tab.label}`)
     await expectSurface(page, `${viewport.label} project ${tab.label}`)
   }
+
+  const moreButton = page.getByRole('button', { name: /^More project sections/ })
+  await moreButton.click()
+  await expect(moreButton).toHaveAttribute('aria-expanded', 'false')
+  await expect(
+    moreButton.locator('[data-overflow-orientation="vertical"]'),
+  ).toHaveCount(1)
+  await expect(
+    projectTabs.getByRole('tab', { name: 'Extras', exact: true }),
+  ).toHaveCount(0)
 }
 
 for (const viewport of viewports) {

@@ -1,7 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { TabShell, tabSlug, type TabDef } from '@/components/project/Tabs'
+import {
+  replaceTabHash,
+  TabShell,
+  tabSlug,
+  type TabDef,
+} from '@/components/project/Tabs'
 
 /**
  * The account view's top-level tab row, in the project page's tab idiom:
@@ -29,7 +34,7 @@ export function AccountTabs({ tabs }: { tabs: TabDef[] }) {
   const activate = (index: number) => {
     setActive(index)
     // Keep the hash shareable without adding history entries per click.
-    window.history.replaceState(null, '', `#${tabSlug(tabs[index].label)}`)
+    replaceTabHash(`#${tabSlug(tabs[index].label)}`)
   }
 
   return (

@@ -608,6 +608,7 @@ describe('AccountOperatedProjects', () => {
 /** A minimal window for the hash-linked tab row (node test environment). */
 function fakeTabWindow(hash = '') {
   const listeners = new Set<() => void>()
+  const historyState = { __NA: true, shell: 'preserved' }
   const win = {
     location: { hash },
     addEventListener: (type: string, listener: () => void) => {
@@ -617,6 +618,7 @@ function fakeTabWindow(hash = '') {
       listeners.delete(listener)
     },
     history: {
+      state: historyState,
       replaceState: vi.fn((_state: unknown, _title: string, url: string) => {
         win.location.hash = url
       }),
@@ -674,7 +676,7 @@ describe('AccountTabs', () => {
     // The previous panel stays mounted but hidden.
     expect(panelFor(renderer, 'activity-body')?.props.hidden).toBe(true)
     expect(win.history.replaceState).toHaveBeenCalledWith(
-      null,
+      win.history.state,
       '',
       '#holdings',
     )

@@ -445,7 +445,7 @@ export function ActivityList({
   }
 
   return (
-    <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[601px]:h-[max(780px,82vh)] min-[601px]:max-h-[max(780px,82vh)]">
+    <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[601px]:max-h-[max(780px,82vh)]">
       {visible.map(event => (
         <Row
           key={event.id}

@@ -23,6 +23,15 @@ export function tabSlug(label: string): string {
 }
 
 /**
+ * Next patches history.replaceState and treats calls without its current
+ * history payload as app-router navigation. Preserve that payload for
+ * hash-only tab state so the mounted project shell never enters route loading.
+ */
+export function replaceTabHash(hash: string): void {
+  window.history.replaceState(window.history.state, '', hash)
+}
+
+/**
  * The shared tab machinery every variant renders (SubTabs here, AccountTabs
  * on the account view): the tablist row and the lazily-mounted panels. A
  * tab's content mounts on first activation and then stays mounted (hidden)
@@ -101,6 +110,7 @@ export function ProjectTabs({
   const activitySlug = tabSlug('Activity')
   const [activeSlug, setActiveSlug] = useState(firstSlug)
   const [isPhone, setIsPhone] = useState(false)
+  const [overflowExpanded, setOverflowExpanded] = useState(false)
   const subtabByParent = useRef<Record<string, string>>({})
   const mounted = useRef(new Set<string>())
 
@@ -167,11 +177,7 @@ export function ProjectTabs({
     setActiveSlug(nextSlug)
     // Keep the hash shareable without adding history entries per click.
     const child = subtabByParent.current[nextSlug]
-    window.history.replaceState(
-      null,
-      '',
-      `#${nextSlug}${child ? `/${child}` : ''}`,
-    )
+    replaceTabHash(`#${nextSlug}${child ? `/${child}` : ''}`)
   }
 
   const buttonClasses = (selected: boolean) =>
@@ -210,7 +216,7 @@ export function ProjectTabs({
             >
               Activity
             </button>
-            {visibleTabs.map(tab => {
+            {[...visibleTabs, ...(overflowExpanded ? overflowTabs : [])].map(tab => {
               const slug = tabSlug(tab.label)
               const selected = !activityActive && normalActiveSlug === slug
               return (
@@ -231,7 +237,8 @@ export function ProjectTabs({
           <ProjectOverflowMenu
             tabs={overflowTabs}
             activeSlug={activityActive ? activitySlug : normalActiveSlug}
-            onSelect={activate}
+            expanded={overflowExpanded}
+            onToggle={() => setOverflowExpanded(current => !current)}
           />
         </div>
 
@@ -257,89 +264,37 @@ export function ProjectTabs({
 function ProjectOverflowMenu({
   tabs,
   activeSlug,
-  onSelect,
+  expanded,
+  onToggle,
 }: {
   tabs: TabDef[]
   activeSlug: string
-  onSelect: (slug: string) => void
+  expanded: boolean
+  onToggle: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
   const activeTab = tabs.find(tab => tabSlug(tab.label) === activeSlug)
-
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', closeOutside)
-    return () => document.removeEventListener('mousedown', closeOutside)
-  }, [open])
 
   if (!tabs.length) return null
 
   return (
-    <div
-      ref={root}
-      className="relative ml-auto shrink-0"
-      onKeyDown={event => {
-        if (event.key !== 'Escape' || !open) return
-        setOpen(false)
-        root.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus()
-      }}
+    <button
+      type="button"
+      aria-label={`More project sections${activeTab ? `, current: ${activeTab.label}` : ''}`}
+      aria-expanded={expanded}
+      onClick={onToggle}
+      className={`ml-auto flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
+        activeTab && !expanded
+          ? 'border-ink text-ink'
+          : 'border-transparent text-smoke-500 hover:text-ink'
+      }`}
     >
-      <button
-        type="button"
-        aria-label={`More project sections${activeTab ? `, current: ${activeTab.label}` : ''}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
-        className={`flex min-h-[44px] min-w-[44px] items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
-          activeTab
-            ? 'border-ink text-ink'
-            : 'border-transparent text-smoke-500 hover:text-ink'
-        }`}
+      <span
+        data-overflow-orientation={expanded ? 'horizontal' : 'vertical'}
+        className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
       >
         <ProjectOverflowIcon />
-      </button>
-      {open ? (
-        <div
-          role="menu"
-          aria-label="More project sections"
-          className="absolute right-0 top-full z-30 mt-1 min-w-36 overflow-hidden rounded-xl border border-smoke-200 bg-white py-1 shadow-lg"
-        >
-          {tabs.map(tab => {
-            const slug = tabSlug(tab.label)
-            const selected = slug === activeSlug
-            return (
-              <button
-                key={tab.label}
-                type="button"
-                role="menuitem"
-                aria-current={selected ? 'page' : undefined}
-                onClick={() => {
-                  onSelect(slug)
-                  setOpen(false)
-                  requestAnimationFrame(() =>
-                    root.current
-                      ?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')
-                      ?.focus(),
-                  )
-                }}
-                className={`flex min-h-[40px] w-full items-center gap-2 px-4 text-left text-sm transition-colors ${
-                  selected
-                    ? 'bg-split-50 font-medium text-ink'
-                    : 'text-smoke-700 hover:bg-smoke-75 hover:text-ink'
-                }`}
-              >
-                <ProjectTabIcon label={tab.label} />
-                <span>{tab.label}</span>
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
+      </span>
+    </button>
   )
 }
 
@@ -378,9 +333,7 @@ export function SubTabs({
   const activate = (i: number) => {
     setActive(i)
     if (hashParent) {
-      window.history.replaceState(
-        null,
-        '',
+      replaceTabHash(
         `#${tabSlug(hashParent)}/${tabSlug(tabs[i].label)}`,
       )
     }

@@ -17,6 +17,7 @@ vi.mock('@/hooks/useProjectTokenUnit', () => ({
 }))
 
 import {
+  ActivityList,
   activityParts,
   isProjectFeedActivity,
   mergeActivityEvents,
@@ -84,6 +85,34 @@ describe('project activity filtering', () => {
     expect(
       isProjectFeedActivity({ id: 'pay', payEvent: {} } as BsActivityEvent),
     ).toBe(true)
+  })
+
+  it('caps a long feed without forcing short feeds to fill the rail', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(
+        <ActivityList
+          events={[
+            {
+              id: 'created',
+              chainId: 1,
+              projectId: 2,
+              timestamp: 1_700_000_000,
+              txHash: '0xabc',
+              from: '0xf00',
+              projectCreateEvent: { from: '0xf00' },
+            } as BsActivityEvent,
+          ]}
+          chainId={1}
+          projectId={2}
+        />,
+      )
+    })
+
+    const list = renderer.root.findByType('ul')
+    expect(list.props.className).toContain('max-h-')
+    expect(list.props.className).not.toMatch(/(?:^|:)h-\[/)
+    act(() => renderer.unmount())
   })
 })
 
