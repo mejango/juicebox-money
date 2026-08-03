@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { createElement, forwardRef, useImperativeHandle, createRef } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import type { Address } from 'viem'
