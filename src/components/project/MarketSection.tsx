@@ -25,7 +25,6 @@ import {
 import { usePublicClient } from 'wagmi'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
-import { LiquidityPositions } from './LiquidityPositions'
 import {
   LiquidityBodySkeleton,
   MarketSectionSkeleton,
@@ -866,7 +865,6 @@ export function MarketSection({
   })
 
   const hasPool = market?.status === 'pool'
-  const marketPositionManager = POSITION_MANAGER_BY_CHAIN[chainId]
 
   const { data: floor } = useCashOutFloor(chainId, projectId, hasPool)
 
@@ -874,7 +872,6 @@ export function MarketSection({
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
-    refetch: refetchLp,
   } = useQuery({
     queryKey: ['marketLp', chainId, projectId],
     enabled: !!publicClient && hasPool,
@@ -1012,15 +1009,141 @@ export function MarketSection({
             />
           </div>
         )}
-        {marketPositionManager ? (
-          <LiquidityPositions
-            chainId={chainId}
-            pool={market}
-            positionManager={marketPositionManager}
-            sym={sym}
-            onChanged={() => void refetchLp()}
-          />
+        {lp?.status === 'positions' ? (
+          <LiquidityProviders lp={lp} sym={sym} chainId={chainId} />
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------- liquidity providers --
+
+/** Donut slice colors, cycled per provider. */
+const PROVIDER_COLORS = [
+  '#5777EB',
+  '#F5A312',
+  '#3BAA9A',
+  '#D2528F',
+  '#8B5CF6',
+  '#EF6C4D',
+]
+
+/**
+ * Who supplies this pool: one donut slice and one row per provider, sized by
+ * the pair-token value of their positions. Amounts are the exact reserves each
+ * provider's liquidity represents at the current price.
+ */
+function LiquidityProviders({
+  lp,
+  sym,
+  chainId,
+}: {
+  lp: Extract<LpPositionsResult, { status: 'positions' }>
+  sym: string
+  chainId: JBChainId
+}) {
+  const total = lp.owners.reduce((sum, owner) => sum + owner.valuePair, 0)
+  if (!(total > 0)) return null
+
+  // Cumulative offsets around a 100-unit circumference give each provider one
+  // slice without a charting dependency.
+  const slices = lp.owners.reduce<
+    { pct: number; offset: number; color: string }[]
+  >((acc, owner, index) => {
+    const pct = (owner.valuePair / total) * 100
+    const offset = acc.length ? acc[acc.length - 1].offset + acc[acc.length - 1].pct : 0
+    acc.push({
+      pct,
+      offset,
+      color: PROVIDER_COLORS[index % PROVIDER_COLORS.length],
+    })
+    return acc
+  }, [])
+
+  return (
+    <div className="mt-5 border-t border-smoke-200 pt-4">
+      <span className="text-xs font-medium text-smoke-700">
+        Liquidity providers
+      </span>
+      <div className="mt-3 flex flex-wrap items-center gap-6">
+        <div className="relative h-32 w-32 shrink-0">
+          <svg viewBox="0 0 42 42" className="h-32 w-32 -rotate-90">
+            {slices.map((slice, index) => (
+              <circle
+                key={index}
+                cx="21"
+                cy="21"
+                r="15.915"
+                fill="transparent"
+                stroke={slice.color}
+                strokeWidth="6"
+                strokeDasharray={`${slice.pct} ${100 - slice.pct}`}
+                strokeDashoffset={`${100 - slice.offset}`}
+              />
+            ))}
+          </svg>
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-xl font-medium text-ink">
+              {lp.owners.length}
+            </span>
+            <span className="text-[11px] text-smoke-500">
+              {lp.owners.length === 1 ? 'LP' : 'LPs'}
+            </span>
+          </div>
+        </div>
+
+        <div className="min-w-[260px] flex-1 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-smoke-500">
+                <th className="py-1.5 pr-3 font-normal">Account</th>
+                <th className="py-1.5 pr-3 text-right font-normal">
+                  {lp.pairSymbol}
+                </th>
+                <th className="py-1.5 pr-3 text-right font-normal">{sym}</th>
+                <th className="py-1.5 text-right font-normal">Share</th>
+              </tr>
+            </thead>
+            <tbody className="text-smoke-700">
+              {lp.owners.map((owner, index) => (
+                <tr key={owner.address}>
+                  <td className="py-1.5 pr-3">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{
+                          background:
+                            PROVIDER_COLORS[index % PROVIDER_COLORS.length],
+                        }}
+                      />
+                      <AddressLink
+                        address={owner.address}
+                        chainId={chainId}
+                        className="font-mono text-xs text-ink"
+                        title={owner.address}
+                      />
+                    </span>
+                    {owner.positions > 1 ? (
+                      <span className="block text-[11px] text-smoke-500">
+                        {owner.positions} positions
+                      </span>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-right">
+                    {formatTokenAmount(owner.pair, lp.pairDecimals)}
+                  </td>
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-right">
+                    {formatTokenAmount(owner.tok, 18)}
+                  </td>
+                  <td className="whitespace-nowrap py-1.5 text-right font-medium text-ink">
+                    {((owner.valuePair / total) * 100).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

@@ -4,15 +4,16 @@ import {
   buildCollectUniswapV4FeesTx,
   readUniswapV4PositionFees,
 } from '@bananapus/nana-sdk-core/v6'
-import { type JBChainId } from '@bananapus/nana-sdk-core'
+import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { decodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
-import { useWallet } from '@/hooks/useWallet'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
+import { POSITION_MANAGER_BY_CHAIN } from '@/lib/uniswap-v4'
 import { swapDeadline } from '@/lib/safe-connector'
 import {
   buildModifyLiquiditiesRequest,
@@ -21,11 +22,117 @@ import {
 } from '@/lib/transaction-builders'
 import {
   readUserLpPositions,
+  resolveMarket,
   type MarketResult,
   type UserLpPosition,
 } from './MarketSection'
 
 type Pool = Extract<MarketResult, { status: 'pool' }>
+
+export interface UserLpSummary {
+  pool: Pool | null
+  positionManager: Address | null
+  positions: UserLpPosition[]
+  /** Totals across the wallet's positions in this pool. */
+  pairFees: bigint
+  tokenFees: bigint
+  feesByToken: Record<string, { pairFees: bigint; tokenFees: bigint } | null>
+  isLoading: boolean
+  isError: boolean
+  refresh: () => void
+}
+
+/**
+ * The connected wallet's positions in a project's pool on one chain, with the
+ * fees each has accrued. Keyed so the You table and the Market panel share one
+ * pool scan rather than each running their own.
+ */
+export function useUserLpSummary(
+  chainId: JBChainId,
+  projectId: number,
+  holder: Address | undefined,
+): UserLpSummary {
+  const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
+  const positionManager = POSITION_MANAGER_BY_CHAIN[chainId] ?? null
+
+  const market = useQuery({
+    queryKey: ['market', chainId, projectId],
+    enabled: !!client,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () => resolveMarket(client!, chainId, projectId, nativeSymbol),
+  })
+  const pool: Pool | null =
+    market.data?.status === 'pool' ? (market.data as Pool) : null
+
+  const positions = useQuery({
+    queryKey: ['userLpPositions', chainId, pool?.poolId, holder?.toLowerCase()],
+    enabled: !!client && !!pool && !!holder,
+    retry: 0,
+    staleTime: 30_000,
+    queryFn: () => readUserLpPositions(client!, chainId, pool!, holder!),
+  })
+
+  const fees = useQuery({
+    queryKey: [
+      'userLpFees',
+      chainId,
+      pool?.poolId,
+      (positions.data ?? []).map(p => p.tokenId.toString()).join(','),
+    ],
+    enabled: !!client && !!pool && !!positionManager && !!positions.data?.length,
+    retry: 0,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        (positions.data ?? []).map(async position => {
+          const owed = await readUniswapV4PositionFees(client!, {
+            chainId,
+            poolId: pool!.poolId,
+            positionManager: positionManager!,
+            tokenId: position.tokenId,
+            tickLower: position.tickLower,
+            tickUpper: position.tickUpper,
+          }).catch(() => null)
+          if (!owed) return [position.tokenId.toString(), null] as const
+          return [
+            position.tokenId.toString(),
+            {
+              pairFees: pool!.pairIsC0 ? owed.amount0 : owed.amount1,
+              tokenFees: pool!.pairIsC0 ? owed.amount1 : owed.amount0,
+            },
+          ] as const
+        }),
+      )
+      return Object.fromEntries(entries)
+    },
+  })
+
+  const feesByToken = fees.data ?? {}
+  let pairFees = 0n
+  let tokenFees = 0n
+  for (const owed of Object.values(feesByToken)) {
+    if (!owed) continue
+    pairFees += owed.pairFees
+    tokenFees += owed.tokenFees
+  }
+
+  return {
+    pool,
+    positionManager,
+    positions: positions.data ?? [],
+    pairFees,
+    tokenFees,
+    feesByToken,
+    isLoading: market.isLoading || positions.isLoading,
+    isError: positions.isError,
+    refresh: () => {
+      void positions.refetch()
+      void fees.refetch()
+    },
+  }
+}
 
 const POSITION_MANAGER_ABI = [
   {
@@ -56,83 +163,37 @@ function unlockDataOf(data: Hex): Hex {
  */
 export function LiquidityPositions({
   chainId,
-  pool,
-  positionManager,
+  projectId,
   sym,
   onChanged,
 }: {
   chainId: JBChainId
-  pool: Pool
-  positionManager: Address
+  projectId: number
   sym: string
   onChanged?: () => void
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
-  const { address } = useWallet()
+  const { address, connectedAddress, isViewAs } = useViewedAccount()
   const tx = useSafeTx(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
-
-  const positions = useQuery({
-    queryKey: ['userLpPositions', chainId, pool.poolId, address?.toLowerCase()],
-    enabled: !!client && !!address,
-    retry: 0,
-    staleTime: 30_000,
-    queryFn: () => readUserLpPositions(client!, chainId, pool, address!),
-  })
-
-  // Fees are two extra reads per position, so they load beside the list rather
-  // than holding it up.
-  const fees = useQuery({
-    queryKey: [
-      'userLpFees',
-      chainId,
-      pool.poolId,
-      (positions.data ?? []).map(p => p.tokenId.toString()).join(','),
-    ],
-    enabled: !!client && !!positions.data?.length,
-    retry: 0,
-    staleTime: 30_000,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        (positions.data ?? []).map(async position => {
-          const owed = await readUniswapV4PositionFees(client!, {
-            chainId,
-            poolId: pool.poolId,
-            positionManager,
-            tokenId: position.tokenId,
-            tickLower: position.tickLower,
-            tickUpper: position.tickUpper,
-          }).catch(() => null)
-          if (!owed) return [position.tokenId.toString(), null] as const
-          return [
-            position.tokenId.toString(),
-            {
-              pairFees: pool.pairIsC0 ? owed.amount0 : owed.amount1,
-              tokenFees: pool.pairIsC0 ? owed.amount1 : owed.amount0,
-            },
-          ] as const
-        }),
-      )
-      return Object.fromEntries(entries)
-    },
-  })
+  const summary = useUserLpSummary(chainId, projectId, address)
+  const { pool, positionManager } = summary
 
   const refresh = () => {
-    void positions.refetch()
-    void fees.refetch()
+    summary.refresh()
     onChanged?.()
   }
 
   const claim = (position: UserLpPosition) => {
-    if (!address) return
+    if (!connectedAddress || !pool || !positionManager) return
     setError(null)
     const collect = buildCollectUniswapV4FeesTx({
       positionManager,
       tokenId: position.tokenId,
       currency0: pool.key.currency0,
       currency1: pool.key.currency1,
-      recipient: address,
+      recipient: connectedAddress,
       deadline: swapDeadline(tx.isSafe),
     })
     tx.send(
@@ -151,12 +212,12 @@ export function LiquidityPositions({
   // open while the market moves, and a stale amount must never become the
   // reviewed minimum.
   const remove = async (position: UserLpPosition) => {
-    if (!address || !client) return
+    if (!connectedAddress || !client || !pool || !positionManager) return
     setError(null)
     setReviewing(position.tokenId)
     try {
       const fresh = (
-        await readUserLpPositions(client, chainId, pool, address)
+        await readUserLpPositions(client, chainId, pool, connectedAddress)
       ).find(p => p.tokenId === position.tokenId)
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
       const pairMin = retainedFloor(fresh.pairAmount)
@@ -169,7 +230,7 @@ export function LiquidityPositions({
             tokenId: fresh.tokenId,
             currency0: pool.key.currency0,
             currency1: pool.key.currency1,
-            recipient: address,
+            recipient: connectedAddress,
             amount0Min: pool.pairIsC0 ? pairMin : tokenMin,
             amount1Min: pool.pairIsC0 ? tokenMin : pairMin,
           }),
@@ -187,27 +248,27 @@ export function LiquidityPositions({
     }
   }
 
-  if (!address) return null
+  if (!address || !pool || !positionManager) return null
 
   return (
     <div className="mt-5 border-t border-smoke-200 pt-4">
       <span className="text-xs font-medium text-smoke-700">Your positions</span>
 
-      {positions.isLoading ? (
+      {summary.isLoading ? (
         <p className="mt-2 text-sm text-smoke-500">Reading your positions…</p>
-      ) : positions.isError ? (
+      ) : summary.isError ? (
         <p className="mt-2 text-sm text-red-700">
           Could not verify the complete position history — nothing has been hidden
           as an empty result.
         </p>
-      ) : !positions.data?.length ? (
+      ) : !summary.positions.length ? (
         <p className="mt-2 text-sm text-smoke-500">
           You have no LP positions in this pool.
         </p>
       ) : (
         <div className="mt-2 space-y-2">
-          {positions.data.map(position => {
-            const owed = fees.data?.[position.tokenId.toString()]
+          {summary.positions.map(position => {
+            const owed = summary.feesByToken[position.tokenId.toString()]
             const nothingOwed =
               !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
             return (
@@ -225,7 +286,7 @@ export function LiquidityPositions({
                     {pool.pair.symbol}
                   </p>
                   <p className="text-smoke-500">
-                    {fees.isLoading && owed === undefined
+                    {owed === undefined
                       ? 'unclaimed fees: reading…'
                       : owed === null
                         ? 'unclaimed fees: unavailable on this chain'
@@ -238,7 +299,7 @@ export function LiquidityPositions({
                   <button
                     type="button"
                     className="btn-secondary min-h-[32px] px-3 text-xs"
-                    disabled={tx.busy || nothingOwed}
+                    disabled={tx.busy || nothingOwed || isViewAs}
                     onClick={() => claim(position)}
                   >
                     Claim fees
@@ -246,7 +307,7 @@ export function LiquidityPositions({
                   <button
                     type="button"
                     className="btn-secondary min-h-[32px] px-3 text-xs"
-                    disabled={tx.busy || reviewing !== null}
+                    disabled={tx.busy || reviewing !== null || isViewAs}
                     onClick={() => void remove(position)}
                   >
                     {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}

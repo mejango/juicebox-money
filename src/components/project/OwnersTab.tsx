@@ -53,6 +53,10 @@ import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
+import {
+  LiquidityPositions,
+  useUserLpSummary,
+} from '@/components/project/LiquidityPositions'
 import { TxError } from '@/components/ui/TxError'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
@@ -624,7 +628,12 @@ function YourChainRow({
               )}
             </td>
             <td className="whitespace-nowrap px-4 py-3 text-right align-top text-smoke-700">
-              See Market
+              <YourLpCell
+                chainId={chainId}
+                projectId={projectId}
+                holder={holder}
+                sym={tokenSymbol}
+              />
             </td>
           </>
         )}
@@ -641,6 +650,69 @@ function YourChainRow({
             />
           </td>
         </tr>
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * The wallet's LP standing on one chain, in the You table: how many positions
+ * it owns and what they have earned, opening the full panel to claim or exit.
+ * Renders "—" where the chain has no pool or the wallet has no position.
+ */
+function YourLpCell({
+  chainId,
+  projectId,
+  holder,
+  sym,
+}: {
+  chainId: JBChainId
+  projectId: number
+  holder: Address
+  sym: string
+}) {
+  const [open, setOpen] = useState(false)
+  const summary = useUserLpSummary(chainId, projectId, holder)
+
+  if (summary.isLoading) return <span className="text-smoke-500">…</span>
+  // An incomplete log scan must not read as "you have no positions".
+  if (summary.isError) {
+    return (
+      <span className="text-smoke-500" title="Could not verify the complete position history on this chain.">
+        Unavailable
+      </span>
+    )
+  }
+  if (!summary.positions.length) return <>—</>
+
+  const owed =
+    summary.tokenFees > 0n || summary.pairFees > 0n
+      ? `${formatTokenAmount(summary.tokenFees, 18)} ${sym} + ${formatTokenAmount(
+          summary.pairFees,
+          summary.pool?.pair.decimals ?? 18,
+        )} ${summary.pool?.pair.symbol ?? ''} fees`
+      : null
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-right underline decoration-dotted underline-offset-2 hover:text-ink"
+      >
+        {summary.positions.length}{' '}
+        {summary.positions.length === 1 ? 'position' : 'positions'}
+        {owed ? <span className="block text-xs text-smoke-500">{owed}</span> : null}
+      </button>
+      {open ? (
+        <ModalShell
+          title="Your liquidity"
+          subtitle="Positions owned by this wallet in the project's market pool."
+          onClose={() => setOpen(false)}
+          maxWidth="max-w-xl"
+        >
+          <LiquidityPositions chainId={chainId} projectId={projectId} sym={sym} />
+        </ModalShell>
       ) : null}
     </>
   )
