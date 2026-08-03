@@ -456,7 +456,6 @@ const graphqlFixtures = [
             { addToBalanceEvent_not: null }
             { setUriEvent_not: null }
             { projectTransferEvent_not: null }
-            { operatorPermissionsSetEvent_not: null }
             { addNftTierEvent_not: null }
             { removeNftTierEvent_not: null }
             { swapEvent_not: null }

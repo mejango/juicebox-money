@@ -677,14 +677,14 @@ export function ProjectPageSkeleton() {
       </div>
 
       <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-10">
-        <aside className="order-1 lg:order-2 lg:col-span-1">
+        <aside className="order-1 lg:col-span-1">
           <ProjectPayPanelSkeleton />
           <Skeleton className="mb-3 mt-8 h-6 w-24 rounded" />
           <div className="card overflow-hidden">
             <ActivityRows rows={5} />
           </div>
         </aside>
-        <main className="order-2 min-w-0 lg:order-1 lg:col-span-2">
+        <main className="order-2 min-w-0 lg:col-span-2">
           <div className="flex gap-6 overflow-hidden border-b border-smoke-200 pb-3">
             {Array.from({ length: 6 }, (_, index) => (
               <Skeleton key={index} className="h-4 w-20 shrink-0 rounded" />

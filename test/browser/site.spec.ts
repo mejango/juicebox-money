@@ -219,6 +219,13 @@ async function exerciseProjectSurfaces(
 
   const payCard = page.locator('#project-pay-card')
   await expect(payCard.getByLabel('Amount')).toBeVisible()
+  if (viewport.width > 600) {
+    const payBox = await payCard.boundingBox()
+    const tabsBox = await projectTabs.boundingBox()
+    expect(payBox).not.toBeNull()
+    expect(tabsBox).not.toBeNull()
+    expect(payBox!.x).toBeLessThan(tabsBox!.x)
+  }
   // USDC only appears after the ABI-correct accounting-context and ERC-20
   // reads resolve; the unhydrated fallback says ETH.
   await expect(payCard.getByText('USDC', { exact: true })).toBeVisible()
@@ -330,12 +337,27 @@ async function exerciseProjectSurfaces(
   ] as const
 
   for (const tab of tabs) {
-    const button = projectTabs.getByRole('tab', {
-      name: tab.label,
-      exact: true,
-    })
-    await button.click()
-    await expect(button).toHaveAttribute('aria-selected', 'true')
+    const overflow = tab.label === 'Extras' || tab.label === 'Operator'
+    const button = overflow
+      ? page.getByRole('button', { name: /^More project sections/ })
+      : projectTabs.getByRole('tab', {
+          name: tab.label,
+          exact: true,
+        })
+    if (overflow) {
+      await button.click()
+      await page
+        .getByRole('menu', { name: 'More project sections' })
+        .getByRole('menuitem', { name: tab.label, exact: true })
+        .click()
+      await expect(button).toHaveAttribute(
+        'aria-label',
+        `More project sections, current: ${tab.label}`,
+      )
+    } else {
+      await button.click()
+      await expect(button).toHaveAttribute('aria-selected', 'true')
+    }
     await expect(tab.ready()).toBeVisible()
     await expectVisibleFocus(page, button, `${viewport.label} project ${tab.label}`)
     await expectSurface(page, `${viewport.label} project ${tab.label}`)

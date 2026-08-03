@@ -10,6 +10,8 @@ export type TabDef = {
   content: ReactNode
 }
 
+const PROJECT_OVERFLOW_TABS = new Set(['extras', 'operator', 'owner'])
+
 /** URL-hash slug for a tab label (website/ parity: tabSlug). */
 export function tabSlug(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -103,6 +105,12 @@ export function ProjectTabs({
     ? activeSlug
     : firstSlug
   const activityActive = isPhone && activeSlug === activitySlug
+  const visibleTabs = tabs.filter(
+    tab => !PROJECT_OVERFLOW_TABS.has(tabSlug(tab.label)),
+  )
+  const overflowTabs = tabs.filter(tab =>
+    PROJECT_OVERFLOW_TABS.has(tabSlug(tab.label)),
+  )
   mounted.current.add(normalActiveSlug)
 
   // Resolve the initial tab from the URL hash, and follow hash changes
@@ -170,7 +178,7 @@ export function ProjectTabs({
 
   return (
     <div className="mt-10 flex flex-col min-[601px]:flex-row min-[601px]:gap-6 lg:gap-10">
-      <aside className="contents min-[601px]:order-2 min-[601px]:flex min-[601px]:w-[280px] min-[601px]:shrink-0 min-[601px]:flex-col md:w-[320px] lg:w-[384px]">
+      <aside className="contents min-[601px]:order-1 min-[601px]:flex min-[601px]:w-[280px] min-[601px]:shrink-0 min-[601px]:flex-col md:w-[320px] lg:w-[384px]">
         <div className="order-1 min-[601px]:order-none">{sidebar}</div>
         <div
           className={`order-3 ${
@@ -181,37 +189,44 @@ export function ProjectTabs({
         </div>
       </aside>
 
-      <div className="contents min-[601px]:order-1 min-[601px]:block min-[601px]:min-w-0 min-[601px]:flex-1">
-        <div
-          role="tablist"
-          aria-label="Project sections"
-          className="scrollbar-none order-2 -mx-1 mt-8 flex gap-1 overflow-x-auto border-b border-smoke-200 px-1 min-[601px]:order-none min-[601px]:mt-0"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activityActive}
-            onClick={() => activate(activitySlug)}
-            className={`${buttonClasses(activityActive)} min-[601px]:hidden`}
+      <div className="contents min-[601px]:order-2 min-[601px]:block min-[601px]:min-w-0 min-[601px]:flex-1">
+        <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[601px]:order-none min-[601px]:mt-0">
+          <div
+            role="tablist"
+            aria-label="Project sections"
+            className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto"
           >
-            Activity
-          </button>
-          {tabs.map(tab => {
-            const slug = tabSlug(tab.label)
-            const selected = !activityActive && normalActiveSlug === slug
-            return (
-              <button
-                key={tab.label}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => activate(slug)}
-                className={buttonClasses(selected)}
-              >
-                {tab.label}
-              </button>
-            )
-          })}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activityActive}
+              onClick={() => activate(activitySlug)}
+              className={`${buttonClasses(activityActive)} min-[601px]:hidden`}
+            >
+              Activity
+            </button>
+            {visibleTabs.map(tab => {
+              const slug = tabSlug(tab.label)
+              const selected = !activityActive && normalActiveSlug === slug
+              return (
+                <button
+                  key={tab.label}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => activate(slug)}
+                  className={buttonClasses(selected)}
+                >
+                  {tab.label}
+                </button>
+              )
+            })}
+          </div>
+          <ProjectOverflowMenu
+            tabs={overflowTabs}
+            activeSlug={activityActive ? activitySlug : normalActiveSlug}
+            onSelect={activate}
+          />
         </div>
 
         <div
@@ -229,6 +244,94 @@ export function ProjectTabs({
           })}
         </div>
       </div>
+    </div>
+  )
+}
+
+function ProjectOverflowMenu({
+  tabs,
+  activeSlug,
+  onSelect,
+}: {
+  tabs: TabDef[]
+  activeSlug: string
+  onSelect: (slug: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const activeTab = tabs.find(tab => tabSlug(tab.label) === activeSlug)
+
+  useEffect(() => {
+    if (!open) return
+    const closeOutside = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', closeOutside)
+    return () => document.removeEventListener('mousedown', closeOutside)
+  }, [open])
+
+  if (!tabs.length) return null
+
+  return (
+    <div
+      ref={root}
+      className="relative ml-auto shrink-0"
+      onKeyDown={event => {
+        if (event.key !== 'Escape' || !open) return
+        setOpen(false)
+        root.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus()
+      }}
+    >
+      <button
+        type="button"
+        aria-label={`More project sections${activeTab ? `, current: ${activeTab.label}` : ''}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        className={`flex min-h-[44px] min-w-[44px] items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
+          activeTab
+            ? 'border-ink text-ink'
+            : 'border-transparent text-smoke-500 hover:text-ink'
+        }`}
+      >
+        <span aria-hidden>⋮</span>
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="More project sections"
+          className="absolute right-0 top-full z-30 mt-1 min-w-36 overflow-hidden rounded-xl border border-smoke-200 bg-white py-1 shadow-lg"
+        >
+          {tabs.map(tab => {
+            const slug = tabSlug(tab.label)
+            const selected = slug === activeSlug
+            return (
+              <button
+                key={tab.label}
+                type="button"
+                role="menuitem"
+                aria-current={selected ? 'page' : undefined}
+                onClick={() => {
+                  onSelect(slug)
+                  setOpen(false)
+                  requestAnimationFrame(() =>
+                    root.current
+                      ?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')
+                      ?.focus(),
+                  )
+                }}
+                className={`block min-h-[40px] w-full px-4 text-left text-sm transition-colors ${
+                  selected
+                    ? 'bg-split-50 font-medium text-ink'
+                    : 'text-smoke-700 hover:bg-smoke-75 hover:text-ink'
+                }`}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
     </div>
   )
 }
