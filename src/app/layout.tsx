@@ -5,6 +5,7 @@ import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
 import { Providers } from '@/providers/Providers'
+import { ScrollToTop } from '@/components/ScrollToTop'
 
 const siteOrigin =
   process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
@@ -115,6 +116,7 @@ export default function RootLayout({
     >
       <body className="flex min-h-screen flex-col">
         <Providers>
+          <ScrollToTop />
           <header className="sticky top-0 z-40 border-b border-smoke-200 bg-bone/90 backdrop-blur">
             <SiteNavigation />
           </header>
