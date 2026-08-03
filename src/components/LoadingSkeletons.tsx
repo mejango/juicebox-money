@@ -311,10 +311,33 @@ export function TokenPanelSkeleton({ compact = false }: { compact?: boolean }) {
   )
 }
 
+/** Ghost of the standalone market price chart: headline, range pills, plot. */
+export function MarketPriceChartSkeleton() {
+  return (
+    <div className="card p-5" aria-hidden="true">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Skeleton className="h-3 w-24 rounded" />
+          <Skeleton className="mt-3 h-7 w-44 rounded" />
+          <Skeleton className="mt-2 h-3 w-32 rounded" />
+        </div>
+        <div className="flex gap-1">
+          {['1D', '7D', '30D', '3M', '1Y', 'All'].map(range => (
+            <Skeleton key={range} className="h-11 w-11 rounded-lg" />
+          ))}
+        </div>
+      </div>
+      <Skeleton className="mt-4 h-40 w-full rounded-lg" />
+      <Skeleton className="mt-4 h-3 w-3/4 rounded" />
+    </div>
+  )
+}
+
 export function MarketSectionSkeleton() {
   return (
     <div className="space-y-5" role="status" aria-label="Loading market">
       <span className="sr-only">Loading market</span>
+      <MarketPriceChartSkeleton />
       <div className="card p-5">
         <div className="flex items-center gap-2" aria-hidden="true">
           <Skeleton className="h-3 w-24 rounded" />

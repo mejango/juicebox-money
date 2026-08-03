@@ -176,7 +176,7 @@ export function MarketPriceChart({
       </div>
 
       {isPending && !series.length ? (
-        <div className="mt-4 h-40 animate-pulse rounded-lg bg-smoke-75" />
+        <div className="skeleton-shimmer mt-4 h-40 w-full rounded-lg" aria-hidden="true" />
       ) : series.length < 2 ? (
         <p className="mt-4 text-sm leading-relaxed text-smoke-700">
           No trades in this range yet — the price above is the live pool price.
