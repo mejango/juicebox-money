@@ -21,6 +21,7 @@ import {
   type ExportProjectProfile,
 } from '@/lib/project-draft-export'
 import { chainName, toUrn } from '@/lib/urn'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 
 /**
  * Extras tab: export a verified create-flow draft, plus the payer-address
@@ -186,11 +187,15 @@ function PayerAddressCard({
 }) {
   const { isConnected, address, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
+  const { data: ownToken } = useProjectTokenSymbol(chainId, projectId)
+  // Name the field after what the beneficiary actually receives.
+  const beneficiaryLabel = `${ownToken?.symbol || 'Token'} beneficiary`
 
   const [addToBalance, setAddToBalance] = useState(false)
   const [beneficiary, setBeneficiary] = useState('')
   const [memo, setMemo] = useState('')
   const [editable, setEditable] = useState(false)
+  const [adminInput, setAdminInput] = useState('')
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedDeploy | null>(null)
 
@@ -239,9 +244,24 @@ function PayerAddressCard({
       }
       beneficiaryAddress = resolved
     }
-    // Website parity: owner defaults to the zero address (nobody can ever
-    // change the payer); editable mode sets the connected wallet as owner.
-    const owner: Address = editable ? address : zeroAddress
+    // Owner defaults to the zero address — nobody can ever change the payer.
+    // Editable mode names an admin explicitly, defaulting to the connected
+    // wallet but not assuming it: whoever deploys is often not who should
+    // administer the address afterwards.
+    let owner: Address = zeroAddress
+    if (editable) {
+      const rawAdmin = adminInput.trim()
+      if (rawAdmin) {
+        const resolvedAdmin = resolvedAddress(rawAdmin)
+        if (!resolvedAdmin) {
+          setFlowError('Enter a valid admin address or ENS name.')
+          return
+        }
+        owner = resolvedAdmin
+      } else {
+        owner = address
+      }
+    }
     setReview({
       request: buildDeployProjectPayerTx({
         chainId,
@@ -321,7 +341,7 @@ function PayerAddressCard({
         <>
           {!addToBalance ? (
             <div className="mt-4">
-              <span className="field-label">Token beneficiary</span>
+              <span className="field-label">{beneficiaryLabel}</span>
               <AddressField
                 value={beneficiary}
                 onChange={value => {
@@ -330,7 +350,7 @@ function PayerAddressCard({
                 }}
                 disabled={busy}
                 placeholder="0x… or name.eth (optional)"
-                ariaLabel="Token beneficiary"
+                ariaLabel={beneficiaryLabel}
                 className="mt-1.5"
                 compact
               />
@@ -371,11 +391,32 @@ function PayerAddressCard({
               Let me edit this later
               <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
                 {editable
-                  ? 'Your connected wallet can later change the destination project, behavior, beneficiary, and memo. It never receives the payments.'
+                  ? 'The admin can later change the destination project, behavior, beneficiary, and memo. It never receives the payments.'
                   : 'Off by default: the settings above are permanent once deployed.'}
               </span>
             </span>
           </label>
+
+          {editable ? (
+            <div className="mt-3">
+              <span className="field-label">Address admin</span>
+              <AddressField
+                value={adminInput}
+                onChange={value => {
+                  setAdminInput(value)
+                  invalidate()
+                }}
+                disabled={busy}
+                placeholder="0x… or name.eth"
+                ariaLabel="Address admin"
+                className="mt-1.5"
+                compact
+              />
+              <p className="mt-1.5 text-xs text-smoke-700">
+                Leave empty to use your connected wallet.
+              </p>
+            </div>
+          ) : null}
 
           {review ? (
             <div className="callout callout-info mt-4 text-xs">
