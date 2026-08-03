@@ -1123,7 +1123,7 @@ function LiquidityProviders({
   return (
     <div>
       <span className="field-label">Liquidity providers</span>
-      <div className="mt-3 grid gap-6 sm:grid-cols-[280px_minmax(0,1fr)] sm:items-center">
+      <div className="mt-4 grid items-start gap-6 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]">
         <div className="relative min-w-0 text-center">
           <svg
             viewBox="0 0 240 218"
@@ -1177,45 +1177,41 @@ function LiquidityProviders({
           ) : null}
         </div>
 
-        <div className="min-w-0 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
-                <th className="py-2 pr-3 font-normal">Account</th>
-                <th className="py-2 pr-3 text-right font-normal">{lp.pairSymbol}</th>
-                <th className="py-2 pr-3 text-right font-normal">{sym}</th>
-                <th className="py-2 text-right font-normal">Share</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lp.owners.map(owner => (
-                <tr key={owner.address} className="border-b border-smoke-100 last:border-0">
-                  <td className="py-2 pr-3">
-                    <AddressLink
-                      address={owner.address}
-                      chainId={chainId}
-                      className="font-mono text-xs text-ink"
-                      title={owner.address}
-                    />
-                    {owner.positions > 1 ? (
-                      <span className="block text-[11px] text-smoke-500">
-                        {owner.positions} positions
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
-                    {formatTokenAmount(owner.pair, lp.pairDecimals)}
-                  </td>
-                  <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
-                    {formatTokenAmount(owner.tok, 18)}
-                  </td>
-                  <td className="whitespace-nowrap py-2 text-right font-medium text-ink">
-                    {shareLabel(owner)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="min-w-0">
+          <div className="overflow-x-auto rounded-xl border border-smoke-200">
+            <div className="min-w-[520px]">
+              <div className="grid grid-cols-[minmax(150px,1.5fr)_90px_minmax(90px,1fr)_minmax(90px,1fr)] gap-3 bg-smoke-75 px-4 py-2.5 text-left text-[10px] font-medium uppercase tracking-wide text-smoke-500">
+                <span>Account</span>
+                <span>Share</span>
+                <span>{lp.pairSymbol}</span>
+                <span>{sym}</span>
+              </div>
+              <div className="divide-y divide-smoke-100">
+                {lp.owners.map(owner => (
+                  <div
+                    key={owner.address}
+                    className="grid grid-cols-[minmax(150px,1.5fr)_90px_minmax(90px,1fr)_minmax(90px,1fr)] items-center gap-3 px-4 py-3 text-sm"
+                  >
+                    <span className="min-w-0">
+                      <AddressLink address={owner.address} chainId={chainId} />
+                      {owner.positions > 1 ? (
+                        <span className="block text-[11px] text-smoke-500">
+                          {owner.positions} positions
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="font-medium text-ink">{shareLabel(owner)}</span>
+                    <span className="text-smoke-700">
+                      {formatTokenAmount(owner.pair, lp.pairDecimals)}
+                    </span>
+                    <span className="text-smoke-700">
+                      {formatTokenAmount(owner.tok, 18)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
