@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { publicReadHeaders } from '@/lib/api-cache'
 import { parseChainProject } from '@/lib/api-params'
 import { getAutoIssuances } from '@/lib/loans-queries'
 
@@ -18,7 +19,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    return NextResponse.json(await getAutoIssuances(projectId, chainId))
+    return NextResponse.json(await getAutoIssuances(projectId, chainId), {
+      headers: publicReadHeaders,
+    })
   } catch {
     return NextResponse.json({ stored: [], issued: [] }, { status: 502 })
   }

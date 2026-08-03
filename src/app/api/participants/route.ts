@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { publicReadHeaders } from '@/lib/api-cache'
 import { parseChainProject } from '@/lib/api-params'
 import { getParticipants } from '@/lib/bendystraw'
 
@@ -22,7 +23,9 @@ export async function GET(request: Request) {
       )
     }
     if (ok) {
-      return NextResponse.json(await getParticipants({ chainId, projectId }))
+      return NextResponse.json(await getParticipants({ chainId, projectId }), {
+        headers: publicReadHeaders,
+      })
     }
     return NextResponse.json(
       { error: 'suckerGroupId or chainId + projectId required' },

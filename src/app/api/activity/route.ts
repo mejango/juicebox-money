@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { publicReadHeaders } from '@/lib/api-cache'
 import { getRecentActivity } from '@/lib/bendystraw'
 
 export const dynamic = 'force-dynamic'
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const events = await getRecentActivity(12)
-    return NextResponse.json({ events })
+    return NextResponse.json({ events }, { headers: publicReadHeaders })
   } catch {
     return NextResponse.json({ events: [] }, { status: 502 })
   }

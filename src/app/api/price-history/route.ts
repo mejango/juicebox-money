@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { publicReadHeaders } from '@/lib/api-cache'
 import { getRevnetPriceHistory } from '@/lib/bendystraw'
 
 export async function GET(request: Request) {
@@ -19,6 +20,7 @@ export async function GET(request: Request) {
       await getRevnetPriceHistory(suckerGroupId, {
         chainId: Number.isInteger(chainId) && chainId > 0 ? chainId : undefined,
       }),
+      { headers: publicReadHeaders },
     )
   } catch {
     return NextResponse.json(
