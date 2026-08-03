@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { cachedQuery } from '@/lib/query-persist'
 import { ammSeriesFrom, visibleSeries, type PricePoint } from '@/lib/price-series'
 import { chartDateLabel, formatPrice } from './chartUtils'
 import { ChartRangeButton } from './StepChartBase'
@@ -64,7 +65,8 @@ export function MarketPriceChart({
   const [hover, setHover] = useState<{ index: number; x: number } | null>(null)
 
   // Shares the Overview chart's query — one fetch per project, not two.
-  const { data: history, isPending } = useQuery({
+  const { data: history, isPending } = useQuery(
+    cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
     staleTime: 30_000,
@@ -76,7 +78,8 @@ export function MarketPriceChart({
       if (!response.ok) throw new Error('Price history is unavailable.')
       return response.json() as Promise<BsRevnetPriceHistory>
     },
-  })
+    }),
+  )
 
   const observed = useMemo(
     () => ammSeriesFrom({ history, chainId, poolId, pairDecimals }),

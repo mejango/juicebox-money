@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
+import { cachedQuery } from '@/lib/query-persist'
 
 const ONE_TOKEN = 10n ** 18n
 
@@ -20,7 +21,8 @@ export function useCashOutFloor(
   enabled = true,
 ) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  return useQuery({
+  return useQuery(
+    cachedQuery({
     queryKey: ['marketFloor', chainId, projectId],
     enabled: !!publicClient && enabled,
     staleTime: 60_000,
@@ -40,5 +42,6 @@ export function useCashOutFloor(
       const value = Number(formatUnits(quote.reclaimAmount, context.decimals))
       return Number.isFinite(value) && value > 0 ? value : null
     },
-  })
+    }),
+  )
 }

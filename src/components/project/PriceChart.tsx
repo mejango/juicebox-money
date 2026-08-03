@@ -18,6 +18,7 @@ import {
   minimumCashOutPriceAtIssuancePrice,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
+import { Revalidating } from '@/components/ui/Revalidating'
 import { visibleSeries, type PricePoint } from '@/lib/price-series'
 
 /**
@@ -145,12 +146,15 @@ function PriceSummary({
   value,
   baseSymbol,
   symbol,
+  pending = false,
 }: {
   label: string
   color: string
   value: number | null
   baseSymbol: string
   symbol: string
+  /** The value is restored from a previous read and still being confirmed. */
+  pending?: boolean
 }) {
   return (
     <div className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2">
@@ -163,13 +167,15 @@ function PriceSummary({
         <span>{label}</span>
       </div>
       <p className="mt-0.5 truncate text-[11px] text-smoke-700">
-        {value && value > 0 ? (
-          <>
-            {formatPrice(value)} {baseSymbol}/{symbol}
-          </>
-        ) : (
-          '—'
-        )}
+        <Revalidating pending={pending && !!value && value > 0}>
+          {value && value > 0 ? (
+            <>
+              {formatPrice(value)} {baseSymbol}/{symbol}
+            </>
+          ) : (
+            '—'
+          )}
+        </Revalidating>
       </p>
     </div>
   )
@@ -184,6 +190,7 @@ export function PriceChart({
   floorHistory = [],
   ammHistory = [],
   cashOutTaxHistory = [],
+  referencesPending = false,
 }: {
   stages: ChartStage[]
   symbol: string
@@ -193,6 +200,8 @@ export function PriceChart({
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
+  /** The live cash-out / AMM reads are still confirming. */
+  referencesPending?: boolean
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
 
@@ -281,6 +290,7 @@ export function PriceChart({
               value={floor?.value ?? null}
               baseSymbol={baseSymbol}
               symbol={symbol}
+              pending={referencesPending}
             />
             <PriceSummary
               label="AMM price"
@@ -288,6 +298,7 @@ export function PriceChart({
               value={amm?.value ?? null}
               baseSymbol={baseSymbol}
               symbol={symbol}
+              pending={referencesPending}
             />
           </div>
           <div className="mt-3 flex items-center justify-between gap-2">

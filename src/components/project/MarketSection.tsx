@@ -35,6 +35,8 @@ import {
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
+import { Revalidating } from '@/components/ui/Revalidating'
+import { cachedQuery } from '@/lib/query-persist'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -920,34 +922,44 @@ export function MarketSection({
     data: market,
     isLoading,
     isError,
-  } = useQuery({
-    queryKey: ['market', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () => resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
-  })
+    isFetching: marketFetching,
+  } = useQuery(
+    cachedQuery({
+      queryKey: ['market', chainId, projectId],
+      enabled: !!publicClient,
+      staleTime: 60_000,
+      retry: 1,
+      queryFn: () =>
+        resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+    }),
+  )
 
   const hasPool = market?.status === 'pool'
 
-  const { data: floor } = useCashOutFloor(chainId, projectId, hasPool)
+  const { data: floor, isFetching: floorFetching } = useCashOutFloor(
+    chainId,
+    projectId,
+    hasPool,
+  )
 
   const {
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
-  } = useQuery({
-    queryKey: ['marketLp', chainId, projectId],
-    enabled: !!publicClient && hasPool,
-    staleTime: 60_000,
-    retry: 0,
-    queryFn: () =>
-      readLpPositions(
-        publicClient!,
-        chainId,
-        market as Extract<MarketResult, { status: 'pool' }>,
-      ),
-  })
+  } = useQuery(
+    cachedQuery({
+      queryKey: ['marketLp', chainId, projectId],
+      enabled: !!publicClient && hasPool,
+      staleTime: 60_000,
+      retry: 0,
+      queryFn: () =>
+        readLpPositions(
+          publicClient!,
+          chainId,
+          market as Extract<MarketResult, { status: 'pool' }>,
+        ),
+    }),
+  )
 
   if (isLoading) {
     return <MarketSectionSkeleton />
@@ -1016,10 +1028,14 @@ export function MarketSection({
           </div>
 
           <p className="mt-3 text-lg font-medium text-ink">
-            1 {sym} = {formatPrice(market.price)} {pairSym}
+            <Revalidating pending={marketFetching}>
+              1 {sym} = {formatPrice(market.price)} {pairSym}
+            </Revalidating>
           </p>
           <p className="mt-0.5 text-sm text-smoke-700">
-            1 {pairSym} = {formatPrice(inverse)} {sym}
+            <Revalidating pending={marketFetching}>
+              1 {pairSym} = {formatPrice(inverse)} {sym}
+            </Revalidating>
           </p>
 
           {(market.issuance && market.issuance > 0) ||
@@ -1029,7 +1045,9 @@ export function MarketSection({
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-smoke-700">Current issuance price</dt>
                   <dd className="font-medium text-ink">
-                    {formatPrice(market.issuance)} {pairSym}
+                    <Revalidating pending={marketFetching}>
+                      {formatPrice(market.issuance)} {pairSym}
+                    </Revalidating>
                   </dd>
                 </div>
               ) : null}
@@ -1037,7 +1055,9 @@ export function MarketSection({
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-smoke-700">Current cash out price</dt>
                   <dd className="font-medium text-ink">
-                    {formatPrice(floor)} {pairSym}
+                    <Revalidating pending={floorFetching}>
+                      {formatPrice(floor)} {pairSym}
+                    </Revalidating>
                   </dd>
                 </div>
               ) : null}

@@ -42,6 +42,7 @@ import {
   type CashOutObservation,
 } from '@/lib/cashOutChange'
 import { ammSeriesFrom, type PricePoint } from '@/lib/price-series'
+import { cachedQuery, immutableQuery } from '@/lib/query-persist'
 import { tokenSymbol } from '@/lib/token-symbol'
 
 /**
@@ -65,15 +66,32 @@ export function RevnetPriceCard({
   const config = useConfig()
   const nativeSymbol = 'ETH'
 
-  const { data, isPending } = useQuery({
-    queryKey: ['revnetPriceCard', chainId, projectId],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async () => {
+  // A revnet's stage schedule is queued once at deployFor and no revnet actor
+  // holds QUEUE_RULESETS, so every stage — past, current and future — is fixed
+  // for the project's lifetime. Read it once, ever.
+  const { data: allRulesets, isPending: stagesPending } = useQuery(
+    immutableQuery({
+      queryKey: ['revnetStages', chainId, projectId],
+      enabled: !!publicClient,
+      retry: 1,
+      queryFn: () =>
+        getAllRulesets(publicClient!, {
+          chainId,
+          projectId: BigInt(projectId),
+          size: 50n,
+        }),
+    }),
+  )
+
+  const { data, isPending: metaPending } = useQuery(
+    cachedQuery({
+      queryKey: ['revnetPriceMeta', chainId, projectId],
+      enabled: !!publicClient,
+      staleTime: 60_000,
+      retry: 1,
+      queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) }
-      const [all, contexts, projectSymbol] = await Promise.all([
-        getAllRulesets(publicClient!, { ...args, size: 50n }),
+      const [contexts, projectSymbol] = await Promise.all([
         getAccountingContexts(publicClient!, args).catch(() => [] as const),
         (async () => {
           const token = (await publicClient!.readContract({
@@ -98,11 +116,16 @@ export function RevnetPriceCard({
           symbol: await tokenSymbol(publicClient!, ctx.token, { nativeSymbol }),
         })),
       )
-      return { all, contexts, contextSymbols, projectSymbol }
-    },
-  })
+      return { contexts, contextSymbols, projectSymbol }
+      },
+    }),
+  )
 
-  const { data: references } = useQuery({
+  const all = useMemo(() => allRulesets ?? [], [allRulesets])
+  const isPending = stagesPending || metaPending
+
+  const { data: references, isFetching: referencesFetching } = useQuery(
+    cachedQuery({
     queryKey: ['revnetPriceReferences', chainId, projectId, chains],
     enabled: !!publicClient,
     staleTime: 60_000,
@@ -239,9 +262,11 @@ export function RevnetPriceCard({
           market?.status === 'pool' ? market.pair.decimals : null,
       }
     },
-  })
+    }),
+  )
 
-  const { data: history } = useQuery({
+  const { data: history } = useQuery(
+    cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
     staleTime: 30_000,
@@ -255,7 +280,8 @@ export function RevnetPriceCard({
       if (!response.ok) throw new Error('Price history is unavailable.')
       return response.json() as Promise<BsRevnetPriceHistory>
     },
-  })
+    }),
+  )
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
@@ -263,12 +289,12 @@ export function RevnetPriceCard({
       decimals === undefined ||
       !references?.floor ||
       !history?.moments.length ||
-      !data?.all.length
+      !all.length
     ) {
       return []
     }
 
-    const taxSchedule = [...data.all].sort(
+    const taxSchedule = [...all].sort(
       (a, b) => a.ruleset.start - b.ruleset.start,
     )
     let previous: CashOutObservation | undefined
@@ -302,11 +328,11 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [data, history?.moments, references?.floor])
+  }, [all, data, history?.moments, references?.floor])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()
-    for (const ruleset of data?.all ?? []) {
+    for (const ruleset of all) {
       byTimestamp.set(
         ruleset.ruleset.start,
         ruleset.metadata.cashOutTaxRate,
@@ -316,7 +342,7 @@ export function RevnetPriceCard({
       timestamp,
       cashOutTaxRate,
     }))
-  }, [data?.all])
+  }, [all])
 
   const ammHistory = useMemo<PricePoint[]>(
     () =>
@@ -329,20 +355,22 @@ export function RevnetPriceCard({
     [chainId, history, references?.pairDecimals, references?.poolId],
   )
 
-  const stages: ChartStage[] = (data?.all ?? []).map(s => ({
+  const stages: ChartStage[] = all.map(s => ({
     start: s.ruleset.start,
     duration: s.ruleset.duration,
     weight: s.ruleset.weight,
     weightCutPercent: s.ruleset.weightCutPercent,
   }))
 
-  if (isPending) return <PriceChartSkeleton />
+  // Stages restore from disk, so a return visit paints the chart immediately
+  // and only the live overlays are still resolving.
+  if (isPending && all.length === 0) return <PriceChartSkeleton />
 
   if (stages.length === 0 || stages.every(s => s.weight === 0n)) return null
 
   // The base currency: 1 → native, 2 → USD, else token-keyed → that token's
   // resolved symbol (a DAI/USDC-based revnet).
-  const baseCurrency = data?.all?.[0]?.metadata.baseCurrency ?? 1
+  const baseCurrency = all[0]?.metadata.baseCurrency ?? 1
   const baseSymbol =
     baseCurrency === 1
       ? nativeSymbol
@@ -360,6 +388,7 @@ export function RevnetPriceCard({
         floorHistory={floorHistory}
         ammHistory={ammHistory}
         cashOutTaxHistory={cashOutTaxHistory}
+        referencesPending={referencesFetching && !!references}
         floorPrice={
           references?.floor
             ? {

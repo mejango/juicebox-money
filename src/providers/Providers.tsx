@@ -14,6 +14,7 @@ import { createConfig, http, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { getDwellirRpcUrl } from '@/lib/dwellir'
+import { installQueryPersistence } from '@/lib/query-persist'
 import { ParaAuthContext } from './ParaAuthContext'
 import { lazyParaConnector } from './lazy-para-connector'
 import { verifyMarkedParaSession } from './para-session'
@@ -88,19 +89,22 @@ export const wagmiConfig = createConfig({
  * self-contained modal host instead (see ParaHost).
  */
 export function Providers({ children }: PropsWithChildren) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 30_000,
-            gcTime: 10 * 60_000,
-            retry: 1,
-            refetchOnWindowFocus: false,
-          },
+  const [queryClient] = useState(() => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          staleTime: 30_000,
+          gcTime: 10 * 60_000,
+          retry: 1,
+          refetchOnWindowFocus: false,
         },
-      }),
-  )
+      },
+    })
+    // Synchronous, so the very first paint already has last session's values
+    // for every query tagged in @/lib/query-persist.
+    installQueryPersistence(client)
+    return client
+  })
   const [paraHostLoaded, setParaHostLoaded] = useState(false)
   const [paraRequestId, setParaRequestId] = useState(0)
   const [paraModalOpen, setParaModalOpen] = useState(false)
