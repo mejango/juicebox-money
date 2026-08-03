@@ -1027,7 +1027,7 @@ export function MarketSection({
             <dl className="mt-5 space-y-1.5 border-t border-smoke-100 pt-3 text-sm">
               {market.issuance && market.issuance > 0 ? (
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-smoke-700">Issuance price (ceiling)</dt>
+                  <dt className="text-smoke-700">Current issuance price</dt>
                   <dd className="font-medium text-ink">
                     {formatPrice(market.issuance)} {pairSym}
                   </dd>
@@ -1035,7 +1035,7 @@ export function MarketSection({
               ) : null}
               {floor && floor > 0 ? (
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-smoke-700">Cash-out price (floor)</dt>
+                  <dt className="text-smoke-700">Current cash out price</dt>
                   <dd className="font-medium text-ink">
                     {formatPrice(floor)} {pairSym}
                   </dd>
