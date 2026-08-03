@@ -685,6 +685,84 @@ export type BsParticipant = {
   volumeUsd: string
 }
 
+export type BsProjectPayer = {
+  chainId: number
+  projectId: number
+  version: number
+  address: string
+  defaultAddToBalance: boolean
+  defaultBeneficiary: string
+  owner: string
+  paymentsCount: number
+  addToBalanceCount: number
+  totalFacilitated: string
+  totalFacilitatedUsd: string
+  lastUsedAt: number | null
+  createdAt: number
+}
+
+const PROJECT_PAYERS_QUERY = `query ProjectPayers(
+  $where: projectPayerFilter!
+  $limit: Int!
+  $offset: Int!
+) {
+  projectPayers(
+    where: $where
+    orderBy: "totalFacilitatedUsd"
+    orderDirection: "desc"
+    limit: $limit
+    offset: $offset
+  ) {
+    totalCount
+    items {
+      chainId projectId version address defaultAddToBalance defaultBeneficiary
+      owner paymentsCount addToBalanceCount totalFacilitated
+      totalFacilitatedUsd lastUsedAt createdAt
+    }
+  }
+}`
+
+/** Indexed payer addresses for exact V6 deployments, defense-in-depth
+ * filtered after every bounded Bendystraw query. */
+export async function getProjectPayers(
+  deployments: readonly [number, number][],
+): Promise<BsProjectPayer[]> {
+  const refs = deployments.map(([chainId, projectId]) => ({
+    chainId,
+    projectId,
+    version: 6,
+  }))
+  const wheres = projectRefsWheres(refs)
+  if (!wheres.length) return []
+  const pages = await Promise.all(
+    wheres.map(where =>
+      getPagedItems<BsProjectPayer>(
+        PROJECT_PAYERS_QUERY,
+        'projectPayers',
+        { where },
+        {
+          pageSize: 250,
+          max: Number.POSITIVE_INFINITY,
+          network: bendystrawNetworkHint(refs[0]?.chainId),
+          policy: 'live',
+        },
+      ),
+    ),
+  )
+  return pages
+    .flatMap(page => page.items)
+    .filter(row => matchesProjectRef(row, refs))
+    .sort((a, b) => {
+      try {
+        const left = BigInt(String(a.totalFacilitatedUsd).split('.')[0])
+        const right = BigInt(String(b.totalFacilitatedUsd).split('.')[0])
+        return left === right ? 0 : left > right ? -1 : 1
+      } catch {
+        return 0
+      }
+    })
+}
+
 /**
  * A project's token holders, largest balances first (website/ parity:
  * BENDYSTRAW_PARTICIPANTS queries). Queried by sucker group when one exists

@@ -277,8 +277,8 @@ function EditRow({
 }) {
   return (
     <div className="py-4 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-ink">{title}</p>
             {differs ? (
@@ -294,7 +294,7 @@ function EditRow({
         <button
           type="button"
           onClick={onToggle}
-          className="btn-secondary min-h-[36px] shrink-0 px-3 text-xs"
+          className="btn-secondary mt-3 min-h-[36px] px-3 text-xs"
         >
           {open ? 'Close' : actionLabel}
         </button>

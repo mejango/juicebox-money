@@ -662,16 +662,18 @@ function PermissionsAcrossChains({
                   return (
                     <div
                       key={id}
-                      className="grid gap-1 sm:grid-cols-[13rem_1fr_auto] sm:gap-3"
+                      className="grid gap-1 sm:grid-cols-[1fr_auto] sm:gap-3"
                     >
-                      <span className="text-sm font-medium text-ink">
-                        {permission.label}
-                        <span className="ml-1 font-mono text-[10px] text-smoke-500">
-                          #{id}
+                      <span>
+                        <span className="block text-sm font-medium text-ink">
+                          {permission.label}
+                          <span className="ml-1 font-mono text-[10px] text-smoke-500">
+                            #{id}
+                          </span>
                         </span>
-                      </span>
-                      <span className="text-xs leading-relaxed text-smoke-700">
-                        {permission.description}
+                        <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                          {permission.description}
+                        </span>
                       </span>
                       <span
                         className="flex items-center gap-1"

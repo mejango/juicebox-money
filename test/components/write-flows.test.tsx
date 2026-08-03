@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,6 +27,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next/link', () => ({
   default: ({ href, children, ...props }: Record<string, unknown>) =>
     createElement('a', { href, ...props }, children as never),
+}))
+vi.mock('@/components/ui/ModalShell', () => ({
+  ModalShell: ({ children }: { children: ReactNode }) =>
+    createElement('div', null, children),
+  ModalDialog: ({ children }: { children: ReactNode }) =>
+    createElement('div', null, children),
 }))
 vi.mock('wagmi', () => ({
   usePublicClient: () =>
@@ -366,6 +372,9 @@ describe('project payer write flow', () => {
         }),
       )
     })
+    await act(async () =>
+      buttonWith(renderer, 'Create payer address').props.onClick(),
+    )
 
     await act(async () => {
       renderer.root.findByType('select').props.onChange({
@@ -400,6 +409,9 @@ describe('project payer write flow', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
     })
+    await act(async () =>
+      buttonWith(renderer, 'Create payer address').props.onClick(),
+    )
 
     await act(async () =>
       buttonWith(renderer, 'Sign in to continue').props.onClick(),
@@ -414,6 +426,9 @@ describe('project payer write flow', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
     })
+    await act(async () =>
+      buttonWith(renderer, 'Create payer address').props.onClick(),
+    )
     await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
 
     mocks.address = '0x3333333333333333333333333333333333333333'

@@ -5,17 +5,22 @@ import {
   buildDeployProjectPayerTx,
   projectPayerFromDeployLogs,
 } from '@bananapus/nana-sdk-core/v6'
+import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { zeroAddress, type Address, type PublicClient } from 'viem'
+import { isAddress, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField } from '@/components/create/AddressField'
+import { AddressLink } from '@/components/ui/AddressLink'
+import { ModalShell } from '@/components/ui/ModalShell'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
 import { draftFileName } from '@/lib/draft'
 import { truncateAddress } from '@/lib/format'
+import { getProjectPayers, type BsProjectPayer } from '@/lib/bendystraw'
 import {
   buildProjectDraftExport,
   type ExportProjectProfile,
@@ -198,6 +203,21 @@ function PayerAddressCard({
   const [adminInput, setAdminInput] = useState('')
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedDeploy | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
+
+  const {
+    data: payerRows = [],
+    isLoading: payersLoading,
+    isError: payersError,
+    isFetching: payersFetching,
+    refetch: refetchPayers,
+  } = useQuery({
+    queryKey: ['projectPayers', ...chains.flat()],
+    queryFn: () => getProjectPayers(chains),
+    enabled: chains.length > 0,
+    staleTime: 30_000,
+    retry: 1,
+  })
 
   const chainMeta = JB_CHAINS[chainId]
   const etherscanHost = chainMeta?.etherscanHostname
@@ -206,6 +226,11 @@ function PayerAddressCard({
     : null
 
   const busy = tx.busy
+
+  useEffect(() => {
+    if (!tx.receipt) return
+    void refetchPayers()
+  }, [tx.receipt, refetchPayers])
 
   // Editing any input invalidates the reviewed args.
   const invalidate = () => {
@@ -298,16 +323,31 @@ function PayerAddressCard({
 
   return (
     <div className="card p-5">
-      <div>
-        <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Get a dedicated address that pays this project whenever someone sends
-          ETH to it — no app needed. Sending other tokens to it directly
-          doesn&apos;t work. Anyone can create any number of payer addresses.
-        </p>
-        {tx.phase !== 'success' ? (
+      <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
+      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+        Get a dedicated address that pays this project whenever someone sends
+        ETH to it — no app needed. Sending other tokens to it directly
+        doesn&apos;t work. Anyone can create any number of payer addresses.
+      </p>
+      <button
+        type="button"
+        onClick={() => setDialogOpen(true)}
+        className="btn-secondary mt-4 min-h-[40px] px-4 text-sm"
+      >
+        Create payer address
+      </button>
+
+      {dialogOpen ? (
+        <ModalShell
+          title="Create payer address"
+          subtitle={`Deploy a dedicated address for ${chainName(chainId)}.`}
+          onClose={() => setDialogOpen(false)}
+          busy={busy}
+        >
+          <div className="max-h-[min(72vh,46rem)] overflow-y-auto px-5 py-5 sm:px-6">
+            {tx.phase !== 'success' ? (
           <>
-            <label className="mt-4 block max-w-sm">
+            <label className="block max-w-sm">
               <span className="field-label">Behavior</span>
               <select
                 value={addToBalance ? 'balance' : 'pay'}
@@ -328,8 +368,7 @@ function PayerAddressCard({
                 : 'Pays the project and mints its tokens to the beneficiary.'}
             </p>
           </>
-        ) : null}
-      </div>
+            ) : null}
       {tx.phase === 'success' ? (
         <PayerDeployedPanel
           payer={deployedPayer}
@@ -500,7 +539,112 @@ function PayerAddressCard({
           .
         </p>
       ) : null}
+          </div>
+        </ModalShell>
+      ) : null}
+
+      <PayerAddressList
+        rows={payerRows}
+        isLoading={payersLoading}
+        isError={payersError}
+        isFetching={payersFetching}
+      />
     </div>
+  )
+}
+
+function payerUsd(value: string): string {
+  try {
+    const raw = BigInt(value.split('.')[0])
+    const cents = (raw + 5_000_000_000_000_000n) / 10_000_000_000_000_000n
+    const dollars = cents / 100n
+    const remainder = (cents % 100n).toString().padStart(2, '0')
+    return `$${dollars.toLocaleString('en-US')}.${remainder}`
+  } catch {
+    return '$0.00'
+  }
+}
+
+function payerCounts(row: BsProjectPayer): string {
+  const parts: string[] = []
+  if (row.paymentsCount) parts.push(`${row.paymentsCount} pay`)
+  if (row.addToBalanceCount) {
+    parts.push(`${row.addToBalanceCount} balance`)
+  }
+  return parts.length ? parts.join(' | ') : 'No payments yet'
+}
+
+function PayerAddressList({
+  rows,
+  isLoading,
+  isError,
+  isFetching,
+}: {
+  rows: BsProjectPayer[]
+  isLoading: boolean
+  isError: boolean
+  isFetching: boolean
+}) {
+  return (
+    <section className="mt-6 border-t border-smoke-200 pt-5">
+      <h3 className="text-sm font-semibold text-ink">
+        Deployed payer addresses
+      </h3>
+      <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+        Reuse an existing address or review how much each one has facilitated.
+      </p>
+      {isFetching && !isLoading ? (
+        <p className="mt-2 text-xs text-smoke-700" role="status">
+          Refreshing indexed payer addresses…
+        </p>
+      ) : null}
+      {isLoading ? (
+        <p className="mt-4 text-sm text-smoke-700">Loading payer addresses…</p>
+      ) : isError ? (
+        <p className="mt-4 text-sm text-smoke-700">
+          Could not load payer addresses from Bendystraw.
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="mt-4 text-sm text-smoke-700">
+          No deployed payer addresses indexed yet.
+        </p>
+      ) : (
+        <div className="mt-4 divide-y divide-smoke-200 border-y border-smoke-200">
+          {rows.map(row => (
+            <div
+              key={`${row.chainId}-${row.address}`}
+              className="grid gap-3 py-3 text-sm sm:grid-cols-[8rem_1fr_10rem_8rem] sm:items-start"
+            >
+              <div className="flex items-center gap-2">
+                <ChainIcon chainId={row.chainId} size={16} />
+                <span>{chainName(row.chainId)}</span>
+              </div>
+              <div className="min-w-0 font-mono text-xs">
+                {isAddress(row.address) ? (
+                  <AddressLink
+                    address={row.address}
+                    chainId={row.chainId}
+                    className="text-ink"
+                  />
+                ) : (
+                  <span className="break-all">{row.address}</span>
+                )}
+              </div>
+              <div>
+                <p>{row.defaultAddToBalance ? 'Add to balance' : 'Pay'}</p>
+                <p className="mt-0.5 text-xs text-smoke-700">
+                  {payerCounts(row)}
+                </p>
+              </div>
+              <div className="sm:text-right">
+                <p>{payerUsd(row.totalFacilitatedUsd)}</p>
+                <p className="mt-0.5 text-xs text-smoke-700">Facilitated</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 

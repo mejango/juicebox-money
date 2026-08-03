@@ -157,8 +157,8 @@ function PowerRow({
 
   return (
     <li className="py-4 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
+      <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-ink">{power.label}</p>
             {allEnabled ? (
@@ -200,7 +200,7 @@ function PowerRow({
           <button
             type="button"
             onClick={onToggle}
-            className="min-h-[36px] shrink-0 rounded-xl border border-red-300 px-3 text-xs font-medium text-red-700 transition-colors hover:bg-red-50"
+            className="mt-3 min-h-[36px] rounded-xl border border-red-300 px-3 text-xs font-medium text-red-700 transition-colors hover:bg-red-50"
           >
             {open ? 'Close' : power.actionLabel}
           </button>
