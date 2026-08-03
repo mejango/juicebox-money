@@ -1193,7 +1193,12 @@ function LiquidityProviders({
                     className="grid grid-cols-[minmax(150px,1.5fr)_90px_minmax(90px,1fr)_minmax(90px,1fr)] items-center gap-3 px-4 py-3 text-sm"
                   >
                     <span className="min-w-0">
-                      <AddressLink address={owner.address} chainId={chainId} />
+                      <AddressLink
+                        address={owner.address}
+                        chainId={chainId}
+                        className="block truncate text-ink"
+                        title={owner.address}
+                      />
                       {owner.positions > 1 ? (
                         <span className="block text-[11px] text-smoke-500">
                           {owner.positions} positions

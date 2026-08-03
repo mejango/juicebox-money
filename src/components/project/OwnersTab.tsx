@@ -1160,6 +1160,8 @@ function AllHoldersCard({
                           <AddressLink
                             address={holder.address}
                             host={etherscanHost}
+                            className="block truncate text-ink"
+                            title={holder.address}
                           />
                         </span>
                         <span className="font-medium text-ink">
