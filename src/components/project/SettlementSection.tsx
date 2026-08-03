@@ -51,6 +51,7 @@ import {
 import { isKnownController } from '@/lib/manage'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -186,6 +187,7 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settlement-composition', chains],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     queryFn: async (): Promise<ChainComposition[]> => {
@@ -346,6 +348,7 @@ function BridgesCard({ chains }: { chains: [number, number][] }) {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settlement-bridges', chains],
+    meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
     queryFn: async (): Promise<BridgeEdge[]> => {
@@ -467,6 +470,7 @@ function QueuedMovementsCard({
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['settlement-movements', chainId, projectId],
+    meta: PERSIST,
     staleTime: 20_000,
     retry: 1,
     refetchInterval: 45_000,

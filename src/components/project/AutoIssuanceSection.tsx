@@ -24,6 +24,7 @@ import {
   formatTokenAmount,
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 /** One auto-issuance allocation on a specific chain, deduped by
  *  (chain, stageId, beneficiary). */
@@ -67,6 +68,7 @@ export function AutoIssuanceSection({
   // everywhere (omnichain ERC-20), so resolve it once on the primary chain.
   const { data: resolvedSym } = useQuery({
     queryKey: ['autoIssueSymbol', chains[0]?.join(':')],
+    meta: PERSIST,
     enabled: !!primaryClient && chains.length > 0,
     staleTime: 5 * 60_000,
     retry: 1,
@@ -85,8 +87,9 @@ export function AutoIssuanceSection({
   })
   const sym = resolvedSym || (tokenSymbol !== 'tokens' ? tokenSymbol : '')
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['autoIssuancesAll', chains.map(c => c.join(':')).join(',')],
+    meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
     queryFn: async (): Promise<Row[]> => {
@@ -161,7 +164,10 @@ export function AutoIssuanceSection({
           This revnet has no auto-issuances configured.
         </p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
+        <div
+          className={`mt-3 overflow-x-auto${isFetching ? ' revalidating' : ''}`}
+          aria-busy={isFetching || undefined}
+        >
           <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="text-left text-xs text-smoke-500">
@@ -206,6 +212,7 @@ function AutoIssueRow({
   // matched by stored stageId against the chain's queued rulesets.
   const { data: stage } = useQuery({
     queryKey: ['autoIssueStage', chainId, projectId, row.stageId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
     retry: 1,

@@ -65,6 +65,7 @@ import {
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
+import { PERSIST } from '@/lib/query-persist'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
@@ -198,6 +199,7 @@ export function ShopTab({
     isError,
   } = useQuery({
     queryKey: ['shop721', chainId, projectId, isRevnet],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
@@ -239,6 +241,7 @@ export function ShopTab({
   // render immediately and hydrate as this lands.
   const { data: mediaById } = useQuery({
     queryKey: ['shop721Media', chainId, shop?.hook],
+    meta: PERSIST,
     enabled: !!shop && shop.tiers.length > 0,
     staleTime: Infinity,
     queryFn: async () => {
@@ -298,6 +301,7 @@ export function ShopTab({
     isLoading: writeTargetsLoading,
   } = useQuery({
     queryKey: ['shop721WriteTargets', chains, isRevnet],
+    meta: PERSIST,
     enabled: addItemsOpen && !!shop,
     staleTime: 30_000,
     retry: false,
@@ -678,6 +682,7 @@ function ShopCustomers({
 
   const purchases = useQuery({
     queryKey: ['shop-purchases', projectKey],
+    meta: PERSIST,
     staleTime: 15_000,
     retry: 1,
     queryFn: () => fetchShopRows<BsShopPurchase>(projectKey),
@@ -1474,6 +1479,7 @@ function TierDetailModal({
 
   const supply = useQuery({
     queryKey: ['shopTierSupply', chains, isRevnet, tier.id],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () =>

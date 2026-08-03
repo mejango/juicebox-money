@@ -52,6 +52,7 @@ import {
   buildUseAllowanceRequest,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -405,6 +406,7 @@ export function FundsTab({
     refetch,
   } = useQuery({
     queryKey: ['fundsMatrix', chainPairs, chainId, projectId],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () => {

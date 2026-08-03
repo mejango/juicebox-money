@@ -36,6 +36,16 @@ export type PersistTier = 'immutable' | 'revalidate'
 
 export type PersistMeta = { persist?: PersistTier }
 
+/**
+ * Drop-in `meta` for a read whose value is worth showing from the last session
+ * while it revalidates. Pair it with `Revalidating` so the stale value reads as
+ * unconfirmed rather than current.
+ */
+export const PERSIST: PersistMeta = { persist: 'revalidate' }
+
+/** Drop-in `meta` for a read that provably cannot change. */
+export const PERSIST_IMMUTABLE: PersistMeta = { persist: 'immutable' }
+
 function tierOf(query: Query): PersistTier | undefined {
   return (query.meta as PersistMeta | undefined)?.persist
 }

@@ -26,6 +26,7 @@ import {
   truncateAddress,
 } from '@/lib/format'
 import { IssuanceLadder } from './IssuanceLadder'
+import { PERSIST } from '@/lib/query-persist'
 
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
@@ -61,6 +62,7 @@ export function TermsTab({
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['termsTab', chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,

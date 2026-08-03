@@ -75,6 +75,7 @@ import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
 import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 /**
  * The Owners (revnet) / Tokens (custom) tab (website/ parity:
@@ -1045,6 +1046,7 @@ function AllHoldersCard({
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['participants', suckerGroupId ?? `${chainId}:${projectId}`],
+    meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
     queryFn: async () => {
@@ -1311,6 +1313,7 @@ function ReservedCard({
     isError: rulesetError,
   } = useQuery({
     queryKey: ['splitStages', chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
@@ -1534,6 +1537,7 @@ function ChainSplitsBlock({
     isError: chainRowsError,
   } = useQuery({
     queryKey: ['chainStageSplits', chainId, projectId, stageIndex, isCurrentStage],
+    meta: PERSIST,
     enabled: homeRows === null && !!publicClient,
     staleTime: 60_000,
     retry: 1,

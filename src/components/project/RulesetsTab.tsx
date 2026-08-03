@@ -44,6 +44,7 @@ import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { chainName } from "@/lib/urn";
 import { wagmiConfig } from "@/providers/Providers";
+import { PERSIST } from '@/lib/query-persist';
 
 /** Fund-access amounts at/above this are stored as "no limit". */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -691,6 +692,7 @@ export function RulesetsTab({
     isError,
   } = useQuery({
     queryKey: ["rulesetsTab", chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
     retry: 1,
@@ -710,6 +712,7 @@ export function RulesetsTab({
 
   const { data: contexts } = useQuery({
     queryKey: ["rulesetsTabContexts", chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
     retry: 1,
@@ -729,6 +732,7 @@ export function RulesetsTab({
 
   const { data: projectTokenSymbol } = useQuery({
     queryKey: ["rulesetsTabTokenSymbol", chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
     retry: 1,
@@ -749,6 +753,7 @@ export function RulesetsTab({
 
   const { data: chainRulesets, isLoading: chainRulesetsLoading } = useQuery({
     queryKey: ["rulesetsTabCrossChain", projectChainsKey],
+    meta: PERSIST,
     enabled: projectChains.length > 1,
     staleTime: 60_000,
     retry: 1,

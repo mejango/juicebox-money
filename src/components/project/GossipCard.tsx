@@ -43,6 +43,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -392,8 +393,9 @@ export function GossipCard({
     })
   }, [])
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['gossip', chains],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     enabled: chains.length >= 2,
@@ -549,7 +551,10 @@ export function GossipCard({
           No linked chains to sync from.
         </p>
       ) : (
-        <div className="space-y-6">
+        <div
+          className={`space-y-6${isFetching ? ' revalidating' : ''}`}
+          aria-busy={isFetching || undefined}
+        >
           {data.blocks
             .filter(b => b.peers.length)
             .map(block => (

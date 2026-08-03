@@ -30,6 +30,8 @@ import {
 } from '@/lib/format'
 import type { BsLoan } from '@/lib/loans-queries'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { PERSIST } from '@/lib/query-persist'
+import { Revalidating } from '@/components/ui/Revalidating'
 
 export function revLoansAddress(chainId: JBChainId): Address {
   return jbContractAddress['6']['REVLoans'][chainId] as Address
@@ -86,6 +88,7 @@ export function LoansSection({
   // The project token symbol, for the collateral copy.
   const { data: collateralToken } = useQuery({
     queryKey: ['projectToken', chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
     retry: 1,
@@ -130,8 +133,9 @@ function LoansTables({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['loans', chainId, projectId],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () => {
@@ -182,13 +186,15 @@ function LoansTables({
           ) : null}
         </div>
         {!isLoading && !isError && loans.length > 0 ? (
-          <LoanTable
-            chainId={chainId}
-            projectId={projectId}
-            loans={loans}
-            contexts={contexts}
-            collateralSymbol={collateralSymbol}
-          />
+          <Revalidating as="div" pending={isFetching}>
+            <LoanTable
+              chainId={chainId}
+              projectId={projectId}
+              loans={loans}
+              contexts={contexts}
+              collateralSymbol={collateralSymbol}
+            />
+          </Revalidating>
         ) : null}
       </div>
     </>

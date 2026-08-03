@@ -26,6 +26,7 @@ import {
   type MarketResult,
   type UserLpPosition,
 } from './MarketSection'
+import { PERSIST } from '@/lib/query-persist'
 
 type Pool = Extract<MarketResult, { status: 'pool' }>
 
@@ -58,6 +59,7 @@ export function useUserLpSummary(
 
   const market = useQuery({
     queryKey: ['market', chainId, projectId],
+    meta: PERSIST,
     enabled: !!client,
     staleTime: 60_000,
     retry: 1,

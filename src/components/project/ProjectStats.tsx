@@ -27,6 +27,8 @@ import type { BsParticipant } from '@/lib/bendystraw'
 import { formatTokenAmount, formatUsd18 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
+import { Revalidating } from '@/components/ui/Revalidating'
 
 type TreasuryRow = {
   chainId: number
@@ -138,15 +140,20 @@ function Stat({
   label,
   value,
   className = '',
+  pending = false,
 }: {
   label: string
   value: ReactNode
   className?: string
+  /** Restored from the last session and still confirming. */
+  pending?: boolean
 }) {
   return (
     <div data-project-stat className={`text-base sm:text-lg ${className}`}>
       <div>
-        <span className="font-agrandir font-medium text-ink">{value}</span>{" "}
+        <span className="font-agrandir font-medium text-ink">
+          <Revalidating pending={pending}>{value}</Revalidating>
+        </span>{" "}
         <span className="text-smoke-600">{label}</span>
       </div>
     </div>
@@ -160,6 +167,7 @@ export function HoverBreakdownStat({
   align = 'right',
   className = '',
   children,
+  pending = false,
 }: {
   label: string
   value: ReactNode
@@ -167,6 +175,8 @@ export function HoverBreakdownStat({
   align?: 'left' | 'right'
   className?: string
   children: ReactNode
+  /** Restored from the last session and still confirming. */
+  pending?: boolean
 }) {
   const cardRef = useRef<HTMLDivElement>(null)
   const [isMobile, setIsMobile] = useState(false)
@@ -217,7 +227,7 @@ export function HoverBreakdownStat({
             if (isMobile) setMobileOpen(open => !open)
           }}
         >
-          {value}
+          <Revalidating pending={pending}>{value}</Revalidating>
         </button>
         <span className="text-smoke-600"> {label}</span>
         <div
@@ -258,8 +268,9 @@ export function ProjectStats({
   const config = useConfig()
   const raisedTooltipId = useId()
   const treasuryTooltipId = useId()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching: treasuryFetching } = useQuery({
     queryKey: ['projectTreasuryUsd', chains],
+    meta: PERSIST,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () => {
@@ -290,6 +301,7 @@ export function ProjectStats({
     data: participantData,
     isLoading: holdersLoading,
     isError: holdersError,
+    isFetching: holdersFetching,
   } = useQuery({
     queryKey: [
       'participants',
@@ -405,6 +417,7 @@ export function ProjectStats({
             value={treasuryValue}
             tooltipId={treasuryTooltipId}
             className="border-l border-smoke-200 pl-4"
+            pending={treasuryFetching && !!data}
           >
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
               Balance breakdown
@@ -456,6 +469,7 @@ export function ProjectStats({
             label="balance"
             value={treasuryValue}
             className="border-l border-smoke-200 pl-4"
+            pending={treasuryFetching && !!data}
           />
         )}
       </div>
@@ -478,6 +492,7 @@ export function ProjectStats({
           }
           value={holderValue}
           className="border-l border-smoke-200 pl-4"
+          pending={holdersFetching && !!participantData}
         />
       </div>
     </div>

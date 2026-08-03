@@ -5,6 +5,7 @@ import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { PERSIST } from '@/lib/query-persist'
 
 /**
  * The project's OWN ERC-20 token address + symbol, resolved on-chain (NOT
@@ -15,6 +16,7 @@ export function useProjectTokenSymbol(chainId: JBChainId, projectId: number) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   return useQuery({
     queryKey: ['marketProjectSymbol', chainId, projectId],
+    meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 5 * 60_000,
     retry: 1,
