@@ -1122,8 +1122,7 @@ function LiquidityProviders({
 
   return (
     <div>
-      <span className="field-label">Liquidity providers</span>
-      <div className="mt-4 grid items-start gap-6 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]">
+      <div className="grid items-start gap-6 md:grid-cols-[minmax(200px,280px)_minmax(0,1fr)]">
         <div className="relative min-w-0 text-center">
           <svg
             viewBox="0 0 240 218"
