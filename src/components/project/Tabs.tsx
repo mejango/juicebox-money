@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
+import {
+  ProjectOverflowIcon,
+  ProjectTabIcon,
+} from '@/components/project/ProjectTabIcon'
+
 export type TabDef = {
   /** Exact label shown on the tab button. */
   label: string
@@ -170,7 +175,7 @@ export function ProjectTabs({
   }
 
   const buttonClasses = (selected: boolean) =>
-    `min-h-[44px] shrink-0 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors ${
+    `inline-flex min-h-[44px] shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3.5 font-agrandir text-sm font-medium transition-colors ${
       selected
         ? 'border-ink text-ink'
         : 'border-transparent text-smoke-500 hover:text-ink'
@@ -217,7 +222,8 @@ export function ProjectTabs({
                   onClick={() => activate(slug)}
                   className={buttonClasses(selected)}
                 >
-                  {tab.label}
+                  <ProjectTabIcon label={tab.label} />
+                  <span>{tab.label}</span>
                 </button>
               )
             })}
@@ -294,7 +300,7 @@ function ProjectOverflowMenu({
             : 'border-transparent text-smoke-500 hover:text-ink'
         }`}
       >
-        <span aria-hidden>⋮</span>
+        <ProjectOverflowIcon />
       </button>
       {open ? (
         <div
@@ -320,13 +326,14 @@ function ProjectOverflowMenu({
                       ?.focus(),
                   )
                 }}
-                className={`block min-h-[40px] w-full px-4 text-left text-sm transition-colors ${
+                className={`flex min-h-[40px] w-full items-center gap-2 px-4 text-left text-sm transition-colors ${
                   selected
                     ? 'bg-split-50 font-medium text-ink'
                     : 'text-smoke-700 hover:bg-smoke-75 hover:text-ink'
                 }`}
               >
-                {tab.label}
+                <ProjectTabIcon label={tab.label} />
+                <span>{tab.label}</span>
               </button>
             )
           })}

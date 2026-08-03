@@ -312,26 +312,32 @@ async function exerciseProjectSurfaces(
   const tabs = [
     {
       label: 'Overview',
+      icon: 'globe',
       ready: () => page.getByText('Details', { exact: true }),
     },
     {
       label: 'Terms',
+      icon: 'stages',
       ready: () => page.getByText('Token issuance', { exact: true }),
     },
     {
       label: 'Owners',
+      icon: 'stack',
       ready: () => page.getByText('Sign in to see your position.', { exact: true }),
     },
     {
       label: 'Shop',
+      icon: 'shop',
       ready: () => page.getByText('No store yet.', { exact: false }),
     },
     {
       label: 'Extras',
+      icon: 'extras',
       ready: () => page.getByRole('heading', { level: 2, name: 'Payer address' }),
     },
     {
       label: 'Operator',
+      icon: 'operator',
       ready: () => page.getByText('Everyday owner/operator changes.', { exact: false }),
     },
   ] as const
@@ -345,16 +351,25 @@ async function exerciseProjectSurfaces(
           exact: true,
         })
     if (overflow) {
+      await expect(
+        button.locator('[data-project-tab-icon="more"]'),
+      ).toHaveCount(1)
       await button.click()
-      await page
+      const menuItem = page
         .getByRole('menu', { name: 'More project sections' })
         .getByRole('menuitem', { name: tab.label, exact: true })
-        .click()
+      await expect(
+        menuItem.locator(`[data-project-tab-icon="${tab.icon}"]`),
+      ).toHaveCount(1)
+      await menuItem.click()
       await expect(button).toHaveAttribute(
         'aria-label',
         `More project sections, current: ${tab.label}`,
       )
     } else {
+      await expect(
+        button.locator(`[data-project-tab-icon="${tab.icon}"]`),
+      ).toHaveCount(1)
       await button.click()
       await expect(button).toHaveAttribute('aria-selected', 'true')
     }

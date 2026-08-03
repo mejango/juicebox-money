@@ -345,8 +345,8 @@ export function ShopTab({
     )
   }
 
-  const collectionName = collectionMeta?.[0]?.result
-  const collectionSymbol = collectionMeta?.[1]?.result
+  const collectionName = String(collectionMeta?.[0]?.result ?? '').trim()
+  const collectionSymbol = String(collectionMeta?.[1]?.result ?? '').trim()
 
   const addItemsButton = (
     <button
@@ -428,7 +428,7 @@ export function ShopTab({
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-smoke-700">Name</dt>
             <dd className="font-medium text-ink">
-              {collectionName ?? '—'}
+              {collectionName || 'Not yet named'}
               {collectionSymbol ? (
                 <span className="ml-1.5 font-normal text-smoke-700">
                   ({collectionSymbol})
@@ -445,6 +445,10 @@ export function ShopTab({
                 className="text-ink"
               />
             </dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-smoke-700">Currency</dt>
+            <dd className="font-medium text-ink">{shop.pricing.symbol}</dd>
           </div>
         </dl>
       </div>

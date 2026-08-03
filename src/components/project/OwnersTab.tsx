@@ -351,7 +351,7 @@ function YouCard({
             <ModalShell
               title={actionTitle}
               onClose={() => setAction(null)}
-              maxWidth={action === 'liquidity' ? 'max-w-3xl' : 'max-w-xl'}
+              maxWidth="max-w-xl"
             >
               {action === 'cashOut' ? (
                 <CashOutPanel

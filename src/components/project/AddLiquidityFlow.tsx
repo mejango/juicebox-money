@@ -29,6 +29,7 @@ import {
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -944,6 +945,16 @@ function AddLiquidityForm({
         </span>
         .
       </p>
+
+      <LiquidityRangePreview
+        floor={floor}
+        ceiling={ceiling}
+        current={poolP}
+        minimum={range.pa}
+        maximum={range.pb}
+        pairSymbol={pairSym}
+        tokenSymbol={sym}
+      />
 
       {/* Price range */}
       <div className="mt-3">
