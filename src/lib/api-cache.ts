@@ -17,6 +17,14 @@
 export const PUBLIC_READ_CACHE_CONTROL =
   'public, s-maxage=60, stale-while-revalidate=86400'
 
+/** Frequently-polled public data such as activity and market prices. */
+export const LIVE_PUBLIC_READ_CACHE_CONTROL =
+  'public, s-maxage=15, stale-while-revalidate=60'
+
 export const publicReadHeaders = {
   'Cache-Control': PUBLIC_READ_CACHE_CONTROL,
+} as const
+
+export const livePublicReadHeaders = {
+  'Cache-Control': LIVE_PUBLIC_READ_CACHE_CONTROL,
 } as const

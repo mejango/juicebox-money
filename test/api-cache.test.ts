@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { PUBLIC_READ_CACHE_CONTROL } from '@/lib/api-cache'
+import {
+  LIVE_PUBLIC_READ_CACHE_CONTROL,
+  PUBLIC_READ_CACHE_CONTROL,
+} from '@/lib/api-cache'
 
 /**
  * These endpoints all read the indexer, which routinely takes seconds. The
@@ -25,10 +28,13 @@ describe('public read cache headers', () => {
     expect(PUBLIC_READ_CACHE_CONTROL).toContain('public')
     expect(PUBLIC_READ_CACHE_CONTROL).toContain('s-maxage=')
     expect(PUBLIC_READ_CACHE_CONTROL).toContain('stale-while-revalidate=')
+    expect(LIVE_PUBLIC_READ_CACHE_CONTROL).toContain('s-maxage=15')
   })
 
   it.each(CACHED_ROUTES)('%s sends the shared cache header', route => {
-    expect(readFileSync(route, 'utf8')).toContain('publicReadHeaders')
+    expect(readFileSync(route, 'utf8')).toMatch(
+      /(?:publicReadHeaders|livePublicReadHeaders)/,
+    )
   })
 
   it.each(UNCACHED_ROUTES)('%s is never shared-cached', route => {
@@ -39,7 +45,7 @@ describe('public read cache headers', () => {
     const source = readFileSync(route, 'utf8')
     for (const line of source.split('\n')) {
       if (line.includes('status: 4') || line.includes('status: 5')) {
-        expect(line).not.toContain('publicReadHeaders')
+        expect(line).not.toMatch(/(?:publicReadHeaders|livePublicReadHeaders)/)
       }
     }
   })

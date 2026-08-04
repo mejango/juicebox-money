@@ -45,6 +45,8 @@ import { ammSeriesFrom, type PricePoint } from '@/lib/price-series'
 import { cachedQuery, immutableQuery } from '@/lib/query-persist'
 import { tokenSymbol } from '@/lib/token-symbol'
 
+const PRICE_REFRESH_MS = 15_000
+
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
  * issuance price ceiling over time. Fetches the stages client-side (the
@@ -129,6 +131,8 @@ export function RevnetPriceCard({
     queryKey: ['revnetPriceReferences', chainId, projectId, chains],
     enabled: !!publicClient,
     staleTime: 60_000,
+    refetchInterval: PRICE_REFRESH_MS,
+    refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async () => {
       const [market, floor] = await Promise.all([
@@ -270,6 +274,8 @@ export function RevnetPriceCard({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
     staleTime: 30_000,
+    refetchInterval: PRICE_REFRESH_MS,
+    refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (): Promise<BsRevnetPriceHistory> => {
       // chainId is an endpoint-routing hint (testnet groups live on the

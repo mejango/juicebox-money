@@ -1273,7 +1273,7 @@ export async function getRevnetPriceHistory(
     }`,
     'suckerGroupMoments',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, network },
+    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
   )
 
   const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
@@ -1294,7 +1294,7 @@ export async function getRevnetPriceHistory(
     }`,
     'swapEvents',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, network },
+    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
   )
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(
@@ -1315,7 +1315,7 @@ export async function getRevnetPriceHistory(
     }`,
     'buybackPoolEvents',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, network },
+    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
   )
 
   const marketPromise = Promise.all([enhancedSwaps(), pools()])
@@ -1341,7 +1341,7 @@ export async function getRevnetPriceHistory(
         }`,
         'swapEvents',
         { suckerGroupId },
-        { max: Number.POSITIVE_INFINITY, network },
+        { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
       )
       return {
         swaps,

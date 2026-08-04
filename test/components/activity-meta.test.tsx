@@ -18,6 +18,7 @@ vi.mock('@/hooks/useProjectTokenUnit', () => ({
 
 import {
   ActivityList,
+  activityCategory,
   activityParts,
   isProjectFeedActivity,
   mergeActivityEvents,
@@ -113,6 +114,21 @@ describe('project activity filtering', () => {
     expect(list.props.className).toContain('max-h-')
     expect(list.props.className).not.toMatch(/(?:^|:)h-\[/)
     act(() => renderer.unmount())
+  })
+
+  it('groups indexed rows into the same human filter categories as Juicescan', () => {
+    expect(activityCategory({ swapEvent: {} } as BsActivityEvent)).toBe(
+      'buybackSwap',
+    )
+    expect(activityCategory({ addToBalanceEvent: {} } as BsActivityEvent)).toBe(
+      'addToBalance',
+    )
+    expect(activityCategory({ repayLoanEvent: {} } as BsActivityEvent)).toBe(
+      'repayLoan',
+    )
+    expect(activityCategory({ projectTransferEvent: {} } as BsActivityEvent)).toBe(
+      'ownershipTransfer',
+    )
   })
 })
 

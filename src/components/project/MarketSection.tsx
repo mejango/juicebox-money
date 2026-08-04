@@ -928,6 +928,8 @@ export function MarketSection({
       queryKey: ['market', chainId, projectId],
       enabled: !!publicClient,
       staleTime: 60_000,
+      refetchInterval: 15_000,
+      refetchOnWindowFocus: true,
       retry: 1,
       queryFn: () =>
         resolveMarket(publicClient!, chainId, projectId, nativeSymbol),

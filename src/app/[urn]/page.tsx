@@ -471,9 +471,6 @@ export default async function ProjectPage({
           }
           activity={
             <section className="min-[801px]:mt-8">
-              <h2 className="mb-3 hidden font-agrandir text-xl font-medium min-[801px]:block">
-                Activity
-              </h2>
               <ActivityList
                 events={activity}
                 error={activityResult.error}

@@ -322,7 +322,7 @@ export function MarketPriceChartSkeleton() {
           <Skeleton className="mt-2 h-3 w-32 rounded" />
         </div>
         <div className="flex gap-1">
-          {['1D', '7D', '30D', '3M', '1Y', 'All'].map(range => (
+          {['1H', '6H', '1D', '7D', '30D', '3M', '1Y', 'All'].map(range => (
             <Skeleton key={range} className="h-11 w-11 rounded-lg" />
           ))}
         </div>

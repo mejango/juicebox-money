@@ -16,6 +16,7 @@ import { ChartRangeButton } from './StepChartBase'
  */
 
 const DAY = 86_400
+const PRICE_REFRESH_MS = 15_000
 const LINE = '#BD4513'
 
 const RANGES = [
@@ -70,6 +71,8 @@ export function MarketPriceChart({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
     staleTime: 30_000,
+    refetchInterval: PRICE_REFRESH_MS,
+    refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (): Promise<BsRevnetPriceHistory> => {
       const response = await fetch(
@@ -86,7 +89,7 @@ export function MarketPriceChart({
     [history, chainId, poolId, pairDecimals],
   )
 
-  const now = useMemo(() => Math.floor(Date.now() / 1000), [])
+  const now = Math.floor(Date.now() / 1000)
   const first = observed[0]?.timestamp ?? now
   const t0 = Math.min(
     now - 1,

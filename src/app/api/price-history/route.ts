@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
-import { publicReadHeaders } from '@/lib/api-cache'
+import { livePublicReadHeaders } from '@/lib/api-cache'
 import { getRevnetPriceHistory } from '@/lib/bendystraw'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -20,7 +22,7 @@ export async function GET(request: Request) {
       await getRevnetPriceHistory(suckerGroupId, {
         chainId: Number.isInteger(chainId) && chainId > 0 ? chainId : undefined,
       }),
-      { headers: publicReadHeaders },
+      { headers: livePublicReadHeaders },
     )
   } catch {
     return NextResponse.json(

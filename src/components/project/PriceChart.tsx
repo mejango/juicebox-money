@@ -46,6 +46,8 @@ const AMM_COLOR = '#BD4513'
 const DAY = 86_400
 
 const PRICE_RANGES = [
+  { label: '1H', seconds: 60 * 60 },
+  { label: '6H', seconds: 6 * 60 * 60 },
   { label: '1D', seconds: DAY },
   { label: '7D', seconds: 7 * DAY },
   { label: '30D', seconds: 30 * DAY },
@@ -205,7 +207,7 @@ export function PriceChart({
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
 
-  const now = useMemo(() => Math.floor(Date.now() / 1000), [])
+  const now = Math.floor(Date.now() / 1000)
   const resolved = useMemo(() => resolveStages(stages), [stages])
   const firstStart = Math.min(resolved[0]?.start ?? now, now)
   const requestedStart =

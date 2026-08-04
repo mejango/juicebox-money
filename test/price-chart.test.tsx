@@ -59,6 +59,8 @@ describe('price history inspection', () => {
 
     const chart = container.querySelector('svg')
     expect(chart).not.toBeNull()
+    expect(container.textContent).toContain('1H')
+    expect(container.textContent).toContain('6H')
     Object.defineProperty(chart, 'getBoundingClientRect', {
       value: () => ({
         left: 0,

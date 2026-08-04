@@ -24,6 +24,132 @@ import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
 
 const ACTIVITY_POLL_MS = 15_000
 
+export type ActivityCategory =
+  | 'pay'
+  | 'cashOut'
+  | 'tokenMint'
+  | 'payout'
+  | 'reserved'
+  | 'autoIssue'
+  | 'borrowLoan'
+  | 'repayLoan'
+  | 'liquidateLoan'
+  | 'nftMint'
+  | 'tokenDeploy'
+  | 'projectCreate'
+  | 'addToBalance'
+  | 'infoUpdate'
+  | 'ownershipTransfer'
+  | 'addShopItem'
+  | 'removeShopItem'
+  | 'buybackSwap'
+  | 'buybackPool'
+  | 'bridgeClaim'
+
+const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
+  pay: 'Payments',
+  cashOut: 'Cash outs',
+  tokenMint: 'Token mints',
+  payout: 'Payouts',
+  reserved: 'Reserved distributions',
+  autoIssue: 'Auto-issuance',
+  borrowLoan: 'Loans',
+  repayLoan: 'Loan repayments',
+  liquidateLoan: 'Liquidations',
+  nftMint: 'NFT mints',
+  tokenDeploy: 'Token deploys',
+  projectCreate: 'Project creation',
+  addToBalance: 'Add to balance',
+  infoUpdate: 'Info updates',
+  ownershipTransfer: 'Ownership transfers',
+  addShopItem: 'Shop items added',
+  removeShopItem: 'Shop items removed',
+  buybackSwap: 'Buyback swaps',
+  buybackPool: 'Buyback pools',
+  bridgeClaim: 'Bridge claims',
+}
+
+export function activityCategory(event: BsActivityEvent): ActivityCategory | null {
+  if (event.payEvent) return 'pay'
+  if (event.cashOutTokensEvent) return 'cashOut'
+  if (event.addToBalanceEvent) return 'addToBalance'
+  if (event.mintTokensEvent) return 'tokenMint'
+  if (event.sendPayoutsEvent) return 'payout'
+  if (event.sendReservedTokensToSplitsEvent) return 'reserved'
+  if (event.autoIssueEvent) return 'autoIssue'
+  if (event.borrowLoanEvent) return 'borrowLoan'
+  if (event.repayLoanEvent) return 'repayLoan'
+  if (event.liquidateLoanEvent) return 'liquidateLoan'
+  if (event.mintNftEvent) return 'nftMint'
+  if (event.deployErc20Event) return 'tokenDeploy'
+  if (event.projectCreateEvent) return 'projectCreate'
+  if (event.setUriEvent) return 'infoUpdate'
+  if (event.projectTransferEvent) return 'ownershipTransfer'
+  if (event.addNftTierEvent) return 'addShopItem'
+  if (event.removeNftTierEvent) return 'removeShopItem'
+  if (event.swapEvent) return 'buybackSwap'
+  if (event.buybackPoolEvent) return 'buybackPool'
+  if (event.bridgeClaimEvent) return 'bridgeClaim'
+  return null
+}
+
+function ActivityTypeFilter({
+  categories,
+  selected,
+  onChange,
+}: {
+  categories: ActivityCategory[]
+  selected: Set<ActivityCategory> | null
+  onChange: (next: Set<ActivityCategory> | null) => void
+}) {
+  if (categories.length < 2) return null
+  const selectedLabel =
+    selected === null
+      ? 'All'
+      : selected.size === 1
+        ? ACTIVITY_CATEGORY_LABELS[[...selected][0]]
+        : `${selected.size} events`
+
+  const toggle = (category: ActivityCategory) => {
+    const next = selected === null ? new Set(categories) : new Set(selected)
+    if (next.has(category)) next.delete(category)
+    else next.add(category)
+    onChange(next.size === categories.length ? null : next)
+  }
+
+  return (
+    <details className="relative z-20">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 border border-smoke-300 bg-bone px-3 text-sm text-smoke-700 hover:border-smoke-500 [&::-webkit-details-marker]:hidden">
+        {selectedLabel}
+        <span aria-hidden>⌄</span>
+      </summary>
+      <div className="absolute right-0 top-full mt-1 min-w-56 border border-smoke-400 bg-bone p-2 shadow-lg">
+        <label className="flex cursor-pointer items-center gap-2 border-b border-smoke-200 px-1 py-2 text-sm text-smoke-700">
+          <input
+            type="checkbox"
+            checked={selected === null}
+            onChange={() => onChange(selected === null ? new Set() : null)}
+          />
+          All
+        </label>
+        {categories.map(category => (
+          <label
+            key={category}
+            className="flex cursor-pointer items-center gap-2 px-1 py-2 text-sm text-smoke-700"
+          >
+            <input
+              type="checkbox"
+              checked={selected === null || selected.has(category)}
+              onChange={() => toggle(category)}
+            />
+            {ACTIVITY_CATEGORY_LABELS[category]}
+          </label>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 export function mergeActivityEvents<T extends BsActivityEvent>(
   current: T[],
   incoming: T[],
@@ -382,6 +508,8 @@ export function ActivityList({
 }) {
   const [liveEvents, setLiveEvents] = useState(events)
   const [liveError, setLiveError] = useState(error)
+  const [selectedCategories, setSelectedCategories] =
+    useState<Set<ActivityCategory> | null>(null)
 
   useEffect(() => {
     setLiveEvents(events)
@@ -419,41 +547,78 @@ export function ActivityList({
     }
   }, [chainId, projectId, suckerGroupId])
 
-  const visible = liveEvents.filter(isProjectFeedActivity)
+  const projectEvents = liveEvents.filter(isProjectFeedActivity)
+  const categories: ActivityCategory[] = []
+  projectEvents.forEach(event => {
+    const category = activityCategory(event)
+    if (category && !categories.includes(category)) categories.push(category)
+  })
+  const visible = projectEvents.filter(event => {
+    const category = activityCategory(event)
+    return selectedCategories === null || (!!category && selectedCategories.has(category))
+  })
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
+  const header = (
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <h2 className="font-agrandir text-xl font-medium">
+        <span className="min-[801px]:hidden">Recent</span>
+        <span className="hidden min-[801px]:inline">Activity</span>
+      </h2>
+      <ActivityTypeFilter
+        categories={categories}
+        selected={selectedCategories}
+        onChange={setSelectedCategories}
+      />
+    </div>
+  )
 
-  if (visible.length === 0) {
+  if (projectEvents.length === 0) {
     if (liveError) {
       return (
-        <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-red-300 p-5 text-sm text-red-700">
-          Activity is temporarily unavailable. No events are being hidden as
-          an empty history.
+        <div>
+          {header}
+          <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-red-300 p-5 text-sm text-red-700">
+            Activity is temporarily unavailable. No events are being hidden as
+            an empty history.
+          </div>
         </div>
       )
     }
     return (
-      <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-smoke-300 p-5">
-        <Image
-          src={quietIllustration}
-          alt=""
-          sizes="128px"
-          className="h-32 w-32 object-contain"
-          aria-hidden
-        />
+      <div>
+        {header}
+        <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-smoke-300 p-5">
+          <Image
+            src={quietIllustration}
+            alt=""
+            sizes="128px"
+            className="h-32 w-32 object-contain"
+            aria-hidden
+          />
+        </div>
       </div>
     )
   }
 
   return (
-    <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[801px]:max-h-[max(780px,82vh)]">
-      {visible.map(event => (
-        <Row
-          key={event.id}
-          event={event}
-          tokenUnit={tokenUnit}
-          accountingToken={accountingToken}
-        />
-      ))}
-    </ul>
+    <div>
+      {header}
+      {visible.length ? (
+        <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[801px]:max-h-[max(780px,82vh)]">
+          {visible.map(event => (
+            <Row
+              key={event.id}
+              event={event}
+              tokenUnit={tokenUnit}
+              accountingToken={accountingToken}
+            />
+          ))}
+        </ul>
+      ) : (
+        <div className="card flex min-h-[180px] items-center justify-center p-5 text-sm text-smoke-500">
+          No activity matches this filter.
+        </div>
+      )}
+    </div>
   )
 }
