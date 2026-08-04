@@ -29,12 +29,12 @@ function Logo({ iconOnly }: { iconOnly: boolean }) {
 
 function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
   return (
-    <nav className="mx-auto hidden h-[72px] w-full max-w-6xl grid-cols-[minmax(0,1fr)_minmax(240px,384px)_minmax(0,1fr)] items-center gap-6 px-6 md:grid">
+    <nav className="mx-auto hidden h-[72px] w-full max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-6 md:grid">
       <div className="justify-self-start">
         <Logo iconOnly={iconOnly} />
       </div>
-      <div className="w-full">
-        <SearchBox expanded />
+      <div className="w-full min-w-0 max-w-96 justify-self-center">
+        <SearchBox expanded compactPlaceholder="Search" />
       </div>
       <div className="justify-self-end">
         <WalletButton />

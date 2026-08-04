@@ -44,9 +44,11 @@ function MagnifierIcon({ className }: { className?: string }) {
 export function SearchBox({
   expanded = false,
   placeholder = 'Search projects',
+  compactPlaceholder,
 }: {
   expanded?: boolean
   placeholder?: string
+  compactPlaceholder?: string
 }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
@@ -55,10 +57,49 @@ export function SearchBox({
   const [ensPending, setEnsPending] = useState(false)
   const [open, setOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [placeholderFits, setPlaceholderFits] = useState(true)
   const boxRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const urn = parseUrn(query.trim())
+
+  // The navigation lets this field absorb the available space between the
+  // logo and wallet control. Keep the descriptive placeholder while it fits,
+  // then fall back to its compact form instead of clipping it.
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input || !compactPlaceholder) return
+    const context = input.ownerDocument.createElement('canvas').getContext('2d')
+    if (!context) return
+
+    let active = true
+    const measure = () => {
+      if (!active) return
+      const styles = window.getComputedStyle(input)
+      const availableWidth =
+        input.clientWidth -
+        (Number.parseFloat(styles.paddingLeft) || 0) -
+        (Number.parseFloat(styles.paddingRight) || 0)
+      context.font = styles.font
+      setPlaceholderFits(context.measureText(placeholder).width <= availableWidth)
+    }
+
+    measure()
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(measure)
+    observer?.observe(input)
+    if (!observer) window.addEventListener('resize', measure)
+    void input.ownerDocument.fonts?.ready.then(measure)
+
+    return () => {
+      active = false
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [compactPlaceholder, placeholder])
 
   // Debounced free-text search against bendystraw (via our API route).
   useEffect(() => {
@@ -152,6 +193,7 @@ export function SearchBox({
     <div className="relative w-full">
       <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-smoke-500" />
       <input
+        ref={inputRef}
         type="text"
         value={query}
         onChange={e => setQuery(e.target.value)}
@@ -165,7 +207,9 @@ export function SearchBox({
             setMobileOpen(false)
           }
         }}
-        placeholder={placeholder}
+        placeholder={
+          placeholderFits ? placeholder : (compactPlaceholder ?? placeholder)
+        }
         aria-label="Search projects"
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />

@@ -390,7 +390,7 @@ export function WalletButton() {
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="flex min-h-[44px] items-center gap-2 rounded-lg border border-amber-400 bg-amber-100 px-4 text-sm font-medium text-amber-900 hover:bg-amber-200"
+          className="flex min-h-[44px] items-center gap-2 whitespace-nowrap rounded-lg border border-amber-400 bg-amber-100 px-4 text-sm font-medium text-amber-900 hover:bg-amber-200"
         >
           <span className="h-2 w-2 rounded-full bg-amber-500" />
           <span className="hidden sm:inline">Viewing as</span>
@@ -400,7 +400,7 @@ export function WalletButton() {
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="btn-secondary flex min-h-[44px] items-center gap-2 px-4 text-sm"
+          className="btn-secondary flex min-h-[44px] items-center gap-2 whitespace-nowrap px-4 text-sm"
         >
           <span className="h-2 w-2 rounded-full bg-melon-500" />
           <AddressLabel address={address} />
@@ -409,7 +409,7 @@ export function WalletButton() {
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="btn-primary min-h-[44px] px-5 text-sm"
+          className="btn-primary min-h-[44px] whitespace-nowrap px-5 text-sm"
         >
           Sign in
         </button>
