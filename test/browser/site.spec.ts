@@ -217,6 +217,23 @@ async function exerciseProjectSurfaces(
   await expect(
     projectTabs.getByRole('tab', { name: activeTab, exact: true }),
   ).toHaveAttribute('aria-selected', 'true')
+  const tabScroll = page.locator('[data-project-tab-scroll]')
+  await expect(tabScroll).toHaveCSS('touch-action', 'pan-x')
+  await expect(tabScroll).toHaveCSS('overflow-y', 'hidden')
+  const overviewBox = await projectTabs
+    .getByRole('tab', { name: 'Overview', exact: true })
+    .boundingBox()
+  const overflowBox = await page
+    .getByRole('button', { name: /^More project sections/ })
+    .boundingBox()
+  expect(overviewBox).not.toBeNull()
+  expect(overflowBox).not.toBeNull()
+  expect(
+    Math.abs(
+      overviewBox!.y + overviewBox!.height / 2 -
+        (overflowBox!.y + overflowBox!.height / 2),
+    ),
+  ).toBeLessThanOrEqual(1)
 
   const payCard = page.locator('#project-pay-card')
   await expect(payCard.getByLabel('Amount')).toBeVisible()

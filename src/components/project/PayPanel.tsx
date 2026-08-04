@@ -31,6 +31,7 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ModalCloseButton } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   encodeFunctionData,
@@ -2199,24 +2200,12 @@ function PaymentSequenceDialog({
                   : "Confirm add to balance"}
             </h2>
           </div>
-          <button
-            type="button"
+          <ModalCloseButton
             onClick={onClose}
             disabled={started}
             aria-label="Close payment"
-            className="icon-button -mr-2 -mt-2 shrink-0 transition-transform hover:scale-110 hover:bg-transparent disabled:opacity-40"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              className="h-6 w-6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
-            </svg>
-          </button>
+            className="-mr-2 -mt-2 transition-transform hover:scale-110 hover:bg-transparent disabled:opacity-40"
+          />
         </header>
         <div className="space-y-4 px-5 py-5">
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">

@@ -22,7 +22,10 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { uniswapV4Deployment } from '@bananapus/nana-sdk-core/v6/uniswap-v4-deployments'
 import { ChainIcon } from '@/components/ChainIcon'
-import { ModalDialog } from '@/components/ui/ModalShell'
+import {
+  ModalCloseButton,
+  ModalDialog,
+} from '@/components/ui/ModalShell'
 import {
   buildTransactionReviewPrompt,
   registerTransactionReviewHandler,
@@ -365,23 +368,11 @@ function ReviewModal({
                 (isAuthorization ? 'Review authorization' : 'Review transaction')}
             </h2>
           </div>
-          <button
-            type="button"
+          <ModalCloseButton
             onClick={() => onFinish(false)}
             aria-label="Cancel transaction review"
-            className="icon-button -mr-2 -mt-2 shrink-0"
-          >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            >
-              <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
-            </svg>
-          </button>
+            className="-mr-2 -mt-2"
+          />
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">

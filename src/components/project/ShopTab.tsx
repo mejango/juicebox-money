@@ -41,7 +41,11 @@ import {
 } from '@/components/project/RedeemShopItemsModal'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
-import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
+import {
+  ModalCloseButton,
+  ModalDialog,
+  ModalShell,
+} from '@/components/ui/ModalShell'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -1546,14 +1550,11 @@ function TierDetailModal({
       className="items-start justify-center px-3 py-8 sm:items-center"
     >
       <div className="card relative w-full max-w-2xl overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]">
-        <button
-          type="button"
+        <ModalCloseButton
           onClick={onClose}
           aria-label="Close item details"
-          className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-xl text-smoke-700 shadow-sm hover:bg-white"
-        >
-          ×
-        </button>
+          className="absolute right-3 top-3 z-10 bg-white/90 text-smoke-700 shadow-sm hover:bg-white"
+        />
 
         <div className="grid md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
           <div className="flex min-h-64 items-center justify-center bg-white p-5">

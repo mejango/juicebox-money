@@ -104,6 +104,18 @@ export default function ModalProofPage() {
           title="Proof modal"
           subtitle="Opened with showModal()."
           onClose={() => setOpen(false)}
+          footer={
+            <div className="flex justify-end">
+              <button
+                type="button"
+                data-testid="proof-footer"
+                onClick={() => setOpen(false)}
+                className="btn-primary min-h-[44px] px-5 text-sm"
+              >
+                Done
+              </button>
+            </div>
+          }
         >
           <p className="text-sm text-smoke-700" data-testid="inside-state">
             {inside}

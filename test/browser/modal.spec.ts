@@ -99,6 +99,38 @@ test('an open modal makes the page behind it unreachable, and gives it back on c
   const dialog = page.locator('dialog[open]')
   await expect(dialog).toHaveCount(1)
 
+  const modalGeometry = await dialog.evaluate(node => {
+    const card = node.querySelector<HTMLElement>('[data-modal-card]')!
+    const body = node.querySelector<HTMLElement>('[data-modal-body]')!
+    const footer = node.querySelector<HTMLElement>('[data-modal-footer]')!
+    const closeIcon = node.querySelector<SVGElement>(
+      'button[aria-label="Close"] svg',
+    )!
+    const cardBox = card.getBoundingClientRect()
+    const bodyBox = body.getBoundingClientRect()
+    const footerBox = footer.getBoundingClientRect()
+    const closeIconBox = closeIcon.getBoundingClientRect()
+    const bodyStyles = getComputedStyle(body)
+    const cardStyles = getComputedStyle(card)
+    return {
+      closeRight: closeIconBox.right,
+      contentRight:
+        bodyBox.right - Number.parseFloat(bodyStyles.paddingRight),
+      footerBottom: footerBox.bottom,
+      cardBottom: cardBox.bottom,
+      cardOverflow: cardStyles.overflow,
+      bottomRadius: Number.parseFloat(cardStyles.borderBottomRightRadius),
+    }
+  })
+  expect(
+    Math.abs(modalGeometry.closeRight - modalGeometry.contentRight),
+  ).toBeLessThanOrEqual(2)
+  expect(
+    Math.abs(modalGeometry.footerBottom - modalGeometry.cardBottom),
+  ).toBeLessThanOrEqual(1)
+  expect(modalGeometry.cardOverflow).toBe('hidden')
+  expect(modalGeometry.bottomRadius).toBeGreaterThan(0)
+
   // `showModal()` gives the dialog modal semantics natively. `:modal` is the
   // browser's own answer to "is the rest of the page inert?".
   expect(await dialog.evaluate(node => node.matches(':modal'))).toBe(true)

@@ -61,7 +61,11 @@ export function TabShell({
 
   return (
     <div>
-      <div role="tablist" aria-label={ariaLabel} className={listClassName}>
+      <div
+        role="tablist"
+        aria-label={ariaLabel}
+        className={`touch-pan-x overflow-y-hidden overscroll-x-contain ${listClassName}`}
+      >
         {tabs.map((tab, i) => (
           <button
             key={tab.label}
@@ -203,9 +207,10 @@ export function ProjectTabs({
       <div className="contents min-[801px]:order-2 min-[801px]:block min-[801px]:min-w-0 min-[801px]:flex-1">
         <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[801px]:order-none min-[801px]:mt-0">
           <div
+            data-project-tab-scroll
             role="tablist"
             aria-label="Project sections"
-            className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto"
+            className="scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
           >
             <button
               type="button"
@@ -283,7 +288,7 @@ function ProjectOverflowMenu({
       aria-label={`More project sections${activeTab ? `, current: ${activeTab.label}` : ''}`}
       aria-expanded={expanded}
       onClick={onToggle}
-      className={`ml-auto flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
+      className={`ml-auto flex min-h-[44px] min-w-[44px] shrink-0 self-start items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
         activeTab && !expanded
           ? 'border-ink text-ink'
           : 'border-transparent text-smoke-500 hover:text-ink'

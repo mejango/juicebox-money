@@ -59,7 +59,12 @@ function mouseDownOn(target: EventTarget) {
 describe('ModalShell', () => {
   it('opens a real dialog in the top layer with implicit modal semantics', () => {
     render(
-      <ModalShell title="Add items" subtitle="Stage items" onClose={vi.fn()}>
+      <ModalShell
+        title="Add items"
+        subtitle="Stage items"
+        footer={<button type="button">Done</button>}
+        onClose={vi.fn()}
+      >
         <p>Body</p>
       </ModalShell>,
     )
@@ -75,6 +80,19 @@ describe('ModalShell', () => {
     const labelledBy = dialog.getAttribute('aria-labelledby')
     expect(labelledBy).toBeTruthy()
     expect(document.getElementById(labelledBy!)?.textContent).toBe('Add items')
+    const card = dialog.querySelector('[data-modal-card]')
+    const body = dialog.querySelector('[data-modal-body]')
+    const footer = dialog.querySelector('[data-modal-footer]')
+    expect(card).not.toBeNull()
+    expect(body?.nextElementSibling).toBe(footer)
+    expect(footer?.parentElement).toBe(card)
+    expect(body?.contains(footer)).toBe(false)
+    const close = dialog.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close"]',
+    )
+    expect(close?.className).toContain('icon-button')
+    expect(close?.className).toContain('-mr-2')
+    expect(close?.querySelector('svg')?.className.baseVal).toContain('h-6')
     // The top layer supersedes z-index; no stacking context juggling remains.
     expect(dialog.className).not.toMatch(/z-\[/)
   })

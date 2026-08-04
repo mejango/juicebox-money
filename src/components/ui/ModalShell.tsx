@@ -1,6 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useId, useRef, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  type ButtonHTMLAttributes,
+  type ReactNode,
+} from 'react'
 
 /**
  * Body scroll lock, reference counted.
@@ -105,6 +112,31 @@ export function ModalDialog({
   )
 }
 
+/** One close control for every dialog: full-size target, full-size mark. */
+export function ModalCloseButton({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`icon-button shrink-0 ${className}`}
+    >
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="h-6 w-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
+
 /**
  * The shared modal chrome: a native modal dialog with a bordered header
  * carrying the title and a × button. `busy` blocks every close path (backdrop,
@@ -114,6 +146,7 @@ export function ModalDialog({
 export function ModalShell({
   title,
   subtitle,
+  footer,
   onClose,
   busy = false,
   maxWidth = 'max-w-2xl',
@@ -121,6 +154,8 @@ export function ModalShell({
 }: {
   title: ReactNode
   subtitle?: ReactNode
+  /** Fixed action row outside the scrolling body. */
+  footer?: ReactNode
   onClose: () => void
   busy?: boolean
   maxWidth?: string
@@ -140,9 +175,14 @@ export function ModalShell({
       className="items-start justify-center px-3 py-5 sm:px-6 sm:py-10"
     >
       <div
-        className={`card w-full ${maxWidth} overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)]`}
+        data-modal-card
+        className={`card w-full ${maxWidth} overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)] ${
+          footer
+            ? 'flex max-h-[calc(100dvh-2.5rem)] flex-col sm:max-h-[calc(100dvh-5rem)]'
+            : ''
+        }`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
           <div className="min-w-0 flex-1 text-left">
             <h2 id={titleId} className="font-agrandir text-left text-xl font-medium text-ink">
               {title}
@@ -153,20 +193,30 @@ export function ModalShell({
               </p>
             ) : null}
           </div>
-          <button
-            type="button"
+          <ModalCloseButton
             onClick={close}
             disabled={busy}
             aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xl text-smoke-700 hover:bg-smoke-75 hover:text-ink disabled:opacity-50"
-          >
-            ×
-          </button>
+            className="-mr-2 -mt-2 text-smoke-700 hover:bg-smoke-75 hover:text-ink disabled:opacity-50"
+          />
         </div>
 
-        <div className="max-h-[calc(100vh-10rem)] overflow-y-auto px-5 py-5 sm:px-6">
+        <div
+          data-modal-body
+          className={`overflow-y-auto px-5 py-5 sm:px-6 ${
+            footer ? 'min-h-0 flex-1' : 'max-h-[calc(100vh-10rem)]'
+          }`}
+        >
           {children}
         </div>
+        {footer ? (
+          <div
+            data-modal-footer
+            className="shrink-0 border-t border-smoke-200 bg-white px-5 py-4 sm:px-6"
+          >
+            {footer}
+          </div>
+        ) : null}
       </div>
     </ModalDialog>
   )

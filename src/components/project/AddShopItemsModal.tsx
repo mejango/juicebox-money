@@ -459,10 +459,79 @@ export function AddShopItemsModal({
     setPhase('form')
   }
 
+  const footer = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {phase === 'done' ? (
+        <button
+          type="button"
+          onClick={close}
+          className="btn-primary min-h-[44px] px-5 text-sm"
+        >
+          Done
+        </button>
+      ) : review ? (
+        <>
+          {!hasSubmittedTransactions ? (
+            <button
+              type="button"
+              onClick={backToForm}
+              disabled={busy}
+              className="btn-secondary min-h-[44px] px-5 text-sm"
+            >
+              Back
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void handleConfirm()}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-5 text-sm"
+          >
+            {phase === 'checking'
+              ? 'Checking permissions…'
+              : phase === 'pinning'
+                ? 'Saving items…'
+                : phase === 'writing'
+                  ? 'Adding items…'
+                  : phase === 'failed'
+                    ? hasUncertainTransactions
+                      ? 'Check submitted transactions'
+                      : 'Retry unfinished chains'
+                    : 'Add items for sale'}
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={close}
+            disabled={busy}
+            className="btn-secondary min-h-[44px] px-5 text-sm"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleReview()}
+            disabled={busy}
+            className="btn-primary min-h-[44px] px-5 text-sm"
+          >
+            {!isConnected
+              ? 'Sign in to continue'
+              : phase === 'checking'
+                ? 'Checking permissions…'
+                : 'Review items'}
+          </button>
+        </>
+      )}
+    </div>
+  )
+
   return (
     <ModalShell
       title="Add items for sale"
       subtitle="Stage one or more items, then add them to the collection."
+      footer={footer}
       onClose={close}
       busy={busy}
     >
@@ -623,69 +692,6 @@ export function AddShopItemsModal({
         </p>
       ) : null}
 
-      {/* Pinned to the bottom of the shell's scrolling body, cancelling its
-          padding so the action bar still spans the card edge to edge. */}
-      <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-smoke-200 bg-white px-5 py-4 sm:-mx-6 sm:px-6">
-      {phase === 'done' ? (
-        <button type="button" onClick={close} className="btn-primary min-h-[44px] px-5 text-sm">
-          Done
-        </button>
-      ) : review ? (
-        <>
-          {!hasSubmittedTransactions ? (
-            <button
-              type="button"
-              onClick={backToForm}
-              disabled={busy}
-              className="btn-secondary min-h-[44px] px-5 text-sm"
-            >
-              Back
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void handleConfirm()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {phase === 'checking'
-              ? 'Checking permissions…'
-              : phase === 'pinning'
-                ? 'Saving items…'
-                : phase === 'writing'
-                  ? 'Adding items…'
-                  : phase === 'failed'
-                    ? hasUncertainTransactions
-                      ? 'Check submitted transactions'
-                      : 'Retry unfinished chains'
-                    : 'Add items for sale'}
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={close}
-            disabled={busy}
-            className="btn-secondary min-h-[44px] px-5 text-sm"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReview()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {!isConnected
-              ? 'Sign in to continue'
-              : phase === 'checking'
-                ? 'Checking permissions…'
-                : 'Review items'}
-          </button>
-        </>
-      )}
-      </div>
     </ModalShell>
   )
 }
