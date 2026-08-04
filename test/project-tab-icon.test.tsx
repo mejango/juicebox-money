@@ -19,6 +19,14 @@ afterEach(() => {
 })
 
 describe('ProjectTabIcon', () => {
+  it('uses the supplied newspaper artwork for Activity', () => {
+    act(() => root.render(<ProjectTabIcon label="Activity" />))
+
+    expect(
+      container.querySelector('[data-project-tab-icon="activity"]'),
+    ).not.toBeNull()
+  })
+
   it('uses the banknotes artwork for a non-revnet Funds tab', () => {
     act(() => root.render(<ProjectTabIcon label="Funds" />))
 

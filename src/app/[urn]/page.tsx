@@ -470,8 +470,8 @@ export default async function ProjectPage({
             />
           }
           activity={
-            <section className="min-[601px]:mt-8">
-              <h2 className="mb-3 hidden font-agrandir text-xl font-medium min-[601px]:block">
+            <section className="xl:mt-8">
+              <h2 className="mb-3 hidden font-agrandir text-xl font-medium xl:block">
                 Activity
               </h2>
               <ActivityList

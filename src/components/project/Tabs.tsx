@@ -109,7 +109,7 @@ export function ProjectTabs({
   const firstSlug = tabSlug(tabs[0]?.label ?? '')
   const activitySlug = tabSlug('Activity')
   const [activeSlug, setActiveSlug] = useState(firstSlug)
-  const [isPhone, setIsPhone] = useState(false)
+  const [isSingleColumn, setIsSingleColumn] = useState(false)
   const [overflowExpanded, setOverflowExpanded] = useState(false)
   const subtabByParent = useRef<Record<string, string>>({})
   const mounted = useRef(new Set<string>())
@@ -119,7 +119,7 @@ export function ProjectTabs({
   )
     ? activeSlug
     : firstSlug
-  const activityActive = isPhone && activeSlug === activitySlug
+  const activityActive = isSingleColumn && activeSlug === activitySlug
   const visibleTabs = tabs.filter(
     tab => !PROJECT_OVERFLOW_TABS.has(tabSlug(tab.label)),
   )
@@ -129,21 +129,21 @@ export function ProjectTabs({
   mounted.current.add(normalActiveSlug)
 
   // Resolve the initial tab from the URL hash, and follow hash changes
-  // (back/forward navigation). Activity participates only at phone widths,
-  // matching website/'s project-detail contract.
+  // (back/forward navigation). Activity participates whenever the project
+  // shell is single-column.
   useEffect(() => {
-    const phoneQuery = window.matchMedia('(max-width: 600px)')
+    const singleColumnQuery = window.matchMedia('(max-width: 1279px)')
     const apply = () => {
       const [slug, child] = window.location.hash.replace('#', '').split('/')
-      const phone = phoneQuery.matches
-      setIsPhone(phone)
+      const singleColumn = singleColumnQuery.matches
+      setIsSingleColumn(singleColumn)
 
       if (slug) {
         const normalized = tabSlug(slug)
         if (child) subtabByParent.current[normalized] = tabSlug(child)
         else delete subtabByParent.current[normalized]
 
-        if (phone && normalized === activitySlug) {
+        if (singleColumn && normalized === activitySlug) {
           setActiveSlug(activitySlug)
           return
         }
@@ -154,14 +154,14 @@ export function ProjectTabs({
         }
       }
 
-      setActiveSlug(phone ? activitySlug : firstSlug)
+      setActiveSlug(singleColumn ? activitySlug : firstSlug)
     }
     apply()
     window.addEventListener('hashchange', apply)
-    phoneQuery.addEventListener('change', apply)
+    singleColumnQuery.addEventListener('change', apply)
     return () => {
       window.removeEventListener('hashchange', apply)
-      phoneQuery.removeEventListener('change', apply)
+      singleColumnQuery.removeEventListener('change', apply)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -188,20 +188,20 @@ export function ProjectTabs({
     }`
 
   return (
-    <div className="mt-10 flex flex-col min-[601px]:flex-row min-[601px]:gap-6 lg:gap-10">
-      <aside className="contents min-[601px]:order-1 min-[601px]:flex min-[601px]:w-[280px] min-[601px]:shrink-0 min-[601px]:flex-col md:w-[320px] lg:w-[384px]">
-        <div className="order-1 min-[601px]:order-none">{sidebar}</div>
+    <div className="mt-10 flex flex-col xl:flex-row xl:gap-10">
+      <aside className="contents xl:order-1 xl:flex xl:w-[384px] xl:shrink-0 xl:flex-col">
+        <div className="order-1 xl:order-none">{sidebar}</div>
         <div
           className={`order-3 ${
             activityActive ? 'block' : 'hidden'
-          } pt-6 min-[601px]:order-none min-[601px]:block min-[601px]:pt-0`}
+          } pt-6 xl:order-none xl:block xl:pt-0`}
         >
           {activity}
         </div>
       </aside>
 
-      <div className="contents min-[601px]:order-2 min-[601px]:block min-[601px]:min-w-0 min-[601px]:flex-1">
-        <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[601px]:order-none min-[601px]:mt-0">
+      <div className="contents xl:order-2 xl:block xl:min-w-0 xl:flex-1">
+        <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 xl:order-none xl:mt-0">
           <div
             role="tablist"
             aria-label="Project sections"
@@ -212,8 +212,9 @@ export function ProjectTabs({
               role="tab"
               aria-selected={activityActive}
               onClick={() => activate(activitySlug)}
-              className={`${buttonClasses(activityActive)} min-[601px]:hidden`}
+              className={`${buttonClasses(activityActive)} xl:hidden`}
             >
+              <ProjectTabIcon label="Activity" />
               Activity
             </button>
             {[...visibleTabs, ...(overflowExpanded ? overflowTabs : [])].map(tab => {
@@ -243,7 +244,7 @@ export function ProjectTabs({
         </div>
 
         <div
-          className={`order-4 pt-6 min-[601px]:order-none ${
+          className={`order-4 pt-6 xl:order-none ${
             activityActive ? 'hidden' : 'block'
           }`}
         >
