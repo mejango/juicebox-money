@@ -11,7 +11,7 @@ const viewports = [
   { label: 'phone-320', width: 320, height: 720 },
   { label: 'phone-390', width: 390, height: 844 },
   { label: 'tablet-768', width: 768, height: 1024 },
-  { label: 'compact-1100', width: 1100, height: 900 },
+  { label: 'wide-1100', width: 1100, height: 900 },
   { label: 'desktop-1280', width: 1280, height: 800 },
 ] as const
 
@@ -212,7 +212,7 @@ async function exerciseProjectSurfaces(
   viewport: (typeof viewports)[number],
 ) {
   const projectTabs = page.getByRole('tablist', { name: 'Project sections' })
-  const activeTab = viewport.width < 1280 ? 'Activity' : 'Overview'
+  const activeTab = viewport.width <= 800 ? 'Activity' : 'Overview'
   await expect(projectTabs).toBeVisible()
   await expect(
     projectTabs.getByRole('tab', { name: activeTab, exact: true }),
@@ -224,7 +224,7 @@ async function exerciseProjectSurfaces(
   const tabsBox = await projectTabs.boundingBox()
   expect(payBox).not.toBeNull()
   expect(tabsBox).not.toBeNull()
-  if (viewport.width >= 1280) {
+  if (viewport.width > 800) {
     expect(payBox!.x).toBeLessThan(tabsBox!.x)
   } else {
     expect(tabsBox!.y).toBeGreaterThanOrEqual(payBox!.y + payBox!.height)
@@ -298,7 +298,7 @@ async function exerciseProjectSurfaces(
     expect(Math.abs(paySpacing!.top - paySpacing!.bottom)).toBeLessThanOrEqual(6)
   }
 
-  if (viewport.width < 1280) {
+  if (viewport.width <= 800) {
     const activity = projectTabs.getByRole('tab', {
       name: 'Activity',
       exact: true,

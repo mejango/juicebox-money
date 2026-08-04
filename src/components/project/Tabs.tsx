@@ -132,7 +132,7 @@ export function ProjectTabs({
   // (back/forward navigation). Activity participates whenever the project
   // shell is single-column.
   useEffect(() => {
-    const singleColumnQuery = window.matchMedia('(max-width: 1279px)')
+    const singleColumnQuery = window.matchMedia('(max-width: 800px)')
     const apply = () => {
       const [slug, child] = window.location.hash.replace('#', '').split('/')
       const singleColumn = singleColumnQuery.matches
@@ -188,20 +188,20 @@ export function ProjectTabs({
     }`
 
   return (
-    <div className="mt-10 flex flex-col xl:flex-row xl:gap-10">
-      <aside className="contents xl:order-1 xl:flex xl:w-[384px] xl:shrink-0 xl:flex-col">
-        <div className="order-1 xl:order-none">{sidebar}</div>
+    <div className="mt-10 flex flex-col min-[801px]:flex-row min-[801px]:gap-10">
+      <aside className="contents min-[801px]:order-1 min-[801px]:flex min-[801px]:w-[320px] min-[801px]:shrink-0 min-[801px]:flex-col lg:w-[384px]">
+        <div className="order-1 min-[801px]:order-none">{sidebar}</div>
         <div
           className={`order-3 ${
             activityActive ? 'block' : 'hidden'
-          } pt-6 xl:order-none xl:block xl:pt-0`}
+          } pt-6 min-[801px]:order-none min-[801px]:block min-[801px]:pt-0`}
         >
           {activity}
         </div>
       </aside>
 
-      <div className="contents xl:order-2 xl:block xl:min-w-0 xl:flex-1">
-        <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 xl:order-none xl:mt-0">
+      <div className="contents min-[801px]:order-2 min-[801px]:block min-[801px]:min-w-0 min-[801px]:flex-1">
+        <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[801px]:order-none min-[801px]:mt-0">
           <div
             role="tablist"
             aria-label="Project sections"
@@ -212,7 +212,7 @@ export function ProjectTabs({
               role="tab"
               aria-selected={activityActive}
               onClick={() => activate(activitySlug)}
-              className={`${buttonClasses(activityActive)} xl:hidden`}
+              className={`${buttonClasses(activityActive)} min-[801px]:hidden`}
             >
               <ProjectTabIcon label="Activity" />
               Activity
@@ -244,7 +244,7 @@ export function ProjectTabs({
         </div>
 
         <div
-          className={`order-4 pt-6 xl:order-none ${
+          className={`order-4 pt-6 min-[801px]:order-none ${
             activityActive ? 'hidden' : 'block'
           }`}
         >
