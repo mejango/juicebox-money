@@ -333,6 +333,23 @@ async function exerciseProjectSurfaces(
   }
   await expectSurface(page, `${viewport.label} project Activity`)
 
+  await page.evaluate(() => {
+    const monitorWindow = window as typeof window & {
+      projectRouteSkeletonObserver?: MutationObserver
+    }
+    document.documentElement.dataset.projectRouteSkeletonObserved = 'false'
+    monitorWindow.projectRouteSkeletonObserver?.disconnect()
+    monitorWindow.projectRouteSkeletonObserver = new MutationObserver(() => {
+      if (document.querySelector('[aria-label="Loading project"]')) {
+        document.documentElement.dataset.projectRouteSkeletonObserved = 'true'
+      }
+    })
+    monitorWindow.projectRouteSkeletonObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+    })
+  })
+
   const tabs = [
     {
       label: 'Overview',
@@ -399,6 +416,18 @@ async function exerciseProjectSurfaces(
     await expectVisibleFocus(page, button, `${viewport.label} project ${tab.label}`)
     await expectSurface(page, `${viewport.label} project ${tab.label}`)
   }
+
+  expect(
+    await page.locator('html').getAttribute('data-project-route-skeleton-observed'),
+  ).toBe('false')
+  await page.evaluate(() => {
+    const monitorWindow = window as typeof window & {
+      projectRouteSkeletonObserver?: MutationObserver
+    }
+    monitorWindow.projectRouteSkeletonObserver?.disconnect()
+    delete monitorWindow.projectRouteSkeletonObserver
+    delete document.documentElement.dataset.projectRouteSkeletonObserved
+  })
 
   const moreButton = page.getByRole('button', { name: /^More project sections/ })
   await moreButton.click()

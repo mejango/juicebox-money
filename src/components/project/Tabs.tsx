@@ -23,12 +23,24 @@ export function tabSlug(label: string): string {
 }
 
 /**
- * Next patches history.replaceState and treats calls without its current
- * history payload as app-router navigation. Preserve that payload for
- * hash-only tab state so the mounted project shell never enters route loading.
+ * Next patches the history instance and can treat a hash-only update as an
+ * app-router restore while its private history marker is unavailable during
+ * hydration. Use the browser's native prototype method: tabs are local UI
+ * state, so changing their shareable hash must never reload the project route.
  */
 export function replaceTabHash(hash: string): void {
-  window.history.replaceState(window.history.state, '', hash)
+  const history = window.history
+  const nativeReplaceState = Object.getPrototypeOf(history)?.replaceState as
+    | History['replaceState']
+    | undefined
+
+  if (nativeReplaceState) {
+    nativeReplaceState.call(history, history.state, '', hash)
+    return
+  }
+
+  // Minimal non-browser test doubles may not model History.prototype.
+  history.replaceState(history.state, '', hash)
 }
 
 /**

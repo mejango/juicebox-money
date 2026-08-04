@@ -609,20 +609,33 @@ describe('AccountOperatedProjects', () => {
 function fakeTabWindow(hash = '') {
   const listeners = new Set<() => void>()
   const historyState = { __NA: true, shell: 'preserved' }
+  const location = { hash }
+  const nativeReplaceState = vi.fn(
+    (_state: unknown, _title: string, url: string) => {
+      location.hash = url
+    },
+  )
+  const patchedReplaceState = vi.fn()
+  const history = Object.assign(
+    Object.create({ replaceState: nativeReplaceState }),
+    {
+      state: historyState,
+      // Mirrors Next's instance-level patch. Hash-only tab state must bypass
+      // this function so it cannot dispatch an app-router restore.
+      replaceState: patchedReplaceState,
+    },
+  )
   const win = {
-    location: { hash },
+    location,
     addEventListener: (type: string, listener: () => void) => {
       if (type === 'hashchange') listeners.add(listener)
     },
     removeEventListener: (_type: string, listener: () => void) => {
       listeners.delete(listener)
     },
-    history: {
-      state: historyState,
-      replaceState: vi.fn((_state: unknown, _title: string, url: string) => {
-        win.location.hash = url
-      }),
-    },
+    history,
+    nativeReplaceState,
+    patchedReplaceState,
   }
   return win
 }
@@ -675,11 +688,12 @@ describe('AccountTabs', () => {
     expect(panelFor(renderer, 'holdings-body')?.props.hidden).toBe(false)
     // The previous panel stays mounted but hidden.
     expect(panelFor(renderer, 'activity-body')?.props.hidden).toBe(true)
-    expect(win.history.replaceState).toHaveBeenCalledWith(
+    expect(win.nativeReplaceState).toHaveBeenCalledWith(
       win.history.state,
       '',
       '#holdings',
     )
+    expect(win.patchedReplaceState).not.toHaveBeenCalled()
 
     await act(async () => buttonWith(renderer, 'Roles').props.onClick())
     expect(panelFor(renderer, 'roles-body')?.props.hidden).toBe(false)
