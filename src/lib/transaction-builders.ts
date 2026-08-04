@@ -36,6 +36,12 @@ type AdjustTiersArgs = ContractFunctionArgs<
   'adjustTiers'
 >
 
+type Mint721TierArgs = ContractFunctionArgs<
+  typeof jb721TiersHookAbi,
+  'nonpayable',
+  'mintFor'
+>
+
 const permit2ApproveAbi = [
   {
     type: 'function',
@@ -167,6 +173,39 @@ export function buildAdjustTiersRequest({
     abi: jb721TiersHookAbi,
     functionName: 'adjustTiers' as const,
     args: [tiers, tierIdsToRemove] as const,
+  }
+}
+
+/** Exact owner/operator free mint. Repeated tier ids mint that quantity. */
+export function buildMint721TierRequest({
+  chainId,
+  hook,
+  tierIds,
+  beneficiary,
+}: {
+  chainId: JBChainId
+  hook: Address
+  tierIds: Mint721TierArgs[0]
+  beneficiary: Mint721TierArgs[1]
+}) {
+  if (tierIds.length === 0) throw new Error('Choose at least one item to mint.')
+  if (tierIds.length > 50) throw new Error('Mint at most 50 items at once.')
+  if (
+    tierIds.some(
+      tierId =>
+        !Number.isSafeInteger(Number(tierId)) ||
+        Number(tierId) < 1 ||
+        Number(tierId) > 65_535,
+    )
+  ) {
+    throw new Error('Every item tier ID must fit uint16 and be greater than zero.')
+  }
+  return {
+    chainId,
+    address: hook,
+    abi: jb721TiersHookAbi,
+    functionName: 'mintFor' as const,
+    args: [tierIds, beneficiary] as const,
   }
 }
 

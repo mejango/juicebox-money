@@ -786,6 +786,8 @@ export function CreateForm() {
       allowOwnerMinting: stage.ownerMinting,
       pausePay: !stage.acceptPayments,
       pauseCreditTransfers: stage.pauseCreditTransfers,
+      pause721Transfers: stage.pause721Transfers,
+      metadataExtra: stage.metadataExtra,
       autoIssuances: [],
       allowSetTerminals: stage.powers.setTerminals,
       allowSetController: stage.powers.setController,
@@ -835,6 +837,8 @@ export function CreateForm() {
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
+      pause721Transfers: stage.pause721Transfers,
+      metadataExtra: stage.metadataExtra,
       // Each row's beneficiary resolves against the ROW's mint chain (where
       // the tokens land), never the config chain — every chain must encode
       // the SAME row list for the cross-chain configuration hash to match.

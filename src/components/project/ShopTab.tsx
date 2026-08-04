@@ -12,6 +12,7 @@ import {
 import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
+  decode721RulesetMetadata,
   effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
@@ -39,6 +40,7 @@ import {
   RedeemShopItemsModal,
   type RedeemableShopTarget,
 } from '@/components/project/RedeemShopItemsModal'
+import { MintShopItemModal } from '@/components/project/MintShopItemModal'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
 import {
@@ -135,8 +137,8 @@ const FLAG_DESCRIPTIONS: [keyof ShopTierFlags, string, string][] = [
   ],
   [
     'transfersPausable',
-    'Transfers pausable',
-    'Transfers of this item can be paused.',
+    'Ruleset-controlled transfers',
+    'The active ruleset can pause transfers of this item. Minting and burning remain available.',
   ],
   [
     'cantBeRemoved',
@@ -160,6 +162,8 @@ type Shop = {
   /** Shared implementation address used to key 721 hook metadata. */
   idTarget: Address
   cashOutEnabled: boolean
+  /** Whether the current ruleset has the 721 transfer-pause bit enabled. */
+  transfersPaused: boolean | null
   pricing: { currency: number; decimals: number; symbol: string }
   tiers: ShopTier[]
   configFlags: ShopConfigFlags | null
@@ -196,6 +200,7 @@ export function ShopTab({
   const [category, setCategory] = useState<number | null>(null)
   const [addItemsOpen, setAddItemsOpen] = useState(false)
   const [detailTierId, setDetailTierId] = useState<number | null>(null)
+  const [mintTierId, setMintTierId] = useState<number | null>(null)
 
   const {
     data: shop,
@@ -296,6 +301,10 @@ export function ShopTab({
     detailTierId == null
       ? null
       : shop?.tiers.find(tier => tier.id === detailTierId) ?? null
+  const mintTier =
+    mintTierId == null
+      ? null
+      : shop?.tiers.find(tier => tier.id === mintTierId) ?? null
 
   // Resolve each linked collection only when the operator opens the editor.
   // Per-chain failures stay local so one flaky RPC does not hide the chains
@@ -419,6 +428,9 @@ export function ShopTab({
                 tier={tier}
                 media={mediaById?.[tier.id]}
                 pricing={shop.pricing}
+                transfersPaused={
+                  shop.transfersPaused && !!tier.flags?.transfersPausable
+                }
                 onOpen={() => setDetailTierId(tier.id)}
               />
             ))}
@@ -480,7 +492,33 @@ export function ShopTab({
           tier={detailTier}
           media={mediaById?.[detailTier.id]}
           pricing={shop.pricing}
+          transfersPaused={
+            detailTier.flags?.transfersPausable
+              ? shop.transfersPaused
+              : false
+          }
+          onMint={
+            detailTier.flags?.allowOwnerMint && detailTier.remaining > 0
+              ? () => {
+                  setDetailTierId(null)
+                  setMintTierId(detailTier.id)
+                }
+              : undefined
+          }
           onClose={() => setDetailTierId(null)}
+        />
+      ) : null}
+
+      {mintTier ? (
+        <MintShopItemModal
+          chainId={chainId}
+          projectId={projectId}
+          hook={shop.hook}
+          tierId={mintTier.id}
+          itemName={mediaById?.[mintTier.id]?.name ?? `Item #${mintTier.id}`}
+          remaining={mintTier.remaining}
+          isRevnet={isRevnet}
+          onClose={() => setMintTierId(null)}
         />
       ) : null}
 
@@ -1337,11 +1375,13 @@ function TierCard({
   tier,
   media,
   pricing,
+  transfersPaused,
   onOpen,
 }: {
   tier: ShopTier
   media: TierMedia | undefined
   pricing: Shop['pricing']
+  transfersPaused: boolean | null
   onOpen: () => void
 }) {
   const {
@@ -1377,6 +1417,11 @@ function TierCard({
         {soldOut ? (
           <span className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-medium text-ink">
             Sold out
+          </span>
+        ) : null}
+        {transfersPaused ? (
+          <span className="absolute bottom-2 left-2 rounded-full bg-peel-100 px-2 py-0.5 text-[11px] font-medium text-peel-700">
+            Transfers paused
           </span>
         ) : null}
         {quantity > 0 ? (
@@ -1447,6 +1492,8 @@ function TierDetailModal({
   tier,
   media,
   pricing,
+  transfersPaused,
+  onMint,
   onClose,
 }: {
   isRevnet: boolean
@@ -1456,6 +1503,8 @@ function TierDetailModal({
   tier: ShopTier
   media: TierMedia | undefined
   pricing: Shop['pricing']
+  transfersPaused: boolean | null
+  onMint?: () => void
   onClose: () => void
 }) {
   const {
@@ -1625,6 +1674,16 @@ function TierDetailModal({
               </span>
             </div>
 
+            {onMint ? (
+              <button
+                type="button"
+                onClick={onMint}
+                className="mt-3 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+              >
+                Mint to a beneficiary without payment →
+              </button>
+            ) : null}
+
             <div className="mt-6 border-t border-smoke-200 pt-4">
               <p className="field-label">Supply by chain</p>
               <div className="mt-2 space-y-2">
@@ -1657,6 +1716,18 @@ function TierDetailModal({
 
             <dl className="mt-5 space-y-2 border-t border-smoke-200 pt-4 text-xs">
               <DetailFact label="Item ID" value={`#${tier.id}`} />
+              {tier.flags?.transfersPausable ? (
+                <DetailFact
+                  label="Transfers"
+                  value={
+                    transfersPaused == null
+                      ? 'Current ruleset unavailable'
+                      : transfersPaused
+                        ? 'Paused now'
+                        : 'Allowed now; ruleset-pausable'
+                  }
+                />
+              ) : null}
               <DetailFact
                 label="Category"
                 value={media?.categoryName ?? String(tier.category)}
@@ -1941,6 +2012,10 @@ async function readShop(
     hook: resolved.hook,
     idTarget,
     cashOutEnabled,
+    transfersPaused: current
+      ? decode721RulesetMetadata(Number(current.metadata.metadata ?? 0))
+          .pauseTransfers
+      : null,
     pricing: { currency, decimals, symbol },
     tiers,
     configFlags,

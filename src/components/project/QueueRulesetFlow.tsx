@@ -13,6 +13,8 @@ import {
 import {
   JBPermissionIdsV6,
   RESERVED_TOKEN_SPLIT_GROUP_ID,
+  build721RulesetMetadata,
+  decode721RulesetMetadata,
   getAccountingContexts,
   getCurrentRuleset,
   hasPermissions,
@@ -83,6 +85,7 @@ type EditorState = {
   cashOutTaxPct: string;
   pausePay: boolean;
   pauseCreditTransfers: boolean;
+  pause721Transfers: boolean;
   holdFees: boolean;
   ownerMustSendPayouts: boolean;
   allowOwnerMinting: boolean;
@@ -426,6 +429,9 @@ function RulesetEditor({
       cashOutTaxPct: bpToPct(m.cashOutTaxRate),
       pausePay: m.pausePay,
       pauseCreditTransfers: m.pauseCreditTransfers,
+      pause721Transfers: decode721RulesetMetadata(
+        Number(m.metadata ?? 0),
+      ).pauseTransfers,
       holdFees: m.holdFees,
       ownerMustSendPayouts: m.ownerMustSendPayouts,
       allowOwnerMinting: m.allowOwnerMinting,
@@ -527,6 +533,10 @@ function RulesetEditor({
         cashOutTaxRate: pctToBp(state.cashOutTaxPct),
         pausePay: state.pausePay,
         pauseCreditTransfers: state.pauseCreditTransfers,
+        metadata: build721RulesetMetadata({
+          metadata: Number(m.metadata ?? 0),
+          pauseTransfers: state.pause721Transfers,
+        }),
         holdFees: state.holdFees,
         ownerMustSendPayouts: state.ownerMustSendPayouts,
         allowOwnerMinting: state.allowOwnerMinting,
@@ -742,9 +752,15 @@ function RulesetEditor({
               disabled={busy}
             />
             <Toggle
-              label="Pause token transfers"
+              label="Pause internal credit transfers"
               checked={state.pauseCreditTransfers}
               onChange={(v) => set("pauseCreditTransfers", v)}
+              disabled={busy}
+            />
+            <Toggle
+              label="Pause eligible shop item transfers"
+              checked={state.pause721Transfers}
+              onChange={(v) => set("pause721Transfers", v)}
               disabled={busy}
             />
             <Toggle
@@ -895,8 +911,12 @@ function describe(s: EditorState): { label: string; value: string }[] {
     },
     { label: "Hold fees", value: s.holdFees ? "Yes" : "No" },
     {
-      label: "Token transfers",
+      label: "Internal credit transfers",
       value: s.pauseCreditTransfers ? "Paused" : "Allowed",
+    },
+    {
+      label: "Eligible shop item transfers",
+      value: s.pause721Transfers ? "Paused" : "Allowed",
     },
     {
       label: "Project owner minting",

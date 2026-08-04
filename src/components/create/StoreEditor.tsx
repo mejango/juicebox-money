@@ -542,17 +542,15 @@ export function StoreEditor({
                     [
                       "allowOwnerMint",
                       "Project owner can mint for free",
-                      "The project owner (or revnet revnet operator) can mint this item without paying.",
+                      "The project owner (or revnet operator) can mint this item without paying.",
                     ],
-                    ...(isRevnet
-                      ? []
-                      : ([
-                          [
-                            "transfersPausable",
-                            "Transfers pausable",
-                            "Rulesets can pause transfers of this item.",
-                          ],
-                        ] as const)),
+                    [
+                      "transfersPausable",
+                      "Allow rulesets to pause transfers",
+                      isRevnet
+                        ? "The active precommitted stage can pause transfers of this item."
+                        : "The active ruleset can pause transfers of this item. Minting and burning stay available.",
+                    ],
                     [
                       "cantBeRemoved",
                       "Permanent",

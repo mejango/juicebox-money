@@ -10,6 +10,7 @@ import {
 } from "@bananapus/nana-sdk-core";
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
+  decode721RulesetMetadata,
   getAccountingContexts,
   getAllRulesets,
   getCurrentRuleset,
@@ -193,9 +194,19 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "pauseCreditTransfers",
-      label: "Token transfers",
+      label: "Internal credit transfers",
       raw: String(m.pauseCreditTransfers),
       value: m.pauseCreditTransfers ? "Paused" : "Allowed",
+    },
+    {
+      key: "pause721Transfers",
+      label: "Eligible shop item transfers",
+      raw: String(
+        decode721RulesetMetadata(Number(m.metadata ?? 0)).pauseTransfers,
+      ),
+      value: decode721RulesetMetadata(Number(m.metadata ?? 0)).pauseTransfers
+        ? "Paused"
+        : "Allowed",
     },
     {
       key: "allowOwnerMinting",
@@ -433,8 +444,16 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Token transfers",
+      label: "Internal credit transfers",
       value: m.pauseCreditTransfers ? "Paused" : "Allowed",
+    },
+    {
+      section: "Shop",
+      label: "Eligible item transfers",
+      value: decode721RulesetMetadata(Number(m.metadata ?? 0)).pauseTransfers
+        ? "Paused"
+        : "Allowed",
+      hint: "Only tiers created with ruleset-controlled transfers are affected. Minting and burning remain available.",
     },
     {
       section: "Token",

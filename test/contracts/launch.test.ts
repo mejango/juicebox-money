@@ -47,7 +47,7 @@ type EncodableRequest = {
 }
 
 type LaunchRuleset = {
-  metadata: { cashOutTaxRate: number; baseCurrency: number }
+  metadata: { cashOutTaxRate: number; baseCurrency: number; metadata: number }
   splitGroups: {
     groupId: bigint
     splits: { percent: number; beneficiary: Address; hook: Address }[]
@@ -346,6 +346,31 @@ describe('project launch encoding', () => {
     expect(request.functionName).toBe('deployFor')
     expect(decoded.functionName).toBe('deployFor')
     expect(data).toMatch(/^0x[0-9a-f]+$/)
+  })
+
+  it('encodes eligible 721 transfer pauses for project rulesets and revnet stages', () => {
+    const projectStage = {
+      ...createSimpleProjectStage(),
+      pause721Transfers: true,
+      metadataExtra: 1 << 2,
+    }
+    const projectRuleset = projectConfig(
+      requestFor(plan({ stages: [projectStage] })),
+    ).rulesetConfigurations[0]
+    expect(projectRuleset.metadata.metadata).toBe(5)
+
+    const revnetRequest = requestFor(
+      plan({
+        flavor: 'revnet',
+        operator: BOB,
+        ticker: 'REV',
+        stages: [projectStage],
+      }),
+    )
+    const revnetConfig = revnetRequest.args[1] as unknown as {
+      stageConfigurations: readonly { extraMetadata: number }[]
+    }
+    expect(revnetConfig.stageConfigurations[0].extraMetadata).toBe(5)
   })
 
   // deployFor(revnetId, config, ...): the union's tuple branch is pinned

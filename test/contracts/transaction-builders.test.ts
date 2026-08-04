@@ -26,6 +26,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAddToBalanceRequest,
   buildAdjustTiersRequest,
+  buildMint721TierRequest,
   buildErc20ApproveRequest,
   buildPermissionsAuthorityCall,
   buildQueueRulesetsAuthorityCall,
@@ -233,6 +234,52 @@ describe("local transaction builders", () => {
       functionName: "adjustTiers",
       args: [tiers, [3n, 9n]],
     });
+  });
+
+  it("pins an owner tier mint to its reviewed quantity and beneficiary", () => {
+    const request = buildMint721TierRequest({
+      chainId: CHAIN_ID,
+      hook: HOOK,
+      tierIds: [7, 7, 7],
+      beneficiary: BOB,
+    });
+    const data = encode(request);
+
+    expect(request).toMatchObject({
+      chainId: CHAIN_ID,
+      address: HOOK,
+      functionName: "mintFor",
+      args: [[7, 7, 7], BOB],
+    });
+    expect(request).not.toHaveProperty("value");
+    expect(decodeFunctionData({ abi: request.abi, data })).toEqual({
+      functionName: "mintFor",
+      args: [[7, 7, 7], BOB],
+    });
+    expect(() =>
+      buildMint721TierRequest({
+        chainId: CHAIN_ID,
+        hook: HOOK,
+        tierIds: [],
+        beneficiary: BOB,
+      }),
+    ).toThrow(/at least one/);
+    expect(() =>
+      buildMint721TierRequest({
+        chainId: CHAIN_ID,
+        hook: HOOK,
+        tierIds: Array.from({ length: 51 }, () => 7),
+        beneficiary: BOB,
+      }),
+    ).toThrow(/at most 50/);
+    expect(() =>
+      buildMint721TierRequest({
+        chainId: CHAIN_ID,
+        hook: HOOK,
+        tierIds: [0],
+        beneficiary: BOB,
+      }),
+    ).toThrow(/uint16/);
   });
 
   it("pins payout execution to the reviewed amount, currency, and slippage floor", () => {

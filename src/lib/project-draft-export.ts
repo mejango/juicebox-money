@@ -8,6 +8,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
+  decode721RulesetMetadata,
   getAccountingContexts,
   getCurrentRuleset,
   payoutSplitGroupId,
@@ -397,6 +398,10 @@ export async function buildProjectDraftExport({
   stage.ownerMinting = current.metadata.allowOwnerMinting
   stage.acceptPayments = !current.metadata.pausePay
   stage.pauseCreditTransfers = current.metadata.pauseCreditTransfers
+  stage.pause721Transfers = decode721RulesetMetadata(
+    Number(current.metadata.metadata ?? 0),
+  ).pauseTransfers
+  stage.metadataExtra = Number(current.metadata.metadata ?? 0)
   stage.powers = {
     setTerminals: current.metadata.allowSetTerminals,
     setController: current.metadata.allowSetController,

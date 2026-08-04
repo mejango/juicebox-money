@@ -60,6 +60,10 @@ export type DraftStage = {
   ownerMinting: boolean;
   acceptPayments: boolean;
   pauseCreditTransfers: boolean;
+  /** Pause transfers for shop items whose tier opted into pausing. */
+  pause721Transfers: boolean;
+  /** App-specific uint14 metadata; hidden bits survive imported drafts. */
+  metadataExtra: number;
   /** Revnet: tokens minted to beneficiaries when the stage starts. Each
    *  row mints once, on ITS chosen chain (null = first selected chain);
    *  every chain's config encodes the full list byte-identically. */
@@ -119,6 +123,8 @@ export function newDraftStage(
     ownerMinting: false,
     acceptPayments: true,
     pauseCreditTransfers: false,
+    pause721Transfers: false,
+    metadataExtra: 0,
     autoIssuances: [],
     powers: {
       setTerminals: false,
@@ -1273,7 +1279,14 @@ export function StageRulesEditor({
       {isRevnet ? null : (
         <SubSection
           label="Extras"
-          summary={stage.pauseCreditTransfers ? "Credits paused" : "None"}
+          summary={
+            [
+              stage.pauseCreditTransfers ? "Credits paused" : null,
+              stage.pause721Transfers ? "Item transfers paused" : null,
+            ]
+              .filter(Boolean)
+              .join(", ") || "None"
+          }
           open={!!stage.open.extras}
           onToggle={() => toggleOpen("extras")}
         >
@@ -1286,8 +1299,35 @@ export function StageRulesEditor({
             title="Pause credit transfers"
             blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
           />
+          <CheckRow
+            checked={stage.pause721Transfers}
+            onToggle={() =>
+              set({ pause721Transfers: !stage.pause721Transfers })
+            }
+            disabled={disabled}
+            title="Pause eligible shop item transfers"
+            blurb="Items created with ‘Transfers pausable’ can't move between wallets during this ruleset. Minting and burning still work."
+          />
         </SubSection>
       )}
+      {isRevnet ? (
+        <SubSection
+          label="Shop item transfers"
+          summary={stage.pause721Transfers ? "Eligible items paused" : "Allowed"}
+          open={!!stage.open.shopTransfers}
+          onToggle={() => toggleOpen("shopTransfers")}
+        >
+          <CheckRow
+            checked={stage.pause721Transfers}
+            onToggle={() =>
+              set({ pause721Transfers: !stage.pause721Transfers })
+            }
+            disabled={disabled}
+            title="Pause eligible shop item transfers"
+            blurb="This stage is permanent once deployed. Items whose tier allows ruleset pauses can't move between wallets while this stage is active; minting and burning still work."
+          />
+        </SubSection>
+      ) : null}
     </div>
   );
 }

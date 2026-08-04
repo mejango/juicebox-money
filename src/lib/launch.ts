@@ -12,6 +12,7 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   buildAccountingContext,
+  build721RulesetMetadata,
   buildDeployRevnetTx,
   buildRevnetStageConfig,
   buildRulesetConfiguration,
@@ -162,6 +163,10 @@ export type StageRules = {
   pausePay: boolean
   /** Freeze internal credit transfers (claimed ERC-20s stay transferable). */
   pauseCreditTransfers: boolean
+  /** Pause transfers of 721 tiers which opted into ruleset-controlled pauses. */
+  pause721Transfers: boolean
+  /** App-specific uint14 metadata; unrelated integration bits are preserved. */
+  metadataExtra: number
   /** Owner superpowers — all default off; supporters can see them. */
   allowSetTerminals: boolean
   allowSetController: boolean
@@ -267,6 +272,8 @@ const DEFAULT_STAGE: StageRules = {
   allowOwnerMinting: false,
   pausePay: false,
   pauseCreditTransfers: false,
+  pause721Transfers: false,
+  metadataExtra: 0,
   autoIssuances: [],
   allowSetTerminals: false,
   allowSetController: false,
@@ -470,6 +477,10 @@ export function buildLaunchRequest(args: {
         issuanceCutFrequency: stage.issuanceCutFrequency,
         issuanceCutPercent: stage.weightCutPercent,
         cashOutTaxRate: stage.cashOutTaxRate ?? 0,
+        extraMetadata: build721RulesetMetadata({
+          metadata: stage.metadataExtra,
+          pauseTransfers: stage.pause721Transfers,
+        }),
       })
     })
 
@@ -547,6 +558,10 @@ export function buildLaunchRequest(args: {
         holdFees: stage.holdFees,
         pausePay: stage.pausePay,
         pauseCreditTransfers: stage.pauseCreditTransfers,
+        metadata: build721RulesetMetadata({
+          metadata: stage.metadataExtra,
+          pauseTransfers: stage.pause721Transfers,
+        }),
         allowSetTerminals: stage.allowSetTerminals,
         allowSetController: stage.allowSetController,
         allowTerminalMigration: stage.allowTerminalMigration,

@@ -336,6 +336,12 @@
         "Add shop tiers"
       ]
     },
+    "src/components/project/MintShopItemModal.tsx": {
+      "calls": 1,
+      "actions": [
+        "Mint shop tiers without payment"
+      ]
+    },
     "src/hooks/useSafeTx.ts": {
       "calls": 1,
       "actions": [
@@ -347,11 +353,13 @@
     "useWriteContract": {
       "src/components/create/CreateForm.tsx": 1,
       "src/components/project/AddShopItemsModal.tsx": 1,
+      "src/components/project/MintShopItemModal.tsx": 1,
       "src/hooks/useSafeTx.ts": 1
     },
     "writeContractAsync": {
       "src/components/create/CreateForm.tsx": 1,
       "src/components/project/AddShopItemsModal.tsx": 1,
+      "src/components/project/MintShopItemModal.tsx": 1,
       "src/hooks/useSafeTx.ts": 1
     },
     "writeContract": {

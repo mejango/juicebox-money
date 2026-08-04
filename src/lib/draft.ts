@@ -157,6 +157,14 @@ function sanitizeStage(raw: unknown): DraftStage {
     ownerMinting: bool(s.ownerMinting),
     acceptPayments: s.acceptPayments === undefined ? true : bool(s.acceptPayments),
     pauseCreditTransfers: bool(s.pauseCreditTransfers),
+    pause721Transfers: bool(s.pause721Transfers),
+    metadataExtra:
+      typeof s.metadataExtra === 'number' &&
+      Number.isInteger(s.metadataExtra) &&
+      s.metadataExtra >= 0 &&
+      s.metadataExtra <= 0x3fff
+        ? s.metadataExtra
+        : 0,
     autoIssuances: (Array.isArray(s.autoIssuances) ? s.autoIssuances : [])
       .slice(0, 100)
       .map(raw => {
