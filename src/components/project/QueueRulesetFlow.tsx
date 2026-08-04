@@ -4,6 +4,7 @@ import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
+  jbControllerAbi,
   jbDirectoryAbi,
   jbFundAccessLimitsAbi,
   jbProjectsAbi,
@@ -17,6 +18,7 @@ import {
   decode721RulesetMetadata,
   getAccountingContexts,
   getCurrentRuleset,
+  getUpcomingRuleset,
   hasPermissions,
   payoutSplitGroupId,
   v6Address,
@@ -25,7 +27,12 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { formatUnits, parseUnits, type Address, type PublicClient } from "viem";
+import {
+  formatUnits,
+  parseUnits,
+  type Address,
+  type PublicClient,
+} from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
 import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
@@ -37,6 +44,13 @@ import { fetchSafeInfo } from "@/lib/safe";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
+import {
+  approvalStatusLabel,
+  planRulesetQueue,
+  type QueueAction,
+  type QueueActionOption,
+  type RulesetQueuePlan,
+} from "@/lib/ruleset-queue";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -171,11 +185,12 @@ export function queueRulesetAuthority({
  * a signer of the owning Safe, or as a QUEUE_RULESETS operator — and the
  * project's controller is one jbm can drive.
  *
- * The current ruleset + its metadata, per-token fund-access limits, and
- * payout/reserved splits are read live and prefilled. Editing builds ONE
- * JBRulesetConfig that carries forward everything untouched (approval hook,
- * data hook, splits, surplus allowances) and only changes what the owner
- * edited. A diff of just the changed rows is shown before sending
+ * The current, next queued, and queue-tail rulesets are read live with their
+ * approval status. The owner chooses whether to replace a still-replaceable
+ * queued configuration or append after its final tail; metadata, fund access,
+ * and splits are prefilled from that exact source. Editing builds ONE
+ * JBRulesetConfig that carries everything untouched and only changes what the
+ * owner edited. A diff of just the changed rows is shown before sending
  * `queueRulesetsOf` to the resolved controller through the simulation-first
  * Safe/Relayr authority router (runAuthorityCalls, like EditSplitsFlow).
  */
@@ -267,8 +282,8 @@ export function QueueRulesetFlow({
   // Load everything the editor prefills from, once we know the wallet can
   // queue for the project (avoid the reads for everyone else).
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["queueRulesetPrefill", chainId, projectId],
-    enabled: !isRevnet && canEdit && !!publicClient,
+    queryKey: ["queueRulesetPrefill", chainId, projectId, controller],
+    enabled: !isRevnet && canEdit && !!publicClient && knownController,
     staleTime: 30_000,
     retry: 1,
     queryFn: async () => {
@@ -277,64 +292,110 @@ export function QueueRulesetFlow({
       const splitsAddr = v6Address("JBSplits", chainId);
       const terminal = v6Address("JBMultiTerminal", chainId);
 
-      const [current, contexts] = await Promise.all([
+      const [current, upcomingRead, latestRead, contexts] = await Promise.all([
         getCurrentRuleset(publicClient!, { chainId, projectId: pid }),
+        getUpcomingRuleset(publicClient!, { chainId, projectId: pid }).catch(
+          () => null,
+        ),
+        publicClient!.readContract({
+          address: controller as Address,
+          abi: jbControllerAbi,
+          functionName: "latestQueuedRulesetOf",
+          args: [pid],
+        }),
         getAccountingContexts(publicClient!, { chainId, projectId: pid }).catch(
           () => [] as JBAccountingContext[],
         ),
       ]);
-      const rid = BigInt(current.ruleset.id);
+      const latest = { ruleset: latestRead[0], metadata: latestRead[1] };
+      const latestApprovalStatus = Number(latestRead[2]);
+      const upcoming =
+        upcomingRead &&
+        BigInt(upcomingRead.ruleset.id) !== 0n &&
+        BigInt(upcomingRead.ruleset.id) !== BigInt(current.ruleset.id)
+          ? upcomingRead
+          : null;
 
-      const access: TokenAccess[] = await Promise.all(
-        contexts.map(async (ctx) => {
-          const [payoutLimits, surplusAllowances, symbol] = await Promise.all([
-            publicClient!.readContract({
-              address: limitsAddr,
-              abi: jbFundAccessLimitsAbi,
-              functionName: "payoutLimitsOf",
-              args: [pid, rid, terminal, ctx.token],
-            }) as Promise<readonly CurrencyAmount[]>,
-            publicClient!.readContract({
-              address: limitsAddr,
-              abi: jbFundAccessLimitsAbi,
-              functionName: "surplusAllowancesOf",
-              args: [pid, rid, terminal, ctx.token],
-            }) as Promise<readonly CurrencyAmount[]>,
-            tokenSymbol(publicClient!, ctx.token, { chainId }),
-          ]);
-          return { ctx, symbol, payoutLimits, surplusAllowances };
-        }),
-      );
+      const plan = planRulesetQueue({
+        current: current.ruleset,
+        upcoming: upcoming?.ruleset ?? null,
+        latest: latest.ruleset,
+        latestApprovalStatus,
+      });
 
-      // Splits to carry forward: reserved + one payout group per token.
-      const reservedSplits = (await publicClient!.readContract({
-        address: splitsAddr,
-        abi: jbSplitsAbi,
-        functionName: "splitsOf",
-        args: [pid, rid, RESERVED_TOKEN_SPLIT_GROUP_ID],
-      })) as readonly RawSplit[];
-      const payoutSplits = await Promise.all(
-        contexts.map(
-          (ctx) =>
-            publicClient!.readContract({
-              address: splitsAddr,
-              abi: jbSplitsAbi,
-              functionName: "splitsOf",
-              args: [pid, rid, payoutSplitGroupId(ctx.token)],
-            }) as Promise<readonly RawSplit[]>,
-        ),
-      );
+      const entryFor = (option: QueueActionOption) => {
+        const id = BigInt(option.source.id);
+        if (id === BigInt(current.ruleset.id)) return current;
+        if (upcoming && id === BigInt(upcoming.ruleset.id)) return upcoming;
+        if (id === BigInt(latest.ruleset.id)) return latest;
+        throw new Error("The queued ruleset source could not be resolved.");
+      };
 
+      const readSource = async (option: QueueActionOption): Promise<PrefillSource> => {
+        const entry = entryFor(option);
+        const rid = BigInt(entry.ruleset.id);
+        const access: TokenAccess[] = await Promise.all(
+          contexts.map(async (ctx) => {
+            const [payoutLimits, surplusAllowances, symbol] = await Promise.all([
+              publicClient!.readContract({
+                address: limitsAddr,
+                abi: jbFundAccessLimitsAbi,
+                functionName: "payoutLimitsOf",
+                args: [pid, rid, terminal, ctx.token],
+              }) as Promise<readonly CurrencyAmount[]>,
+              publicClient!.readContract({
+                address: limitsAddr,
+                abi: jbFundAccessLimitsAbi,
+                functionName: "surplusAllowancesOf",
+                args: [pid, rid, terminal, ctx.token],
+              }) as Promise<readonly CurrencyAmount[]>,
+              tokenSymbol(publicClient!, ctx.token, { chainId }),
+            ]);
+            return { ctx, symbol, payoutLimits, surplusAllowances };
+          }),
+        );
+        const reservedSplits = (await publicClient!.readContract({
+          address: splitsAddr,
+          abi: jbSplitsAbi,
+          functionName: "splitsOf",
+          args: [pid, rid, RESERVED_TOKEN_SPLIT_GROUP_ID],
+        })) as readonly RawSplit[];
+        const payoutSplits = await Promise.all(
+          contexts.map(
+            (ctx) =>
+              publicClient!.readContract({
+                address: splitsAddr,
+                abi: jbSplitsAbi,
+                functionName: "splitsOf",
+                args: [pid, rid, payoutSplitGroupId(ctx.token)],
+              }) as Promise<readonly RawSplit[]>,
+          ),
+        );
+        return {
+          action: option.action,
+          option,
+          entry,
+          rulesetId: rid,
+          terminal,
+          access,
+          reservedSplits,
+          payoutSplits: contexts.map((ctx, i) => ({
+            token: ctx.token as Address,
+            splits: payoutSplits[i],
+          })),
+        };
+      };
+
+      const sourceEntries = await Promise.all(plan.options.map(readSource));
       return {
         current,
-        rulesetId: rid,
-        terminal,
-        access,
-        reservedSplits,
-        payoutSplits: contexts.map((ctx, i) => ({
-          token: ctx.token as Address,
-          splits: payoutSplits[i],
-        })),
+        upcoming,
+        latest,
+        latestApprovalStatus,
+        plan,
+        sources: Object.fromEntries(
+          sourceEntries.map((source) => [source.action, source]),
+        ) as Partial<Record<QueueAction, PrefillSource>>,
       };
     },
   });
@@ -376,18 +437,33 @@ export function QueueRulesetFlow({
       controller={controller as Address}
       authority={authority}
       data={data}
+      publicClient={publicClient!}
     />
   );
 }
 
-/** The live state the editor prefills from. */
-type PrefillData = {
-  current: Awaited<ReturnType<typeof getCurrentRuleset>>;
+type RulesetEntry = Awaited<ReturnType<typeof getCurrentRuleset>>;
+
+/** One fully verified ruleset configuration the editor can carry forward. */
+type PrefillSource = {
+  action: QueueAction;
+  option: QueueActionOption;
+  entry: RulesetEntry;
   rulesetId: bigint;
   terminal: Address;
   access: TokenAccess[];
   reservedSplits: readonly RawSplit[];
   payoutSplits: { token: Address; splits: readonly RawSplit[] }[];
+};
+
+/** The live queue and every safe source the owner may choose between. */
+type PrefillData = {
+  current: RulesetEntry;
+  upcoming: RulesetEntry | null;
+  latest: RulesetEntry;
+  latestApprovalStatus: number;
+  plan: RulesetQueuePlan;
+  sources: Partial<Record<QueueAction, PrefillSource>>;
 };
 
 /** A reviewed, ready-to-send queue: the exact config is frozen so what the
@@ -399,12 +475,52 @@ type Reviewed = {
   clearsPayouts: boolean;
 };
 
-function RulesetEditor({
+function RulesetEditor(props: {
+  chainId: JBChainId;
+  projectId: number;
+  controller: Address;
+  authority: Address;
+  data: PrefillData;
+  publicClient: PublicClient;
+}) {
+  const [action, setAction] = useState<QueueAction>(
+    props.data.plan.defaultAction,
+  );
+  const source = props.data.sources[action];
+  if (!source) {
+    return (
+      <div className="card p-5">
+        <span className="field-label">Edit rules</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          The queued ruleset&apos;s approval hook does not currently permit a
+          safe replacement or a following configuration. Try again after its
+          approval status changes.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <RulesetEditorForm
+      key={`${action}:${source.rulesetId}`}
+      {...props}
+      action={action}
+      source={source}
+      onActionChange={setAction}
+    />
+  );
+}
+
+function RulesetEditorForm({
   chainId,
   projectId,
   controller,
   authority,
   data,
+  action,
+  source,
+  onActionChange,
+  publicClient,
 }: {
   chainId: JBChainId;
   projectId: number;
@@ -413,12 +529,16 @@ function RulesetEditor({
    *  the connected wallet signs for) or a QUEUE_RULESETS operator. */
   authority: Address;
   data: PrefillData;
+  action: QueueAction;
+  source: PrefillSource;
+  onActionChange: (action: QueueAction) => void;
+  publicClient: PublicClient;
 }) {
   const { isConnected, address, openSignIn } = useWallet();
 
-  const { current, terminal, access, reservedSplits, payoutSplits } = data;
-  const r = current.ruleset;
-  const m = current.metadata;
+  const { terminal, access, reservedSplits, payoutSplits } = source;
+  const r = source.entry.ruleset;
+  const m = source.entry.metadata;
 
   const baseline: EditorState = useMemo(
     () => ({
@@ -453,6 +573,7 @@ function RulesetEditor({
   const [status, setStatus] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
+  const [scheduledStart, setScheduledStart] = useState("");
 
   const set = <K extends keyof EditorState>(key: K, value: EditorState[K]) => {
     setState((s) => ({ ...s, [key]: value }));
@@ -479,6 +600,21 @@ function RulesetEditor({
   const limitsValid = state.limits.every(
     (l) => l.mode !== "limited" || Number(l.amount) > 0,
   );
+  const minimumScheduledStart = Math.max(
+    Math.floor(Date.now() / 1000) + 60,
+    Number(source.entry.ruleset.start) + 1,
+  );
+  const scheduledStartSeconds = scheduledStart
+    ? Math.floor(new Date(scheduledStart).getTime() / 1000)
+    : 0;
+  const startValid =
+    !source.option.requiresStartDate ||
+    (Number.isFinite(scheduledStartSeconds) &&
+      scheduledStartSeconds >= minimumScheduledStart);
+
+  const mustStartAtOrAfter = source.option.requiresStartDate
+    ? scheduledStartSeconds
+    : (source.option.mustStartAtOrAfter ?? 0);
 
   const buildConfig = (): JBRulesetConfig => {
     const fundAccessLimitGroups = state.limits
@@ -521,11 +657,12 @@ function RulesetEditor({
     ];
 
     return {
-      mustStartAtOrAfter: 0,
+      mustStartAtOrAfter,
       duration: state.duration,
       weight: parseUnits(state.weight.trim() || "0", 18),
       weightCutPercent: pctTo1e9(state.weightCutPct),
-      // Keep the current approval hook so the rule-change deadline is unchanged.
+      // Keep the selected source's approval hook so its future rule-change
+      // condition carries forward unchanged.
       approvalHook: r.approvalHook,
       metadata: {
         ...m,
@@ -557,7 +694,7 @@ function RulesetEditor({
       openSignIn();
       return;
     }
-    if (!weightValid || !limitsValid || busy) return;
+    if (!weightValid || !limitsValid || !startValid || busy) return;
     if (changes.length === 0) {
       setFlowError("Nothing changed — edit a rule to queue an update.");
       return;
@@ -579,22 +716,67 @@ function RulesetEditor({
       );
       return;
     }
-    // Route by the controlling account: the owner EOA sends directly, an
-    // owner Safe gets the exact call proposed/approved through the Safe, an
-    // operator sends as itself — all simulation-first via runAuthorityCalls.
-    const call = buildQueueRulesetsAuthorityCall({
-      chainId,
-      authority,
-      controller,
-      projectId: BigInt(projectId),
-      rulesetConfigurations: [review.config],
-      memo: "",
-      label: "Queue new rules",
-    });
     setBusy(true);
     setFlowError(null);
-    setStatus("Reviewing the queued rules…");
+    setStatus("Rechecking the live queue…");
     try {
+      const [liveCurrent, liveLatest] = await Promise.all([
+        getCurrentRuleset(publicClient, {
+          chainId,
+          projectId: BigInt(projectId),
+        }),
+        publicClient.readContract({
+          address: controller,
+          abi: jbControllerAbi,
+          functionName: "latestQueuedRulesetOf",
+          args: [BigInt(projectId)],
+        }),
+      ]);
+      const livePlan = planRulesetQueue({
+        current: liveCurrent.ruleset,
+        upcoming: null,
+        latest: liveLatest[0],
+        latestApprovalStatus: Number(liveLatest[2]),
+      });
+      const liveOption = livePlan.options.find(
+        (option) => option.action === action,
+      );
+      if (
+        !liveOption ||
+        !sameQueueSource(liveOption.source, source.option.source)
+      ) {
+        setReview(null);
+        throw new Error(
+          "The ruleset queue changed while this form was open. Nothing was sent; reload it and review the live queue again.",
+        );
+      }
+      if (
+        source.option.requiresStartDate &&
+        review.config.mustStartAtOrAfter <
+          Math.max(
+            Math.floor(Date.now() / 1000) + 60,
+            Number(liveOption.source.start) + 1,
+          )
+      ) {
+        setReview(null);
+        throw new Error(
+          "The chosen follow-on time is no longer safely in the future. Nothing was sent; choose a later time and review again.",
+        );
+      }
+
+      // Route by the controlling account: the owner EOA sends directly, an
+      // owner Safe gets the exact call proposed/approved through the Safe, an
+      // operator sends as itself — all simulation-first via runAuthorityCalls.
+      const call = buildQueueRulesetsAuthorityCall({
+        chainId,
+        authority,
+        controller,
+        projectId: BigInt(projectId),
+        rulesetConfigurations: [review.config],
+        memo: "",
+        label: "Queue new rules",
+      });
+      setStatus("Reviewing the queued rules…");
       const result = await runAuthorityCalls({
         calls: [call],
         onProgress: (progress) => setStatus(progress.message),
@@ -603,7 +785,7 @@ function RulesetEditor({
       setStatus(
         safeOutcomeMessage(
           result,
-          "New rules queued. They take effect at the start of the next cycle.",
+          queueSuccessCopy(action, mustStartAtOrAfter),
         ),
       );
       setSuccess(true);
@@ -623,8 +805,7 @@ function RulesetEditor({
     return (
       <div className="card p-5">
         <p className="text-sm font-medium text-ink">
-          {status ??
-            "New rules queued. They take effect at the start of the next cycle."}
+          {status ?? queueSuccessCopy(action, mustStartAtOrAfter)}
         </p>
         <div className="mt-2 flex gap-3 text-sm font-semibold">
           {txUrl ? (
@@ -646,10 +827,43 @@ function RulesetEditor({
     <div className="card p-5">
       <span className="field-label">Edit rules</span>
       <p className="mt-1 text-xs text-smoke-700">
-        Changes queue for the next cycle. Anything you don&apos;t touch —
-        including payout recipients and the rule-change deadline — carries
-        forward unchanged.
+        Anything you don&apos;t touch — including payout recipients and the
+        rule-change deadline — carries forward from the ruleset named below.
       </p>
+
+      <QueueActionPicker
+        data={data}
+        action={action}
+        disabled={busy || review !== null}
+        onChange={onActionChange}
+      />
+
+      {source.option.requiresStartDate ? (
+        <label className="mt-4 block">
+          <span className="field-label">Start following rules</span>
+          <input
+            type="datetime-local"
+            value={scheduledStart}
+            min={toLocalDateTimeInput(minimumScheduledStart)}
+            disabled={busy || review !== null}
+            onChange={(event) => {
+              setScheduledStart(event.target.value);
+              setReview(null);
+              setFlowError(null);
+            }}
+            className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+          />
+          <span className="mt-1 block text-xs text-smoke-600">
+            This queued ruleset has no duration, so it has no automatic end.
+            Pick when the following rules may replace it.
+          </span>
+          {!startValid && scheduledStart ? (
+            <span className="mt-1 block text-xs font-medium text-red-700">
+              Choose a future time after the queued ruleset starts.
+            </span>
+          ) : null}
+        </label>
+      ) : null}
 
       <div className="mt-4 space-y-5">
         <section>
@@ -811,7 +1025,9 @@ function RulesetEditor({
 
       {review ? (
         <div className="callout callout-warning mt-4 text-xs">
-          <p className="font-medium">These rules change at the next cycle:</p>
+          <p className="font-medium">
+            {queueReviewHeading(action, mustStartAtOrAfter)}
+          </p>
           <ul className="mt-1.5 space-y-1">
             {changes.map((c) => (
               <li key={c.label}>
@@ -830,7 +1046,9 @@ function RulesetEditor({
 
       <button
         onClick={review ? () => void handleConfirm() : handleReview}
-        disabled={busy || (isConnected && (!weightValid || !limitsValid))}
+        disabled={
+          busy || (isConnected && (!weightValid || !limitsValid || !startValid))
+        }
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
         {busy
@@ -855,6 +1073,131 @@ function RulesetEditor({
 }
 
 // -------------------------------------------------------------- helpers --
+
+function QueueActionPicker({
+  data,
+  action,
+  disabled,
+  onChange,
+}: {
+  data: PrefillData;
+  action: QueueAction;
+  disabled: boolean;
+  onChange: (action: QueueAction) => void;
+}) {
+  return (
+    <section className="mt-4">
+      <span className="field-label">Queue position</span>
+      <div className="mt-2 space-y-2">
+        {data.plan.options.map((option) => {
+          const selected = option.action === action;
+          const cycle = Number(option.source.cycleNumber);
+          const status =
+            option.action === "replace"
+              ? data.latestApprovalStatus
+              : option.action === "after"
+                ? data.latestApprovalStatus
+                : null;
+          const label =
+            option.action === "current"
+              ? `Base new rules on current Cycle #${cycle}`
+              : option.action === "replace"
+                ? `Replace queued Cycle #${cycle}`
+                : `Queue after Cycle #${cycle}`;
+          let description: string;
+          if (option.action === "current") {
+            description =
+              "The form is copied from the rules governing the project now. Their approval hook and cycle schedule determine when the change can take effect.";
+          } else if (option.action === "replace") {
+            description = `${approvalStatusLabel(status)}. The form is copied from this queued change and targets its scheduled cycle.`;
+            if (data.plan.hasMultipleQueuedRulesets) {
+              description +=
+                " Earlier queued configurations remain in place.";
+            }
+          } else if (option.requiresStartDate) {
+            description = `${approvalStatusLabel(status)}. This ruleset has no automatic end, so choose when the following rules may start.`;
+          } else {
+            description = `${approvalStatusLabel(status)}. The form is copied from the last queued configuration and starts no earlier than ${formatRulesetDate(option.mustStartAtOrAfter ?? 0)}.`;
+          }
+
+          return (
+            <label
+              key={option.action}
+              className={`flex cursor-pointer gap-3 rounded-lg border px-3 py-3 text-sm ${
+                selected
+                  ? "border-bluebs-500 bg-bluebs-50"
+                  : "border-smoke-200 bg-white"
+              } ${disabled ? "cursor-default opacity-70" : ""}`}
+            >
+              {data.plan.options.length > 1 ? (
+                <input
+                  type="radio"
+                  name="queue-position"
+                  checked={selected}
+                  disabled={disabled}
+                  onChange={() => onChange(option.action)}
+                  className="mt-0.5"
+                />
+              ) : null}
+              <span>
+                <span className="block font-medium text-ink">{label}</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                  {description}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function formatRulesetDate(seconds: number): string {
+  if (!seconds) return "the next eligible cycle";
+  return new Date(seconds * 1000).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function sameQueueSource(
+  a: QueueActionOption["source"],
+  b: QueueActionOption["source"],
+): boolean {
+  return (
+    BigInt(a.id) === BigInt(b.id) &&
+    BigInt(a.cycleNumber) === BigInt(b.cycleNumber) &&
+    BigInt(a.start) === BigInt(b.start) &&
+    BigInt(a.duration) === BigInt(b.duration)
+  );
+}
+
+function toLocalDateTimeInput(seconds: number): string {
+  const date = new Date(seconds * 1000);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function queueReviewHeading(action: QueueAction, start: number): string {
+  if (action === "replace") {
+    return `These rules replace the queued change targeting ${formatRulesetDate(start)}:`;
+  }
+  if (action === "after") {
+    return `These rules are queued no earlier than ${formatRulesetDate(start)}:`;
+  }
+  return "These rules are queued from the current configuration:";
+}
+
+function queueSuccessCopy(action: QueueAction, start: number): string {
+  if (action === "replace") {
+    return `Queued rules replaced for the cycle scheduled around ${formatRulesetDate(start)}. Their parent ruleset's approval hook still decides whether they take effect.`;
+  }
+  if (action === "after") {
+    return `Following rules queued no earlier than ${formatRulesetDate(start)}.`;
+  }
+  return "New rules queued. Their parent ruleset's approval hook and cycle schedule determine when they take effect.";
+}
 
 function hasPayoutLimit(limits: readonly CurrencyAmount[]): boolean {
   return limits.some((l) => l.amount > 0n);
