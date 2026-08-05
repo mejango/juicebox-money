@@ -29,7 +29,7 @@ import {
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
-import { ipfsUrl } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/format'
 import { TOKEN_SYMBOL_RE } from '@/lib/manage'
 import {
   customPropertiesText,
@@ -656,7 +656,7 @@ export function MetadataEditor({
     }
   }
 
-  const preview = logoPreview ?? ipfsUrl(initial.logoUri)
+  const preview = logoPreview ?? projectLogoUrl(initial.logoUri)
 
   return (
     <div className="mt-4 rounded-xl border border-smoke-200 p-4">

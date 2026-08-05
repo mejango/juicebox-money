@@ -22,6 +22,8 @@ import { getProject, type BsProject } from '@/lib/bendystraw'
 export type OnChainProjectShell = {
   owner: Address
   metadataUri: string | null
+  /** Whether controllerOf + uriOf completed, including an intentionally empty URI. */
+  metadataUriResolved: boolean
 }
 
 const V6_ADDRESSES = jbContractAddress['6'] as Record<
@@ -43,7 +45,10 @@ export async function readOnChainProject(
   const projects = V6_ADDRESSES[JBCoreContracts.JBProjects]?.[chainId]
   const directory = V6_ADDRESSES[JBCoreContracts.JBDirectory]?.[chainId]
   if (!chain || !projects) return null
-  const client = createPublicClient({ chain, transport: http() })
+  const client = createPublicClient({
+    chain,
+    transport: http(undefined, { retryCount: 1, timeout: 4_000 }),
+  })
   try {
     const owner = (await client.readContract({
       address: projects,
@@ -54,6 +59,7 @@ export async function readOnChainProject(
 
     // Metadata is decorative here — a shell without a URI still renders.
     let metadataUri: string | null = null
+    let metadataUriResolved = false
     if (directory) {
       try {
         const controller = (await client.readContract({
@@ -70,12 +76,13 @@ export async function readOnChainProject(
             args: [BigInt(projectId)],
           })) as string
           metadataUri = uri || null
+          metadataUriResolved = true
         }
       } catch {
         metadataUri = null
       }
     }
-    return { owner, metadataUri }
+    return { owner, metadataUri, metadataUriResolved }
   } catch {
     // ownerOf reverted (no such project) or the RPC is unreachable.
     return null
@@ -116,9 +123,12 @@ function shellProject(
 }
 
 /**
- * The project page's data source. Indexed row when available; otherwise a
- * degraded on-chain shell (fresh launch or indexer outage); null only when
- * the project can't be found onchain either — the page's 404. Never throws.
+ * The project page's data source. Indexed financial/activity fields stay the
+ * efficient primary, while identity and the controller's CURRENT metadata URI
+ * are reconciled onchain so a recent name/logo edit does not wait for the
+ * indexer. Falls back to a degraded on-chain shell for fresh projects or an
+ * indexer outage; null only when the project can't be found either. Never
+ * throws.
  */
 export async function getProjectPageData(
   chainId: number,
@@ -128,22 +138,33 @@ export async function getProjectPageData(
     readOnChainProject: typeof readOnChainProject
   } = { getProject, readOnChainProject },
 ): Promise<ProjectPageData | null> {
-  let indexed: BsProject | null = null
-  let indexerFailed = false
-  try {
-    indexed = await deps.getProject(chainId, projectId)
-  } catch {
-    indexerFailed = true
+  const [indexedResult, shell] = await Promise.all([
+    deps
+      .getProject(chainId, projectId)
+      .then(project => ({ project, failed: false }))
+      .catch(() => ({ project: null, failed: true })),
+    deps.readOnChainProject(chainId, projectId).catch(() => null),
+  ])
+  const indexed = indexedResult.project
+  if (indexed) {
+    return {
+      project: shell
+        ? {
+            ...indexed,
+            owner: shell.owner,
+            ...(shell.metadataUriResolved
+              ? { metadataUri: shell.metadataUri }
+              : {}),
+          }
+        : indexed,
+      degraded: false,
+    }
   }
-  if (indexed) return { project: indexed, degraded: false }
 
-  const shell = await deps
-    .readOnChainProject(chainId, projectId)
-    .catch(() => null)
   if (!shell) return null
   return {
     project: shellProject(chainId, projectId, shell),
     degraded: true,
-    reason: indexerFailed ? 'indexer-error' : 'not-indexed',
+    reason: indexedResult.failed ? 'indexer-error' : 'not-indexed',
   }
 }

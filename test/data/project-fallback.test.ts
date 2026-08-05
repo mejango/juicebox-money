@@ -41,17 +41,39 @@ function indexedProject(overrides: Partial<BsProject> = {}): BsProject {
 }
 
 describe('project page data with on-chain fallback', () => {
-  it('returns indexed data without touching the chain when the row exists', async () => {
+  it('keeps indexed fields while reconciling current on-chain identity', async () => {
     const deps = {
       getProject: vi.fn().mockResolvedValue(indexedProject()),
-      readOnChainProject: vi.fn(),
+      readOnChainProject: vi.fn().mockResolvedValue({
+        owner: OWNER,
+        metadataUri: 'ipfs://QmCurrent',
+        metadataUriResolved: true,
+      }),
     }
 
     await expect(getProjectPageData(1, 7, deps)).resolves.toEqual({
-      project: indexedProject(),
+      project: indexedProject({ metadataUri: 'ipfs://QmCurrent' }),
       degraded: false,
     })
-    expect(deps.readOnChainProject).not.toHaveBeenCalled()
+    expect(deps.readOnChainProject).toHaveBeenCalledWith(1, 7)
+  })
+
+  it('retains indexed metadata when the live metadata read is unavailable', async () => {
+    const deps = {
+      getProject: vi
+        .fn()
+        .mockResolvedValue(indexedProject({ metadataUri: 'ipfs://QmIndexed' })),
+      readOnChainProject: vi.fn().mockResolvedValue({
+        owner: OWNER,
+        metadataUri: null,
+        metadataUriResolved: false,
+      }),
+    }
+
+    await expect(getProjectPageData(1, 7, deps)).resolves.toEqual({
+      project: indexedProject({ metadataUri: 'ipfs://QmIndexed' }),
+      degraded: false,
+    })
   })
 
   it('falls back to on-chain identity when the project is not indexed yet', async () => {
@@ -59,7 +81,11 @@ describe('project page data with on-chain fallback', () => {
       getProject: vi.fn().mockResolvedValue(null),
       readOnChainProject: vi
         .fn()
-        .mockResolvedValue({ owner: OWNER, metadataUri: 'ipfs://QmShell' }),
+        .mockResolvedValue({
+          owner: OWNER,
+          metadataUri: 'ipfs://QmShell',
+          metadataUriResolved: true,
+        }),
     }
 
     const result = await getProjectPageData(8453, 42, deps)
@@ -85,7 +111,11 @@ describe('project page data with on-chain fallback', () => {
       getProject: vi.fn().mockRejectedValue(new Error('bendystraw 503')),
       readOnChainProject: vi
         .fn()
-        .mockResolvedValue({ owner: OWNER, metadataUri: null }),
+        .mockResolvedValue({
+          owner: OWNER,
+          metadataUri: null,
+          metadataUriResolved: false,
+        }),
     }
 
     await expect(getProjectPageData(1, 7, deps)).resolves.toEqual({
@@ -161,6 +191,7 @@ describe('on-chain project shell read', () => {
     await expect(readOnChainProject(1, 7)).resolves.toEqual({
       owner: OWNER,
       metadataUri: 'ipfs://QmShell',
+      metadataUriResolved: true,
     })
     const targets = fetchMock.mock.calls.map(call =>
       (
@@ -217,6 +248,7 @@ describe('on-chain project shell read', () => {
     await expect(readOnChainProject(1, 7)).resolves.toEqual({
       owner: OWNER,
       metadataUri: null,
+      metadataUriResolved: false,
     })
   })
 })

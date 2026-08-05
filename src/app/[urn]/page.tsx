@@ -8,7 +8,7 @@ import type { Address } from "viem";
 import { ActivityList } from "@/components/ActivityList";
 import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
-import { ProjectLogo } from "@/components/ProjectLogo";
+import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { OverviewTab } from "@/components/project/OverviewTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
@@ -121,15 +121,21 @@ export async function generateMetadata({
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
   const project = result.project;
-  const name = project.name ?? `Project ${project.projectId}`;
+  const projectMetadata = await fetchProjectMetadata(project.metadataUri);
+  const name =
+    projectMetadata?.name?.trim() ||
+    project.name ||
+    `Project ${project.projectId}`;
+  const tagline =
+    projectMetadata?.projectTagline?.trim() || project.projectTagline;
   return {
     title: name,
     description:
-      project.projectTagline ??
+      tagline ??
       `Support ${name} on Juicebox — transparent, onchain funding.`,
     openGraph: {
       title: `${name} — Juicebox`,
-      description: project.projectTagline ?? undefined,
+      description: tagline ?? undefined,
     },
   };
 }
@@ -155,7 +161,7 @@ async function DegradedProjectShell({
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-        <ProjectLogo
+        <ProjectLogoWithFallback
           name={name}
           logoUri={metadata?.logoUri ?? null}
           size={112}
@@ -245,7 +251,11 @@ export default async function ProjectPage({
   ]);
   const activity = activityResult.events;
 
-  const name = project.name ?? `Project ${project.projectId}`;
+  const name =
+    metadata?.name?.trim() || project.name || `Project ${project.projectId}`;
+  const tagline =
+    metadata?.projectTagline?.trim() || project.projectTagline || null;
+  const logoUri = metadata?.logoUri?.trim() || project.logoUri;
   const chains = resolveProjectDeployments(project, siblings);
   const accountingToken = suckerGroupAccountingToken(chains);
   const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname;
@@ -327,9 +337,9 @@ export default async function ProjectPage({
         ) : null}
         {/* Header */}
         <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-          <ProjectLogo
-            name={project.name}
-            logoUri={project.logoUri}
+          <ProjectLogoWithFallback
+            name={name}
+            logoUri={logoUri}
             size={112}
             className="rounded-xl"
           />
@@ -337,9 +347,9 @@ export default async function ProjectPage({
             <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
               {name}
             </h1>
-            {project.projectTagline ? (
+            {tagline ? (
               <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
-                {project.projectTagline}
+                {tagline}
               </p>
             ) : null}
             <ProjectStats

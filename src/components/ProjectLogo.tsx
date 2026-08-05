@@ -1,5 +1,5 @@
 import Image from 'next/image'
-import { ipfsUrl } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/format'
 
 // Fruit-scale placeholder tiles (DESIGN.md §Icons) with checked contrast:
 // ink on split-400 = 10.3, melon-400 = 10.0, crush-400 = 10.5,
@@ -13,20 +13,22 @@ const TILES = [
 ]
 
 /** Project logo image, or a colored initial tile when there's no usable logo. */
+export type ProjectLogoProps = {
+  name: string | null
+  logoUri: string | null
+  size: number
+  className?: string
+  onError?: () => void
+}
+
 export function ProjectLogo({
   name,
   logoUri,
   size,
   className = '',
-}: {
-  name: string | null
-  logoUri: string | null
-  size: number
-  className?: string
-}) {
-  // Only ipfs:// (or bare-CID) URIs resolve through our allowed gateway.
-  const src =
-    logoUri && !logoUri.startsWith('http') ? ipfsUrl(logoUri) : null
+  onError,
+}: ProjectLogoProps) {
+  const src = projectLogoUrl(logoUri)
   const label = name?.trim() || '?'
 
   if (src) {
@@ -38,6 +40,8 @@ export function ProjectLogo({
         height={size}
         className={`shrink-0 rounded-lg border border-smoke-200 bg-smoke-75 object-cover ${className}`}
         style={{ width: size, height: size }}
+        unoptimized={src.startsWith('data:')}
+        onError={onError}
       />
     )
   }
