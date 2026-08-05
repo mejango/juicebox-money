@@ -72,6 +72,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import { PERSIST } from '@/lib/query-persist'
+import { SPLIT_SALES_TOKEN_CREDIT_TITLE } from '@/lib/shop-copy'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
@@ -104,7 +105,7 @@ const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['noNewTiersWithReserves', 'Lock reserved items after launch'],
   ['noNewTiersWithVotes', 'Lock voting items after launch'],
   ['noNewTiersWithOwnerMinting', 'Lock owner minting after launch'],
-  ['issueTokensForSplits', 'Give split recipients project tokens'],
+  ['issueTokensForSplits', SPLIT_SALES_TOKEN_CREDIT_TITLE],
 ]
 
 const TIER_PAGE_SIZE = 200

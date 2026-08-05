@@ -227,7 +227,7 @@ export function SplitsEditor({
                       value={split.projectId}
                       onChange={projectId => update(split.id, { projectId })}
                       disabled={disabled}
-                      chainId={chainIds?.[0] ?? 1}
+                      chainIds={chainIds?.length ? chainIds : [1]}
                       className="w-28"
                     />
                   ) : null}
@@ -276,7 +276,7 @@ export function SplitsEditor({
                         value={split.projectId}
                         onChange={projectId => update(split.id, { projectId })}
                         disabled={disabled}
-                        chainId={chainIds?.[0] ?? 1}
+                        chainIds={chainIds?.length ? chainIds : [1]}
                         className="w-24"
                       />
                     </div>
@@ -443,7 +443,7 @@ export function SplitsEditor({
                                   })
                                 }
                                 disabled={disabled}
-                                chainId={chainId}
+                                chainIds={[chainId]}
                                 className="w-24"
                               />
                               <AddressField

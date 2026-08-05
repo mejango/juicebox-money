@@ -94,6 +94,10 @@ import {
 import { chainName, toUrn } from "@/lib/urn";
 import { requireContractTransactionReview } from "@/lib/transaction-review";
 import {
+  SPLIT_SALES_TOKEN_CREDIT_DESCRIPTION,
+  SPLIT_SALES_TOKEN_CREDIT_TITLE,
+} from "@/lib/shop-copy";
+import {
   PRODUCTION_CHAINS,
   SUPPORTED_CHAINS,
   chainsForEnvironment,
@@ -2690,8 +2694,8 @@ export function CreateForm() {
                     ],
                     [
                       "issueTokensForSplits",
-                      "Full token credit on split sales",
-                      "Buyers get project tokens for their entire payment, even the portion an item routes to splits. When off, tokens are only issued for what stays in the project.",
+                      SPLIT_SALES_TOKEN_CREDIT_TITLE,
+                      SPLIT_SALES_TOKEN_CREDIT_DESCRIPTION,
                     ],
                   ] as const
                 ).map(([key, title, blurb]) => (

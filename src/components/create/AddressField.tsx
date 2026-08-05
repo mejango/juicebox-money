@@ -3,8 +3,14 @@
 import { useEffect, useId, useState } from 'react'
 import { isAddress } from 'viem'
 import { looksLikeEns, lookupEnsAddress, lookupEnsName } from '@/lib/ens'
+import { chainName } from '@/lib/urn'
 
-type Note = { kind: 'ok' | 'bad'; text: string; copy?: string }
+type Note = {
+  kind: 'ok' | 'warn' | 'bad'
+  text: string
+  copy?: string
+  full?: boolean
+}
 
 function ResolutionNote({ note, id }: { note: Note; id: string }) {
   const [copied, setCopied] = useState(false)
@@ -16,7 +22,24 @@ function ResolutionNote({ note, id }: { note: Note; id: string }) {
 
   if (note.kind === 'bad') {
     return (
-      <p id={id} className="field-error mt-0.5 truncate pl-1 text-[11px]">
+      <p
+        id={id}
+        className={`field-error mt-0.5 pl-1 text-[11px] ${
+          note.full
+            ? 'w-72 max-w-[80vw] leading-relaxed'
+            : 'truncate'
+        }`}
+      >
+        {note.text}
+      </p>
+    )
+  }
+  if (note.kind === 'warn') {
+    return (
+      <p
+        id={id}
+        className="mt-0.5 w-72 max-w-[80vw] pl-1 text-[11px] leading-relaxed text-amber-700"
+      >
         {note.text}
       </p>
     )
@@ -116,25 +139,78 @@ export function AddressField({
   )
 }
 
-const projectNameCache = new Map<string, string | null>()
+export type ProjectChainLookup = {
+  chainId: number
+  found: boolean
+  name: string | null
+  suckerGroupId: string | null
+}
+
+const projectLookupCache = new Map<string, ProjectChainLookup>()
+
+/** Turn exact-chain project reads into one actionable field message. */
+export function projectLookupNote(
+  projectId: number,
+  chainIds: readonly number[],
+  lookups: readonly ProjectChainLookup[],
+): Note {
+  const selected = [...new Set(chainIds)]
+  const found = selected
+    .map(chainId => lookups.find(result => result.chainId === chainId))
+    .filter((result): result is ProjectChainLookup => Boolean(result?.found))
+
+  if (found.length === 0) {
+    return {
+      kind: 'bad',
+      text: `No project #${projectId} found on the selected ${selected.length === 1 ? 'chain' : 'chains'}`,
+      full: true,
+    }
+  }
+
+  const label = found.find(result => result.name)?.name ?? `Project #${projectId}`
+  if (selected.length === 1) return { kind: 'ok', text: `→ ${label}` }
+
+  if (found.length < selected.length) {
+    return {
+      kind: 'warn',
+      text: `→ ${label} found on ${found.map(result => chainName(result.chainId)).join(', ')} only — set per-chain project IDs for the other selected chains`,
+    }
+  }
+
+  const groups = new Set(
+    found.map(result => result.suckerGroupId).filter(Boolean),
+  )
+  if (
+    groups.size !== 1 ||
+    found.some(result => result.suckerGroupId === null)
+  ) {
+    return {
+      kind: 'warn',
+      text: `→ Project #${projectId} exists on every selected chain, but the deployments aren't linked — confirm each per-chain project ID`,
+    }
+  }
+
+  return { kind: 'ok', text: `→ ${label} on all selected chains` }
+}
 
 /** Project-id input that resolves the project's name beneath it. */
 export function ProjectIdField({
   value,
   onChange,
   disabled,
-  chainId,
+  chainIds,
   className = '',
 }: {
   value: string
   onChange: (value: string) => void
   disabled: boolean
-  /** Chain to resolve the name on (ids differ per chain). */
-  chainId: number
+  /** Selected chains to resolve on (project ids can differ per chain). */
+  chainIds: readonly number[]
   className?: string
 }) {
   const [note, setNote] = useState<Note | null>(null)
   const noteId = useId()
+  const chainKey = [...new Set(chainIds)].sort((a, b) => a - b).join(',')
 
   useEffect(() => {
     const id = Number(value.trim().replace('#', ''))
@@ -146,32 +222,48 @@ export function ProjectIdField({
     }
     let stale = false
     const t = setTimeout(async () => {
-      const key = `${chainId}:${id}`
-      let name = projectNameCache.get(key)
-      if (name === undefined) {
-        try {
-          const res = await fetch(
-            `/api/project-name?chainId=${chainId}&projectId=${id}`,
-          )
-          const json = (await res.json()) as { name?: string | null }
-          name = json.name ?? null
-        } catch {
-          name = null
-        }
-        projectNameCache.set(key, name)
-      }
-      if (stale) return
-      setNote(
-        name
-          ? { kind: 'ok', text: `→ ${name}` }
-          : { kind: 'bad', text: 'No project found' },
+      const selectedChains = chainKey
+        .split(',')
+        .map(Number)
+        .filter(chainId => Number.isSafeInteger(chainId) && chainId > 0)
+      const lookups = await Promise.all(
+        selectedChains.map(async chainId => {
+          const key = `${chainId}:${id}`
+          const cached = projectLookupCache.get(key)
+          if (cached) return cached
+          let result: ProjectChainLookup
+          try {
+            const res = await fetch(
+              `/api/project-name?chainId=${chainId}&projectId=${id}`,
+            )
+            const json = (await res.json()) as {
+              found?: boolean
+              name?: string | null
+              suckerGroupId?: string | null
+            }
+            result = {
+              chainId,
+              found: res.ok && json.found === true,
+              name: json.name ?? null,
+              suckerGroupId: json.suckerGroupId ?? null,
+            }
+          } catch {
+            result = { chainId, found: false, name: null, suckerGroupId: null }
+          }
+          // Positive identity reads are stable. Retry misses next time so a
+          // just-launched project or brief indexer/RPC outage can recover.
+          if (result.found) projectLookupCache.set(key, result)
+          return result
+        }),
       )
+      if (stale) return
+      setNote(projectLookupNote(id, selectedChains, lookups))
     }, 400)
     return () => {
       stale = true
       clearTimeout(t)
     }
-  }, [value, chainId])
+  }, [value, chainKey])
 
   return (
     <div className={`min-w-0 ${className}`}>
