@@ -1,5 +1,5 @@
-import Link from 'next/link'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ProjectLink } from '@/components/ProjectLink'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { accountProjectHref } from '@/components/account/AccountProjectCard'
 import { AddressLabel } from '@/components/ui/AddressLabel'
@@ -103,12 +103,17 @@ export function AccountOperatedProjects({
             {name}
           </a>
         ) : (
-          <Link
+          <ProjectLink
             href={href}
+            projectHint={{
+              name,
+              logoUri: group.project?.logoUri ?? null,
+              tagline: group.project?.projectTagline ?? null,
+            }}
             className="font-agrandir font-medium text-ink hover:text-bluebs-600"
           >
             {name}
-          </Link>
+          </ProjectLink>
         )
         return (
           <div

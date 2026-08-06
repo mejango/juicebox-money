@@ -1,5 +1,5 @@
-import Link from 'next/link'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ProjectLink } from '@/components/ProjectLink'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import type { BsProject } from '@/lib/bendystraw'
 import { truncateAddress } from '@/lib/format'
@@ -79,8 +79,17 @@ export function AccountProjectCard({
     )
   }
   return (
-    <Link href={href} className={className} aria-label={`Open ${name}`}>
+    <ProjectLink
+      href={href}
+      projectHint={{
+        name,
+        logoUri: project.logoUri,
+        tagline: project.projectTagline,
+      }}
+      className={className}
+      aria-label={`Open ${name}`}
+    >
       {body}
-    </Link>
+    </ProjectLink>
   )
 }

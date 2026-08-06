@@ -1,7 +1,6 @@
 import { JB_CHAINS, type JBChainId } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import type { Address } from "viem";
@@ -9,6 +8,7 @@ import { ActivityList } from "@/components/ActivityList";
 import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
+import { ProjectLink } from "@/components/ProjectLink";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { OverviewTab } from "@/components/project/OverviewTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
@@ -401,13 +401,14 @@ export default async function ProjectPage({
                   <span className="inline-flex items-center gap-1.5">
                     <span className="text-smoke-500">On:</span>
                     {chains.map((p) => (
-                      <Link
+                      <ProjectLink
                         key={p.chainId}
                         href={`/${toUrn(p.chainId, p.projectId)}`}
+                        projectHint={{ name, logoUri, tagline }}
                         className="transition-opacity hover:opacity-70"
                       >
                         <ChainIcon chainId={p.chainId} standalone />
-                      </Link>
+                      </ProjectLink>
                     ))}
                   </span>
                 </div>
@@ -453,13 +454,14 @@ export default async function ProjectPage({
                 <span className="inline-flex items-center gap-1.5">
                   <span className="text-smoke-500">On:</span>
                   {chains.map((p) => (
-                    <Link
+                    <ProjectLink
                       key={p.chainId}
                       href={`/${toUrn(p.chainId, p.projectId)}`}
+                      projectHint={{ name, logoUri, tagline }}
                       className="transition-opacity hover:opacity-70"
                     >
                       <ChainIcon chainId={p.chainId} standalone />
-                    </Link>
+                    </ProjectLink>
                   ))}
                 </span>
               </div>

@@ -9,6 +9,10 @@ import { truncateAddress } from '@/lib/format'
 import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
+import {
+  rememberProjectNavigation,
+  type ProjectNavigationHint,
+} from '@/lib/project-navigation'
 import { ProjectLogo } from './ProjectLogo'
 import { AddressLabel } from './ui/AddressLabel'
 
@@ -167,7 +171,8 @@ export function SearchBox({
     setMobileOpen(false)
   })
 
-  const go = (path: string) => {
+  const go = (path: string, projectHint?: ProjectNavigationHint) => {
+    if (projectHint) rememberProjectNavigation(path, projectHint)
     setOpen(false)
     setMobileOpen(false)
     setQuery('')
@@ -186,7 +191,11 @@ export function SearchBox({
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
-      go(`/${toUrn(results[0].chainId, results[0].projectId)}`)
+      go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
+        name: results[0].name ?? `Project ${results[0].projectId}`,
+        logoUri: results[0].logoUri,
+        tagline: results[0].projectTagline,
+      })
   }
 
   const input = (
@@ -269,7 +278,13 @@ export function SearchBox({
             results.map(r => (
               <li key={`${r.chainId}-${r.projectId}`}>
                 <button
-                  onClick={() => go(`/${toUrn(r.chainId, r.projectId)}`)}
+                  onClick={() =>
+                    go(`/${toUrn(r.chainId, r.projectId)}`, {
+                      name: r.name ?? `Project ${r.projectId}`,
+                      logoUri: r.logoUri,
+                      tagline: r.projectTagline,
+                    })
+                  }
                   className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-smoke-25"
                 >
                   <ProjectLogo name={r.name} logoUri={r.logoUri} size={32} />

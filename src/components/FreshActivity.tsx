@@ -1,7 +1,6 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
@@ -11,6 +10,7 @@ import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
 import { ActivityMeta } from './ActivityMeta'
 import { ProjectLogo } from './ProjectLogo'
+import { ProjectLink } from './ProjectLink'
 
 const POLL_MS = 15_000
 
@@ -64,6 +64,10 @@ export function FreshActivity({
 function Row({ event }: { event: BsFreshActivityEvent }) {
   const name = event.project?.name ?? `Project ${event.projectId}`
   const href = `/${toUrn(event.chainId, event.projectId)}`
+  const projectHint = {
+    name,
+    logoUri: event.project?.logoUri ?? null,
+  }
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
   // Bendystraw's project.tokenSymbol is the accounting token (ETH/USDC),
@@ -90,8 +94,9 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
   return (
     <li className="px-4 py-4 transition-colors hover:bg-smoke-25">
       <div className="flex items-start gap-3">
-        <Link
+        <ProjectLink
           href={href}
+          projectHint={projectHint}
           aria-label={`Open ${name} activity`}
           className="shrink-0"
         >
@@ -100,7 +105,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
             logoUri={event.project?.logoUri ?? null}
             size={46}
           />
-        </Link>
+        </ProjectLink>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
             <span suppressHydrationWarning>
@@ -113,12 +118,13 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
               direction={isPay ? 'in' : 'out'}
             />
           </div>
-          <Link
+          <ProjectLink
             href={href}
+            projectHint={projectHint}
             className="mt-1 block min-w-0 truncate text-sm font-medium text-bluebs-600 hover:underline"
           >
             {name}
-          </Link>
+          </ProjectLink>
           <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
             {actorNode} {isPay ? 'got' : 'cashed out'}{' '}
             <span className="font-medium text-bluebs-600">

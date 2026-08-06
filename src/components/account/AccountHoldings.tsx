@@ -1,5 +1,5 @@
-import Link from 'next/link'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ProjectLink } from '@/components/ProjectLink'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import {
   type BsAccountNft,
@@ -171,12 +171,17 @@ function ProjectTitle({
 }) {
   const name = project?.name ?? `Project ${projectId}`
   return (
-    <Link
+    <ProjectLink
       href={`/${toUrn(chainId, projectId)}`}
+      projectHint={{
+        name,
+        logoUri: project?.logoUri ?? null,
+        tagline: project?.projectTagline ?? null,
+      }}
       className="min-w-0 break-words font-agrandir font-medium text-ink hover:text-bluebs-600"
     >
       {name}
-    </Link>
+    </ProjectLink>
   )
 }
 

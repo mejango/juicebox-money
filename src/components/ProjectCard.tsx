@@ -1,7 +1,7 @@
-import Link from 'next/link'
 import { TrendingCard } from '@/lib/trending'
 import { formatTokenAmount } from '@/lib/format'
 import { ChainIcon } from './ChainIcon'
+import { ProjectLink } from './ProjectLink'
 import { ProjectLogo } from './ProjectLogo'
 
 /**
@@ -68,12 +68,17 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
     )
   }
   return (
-    <Link
+    <ProjectLink
       href={card.href}
+      projectHint={{
+        name: card.name,
+        logoUri: card.logoUri,
+        tagline: card.tagline,
+      }}
       className={className}
       aria-label={`Open ${card.name}`}
     >
       {body}
-    </Link>
+    </ProjectLink>
   )
 }

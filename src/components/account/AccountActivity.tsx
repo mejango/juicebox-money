@@ -1,12 +1,12 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { ActorLink } from '@/components/ActorLink'
 import { activityParts, mergeActivityEvents } from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { ProjectLink } from '@/components/ProjectLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { getAccountActivity, type BsAccountActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
@@ -123,6 +123,10 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
   const name = event.project?.name ?? `Project ${event.projectId}`
   const isV6 = event.version === 6
   const projectHref = isV6 ? `/${toUrn(event.chainId, event.projectId)}` : null
+  const projectHint = {
+    name,
+    logoUri: event.project?.logoUri ?? null,
+  }
   // The V6 token unit is resolved onchain; earlier-version rows keep the
   // generic word rather than reading the wrong protocol's contracts.
   const v6TokenUnit = useProjectTokenUnit(
@@ -153,13 +157,14 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
     <li className="px-0 py-4">
       <div className="flex items-start gap-3">
         {projectHref ? (
-          <Link
+          <ProjectLink
             href={projectHref}
+            projectHint={projectHint}
             aria-label={`Open ${name}`}
             className="shrink-0"
           >
             {logo}
-          </Link>
+          </ProjectLink>
         ) : (
           <span className="shrink-0">{logo}</span>
         )}
@@ -192,12 +197,13 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
             />
           </div>
           {projectHref ? (
-            <Link
+            <ProjectLink
               href={projectHref}
+              projectHint={projectHint}
               className="mt-1 block min-w-0 truncate text-sm font-medium text-bluebs-600 hover:underline"
             >
               {name}
-            </Link>
+            </ProjectLink>
           ) : (
             <span className="mt-1 block min-w-0 truncate text-sm font-medium text-smoke-700">
               {name} <span className="text-xs text-smoke-500">V{event.version}</span>

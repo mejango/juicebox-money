@@ -1,5 +1,8 @@
 import { Skeleton, SkeletonLines, SkeletonTable } from './ui/Skeleton'
 import { HomepageDiscoveryTabs } from './HomepageDiscoveryTabs'
+import { ProjectLogoWithFallback } from './ProjectLogoWithFallback'
+import { Revalidating } from './ui/Revalidating'
+import type { ProjectNavigationHint } from '@/lib/project-navigation'
 
 export function ProjectCardSkeleton({ index = 0 }: { index?: number }) {
   return (
@@ -650,7 +653,11 @@ function OverviewTabSkeleton() {
   )
 }
 
-export function ProjectPageSkeleton() {
+export function ProjectPageSkeleton({
+  hint = null,
+}: {
+  hint?: ProjectNavigationHint | null
+} = {}) {
   return (
     <div
       className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12"
@@ -659,12 +666,44 @@ export function ProjectPageSkeleton() {
     >
       <span className="sr-only">Loading project</span>
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-        <Skeleton className="h-28 w-28 shrink-0 rounded-xl" />
-        <div className="min-w-0 flex-1 space-y-3 py-1">
-          <Skeleton className="h-9 w-64 max-w-[70%] rounded" />
-          <Skeleton className="h-4 w-[28rem] max-w-[85%] rounded" />
-          <Skeleton className="h-3.5 w-[34rem] max-w-full rounded" />
-        </div>
+        {hint ? (
+          <>
+            <Revalidating as="div" pending className="w-fit shrink-0 rounded-xl">
+              <ProjectLogoWithFallback
+                name={hint.name}
+                logoUri={hint.logoUri}
+                size={112}
+                className="rounded-xl"
+              />
+            </Revalidating>
+            <div className="min-w-0 flex-1 py-1">
+              <Revalidating as="div" pending className="w-fit max-w-full">
+                <h1 className="break-words font-agrandir text-3xl font-medium sm:text-4xl">
+                  {hint.name}
+                </h1>
+              </Revalidating>
+              {hint.tagline ? (
+                <Revalidating as="div" pending className="mt-1.5 w-fit max-w-full">
+                  <p className="text-base text-smoke-700 sm:text-lg">
+                    {hint.tagline}
+                  </p>
+                </Revalidating>
+              ) : (
+                <Skeleton className="mt-3 h-4 w-[28rem] max-w-[85%] rounded" />
+              )}
+              <Skeleton className="mt-3 h-3.5 w-[34rem] max-w-full rounded" />
+            </div>
+          </>
+        ) : (
+          <>
+            <Skeleton className="h-28 w-28 shrink-0 rounded-xl" />
+            <div className="min-w-0 flex-1 space-y-3 py-1">
+              <Skeleton className="h-9 w-64 max-w-[70%] rounded" />
+              <Skeleton className="h-4 w-[28rem] max-w-[85%] rounded" />
+              <Skeleton className="h-3.5 w-[34rem] max-w-full rounded" />
+            </div>
+          </>
+        )}
       </header>
 
       <div className="scrollbar-none -mx-4 mt-8 flex gap-3 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">

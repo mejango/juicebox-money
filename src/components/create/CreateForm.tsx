@@ -7,7 +7,6 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
-import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
@@ -19,6 +18,7 @@ import {
   waitForTransactionReceipt,
 } from "wagmi/actions";
 import { AddressLabel } from "@/components/ui/AddressLabel";
+import { ProjectLink } from "@/components/ProjectLink";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
@@ -1643,12 +1643,13 @@ export function CreateForm() {
                     </p>
                   </div>
                   {s.indexed ? (
-                    <Link
+                    <ProjectLink
                       href={`/${urn}`}
+                      projectHint={{ name: name.trim(), logoUri: null }}
                       className="btn-primary min-h-[40px] shrink-0 px-5 text-xs"
                     >
                       View project
-                    </Link>
+                    </ProjectLink>
                   ) : (
                     <span className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-full border border-smoke-300 px-5 text-sm text-smoke-700">
                       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-smoke-300 border-t-smoke-700" />
