@@ -16,6 +16,7 @@
     "container:check": "node scripts/check-container-definition.mjs",
     "protocol:check": "node scripts/check-protocol-deployments.mjs",
     "schema:check": "node scripts/check-bendystraw-schema.mjs 27",
+    "schema:check:offline": "node scripts/check-bendystraw-schema.mjs 27 --offline",
     "bendystraw:registry": "node scripts/check-bendystraw-schema.mjs 27 --write-registry",
     "transaction:check": "node scripts/check-transaction-inventory.mjs",
     "source:check": "node scripts/check-source-invariants.mjs && node scripts/audit-production.mjs --source-only",

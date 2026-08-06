@@ -722,6 +722,51 @@ const PROJECT_PAYERS_QUERY = `query ProjectPayers(
   }
 }`
 
+const PROJECT_TICKERS_QUERY = `query ProjectTickers(
+  $where: deployErc20EventFilter!
+  $limit: Int!
+) {
+  deployErc20Events(where: $where, limit: $limit) {
+    items { chainId projectId symbol }
+  }
+}`
+
+/**
+ * The ERC-20 ticker each deployment issues, keyed `chainId:projectId`.
+ *
+ * A project row's `tokenSymbol` is the ACCOUNTING context's symbol — what the
+ * project is paid IN (see bendystraw ponder.schema.ts, where token/tokenSymbol/
+ * decimals/currency sit under an `accountingContext` heading). It must never
+ * label a balance of the project's own token, or an ETH-funded project renders
+ * its holders' balances as "ETH".
+ */
+export async function getProjectTickersByRefs(
+  refs: VersionedProjectRef[],
+): Promise<Map<string, string>> {
+  const wheres = projectRefsWheres(refs)
+  const tickers = new Map<string, string>()
+  if (!wheres.length) return tickers
+  const pages = await Promise.all(
+    wheres.map(where =>
+      bendystraw<{
+        deployErc20Events: {
+          items: { chainId: number; projectId: number; symbol: string }[]
+        }
+      }>(PROJECT_TICKERS_QUERY, { where, limit: 200 }, { policy: 'stable' }),
+    ),
+  )
+  for (const page of pages) {
+    for (const event of page.deployErc20Events.items) {
+      if (!matchesProjectRef(
+        { chainId: event.chainId, projectId: event.projectId, version: 6 },
+        refs,
+      )) continue
+      if (event.symbol) tickers.set(`${event.chainId}:${event.projectId}`, event.symbol)
+    }
+  }
+  return tickers
+}
+
 /** Indexed payer addresses for exact V6 deployments, defense-in-depth
  * filtered after every bounded Bendystraw query. */
 export async function getProjectPayers(

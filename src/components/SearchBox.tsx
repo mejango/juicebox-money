@@ -59,6 +59,8 @@ export function SearchBox({
   const [results, setResults] = useState<Result[]>([])
   const [account, setAccount] = useState<AccountResult | null>(null)
   const [ensPending, setEnsPending] = useState(false)
+  // Search backend unreachable — say so rather than letting it read as "no matches".
+  const [searchUnavailable, setSearchUnavailable] = useState(false)
   const [open, setOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [placeholderFits, setPlaceholderFits] = useState(true)
@@ -110,6 +112,7 @@ export function SearchBox({
     const text = query.trim()
     if (urn || (text.length < 2 && !/^\d+$/.test(text))) {
       setResults([])
+      setSearchUnavailable(false)
       return
     }
     const t = setTimeout(async () => {
@@ -120,12 +123,20 @@ export function SearchBox({
         const res = await fetch(`/api/search?q=${encodeURIComponent(text)}`, {
           signal: controller.signal,
         })
-        if (!res.ok) return
+        if (!res.ok) {
+          setSearchUnavailable(true)
+          setOpen(true)
+          return
+        }
         const json = (await res.json()) as { projects: Result[] }
+        setSearchUnavailable(false)
         setResults(json.projects)
         setOpen(true)
-      } catch {
-        /* aborted or offline — keep previous results */
+      } catch (reason) {
+        // An abort is the next keystroke, not an outage — keep previous results.
+        if ((reason as Error)?.name === 'AbortError') return
+        setSearchUnavailable(true)
+        setOpen(true)
       }
     }, 300)
     return () => clearTimeout(t)
@@ -207,7 +218,8 @@ export function SearchBox({
         value={query}
         onChange={e => setQuery(e.target.value)}
         onFocus={() =>
-          (results.length > 0 || account || ensPending) && setOpen(true)
+          (results.length > 0 || account || ensPending || searchUnavailable) &&
+          setOpen(true)
         }
         onKeyDown={e => {
           if (e.key === 'Enter') submit()
@@ -222,11 +234,18 @@ export function SearchBox({
         aria-label="Search projects"
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />
-      {open && (results.length > 0 || urn || account || ensPending) ? (
+      {open &&
+      (results.length > 0 || urn || account || ensPending || searchUnavailable) ? (
         <ul className="card absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {ensPending && !account ? (
             <li className="px-4 py-2.5 text-xs text-smoke-500">
               Resolving {query.trim()}…
+            </li>
+          ) : null}
+          {searchUnavailable && results.length === 0 ? (
+            <li className="px-4 py-2.5 text-xs text-smoke-500">
+              Project search is unavailable right now. Paste an address or
+              project URL to keep going.
             </li>
           ) : null}
           {account && accountPath ? (

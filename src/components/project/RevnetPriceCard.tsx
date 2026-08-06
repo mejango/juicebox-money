@@ -31,6 +31,10 @@ import {
   type CashOutTaxPoint,
 } from '@/components/project/PriceChart'
 import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
+import {
+  basePerAccountingToken,
+  toBaseAxis,
+} from '@/lib/base-currency-axis'
 import type { ChartStage } from '@/components/project/chartUtils'
 import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
@@ -213,6 +217,9 @@ export function RevnetPriceCard({
                 supply,
                 balance,
                 decimals: context.decimals,
+                /** Accounting-context currency, for the base-currency axis conversion. */
+                currency: Number(context.currency),
+                baseCurrency: Number(currentRuleset.metadata.baseCurrency),
                 contextSymbol,
                 isNative:
                   context.token.toLowerCase() ===
@@ -248,6 +255,8 @@ export function RevnetPriceCard({
           return {
             price: cashOutPriceFromTotals(totals),
             cashOutTaxRate: current.cashOutTaxRate,
+            currency: current.currency,
+            baseCurrency: current.baseCurrency,
           }
         })().catch(error => {
           if (process.env.NODE_ENV !== 'production') {
@@ -257,10 +266,32 @@ export function RevnetPriceCard({
         }),
       ])
 
+      // The chart's axis is the ruleset's BASE currency, which the issuance ladder is
+      // already denominated in. The pool price and the cash-out floor are denominated in
+      // the ACCOUNTING token, so they have to be converted onto it — otherwise two
+      // different units share one axis under a single base-currency label.
+      // See lib/base-currency-axis.ts. Same-currency projects resolve to a rate of 1
+      // without an RPC call, so the common case is unaffected.
+      const baseCurrency = floor?.baseCurrency ?? 1
+      const accountingCurrency = floor?.currency ?? baseCurrency
+      const rate = await basePerAccountingToken(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+        baseCurrency,
+        accountingCurrency,
+      })
+
       return {
-        floor: floor?.price ?? null,
+        floor: toBaseAxis(floor?.price ?? null, rate),
         cashOutTaxRate: floor?.cashOutTaxRate,
-        amm: market?.status === 'pool' ? market.price : null,
+        amm: toBaseAxis(
+          market?.status === 'pool' ? market.price : null,
+          rate,
+        ),
+        /** Converted from the accounting token rather than natively on-axis. */
+        converted: rate !== null && rate !== 1,
+        /** No feed, so the accounting-denominated lines are omitted. */
+        rateUnavailable: rate === null,
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
           market?.status === 'pool' ? market.pair.decimals : null,
@@ -289,9 +320,18 @@ export function RevnetPriceCard({
     }),
   )
 
+  // Historical points are ACCOUNTING-token denominated. When the axis (the ruleset's base
+  // currency) is a different unit, each point would need the rate in force at ITS OWN
+  // timestamp — the live feed only prices now, and reusing it would restate the past. Until
+  // per-timestamp rates are wired through /api/price-history, the honest move is to omit the
+  // historical series rather than draw it in the wrong unit; the live converted reference
+  // lines still show. Untouched for same-currency projects, where the rate is exactly 1.
+  const historyOnAxis = references ? !references.converted && !references.rateUnavailable : true
+
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
     if (
+      !historyOnAxis ||
       decimals === undefined ||
       !references?.floor ||
       !history?.moments.length ||
@@ -334,7 +374,7 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [all, data, history?.moments, references?.floor])
+  }, [all, data, history?.moments, historyOnAxis, references?.floor])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()
@@ -352,13 +392,15 @@ export function RevnetPriceCard({
 
   const ammHistory = useMemo<PricePoint[]>(
     () =>
-      ammSeriesFrom({
-        history,
-        chainId,
-        poolId: references?.poolId ?? null,
-        pairDecimals: references?.pairDecimals ?? null,
-      }),
-    [chainId, history, references?.pairDecimals, references?.poolId],
+      historyOnAxis
+        ? ammSeriesFrom({
+            history,
+            chainId,
+            poolId: references?.poolId ?? null,
+            pairDecimals: references?.pairDecimals ?? null,
+          })
+        : [],
+    [chainId, history, historyOnAxis, references?.pairDecimals, references?.poolId],
   )
 
   const stages: ChartStage[] = all.map(s => ({
@@ -408,6 +450,19 @@ export function RevnetPriceCard({
           references?.amm ? { value: references.amm, label: 'AMM price' } : null
         }
       />
+      {references?.converted ? (
+        <p className="mt-2 text-xs text-grey-500">
+          Market and cash-out prices are converted into {baseSymbol}, this revnet&apos;s
+          issuance currency. History is shown only for the issuance ceiling, which is
+          natively denominated in it.
+        </p>
+      ) : null}
+      {references?.rateUnavailable ? (
+        <p className="mt-2 text-xs text-grey-500">
+          No price feed converts this revnet&apos;s treasury token into {baseSymbol}, so only
+          the issuance ceiling is shown.
+        </p>
+      ) : null}
       {history?.sampled ? (
         <p className="mt-2 text-xs text-grey-500">
           Historical series are shape-preserving samples of the complete

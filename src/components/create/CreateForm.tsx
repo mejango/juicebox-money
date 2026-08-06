@@ -1068,18 +1068,24 @@ export function CreateForm() {
       const totalSplitPct = splitRows.reduce((s, r) => s + Number(r.value), 0);
       let splitPercent = 0;
       let splits: SplitConfig[] = [];
+      // A split row can name a different recipient per chain (SplitsEditor exposes the
+      // overrides for store items too). The item's metadata is pinned once for every chain,
+      // but its recipients are NOT chain-independent — resolving them against one chain and
+      // reusing that everywhere silently pays chain[0]'s address on all the others.
+      const perChainSplits: Record<number, SplitConfig[]> = {};
       if (totalSplitPct > 0) {
         splitPercent = Math.round((totalSplitPct / 100) * 1e9);
         const rel = splitRows.map((r) =>
           Math.round((Number(r.value) / totalSplitPct) * 1e9),
         );
         rel[rel.length - 1] = 1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0);
-        // Store items are shared across chains — no per-chain overrides, so
-        // any selected chain resolves the same recipients.
-        splits = splitRows.map((r, i) => ({
-          percent: rel[i],
-          ...toRecipient(r, selected[0]),
-        }));
+        const forChain = (chainId: number) =>
+          splitRows.map((r, i) => ({
+            percent: rel[i],
+            ...toRecipient(r, chainId),
+          }));
+        splits = forChain(selected[0]);
+        for (const chainId of selected) perChainSplits[chainId] = forChain(chainId);
       }
       const reserveOn = item.reserveN.trim() !== "";
       const perChainSupply: Record<number, number | null> = {};
@@ -1111,6 +1117,7 @@ export function CreateForm() {
           ownerCanEditDiscount: item.ownerCanEditDiscount,
         },
         perChainSupply,
+        perChainSplits,
       });
     }
     // The store collection deploys with every launch (even empty) so the

@@ -60,6 +60,12 @@ jobs:
         run: npm run protocol:check
       - name: Check reviewed transaction inventory
         run: npm run transaction:check
+      # Local hash comparison only. A browser query whose document is missing from the
+      # persisted registry is rejected by the proxy (bendystraw-proxy.ts), so drift here
+      # silently breaks a feature — this catches it. The live-schema half of the same
+      # script stays out of CI so a third-party outage cannot fail the build.
+      - name: Check persisted Bendystraw operation registry
+        run: npm run schema:check:offline
       - name: Run deterministic tests
         run: npm run test:ci
       - name: Build deterministic production application

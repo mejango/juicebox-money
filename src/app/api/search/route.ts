@@ -62,6 +62,11 @@ export async function GET(req: NextRequest) {
       })),
     })
   } catch {
-    return NextResponse.json({ projects: [] })
+    // An indexer outage is not "no results". Returning 200 with an empty list tells the user
+    // their search matched nothing, which is indistinguishable from the project not existing.
+    return NextResponse.json(
+      { projects: [], error: 'Search is unavailable right now.' },
+      { status: 503 },
+    )
   }
 }

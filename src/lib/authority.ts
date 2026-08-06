@@ -328,6 +328,24 @@ export async function runAuthorityCalls({
         data: call.data,
         value: call.value ?? 0n,
       })
+      // Measure what the call actually needs and sign THAT, with headroom. The forwarder
+      // caps the inner call at `request.gas` and reverts `execute` when the inner call
+      // fails (OZ ERC2771Forwarder), so a hard-coded cap that turns out too small burns the
+      // bundle AFTER the user has paid Relayr for it. A failed estimate leaves `gas` unset
+      // and the signer falls back to its default — no worse than before.
+      if (call.gas === undefined) {
+        try {
+          const estimate = await client.estimateGas({
+            account: call.authority,
+            to: call.target,
+            data: call.data,
+            value: call.value ?? 0n,
+          })
+          call.gas = (estimate * 3n) / 2n
+        } catch {
+          // Estimation is best-effort; the eth_call above is the real gate.
+        }
+      }
     } catch (simulationError) {
       const detail =
         simulationError instanceof Error &&

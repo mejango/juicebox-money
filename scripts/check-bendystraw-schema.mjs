@@ -12,6 +12,10 @@ import {
 
 const minimumDocuments = Number(process.argv[2] ?? 1)
 const writeRegistry = process.argv.includes('--write-registry')
+// The registry check is a pure local hash comparison; the schema validation below talks to
+// live Bendystraw. `--offline` runs only the deterministic half so CI can gate registry drift
+// without depending on a third party being up.
+const offline = process.argv.includes('--offline')
 const registryPath = path.resolve('src/lib/bendystraw-operation-registry.json')
 const sourceRoot = path.resolve('src')
 const extensions = new Set(['.js', '.jsx', '.mjs', '.ts', '.tsx'])
@@ -197,12 +201,12 @@ async function liveSchema(endpoint) {
 // ahead of the indexer is safe, but they cannot be validated until it deploys.
 // Each entry names the PR that removes it, and the check FAILS once the field
 // exists, so the list cannot quietly rot after the feature lands.
-const PENDING_SCHEMA_FIELDS = [
-  {
-    field: 'buybackPoolPositions',
-    reason: 'peripheralist/bendystraw#24 — LP positions and lifetime fees',
-  },
-]
+const PENDING_SCHEMA_FIELDS = []
+
+if (offline) {
+  console.log(`Registry is current for ${documents.size} Bendystraw documents (schema validation skipped).`)
+  process.exit(0)
+}
 
 for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
   const schema = await liveSchema(endpoint)

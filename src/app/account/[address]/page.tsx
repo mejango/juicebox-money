@@ -27,6 +27,7 @@ import {
   getAccountTokenHoldings,
   getOperatorGrants,
   getProjectsByRefs,
+  getProjectTickersByRefs,
   getProjectsOwnedBy,
   type BsProject,
 } from '@/lib/bendystraw'
@@ -109,7 +110,13 @@ export default async function AccountPage({
       getTokenHoldings(address).catch(() => null),
       getNftHoldings(address).catch(() => null),
     ])
-  const [grantProjects, tokenProjects, nftProjects] = await Promise.all([
+  const tokenRefs = (tokenHoldings?.items ?? []).map(row => ({
+    chainId: row.chainId,
+    projectId: row.projectId,
+    version: 6,
+  }))
+  const [grantProjects, tokenProjects, nftProjects, tokenTickers] =
+    await Promise.all([
     grants?.length
       ? getProjectsByRefs(
           grants.map(grant => ({
@@ -119,13 +126,7 @@ export default async function AccountPage({
           })),
         ).catch(() => [] as BsProject[])
       : ([] as BsProject[]),
-    getHoldingProjects(
-      (tokenHoldings?.items ?? []).map(row => ({
-        chainId: row.chainId,
-        projectId: row.projectId,
-        version: 6,
-      })),
-    ),
+    getHoldingProjects(tokenRefs),
     getHoldingProjects(
       (nftHoldings?.items ?? []).map(row => ({
         chainId: row.chainId,
@@ -133,11 +134,19 @@ export default async function AccountPage({
         version: 6,
       })),
     ),
+    // Balances are denominated in the project's own ERC-20, which the project
+    // row does not carry — its tokenSymbol names the accounting context.
+    tokenRefs.length
+      ? getProjectTickersByRefs(tokenRefs).catch(
+          () => new Map<string, string>(),
+        )
+      : Promise.resolve(new Map<string, string>()),
   ])
   const operated = groupOperatorGrants(grants ?? [], grantProjects)
   const tokenGroups = groupTokenHoldings(
     tokenHoldings?.items ?? [],
     tokenProjects,
+    tokenTickers,
   )
   const itemGroups = groupNftHoldings(nftHoldings?.items ?? [], nftProjects)
   const ownedKeys = (owned ?? []).map(projectKey)

@@ -80,6 +80,7 @@ import {
 import { useReviewedPermit2Signature } from "@/hooks/useReviewedPermit2Signature";
 import {
   buildDirectPaySwapTx,
+  directSwapRouteApplies,
   quoteDirectPaySwap,
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
@@ -343,6 +344,13 @@ export function PayPanel({
     "token-approval" | "router-approval" | "payment" | null
   >(null);
   const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
+  // What the frozen actions actually authorize. The inputs behind them keep
+  // moving while the dialog is open (the amount is debounced), so the summary
+  // has to be captured with the actions rather than read live.
+  const [sequenceSummary, setSequenceSummary] = useState<{
+    amountRaw: bigint;
+    minReturned: bigint;
+  } | null>(null);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
@@ -925,6 +933,7 @@ export function PayPanel({
     data: directSwapQuote,
     isFetching: directSwapQuoteLoading,
     isError: directSwapQuoteError,
+    isPlaceholderData: directSwapQuoteIsPrevious,
   } = useQuery({
     queryKey: [
       "directPaySwapQuote",
@@ -933,10 +942,17 @@ export function PayPanel({
       context?.token,
       amountRaw.toString(),
       market?.status === "pool" ? market.poolId : null,
+      // The quote is SCORED against this preview, so a changed preview has to
+      // requote — otherwise the route is picked using the previous amount's
+      // terminal numbers.
+      preview?.beneficiaryTokenCount.toString() ?? null,
     ],
     enabled:
       !!publicClient &&
       !!preview &&
+      // A placeholder preview belongs to the previous amount; scoring against
+      // it picks the route on stale terminal output.
+      !previewIsPrevious &&
       market?.status === "pool" &&
       !!context &&
       amountRaw > 0n &&
@@ -960,14 +976,29 @@ export function PayPanel({
       });
     },
   });
-  const directSwapRoute = !!directSwapQuote && !directSwapQuoteError;
+  // The ONLY quote allowed to route this payment. Anything the query is still
+  // serving that doesn't apply to what's on screen resolves to null here, so a
+  // stale quote can't reach the transaction builders further down.
+  const activeSwapQuote =
+    directSwapQuote &&
+    directSwapRouteApplies({
+      hasQuote: true,
+      quoteErrored: directSwapQuoteError,
+      quoteIsPrevious: directSwapQuoteIsPrevious,
+      mode,
+      cartCount,
+      amountRaw,
+    })
+      ? directSwapQuote
+      : null;
+  const directSwapRoute = !!activeSwapQuote;
   const bestRoute = useMemo(
     () =>
-      directSwapRoute && directSwapQuote
+      activeSwapQuote
         ? {
             kind: "direct-swap" as const,
             settlement: "swap" as const,
-            beneficiaryTokenCount: directSwapQuote.minimumTokenCount,
+            beneficiaryTokenCount: activeSwapQuote.minimumTokenCount,
             reservedTokenCount: 0n,
           }
         : preview
@@ -979,7 +1010,7 @@ export function PayPanel({
               ...preview,
             }
           : null,
-    [context?.viaRouter, directSwapQuote, directSwapRoute, preview],
+    [activeSwapQuote, context?.viaRouter, preview],
   );
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
@@ -995,8 +1026,8 @@ export function PayPanel({
   // buyback-routed or USD-issuance pay legitimately drifts between preview
   // and inclusion, and an exact min would make ordinary pays revert. A
   // verified zero stays zero.
-  const minReturned = directSwapRoute
-    ? directSwapQuote.minimumTokenCount
+  const minReturned = activeSwapQuote
+    ? activeSwapQuote.minimumTokenCount
     : ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n;
 
   // ---- ERC-20 allowance ----
@@ -1254,11 +1285,11 @@ export function PayPanel({
     }
     let paymentRequest: TxRequest;
     if (mode === "pay") {
-      if (directSwapRoute && directSwapQuote) {
+      if (activeSwapQuote) {
         const viaSafe = isSafeConnection(wagmiConfig);
         const request = buildDirectPaySwapTx({
           chainId,
-          quote: directSwapQuote,
+          quote: activeSwapQuote,
           amount: amountRaw,
           recipient: address,
           deadline: swapDeadline(viaSafe),
@@ -1311,7 +1342,7 @@ export function PayPanel({
             : "Execute the payment"
           : "Add to the project balance",
       request: paymentRequest,
-      swapInputRoute: directSwapQuote?.inputRoute,
+      swapInputRoute: activeSwapQuote?.inputRoute,
     });
     return actions;
   };
@@ -1344,6 +1375,7 @@ export function PayPanel({
     setSequenceStarted(false);
     setSequenceSafeStage(null);
     setSequenceActions(actions);
+    setSequenceSummary({ amountRaw, minReturned });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
@@ -1524,6 +1556,7 @@ export function PayPanel({
     setSequenceStarted(false);
     setSequenceComplete(false);
     setSequenceActions([]);
+    setSequenceSummary(null);
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceSafeStage(null);
@@ -2103,10 +2136,10 @@ export function PayPanel({
         <PaymentSequenceDialog
           mode={mode}
           chainName={chainName(chainId)}
-          amount={`${formatTokenAmount(amountRaw, decimals)} ${symbol}`}
+          amount={`${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`}
           tokenReturn={
-            mode === "pay" && preview
-              ? `${formatTokenAmount(minReturned, 18)} ${projectTokenLabel}`
+            mode === "pay" && sequenceSummary
+              ? `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`
               : null
           }
           projectTokenSymbol={projectTokenLabel}

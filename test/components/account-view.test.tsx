@@ -725,6 +725,15 @@ describe('account holdings grouping', () => {
     ...overrides,
   })
 
+  // A project row's tokenSymbol is the ACCOUNTING context's symbol — what the project is paid IN
+  // (bendystraw ponder.schema.ts groups token/tokenSymbol/decimals/currency under accountingContext).
+  // Balances are denominated in the project's OWN ERC-20, so fixtures deliberately differ: an
+  // ETH-funded project whose token is REV. Reverting to tokenSymbol renders "4,000 ETH" and fails here.
+  const TICKERS = new Map([
+    ['1:4', 'REV'],
+    ['8453:4', 'REV'],
+  ])
+
   it('merges linked chains by sucker group and falls back per deployment', () => {
     const groups = groupTokenHoldings(
       [
@@ -738,17 +747,18 @@ describe('account holdings grouping', () => {
           chainId: 1,
           projectId: 4,
           name: 'Rev',
-          tokenSymbol: 'REV',
+          tokenSymbol: 'ETH',
           suckerGroupId: 'sg-1',
         }),
         project({
           chainId: 8453,
           projectId: 4,
           name: 'Rev',
-          tokenSymbol: 'REV',
+          tokenSymbol: 'ETH',
           suckerGroupId: 'sg-1',
         }),
       ],
+      TICKERS,
     )
 
     expect(groups).toHaveLength(2)
@@ -760,6 +770,25 @@ describe('account holdings grouping', () => {
     expect(rev.rows.map(row => row.chainId)).toEqual([1, 8453])
     expect(solo.front.projectId).toBe(77)
     expect(solo.front.project).toBeNull()
+  })
+
+  it('never labels balances with the accounting context symbol', () => {
+    const [group] = groupTokenHoldings(
+      [holding({ balance: '4000000000000000000' })],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'ETH' })],
+      TICKERS,
+    )
+    expect(group.symbol).toBe('REV')
+    expect(group.symbol).not.toBe('ETH')
+  })
+
+  it('shows no symbol rather than the accounting one when the ticker is unknown', () => {
+    const [group] = groupTokenHoldings(
+      [holding({ balance: '4000000000000000000' })],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'USDC' })],
+    )
+    // An un-tokenized project has no ticker. Blank is honest; "USDC" would be a lie.
+    expect(group.symbol).toBeNull()
   })
 
   const nft = (overrides: Partial<BsAccountNft>): BsAccountNft => ({
@@ -807,17 +836,18 @@ describe('account holdings grouping', () => {
           chainId: 1,
           projectId: 4,
           name: 'Rev',
-          tokenSymbol: 'REV',
+          tokenSymbol: 'ETH',
           suckerGroupId: 'sg-1',
         }),
         project({
           chainId: 8453,
           projectId: 4,
           name: 'Rev',
-          tokenSymbol: 'REV',
+          tokenSymbol: 'ETH',
           suckerGroupId: 'sg-1',
         }),
       ],
+      TICKERS,
     )
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
@@ -841,7 +871,8 @@ describe('account holdings grouping', () => {
           erc20Balance: '2000000000000000000',
         }),
       ],
-      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'ETH' })],
+      TICKERS,
     )
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
@@ -861,7 +892,8 @@ describe('account holdings grouping', () => {
           erc20Balance: '0',
         }),
       ],
-      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'ETH' })],
+      TICKERS,
     )
     await act(async () => {
       renderer = TestRenderer.create(
@@ -874,7 +906,8 @@ describe('account holdings grouping', () => {
   it('surfaces truncation when more balances exist than were fetched', async () => {
     const groups = groupTokenHoldings(
       [holding({})],
-      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'REV' })],
+      [project({ chainId: 1, projectId: 4, name: 'Rev', tokenSymbol: 'ETH' })],
+      TICKERS,
     )
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

@@ -58,6 +58,7 @@ const UNLIMITED_FLOOR = 2n ** 200n;
 const UNLIMITED_PAYOUT = 2n ** 224n - 1n;
 /** ETH base currency id. */
 const BASE_ETH = 1;
+const BASE_USD = 2;
 /** uint16 max — the ceiling for reservedPercent / cashOutTaxRate. */
 const PERCENT_OUT_OF_10000_MAX = 10_000;
 
@@ -75,6 +76,8 @@ type TokenAccess = {
 type LimitDraft = {
   token: Address;
   symbol: string;
+  /** Payout limits in additional currencies that this one-value-per-token editor can't model. */
+  unrepresentableLimits?: readonly CurrencyAmount[];
   decimals: number;
   /** The currency the limit is denominated in (carried from current). */
   currency: number;
@@ -139,8 +142,16 @@ export function pctToBp(pct: string): number {
   return Math.min(PERCENT_OUT_OF_10000_MAX, Math.round(n * 100));
 }
 
-function currencyLabel(currency: number, symbol: string): string {
+/**
+ * What a fund-access limit is DENOMINATED in. The base currencies (JBCurrencyIds:
+ * ETH = 1, USD = 2) name a unit of account, not a token; any other id is the
+ * accounting context's own `uint32(tokenAddress)`, which the token's symbol names.
+ * Falling through on USD labels a USD-denominated limit with the accounting token
+ * ("100 ETH" for a $100 limit) on a config that becomes immutable once queued.
+ */
+export function currencyLabel(currency: number, symbol: string): string {
   if (currency === BASE_ETH) return "ETH";
+  if (currency === BASE_USD) return "USD";
   return symbol;
 }
 
@@ -600,6 +611,7 @@ function RulesetEditorForm({
   const limitsValid = state.limits.every(
     (l) => l.mode !== "limited" || Number(l.amount) > 0,
   );
+  const limitBlock = multiCurrencyLimitBlock(state.limits);
   const minimumScheduledStart = Math.max(
     Math.floor(Date.now() / 1000) + 60,
     Number(source.entry.ruleset.start) + 1,
@@ -695,6 +707,10 @@ function RulesetEditorForm({
       return;
     }
     if (!weightValid || !limitsValid || !startValid || busy) return;
+    if (limitBlock) {
+      setFlowError(limitBlock);
+      return;
+    }
     if (changes.length === 0) {
       setFlowError("Nothing changed — edit a rule to queue an update.");
       return;
@@ -1044,10 +1060,17 @@ function RulesetEditorForm({
         </div>
       ) : null}
 
+      {limitBlock ? (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          {limitBlock}
+        </p>
+      ) : null}
+
       <button
         onClick={review ? () => void handleConfirm() : handleReview}
         disabled={
-          busy || (isConnected && (!weightValid || !limitsValid || !startValid))
+          busy ||
+          (isConnected && (!weightValid || !limitsValid || !startValid || !!limitBlock))
         }
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
@@ -1205,6 +1228,12 @@ function hasPayoutLimit(limits: readonly CurrencyAmount[]): boolean {
 
 function limitDraftFrom(a: TokenAccess): LimitDraft {
   const first = a.payoutLimits[0];
+  // `JBFundAccessLimitGroup.payoutLimits` is an ARRAY: a token can carry limits in several
+  // currencies at once, and they are additive within their reset windows. This editor models
+  // one value per token, so anything past the first cannot be represented — and the queued
+  // ruleset is immutable, so silently emitting only the first would permanently delete the
+  // rest. Recorded here and blocked at the gate rather than dropped.
+  const unrepresentable = a.payoutLimits.slice(1).filter((l) => l.amount > 0n);
   const currency = first?.currency ?? a.ctx.currency;
   let mode: LimitDraft["mode"] = "none";
   let amount = "";
@@ -1225,7 +1254,23 @@ function limitDraftFrom(a: TokenAccess): LimitDraft {
     mode,
     amount,
     surplusAllowances: a.surplusAllowances,
+    unrepresentableLimits: unrepresentable,
   };
+}
+
+/**
+ * Why this ruleset cannot be queued from here, or null when it can.
+ *
+ * Fails CLOSED: the alternative is queueing an immutable ruleset that drops payout limits the
+ * owner never chose to remove.
+ */
+export function multiCurrencyLimitBlock(
+  limits: readonly Pick<LimitDraft, "symbol" | "unrepresentableLimits">[],
+): string | null {
+  const affected = limits.filter((l) => (l.unrepresentableLimits?.length ?? 0) > 0);
+  if (!affected.length) return null;
+  const names = affected.map((l) => l.symbol).join(", ");
+  return `${names} ${affected.length === 1 ? "has" : "have"} payout limits in more than one currency, which this editor can't preserve. Queueing here would drop them — use a tool that edits fund-access limits directly.`;
 }
 
 type Change = { label: string; from: string; to: string };

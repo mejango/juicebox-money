@@ -144,6 +144,8 @@ export type ProjectChainLookup = {
   found: boolean
   name: string | null
   suckerGroupId: string | null
+  /** The lookup itself failed (indexer/RPC outage) — NOT the same as "no such project". */
+  unavailable?: boolean
 }
 
 const projectLookupCache = new Map<string, ProjectChainLookup>()
@@ -160,6 +162,18 @@ export function projectLookupNote(
     .filter((result): result is ProjectChainLookup => Boolean(result?.found))
 
   if (found.length === 0) {
+    // Never call a project missing when the lookup never completed: a create-flow split row
+    // pointing at a real project would read as a typo during an indexer blip.
+    const unavailable = selected
+      .map(chainId => lookups.find(result => result.chainId === chainId))
+      .some(result => result?.unavailable)
+    if (unavailable) {
+      return {
+        kind: 'warn',
+        text: `Couldn't check project #${projectId} right now — verify it before deploying`,
+        full: true,
+      }
+    }
     return {
       kind: 'bad',
       text: `No project #${projectId} found on the selected ${selected.length === 1 ? 'chain' : 'chains'}`,
@@ -246,9 +260,16 @@ export function ProjectIdField({
               found: res.ok && json.found === true,
               name: json.name ?? null,
               suckerGroupId: json.suckerGroupId ?? null,
+              unavailable: !res.ok,
             }
           } catch {
-            result = { chainId, found: false, name: null, suckerGroupId: null }
+            result = {
+              chainId,
+              found: false,
+              name: null,
+              suckerGroupId: null,
+              unavailable: true,
+            }
           }
           // Positive identity reads are stable. Retry misses next time so a
           // just-launched project or brief indexer/RPC outage can recover.

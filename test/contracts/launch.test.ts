@@ -373,6 +373,29 @@ describe('project launch encoding', () => {
     expect(revnetConfig.stageConfigurations[0].extraMetadata).toBe(5)
   })
 
+  // REVDeployer.deploySuckersFor reverts unless bit 2 of the CURRENT stage's app
+  // metadata is set (REVDeployer.sol:646-650), and stages are immutable — a stage
+  // launched without it can never be extended to another chain. Launch-time
+  // suckers skip the check, so nothing fails until someone tries to extend.
+  it('sets the allow-sucker-deployment bit on every revnet stage by default', () => {
+    const request = requestFor(
+      plan({
+        flavor: 'revnet',
+        operator: BOB,
+        ticker: 'REV',
+        stages: [createSimpleProjectStage(), createSimpleProjectStage()],
+      }),
+    )
+    const config = request.args[1] as unknown as {
+      stageConfigurations: readonly { extraMetadata: number }[]
+    }
+
+    expect(config.stageConfigurations).toHaveLength(2)
+    for (const stage of config.stageConfigurations) {
+      expect(stage.extraMetadata & (1 << 2)).toBe(1 << 2)
+    }
+  })
+
   // deployFor(revnetId, config, ...): the union's tuple branch is pinned
   // by the functionName assertion in the revnet encoding test above.
   const autoIssuancesOn = (revnetPlan: LaunchPlan, chainId: JBChainId) => {
@@ -522,6 +545,101 @@ describe('launch helper invariants', () => {
       expect.objectContaining({ weight: 0n, pausePay: true, cashOutTaxRate: 2_000 }),
     )
     expect(timed.duration).toBe(86_400)
+  })
+
+  // A store item's metadata is pinned ONCE for every chain, but a split row can name a
+  // different recipient per chain (SplitsEditor exposes those overrides for store items too).
+  // Resolving recipients against one chain and reusing them everywhere silently pays chain[0]'s
+  // address on all the others.
+  it('encodes each chain its own store-item split recipients', () => {
+    const item: StoreItem = {
+      price: 1_000n,
+      supply: null,
+      encodedIpfsUri: `0x${'1'.padStart(64, '0')}`,
+      splitPercent: 500_000_000,
+      splits: [
+        {
+          percent: 1e9,
+          projectId: 0n,
+          beneficiary: ALICE,
+          preferAddToBalance: false,
+          lockedUntil: 0,
+          hook: zeroAddress,
+        },
+      ],
+      discountPercent: 0,
+      reserveFrequency: 0,
+      reserveBeneficiary: null,
+      category: 0,
+      votingUnits: 0,
+      flags: {
+        allowOwnerMint: false,
+        transfersPausable: false,
+        cantBeRemoved: false,
+        allowCredits: true,
+        ownerCanEditDiscount: true,
+      },
+      perChainSupply: {},
+      perChainSplits: {
+        1: [
+          {
+            percent: 1e9,
+            projectId: 0n,
+            beneficiary: ALICE,
+            preferAddToBalance: false,
+            lockedUntil: 0,
+            hook: zeroAddress,
+          },
+        ],
+        8453: [
+          {
+            percent: 1e9,
+            projectId: 0n,
+            beneficiary: BOB,
+            preferAddToBalance: false,
+            lockedUntil: 0,
+            hook: zeroAddress,
+          },
+        ],
+      },
+    }
+
+    expect(build721TierConfigs([item], 1)[0].splits[0].beneficiary).toBe(ALICE)
+    expect(build721TierConfigs([item], 8453)[0].splits[0].beneficiary).toBe(BOB)
+  })
+
+  it('falls back to the resolved splits when no per-chain map is supplied', () => {
+    // The live Shop editor builds its items per chain already, so `splits` is correct there.
+    const item: StoreItem = {
+      price: 1_000n,
+      supply: null,
+      encodedIpfsUri: `0x${'2'.padStart(64, '0')}`,
+      splitPercent: 500_000_000,
+      splits: [
+        {
+          percent: 1e9,
+          projectId: 0n,
+          beneficiary: BOB,
+          preferAddToBalance: false,
+          lockedUntil: 0,
+          hook: zeroAddress,
+        },
+      ],
+      discountPercent: 0,
+      reserveFrequency: 0,
+      reserveBeneficiary: null,
+      category: 0,
+      votingUnits: 0,
+      flags: {
+        allowOwnerMint: false,
+        transfersPausable: false,
+        cantBeRemoved: false,
+        allowCredits: true,
+        ownerCanEditDiscount: true,
+      },
+      perChainSupply: {},
+    }
+    expect(build721TierConfigs([item], 42_161)[0].splits[0].beneficiary).toBe(BOB)
   })
 
   it('sorts tiers and applies per-chain supply and inverted flags exactly', () => {

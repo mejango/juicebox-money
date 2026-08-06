@@ -125,4 +125,27 @@ describe('project recipient chain lookup', () => {
       full: true,
     })
   })
+
+  // An indexer outage is not evidence of absence. Calling a real project missing during one makes
+  // the user "fix" a correct split recipient — the opposite of what the hint is for.
+  it('says it could not check, rather than not found, when a lookup failed', () => {
+    expect(
+      projectLookupNote(99, [1, 10], [
+        lookup(1, { found: false, name: null, suckerGroupId: null, unavailable: true }),
+        lookup(10, { found: false, name: null, suckerGroupId: null }),
+      ]),
+    ).toEqual({
+      kind: 'warn',
+      text: "Couldn't check project #99 right now — verify it before deploying",
+      full: true,
+    })
+  })
+
+  it('still reports a true miss when every lookup completed', () => {
+    expect(
+      projectLookupNote(99, [1], [
+        lookup(1, { found: false, name: null, suckerGroupId: null, unavailable: false }),
+      ]).kind,
+    ).toBe('bad')
+  })
 })

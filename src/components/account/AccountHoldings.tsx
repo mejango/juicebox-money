@@ -23,6 +23,8 @@ type TokenHoldingRow = {
   /** The claimed ERC-20 share of `balance`. */
   claimed: bigint
   project: BsProject | null
+  /** The project's OWN ERC-20 ticker — never the accounting context's symbol. */
+  ticker: string | null
 }
 
 export type TokenHoldingGroup = {
@@ -51,6 +53,8 @@ function projectLookup(projects: BsProject[]): Map<string, BsProject> {
 export function groupTokenHoldings(
   holdings: BsAccountTokenHolding[],
   projects: BsProject[],
+  /** ERC-20 ticker per `chainId:projectId`. See getProjectTickersByRefs. */
+  tickers: Map<string, string> = new Map(),
 ): TokenHoldingGroup[] {
   const byRef = projectLookup(projects)
   const groups = new Map<string, TokenHoldingRow[]>()
@@ -68,6 +72,7 @@ export function groupTokenHoldings(
       credits: BigInt(raw.creditBalance ?? '0'),
       claimed: BigInt(raw.erc20Balance ?? '0'),
       project,
+      ticker: tickers.get(`${raw.chainId}:${raw.projectId}`) ?? null,
     })
   }
   return [...groups.values()]
@@ -80,9 +85,10 @@ export function groupTokenHoldings(
         total: sorted.reduce((sum, row) => sum + row.balance, 0n),
         credits: sorted.reduce((sum, row) => sum + row.credits, 0n),
         claimed: sorted.reduce((sum, row) => sum + row.claimed, 0n),
-        symbol:
-          sorted.find(row => row.project?.tokenSymbol)?.project
-            ?.tokenSymbol ?? null,
+        // The project's OWN ERC-20 ticker. `project.tokenSymbol` is the
+        // accounting context's symbol (what the project is paid in), so using
+        // it here renders an ETH-funded project's balances as "4,000 ETH".
+        symbol: sorted.find(row => row.ticker)?.ticker ?? null,
       }
     })
     .sort((a, b) => (a.total < b.total ? 1 : -1))

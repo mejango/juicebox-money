@@ -11,7 +11,8 @@ const ONE_TOKEN = 10n ** 18n
 
 /**
  * The cash-out floor: what ONE project token reclaims from surplus right now,
- * in the accounting token's own terms (pair per token). Best-effort marker —
+ * NET of the protocol cash-out fee, in the accounting token's own terms (pair
+ * per token) — the same number the confirm modal shows. Best-effort marker —
  * null when unreadable. Shares one cache entry per project across the Market
  * card and the add-liquidity flow.
  */
@@ -39,7 +40,12 @@ export function useCashOutFloor(
         cashOutCount: ONE_TOKEN,
         context,
       })
-      const value = Number(formatUnits(quote.reclaimAmount, context.decimals))
+      // NET of the protocol fee, matching what the confirm modal quotes and what a holder
+      // actually receives. `reclaimAmount` is the pre-fee figure; the SDK already computes
+      // the fee correctly (it applies only when the cash-out tax is non-zero), so reading
+      // the gross field here overstated the floor on the Market card, the chart marker and
+      // the LP default range alike.
+      const value = Number(formatUnits(quote.reclaimAmountAfterFee, context.decimals))
       return Number.isFinite(value) && value > 0 ? value : null
     },
     }),

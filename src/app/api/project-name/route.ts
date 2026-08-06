@@ -21,6 +21,11 @@ export async function GET(req: NextRequest) {
       suckerGroupId: result?.project.suckerGroupId ?? null,
     })
   } catch {
-    return NextResponse.json({ found: false, name: null, suckerGroupId: null })
+    // `found: false` would mean "this project does not exist". A failed lookup has to stay
+    // distinguishable from that, or the create flow tells the user a real id is invalid.
+    return NextResponse.json(
+      { found: false, name: null, suckerGroupId: null, error: 'Lookup unavailable.' },
+      { status: 503 },
+    )
   }
 }

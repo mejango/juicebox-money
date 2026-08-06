@@ -508,7 +508,7 @@ function ruleRows(
   ];
 }
 
-function formatLimits(
+export function formatLimits(
   limits: readonly CurrencyAmount[],
   ctx: AccountingContext,
 ): string {
@@ -526,11 +526,15 @@ function formatLimits(
             : isTokenKeyed
               ? ctx.symbol
               : `currency ${limit.currency}`;
-      // A limit in the token's OWN currency uses the token's decimals; a
-      // limit in a base currency (ETH/USD) is 18-dec fixed point (JB's price
-      // fidelity), NOT the token's decimals — else a USD limit on 6-dec USDC
-      // reads 1e12× too large.
-      const dec = isTokenKeyed ? ctx.decimals : 18;
+      // Fund-access amounts are stored in the TERMINAL TOKEN's decimals whatever
+      // currency denominates them — "Amounts use the same decimal precision as the
+      // terminal token (e.g. 18 for ETH, 6 for USDC)" (JBFundAccessLimitGroup.sol).
+      // JBTerminalStore.recordPayoutFor compares the request against the limit with
+      // no decimal conversion and then converts by PRICE alone, which only works if
+      // both are already in the token's decimals. Assuming 18 for a base-currency
+      // limit reads 1e12× too small on 6-decimal USDC; it looks right on ETH only
+      // because ETH's decimals happen to be 18.
+      const dec = ctx.decimals;
       return limit.amount >= UNLIMITED_FLOOR
         ? `Unlimited ${symbol}`
         : `${formatTokenAmount(limit.amount, dec)} ${symbol}`;

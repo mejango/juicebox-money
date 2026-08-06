@@ -34,6 +34,15 @@ const CASH_OUTS_OFF = 10_000
 /** JBFundAccessLimitGroup "unlimited" payout amount sentinel. */
 const UNLIMITED_PAYOUT = 2n ** 224n - 1n
 
+/**
+ * `REVDeployer.deploySuckersFor` reads bit 2 of the CURRENT stage's app
+ * metadata and reverts without it (REVDeployer.sol:646-650). Stages are
+ * immutable, so a stage that ships without this bit can never be extended to
+ * another chain — launch-time suckers are exempt, which is why the gap only
+ * surfaces later.
+ */
+const REV_METADATA_ALLOW_SUCKER_DEPLOYMENT = 1 << 2
+
 export type TreasuryCurrency = 'eth' | 'usdc'
 
 /** One store item, already pinned: encodedIpfsUri is the bytes32 digest of
@@ -67,6 +76,15 @@ export type StoreItem = {
   }
   /** Per-chain supply overrides (null value = unlimited on that chain). */
   perChainSupply: Record<number, number | null>
+  /**
+   * Per-chain split recipients, when the editor's per-chain overrides are used.
+   *
+   * The item metadata is pinned ONCE for every chain, but a split row may name a different
+   * recipient (or project id) on each — so the recipients cannot be baked in alongside the
+   * pin. Absent for callers that already resolved `splits` for the chain they are building
+   * (the live Shop editor does exactly that), which is why the lookup falls back to `splits`.
+   */
+  perChainSplits?: Record<number, SplitConfig[]>
 }
 
 /** The Uniswap V4 LP split hook ("Fund market") — same address on every
@@ -477,10 +495,11 @@ export function buildLaunchRequest(args: {
         issuanceCutFrequency: stage.issuanceCutFrequency,
         issuanceCutPercent: stage.weightCutPercent,
         cashOutTaxRate: stage.cashOutTaxRate ?? 0,
-        extraMetadata: build721RulesetMetadata({
-          metadata: stage.metadataExtra,
-          pauseTransfers: stage.pause721Transfers,
-        }),
+        extraMetadata:
+          build721RulesetMetadata({
+            metadata: stage.metadataExtra,
+            pauseTransfers: stage.pause721Transfers,
+          }) | REV_METADATA_ALLOW_SUCKER_DEPLOYMENT,
       })
     })
 
@@ -834,7 +853,9 @@ export function build721TierConfigs(
           cantBuyWithCredits: !item.flags.allowCredits,
         },
         splitPercent: item.splitPercent,
-        splits: toJbSplits(item.splits),
+        // Per-chain recipients when the create flow supplied them; otherwise `splits`, which
+        // the caller already resolved for this chain.
+        splits: toJbSplits(item.perChainSplits?.[chainId] ?? item.splits),
       }
     })
 }
