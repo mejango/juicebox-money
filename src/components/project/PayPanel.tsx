@@ -71,6 +71,7 @@ import {
 } from "@/lib/transaction-review";
 import {
   addPermit2SignatureToSwap,
+  paymentSequenceLocked,
   PERMIT2_ADDRESS,
   permit2SignatureNeedsOnchainFallback,
   permit2TypedData,
@@ -2211,13 +2212,12 @@ export function PayPanel({
           memo={memo.trim() || null}
           status={sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
-          // A pending payment keeps the dialog in its "started" state so no retry is offered.
-          started={sequenceStarted || !!sequencePending}
+          started={paymentSequenceLocked(sequenceStarted, sequencePending)}
           waitingForSafe={!!sequenceSafeStage}
           complete={sequenceComplete}
           onStart={() => void runPaymentSequence()}
           onClose={() => {
-            if (sequenceStarted || sequencePending) return;
+            if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);
