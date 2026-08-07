@@ -201,7 +201,14 @@ async function liveSchema(endpoint) {
 // ahead of the indexer is safe, but they cannot be validated until it deploys.
 // Each entry names the PR that removes it, and the check FAILS once the field
 // exists, so the list cannot quietly rot after the feature lands.
-const PENDING_SCHEMA_FIELDS = []
+const PENDING_SCHEMA_FIELDS = [
+  {
+    field: 'accountingTokenUsdRate',
+    reason:
+      'peripheralist/bendystraw#25 — per-point USD rate on suckerGroupMoment and swapEvent; ' +
+      'the price chart asks for it behind a fallback and converts at the live rate without it',
+  },
+]
 
 if (offline) {
   console.log(`Registry is current for ${documents.size} Bendystraw documents (schema validation skipped).`)
@@ -213,8 +220,12 @@ for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendy
   const errors = parsedDocuments.flatMap(({ parsed, location }) =>
     validate(schema, parsed).map(error => `${location}: ${error.message}`),
   )
-  const live = new Set(Object.keys(schema.getQueryType()?.getFields() ?? {}))
-  const shipped = PENDING_SCHEMA_FIELDS.filter(({ field }) => live.has(field))
+  // Shipped = the field no longer produces a validation error. Testing the root-query field
+  // set instead would never fire for a NESTED field like accountingTokenUsdRate, letting the
+  // entry outlive the indexer PR it names — which is the one thing this list must not do.
+  const shipped = PENDING_SCHEMA_FIELDS.filter(
+    ({ field }) => !errors.some(error => error.includes(`"${field}"`)),
+  )
   if (shipped.length) {
     throw new Error(
       `${endpoint} now serves ${shipped.map(({ field }) => field).join(', ')} — ` +

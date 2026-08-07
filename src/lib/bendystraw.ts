@@ -1214,6 +1214,9 @@ type BsPriceMoment = {
   timestamp: number
   balance: string
   tokenSupply: string
+  /** 18-dec USD per one whole accounting token, as of THIS moment's block. See
+   *  OPTIONAL_RATE_FIELD — absent until the indexer serving this request has it. */
+  accountingTokenUsdRate?: string | null
 }
 
 type BsSwapEvent = {
@@ -1225,6 +1228,8 @@ type BsSwapEvent = {
   chainId: number
   sqrtPriceX96: string | null
   projectTokenIsCurrency0: boolean | null
+  /** 18-dec USD per one whole accounting token, as of THIS swap's block. */
+  accountingTokenUsdRate?: string | null
 }
 
 type BsBuybackPoolEvent = {
@@ -1296,6 +1301,103 @@ export async function getPagedItems<T>(
  * spots for a revnet. Consumers apply the project's decimals and filter to the
  * currently resolved pool; no values are projected beyond the last event.
  */
+/**
+ * `accountingTokenUsdRate` is added by peripheralist/bendystraw#25 and is NOT on the live
+ * schema yet. GraphQL rejects the entire document for one unknown field, so requesting it
+ * unconditionally would take price history down rather than improve it.
+ *
+ * So: ask for it once. If the schema refuses THIS field, remember that and run without it for
+ * the rest of the process. The upgrade happens on its own the moment the indexer deploys —
+ * no client release, no flag to flip. Registered in scripts/check-bendystraw-schema.mjs, which
+ * fails once the field is live so this scaffolding cannot quietly outlive its purpose.
+ */
+const OPTIONAL_RATE_FIELD = 'accountingTokenUsdRate'
+let optionalRateFieldSupported: boolean | null = null
+
+// Both variants are written out in full rather than built by interpolation: every document
+// here is parsed and validated against the live schema by scripts/check-bendystraw-schema.mjs,
+// and a document assembled at runtime cannot be.
+const MOMENTS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  suckerGroupMoments(
+    where: { suckerGroupId: $suckerGroupId, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp balance tokenSupply }
+    totalCount
+  }
+}`
+
+const MOMENTS_WITH_RATE_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  suckerGroupMoments(
+    where: { suckerGroupId: $suckerGroupId, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp balance tokenSupply accountingTokenUsdRate }
+    totalCount
+  }
+}`
+
+const SWAPS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  swapEvents(
+    where: { suckerGroupId: $suckerGroupId, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items {
+      timestamp direction terminalTokenAmount projectTokenAmount
+      poolId chainId sqrtPriceX96 projectTokenIsCurrency0
+    }
+    totalCount
+  }
+}`
+
+const SWAPS_WITH_RATE_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  swapEvents(
+    where: { suckerGroupId: $suckerGroupId, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items {
+      timestamp direction terminalTokenAmount projectTokenAmount
+      poolId chainId sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate
+    }
+    totalCount
+  }
+}`
+
+async function withOptionalRateField<T>(
+  run: (query: string) => Promise<T>,
+  withRate: string,
+  withoutRate: string,
+): Promise<T> {
+  if (optionalRateFieldSupported === false) return run(withoutRate)
+  try {
+    const result = await run(withRate)
+    optionalRateFieldSupported = true
+    return result
+  } catch (reason) {
+    // Only an unknown-FIELD rejection is a downgrade, and only before the field is known to
+    // work. Treating any failure as "no rate" would let a real indexer outage silently pin
+    // every chart to the live rate forever.
+    const message = reason instanceof Error ? reason.message : String(reason)
+    if (optionalRateFieldSupported !== null || !message.includes(OPTIONAL_RATE_FIELD)) {
+      throw reason
+    }
+    optionalRateFieldSupported = false
+    return run(withoutRate)
+  }
+}
+
 export async function getRevnetPriceHistory(
   suckerGroupId: string,
   /** `chainId` is an endpoint-routing hint only (testnet groups live on the
@@ -1303,43 +1405,24 @@ export async function getRevnetPriceHistory(
   { chainId }: { chainId?: number } = {},
 ): Promise<BsRevnetPriceHistory> {
   const network = bendystrawNetworkHint(chainId)
-  const momentsPromise = getPagedItems<BsPriceMoment>(
-    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-      suckerGroupMoments(
-        where: { suckerGroupId: $suckerGroupId, version: 6 }
-        orderBy: "timestamp"
-        orderDirection: "asc"
-        limit: $limit
-        offset: $offset
-      ) {
-        items { timestamp balance tokenSupply }
-        totalCount
-      }
-    }`,
-    'suckerGroupMoments',
-    { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
+  const momentsPromise = withOptionalRateField(query =>
+    getPagedItems<BsPriceMoment>(query, 'suckerGroupMoments', { suckerGroupId }, {
+      max: Number.POSITIVE_INFINITY,
+      network,
+      policy: 'live',
+    }),
+    MOMENTS_WITH_RATE_QUERY,
+    MOMENTS_QUERY,
   )
 
-  const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
-    `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-      swapEvents(
-        where: { suckerGroupId: $suckerGroupId, version: 6 }
-        orderBy: "timestamp"
-        orderDirection: "asc"
-        limit: $limit
-        offset: $offset
-      ) {
-        items {
-          timestamp direction terminalTokenAmount projectTokenAmount
-          poolId chainId sqrtPriceX96 projectTokenIsCurrency0
-        }
-        totalCount
-      }
-    }`,
-    'swapEvents',
-    { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
+  const enhancedSwaps = () => withOptionalRateField(query =>
+    getPagedItems<BsSwapEvent>(query, 'swapEvents', { suckerGroupId }, {
+      max: Number.POSITIVE_INFINITY,
+      network,
+      policy: 'live',
+    }),
+    SWAPS_WITH_RATE_QUERY,
+    SWAPS_QUERY,
   )
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(

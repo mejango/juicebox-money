@@ -10,6 +10,13 @@ export type PricePoint = {
   timestamp: number
   value: number
   reason?: string
+  /**
+   * USD per one whole accounting token AT THIS POINT'S BLOCK, when the indexer recorded it.
+   * Carried alongside the value so a base-currency axis can convert each point with the rate
+   * that was actually in force, instead of scaling the whole series by today's. Undefined
+   * where the indexer has not backfilled it — the caller falls back to the live rate.
+   */
+  rate?: number
 }
 
 /**
@@ -57,6 +64,17 @@ export function visibleSeries(
  * back to the trade's realized average price. Decimals and prices are only
  * comparable inside one pool, so everything is filtered to `poolId`.
  */
+/**
+ * The indexer's 18-dec rate as a plain number. Undefined for a row the indexer has not
+ * backfilled, and for a null the indexer wrote because no feed bridged the pair — both mean
+ * "no rate here", which the caller answers with the live one.
+ */
+export function usdRateOf(raw: string | null | undefined): number | undefined {
+  if (raw === null || raw === undefined) return undefined
+  const rate = Number(raw) / 1e18
+  return Number.isFinite(rate) && rate > 0 ? rate : undefined
+}
+
 export function ammSeriesFrom({
   history,
   chainId,
@@ -109,15 +127,16 @@ export function ammSeriesFrom({
       return []
     }
     try {
+      const rate = usdRateOf(swap.accountingTokenUsdRate)
       const spot = spotPrice(swap.sqrtPriceX96, swap.projectTokenIsCurrency0)
-      if (spot) return [{ timestamp: Number(swap.timestamp), value: spot }]
+      if (spot) return [{ timestamp: Number(swap.timestamp), value: spot, rate }]
 
       // Compatibility for pre-sqrtPriceX96 rows while Bendystraw reindexes.
       const terminalAmount = Number(BigInt(swap.terminalTokenAmount)) / pairScale
       const projectAmount = Number(BigInt(swap.projectTokenAmount)) / 1e18
       const value = terminalAmount / projectAmount
       return Number.isFinite(value) && value > 0
-        ? [{ timestamp: Number(swap.timestamp), value }]
+        ? [{ timestamp: Number(swap.timestamp), value, rate }]
         : []
     } catch {
       return []

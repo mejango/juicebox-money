@@ -46,7 +46,8 @@ import {
   explainCashOutChange,
   type CashOutObservation,
 } from '@/lib/cashOutChange'
-import { ammSeriesFrom, type PricePoint } from '@/lib/price-series'
+import { ammSeriesFrom, usdRateOf, type PricePoint } from '@/lib/price-series'
+import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
 import { cachedQuery, immutableQuery } from '@/lib/query-persist'
 import { tokenSymbol } from '@/lib/token-symbol'
 
@@ -58,6 +59,16 @@ const PRICE_REFRESH_MS = 15_000
  * Overview is a server component), then reads the live omnichain cash-out
  * floor and Uniswap V4 AMM price as current reference points.
  */
+/** The rate to convert one historical point with: its own if the indexer recorded one and the
+ *  axis is the unit that rate measures, otherwise the live feed. */
+function axisRate(
+  perPointRates: boolean,
+  pointRate: number | undefined,
+  live: number,
+): number {
+  return (perPointRates ? pointRate : undefined) ?? live
+}
+
 export function RevnetPriceCard({
   chainId,
   projectId,
@@ -300,6 +311,8 @@ export function RevnetPriceCard({
         rateUnavailable: rate === null,
         /** The factor history is converted with, exposed so the series can use it too. */
         rate,
+        /** The axis unit. Only a USD axis can use the indexer's per-point USD rate. */
+        baseCurrency,
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
           market?.status === 'pool' ? market.pair.decimals : null,
@@ -329,11 +342,13 @@ export function RevnetPriceCard({
   )
 
   // Historical points are ACCOUNTING-token denominated, so they need the same factor the
-  // reference lines get. The live feed only prices NOW, so applying it across the range
-  // restates history whenever the pair floats — but omitting the series left a USD revnet
-  // with a chart of one line and two dots, which is worse. Draw it at the live rate and say
-  // so. `null` still means no feed at all, where there is nothing to draw it with.
+  // reference lines get. `null` means no feed at all — nothing to draw them with.
   const historyRate = references?.rate ?? null
+  // The indexer records USD per accounting token at each point's own block, which is the rate
+  // that was actually in force there. It is only the AXIS rate when the axis IS USD, so an
+  // ETH-denominated ruleset must keep using the live base/accounting feed rather than reading
+  // a USD number as if it were ETH. Per-point where available, live rate everywhere else.
+  const perPointRates = references?.baseCurrency === BASE_CURRENCY_USD
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
@@ -371,7 +386,7 @@ export function RevnetPriceCard({
           tax,
         )
         if (!value) return []
-        const onAxis = value * historyRate
+        const onAxis = value * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
         const observation: CashOutObservation = {
           balance: BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
@@ -385,7 +400,7 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [all, data, history?.moments, historyRate, references?.floor])
+  }, [all, data, history?.moments, historyRate, perPointRates, references?.floor])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()
@@ -410,8 +425,8 @@ export function RevnetPriceCard({
             chainId,
             poolId: references?.poolId ?? null,
             pairDecimals: references?.pairDecimals ?? null,
-          }).map(point => ({ ...point, value: point.value * historyRate })),
-    [chainId, history, historyRate, references?.pairDecimals, references?.poolId],
+          }).map(point => ({ ...point, value: point.value * axisRate(perPointRates, point.rate, historyRate) })),
+    [chainId, history, historyRate, perPointRates, references?.pairDecimals, references?.poolId],
   )
 
   const stages: ChartStage[] = all.map(s => ({
