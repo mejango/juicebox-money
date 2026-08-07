@@ -490,7 +490,10 @@ function QueuedMovementsCard({
       { sourceChainId: number; destChainId: number; sucker: Address; token: Address; rows: BridgeMovement[] }
     >()
     for (const m of data ?? []) {
-      const key = `${m.sourceChainId}->${m.destChainId}:${m.token}`
+      // Keyed by the SUCKER too, not just the pair and token. A project with two suckers for
+      // the same pair+token (a native and a CCIP generation, say) collapsed into one row whose
+      // Execute shipped only the first sucker's outbox, silently leaving the other's behind.
+      const key = `${m.sourceChainId}->${m.destChainId}:${m.token}:${String(m.sourceSucker).toLowerCase()}`
       if (!byKey.has(key)) {
         byKey.set(key, {
           sourceChainId: m.sourceChainId,
@@ -639,12 +642,24 @@ function MovementGroup({
                       ? 'Queued'
                       : m.status === 'sent'
                         ? 'Bridging'
-                        : 'Claimable'}
+                        : m.likelyAlreadyClaimed
+                          ? 'Likely claimed'
+                          : 'Claimable'}
                   </span>
                 </td>
                 <td className="py-1.5 text-right">
-                  {m.status === 'claimable' ? (
+                  {m.status === 'claimable' && !m.likelyAlreadyClaimed ? (
                     <ClaimButton m={m} chains={chains} />
+                  ) : m.likelyAlreadyClaimed ? (
+                    // A claim matching every identity field but the token tree exists, so the
+                    // leaf is almost certainly executed and Claim would revert on it. The row
+                    // stays rather than being hidden — the matcher fails open by design.
+                    <span
+                      className="text-xs text-smoke-500"
+                      title="A matching claim was found on the destination chain, but its token could not be tied to this move's tree. Claiming again would revert."
+                    >
+                      Already settled?
+                    </span>
                   ) : (
                     <span className="text-xs text-smoke-500">—</span>
                   )}

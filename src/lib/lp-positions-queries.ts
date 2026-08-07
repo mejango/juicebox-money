@@ -25,7 +25,7 @@ export type BsLpPosition = {
 const LP_POSITIONS_QUERY = `
   query($chainId: Int!, $poolId: String!, $limit: Int!, $offset: Int!) {
     buybackPoolPositions(
-      where: { chainId: $chainId, poolId: $poolId, burned: false }
+      where: { chainId: $chainId, poolId: $poolId, burned: false, version: 6 }
       orderBy: "tokenId"
       orderDirection: "asc"
       limit: $limit

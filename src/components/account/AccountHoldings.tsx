@@ -138,15 +138,20 @@ export function groupNftHoldings(
   return [...groups.values()]
     .map(({ rows }) => {
       const { chainId, projectId } = rows[0]
-      const byTier = new Map<number, BsAccountNft[]>()
+      // Keyed by HOOK and tier, the way ShopTab does it. Tier ids restart at 1 per hook, so a
+      // project with a replaced or second 721 hook folded tier 1 of two different collections
+      // into one row — counts summed, name and image taken from whichever arrived first.
+      const byTier = new Map<string, BsAccountNft[]>()
       for (const row of rows) {
-        let tier = byTier.get(row.tierId)
-        if (!tier) byTier.set(row.tierId, (tier = []))
+        const key = `${row.hook?.address?.toLowerCase() ?? 'unknown'}:${row.tierId}`
+        let tier = byTier.get(key)
+        if (!tier) byTier.set(key, (tier = []))
         tier.push(row)
       }
-      const tiers = [...byTier.entries()]
-        .map(([tierId, tierRows]) => {
+      const tiers = [...byTier.values()]
+        .map(tierRows => {
           const media = tierMedia(tierRows[0])
+          const tierId = tierRows[0].tierId
           return {
             tierId,
             count: tierRows.length,
@@ -274,10 +279,15 @@ export function AccountTokenHoldings({
                   {group.symbol ?? 'tokens'}
                 </span>
               </p>
-              {group.claimed > 0n && group.credits > 0n ? (
+              {group.credits > 0n ? (
+                // Shown whenever ANY credits exist, not only alongside a claimed balance. An
+                // all-credits holding rendered as a bare total, so a holder could not tell the
+                // balance was unclaimed — and therefore could not tell why moving it
+                // cross-chain (which needs the ERC-20) was unavailable.
                 <p className="mt-0.5 text-xs text-smoke-500">
-                  {formatTokenAmount(group.claimed)} claimed ·{' '}
-                  {formatTokenAmount(group.credits)} credits
+                  {group.claimed > 0n
+                    ? `${formatTokenAmount(group.claimed)} claimed · ${formatTokenAmount(group.credits)} credits`
+                    : `${formatTokenAmount(group.credits)} credits (unclaimed)`}
                 </p>
               ) : null}
             </div>

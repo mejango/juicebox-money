@@ -265,6 +265,20 @@ function stateDiffers(
   return new Set(values).size > 1
 }
 
+/**
+ * Native has two spellings here: pool probes record it as `zeroAddress`, while the TWAP form
+ * defaults to the `NATIVE_TOKEN` sentinel. Comparing them raw meant the review line's lookup
+ * never matched for the MOST COMMON pool type, printing "TWAP —s → Xs". The hook normalizes
+ * the sentinel, so the transaction was always right — only the review text was blank.
+ */
+function sameToken(a: string, b: string): boolean {
+  const norm = (value: string) => {
+    const lower = value.toLowerCase()
+    return lower === NATIVE_TOKEN.toLowerCase() ? zeroAddress : lower
+  }
+  return norm(a) === norm(b)
+}
+
 export function MultiChainBuybackRouterCard({
   deployments,
   isRevnet,
@@ -659,7 +673,7 @@ function BuybackActionForm({
               : kind === 'twap'
                 ? ` · TWAP ${
                     row.pools.find(
-                      pool => pool.token.toLowerCase() === address.toLowerCase(),
+                      pool => sameToken(pool.token, address),
                     )?.twap ?? '—'
                   }s → ${twapWindow}s`
                 : ''

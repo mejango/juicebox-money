@@ -442,7 +442,11 @@ function MoveFlow({
         args: [sucker, BigInt(fromPid), amount, token, sucker, '0x'],
       })) as readonly [unknown, bigint, bigint, unknown]
       const gross = preview[1] ?? 0n
-      const minReclaimed = gross > 0n ? (gross * 99n) / 100n : 0n
+      // Clamped to >=1 like retainedFloor: at gross === 1 the 99% floor truncates to 0n, and a
+      // zero minimum is an UNPROTECTED bridge prepare — the one thing every floor helper here
+      // exists to prevent.
+      const minReclaimed =
+        gross > 0n ? ((gross * 99n) / 100n > 0n ? (gross * 99n) / 100n : 1n) : 0n
 
       const backingSymbol = await tokenSymbol(client, token, { chainId: from })
 

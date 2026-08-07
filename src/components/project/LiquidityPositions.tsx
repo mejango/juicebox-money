@@ -218,8 +218,23 @@ export function LiquidityPositions({
     setError(null)
     setReviewing(position.tokenId)
     try {
+      // The POOL has to be re-read too, not just the position. `pairAmount`/`tokenAmount` are
+      // derived from `pool.sqrtP`, and this `pool` comes from the cached ['market', …] query
+      // (60s staleTime, PERSIST revalidate tier — worst case restored from a previous
+      // session). Refreshing liquidity against a stale price still yields stale amounts, and
+      // those become the reviewed 95% minimum: too high reverts at simulation, too low gives
+      // weaker sandwich protection than the number on screen says.
+      const freshMarket = await resolveMarket(
+        client,
+        chainId,
+        projectId,
+        JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
+      )
+      if (freshMarket.status !== 'pool' || freshMarket.poolId !== pool.poolId) {
+        throw new Error('The pool changed while this list was open. Reopen it and try again.')
+      }
       const fresh = (
-        await readUserLpPositions(client, chainId, pool, connectedAddress)
+        await readUserLpPositions(client, chainId, freshMarket, connectedAddress)
       ).find(p => p.tokenId === position.tokenId)
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
       const pairMin = retainedFloor(fresh.pairAmount)

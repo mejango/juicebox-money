@@ -782,6 +782,13 @@ function AddLiquidityForm({
   }
 
   // ----- send one step -----------------------------------------------------
+  // The block of the most recent approval receipt in this run. `useSafeTx` documents
+  // `simulationBlockNumber` as REQUIRED when a reviewed write immediately follows an ERC-20 or
+  // Permit2 approval: on a lagging load-balanced RPC the mint otherwise simulates against a
+  // pre-approval block and reverts on allowance — after the user has already paid for two
+  // approvals. PayPanel already threads it; this flow did not.
+  const approvalBlockRef = useRef<bigint | undefined>(undefined)
+
   const sendStep = useCallback(
     (step: Step) => {
       const p = planRef.current
@@ -819,6 +826,7 @@ function AddLiquidityForm({
             deadline,
             value: p.mint.value,
           }),
+          { simulationBlockNumber: approvalBlockRef.current },
         )
       }
     },
@@ -832,6 +840,14 @@ function AddLiquidityForm({
     if (!p) return
     if (tx.phase === 'success' && tx.hash && tx.hash !== processedRef.current) {
       processedRef.current = tx.hash
+      // Record the approval's block so the mint simulates at or after it.
+      const block = tx.receipt?.blockNumber
+      if (
+        block !== undefined &&
+        (approvalBlockRef.current === undefined || block > approvalBlockRef.current)
+      ) {
+        approvalBlockRef.current = block
+      }
       const isLast = stepIdxRef.current >= p.steps.length - 1
       if (isLast) {
         setMintHash(tx.hash)

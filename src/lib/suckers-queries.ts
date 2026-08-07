@@ -21,6 +21,25 @@ import {
 } from '@/lib/bendystraw'
 
 /** A bytes32-packed EVM address (left-padded) unpacked to its 20-byte form. */
+/**
+ * Warn once per process when a claim row arrives without `token`.
+ *
+ * That row matches ANY token tree, which is the pre-B7 over-matching. The query asks for the
+ * field, so this only fires against an indexer deployment that predates it — and the whole
+ * `!claim.token` branch should be deleted once none are left. Silence is what let it linger.
+ */
+let warnedMissingClaimToken = false
+function logMissingClaimToken(claim: ClaimRow): void {
+  if (warnedMissingClaimToken) return
+  warnedMissingClaimToken = true
+  console.warn(
+    '[suckers] Bendystraw returned a bridge claim with no `token` field ' +
+      `(chain ${claim.chainId}, sucker ${claim.sucker}, index ${claim.index}); ` +
+      'falling back to matching any token tree. ' +
+      'Remove the compat branch in sameTokenTree once every deployment serves it.',
+  )
+}
+
 function unpackAddress(bytes32: string): string {
   return suckerBytes32ToAddress(bytes32 as `0x${string}`).toLowerCase()
 }
@@ -97,6 +116,15 @@ export type BridgeMovement = {
    * (claimed movements are dropped — they live in the activity feed.)
    */
   status: 'pending' | 'sent' | 'claimable'
+  /**
+   * A claim row matches this leaf on every identity field EXCEPT the token tree.
+   *
+   * That happens when a sucker bridges 2+ ERC-20 trees and the destination's local token
+   * address differs from the source's (the USDC case). The row stays claimable on purpose —
+   * this matcher fails open and must never hide an unclaimed movement — but the claim has
+   * almost certainly already executed, so offering Claim just reverts on an executed leaf.
+   */
+  likelyAlreadyClaimed?: boolean
 }
 
 const BRIDGE_EVENTS_QUERY = `
@@ -232,7 +260,13 @@ export async function getBridgeMovements(args: {
   // when the sucker bridges a single ERC-20. A claim row without a token
   // (older indexer schema) matches any tree, preserving prior behavior.
   const sameTokenTree = (claim: ClaimRow, leaf: OutboxRow): boolean => {
-    if (!claim.token) return true
+    if (!claim.token) {
+      // Compat shim for an indexer deployment that predates the `token` field (the query does
+      // request it). Matching ANY tree reintroduces the over-matching that B7 fixed, so make it
+      // visible rather than silent — and delete this branch once every deployment serves it.
+      logMissingClaimToken(claim)
+      return true
+    }
     if (isNative(claim.token) !== isNative(leaf.token)) return false
     if (isNative(claim.token) || eq(claim.token, leaf.token)) return true
     return (
@@ -249,17 +283,19 @@ export async function getBridgeMovements(args: {
     // Claimed on the destination: same leaf identity landed there, within
     // the same token tree. Drop it — the move is finished and shows in the
     // activity feed.
-    const claimed = claims.some(
-      c =>
-        c.chainId === o.peerChainId &&
-        eq(c.sucker, destSucker) &&
-        c.index === o.index &&
-        sameTokenTree(c, o) &&
-        c.projectTokenCount === o.projectTokenCount &&
-        c.terminalTokenAmount === o.terminalTokenAmount &&
-        eq(unpackAddress(c.beneficiary), beneficiary),
-    )
+    // Everything except the token tree. Kept separate so a match on all of these WITHOUT a
+    // token-tree match can be reported rather than silently ignored.
+    const sameLeafIdentity = (c: ClaimRow) =>
+      c.chainId === o.peerChainId &&
+      eq(c.sucker, destSucker) &&
+      c.index === o.index &&
+      c.projectTokenCount === o.projectTokenCount &&
+      c.terminalTokenAmount === o.terminalTokenAmount &&
+      eq(unpackAddress(c.beneficiary), beneficiary)
+
+    const claimed = claims.some(c => sameLeafIdentity(c) && sameTokenTree(c, o))
     if (claimed) continue
+    const likelyAlreadyClaimed = claims.some(sameLeafIdentity)
 
     // Delivered: the destination inbox received a tree root that INCLUDES
     // this leaf. Each outbox leaf stores the root as of its own insertion
@@ -311,6 +347,7 @@ export async function getBridgeMovements(args: {
       timestamp: o.timestamp,
       txHash: o.txHash,
       status,
+      ...(likelyAlreadyClaimed ? { likelyAlreadyClaimed: true as const } : {}),
     })
   }
 

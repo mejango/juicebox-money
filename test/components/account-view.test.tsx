@@ -893,7 +893,7 @@ describe('account holdings grouping', () => {
     expect(text).toContain('Base')
   })
 
-  it('shows the claimed/credits split only when both are nonzero, and keeps the combined headline', async () => {
+  it('shows the credits breakdown whenever credits exist, and keeps the combined headline', async () => {
     const groups = groupTokenHoldings(
       [
         holding({
@@ -915,7 +915,9 @@ describe('account holdings grouping', () => {
     expect(text).toContain('3 REV')
     expect(text).toContain('2 claimed · 1 credits')
 
-    // Credits-only balances keep the plain headline — no split line.
+    // Credits-only balances say so. A bare headline left a holder unable to tell the balance
+    // was unclaimed, and therefore unable to tell why moving it cross-chain (which needs the
+    // ERC-20) was unavailable.
     const creditsOnly = groupTokenHoldings(
       [
         holding({
@@ -931,7 +933,9 @@ describe('account holdings grouping', () => {
         createElement(AccountTokenHoldings, { groups: creditsOnly }),
       )
     })
-    expect(renderedText(renderer.root)).not.toContain('claimed')
+    const creditsText = renderedText(renderer.root)
+    expect(creditsText).toContain('1 credits (unclaimed)')
+    expect(creditsText).not.toContain('claimed ·')
   })
 
   it('surfaces truncation when more balances exist than were fetched', async () => {
