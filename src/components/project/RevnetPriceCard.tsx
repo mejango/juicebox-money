@@ -298,6 +298,8 @@ export function RevnetPriceCard({
         converted: rate !== null && rate !== 1,
         /** No feed, so the accounting-denominated lines are omitted. */
         rateUnavailable: rate === null,
+        /** The factor history is converted with, exposed so the series can use it too. */
+        rate,
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
           market?.status === 'pool' ? market.pair.decimals : null,
@@ -326,18 +328,17 @@ export function RevnetPriceCard({
     }),
   )
 
-  // Historical points are ACCOUNTING-token denominated. When the axis (the ruleset's base
-  // currency) is a different unit, each point would need the rate in force at ITS OWN
-  // timestamp — the live feed only prices now, and reusing it would restate the past. Until
-  // per-timestamp rates are wired through /api/price-history, the honest move is to omit the
-  // historical series rather than draw it in the wrong unit; the live converted reference
-  // lines still show. Untouched for same-currency projects, where the rate is exactly 1.
-  const historyOnAxis = references ? !references.converted && !references.rateUnavailable : true
+  // Historical points are ACCOUNTING-token denominated, so they need the same factor the
+  // reference lines get. The live feed only prices NOW, so applying it across the range
+  // restates history whenever the pair floats — but omitting the series left a USD revnet
+  // with a chart of one line and two dots, which is worse. Draw it at the live rate and say
+  // so. `null` still means no feed at all, where there is nothing to draw it with.
+  const historyRate = references?.rate ?? null
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
     if (
-      !historyOnAxis ||
+      historyRate === null ||
       decimals === undefined ||
       !references?.floor ||
       !history?.moments.length ||
@@ -370,6 +371,7 @@ export function RevnetPriceCard({
           tax,
         )
         if (!value) return []
+        const onAxis = value * historyRate
         const observation: CashOutObservation = {
           balance: BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
@@ -378,12 +380,12 @@ export function RevnetPriceCard({
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation
-        return [{ timestamp, value, reason }]
+        return [{ timestamp, value: onAxis, reason }]
       } catch {
         return []
       }
       })
-  }, [all, data, history?.moments, historyOnAxis, references?.floor])
+  }, [all, data, history?.moments, historyRate, references?.floor])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()
@@ -401,15 +403,15 @@ export function RevnetPriceCard({
 
   const ammHistory = useMemo<PricePoint[]>(
     () =>
-      historyOnAxis
-        ? ammSeriesFrom({
+      historyRate === null
+        ? []
+        : ammSeriesFrom({
             history,
             chainId,
             poolId: references?.poolId ?? null,
             pairDecimals: references?.pairDecimals ?? null,
-          })
-        : [],
-    [chainId, history, historyOnAxis, references?.pairDecimals, references?.poolId],
+          }).map(point => ({ ...point, value: point.value * historyRate })),
+    [chainId, history, historyRate, references?.pairDecimals, references?.poolId],
   )
 
   const stages: ChartStage[] = all.map(s => ({
@@ -462,8 +464,9 @@ export function RevnetPriceCard({
       {references?.converted ? (
         <p className="mt-2 text-xs text-grey-500">
           Market and cash-out prices are converted into {baseSymbol}, this revnet&apos;s
-          issuance currency. History is shown only for the issuance ceiling, which is
-          natively denominated in it.
+          issuance currency, at the current exchange rate — so earlier points are
+          approximate. The issuance ceiling is natively denominated in {baseSymbol} and is
+          exact.
         </p>
       ) : null}
       {references?.rateUnavailable ? (
