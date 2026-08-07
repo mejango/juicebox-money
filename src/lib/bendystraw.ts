@@ -470,11 +470,15 @@ const ACTIVITY_EVENT_FIELDS = `
   }
 `
 
+/** Returns `totalCount` alongside the page: the feed is capped, and the caller offers
+ *  "Load more" only if it can tell how much it is holding back. Category filters apply to
+ *  what has been LOADED, so a discarded total let a populated category render as empty. */
 export async function getProjectActivity(
   suckerGroupId: string,
   limit = 20,
   chainId?: number,
-): Promise<BsActivityEvent[]> {
+  offset = 0,
+): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
       activityEvents(
@@ -514,7 +518,7 @@ export async function getProjectActivity(
       }
     }`,
     'activityEvents',
-    { suckerGroupId, limit },
+    { suckerGroupId, limit, offset },
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
@@ -522,14 +526,15 @@ export async function getProjectActivity(
       policy: 'live',
     },
   )
-  return page.items
+  return page
 }
 
 export async function getProjectActivityByProject(
   chainId: number,
   projectId: number,
   limit = 20,
-): Promise<BsActivityEvent[]> {
+  offset = 0,
+): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
       activityEvents(
@@ -570,7 +575,7 @@ export async function getProjectActivityByProject(
       }
     }`,
     'activityEvents',
-    { chainId, projectId },
+    { chainId, projectId, offset },
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
@@ -578,7 +583,7 @@ export async function getProjectActivityByProject(
       policy: 'live',
     },
   )
-  return page.items
+  return page
 }
 
 export type BsFreshActivityEvent = {
@@ -1093,12 +1098,15 @@ export async function getSuckerGroupProjects(
   suckerGroupId: string,
   chainId?: number,
 ): Promise<BsProject[]> {
+  // A sucker group spans one row per chain per version, so 10 truncated real groups — and the
+  // members that fell off vanished from project-page siblings, the wallet's cross-chain
+  // balances and /api/search chain badges, with nothing to say they had.
   const data = await bendystraw<{
     suckerGroup: { projects: { items: BsProject[] } } | null
   }>(
     `query($id: String!) {
       suckerGroup(id: $id) {
-        projects(limit: 10) { items { ${PROJECT_FIELDS} } }
+        projects(limit: 100) { items { ${PROJECT_FIELDS} } }
       }
     }`,
     { id: suckerGroupId },
@@ -1779,7 +1787,14 @@ export async function getAccountActivity(
     seen.add(event.id)
     return true
   })
-  return { items: deduped.slice(offset, offset + limit), totalCount }
+  // `totalCount` is the sum of per-branch counts, but the branches are deduped by id. Any row
+  // counted twice would otherwise make "Load more (X of Y)" overstate Y and leave a page that
+  // never arrives — subtract what the dedupe actually removed.
+  const duplicatesInWindow = merged.length - deduped.length
+  return {
+    items: deduped.slice(offset, offset + limit),
+    totalCount: totalCount - duplicatesInWindow,
+  }
 }
 
 /**

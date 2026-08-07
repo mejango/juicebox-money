@@ -620,7 +620,7 @@ function PermissionsAcrossChains({
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
           ? "Every power the revnet’s revnet operator role currently holds, including any NFT powers granted at launch."
-          : "Revnet operators authorized to act for the project owner. Each row shows exactly what is granted and on which chains."}
+          : "Operators authorized to act for the project owner. Each row shows exactly what is granted and on which chains."}
       </p>
 
       {query.isLoading ? (
@@ -629,7 +629,7 @@ function PermissionsAcrossChains({
         <p className="mt-4 text-sm text-smoke-500">
           {isRevnet
             ? "No revnet operator permissions found."
-            : "No revnet operators authorized yet."}
+            : "No operators authorized yet."}
         </p>
       ) : (
         <div className="mt-4 divide-y divide-smoke-100">

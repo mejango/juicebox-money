@@ -43,9 +43,6 @@ export type PersistMeta = { persist?: PersistTier }
  */
 export const PERSIST: PersistMeta = { persist: 'revalidate' }
 
-/** Drop-in `meta` for a read that provably cannot change. */
-export const PERSIST_IMMUTABLE: PersistMeta = { persist: 'immutable' }
-
 function tierOf(query: Query): PersistTier | undefined {
   return (query.meta as PersistMeta | undefined)?.persist
 }

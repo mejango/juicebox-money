@@ -14,6 +14,7 @@ import {
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
@@ -43,6 +44,9 @@ export function tokenMeta(
   contexts: readonly JBAccountingContext[],
   token: string,
   chainId: JBChainId,
+  /** Resolved ERC-20 symbols keyed by lowercased address. Without it an ERC-20 falls back to
+   *  a truncated address, which is a correct label for nothing anyone recognises. */
+  symbols?: Record<string, string>,
 ): { symbol: string; decimals: number } {
   const ctx = contexts.find(
     c => c.token.toLowerCase() === token.toLowerCase(),
@@ -54,7 +58,10 @@ export function tokenMeta(
       decimals: ctx?.decimals ?? 18,
     }
   }
-  return { symbol: truncateAddress(token), decimals: ctx?.decimals ?? 18 }
+  return {
+    symbol: symbols?.[token.toLowerCase()] ?? truncateAddress(token),
+    decimals: ctx?.decimals ?? 18,
+  }
 }
 
 /**
@@ -85,6 +92,25 @@ export function LoansSection({
       }),
   })
 
+  // Resolved here rather than at render, because reading `symbol()` is async and `tokenMeta`
+  // is called from render paths — which is why it fell back to a truncated address and showed
+  // a USDC loan as "0x1c7D…".
+  const { data: symbols } = useQuery({
+    queryKey: ['loanTokenSymbols', chainId, contexts?.map(c => c.token).join(',')],
+    enabled: !!publicClient && !!contexts?.length,
+    staleTime: 5 * 60_000,
+    retry: 1,
+    queryFn: async () =>
+      Object.fromEntries(
+        await Promise.all(
+          contexts!.map(async ctx => [
+            ctx.token.toLowerCase(),
+            await tokenSymbol(publicClient!, ctx.token as Address, { chainId }),
+          ]),
+        ),
+      ) as Record<string, string>,
+  })
+
   // The project token symbol, for the collateral copy.
   const { data: collateralToken } = useQuery({
     queryKey: ['projectToken', chainId, projectId],
@@ -110,6 +136,7 @@ export function LoansSection({
         chainId={chainId}
         projectId={projectId}
         contexts={contexts ?? []}
+        symbols={symbols}
         collateralSymbol={collateralSymbol}
       />
     </div>
@@ -122,11 +149,13 @@ function LoansTables({
   chainId,
   projectId,
   contexts,
+  symbols,
   collateralSymbol,
 }: {
   chainId: JBChainId
   projectId: number
   contexts: readonly JBAccountingContext[]
+  symbols?: Record<string, string>
   collateralSymbol: string
 }) {
   const { address } = useViewedAccount()
@@ -160,9 +189,9 @@ function LoansTables({
           <span className="field-label">Your loans</span>
           <LoanTable
             chainId={chainId}
-            projectId={projectId}
             loans={yourLoans}
             contexts={contexts}
+            symbols={symbols}
             collateralSymbol={collateralSymbol}
             holder={address}
             onRepaid={refetch}
@@ -189,9 +218,9 @@ function LoansTables({
           <Revalidating as="div" pending={isFetching}>
             <LoanTable
               chainId={chainId}
-              projectId={projectId}
               loans={loans}
               contexts={contexts}
+              symbols={symbols}
               collateralSymbol={collateralSymbol}
             />
           </Revalidating>
@@ -203,17 +232,17 @@ function LoansTables({
 
 function LoanTable({
   chainId,
-  projectId,
   loans,
   contexts,
+  symbols,
   collateralSymbol,
   holder,
   onRepaid,
 }: {
   chainId: JBChainId
-  projectId: number
   loans: BsLoan[]
   contexts: readonly JBAccountingContext[]
+  symbols?: Record<string, string>
   collateralSymbol: string
   /** When set, a Repay column is shown (the connected holder's own loans). */
   holder?: Address
@@ -234,7 +263,7 @@ function LoanTable({
         </thead>
         <tbody className="text-ink">
           {loans.map(loan => {
-            const meta = tokenMeta(contexts, loan.token, chainId)
+            const meta = tokenMeta(contexts, loan.token, chainId, symbols)
             const isNative =
               loan.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
             return (
@@ -267,9 +296,9 @@ function LoanTable({
                   <td className="py-1.5 text-right">
                     <RepayFlow
                       chainId={chainId}
-                      projectId={projectId}
                       loan={loan}
                       contexts={contexts}
+                      symbols={symbols}
                       collateralSymbol={collateralSymbol}
                       holder={holder}
                       onRepaid={onRepaid}
@@ -301,14 +330,15 @@ function RepayFlow({
   chainId,
   loan,
   contexts,
+  symbols,
   collateralSymbol,
   holder,
   onRepaid,
 }: {
   chainId: JBChainId
-  projectId: number
   loan: BsLoan
   contexts: readonly JBAccountingContext[]
+  symbols?: Record<string, string>
   collateralSymbol: string
   holder: Address
   onRepaid?: () => void
@@ -326,7 +356,7 @@ function RepayFlow({
   > | null>(null)
 
   const loans = revLoansAddress(chainId)
-  const meta = tokenMeta(contexts, loan.token, chainId)
+  const meta = tokenMeta(contexts, loan.token, chainId, symbols)
 
   const busy = checking || approveTx.busy || repayTx.busy
 

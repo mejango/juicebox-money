@@ -238,25 +238,30 @@ export default async function ProjectPage({
       ? getProjectActivity(project.suckerGroupId, 250, urn.chainId)
       : getProjectActivityByProject(urn.chainId, project.projectId, 250)
     )
-      .then(events => ({ events, error: false }))
-      .catch(() => ({ events: [] as BsActivityEvent[], error: true })),
-    project.suckerGroupId
-      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId).catch(
-          () => [] as BsProject[],
-        )
-      : Promise.resolve([] as BsProject[]),
+      .then(page => ({ events: page.items, total: page.totalCount, error: false }))
+      .catch(() => ({ events: [] as BsActivityEvent[], total: 0, error: true })),
+    // An indexer failure here used to read as "this project is on one chain": the page
+    // rendered fully, but cross-chain stats, per-chain tabs and authorities all silently
+    // shrank to the home chain. Carry the failure so the UI can say so instead.
+    (project.suckerGroupId
+      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId)
+      : Promise.resolve([] as BsProject[])
+    )
+      .then(projects => ({ projects, error: false }))
+      .catch(() => ({ projects: [] as BsProject[], error: true })),
     isRevnet
       ? getRevnetOperatorCached(urn.chainId, urn.projectId)
       : Promise.resolve(null),
   ]);
   const activity = activityResult.events;
+  const siblingProjects = siblings.projects;
 
   const name =
     metadata?.name?.trim() || project.name || `Project ${project.projectId}`;
   const tagline =
     metadata?.projectTagline?.trim() || project.projectTagline || null;
   const logoUri = metadata?.logoUri?.trim() || project.logoUri;
-  const chains = resolveProjectDeployments(project, siblings);
+  const chains = resolveProjectDeployments(project, siblingProjects);
   const accountingToken = suckerGroupAccountingToken(chains);
   const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname;
   const description = metadata?.description?.trim() ?? "";
@@ -350,6 +355,14 @@ export default async function ProjectPage({
             {tagline ? (
               <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
                 {tagline}
+              </p>
+            ) : null}
+            {siblings.error ? (
+              // The page otherwise looks complete, so an unannounced failure here reads as
+              // "this project is only on one chain" rather than "we couldn't check".
+              <p className="mt-2 text-sm text-amber-700">
+                Couldn&apos;t load this project&apos;s linked chains. Cross-chain totals and
+                per-chain views may be incomplete.
               </p>
             ) : null}
             <ProjectStats
@@ -485,6 +498,7 @@ export default async function ProjectPage({
             <section className="min-[801px]:mt-8">
               <ActivityList
                 events={activity}
+                total={activityResult.total}
                 error={activityResult.error}
                 chainId={urn.chainId}
                 projectId={project.projectId}
@@ -519,7 +533,6 @@ export default async function ProjectPage({
                     <TermsTab
                       chainId={urn.chainId}
                       projectId={project.projectId}
-                      tokenSymbol=""
                     />
                   ),
                 }

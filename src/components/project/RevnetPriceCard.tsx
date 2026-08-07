@@ -6,6 +6,7 @@ import {
   USD_CURRENCY_ID,
   jbContractAddress,
   jbControllerAbi,
+  JB_CHAINS,
   jbDirectoryAbi,
   jbTerminalStoreAbi,
   jbTokensAbi,
@@ -82,7 +83,7 @@ export function RevnetPriceCard({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
-  const nativeSymbol = 'ETH'
+  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
 
   // A revnet's stage schedule is queued once at deployFor and no revnet actor
   // holds QUEUE_RULESETS, so every stage — past, current and future — is fixed

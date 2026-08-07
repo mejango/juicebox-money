@@ -9,7 +9,6 @@ import {
   USDC_ADDRESSES,
   jbContractAddress,
   jb721TiersHookAbi,
-  jb721TiersHookStoreAbi,
   jbDirectoryAbi,
   jbPricesAbi,
   jbRouterTerminalRegistryAbi,
@@ -31,9 +30,12 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalCloseButton } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BaseError,
+  ContractFunctionRevertedError,
   encodeFunctionData,
   erc20Abi,
   formatUnits,
@@ -212,7 +214,19 @@ function routerPayRouteWorks(
   return cached;
 }
 
+/** A revert means the chain answered, so a missing feed is a fact about the protocol rather
+ *  than about the network. */
+function contractReverted(error: unknown): boolean {
+  return (
+    error instanceof BaseError &&
+    !!error.walk((cause) => cause instanceof ContractFunctionRevertedError)
+  );
+}
+
 type ShopInfo = {
+  /** Whether `tiers` is the shop's FULL inventory. The cart prunes rows against it, so a
+   *  truncated list would silently delete items the shopper added from the Shop tab. */
+  tiersComplete: boolean;
   hook: Address;
   /** The metadata id target — the hook's METADATA_ID_TARGET (the shared
    *  implementation), NOT the clone. Keying by the clone address makes the
@@ -239,6 +253,8 @@ type ShopPayRoute = {
   /** Payment-token units per one whole shop-pricing unit. */
   pricePerUnit: bigint | null;
   reason?: string;
+  /** The feed could not be READ, as opposed to not existing. Temporary, and worth retrying. */
+  unavailable?: boolean;
 };
 
 const permit2AllowanceAbi = [
@@ -548,31 +564,29 @@ export function PayPanel({
     retry: 1,
     queryFn: async (): Promise<ShopInfo | null> => {
       const client = publicClient!;
+      // Paged to completion, like ShopTab. A single 200-tier page truncated the shop, and the
+      // effect below then DELETED any cart row outside that window — so items added from the
+      // Shop tab silently disappeared from the cart on a large shop.
       const resolved = await getProject721Shop(client, {
         chainId,
         projectId: BigInt(projectId),
         isRevnet,
-        tierLimit: 200,
+        tierLimit: 0,
       });
       if (!resolved) return null;
-      const rawTiers = await client
-        .readContract({
-          address: resolved.store,
-          abi: jb721TiersHookStoreAbi,
-          functionName: "tiersOf",
-          args: [resolved.hook, [], true, 0n, 200n],
-        })
-        .catch(() => []);
-      const flagsById = new Map(
-        rawTiers.map((rawTier) => [rawTier.id, rawTier.flags] as const),
-      );
+      const rawTiers = await readAllActiveTiers(client, resolved.store, resolved.hook, true);
+      // One read now carries flags too, so the second `tiersOf` call this used to make — and
+      // its `.catch(() => [])`, which quietly failed every tier closed — is gone.
+      const tiers = rawTiers.filter((tier) => tier.initialSupply > 0);
       return {
+        /** The read walked every page, so an absent id is a removed tier and not a truncation. */
+        tiersComplete: true,
         hook: resolved.hook,
         idTarget: resolved.metadataIdTarget,
         pricingCurrency: resolved.pricing.currency,
         pricingDecimals: resolved.pricing.decimals,
         tiers: await Promise.all(
-          resolved.tiers.map(async (t) => {
+          tiers.map(async (t) => {
             // Metadata is cosmetic — a tier without it still sells.
             const meta = await resolvePayTierMetadata(t);
             const name = meta?.name ?? null;
@@ -587,8 +601,7 @@ export function PayPanel({
               unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
               // Fail closed if a legacy store does not return flags: charging
               // fresh funds is safer than underfunding a credit-restricted mint.
-              cantBuyWithCredits:
-                flagsById.get(t.id)?.cantBuyWithCredits ?? true,
+              cantBuyWithCredits: t.flags?.cantBuyWithCredits ?? true,
               name,
               description,
               image,
@@ -614,6 +627,10 @@ export function PayPanel({
       const cap = tier.unlimited ? 99 : tier.remaining;
       if (quantity > cap) setQuantity(tier.id, cap);
     }
+    // Only ever prune against a COMPLETE tier list. `shop` is now paged to completion, so an
+    // id missing from it really is gone from the shop — but the guard stays explicit, because
+    // the failure mode is destroying a shopper's cart, and it is silent.
+    if (!shop.tiersComplete) return;
     for (const id of Object.keys(cart).map(Number)) {
       if (!liveIds.has(id)) setQuantity(id, 0);
     }
@@ -688,8 +705,13 @@ export function PayPanel({
               },
             ] as const;
           }
-          const pricePerUnit = await publicClient!
-            .readContract({
+          // A REVERT is JBPrices_PriceFeedNotFound — the chain answered, and this pair really
+          // has no feed. A transport failure is not, and used to collapse into the same `0n`
+          // and produce the same permanent-sounding verdict about a momentary outage. Both
+          // still fail closed; only the explanation, and whether it's worth retrying, differ.
+          let pricePerUnit: bigint;
+          try {
+            pricePerUnit = await publicClient!.readContract({
               address: prices,
               abi: jbPricesAbi,
               functionName: "pricePerUnitOf",
@@ -699,8 +721,25 @@ export function PayPanel({
                 BigInt(shop!.pricingCurrency),
                 BigInt(payContext.decimals),
               ],
-            })
-            .catch(() => 0n);
+            });
+          } catch (error) {
+            return [
+              key,
+              contractReverted(error)
+                ? {
+                    supported: false,
+                    pricePerUnit: null,
+                    reason: "No price feed converts this payment token.",
+                  }
+                : {
+                    supported: false,
+                    pricePerUnit: null,
+                    unavailable: true,
+                    reason:
+                      "Couldn't check this token's price feed. Try again in a moment.",
+                  },
+            ] as const;
+          }
           return [
             key,
             pricePerUnit > 0n
@@ -720,6 +759,11 @@ export function PayPanel({
     ? shopRoutes?.[payTokenKey(context)]
     : undefined;
   const shopMatchesToken = !!selectedShopRoute?.supported;
+  // A feed the app could not READ is not a feed the protocol lacks. Both hide the route, but
+  // only one is permanent, and only one is worth retrying.
+  const shopRouteCheckFailed = Object.values(shopRoutes ?? {}).some(
+    (route) => route.unavailable,
+  );
   const supportedShopContextIndexes = useMemo(
     () =>
       contexts.flatMap((payContext, index) =>
@@ -1705,8 +1749,9 @@ export function PayPanel({
             />
           ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
             <p className="mt-1 text-xs leading-relaxed text-red-600">
-              No directly accepted payment token has a verified price feed for
-              these items on {chainName(chainId)}.
+              {shopRouteCheckFailed
+                ? `Couldn't check which payment tokens have a price feed for these items on ${chainName(chainId)}. Try again in a moment.`
+                : `No directly accepted payment token has a verified price feed for these items on ${chainName(chainId)}.`}
             </p>
           ) : cartCount > 0 && !shopMatchesToken ? (
             <p className="mt-1 text-xs leading-relaxed text-smoke-700">
@@ -2436,7 +2481,7 @@ function PaymentCallReview({
   }
   const request = action.request;
   const destination = paymentRequestDestination(request);
-  const actionName = action.label || humanPaymentAction(request.functionName);
+  const actionName = action.label;
   const reviewRequest: TransactionReviewRequest = {
     title: actionName,
     calls: [
@@ -2660,14 +2705,6 @@ function Permit2SignatureReview({
       </div>
     </div>
   );
-}
-
-function humanPaymentAction(functionName?: string): string {
-  if (functionName === "approve") return "Approve token access";
-  if (functionName === "execute") return "Direct AMM swap";
-  if (functionName === "pay") return "Pay project";
-  if (functionName === "addToBalanceOf") return "Add to project balance";
-  return "Review wallet action";
 }
 
 function paymentRequestDestination(request: TxRequest): { name: string } {

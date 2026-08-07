@@ -23,6 +23,8 @@ import { ActorLink } from './ActorLink'
 import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
 
 const ACTIVITY_POLL_MS = 15_000
+/** Rows per page. The server renders the first one; "Load more" appends the rest. */
+const ACTIVITY_PAGE = 250
 
 export type ActivityCategory =
   | 'pay'
@@ -494,6 +496,7 @@ export function ActivityList({
   suckerGroupId,
   accountingToken,
   error = false,
+  total,
 }: {
   events: BsActivityEvent[]
   chainId: JBChainId
@@ -505,16 +508,23 @@ export function ActivityList({
    */
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
   error?: boolean
+  /** Rows matching the feed's filter, of which `events` is the newest page. Category filters
+   *  apply only to what is LOADED, so without this a populated category renders as empty. */
+  total?: number
 }) {
   const [liveEvents, setLiveEvents] = useState(events)
   const [liveError, setLiveError] = useState(error)
+  const [liveTotal, setLiveTotal] = useState(total ?? events.length)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
   const [selectedCategories, setSelectedCategories] =
     useState<Set<ActivityCategory> | null>(null)
 
   useEffect(() => {
     setLiveEvents(events)
     setLiveError(error)
-  }, [error, events])
+    setLiveTotal(total ?? events.length)
+  }, [error, events, total])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
@@ -524,10 +534,12 @@ export function ActivityList({
       if (document.visibilityState === 'hidden') return
       try {
         const incoming = await (suckerGroupId
-          ? getProjectActivity(suckerGroupId, 250, chainId)
-          : getProjectActivityByProject(chainId, projectId, 250))
+          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId)
+          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE))
         if (stopped) return
-        setLiveEvents(current => mergeActivityEvents(current, incoming))
+        // Poll the newest page only; merging keeps whatever "Load more" has already pulled in.
+        setLiveEvents(current => mergeActivityEvents(current, incoming.items))
+        setLiveTotal(incoming.totalCount)
         setLiveError(false)
       } catch {
         // Keep the last known-good feed; the next poll retries.
@@ -546,6 +558,27 @@ export function ActivityList({
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [chainId, projectId, suckerGroupId])
+
+  const loadMore = async () => {
+    setLoadingMore(true)
+    setLoadMoreError(null)
+    try {
+      const page = await (suckerGroupId
+        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, liveEvents.length)
+        : getProjectActivityByProject(
+            chainId,
+            projectId,
+            ACTIVITY_PAGE,
+            liveEvents.length,
+          ))
+      setLiveEvents(current => mergeActivityEvents(current, page.items))
+      setLiveTotal(page.totalCount)
+    } catch {
+      setLoadMoreError('Could not load more activity. Try again.')
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   const projectEvents = liveEvents.filter(isProjectFeedActivity)
   const categories: ActivityCategory[] = []
@@ -616,9 +649,27 @@ export function ActivityList({
         </ul>
       ) : (
         <div className="card flex min-h-[180px] items-center justify-center p-5 text-sm text-smoke-500">
-          No activity matches this filter.
+          {liveEvents.length < liveTotal
+            ? 'No activity matches this filter in the rows loaded so far.'
+            : 'No activity matches this filter.'}
         </div>
       )}
+      {liveEvents.length < liveTotal ? (
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <button
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+            className="btn-secondary min-h-[40px] px-5 text-sm"
+          >
+            {loadingMore
+              ? 'Loading…'
+              : `Load more (${liveEvents.length} of ${liveTotal})`}
+          </button>
+          {loadMoreError ? (
+            <p className="text-xs text-crush-600">{loadMoreError}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

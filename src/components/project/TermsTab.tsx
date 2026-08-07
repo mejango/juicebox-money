@@ -51,11 +51,9 @@ function cutCadence(durationSecs: number): string {
 export function TermsTab({
   chainId,
   projectId,
-  tokenSymbol,
 }: {
   chainId: JBChainId
   projectId: number
-  tokenSymbol: string
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
@@ -99,7 +97,7 @@ export function TermsTab({
   // The revnet's OWN token symbol (bendystraw's tokenSymbol is the
   // accounting token — "ETH per ETH" would be nonsense).
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
-  const sym = projectToken?.symbol || tokenSymbol || 'tokens'
+  const sym = projectToken?.symbol || 'tokens'
 
   if (isLoading) {
     return <TermsTabSkeleton />

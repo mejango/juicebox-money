@@ -239,7 +239,9 @@ describe('account activity query', () => {
 
     const page = await getAccountActivity(ALICE, { limit: 25, offset: 0 })
 
-    expect(page.totalCount).toBe(4)
+    // 3, not 4: `dup` is counted by both branches but appears once after the dedupe. Summing
+    // the raw per-branch counts made "Load more (3 of 4)" offer a page that never arrives.
+    expect(page.totalCount).toBe(3)
     expect(page.items.map(item => item.id)).toEqual(['evt-new', 'pay-1', 'dup'])
     const wrapped = page.items[1]
     expect(wrapped.chainId).toBe(8453)

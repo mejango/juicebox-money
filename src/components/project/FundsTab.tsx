@@ -838,6 +838,12 @@ type ReviewedTx = {
   account: Address
 }
 
+/**
+ * The two branches ARE identical at runtime, and deliberately so: `FundsWriteRequest` is a
+ * union of per-function shapes, and `simulateContract` only resolves a single overload once
+ * the union is narrowed. Calling it on the un-narrowed union does not typecheck. Discriminate
+ * first, then call — do not "simplify" this back into one call.
+ */
 async function simulateFundsRequest(
   publicClient: PublicClient,
   request: FundsWriteRequest,

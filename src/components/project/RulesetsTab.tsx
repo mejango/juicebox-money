@@ -24,8 +24,7 @@ import { getPublicClient } from "@wagmi/core";
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { erc20Abi, zeroAddress, type PublicClient } from "viem";
-import { AddressLabel } from "@/components/ui/AddressLabel";
-import { AddressLink } from "@/components/ui/AddressLink";
+import { SplitRecipient } from "@/components/project/SplitRecipient";
 import { usePublicClient } from "wagmi";
 import { ChainIcon } from "@/components/ChainIcon";
 import { RulesetsTabSkeleton } from "@/components/LoadingSkeletons";
@@ -50,7 +49,6 @@ import { PERSIST } from '@/lib/query-persist';
 /** Fund-access amounts at/above this are stored as "no limit". */
 const UNLIMITED_FLOOR = 2n ** 200n;
 /** Reserved-split sentinel meaning "burn this portion". */
-const BURN_ADDRESS = "0x000000000000000000000000000000000000dead";
 
 type AccountingContext = {
   token: `0x${string}`;
@@ -620,39 +618,30 @@ function ArrowButton({
 function SplitsList({
   splits,
   chainId,
+  /** The 0x…dead sentinel means BURN only in the reserved group. A payout split to that
+   *  address is an ordinary (if unwise) payout, and labelling it "Burn" misreports where the
+   *  money goes. */
+  showBurn = false,
 }: {
   splits: readonly RawSplit[];
   chainId: JBChainId;
+  showBurn?: boolean;
 }) {
   const host = JB_CHAINS[chainId]?.etherscanHostname;
   const total = splits.reduce((sum, sp) => sum + sp.percent, 0);
   const leftover = 1e9 - total;
-
-  const recipient = (sp: RawSplit): ReactNode => {
-    if (sp.hook !== zeroAddress) {
-      return (
-        <>
-          Hook <AddressLabel address={sp.hook} />
-        </>
-      );
-    }
-    if (sp.projectId > 0n) return `Project #${sp.projectId}`;
-    if (sp.beneficiary.toLowerCase() === BURN_ADDRESS) return "Burn";
-    return (
-      <AddressLink
-        address={sp.beneficiary}
-        host={host}
-        className="text-inherit"
-      />
-    );
-  };
 
   return (
     <dl className="mt-2 space-y-1.5 text-sm">
       {splits.map((sp, i) => (
         <div key={i} className="flex items-baseline justify-between gap-3">
           <dt className="min-w-0 text-smoke-700">
-            {recipient(sp)}
+            <SplitRecipient
+              split={sp}
+              chainId={chainId}
+              host={host}
+              showBurn={showBurn}
+            />
             {sp.lockedUntil > 0 ? (
               <span className="block text-xs text-smoke-500">
                 Locked until {formatDate(sp.lockedUntil)}
@@ -942,6 +931,9 @@ export function RulesetsTab({
 
   return (
     <div className="space-y-5">
+      {/* Constant, and not dead: this tab is only mounted for non-revnets (revnets get Terms
+          instead), and the flag is the flow's own assertion that it must never offer to queue
+          a ruleset for a revnet, whose stages are immutable. */}
       <QueueRulesetFlow
         chainId={chainId}
         projectId={projectId}
@@ -1066,6 +1058,7 @@ export function RulesetsTab({
                     <SplitsList
                       splits={fundsAccess.reservedSplits}
                       chainId={chainId}
+                      showBurn
                     />
                   ) : fundsFailed ? (
                     <p className="mt-2 text-sm text-smoke-500">

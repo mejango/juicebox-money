@@ -32,6 +32,7 @@ import {
   ShopTabSkeleton,
 } from '@/components/LoadingSkeletons'
 import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
+import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
   AddShopItemsModal,
   type ShopWriteTarget,
@@ -108,7 +109,6 @@ const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['issueTokensForSplits', SPLIT_SALES_TOKEN_CREDIT_TITLE],
 ]
 
-const TIER_PAGE_SIZE = 200
 const ZERO_BYTES32 = `0x${'0'.repeat(64)}`
 
 type ShopTier = {
@@ -129,12 +129,20 @@ type ShopTier = {
   flags?: ShopTierFlags
 }
 
-/** Shopper-facing copy for each stored tier flag (revnet-app parity). */
-const FLAG_DESCRIPTIONS: [keyof ShopTierFlags, string, string][] = [
+/**
+ * Shopper-facing copy for each stored tier flag (revnet-app parity).
+ *
+ * Parameterized on `isRevnet` because this tab renders for non-revnet projects too, where the
+ * free-mint gate is the project OWNER plus MINT_721 and there is no revnet operator at all —
+ * the same distinction MintShopItemModal already draws.
+ */
+const flagDescriptions = (
+  isRevnet: boolean,
+): [keyof ShopTierFlags, string, string][] => [
   [
     'allowOwnerMint',
-    'Revnet operator can mint',
-    "The revnet operator can mint this item for free, without a payment.",
+    `${isRevnet ? 'Revnet operator' : 'Project owner'} can mint`,
+    `The ${isRevnet ? 'revnet operator' : 'project owner'}, or an address with the MINT_721 permission, can mint this item for free, without a payment.`,
   ],
   [
     'transfersPausable',
@@ -183,13 +191,15 @@ export function ShopTab({
   chainId,
   projectId,
   isRevnet,
-  chains = [[chainId, projectId]],
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   isRevnet: boolean
-  /** [chain id, project id] for every linked deployment. */
-  chains?: [number, number][]
+  /** [chain id, project id] for every linked deployment. Required: the old
+   *  single-deployment default silently degraded every cross-chain view to one chain, with
+   *  nothing to distinguish that from a genuinely single-chain project. */
+  chains: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useViewedAccount()
@@ -1519,7 +1529,7 @@ function TierDetailModal({
     item,
   } = useTierCartItem(tier, media)
   const setFlags = tier.flags
-    ? FLAG_DESCRIPTIONS.filter(([flag]) => tier.flags![flag])
+    ? flagDescriptions(isRevnet).filter(([flag]) => tier.flags![flag])
     : []
 
   useEffect(() => {
@@ -1797,59 +1807,6 @@ function plainText(value: string): string {
 function discountLabel(discountPercent: number): string {
   const pct = discountPercent / 2
   return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}% off`
-}
-
-async function readTierPage(
-  client: PublicClient,
-  store: Address,
-  hook: Address,
-  startingId: bigint,
-) {
-  return client.readContract({
-    address: store,
-    abi: jb721TiersHookStoreAbi,
-    functionName: 'tiersOf',
-    args: [
-      hook,
-      [],
-      false,
-      startingId,
-      BigInt(startingId === 0n ? TIER_PAGE_SIZE : TIER_PAGE_SIZE + 1),
-    ],
-  })
-}
-
-async function readAllActiveTiers(
-  client: PublicClient,
-  store: Address,
-  hook: Address,
-) {
-  const tiers: Awaited<ReturnType<typeof readTierPage>>[number][] = []
-  const seen = new Set<number>()
-  let startingId = 0n
-
-  for (;;) {
-    const page = await readTierPage(client, store, hook, startingId)
-    if (page.length === 0) break
-    if (startingId !== 0n && BigInt(page[0].id) !== startingId) {
-      throw new Error('The shop changed while its inventory was being read.')
-    }
-    const fresh = startingId === 0n ? page : page.slice(1)
-    for (const tier of fresh) {
-      if (seen.has(tier.id)) {
-        throw new Error(`The shop repeated tier ${tier.id} while loading.`)
-      }
-      seen.add(tier.id)
-      tiers.push(tier)
-    }
-    if (fresh.length < TIER_PAGE_SIZE) break
-    const next = BigInt(fresh[fresh.length - 1].id)
-    if (next === startingId) {
-      throw new Error('The shop returned a cyclic inventory cursor.')
-    }
-    startingId = next
-  }
-  return tiers
 }
 
 async function resolveLegacyTierUris(
