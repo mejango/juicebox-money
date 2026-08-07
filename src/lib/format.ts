@@ -214,13 +214,24 @@ export function formatCountdown(
 export const USD_SCALE = 10n ** 18n
 
 /** 18-decimal fixed-point USD → "$1,234.56" (half-up to the cent). */
-export function formatUsd18(raw: bigint | string): string {
+export function formatUsd18(
+  raw: bigint | string,
+  { compact = false }: { compact?: boolean } = {},
+): string {
   try {
     const value = typeof raw === 'bigint' ? raw : BigInt(raw)
     if (value > 0n && value < USD_SCALE / 100n) return '<$0.01'
 
     const cents = (value * 100n + USD_SCALE / 2n) / USD_SCALE
     const dollars = cents / 100n
+    // Cents matter up to $1,000 — at $340.50 they still carry meaning. Above that a dense
+    // list reads better without them, and the exact value stays one hover away.
+    if (compact && (dollars >= 1_000n || dollars <= -1_000n)) {
+      // Round to the nearest dollar rather than truncating the cents off — dropping
+      // precision must not also bias the number downward.
+      const wholeDollars = (value + USD_SCALE / 2n) / USD_SCALE
+      return `$${wholeDollars.toLocaleString('en-US')}`
+    }
     const remainder = (cents % 100n).toString().padStart(2, '0')
     return `$${dollars.toLocaleString('en-US')}.${remainder}`
   } catch {

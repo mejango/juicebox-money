@@ -16,6 +16,7 @@ import {
 } from './StepChartBase'
 import {
   minimumCashOutPriceAtIssuancePrice,
+  netCashOutDisplayValue,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 import { Revalidating } from '@/components/ui/Revalidating'
@@ -253,9 +254,11 @@ export function PriceChart({
       const tax = taxAtTime(
         isOutgoingBoundary ? timestamp - 0.001 : timestamp,
       )
+      // Net of the protocol fee so the asymptote shares the axis honestly with the floor
+      // line above it; both are ambient displays of what a holder would receive.
       const value =
         rate > 0 && tax !== undefined
-          ? minimumCashOutPriceAtIssuancePrice(1 / rate, tax)
+          ? netCashOutDisplayValue(minimumCashOutPriceAtIssuancePrice(1 / rate, tax), tax)
           : null
       return value && value > 0 ? [{ timestamp, value }] : []
     },

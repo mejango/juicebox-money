@@ -1,6 +1,6 @@
 import { ChainIcon } from '@/components/ChainIcon'
 import { explorerHostname } from '@/lib/chainDisplay'
-import { formatTokenAmount } from '@/lib/format'
+import { formatTokenAmount, formatUsd18 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 
 /**
@@ -14,17 +14,20 @@ export type ActivityAmountToken = {
   decimals: number
 }
 
-/** Bendystraw stores indexed USD amounts as 18-decimal fixed point values. */
+/**
+ * Bendystraw stores indexed USD amounts as 18-decimal fixed point values.
+ *
+ * Delegates to the canonical `formatUsd18` rather than re-deriving: this used to divide
+ * through `Number`, which truncates, and rounded via `toLocaleString` instead of the
+ * half-up BigInt path — so the feed could disagree with every other USD figure in the app.
+ */
 function formatIndexedUsd(raw: string | null | undefined): string | null {
   if (!raw) return null
   try {
-    const usd = Number(BigInt(raw) / 1_000_000_000_000n) / 1_000_000
-    if (!Number.isFinite(usd) || usd <= 0) return null
-    if (usd < 0.01) return '<$0.01'
-    return `$${usd.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`
+    const value = BigInt(raw)
+    // Genuinely-zero amounts (e.g. credit-funded pays) show no amount at all.
+    if (value <= 0n) return null
+    return formatUsd18(value, { compact: true })
   } catch {
     return null
   }

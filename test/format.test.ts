@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { billionthsToPct, fmtPct, projectLogoUrl } from '@/lib/format'
+import {
+  billionthsToPct,
+  fmtPct,
+  formatUsd18,
+  projectLogoUrl,
+} from '@/lib/format'
 
 describe('percent formatting', () => {
   it('keeps ordinary percentages compact', () => {
@@ -34,5 +39,36 @@ describe('project logo URLs', () => {
     ).toBeNull()
     expect(projectLogoUrl('javascript:alert(1)')).toBeNull()
     expect(projectLogoUrl('blob:https://example.com/id')).toBeNull()
+  })
+})
+
+// USD is formatted BigInt-exact with half-up rounding and a sub-cent floor. The activity
+// feed used to re-derive this through `Number` (truncating) and `toLocaleString`, so it
+// could disagree with every other USD figure in the app; it now shares this one path.
+describe('formatUsd18', () => {
+  const usd = (dollars: string) => BigInt(dollars) * 10n ** 18n
+
+  it('keeps cents by default', () => {
+    expect(formatUsd18(usd('340') + 5n * 10n ** 17n)).toBe('$340.50')
+  })
+
+  it('drops cents above $1,000 only in compact mode', () => {
+    const value = usd('12345') + 67n * 10n ** 16n
+    expect(formatUsd18(value, { compact: true })).toBe('$12,346')
+    expect(formatUsd18(value)).toBe('$12,345.67')
+  })
+
+  it('keeps cents below $1,000 even in compact mode', () => {
+    expect(formatUsd18(usd('340') + 5n * 10n ** 17n, { compact: true })).toBe('$340.50')
+  })
+
+  it('floors a real sub-cent amount rather than rendering $0.00', () => {
+    // "$0.00" reads as "nothing happened" for a payment that did happen.
+    expect(formatUsd18(10n ** 15n)).toBe('<$0.01')
+  })
+
+  it('rounds half-up rather than truncating', () => {
+    // The old Number-based path divided by 1e12 first and lost this.
+    expect(formatUsd18(usd('1') + 5n * 10n ** 15n)).toBe('$1.01')
   })
 })

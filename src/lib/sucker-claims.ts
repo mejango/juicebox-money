@@ -89,6 +89,20 @@ export async function buildClaim(
   )
   if (!movement) throw new Error('This move is not in the sucker outbox.')
 
+  // Claim status comes from the CHAIN, not the indexer. The movement list this client shows
+  // is assembled from indexed outbox/claim rows, so under indexer lag a move that was
+  // already claimed still offers a Claim button (and one just claimed elsewhere would too).
+  // The SDK verified this leaf against the destination inbox root, so its status is
+  // authoritative — refuse rather than send a transaction that must revert.
+  if (movement.status === 'claimed') {
+    throw new Error('This move has already been claimed on the destination chain.')
+  }
+  if (movement.status === 'pending' || !movement.proof) {
+    throw new Error(
+      'This move has not been delivered to the destination chain yet — it cannot be claimed until its root arrives.',
+    )
+  }
+
   // The indexer is only used to select a row. Refuse the claim if its visible
   // identity disagrees with the SDK's verified event preimage.
   if (

@@ -150,6 +150,9 @@ export function cashOutPriceFromTotals({
       : (base * (10_000n - tax + (tax * oneToken) / tokenSupply)) / 10_000n
   if (rawPrice <= 0n) return null
 
+  // GROSS by design: this mirrors JBCashOuts.cashOutFrom exactly (see the test pinning the
+  // staged arithmetic). The protocol fee is applied by the DISPLAY layer via
+  // `netOfCashOutFee`, so this stays a faithful contract mirror.
   const value = Number(formatUnits(rawPrice, balanceDecimals))
   return Number.isFinite(value) && value > 0 ? value : null
 }
@@ -187,7 +190,10 @@ export function minimumCashOutPriceFromTotals({
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
-/** Long-run cash-out price after payments at the current issuance price. */
+/**
+ * Long-run cash-out price after payments at the current issuance price. GROSS of the
+ * protocol fee — net it at the display layer with {@link netCashOutDisplayValue}.
+ */
 export function minimumCashOutPriceAtIssuancePrice(
   issuancePrice: number,
   cashOutTaxRate: number,
@@ -195,6 +201,25 @@ export function minimumCashOutPriceAtIssuancePrice(
   if (!Number.isFinite(issuancePrice) || issuancePrice <= 0) return null
   const tax = Math.max(0, Math.min(10_000, cashOutTaxRate))
   return issuancePrice * (1 - tax / 10_000)
+}
+
+/**
+ * Net an ambient DISPLAY value of the protocol cash-out fee.
+ *
+ * The pure quote helpers above mirror the contract and are deliberately gross; every surface
+ * a holder reads to decide when to sell must show what they would actually RECEIVE, matching
+ * the confirm modal. `feeFreeSurplusOf` is unavailable to these display paths, so the fee is
+ * assumed fully applicable — understating proceeds is the safe direction.
+ */
+export function netCashOutDisplayValue(
+  value: number | null | undefined,
+  cashOutTaxRate: number | undefined,
+): number | null {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null
+  // A zero-tax project is fee-free up to feeFreeSurplusOf; without that counter the fee
+  // still cannot be ruled out, so it is applied either way.
+  void cashOutTaxRate
+  return value - value / 40
 }
 
 /** Show the payment asymptote only when paid issuance can pull the live quote down toward it. */

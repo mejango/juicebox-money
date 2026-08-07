@@ -40,6 +40,7 @@ import { resolveMarket } from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
+  netCashOutDisplayValue,
 } from '@/lib/cashOut'
 import {
   explainCashOutChange,
@@ -253,7 +254,12 @@ export function RevnetPriceCard({
             balanceDecimals: current.decimals,
           }
           return {
-            price: cashOutPriceFromTotals(totals),
+            // Ambient displays quote what a holder would RECEIVE, matching the confirm
+            // modal — the pure helper is a gross contract mirror by design.
+            price: netCashOutDisplayValue(
+              cashOutPriceFromTotals(totals),
+              current.cashOutTaxRate,
+            ),
             cashOutTaxRate: current.cashOutTaxRate,
             currency: current.currency,
             baseCurrency: current.baseCurrency,
@@ -354,12 +360,15 @@ export function RevnetPriceCard({
         tax = ruleset.metadata.cashOutTaxRate
       }
       try {
-        const value = cashOutPriceFromTotals({
-          balance: BigInt(moment.balance),
-          tokenSupply: BigInt(moment.tokenSupply),
-          cashOutTaxRate: tax,
-          balanceDecimals: decimals,
-        })
+        const value = netCashOutDisplayValue(
+          cashOutPriceFromTotals({
+            balance: BigInt(moment.balance),
+            tokenSupply: BigInt(moment.tokenSupply),
+            cashOutTaxRate: tax,
+            balanceDecimals: decimals,
+          }),
+          tax,
+        )
         if (!value) return []
         const observation: CashOutObservation = {
           balance: BigInt(moment.balance),
