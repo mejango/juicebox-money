@@ -4,7 +4,12 @@ import type { Config } from 'wagmi'
 import { getAccount } from 'wagmi/actions'
 import type { Address, Hex } from 'viem'
 
-const SAFE_PREFIX: Partial<Record<number, string>> = {
+/**
+ * Safe's per-chain URL prefix. THE map — `safe.ts` used to keep a second copy missing every
+ * L2 testnet, so `hasSafeService`, `safeQueueLink` and `safeTxLink` all went dead there while
+ * the connector happily supported them.
+ */
+export const SAFE_PREFIX: Partial<Record<number, string>> = {
   1: 'eth',
   10: 'oeth',
   8453: 'base',

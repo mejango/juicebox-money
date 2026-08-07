@@ -1,5 +1,5 @@
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { ReactNode } from 'react'
+import { explorerHostname } from '@/lib/chainDisplay'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 
 /**
@@ -27,11 +27,10 @@ export function AddressLink({
   note?: ReactNode
   title?: string
 }) {
+  // Resolved through the app's single explorer registry (lib/chainDisplay), not a fourth
+  // source — the SDK hostname was one of the maps that drifted on OP mainnet.
   const explorerHost =
-    host ??
-    (chainId !== undefined
-      ? JB_CHAINS[chainId as JBChainId]?.etherscanHostname
-      : undefined)
+    host ?? (chainId !== undefined ? (explorerHostname(chainId) ?? undefined) : undefined)
   const label = children ?? <AddressLabel address={address} />
   const core = explorerHost ? (
     <a

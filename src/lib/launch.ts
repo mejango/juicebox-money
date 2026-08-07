@@ -28,8 +28,18 @@ import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
 /** 10,000 tokens per ETH/USD paid (18-decimal fixed point). */
 const DEFAULT_WEIGHT = 10n ** 22n
 
-/** cashOutTaxRate sentinel: 100% tax = cash outs disabled. */
-const CASH_OUTS_OFF = 10_000
+/**
+ * cashOutTaxRate sentinel: 100% tax = cash outs disabled. Standard projects only.
+ *
+ * A REVNET cannot use this value — `REVDeployer` reverts with
+ * `REVDeployer_CashOutsCantBeTurnedOffCompletely` on anything >= MAX_CASH_OUT_TAX_RATE — so
+ * the revnet path encodes {@link CASH_OUTS_OFF_REVNET} instead. Both live here because
+ * having a third copy in CreateForm is how the export came to decode 9,999 as "on at 99.99%".
+ */
+export const CASH_OUTS_OFF = 10_000
+
+/** The closest a revnet can get to disabling cash outs, since 10,000 reverts at deploy. */
+export const CASH_OUTS_OFF_REVNET = 9_999
 
 /** JBFundAccessLimitGroup "unlimited" payout amount sentinel. */
 const UNLIMITED_PAYOUT = 2n ** 224n - 1n
@@ -138,8 +148,10 @@ export type StageRules = {
    *  Later stages always encode 0 — the controller chains each after the
    *  previous stage's duration. */
   mustStartAtOrAfter: number
-  /** Tokens issued per ETH/USD paid — 18-dec FP. On stage 2+, 0n = inherit
-   *  the previous stage's (cut) rate. */
+  /** Tokens issued per ETH/USD paid — 18-dec FP. On stage 2+, the raw sentinel `1n` means
+   *  inherit the previous stage's (cut) rate — "A weight of 1 is a special case that
+   *  represents inheriting the cut weight of the previous ruleset" (JBRulesets.sol:822-823).
+   *  `0n` is GENUINE ZERO ISSUANCE, permanently, and revnet stages are immutable. */
   weight: bigint
   /** Issuance cut applied each cycle, out of 1e9. */
   weightCutPercent: number
@@ -359,6 +371,32 @@ export function resolveStages(plan: LaunchPlan): StageRules[] {
   ]
 }
 
+/**
+ * Relative shares of a split bucket, summing to EXACTLY 1e9.
+ *
+ * The last row absorbs the rounding remainder, which is what makes the total exact —
+ * `JBSplits` reverts on a group over 1e9. This lived in three places with two different
+ * rounding modes (floor vs round) and a `<= 0` guard in only one of them, so the copies
+ * without it could emit a zero-or-negative final split, which also reverts.
+ */
+export function splitShares(values: readonly number[]): number[] {
+  const total = values.reduce((sum, value) => sum + value, 0)
+  if (!(total > 0)) return values.map(() => 0)
+
+  const shares = values.map(value => Math.floor((value / total) * 1e9))
+  const assigned = shares.slice(0, -1).reduce((sum, share) => sum + share, 0)
+  shares[shares.length - 1] = 1e9 - assigned
+  // ANY zero share is unencodable, not just the last: flooring sends a sufficiently tiny row
+  // to 0 while the last row still absorbs a positive remainder. A 0% split reverts on-chain,
+  // so surface it here where the percentages can still be edited.
+  if (shares.some(share => share <= 0)) {
+    throw new Error(
+      'These split percentages cannot be represented — one share is too small to encode.',
+    )
+  }
+  return shares
+}
+
 /** Reserved-token splits live in group 1; payout splits in group
  *  uint256(token). Split percents are out of 1e9. */
 const RESERVED_SPLIT_GROUP = 1n
@@ -487,8 +525,10 @@ export function buildLaunchRequest(args: {
           count: a.count,
           beneficiary: a.beneficiary,
         })),
-        // 0n on later stages = inherit the previous (cut) rate — the JB
-        // ruleset weight semantic REVDeployer passes straight through.
+        // The raw sentinel 1n on later stages = inherit the previous (cut) rate
+        // (JBRulesets.sol:822-823); 0n is genuine, permanent zero issuance. REVDeployer
+        // passes this weight straight through, and revnet stages are immutable — a caller
+        // that follows the old comment ships zero-issuance stages that can never be fixed.
         initialIssuance: stage.weight,
         splitPercent: stage.reservedPercent,
         splits: stage.reservedPercent > 0 ? splits : [],

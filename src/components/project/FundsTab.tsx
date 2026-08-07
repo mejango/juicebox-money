@@ -22,6 +22,7 @@ import {
   payoutSplitGroupId,
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
+import { explorerTxUrl } from '@/lib/chainDisplay'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -895,10 +896,9 @@ function FundsTxFlow({
     : tokenSymbol
   const tokenKeyed = line?.currency === ctx.currency
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  // Built through the shared helper, which returns null for an unknown chain — the previous
+  // template interpolated `undefined` into the host and produced `https://undefined/tx/…`.
+  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
 
   const busy = quoting || tx.busy
 

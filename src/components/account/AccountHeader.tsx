@@ -95,9 +95,12 @@ function ViewSiteAsButton({ address }: { address: string }) {
 export function AccountHeader({
   address,
   ensName,
+  chainId,
 }: {
   address: string
   ensName: string | null
+  /** A chain this account appears on, for the explorer link. Omitted ⇒ no link. */
+  chainId?: number
 }) {
   return (
     <header className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
@@ -114,7 +117,10 @@ export function AccountHeader({
           <p className="mt-1 text-sm">
             <AddressLink
               address={address}
-              host="etherscan.io"
+              // An address is not chain-specific, so link the explorer for a chain this
+              // account actually appears on. Hard-coding mainnet sent every testnet user to
+              // the wrong explorer; with no known chain AddressLink renders a plain span.
+              chainId={chainId}
               title={address}
               className="text-smoke-600"
             >

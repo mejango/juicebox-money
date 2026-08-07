@@ -10,6 +10,7 @@ import {
   LP_SPLIT_HOOK,
   type SplitConfig,
   type StoreItem,
+  splitShares,
 } from '@/lib/launch'
 
 export type PinnedStoreItemDraft = {
@@ -125,12 +126,9 @@ export function storeItemsForChain(
     let splits: SplitConfig[] = []
     if (totalSplitPct > 0) {
       splitPercent = Math.round((totalSplitPct / 100) * 1e9)
-      const relativePercents = splitRows.map(split =>
-        Math.round((Number(split.value) / totalSplitPct) * 1e9),
+      const relativePercents = splitShares(
+        splitRows.map(split => Number(split.value)),
       )
-      relativePercents[relativePercents.length - 1] =
-        1e9 -
-        relativePercents.slice(0, -1).reduce((sum, value) => sum + value, 0)
       splits = splitRows.map((split, index) => ({
         percent: relativePercents[index],
         ...splitRecipientForChain(split, chainId),

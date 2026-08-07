@@ -14,7 +14,8 @@ const CHAIN_DISPLAY = {
   10: {
     name: 'Optimism',
     slug: 'op',
-    explorer: 'optimism.etherscan.io',
+    // `optimism.etherscan.io` does not resolve — the working host is `optimistic.`.
+    explorer: 'optimistic.etherscan.io',
   },
   8453: {
     name: 'Base',
@@ -71,4 +72,31 @@ export function displayChainId(slug: string): number | null {
 
 export function explorerHostname(chainId: number): string | null {
   return displayChain(chainId)?.explorer ?? null
+}
+
+/**
+ * THE explorer URL builders. Every explorer link in this app routes through these.
+ *
+ * This map used to be one of three sources (a second registry in transaction-review.ts, the
+ * SDK's `etherscanHostname` inline, plus a dozen hand-built concatenations) and they DRIFTED:
+ * OP mainnet was `optimism.etherscan.io` here — a host that does not resolve — while the
+ * other map had the working `optimistic.` one. Every link built from this map was dead.
+ *
+ * Returns null for an unknown chain so callers omit the link rather than rendering
+ * `https://undefined/tx/…`.
+ */
+export function explorerTxUrl(chainId: number, hash: string): string | null {
+  const host = explorerHostname(chainId)
+  return host ? `https://${host}/tx/${hash}` : null
+}
+
+export function explorerAddressUrl(chainId: number, address: string): string | null {
+  const host = explorerHostname(chainId)
+  return host ? `https://${host}/address/${address}` : null
+}
+
+/** Origin only, for callers that append their own path. */
+export function explorerOrigin(chainId: number): string | null {
+  const host = explorerHostname(chainId)
+  return host ? `https://${host}` : null
 }

@@ -29,6 +29,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   formatUnits,
+  parseEther,
   parseUnits,
   type Address,
   type PublicClient,
@@ -606,7 +607,17 @@ function RulesetEditorForm({
   const changes = useMemo(() => diffRows(baseline, state), [baseline, state]);
   const weightValid = (() => {
     const n = Number(state.weight);
-    return state.weight.trim() !== "" && Number.isFinite(n) && n >= 0;
+    if (state.weight.trim() === "" || !Number.isFinite(n) || n < 0) return false;
+    // A weight of exactly 1 wei collides with the JBRulesets inherit sentinel: raw `1` means
+    // "inherit the previous ruleset's decayed weight" (JBRulesets.sol:822-823), not "one
+    // attowei of issuance". Typing 0.000000000000000001 would therefore queue a completely
+    // different — and immutable — encoding from the one shown.
+    try {
+      if (parseEther(state.weight.trim()) === 1n) return false;
+    } catch {
+      return false;
+    }
+    return true;
   })();
   const limitsValid = state.limits.every(
     (l) => l.mode !== "limited" || Number(l.amount) > 0,
@@ -1132,7 +1143,10 @@ function QueueActionPicker({
             description =
               "The form is copied from the rules governing the project now. Their approval hook and cycle schedule determine when the change can take effect.";
           } else if (option.action === "replace") {
-            description = `${approvalStatusLabel(status)}. The form is copied from this queued change and targets its scheduled cycle.`;
+            // "its scheduled cycle" overstates the guarantee: a long-DURATION approval hook
+            // can push the replacement past that cycle to a later multiple, so the start the
+            // user reads here can differ from the actual one by whole cycles.
+            description = `${approvalStatusLabel(status)}. The form is copied from this queued change and targets the next cycle its approval window allows.`;
             if (data.plan.hasMultipleQueuedRulesets) {
               description +=
                 " Earlier queued configurations remain in place.";

@@ -47,7 +47,9 @@ import {
   type LaunchSession,
 } from "@/lib/launch-session";
 import {
+  CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
+  splitShares,
   FOREVER_SECONDS,
   LP_SPLIT_HOOK,
   autoIssuanceMintChain,
@@ -669,11 +671,7 @@ export function CreateForm() {
     const total = valid.reduce((sum, row) => sum + Number(row.value), 0);
     if (total <= 0) return { percent: 0, splits: [] };
 
-    const percents = valid.map((row) =>
-      Math.floor((Number(row.value) / total) * 1e9),
-    );
-    percents[percents.length - 1] =
-      1e9 - percents.slice(0, -1).reduce((sum, percent) => sum + percent, 0);
+    const percents = splitShares(valid.map((row) => Number(row.value)));
 
     return {
       percent: Math.min(100, total),
@@ -837,7 +835,7 @@ export function CreateForm() {
       holdFees: false,
       // Revnets can't disable cash outs entirely — 'off' is the maximum
       // allowed 99.99% tax.
-      cashOutTaxRate: stage.cashOuts ? stageCashOutTax(stage) : 9_999,
+      cashOutTaxRate: stage.cashOuts ? stageCashOutTax(stage) : CASH_OUTS_OFF_REVNET,
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
@@ -1075,10 +1073,7 @@ export function CreateForm() {
       const perChainSplits: Record<number, SplitConfig[]> = {};
       if (totalSplitPct > 0) {
         splitPercent = Math.round((totalSplitPct / 100) * 1e9);
-        const rel = splitRows.map((r) =>
-          Math.round((Number(r.value) / totalSplitPct) * 1e9),
-        );
-        rel[rel.length - 1] = 1e9 - rel.slice(0, -1).reduce((a, b) => a + b, 0);
+        const rel = splitShares(splitRows.map((r) => Number(r.value)));
         const forChain = (chainId: number) =>
           splitRows.map((r, i) => ({
             percent: rel[i],

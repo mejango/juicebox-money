@@ -6,6 +6,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
+import { explorerOrigin } from '@/lib/chainDisplay'
 
 export type TransactionReviewCall = {
   chainId: number
@@ -182,17 +183,6 @@ export function transactionReviewJson(
   )
 }
 
-const EXPLORER_BY_CHAIN: Record<number, string> = {
-  1: 'https://etherscan.io',
-  10: 'https://optimistic.etherscan.io',
-  8453: 'https://basescan.org',
-  42161: 'https://arbiscan.io',
-  11155111: 'https://sepolia.etherscan.io',
-  11155420: 'https://sepolia-optimism.etherscan.io',
-  84532: 'https://sepolia.basescan.org',
-  421614: 'https://sepolia.arbiscan.io',
-}
-
 /** A website/-style prompt which keeps the exact reviewed RPC call intact. */
 export function buildTransactionReviewPrompt(
   request: TransactionReviewRequest,
@@ -224,7 +214,9 @@ export function buildTransactionReviewPrompt(
     '- Use only V6 repositories (normally ending in `-v6`); same-named repositories without that suffix may be older and incompatible.',
   )
   request.calls.forEach((call, index) => {
-    const explorer = EXPLORER_BY_CHAIN[call.chainId]
+    // Explorer hosts live in ONE place (lib/chainDisplay). This file used to keep a second
+    // copy and the two drifted on OP mainnet, where one pointed at a host that never resolved.
+    const explorer = explorerOrigin(call.chainId)
     const prefix = request.calls.length > 1 ? `Transaction ${index + 1}` : 'Target'
     lines.push(
       explorer

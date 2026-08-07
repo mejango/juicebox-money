@@ -153,7 +153,18 @@ export default async function AccountPage({
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 sm:py-12">
-      <AccountHeader address={address} ensName={ensName} />
+      <AccountHeader
+        address={address}
+        ensName={ensName}
+        // Any chain the account demonstrably touches; the explorer link follows the data
+        // rather than assuming mainnet.
+        chainId={
+          tokenHoldings?.items?.[0]?.chainId ??
+          nftHoldings?.items?.[0]?.chainId ??
+          owned?.[0]?.chainId ??
+          grants?.[0]?.chainId
+        }
+      />
 
       <div className="mt-10">
         <AccountTabs

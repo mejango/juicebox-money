@@ -14,6 +14,7 @@ import {
   payoutSplitGroupId,
   v6Address,
 } from '@bananapus/nana-sdk-core/v6'
+import { CASH_OUTS_OFF_REVNET } from '@/lib/launch'
 import { formatUnits, zeroAddress, type Address, type PublicClient } from 'viem'
 import { newDraftSplit, type DraftSplit } from '@/components/create/SplitsEditor'
 import {
@@ -389,9 +390,11 @@ export async function buildProjectDraftExport({
     owner,
   )
   stage.holdFees = current.metadata.holdFees
-  stage.cashOuts = Number(current.metadata.cashOutTaxRate) < 10_000
+  // 9,999 is the revnet "off" encoding (10,000 reverts at deploy), so decoding `< 10_000` as
+  // ON round-tripped an exported revnet back with cash outs ENABLED at 99.99%.
+  stage.cashOuts = Number(current.metadata.cashOutTaxRate) < CASH_OUTS_OFF_REVNET
   stage.cashOutTax = Number(current.metadata.cashOutTaxRate)
-  stage.taxCustomOn = ![0, 1000, 2500, 5000, 7500, 9999].includes(
+  stage.taxCustomOn = ![0, 1000, 2500, 5000, 7500, CASH_OUTS_OFF_REVNET].includes(
     stage.cashOutTax,
   )
   stage.taxCustomPct = percent(stage.cashOutTax / 100)

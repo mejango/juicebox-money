@@ -1,5 +1,7 @@
 'use client'
 
+import { SAFE_PREFIX } from '@/lib/safe-connector'
+
 import { getAccount } from '@wagmi/core'
 import {
   encodeFunctionData,
@@ -187,13 +189,23 @@ const SAFE_TX_BASE: Partial<Record<number, string>> = {
   11155111: 'https://safe-transaction-sepolia.safe.global',
 }
 
-const SAFE_PREFIX: Partial<Record<number, string>> = {
+/**
+ * Chains with a HOSTED Safe Transaction Service, which is a smaller set than the chains Safe
+ * links work on: `api.safe.global/tx-service/{opsepolia,arb1-sep}` both 404, while `basesep`
+ * is live and was previously missing here — Base Sepolia Safes were invisible to this app.
+ * Probed against `/api/v1/about/`. `SAFE_PREFIX` (imported, for app.safe.global URLs) stays
+ * the wider set; conflating the two is what made service calls fire at chains with none.
+ */
+const SAFE_SERVICE_PREFIX: Partial<Record<number, string>> = {
   1: 'eth',
   10: 'oeth',
   8453: 'base',
   42161: 'arb1',
   11155111: 'sep',
+  84532: 'basesep',
 }
+
+
 
 let safeActive = 0
 const safeWaiters: (() => void)[] = []
@@ -209,7 +221,7 @@ function txBase(chainId: number): string | null {
   } catch {
     // Local overrides are optional.
   }
-  const prefix = SAFE_PREFIX[chainId]
+  const prefix = SAFE_SERVICE_PREFIX[chainId]
   return prefix
     ? `https://api.safe.global/tx-service/${prefix}`
     : null
@@ -1137,7 +1149,13 @@ export type SafeCreation = {
 }
 
 export async function fetchSafeCreation(safe: Address): Promise<SafeCreation | null> {
-  for (const chainId of [11155111, 1, 42161, 8453, 10]) {
+  // Derived from SAFE_TX_BASE rather than restated: a hard-coded list silently skips any
+  // chain added to the service map. Testnet first — a Safe being looked up during
+  // development is far more likely to live there.
+  const searchOrder = Object.keys(SAFE_SERVICE_PREFIX)
+    .map(Number)
+    .sort((a, b) => (a > 1_000_000 ? -1 : 0) - (b > 1_000_000 ? -1 : 0))
+  for (const chainId of searchOrder) {
     const base = txBase(chainId)
     if (!base) continue
     try {
