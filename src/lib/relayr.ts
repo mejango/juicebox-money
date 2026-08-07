@@ -178,6 +178,33 @@ export function relayrProgress(
   }
 }
 
+/**
+ * How long a signed ERC-2771 ForwardRequest stays valid. The forwarder rejects the request
+ * after this, and pending sessions persist in localStorage indefinitely — so a bundle resumed
+ * days later fails at the forwarder with the payment already made. {@link relayrSessionExpired}
+ * lets the resume UI say so instead of offering a retry that cannot succeed.
+ */
+export const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
+
+/**
+ * True once a session's signed ForwardRequests can no longer be executed.
+ *
+ * `createdAt` is stored in MILLISECONDS (`Date.now()`), while the on-chain deadline is in
+ * seconds — mixing the two would mark every session either permanently live or instantly
+ * expired, so both arguments here are milliseconds.
+ */
+export function relayrSessionExpired(
+  session: { createdAt: number },
+  nowMs: number = Date.now(),
+): boolean {
+  return nowMs >= relayrSessionExpiresAt(session)
+}
+
+/** When a session's signatures stop being executable, in milliseconds. */
+export function relayrSessionExpiresAt(session: { createdAt: number }): number {
+  return session.createdAt + FORWARDER_DEADLINE_SECONDS * 1000
+}
+
 /** A timeout means Relayr may still execute a paid bundle. Do not submit it again blindly. */
 export function relayrErrorIsUncertain(error: unknown): boolean {
   return (
@@ -430,7 +457,7 @@ async function buildForwardedTx(
     value,
     gas: call.gas ?? 500_000n,
     nonce,
-    deadline: Math.floor(Date.now() / 1000) + 47 * 60 * 60,
+    deadline: Math.floor(Date.now() / 1000) + FORWARDER_DEADLINE_SECONDS,
     data: call.data,
   }
   const typedDomain = {

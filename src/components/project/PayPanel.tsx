@@ -344,6 +344,8 @@ export function PayPanel({
     "token-approval" | "router-approval" | "payment" | null
   >(null);
   const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
+  /** A submitted payment whose receipt hasn't arrived. Retry stays blocked while set. */
+  const [sequencePending, setSequencePending] = useState<Hex | null>(null);
   // What the frozen actions actually authorize. The inputs behind them keep
   // moving while the dialog is open (the amount is debounced), so the summary
   // has to be captured with the actions rather than read live.
@@ -1070,7 +1072,11 @@ export function PayPanel({
       }),
   });
   const needsApproval = !isNative && (allowance ?? 0n) < amountRaw;
-  const { data: permit2Allowance, refetch: refetchPermit2Allowance } = useQuery(
+  const {
+    data: permit2Allowance,
+    isFetched: permit2AllowanceFetched,
+    refetch: refetchPermit2Allowance,
+  } = useQuery(
     {
       queryKey: [
         "payPermit2Allowance",
@@ -1249,15 +1255,21 @@ export function PayPanel({
       });
     }
     if (needsPermit2Approval && swapDeployment?.universalRouter) {
-      const now = Math.floor(Date.now() / 1000);
+      // The nonce MUST come from a resolved allowance read: defaulting to 0 signs a
+      // PermitSingle that `InvalidNonce`s for any wallet that has permitted this
+      // token/spender before. The action is gated on `permit2AllowanceFetched` below.
+      const nonce = Number(permit2Allowance?.[2] ?? 0);
       const authorization: Permit2SignatureAuthorization = {
         chainId,
         token: context.token,
         spender: swapDeployment.universalRouter,
         amount: amountRaw,
-        expiration: now + 1_800,
-        nonce: Number(permit2Allowance?.[2] ?? 0),
-        sigDeadline: BigInt(now + 1_800),
+        // `expiration`/`sigDeadline` are STAMPED AT SIGNING, not here: the signature is
+        // produced only after the preceding approval confirms, so a slow approval used to
+        // yield a dead-on-arrival 30-minute window. `signPermit2Authorization` fills them.
+        expiration: 0,
+        nonce,
+        sigDeadline: 0n,
       };
       if (canSignPermit2) {
         actions.push({
@@ -1360,6 +1372,9 @@ export function PayPanel({
       (amountRaw <= 0n && !creditOnlyCheckout) ||
       busy ||
       permit2WalletKindLoading ||
+      // The Permit2 nonce comes from this read; opening the sequence before it resolves
+      // would sign nonce 0 and fail simulation for any wallet with a prior permit.
+      (needsPermit2Approval && !permit2AllowanceFetched) ||
       (cartCount > 0 && shopCreditsLoading)
     ) {
       return;
@@ -1367,7 +1382,20 @@ export function PayPanel({
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return;
-    const actions = preparePaymentSequence();
+    let actions: PaymentSequenceAction[]
+    try {
+      // `buildDirectPaySwapTx` throws on a zero amount, reachable from credit-only
+      // checkouts — an unhandled throw here surfaced as a dead click.
+      actions = preparePaymentSequence();
+    } catch (reason) {
+      setSequenceError(
+        reason instanceof Error
+          ? reason.message
+          : "This payment could not be prepared. Check the amount and try again.",
+      );
+      setSequenceOpen(true);
+      return;
+    }
     if (!actions.length) return;
     setSequenceError(null);
     setSequenceStatus(null);
@@ -1388,7 +1416,9 @@ export function PayPanel({
       !terminalAddress ||
       !publicClient ||
       !sequenceActions.length ||
-      sequenceStarted
+      sequenceStarted ||
+      // A submitted-but-unconfirmed payment must never be re-sent.
+      sequencePending
     ) return;
     setSequenceStarted(true);
     setSequenceError(null);
@@ -1440,13 +1470,22 @@ export function PayPanel({
         await showAction("router-signature");
         setSequenceStatus("Sign the gasless swap authorization in your wallet.");
         try {
+          // Stamp the 30-minute window NOW, not when the sequence was built: this signature
+          // is produced only after the preceding approval confirms, so a slow approval used
+          // to hand the wallet an already-expired authorization.
+          const signedAt = Math.floor(Date.now() / 1000);
+          const authorization = {
+            ...routerSignature.authorization,
+            expiration: signedAt + 1_800,
+            sigDeadline: BigInt(signedAt + 1_800),
+          };
           const signature = await signPermit2Async({
             expectedAccount: address,
-            authorization: routerSignature.authorization,
+            authorization,
           });
           paymentRequest = addPermit2SignatureToSwap(
             paymentRequest,
-            routerSignature.authorization,
+            authorization,
             signature,
           );
           setSequenceActions(current =>
@@ -1534,7 +1573,20 @@ export function PayPanel({
         return;
       }
       setSequenceStatus("Payment submitted. Confirming onchain…");
-      const paymentReceipt = await waitForPaymentReceipt(publicClient, paymentHash);
+      let paymentReceipt
+      try {
+        paymentReceipt = await waitForPaymentReceipt(publicClient, paymentHash);
+      } catch {
+        // The wait gave up (~5 min) — the payment is PENDING, not failed. Re-enabling the
+        // button here let a second `pay` go out while the first was still in flight, which
+        // is a genuine double payment; this waiter also bypasses useSafeTx's own
+        // "do not submit again" guard. Leave the sequence started so retry stays disabled.
+        setSequencePending(paymentHash);
+        setSequenceStatus(
+          "Still confirming onchain. Your payment was submitted — do NOT send it again. Check the transaction before retrying.",
+        );
+        return;
+      }
       if (paymentReceipt.status !== "success") throw new Error("Payment reverted onchain.");
       setSequenceCompletedKinds(current =>
         current.includes("payment") ? current : [...current, "payment"],
@@ -1542,6 +1594,12 @@ export function PayPanel({
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
+      // A Permit2 signature is only valid for ~30 minutes. Keeping `router-signature` in the
+      // completed set meant a retry reused the expired one and failed simulation forever,
+      // until the user closed and reopened the dialog. Drop it so a retry re-signs.
+      setSequenceCompletedKinds(current =>
+        current.filter(kind => kind !== "router-signature"),
+      );
       setSequenceError(reason instanceof Error ? reason.message : "The payment could not be completed.");
     } finally {
       setSequenceStarted(false);
@@ -1557,6 +1615,7 @@ export function PayPanel({
     setSequenceComplete(false);
     setSequenceActions([]);
     setSequenceSummary(null);
+    setSequencePending(null);
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceSafeStage(null);
@@ -1848,6 +1907,7 @@ export function PayPanel({
             disabled={
               busy ||
               permit2WalletKindLoading ||
+              (needsPermit2Approval && !permit2AllowanceFetched) ||
               notStarted ||
               surfaceError ||
               terminalBlocked ||
@@ -2151,12 +2211,13 @@ export function PayPanel({
           memo={memo.trim() || null}
           status={sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
-          started={sequenceStarted}
+          // A pending payment keeps the dialog in its "started" state so no retry is offered.
+          started={sequenceStarted || !!sequencePending}
           waitingForSafe={!!sequenceSafeStage}
           complete={sequenceComplete}
           onStart={() => void runPaymentSequence()}
           onClose={() => {
-            if (sequenceStarted) return;
+            if (sequenceStarted || sequencePending) return;
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);

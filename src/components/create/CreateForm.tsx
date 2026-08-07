@@ -895,6 +895,11 @@ export function CreateForm() {
   const buildPlans = (
     store: LaunchPlan["store"],
   ): Record<number, LaunchPlan> => {
+    // FROZEN deliberately: every chain must encode the SAME start or the cross-chain
+    // configuration hash — and the deterministic addresses derived from it — diverge. The
+    // cost is that a launch EXECUTED much later (a Safe collecting signatures over days)
+    // begins with stage 1 already in the past. Inherent to the hash requirement, so the
+    // review step warns Safe users rather than trying to re-derive it at execution time.
     const deployStart = Math.floor(Date.now() / 1000) + 600;
     return Object.fromEntries(
       selected.map((chainId) => {
@@ -1529,8 +1534,17 @@ export function CreateForm() {
       setPhase("done");
     } else {
       setPhase("failed");
+      // A chain restored from `signing` has no transaction hash, but a mobile or
+      // WalletConnect wallet may have broadcast AFTER the reload — resuming would re-send
+      // and mint a DUPLICATE project there. Nothing on-chain can rule that out from here,
+      // so name the chains and tell the user to check before retrying.
+      const unverified = Object.entries(session.statuses)
+        .filter(([, status]) => status.unverifiedSend)
+        .map(([chainId]) => chainName(Number(chainId)));
       setLaunchError(
-        "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
+        unverified.length > 0
+          ? `This launch was interrupted while your wallet was signing on ${unverified.join(", ")}. Check your wallet's recent activity there BEFORE pressing Try again — if a launch went through, resuming would create a second project. Chains that already launched are kept.`
+          : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
       );
     }
   }, []);
@@ -2923,6 +2937,18 @@ export function CreateForm() {
             ? `You’ll confirm one transaction per chain — ${selected.length} transactions total.`
             : "You’ll confirm one transaction to launch."}
         </p>
+
+        {isSafeConnection(config) ? (
+          // The start time is pinned now because every chain must encode the same value —
+          // that shared value is what links the chains. A multisig executing days later
+          // therefore launches with stage 1 already begun.
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
+            This launch pins its start time now (about 10 minutes out) so every chain encodes
+            the same value. If your Safe executes days later, the first stage will already
+            have begun and some of its scheduled issuance cuts may have passed — execute
+            promptly, or re-create the launch when you’re ready to sign.
+          </p>
+        ) : null}
 
         <button
           onClick={launch}

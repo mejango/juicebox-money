@@ -53,6 +53,11 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
 vi.mock('@/lib/relayr', () => ({
   fetchRelayrBundlesByAccount: mocks.fetchRelayrBundlesByAccount,
   resumeRelayrSession: mocks.resumeRelayrSession,
+  // Signed ForwardRequests expire after 47h; the card hides Resume past that.
+  relayrSessionExpired: (session: { createdAt: number }, nowMs = Date.now()) =>
+    nowMs >= session.createdAt + 47 * 60 * 60 * 1000,
+  relayrSessionExpiresAt: (session: { createdAt: number }) =>
+    session.createdAt + 47 * 60 * 60 * 1000,
   relayrDestinationHash: (record: {
     status?: { data?: { hash?: string } }
   }) => record.status?.data?.hash ?? null,
@@ -203,7 +208,9 @@ function pendingSession(
     records: [{ chain: 1, status: { state: 'success' } }],
     itemCount: 2,
     account: ALICE,
-    createdAt: 1_700_000_000_000,
+    // A LIVE session by default: signed ForwardRequests expire 47h after creation, and an
+    // expired one deliberately offers no Resume (see the expiry test below).
+    createdAt: Date.now(),
     ...overrides,
   }
 }
@@ -427,6 +434,30 @@ describe('AccountPendingRelayr', () => {
     })
     expect(renderer.toJSON()).toBeNull()
     expect(mocks.fetchRelayrBundlesByAccount).not.toHaveBeenCalled()
+  })
+
+  it('offers no resume once the signed requests have expired', async () => {
+    // The ForwardRequest deadline is signed at creation + 47h; past it the forwarder rejects
+    // the bundle, so a Resume button promised a retry that could never succeed — on a bundle
+    // the user has already paid for.
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
+      {
+        scope: 'authority:0xaaa',
+        session: pendingSession({ createdAt: Date.now() - 48 * 60 * 60 * 1000 }),
+      },
+    ])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountPendingRelayr, { address: ALICE }),
+      )
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('Signatures expired')
+    expect(buttonWith(renderer, 'Resume')).toBeUndefined()
   })
 
   it('shows the account its in-flight legs and resumes by session', async () => {

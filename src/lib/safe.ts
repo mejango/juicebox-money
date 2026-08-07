@@ -764,11 +764,33 @@ async function sendContractAndConfirm({
   return { hash, status: 'confirmed' }
 }
 
+/**
+ * Fees for a Safe execution.
+ *
+ * Asks the node what the network currently wants, because a flat tip is wrong in both
+ * directions: 0.05 gwei is far below mainnet's ask under congestion (the transaction just
+ * sits unmined) while being needlessly generous on an L2. The previous flat values remain the
+ * fallback for nodes that don't implement fee estimation.
+ */
 async function safeFeeOverrides(
   client: PublicClient,
 ): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
   const tip = 50_000_000n // 0.05 gwei
   const floor = 1_000_000_000n // a cap; actual cost remains base fee + tip
+  try {
+    const estimated = await client.estimateFeesPerGas()
+    if (estimated.maxFeePerGas > 0n && estimated.maxPriorityFeePerGas > 0n) {
+      // Never bid BELOW the flat floor — it is the historical known-good value.
+      return {
+        maxFeePerGas:
+          estimated.maxFeePerGas > floor ? estimated.maxFeePerGas : floor,
+        maxPriorityFeePerGas:
+          estimated.maxPriorityFeePerGas > tip ? estimated.maxPriorityFeePerGas : tip,
+      }
+    }
+  } catch {
+    // Fall through to the block-derived estimate below.
+  }
   try {
     const block = await client.getBlock()
     const base = block.baseFeePerGas ?? 0n

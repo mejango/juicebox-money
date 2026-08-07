@@ -33,6 +33,12 @@ export type LaunchChainStatus = {
   txHash?: `0x${string}`
   safeProposalHash?: `0x${string}`
   projectId?: number
+  /**
+   * Restored from `signing`: a wallet may have broadcast after the page reloaded, so this
+   * chain COULD already be launched with no hash to prove it. Resuming re-sends, which would
+   * mint a duplicate — surface a check-your-wallet warning before retrying.
+   */
+  unverifiedSend?: true
 }
 
 export type LaunchSession = {
@@ -154,11 +160,18 @@ function coerceStatus(value: unknown): LaunchChainStatus {
     ? (status.phase as LaunchChainStatus['phase'])
     : 'pending'
   // Nothing provably submitted — the resume must re-send.
+  //
+  // `signing` is the dangerous one: a mobile/WalletConnect wallet can broadcast AFTER the
+  // dapp reloads, so there is no hash here even though a launch may be in flight. Re-sending
+  // then mints a DUPLICATE project on that chain. The window is inherent (no hash exists to
+  // check), so the flag below lets the UI warn before retrying instead of resuming silently.
+  const wasSigning = phase === 'signing'
   if (phase === 'signing' || (phase === 'confirming' && !txHash)) {
     phase = 'pending'
   }
   return {
     phase,
+    ...(wasSigning ? { unverifiedSend: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
     ...(typeof status.projectId === 'number'

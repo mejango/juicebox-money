@@ -5,6 +5,8 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { useWallet } from '@/hooks/useWallet'
 import {
   fetchRelayrBundlesByAccount,
+  relayrSessionExpired,
+  relayrSessionExpiresAt,
   relayrDestinationHash,
   relayrProgress,
   relayrStateIsFailed,
@@ -104,13 +106,24 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                   {progress.confirmed}/{progress.total} chains done
                 </span>
               </div>
-              <button
-                onClick={() => resume(scope)}
-                disabled={busyScope !== null}
-                className="btn-secondary min-h-[36px] px-4 text-sm"
-              >
-                {busyScope === scope ? 'Resuming…' : 'Resume'}
-              </button>
+              {relayrSessionExpired(session) ? (
+                // The signed ForwardRequests are past their 47-hour deadline, so the
+                // forwarder will reject them — offering Resume here promised a retry that
+                // cannot succeed, on a bundle the user has already paid for.
+                <span className="text-xs text-smoke-600">
+                  Signatures expired{' '}
+                  {formatDate(Math.floor(relayrSessionExpiresAt(session) / 1000))} — this
+                  bundle can no longer be executed.
+                </span>
+              ) : (
+                <button
+                  onClick={() => resume(scope)}
+                  disabled={busyScope !== null}
+                  className="btn-secondary min-h-[36px] px-4 text-sm"
+                >
+                  {busyScope === scope ? 'Resuming…' : 'Resume'}
+                </button>
+              )}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {sessionLegs(session).map(({ chainId, record }, index) => {
