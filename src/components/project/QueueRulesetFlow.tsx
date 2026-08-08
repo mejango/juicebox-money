@@ -57,6 +57,8 @@ import {
   type QueueActionOption,
   type RulesetQueuePlan,
 } from "@/lib/ruleset-queue";
+import { ConceptTerm } from "@/components/project/ConceptTerm";
+import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -935,18 +937,21 @@ function RulesetEditorForm({
           />
           <PctField
             label="Issuance cut each cycle"
+            note={PROTOCOL_CONCEPTS.issuanceCut}
             value={state.weightCutPct}
             onChange={(v) => set("weightCutPct", v)}
             disabled={busy}
           />
           <PctField
             label="Reserved share"
+            note={PROTOCOL_CONCEPTS.reservedShare}
             value={state.reservedPct}
             onChange={(v) => set("reservedPct", v)}
             disabled={busy}
           />
           <PctField
             label="Cash-out tax"
+            note={PROTOCOL_CONCEPTS.cashOutTax}
             value={state.cashOutTaxPct}
             onChange={(v) => set("cashOutTaxPct", v)}
             disabled={busy}
@@ -1399,15 +1404,21 @@ function PctField({
   value,
   onChange,
   disabled,
+  note,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   disabled: boolean;
+  /** What the field MEANS. These write an IMMUTABLE ruleset, so this is the highest-stakes
+   *  place in the app to leave a term unexplained. */
+  note?: string;
 }) {
   return (
     <label className="block">
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : label}
+      </span>
       <div className="input-well mt-1.5 flex items-center px-3">
         <input
           type="text"

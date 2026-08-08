@@ -3,28 +3,58 @@
  *
  * Shared verbatim across juicebox-money, revnet-money and juicescan: these are protocol
  * concepts, not per-app copy. Every clause is checked against the contracts in this monorepo —
- * see the citation on each entry — because a confident wrong explanation of a fee is worse
- * than no explanation at all.
+ * see the citation on each entry — because a confident wrong explanation of where money goes
+ * is worse than no explanation at all.
+ *
+ * Written for someone who has never read a Juicebox doc. No "ruleset", no "issuance weight",
+ * no "surplus", no "splits" — those are our words, not theirs. Where a word is unavoidable
+ * (a "cycle" is a real thing that repeats) it gets glossed in the sentence that uses it.
  */
 export const PROTOCOL_CONCEPTS = {
-  /** JBCashOuts.cashOutFrom — tax 0 returns the exact proportional share of surplus; a higher
-   *  rate returns less than proportional; MAX returns nothing. */
+  /** tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175). */
+  issuance:
+    'How many tokens you get for each unit you put in. The project sets this in its rules, so unlike a market price it does not move with trading.',
+
+  /** JBRuleset.weightCutPercent — the issuance weight is reduced by this each cycle. */
+  issuanceCut:
+    'How much that rate drops each cycle. Where there is a cut, the same payment gets you fewer tokens later on — so paying earlier gets you more.',
+
+  /** JBRulesetMetadataResolver.reservedPercent — the share of newly minted tokens routed to
+   *  the reserved split list instead of the payer. */
+  reservedShare:
+    'The share of newly created tokens that goes to people the project chose in advance, instead of to whoever paid. Whoever paid gets the rest.',
+
+  /** REVOwner / JBController auto-issuance: minted to named beneficiaries at stage start. */
+  autoIssuance:
+    'Tokens created for specific people the moment this stage begins, without anyone paying for them.',
+
+  /** JBCashOuts.cashOutFrom — 0 returns the exact proportional share of surplus; a higher rate
+   *  returns less than proportional; MAX returns nothing. */
   cashOutTax:
-    'How much of the treasury stays behind when someone cashes out. At 0% you get your exact proportional share of the surplus. Higher rates return less than proportional, leaving the difference for the holders who stay.',
+    'What the project keeps when someone cashes their tokens back in. At 0% you get your full share of the money in the treasury. Higher settings pay you less than your full share and leave the difference to everyone still holding.',
 
-  /** JBRulesetMetadataResolver.reservedPercent — the share of newly minted tokens routed to the
-   *  reserved split list instead of the payer. */
-  reservedPercent:
-    'The share of newly minted tokens set aside for the project’s reserved list instead of going to whoever paid. It applies to tokens minted by payments, not to tokens already in circulation.',
+  /** JBFundAccessLimitGroup.payoutLimits — "maximum amounts distributable to splits per ruleset
+   *  cycle". Resets every cycle. */
+  payoutLimit:
+    'The most the project can send to the people it pays, in one cycle. It refills at the start of every cycle. Anything above it stays in the treasury, where it backs what token holders can cash out.',
 
-  /** REVLoans header (:42-46): 2.5% to the source revnet + 1% to $REV + a variable amount the
-   *  borrower chooses, which sets the prepaid duration. After it lapses the repay cost ramps
-   *  linearly to liquidation at LOAN_LIQUIDATION_DURATION (10 years). */
+  /** JBFundAccessLimitGroup.surplusAllowances — "maximum amounts withdrawable from surplus per
+   *  ruleset". JBTerminalStore.sol:140-144 is explicit that usage is keyed by `ruleset.id`, NOT
+   *  cycle number, so cycles rolling over do NOT refill it. That is the whole difference from
+   *  the payout limit and the thing an owner is most likely to get wrong. */
+  surplusAllowance:
+    'The most the project’s owner can take out of the treasury on top of the payouts, to spend however they choose. Unlike the payout limit this does not refill each cycle — it is a single budget that lasts as long as the current rules do.',
+
+  /** REVLoans header (:42-46): an upfront fee, part of which the borrower chooses; it sets the
+   *  prepaid duration, after which the repay cost ramps to liquidation at 10 years. */
   prepaidFee:
-    'Paid upfront when the loan opens, and it buys time: a larger prepayment extends the period where repaying costs nothing extra. Once that period ends, the cost to repay climbs steadily until the loan liquidates at 10 years and the collateral is lost for good.',
+    'Paid upfront when the loan opens, and it buys time: paying more extends the stretch where paying the loan back costs you nothing extra. Once that runs out, the cost to get your collateral back climbs steadily, until after 10 years the collateral is gone for good.',
 
-  /** JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days. The hook averages the pool
-   *  price over this window to floor what a swap must return. */
+  /** JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days. */
   twapWindow:
-    'How far back the buyback hook averages the pool price when deciding the least a swap may return. Longer windows are harder to manipulate but slower to reflect a real price move; shorter windows are the reverse. Allowed range is 300 to 172800 seconds.',
+    'How far back to average the trading price when checking that a swap is a fair deal. A longer window is harder for someone to manipulate, but slower to notice a real change in price. A shorter one is the opposite. Anything from 300 to 172800 seconds.',
+
+  /** JB721 tier flag `transfersPausable` — only tiers that opted in are affected. */
+  itemTransfers:
+    'Whether this stage stops shop items from being passed on to someone else. It only affects items whose creator agreed to let the project’s rules control that.',
 } as const

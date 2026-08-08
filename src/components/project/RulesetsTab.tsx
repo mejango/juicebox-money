@@ -45,6 +45,8 @@ import { tokenSymbol } from "@/lib/token-symbol";
 import { chainName } from "@/lib/urn";
 import { wagmiConfig } from "@/providers/Providers";
 import { PERSIST } from '@/lib/query-persist';
+import { ConceptTerm } from "@/components/project/ConceptTerm";
+import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
 
 /** Fund-access amounts at/above this are stored as "no limit". */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -540,10 +542,22 @@ export function formatLimits(
     .join(" + ");
 }
 
-function Row({ label, value }: { label: string; value: ReactNode }) {
+function Row({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: ReactNode;
+  /** What the label MEANS. The payout-limit / surplus-allowance pair is the one people
+   *  conflate, and both control real money leaving the treasury. */
+  note?: string;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <dt className="shrink-0 text-smoke-700">{label}</dt>
+      <dt className="shrink-0 text-smoke-700">
+        {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : label}
+      </dt>
       <dd className="text-right font-medium text-ink">{value}</dd>
     </div>
   );
@@ -1103,6 +1117,7 @@ export function RulesetsTab({
                     <dl className="mt-2 space-y-1.5 text-sm">
                       <Row
                         label="Payout limit per cycle"
+                        note={PROTOCOL_CONCEPTS.payoutLimit}
                         value={
                           fa
                             ? formatLimits(fa.payoutLimits, ctx)
@@ -1113,6 +1128,7 @@ export function RulesetsTab({
                       />
                       <Row
                         label="Surplus allowance"
+                        note={PROTOCOL_CONCEPTS.surplusAllowance}
                         value={
                           fa
                             ? formatLimits(fa.surplusAllowances, ctx)

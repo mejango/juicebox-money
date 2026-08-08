@@ -215,12 +215,14 @@ export function TermsTab({
                 <th className="pb-2 pl-3 pr-4 font-medium">Stage</th>
                 <th className="pb-2 pr-4 font-medium">Period</th>
                 <th className="pb-2 pr-4 font-medium">
-                  Issuance
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.issuance}>Issuance</ConceptTerm>
                   <span className="block whitespace-nowrap">
                     ({sym} per {base})
                   </span>
                 </th>
-                <th className="pb-2 pr-4 font-medium">Split limit</th>
+                <th className="pb-2 pr-4 font-medium">
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.reservedShare}>Split limit</ConceptTerm>
+                </th>
                 <th className="pb-2 font-medium">
                   <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash out tax</ConceptTerm>
                 </th>
