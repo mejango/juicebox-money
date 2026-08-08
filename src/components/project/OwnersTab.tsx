@@ -77,6 +77,7 @@ import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 
 /**
  * The Owners (revnet) / Tokens (custom) tab (website/ parity:
@@ -306,12 +307,10 @@ function YouCard({
                   </th>
                   <th
                     className="whitespace-nowrap px-4 py-3 text-right font-normal"
-                    title="Estimated proceeds after the protocol, REV, and minimum source fees"
                   >
-                    <span className="inline-flex items-center gap-1">
+                    <ConceptTerm note="The most you could borrow against these tokens right now, after fees are taken out. Borrowing locks the tokens until you pay the loan back.">
                       Max loan
-                      <ChartNoteTip note="Estimated proceeds after the protocol, REV, and minimum source fees." />
-                    </span>
+                    </ConceptTerm>
                   </th>
                   <th className="whitespace-nowrap px-4 py-3 text-right font-normal">
                     LP

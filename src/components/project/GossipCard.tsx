@@ -821,7 +821,7 @@ function GossipRow({
         {pending ? (
           <span className="inline-flex items-center gap-1 text-amber-600">
             Syncing…
-            <ChartNoteTip note="A snapshot was pushed and is arriving over the bridge (a few minutes)." />
+            <ChartNoteTip note="This chain's latest numbers are on their way to the other chain. It usually takes a few minutes." />
           </span>
         ) : (
           <span className={`whitespace-nowrap ${STATUS_COLOR[staleness.level]}`}>
