@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 import {
   buildStepPoints,
   chartDateLabel,
@@ -194,6 +195,7 @@ export function PriceChart({
   ammHistory = [],
   cashOutTaxHistory = [],
   referencesPending = false,
+  note,
 }: {
   stages: ChartStage[]
   symbol: string
@@ -205,6 +207,9 @@ export function PriceChart({
   cashOutTaxHistory?: CashOutTaxPoint[]
   /** The live cash-out / AMM reads are still confirming. */
   referencesPending?: boolean
+  /** An always-true caveat about how to READ the chart, shown behind an (!) rather than as a
+   *  banner. Notices about missing or stale DATA stay inline — see RevnetPriceCard. */
+  note?: string | null
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
 
@@ -307,7 +312,8 @@ export function PriceChart({
           </div>
           <div className="mt-3 flex items-center justify-between gap-2">
             <span className="text-xs text-smoke-500">Price</span>
-            <div className="flex flex-wrap justify-end gap-1">
+            <div className="flex flex-wrap items-center justify-end gap-1">
+              {note ? <ChartNoteTip note={note} /> : null}
               {PRICE_RANGES.map(r => (
                 <ChartRangeButton
                   key={r.label}

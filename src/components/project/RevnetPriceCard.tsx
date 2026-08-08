@@ -494,6 +494,20 @@ export function RevnetPriceCard({
         : (data?.contextSymbols.find(c => c.currency === baseCurrency)
             ?.symbol ?? nativeSymbol)
 
+  // Caveats that are ALWAYS true of this chart's data go behind the (!). The two notices left
+  // inline below say a series is MISSING, which the reader must not have to hover to discover.
+  const chartNote =
+    [
+      references?.converted
+        ? `Market and cash-out prices are converted into ${baseSymbol}, this revnet's issuance currency, at the current exchange rate — so earlier points are approximate. The issuance ceiling is natively denominated in ${baseSymbol} and is exact.`
+        : null,
+      history?.sampled
+        ? 'Historical series are shape-preserving samples of the complete indexed history. The latest observation is always included.'
+        : null,
+    ]
+      .filter(Boolean)
+      .join(' ') || null
+
   return (
     <div>
       <PriceChart
@@ -516,15 +530,8 @@ export function RevnetPriceCard({
         ammPrice={
           references?.amm ? { value: references.amm, label: 'AMM price' } : null
         }
+        note={chartNote}
       />
-      {references?.converted ? (
-        <p className="mt-2 text-xs text-grey-500">
-          Market and cash-out prices are converted into {baseSymbol}, this revnet&apos;s
-          issuance currency, at the current exchange rate — so earlier points are
-          approximate. The issuance ceiling is natively denominated in {baseSymbol} and is
-          exact.
-        </p>
-      ) : null}
       {references?.rateUnavailable ? (
         <p className="mt-2 text-xs text-grey-500">
           No price feed converts this revnet&apos;s treasury token into {baseSymbol}, so only
@@ -538,12 +545,7 @@ export function RevnetPriceCard({
           ceiling is shown.
         </p>
       ) : null}
-      {history?.sampled ? (
-        <p className="mt-2 text-xs text-grey-500">
-          Historical series are shape-preserving samples of the complete
-          indexed history. The latest observation is always included.
-        </p>
-      ) : null}
+
     </div>
   )
 }
