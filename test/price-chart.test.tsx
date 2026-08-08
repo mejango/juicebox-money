@@ -57,7 +57,10 @@ describe('price history inspection', () => {
       ),
     )
 
-    const chart = container.querySelector('svg')
+    // `svg[role="img"]`, not the first svg on the page: the price summaries above the chart
+    // carry their own icons, and a bare `querySelector('svg')` silently grabs one of those and
+    // dispatches the hover at nothing.
+    const chart = container.querySelector('svg[role="img"]')
     expect(chart).not.toBeNull()
     expect(container.textContent).toContain('1H')
     expect(container.textContent).toContain('6H')

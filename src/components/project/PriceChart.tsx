@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from 'react'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { QuestionMarkCircle } from '@/components/project/QuestionMarkCircle'
+import { priceConcept } from '@/lib/price-concepts'
 import {
   buildStepPoints,
   chartDateLabel,
@@ -151,6 +153,7 @@ function PriceSummary({
   baseSymbol,
   symbol,
   pending = false,
+  note,
 }: {
   label: string
   color: string
@@ -159,9 +162,15 @@ function PriceSummary({
   symbol: string
   /** The value is restored from a previous read and still being confirmed. */
   pending?: boolean
+  /** What this price MEANS. Carried by the whole cell so the entire target reveals it; the (?)
+   *  beside the label is the affordance saying so. */
+  note?: string
 }) {
   return (
-    <div className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2">
+    <div
+      className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2"
+      title={note}
+    >
       <div className="flex items-center gap-2 text-[11px] font-medium text-ink">
         <span
           aria-hidden="true"
@@ -169,6 +178,7 @@ function PriceSummary({
           style={{ backgroundColor: color }}
         />
         <span>{label}</span>
+        {note ? <QuestionMarkCircle className="h-3.5 w-3.5 shrink-0 text-smoke-400" /> : null}
       </div>
       <p className="mt-0.5 truncate text-[11px] text-smoke-700">
         <Revalidating pending={pending && !!value && value > 0}>
@@ -288,6 +298,7 @@ export function PriceChart({
           <div className="grid gap-2 sm:grid-cols-3">
             <PriceSummary
               label="Issuance price"
+              note={priceConcept("issuance", { tokenSymbol: symbol, baseSymbol })}
               color={ISSUANCE_COLOR}
               value={issuanceNow}
               baseSymbol={baseSymbol}
@@ -295,6 +306,7 @@ export function PriceChart({
             />
             <PriceSummary
               label="Cash out price"
+              note={priceConcept("cashOut", { tokenSymbol: symbol, baseSymbol })}
               color={CASH_OUT_COLOR}
               value={floor?.value ?? null}
               baseSymbol={baseSymbol}
@@ -303,6 +315,7 @@ export function PriceChart({
             />
             <PriceSummary
               label="AMM price"
+              note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
               color={AMM_COLOR}
               value={amm?.value ?? null}
               baseSymbol={baseSymbol}
