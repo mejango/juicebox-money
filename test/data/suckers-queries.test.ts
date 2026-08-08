@@ -247,6 +247,8 @@ describe('bridge movement endpoint routing', () => {
     await getBridgeMovements({ suckerGroupId: 'group-1' })
 
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://bendystraw.xyz/graphql')
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://bendystraw.up.railway.app/graphql',
+    )
   })
 })

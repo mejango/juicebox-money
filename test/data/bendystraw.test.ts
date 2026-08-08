@@ -72,7 +72,7 @@ describe('minimal Bendystraw client', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://bendystraw.xyz/graphql')
+    expect(url).toBe('https://bendystraw.up.railway.app/graphql')
     expect(init.method).toBe('POST')
     expect(bodyOf(init).variables).toEqual({ projectId: 7 })
     expect(init.signal).toBeInstanceOf(AbortSignal)
@@ -333,7 +333,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
     await getParticipants({ suckerGroupId: 'group-1' })
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
-      'https://bendystraw.xyz/graphql',
+      'https://bendystraw.up.railway.app/graphql',
     )
   })
 

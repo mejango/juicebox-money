@@ -58,7 +58,7 @@ without printing its values.
 ```sh
 docker build -t juicebox-money:local \
   --build-arg NEXT_PUBLIC_SITE_URL=https://juicebox.money \
-  --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.xyz \
+  --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.up.railway.app \
   --build-arg NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.xyz \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_PARA_ENV=PROD \

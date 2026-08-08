@@ -196,7 +196,10 @@ async function liveSchema(endpoint) {
   return buildClientSchema(envelope.data)
 }
 
-const ENDPOINTS = ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']
+const ENDPOINTS = [
+  'https://bendystraw.up.railway.app/graphql',
+  'https://testnet.bendystraw.xyz/graphql',
+]
 
 // Documents that query fields an unmerged indexer PR adds. They run behind a
 // fallback — a schema error degrades to the on-chain read — so shipping them
@@ -204,19 +207,7 @@ const ENDPOINTS = ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw
 // Each entry names the PR that removes it and the ONE endpoint still missing the
 // field, and the check FAILS once that endpoint serves it, so the list cannot
 // quietly rot after the feature lands.
-const PENDING_SCHEMA_FIELDS = [
-  {
-    // Rolled out testnet-first. testnet.bendystraw.xyz serves this already; bendystraw.xyz is
-    // the same indexer on an older deploy, and its schema differs from the testnet one by this
-    // field alone.
-    endpoint: 'https://bendystraw.xyz/graphql',
-    field: 'accountingTokenUsdRate',
-    reason:
-      'peripheralist/bendystraw#25 — per-point USD rate on suckerGroupMoment and swapEvent; ' +
-      'live on testnet, and the price chart asks for it behind a fallback that converts at the ' +
-      'live rate wherever the endpoint still refuses it',
-  },
-]
+const PENDING_SCHEMA_FIELDS = []
 
 if (offline) {
   console.log(`Registry is current for ${documents.size} Bendystraw documents (schema validation skipped).`)

@@ -29,7 +29,8 @@ export function normalizeBendystrawUrl(value: string): string {
 const MAINNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
   ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
   : normalizeBendystrawUrl(
-      process.env.NEXT_PUBLIC_BENDYSTRAW_URL ?? 'https://bendystraw.xyz',
+      process.env.NEXT_PUBLIC_BENDYSTRAW_URL ??
+        'https://bendystraw.up.railway.app',
     )
 const TESTNET_URL = process.env.BROWSER_BUILD_FIXTURE_ORIGIN
   ? `${process.env.BROWSER_BUILD_FIXTURE_ORIGIN}/graphql`
@@ -1287,8 +1288,8 @@ type BsPriceMoment = {
   timestamp: number
   balance: string
   tokenSupply: string
-  /** 18-dec USD per one whole accounting token, as of THIS moment's block. See
-   *  OPTIONAL_RATE_FIELD — absent until the indexer serving this request has it. */
+  /** 18-dec USD per one whole accounting token, as of THIS moment's block.
+   *  Null for a moment the indexer could not value. */
   accountingTokenUsdRate?: string | null
 }
 
@@ -1301,7 +1302,9 @@ type BsSwapEvent = {
   chainId: number
   sqrtPriceX96: string | null
   projectTokenIsCurrency0: boolean | null
-  /** 18-dec USD per one whole accounting token, as of THIS swap's block. */
+  /** 18-dec USD per one whole accounting token, as of THIS swap's block. Null
+   *  for a swap the indexer could not value, and absent on rows read by the
+   *  pre-sqrtPriceX96 compatibility document below, which does not select it. */
   accountingTokenUsdRate?: string | null
 }
 
@@ -1381,36 +1384,10 @@ export async function getPagedItems<T>(
  * spots for a revnet. Consumers apply the project's decimals and filter to the
  * currently resolved pool; no values are projected beyond the last event.
  */
-/**
- * `accountingTokenUsdRate` is added by peripheralist/bendystraw#25 and is NOT on the live
- * schema yet. GraphQL rejects the entire document for one unknown field, so requesting it
- * unconditionally would take price history down rather than improve it.
- *
- * So: ask for it once. If the schema refuses THIS field, remember that and run without it for
- * the rest of the process. The upgrade happens on its own the moment the indexer deploys —
- * no client release, no flag to flip. Registered in scripts/check-bendystraw-schema.mjs, which
- * fails once the field is live so this scaffolding cannot quietly outlive its purpose.
- */
-const OPTIONAL_RATE_FIELD = 'accountingTokenUsdRate'
-let optionalRateFieldSupported: boolean | null = null
-
-// Both variants are written out in full rather than built by interpolation: every document
-// here is parsed and validated against the live schema by scripts/check-bendystraw-schema.mjs,
-// and a document assembled at runtime cannot be.
+// Written out in full rather than built by interpolation: every document here is parsed and
+// validated against the live schema by scripts/check-bendystraw-schema.mjs, and a document
+// assembled at runtime cannot be.
 const MOMENTS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-  suckerGroupMoments(
-    where: { suckerGroupId: $suckerGroupId, version: 6 }
-    orderBy: "timestamp"
-    orderDirection: "asc"
-    limit: $limit
-    offset: $offset
-  ) {
-    items { timestamp balance tokenSupply }
-    totalCount
-  }
-}`
-
-const MOMENTS_WITH_RATE_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
   suckerGroupMoments(
     where: { suckerGroupId: $suckerGroupId, version: 6 }
     orderBy: "timestamp"
@@ -1433,50 +1410,11 @@ const SWAPS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!)
   ) {
     items {
       timestamp direction terminalTokenAmount projectTokenAmount
-      poolId chainId sqrtPriceX96 projectTokenIsCurrency0
-    }
-    totalCount
-  }
-}`
-
-const SWAPS_WITH_RATE_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
-  swapEvents(
-    where: { suckerGroupId: $suckerGroupId, version: 6 }
-    orderBy: "timestamp"
-    orderDirection: "asc"
-    limit: $limit
-    offset: $offset
-  ) {
-    items {
-      timestamp direction terminalTokenAmount projectTokenAmount
       poolId chainId sqrtPriceX96 projectTokenIsCurrency0 accountingTokenUsdRate
     }
     totalCount
   }
 }`
-
-async function withOptionalRateField<T>(
-  run: (query: string) => Promise<T>,
-  withRate: string,
-  withoutRate: string,
-): Promise<T> {
-  if (optionalRateFieldSupported === false) return run(withoutRate)
-  try {
-    const result = await run(withRate)
-    optionalRateFieldSupported = true
-    return result
-  } catch (reason) {
-    // Only an unknown-FIELD rejection is a downgrade, and only before the field is known to
-    // work. Treating any failure as "no rate" would let a real indexer outage silently pin
-    // every chart to the live rate forever.
-    const message = reason instanceof Error ? reason.message : String(reason)
-    if (optionalRateFieldSupported !== null || !message.includes(OPTIONAL_RATE_FIELD)) {
-      throw reason
-    }
-    optionalRateFieldSupported = false
-    return run(withoutRate)
-  }
-}
 
 /**
  * Fields/lists that only a pre-upgrade indexer lacks. Anything else — a
@@ -1501,24 +1439,18 @@ export async function getRevnetPriceHistory(
   { chainId }: { chainId?: number } = {},
 ): Promise<BsRevnetPriceHistory> {
   const network = bendystrawNetworkHint(chainId)
-  const momentsPromise = withOptionalRateField(query =>
-    getPagedItems<BsPriceMoment>(query, 'suckerGroupMoments', { suckerGroupId }, {
-      max: Number.POSITIVE_INFINITY,
-      network,
-      policy: 'live',
-    }),
-    MOMENTS_WITH_RATE_QUERY,
+  const momentsPromise = getPagedItems<BsPriceMoment>(
     MOMENTS_QUERY,
+    'suckerGroupMoments',
+    { suckerGroupId },
+    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
   )
 
-  const enhancedSwaps = () => withOptionalRateField(query =>
-    getPagedItems<BsSwapEvent>(query, 'swapEvents', { suckerGroupId }, {
-      max: Number.POSITIVE_INFINITY,
-      network,
-      policy: 'live',
-    }),
-    SWAPS_WITH_RATE_QUERY,
+  const enhancedSwaps = () => getPagedItems<BsSwapEvent>(
     SWAPS_QUERY,
+    'swapEvents',
+    { suckerGroupId },
+    { max: Number.POSITIVE_INFINITY, network, policy: 'live' },
   )
 
   const pools = () => getPagedItems<BsBuybackPoolEvent>(
