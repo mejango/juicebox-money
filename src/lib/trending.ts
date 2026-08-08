@@ -1,4 +1,8 @@
-import { bendystraw, BsProject } from './bendystraw'
+import {
+  bendystraw,
+  suckerGroupAccountingToken,
+  BsProject,
+} from './bendystraw'
 import { toUrn } from './urn'
 
 /**
@@ -15,8 +19,10 @@ export type TrendingCard = {
   tagline: string | null
   logoUri: string | null
   volume: string
-  decimals: number
-  symbol: string
+  /** null when the group's members disagree on the accounting token, so the
+   *  group volume has no single unit to state it in. */
+  decimals: number | null
+  symbol: string | null
   paymentsCount: number
   chainIds: number[]
   trendingScore: bigint
@@ -69,6 +75,13 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     // Skip unnamed dead groups; the storefront isn't a block explorer.
     if (!representative.name && BigInt(group.volume) === 0n) return []
 
+    // `volume` is the GROUP total, so labelling it with one member's symbol and
+    // decimals is only correct when every member agrees — a USDC member paired
+    // with an ETH one renders the total 1e12x off and calls it ETH. The query
+    // caps members at 8; a full page can't be checked for agreement at all.
+    const accounting =
+      members.length < 8 ? suckerGroupAccountingToken(members) : null
+
     const urn = toUrn(representative.chainId, representative.projectId)
     return [
       {
@@ -81,8 +94,8 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         tagline: representative.projectTagline,
         logoUri: representative.logoUri,
         volume: group.volume,
-        decimals: representative.decimals ?? 18,
-        symbol: representative.tokenSymbol ?? 'ETH',
+        decimals: accounting?.decimals ?? null,
+        symbol: accounting?.symbol ?? null,
         paymentsCount: group.paymentsCount,
         chainIds: members.map(m => m.chainId),
         trendingScore: BigInt(group.trendingScore),

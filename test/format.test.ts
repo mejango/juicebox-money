@@ -4,6 +4,7 @@ import {
   fmtPct,
   formatUsd18,
   projectLogoUrl,
+  treasuryUsdValue,
 } from '@/lib/format'
 
 describe('percent formatting', () => {
@@ -70,5 +71,54 @@ describe('formatUsd18', () => {
   it('rounds half-up rather than truncating', () => {
     // The old Number-based path divided by 1e12 first and lost this.
     expect(formatUsd18(usd('1') + 5n * 10n ** 15n)).toBe('$1.01')
+  })
+})
+
+describe('treasuryUsdValue', () => {
+  it('prices a balance from the feed', () => {
+    // 2 ETH at $3,000
+    expect(
+      treasuryUsdValue({
+        balance: 2n * 10n ** 18n,
+        usdPrice: 3_000n * 10n ** 18n,
+        symbol: 'ETH',
+        decimals: 18,
+      }),
+    ).toBe(6_000n * 10n ** 18n)
+  })
+
+  it('never reads an unavailable or zero feed as $0', () => {
+    for (const usdPrice of [null, undefined, 0n]) {
+      expect(
+        treasuryUsdValue({
+          balance: 10n ** 18n,
+          usdPrice,
+          symbol: 'ETH',
+          decimals: 18,
+        }),
+      ).toBeNull()
+    }
+  })
+
+  it('values USDC at par without an oracle', () => {
+    expect(
+      treasuryUsdValue({
+        balance: 1_500_000n,
+        usdPrice: null,
+        symbol: 'usdc',
+        decimals: 6,
+      }),
+    ).toBe(1n * 10n ** 18n + 5n * 10n ** 17n)
+  })
+
+  it('is zero for an empty balance regardless of the feed', () => {
+    expect(
+      treasuryUsdValue({
+        balance: 0n,
+        usdPrice: null,
+        symbol: 'ETH',
+        decimals: 18,
+      }),
+    ).toBe(0n)
   })
 })

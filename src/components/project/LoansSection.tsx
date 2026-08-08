@@ -33,6 +33,7 @@ import type { BsLoan } from '@/lib/loans-queries'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { PERSIST } from '@/lib/query-persist'
 import { Revalidating } from '@/components/ui/Revalidating'
+import { explorerTokenUrl } from '@/lib/chainDisplay'
 
 export function revLoansAddress(chainId: JBChainId): Address {
   return jbContractAddress['6']['REVLoans'][chainId] as Address
@@ -248,7 +249,6 @@ function LoanTable({
   holder?: Address
   onRepaid?: () => void
 }) {
-  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
   return (
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-sm">
@@ -269,9 +269,9 @@ function LoanTable({
             return (
               <tr key={loan.id} className="border-t border-smoke-100">
                 <td className="py-1.5 pr-3">
-                  {etherscanHost && !isNative ? (
+                  {explorerTokenUrl(chainId, loan.token) && !isNative ? (
                     <a
-                      href={`https://${etherscanHost}/token/${loan.token}`}
+                      href={explorerTokenUrl(chainId, loan.token)!}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-ink hover:underline"

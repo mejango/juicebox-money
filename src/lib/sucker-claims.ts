@@ -6,28 +6,13 @@ import {
   claimFromSuckerMovement,
   getAccountingContexts,
   getSuckerMovements,
+  suckerAccountingContextKey,
   suckerBytes32ToAddress,
   type JBClaim,
 } from '@bananapus/nana-sdk-core/v6'
-import {
-  NATIVE_TOKEN,
-  USDC_ADDRESSES,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { isAddressEqual, type Address, type PublicClient } from 'viem'
 import type { BridgeMovement } from '@/lib/suckers-queries'
-
-function accountingAssetKey(
-  token: Address,
-  chainId: JBChainId,
-  decimals: number,
-): string {
-  if (isAddressEqual(token, NATIVE_TOKEN)) return `native@${decimals}`
-  if (isAddressEqual(token, USDC_ADDRESSES[chainId])) {
-    return `usdc@${decimals}`
-  }
-  return `${token.toLowerCase()}@${decimals}`
-}
 
 export async function buildClaim(
   sourceClient: PublicClient,
@@ -56,14 +41,14 @@ export async function buildClaim(
       isAddressEqual(context.token, indexed.token as Address),
     )
     if (sourceContext) {
-      const sourceKey = accountingAssetKey(
+      const sourceKey = suckerAccountingContextKey(
         sourceContext.token,
         sourceChainId,
         sourceContext.decimals,
       )
       const candidates = destinationContexts.filter(
         context =>
-          accountingAssetKey(
+          suckerAccountingContextKey(
             context.token,
             destinationChainId,
             context.decimals,

@@ -3,6 +3,7 @@ import {
   bendystraw,
   getPagedItems,
   getParticipants,
+  getParticipantsForRefs,
   getRevnetPriceHistory,
   getShopPurchases,
   normalizeBendystrawUrl,
@@ -259,6 +260,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
       balance: String(300 - index),
       chainId: 1,
       volumeUsd: '0',
+      suckerGroupId: 'group',
     }))
     const fetchMock = vi.fn().mockImplementation(
       async (_url: string, init?: RequestInit) => {
@@ -383,6 +385,145 @@ describe('Bendystraw pagination and trust boundaries', () => {
     expect(result.items).toEqual([0, 1, 2, 3, 4])
     expect(result.totalCount).toBe(10_000)
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  // The paged reader owns `offset`, so a caller resuming after a first page has to say
+  // where it left off. Without startOffset every "load more" refetched rows [0, limit).
+  it('resumes paging from startOffset instead of restarting at row 0', async () => {
+    const offsets: number[] = []
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (_url: string, init?: RequestInit) => {
+        const { variables } = bodyOf(init)
+        const limit = Number(variables.limit)
+        const offset = Number(variables.offset)
+        offsets.push(offset)
+        return graphqlResponse({
+          data: {
+            rows: {
+              items: Array.from({ length: limit }, (_, i) => offset + i),
+              totalCount: 250,
+            },
+          },
+        })
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getPagedItems<number>(
+      'query($limit: Int!, $offset: Int!) { rows { items totalCount } }',
+      'rows',
+      { offset: 0 },
+      { pageSize: 10, max: 20, startOffset: 100 },
+    )
+
+    expect(offsets).toEqual([100, 110])
+    expect(result.items[0]).toBe(100)
+    expect(result.items.at(-1)).toBe(119)
+  })
+
+  it('stops at the total instead of paging past the last row', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (_url: string, init?: RequestInit) => {
+        const { variables } = bodyOf(init)
+        const limit = Number(variables.limit)
+        const offset = Number(variables.offset)
+        return graphqlResponse({
+          data: {
+            rows: {
+              items: Array.from(
+                { length: Math.max(0, Math.min(limit, 12 - offset)) },
+                (_, i) => offset + i,
+              ),
+              totalCount: 12,
+            },
+          },
+        })
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getPagedItems<number>(
+      'query($limit: Int!, $offset: Int!) { rows { items totalCount } }',
+      'rows',
+      {},
+      { pageSize: 5, max: 50, startOffset: 10 },
+    )
+
+    expect(result.items).toEqual([10, 11])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  // Extending a sucker group mints a NEW group id and deletes the old one, but the
+  // indexer re-points only a few tables — `participant` is not one of them. A
+  // group-keyed read therefore drops every holder who has not transacted since the
+  // extension. Per-deployment keys never move, so holders are read that way instead.
+  it('unions holders per deployment and flags a superseded group stamp', async () => {
+    const row = (chainId: number, address: string, groupId: string | null) => ({
+      address,
+      balance: '10',
+      chainId,
+      volumeUsd: '0',
+      suckerGroupId: groupId,
+    })
+    const byChain: Record<number, ReturnType<typeof row>[]> = {
+      1: [row(1, `0x${'aa'.repeat(20)}`, 'group-new')],
+      // Dormant since before the extension — still stamped with the deleted group.
+      8453: [row(8453, `0x${'bb'.repeat(20)}`, 'group-old')],
+    }
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (_url: string, init?: RequestInit) => {
+        const { variables } = bodyOf(init)
+        const where = variables.where as { AND: { AND: { chainId: number }[] }[] }
+        const chainId = where.AND[0].AND[0].chainId
+        const items = byChain[chainId] ?? []
+        return graphqlResponse({
+          data: { participants: { items, totalCount: items.length } },
+        })
+      })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getParticipantsForRefs(
+      [
+        { chainId: 1, projectId: 5 },
+        { chainId: 8453, projectId: 9 },
+      ],
+      'group-new',
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.items.map(item => item.chainId).sort()).toEqual([1, 8453])
+    expect(result.totalCount).toBe(2)
+    expect(result.groupExtended).toBe(true)
+  })
+
+  it('reports no extension when every holder carries the live group', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      graphqlResponse({
+        data: {
+          participants: {
+            items: [
+              {
+                address: `0x${'cc'.repeat(20)}`,
+                balance: '1',
+                chainId: 1,
+                volumeUsd: '0',
+                suckerGroupId: 'group-new',
+              },
+            ],
+            totalCount: 1,
+          },
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getParticipantsForRefs(
+      [{ chainId: 1, projectId: 5 }],
+      'group-new',
+    )
+
+    expect(result.groupExtended).toBe(false)
   })
 
   it('drops mismatched shop identities and reports partial-chain failures', async () => {

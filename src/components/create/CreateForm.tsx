@@ -10,7 +10,12 @@ import Image from "next/image";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
-import { parseUnits, zeroAddress, type PublicClient } from "viem";
+import {
+  parseUnits,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from "viem";
 import { useConfig, useSwitchChain, useWriteContract } from "wagmi";
 import {
   getAccount,
@@ -29,6 +34,7 @@ import {
 } from "@/lib/safe-connector";
 import { etherscanTxUrl, formatTokenAmount } from "@/lib/format";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
+import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
 import { resolvedAddress } from "@/lib/ens";
 import {
@@ -39,6 +45,7 @@ import {
   type CreateDraft,
 } from "@/lib/draft";
 import {
+  abandonLaunchSession,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -51,12 +58,15 @@ import {
   DEFAULT_STORE_FLAGS,
   splitShares,
   FOREVER_SECONDS,
-  LP_SPLIT_HOOK,
+  chainsWithoutLpSplitHook,
+  requireLpSplitHook,
+  activeChainOverrides,
   autoIssuanceMintChain,
   buildLaunchRequest,
   createSimpleProjectStage,
   nativeBridgeViable,
   projectIdFromReceipt,
+  routesAllFunds,
   type ApprovalDeadline,
   type LaunchPlan,
   type SplitConfig,
@@ -73,6 +83,7 @@ import {
   stageCashOutTax,
   stageDurationSeconds,
   stageOk,
+  stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
   type DraftStage,
@@ -93,6 +104,11 @@ import {
   TransactionProgressImage,
   usePreloadTransactionAnimation,
 } from "@/components/TransactionInProgress";
+import {
+  feedReachabilityBlock,
+  probeFeedReachability,
+  type FeedReachability,
+} from "@/lib/feed-reachability";
 import { chainName, toUrn } from "@/lib/urn";
 import { requireContractTransactionReview } from "@/lib/transaction-review";
 import {
@@ -290,6 +306,9 @@ export function CreateForm() {
     Record<number, string>
   >({});
   const [customChainError, setCustomChainError] = useState<string | null>(null);
+  /** Feed-reachability probe verdict; null while (re)checking. */
+  const [feedCheck, setFeedCheck] = useState<FeedReachability | null>(null);
+  const [feedRetry, setFeedRetry] = useState(0);
   const [environment, setEnvironment] =
     useState<ChainEnvironment>("production");
   const availableChains = chainsForEnvironment(environment);
@@ -379,8 +398,14 @@ export function CreateForm() {
     : effectiveBase === "eth"
       ? "ETH"
       : "USD";
+  // Pricing shop items in "the token" only means anything while a custom
+  // accounting token is configured. A selection left behind after the custom
+  // token is switched off has no token to price against, and the encoder falls
+  // back to ETH at 18 decimals — "10 TOKEN" would launch as 10 ETH.
+  const storeCurrencyValue =
+    storeCurrency === "token" && !customOn ? null : storeCurrency;
   const effectiveStoreCurrency =
-    storeCurrency ??
+    storeCurrencyValue ??
     (customOn ? "token" : accepts.includes("eth") ? "eth" : "usd");
   const storeUsd = effectiveStoreCurrency === "usd";
   const tokenLabel =
@@ -470,6 +495,43 @@ export function CreateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customOn, customAddress, selected.join(",")]);
 
+  // Fail-closed feed-reachability launch guard: probe JBPrices on EVERY
+  // selected chain for every pair the plan's terminal will read at runtime
+  // (context↔base for pay, context↔context for cash-outs). Contexts are
+  // immutable after launch — a feed-less combination (ETH+USDC today) ships
+  // a project whose USDC payments and mixed-balance cash outs revert, and a
+  // revnet can never be rescued. Probing on-chain (project 0 = protocol
+  // default feeds) means a feed registration unblocks launches with no
+  // client release. Custom-token plans price everything in themselves and
+  // need no probe.
+  useEffect(() => {
+    setFeedCheck(null);
+    if (customOn || selected.length === 0) return;
+    let stale = false;
+    const t = setTimeout(async () => {
+      const result = await probeFeedReachability({
+        accounting: { tokens: accepts, custom: null },
+        issuanceBase,
+        chains: selected,
+        getClient: (chainId) => {
+          try {
+            return getPublicClient(config, {
+              chainId: chainId as SupportedChainId,
+            }) as PublicClient;
+          } catch {
+            return null;
+          }
+        },
+      });
+      if (!stale) setFeedCheck(result);
+    }, 400);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customOn, accepts.join(","), issuanceBase, selected.join(","), feedRetry]);
+
   useEffect(
     () => () => {
       if (logoPreview) URL.revokeObjectURL(logoPreview);
@@ -533,17 +595,22 @@ export function CreateForm() {
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0;
+  // Fail closed: only a completed probe with every required feed pair
+  // resolved unlocks the launch — while checking (null) it stays blocked.
+  const feedsOk = customOn || feedCheck?.status === "ok";
+  const feedBlock = customOn
+    ? null
+    : feedReachabilityBlock(feedCheck, flavor === "revnet");
+  const ownerOverrides = activeChainOverrides(ownerPerChain, selected);
   const ownerOk =
     (owner.trim() === "" || resolvedAddress(owner) !== null) &&
-    Object.values(ownerPerChain).every(
-      (v) => v.trim() === "" || resolvedAddress(v) !== null,
-    );
+    ownerOverrides.every((v) => resolvedAddress(v) !== null);
   const approvalOk =
     isSimpleProject ||
     approvalDeadline !== "custom" ||
     (resolvedAddress(approvalCustom) !== null &&
-      Object.values(approvalPerChain).every(
-        (v) => v.trim() === "" || resolvedAddress(v) !== null,
+      activeChainOverrides(approvalPerChain, selected).every(
+        (v) => resolvedAddress(v) !== null,
       ));
   const tickerOk =
     flavor !== "revnet" || /^[A-Z0-9]{1,11}$/.test(ticker.trim());
@@ -562,6 +629,23 @@ export function CreateForm() {
     bridge !== "native" ||
     selected.length < 2 ||
     nativeBridgeViable(selected, accepts, customOn);
+  // A "Fund market" recipient encodes the Uniswap V4 LP split hook, which is not deployed
+  // on every chain the create flow offers. A reserved split at a codeless address reverts
+  // split processing, so the launch is blocked rather than shipped broken on that chain.
+  const lpHookOk =
+    chainsWithoutLpSplitHook(selected).length === 0 ||
+    !(
+      stages.some(stage =>
+        [...stage.reservedSplits, ...stage.payoutSplits].some(
+          split => split.kind === "hook" && split.hookKind === "fundmarket",
+        ),
+      ) ||
+      items.some(item =>
+        item.splits.some(
+          split => split.kind === "hook" && split.hookKind === "fundmarket",
+        ),
+      )
+    );
   // A restored multichain session resumes on its persisted plans; the form
   // (validated when the launch originally started) no longer gates it.
   const canResume = phase === "failed" && restoredSessionRef.current !== null;
@@ -570,10 +654,12 @@ export function CreateForm() {
     (nameOk &&
       tosAccepted &&
       accountingOk &&
+      feedsOk &&
       approvalOk &&
       ownerOk &&
       tickerOk &&
       bridgeOk &&
+      lpHookOk &&
       selected.length > 0 &&
       stagesOk &&
       badStage === -1 &&
@@ -624,7 +710,7 @@ export function CreateForm() {
         lockedUntil,
         hook:
           row.hookKind === "fundmarket"
-            ? LP_SPLIT_HOOK
+            ? requireLpSplitHook(chainId)
             : resolvedAddress(row.hookAddress)!,
       };
     }
@@ -700,7 +786,12 @@ export function CreateForm() {
       parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
     );
     const total = values.reduce((a, b) => a + b, 0n);
-    if (total === 0n) return { splits: [], limit: null };
+    // A zero total is "fixed amounts, none set yet" — a payout limit of 0, NOT
+    // the unlimited-limit sentinel. `null` here would read downstream as
+    // "routes everything", disabling cash outs on a stage whose summary says
+    // they're on. JBFundAccessLimits skips zero-amount limits, so this encodes
+    // exactly what it says: no payouts, everything stays as surplus.
+    if (total === 0n) return { splits: [], limit: 0n };
     const percents = values.map((v) => Number((v * 1_000_000_000n) / total));
     percents[percents.length - 1] =
       1_000_000_000 - percents.slice(0, -1).reduce((a, b) => a + b, 0);
@@ -743,10 +834,10 @@ export function CreateForm() {
             chainId,
           )
         : null;
-    const routedAll =
-      stage.payouts === "routed" &&
-      stage.routedMode === "all" &&
-      (!multiToken || stage.routedModeUsdc === "all");
+    const routedAll = routesAllFunds(
+      stage.payouts,
+      stageRoutesEverything(stage, multiToken),
+    );
     const surplusOn =
       stage.payouts === "flexible" ||
       (stage.payouts === "routed" && !routedAll && stage.routedSurplusOn);
@@ -891,9 +982,16 @@ export function CreateForm() {
   };
 
   /** Per-chain launch plans (recipients can differ per chain), sharing one
-   *  deployStart so multichain first rulesets begin together. */
+   *  deployStart so multichain first rulesets begin together.
+   *
+   *  `launchAccount` is the wallet connected when the run was pinned. An empty
+   *  owner field means "the launching wallet", and that has to be RESOLVED
+   *  here, not left null for send time: a session resumed from a different
+   *  wallet would otherwise hand the remaining chains a different owner —
+   *  split-brain ownership inside one sucker-linked group. */
   const buildPlans = (
     store: LaunchPlan["store"],
+    launchAccount: Address,
   ): Record<number, LaunchPlan> => {
     // FROZEN deliberately: every chain must encode the SAME start or the cross-chain
     // configuration hash — and the deterministic addresses derived from it — diverge. The
@@ -929,7 +1027,9 @@ export function CreateForm() {
             bridge,
             issuanceBase,
             allowAnyToken: true,
-            owner: resolvedAddress(ownerPerChain[chainId]?.trim() || owner),
+            owner:
+              resolvedAddress(ownerPerChain[chainId]?.trim() || owner) ??
+              launchAccount,
             approvalCustomAddress:
               !isSimpleProject && approvalDeadline === "custom"
                 ? resolvedAddress(
@@ -947,7 +1047,10 @@ export function CreateForm() {
                   : null,
             },
             flavor: flavor === "revnet" ? "revnet" : "project",
-            operator: resolvedAddress(ownerPerChain[chainId]?.trim() || owner),
+            projectName: name.trim(),
+            operator:
+              resolvedAddress(ownerPerChain[chainId]?.trim() || owner) ??
+              launchAccount,
             ticker: ticker.trim(),
             stages: planStages,
             afterMode: isSimpleProject ? "wait" : afterMode,
@@ -1101,7 +1204,9 @@ export function CreateForm() {
         encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
         splitPercent,
         splits,
-        discountPercent: Math.round(Number(item.discountPct || "0") * 2),
+        discountPercent: Math.round(
+          (Number(item.discountPct || "0") * Number(DISCOUNT_DENOMINATOR)) / 100,
+        ),
         reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
         reserveBeneficiary: reserveOn
           ? resolvedAddress(item.reserveBeneficiary)
@@ -1187,7 +1292,9 @@ export function CreateForm() {
           );
           const request = buildLaunchRequest({
             chainId: chainId as JBChainId,
-            owner: pinned.plans[chainId].owner ?? address!,
+            // The plan's frozen owner wins; this is only consulted for a
+            // session pinned before the freeze, which recorded none.
+            owner: address!,
             projectUri: pinned.projectUri,
             creationFee,
             plan: pinned.plans[chainId],
@@ -1315,7 +1422,7 @@ export function CreateForm() {
   };
 
   const launch = async () => {
-    if (!connected) {
+    if (!connected || !address) {
       openSignIn();
       return;
     }
@@ -1332,7 +1439,7 @@ export function CreateForm() {
         statusesRef.current = initial;
         setStatuses(initial);
         const result = await pinAll();
-        pinned = { ...result, plans: buildPlans(result.store) };
+        pinned = { ...result, plans: buildPlans(result.store, address) };
         pinnedRef.current = pinned;
         // Persist progress up front so a refresh resumes with the SAME salt
         // instead of re-launching everything — single-chain included: a
@@ -1358,6 +1465,24 @@ export function CreateForm() {
   const retry = () => {
     const pinned = resumablePinned();
     if (pinned) void runChains(pinned);
+  };
+
+  /**
+   * Give up on a failed run and unlock the form. Without this, a
+   * deterministically-reverting configuration loops on Retry forever — the
+   * failed phase counts as busy, so every input stays disabled and the only
+   * exit was hand-clearing localStorage. The pinned session (salt + plans) is
+   * dropped for good: a later launch pins fresh and creates a SEPARATE
+   * project, so the affordance's copy warns when chains already succeeded.
+   */
+  const abandonLaunch = () => {
+    abandonLaunchSession();
+    restoredSessionRef.current = null;
+    pinnedRef.current = null;
+    statusesRef.current = {};
+    setStatuses({});
+    setLaunchError(null);
+    setPhase("form");
   };
 
   // Poll bendystraw for freshly launched projects until they're indexed.
@@ -1413,7 +1538,7 @@ export function CreateForm() {
     stages,
     afterMode,
     approvalDeadline,
-    storeCurrency,
+    storeCurrency: storeCurrencyValue,
     storeConfig,
     storeCategories,
     items: items.map(({ mediaFile, mediaPreview, ...rest }) => rest),
@@ -1613,6 +1738,22 @@ export function CreateForm() {
   const deadlineApplies =
     lastDuration !== FOREVER_SECONDS &&
     !(afterApplies && afterMode === "terminal");
+
+  // What abandoning a failed run leaves behind, per chain: projects that
+  // provably launched are kept, and a chain whose send could not be verified
+  // (uncertain receipt, or interrupted mid-signature) may have launched too.
+  const launchedChainNames = selected
+    .filter((id) => statuses[id]?.phase === "done")
+    .map((id) => chainName(id));
+  const maybeLaunchedChainNames = selected
+    .filter((id) => {
+      if (statuses[id]?.phase === "done") return false;
+      return (
+        statuses[id]?.phase === "uncertain" ||
+        restoredSessionRef.current?.statuses[id]?.unverifiedSend === true
+      );
+    })
+    .map((id) => chainName(id));
 
   // ---- Success view ----
   if (phase === "done") {
@@ -1964,6 +2105,23 @@ export function CreateForm() {
                 owner can add a feed later to price in ETH or USD instead.
               </p>
             </div>
+          ) : feedBlock ? (
+            <div className="mt-3 text-xs leading-relaxed text-red-600">
+              <p>{feedBlock}</p>
+              {feedCheck?.status === "unavailable" ? (
+                <button
+                  type="button"
+                  onClick={() => setFeedRetry((n) => n + 1)}
+                  className="mt-1 font-medium underline underline-offset-2"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
+          ) : feedCheck === null && selected.length > 0 ? (
+            <p className="mt-3 text-xs text-smoke-500">
+              Checking price feeds on every selected chain…
+            </p>
           ) : null}
         </div>
 
@@ -1989,7 +2147,7 @@ export function CreateForm() {
           <p className="mt-1.5 text-xs text-smoke-700">
             Currently set to{" "}
             <span className="font-medium text-ink">
-              {Object.values(ownerPerChain).some((value) => value.trim())
+              {ownerOverrides.length > 0
                 ? "the per-chain addresses below"
                 : owner.trim()
                 ? owner.trim()
@@ -2356,7 +2514,13 @@ export function CreateForm() {
                   </span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
                     <Piped
-                      text={stageSummary(stage, i, unitLabel, rulesFlavor)}
+                      text={stageSummary(
+                        stage,
+                        i,
+                        unitLabel,
+                        rulesFlavor,
+                        multiToken,
+                      )}
                     />
                   </span>
                 </button>
@@ -2795,7 +2959,7 @@ export function CreateForm() {
               {flavor === "revnet" ? "Revnet operator" : "Project owner"}
             </dt>
             <dd className="font-medium text-ink">
-              {Object.values(ownerPerChain).some((value) => value.trim()) ? (
+              {ownerOverrides.length > 0 ? (
                 "Set per chain"
               ) : resolvedAddress(owner.trim()) ? (
                 <AddressLabel address={resolvedAddress(owner.trim())!} />
@@ -2850,11 +3014,15 @@ export function CreateForm() {
                 </dt>
                 <dd className="mt-1">
                   <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
-                    {stageSummaryParts(stage, i, unitLabel, rulesFlavor).map(
-                      (part) => (
-                        <li key={part}>{part}</li>
-                      ),
-                    )}
+                    {stageSummaryParts(
+                      stage,
+                      i,
+                      unitLabel,
+                      rulesFlavor,
+                      multiToken,
+                    ).map((part) => (
+                      <li key={part}>{part}</li>
+                    ))}
                   </ul>
                 </dd>
               </div>
@@ -2950,6 +3118,21 @@ export function CreateForm() {
           </p>
         ) : null}
 
+        {feedBlock && !canResume ? (
+          <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+            <p>{feedBlock}</p>
+            {feedCheck?.status === "unavailable" ? (
+              <button
+                type="button"
+                onClick={() => setFeedRetry((n) => n + 1)}
+                className="mt-1 font-medium underline underline-offset-2"
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         <button
           onClick={launch}
           disabled={connected && !canLaunch}
@@ -2974,13 +3157,49 @@ export function CreateForm() {
           </p>
         ) : null}
 
+        {phase === "failed" ? (
+          <div className="mt-3 rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
+            <p>
+              {launchedChainNames.length > 0
+                ? `Abandoning stops this run. The ${
+                    launchedChainNames.length === 1 ? "project" : "projects"
+                  } already launched on ${launchedChainNames.join(", ")} ${
+                    launchedChainNames.length === 1 ? "is" : "are"
+                  } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
+                    launchedChainNames.length === 1 ? "it" : "them"
+                  }.${
+                    maybeLaunchedChainNames.length > 0
+                      ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
+                      : ""
+                  }`
+                : maybeLaunchedChainNames.length > 0
+                  ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
+                  : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
+            </p>
+            <button
+              type="button"
+              onClick={abandonLaunch}
+              className="mt-1 font-medium underline underline-offset-2"
+            >
+              Abandon this launch
+            </button>
+          </div>
+        ) : null}
+
         {/* Per-chain progress checklist */}
         {phase === "launching" ||
         Object.values(statuses).some((s) => s.phase !== "pending") ? (
           <ul className="mt-5 space-y-2" aria-live="polite">
             {selected.map((chainId) => {
               const s = statuses[chainId] ?? { phase: "pending" as const };
-              const txUrl = s.txHash ? etherscanTxUrl(chainId, s.txHash) : null;
+              // While a Safe proposal is pending, `txHash` holds the
+              // safeTxHash — not a transaction hash. Linking an explorer at it
+              // yields a dead page, so suppress the link until the executing
+              // transaction hash replaces it.
+              const txUrl =
+                s.txHash && !s.safeProposalHash
+                  ? etherscanTxUrl(chainId, s.txHash)
+                  : null;
               const label =
                 s.phase === "pending"
                   ? "Waiting"
@@ -3031,6 +3250,11 @@ export function CreateForm() {
                       >
                         View {s.txHash}
                       </a>
+                    ) : s.safeProposalHash ? (
+                      <p className="mt-1 block truncate font-mono text-[10px] text-smoke-600">
+                        Safe proposal {s.safeProposalHash} — co-sign and execute
+                        it in your Safe
+                      </p>
                     ) : null}
                   </div>
                   {(s.phase === "failed" || s.phase === "uncertain") &&

@@ -14,7 +14,6 @@ const CHAIN_DISPLAY = {
   10: {
     name: 'Optimism',
     slug: 'op',
-    // `optimism.etherscan.io` does not resolve — the working host is `optimistic.`.
     explorer: 'optimistic.etherscan.io',
   },
   8453: {
@@ -35,7 +34,9 @@ const CHAIN_DISPLAY = {
   11155420: {
     name: 'Optimism Sepolia',
     slug: 'opsep',
-    explorer: 'sepolia-optimism.etherscan.io',
+    // Matches the SDK's `JB_CHAINS[11155420].etherscanHostname`; the parity
+    // test in test/explorer-and-safe-registries.test.ts holds them together.
+    explorer: 'optimism-sepolia.blockscout.com',
   },
   84532: {
     name: 'Base Sepolia',
@@ -93,6 +94,11 @@ export function explorerTxUrl(chainId: number, hash: string): string | null {
 export function explorerAddressUrl(chainId: number, address: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/address/${address}` : null
+}
+
+export function explorerTokenUrl(chainId: number, token: string): string | null {
+  const host = explorerHostname(chainId)
+  return host ? `https://${host}/token/${token}` : null
 }
 
 /** Origin only, for callers that append their own path. */

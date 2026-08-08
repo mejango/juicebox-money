@@ -143,10 +143,21 @@ export function RevnetPriceCard({
   const all = useMemo(() => allRulesets ?? [], [allRulesets])
   const isPending = stagesPending || metaPending
 
+  // The axis unit, straight from the immutable stage data the axis LABEL is
+  // built from further down. Both must read the same source or the lines and
+  // the label describe different currencies.
+  const axisBaseCurrency = all[0]?.metadata.baseCurrency ?? null
+
   const { data: references, isFetching: referencesFetching } = useQuery(
     cachedQuery({
-    queryKey: ['revnetPriceReferences', chainId, projectId, chains],
-    enabled: !!publicClient,
+    queryKey: [
+      'revnetPriceReferences',
+      chainId,
+      projectId,
+      chains,
+      axisBaseCurrency,
+    ],
+    enabled: !!publicClient && axisBaseCurrency !== null,
     staleTime: 60_000,
     refetchInterval: PRICE_REFRESH_MS,
     refetchOnWindowFocus: true,
@@ -157,8 +168,10 @@ export function RevnetPriceCard({
           () => null,
         ),
         (async () => {
-          const rows = await Promise.all(
-            chains.map(async ([rawChainId, rawProjectId]) => {
+          const readRow = async ([rawChainId, rawProjectId]: [
+            number,
+            number,
+          ]) => {
               const rowChainId = rawChainId as JBChainId
               const client = getPublicClient(config, {
                 chainId: rowChainId,
@@ -241,12 +254,24 @@ export function RevnetPriceCard({
                 scopeLocal:
                   currentRuleset.metadata.scopeCashOutsToLocalBalances,
               }
-            }),
-          )
+          }
 
-          const current = rows.find(row => row.chainId === chainId) ?? rows[0]
-          if (!current) return null
-          const pricedRows = current.scopeLocal ? [current] : rows
+          // Local first. `scopeCashOutsToLocalBalances` prices from THIS
+          // chain's balance alone, so fanning out to every peer up front let a
+          // single unreachable peer null the whole floor — dropping the
+          // cash-out line, the floor history and the tax tooltip on a revnet
+          // whose own numbers had already resolved.
+          const localEntry =
+            chains.find(([rawChainId]) => rawChainId === chainId) ?? chains[0]
+          if (!localEntry) return null
+          const current = await readRow(localEntry)
+          const pricedRows = current.scopeLocal
+            ? [current]
+            : await Promise.all(
+                chains.map(entry =>
+                  entry === localEntry ? current : readRow(entry),
+                ),
+              )
           const homogeneous = pricedRows.every(
             row =>
               row.decimals === current.decimals &&
@@ -290,14 +315,23 @@ export function RevnetPriceCard({
       // different units share one axis under a single base-currency label.
       // See lib/base-currency-axis.ts. Same-currency projects resolve to a rate of 1
       // without an RPC call, so the common case is unaffected.
-      const baseCurrency = floor?.baseCurrency ?? 1
-      const accountingCurrency = floor?.currency ?? baseCurrency
-      const rate = await basePerAccountingToken(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        baseCurrency,
-        accountingCurrency,
-      })
+      //
+      // The axis unit comes from the STAGE data the label is drawn from, never
+      // from the floor read: falling back to native(1) when that read failed
+      // drew the pool price in accounting units under a USD label. And with no
+      // floor there is no known accounting denomination either, so there is no
+      // rate to convert with — omit the lines rather than guess.
+      const baseCurrency = axisBaseCurrency!
+      const accountingCurrency = floor?.currency ?? null
+      const rate =
+        accountingCurrency === null
+          ? null
+          : await basePerAccountingToken(publicClient!, {
+              chainId,
+              projectId: BigInt(projectId),
+              baseCurrency,
+              accountingCurrency,
+            })
 
       return {
         floor: toBaseAxis(floor?.price ?? null, rate),
@@ -309,7 +343,9 @@ export function RevnetPriceCard({
         /** Converted from the accounting token rather than natively on-axis. */
         converted: rate !== null && rate !== 1,
         /** No feed, so the accounting-denominated lines are omitted. */
-        rateUnavailable: rate === null,
+        rateUnavailable: accountingCurrency !== null && rate === null,
+        /** The live reads that say what those lines are denominated in failed. */
+        scaleUnknown: accountingCurrency === null,
         /** The factor history is converted with, exposed so the series can use it too. */
         rate,
         /** The axis unit. Only a USD axis can use the indexer's per-point USD rate. */
@@ -353,10 +389,14 @@ export function RevnetPriceCard({
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
+    // The history stands on its own: a revnet whose CURRENT floor is null —
+    // surplus at ~0, or a peer read that failed — still has a real recorded
+    // series, and dropping it lost the whole chart line. The rate is the only
+    // real requirement, and it is null exactly when the denomination is
+    // unknown (see the reference query above).
     if (
       historyRate === null ||
       decimals === undefined ||
-      !references?.floor ||
       !history?.moments.length ||
       !all.length
     ) {
@@ -401,7 +441,7 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [all, data, history?.moments, historyRate, perPointRates, references?.floor])
+  }, [all, data, history?.moments, historyRate, perPointRates])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()
@@ -445,7 +485,7 @@ export function RevnetPriceCard({
 
   // The base currency: 1 → native, 2 → USD, else token-keyed → that token's
   // resolved symbol (a DAI/USDC-based revnet).
-  const baseCurrency = all[0]?.metadata.baseCurrency ?? 1
+  const baseCurrency = axisBaseCurrency ?? 1
   const baseSymbol =
     baseCurrency === 1
       ? nativeSymbol
@@ -489,6 +529,13 @@ export function RevnetPriceCard({
         <p className="mt-2 text-xs text-grey-500">
           No price feed converts this revnet&apos;s treasury token into {baseSymbol}, so only
           the issuance ceiling is shown.
+        </p>
+      ) : null}
+      {references?.scaleUnknown ? (
+        <p className="mt-2 text-xs text-grey-500">
+          The live cash-out and market prices couldn&apos;t be read just now, so
+          there is no way to tell what unit they are in — only the issuance
+          ceiling is shown.
         </p>
       ) : null}
       {history?.sampled ? (

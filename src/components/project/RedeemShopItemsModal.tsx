@@ -35,6 +35,7 @@ import {
   formatTokenAmount,
   truncateAddress,
 } from '@/lib/format'
+import { minimumDropNotice } from '@/lib/cashOut'
 import { chainName } from '@/lib/urn'
 
 export type RedeemableShopItem = {
@@ -310,6 +311,8 @@ export function RedeemShopItemsModal({
     if (busy || selectedTokenIds.length === 0) return
     setPrepareError(null)
     setPreparing(true)
+    // What the panel promised, captured before the re-quote below replaces it.
+    const displayedMinimum = quote ? slippageFloor(quote.net) : null
     try {
       // Refresh ownership, hook preview, fee state, and minimum immediately
       // before simulation/signing. The sent request is frozen from this read.
@@ -346,6 +349,14 @@ export function RedeemShopItemsModal({
           beneficiary: reviewed.holder,
           metadata: reviewed.metadata,
         }),
+        {
+          reviewNotice: minimumDropNotice({
+            displayedMinimum,
+            freshMinimum: minReclaimed,
+            decimals: reviewed.decimals,
+            symbol: reviewed.symbol,
+          }),
+        },
       )
     } catch (error) {
       setPrepareError(

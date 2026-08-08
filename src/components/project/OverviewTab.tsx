@@ -47,10 +47,20 @@ function AuthorityRows({
   authorities,
 }: {
   label: string;
-  authorities: [number, string | null][];
+  /** `null` = the indexer says there is none; `undefined` = it couldn't be read. */
+  authorities: [number, string | null | undefined][];
 }) {
   const known = authorities.filter(([, a]) => !!a) as [number, string][];
-  if (known.length === 0) return null;
+  const unreadable = authorities.some(([, a]) => a === undefined);
+  if (known.length === 0) {
+    // "No operator" and "we couldn't check" are different claims.
+    return unreadable ? (
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <dt className="text-smoke-700">{label}</dt>
+        <dd className="text-smoke-500">Couldn&apos;t load</dd>
+      </div>
+    ) : null;
+  }
 
   const uniform = known.every(
     ([, a]) => a.toLowerCase() === known[0][1].toLowerCase(),
@@ -100,7 +110,6 @@ export function OverviewTab({
   authorities,
   chains,
   suckerGroupId,
-  etherscanHost,
 }: {
   chainId: JBChainId;
   projectId: number;
@@ -110,12 +119,12 @@ export function OverviewTab({
   isRevnet: boolean;
   /** Owner (custom) or operator (revnet) address; null hides the row. */
   authority: string | null;
-  /** The authority per chain — [chainId, address|null]. Can differ. */
-  authorities: [number, string | null][];
+  /** The authority per chain — [chainId, address|null]. Can differ.
+   *  `undefined` for a chain whose authority could not be read. */
+  authorities: [number, string | null | undefined][];
   /** Per-chain deployments: [chainId, projectId]. */
   chains: [number, number][];
   suckerGroupId: string | null;
-  etherscanHost?: string;
 }) {
   const links = socialLinks.filter(([, href]) => href);
   return (
@@ -162,7 +171,6 @@ export function OverviewTab({
           chainId={chainId}
           projectId={projectId}
           chainIds={chains.map(([id]) => id)}
-          etherscanHost={etherscanHost}
         />
 
         <div className="card p-5">

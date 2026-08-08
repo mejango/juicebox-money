@@ -6,8 +6,9 @@ import type {
 import { splitOk, type DraftSplit } from '@/components/create/SplitsEditor'
 import { resolvedAddress } from '@/lib/ens'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
+import { DISCOUNT_DENOMINATOR } from '@bananapus/nana-sdk-core/v6'
 import {
-  LP_SPLIT_HOOK,
+  requireLpSplitHook,
   type SplitConfig,
   type StoreItem,
   splitShares,
@@ -159,7 +160,9 @@ export function storeItemsForChain(
       encodedIpfsUri,
       splitPercent,
       splits,
-      discountPercent: Math.round(Number(item.discountPct || '0') * 2),
+      discountPercent: Math.round(
+        (Number(item.discountPct || '0') * Number(DISCOUNT_DENOMINATOR)) / 100,
+      ),
       reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
       reserveBeneficiary: reserveOn
         ? resolvedAddress(item.reserveBeneficiary)
@@ -194,7 +197,7 @@ function splitRecipientForChain(split: DraftSplit, chainId: number) {
       lockedUntil,
       hook:
         split.hookKind === 'fundmarket'
-          ? LP_SPLIT_HOOK
+          ? requireLpSplitHook(chainId)
           : resolvedAddress(split.hookAddress)!,
     }
   }

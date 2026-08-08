@@ -24,7 +24,11 @@ import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { BsParticipant } from '@/lib/bendystraw'
-import { formatTokenAmount, formatUsd18 } from '@/lib/format'
+import {
+  formatTokenAmount,
+  formatUsd18,
+  treasuryUsdValue,
+} from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
@@ -115,10 +119,12 @@ async function readChainTreasury(
                   ],
                 })
                 .catch(() => null)
-        const usd =
-          usdPrice == null
-            ? null
-            : (balance * usdPrice) / 10n ** BigInt(context.decimals)
+        const usd = treasuryUsdValue({
+          balance,
+          usdPrice,
+          symbol,
+          decimals: context.decimals,
+        })
 
         return {
           chainId,

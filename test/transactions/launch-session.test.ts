@@ -7,6 +7,7 @@ import {
 import { DRAFT_KEY } from '@/lib/draft'
 import {
   LAUNCH_SESSION_KEY,
+  abandonLaunchSession,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -74,6 +75,7 @@ function planFor(store: LaunchPlan['store']): LaunchPlan {
     accounting: { tokens: ['eth'], custom: null },
     issuanceBase: null,
     flavor: 'project',
+    projectName: 'Test project',
     operator: null,
     ticker: '',
     stages: [
@@ -226,6 +228,53 @@ describe('multichain launch session persistence', () => {
     expect(storage.getItem(DRAFT_KEY)).toBeNull()
   })
 
+  it('abandons a failed run by dropping the session while KEEPING the form draft', () => {
+    // A deterministically-reverting config loops on Retry forever; abandoning
+    // must free the pinned session (the exit) without losing the draft the
+    // user needs in order to fix the configuration and relaunch.
+    storage.setItem(DRAFT_KEY, '{"v":1}')
+    saveLaunchSession(session())
+    recordLaunchChainStatus(1, { phase: 'failed' })
+
+    abandonLaunchSession()
+
+    expect(loadLaunchSession()).toBeNull()
+    expect(storage.getItem(DRAFT_KEY)).toBe('{"v":1}')
+  })
+
+  it('backfills projectName from the store name for plans pinned without it', () => {
+    saveLaunchSession(session())
+    const parsed = JSON.parse(storage.getItem(LAUNCH_SESSION_KEY)!) as {
+      plans: Record<number, Record<string, unknown>>
+    }
+    for (const plan of Object.values(parsed.plans)) {
+      delete plan.projectName
+    }
+    storage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(parsed))
+
+    const restored = loadLaunchSession()
+    // Those runs encoded the store name as the description name — a resume
+    // must reuse it verbatim to stay byte-compatible with launched chains.
+    expect(restored?.plans[1].projectName).toBe('Test collection')
+  })
+
+  it('carries the owner frozen at pin time through to a resume', () => {
+    // The empty owner field means "the launching wallet". Resolving that per
+    // chain at SEND time let a run resumed from a DIFFERENT wallet hand the
+    // remaining chains another owner — split-brain ownership inside one
+    // sucker-linked group. The concrete address is frozen into every plan when
+    // the run is pinned, and the resume reuses it verbatim.
+    saveLaunchSession(session())
+    recordLaunchChainStatus(1, { phase: 'done', projectId: 7 })
+
+    const restored = loadLaunchSession()!
+    for (const chainId of remainingLaunchChains(restored)) {
+      expect(restored.plans[chainId].owner).toBe(
+        '0x2222222222222222222222222222222222222222',
+      )
+    }
+  })
+
   it('rejects corrupt or foreign records', () => {
     storage.setItem(LAUNCH_SESSION_KEY, 'not json')
     expect(loadLaunchSession()).toBeNull()
@@ -243,6 +292,7 @@ describe('multichain launch session persistence', () => {
     expect(loadLaunchSession()).toBeNull()
     expect(() => recordLaunchChainStatus(1, { phase: 'done' })).not.toThrow()
     expect(() => completeLaunchSession()).not.toThrow()
+    expect(() => abandonLaunchSession()).not.toThrow()
   })
 
   it('ignores status updates when no launch session is active', () => {

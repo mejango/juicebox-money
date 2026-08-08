@@ -627,7 +627,6 @@ function SplitsList({
   chainId: JBChainId;
   showBurn?: boolean;
 }) {
-  const host = JB_CHAINS[chainId]?.etherscanHostname;
   const total = splits.reduce((sum, sp) => sum + sp.percent, 0);
   const leftover = 1e9 - total;
 
@@ -639,7 +638,6 @@ function SplitsList({
             <SplitRecipient
               split={sp}
               chainId={chainId}
-              host={host}
               showBurn={showBurn}
             />
             {sp.lockedUntil > 0 ? (

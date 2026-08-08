@@ -41,6 +41,7 @@ import {
   isNativeToken,
   minimumCashOutPriceAtIssuancePrice,
   minimumCashOutPriceFromTotals,
+  minimumDropNotice,
   netOfCashOutFee,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
@@ -458,5 +459,55 @@ describe('cash-out transaction request', () => {
         beneficiary: HOLDER,
       }),
     ).toThrow(/Nothing to reclaim/)
+  })
+})
+
+describe('minimum-drop disclosure', () => {
+  const args = { decimals: 18, symbol: 'ETH' }
+
+  it('stays silent when the minimum holds or improves', () => {
+    expect(
+      minimumDropNotice({
+        ...args,
+        displayedMinimum: 10n ** 18n,
+        freshMinimum: 10n ** 18n,
+      }),
+    ).toBeUndefined()
+    expect(
+      minimumDropNotice({
+        ...args,
+        displayedMinimum: 10n ** 18n,
+        freshMinimum: 2n * 10n ** 18n,
+      }),
+    ).toBeUndefined()
+  })
+
+  it('names both figures on ANY drop — there is no tolerance band', () => {
+    const notice = minimumDropNotice({
+      ...args,
+      displayedMinimum: 10n ** 18n,
+      freshMinimum: (10n ** 18n * 99n) / 100n,
+    })
+    expect(notice).toMatch(/dropped since you reviewed/)
+    expect(notice).toContain('was at least 1 ETH')
+    expect(notice).toContain('now at least 0.99 ETH')
+  })
+
+  it('widens precision rather than printing the same figure twice', () => {
+    // A one-wei drop rounds to the same display string (and is below JS
+    // number precision) — the warning must still show two different numbers.
+    const notice = minimumDropNotice({
+      ...args,
+      displayedMinimum: 10n ** 18n,
+      freshMinimum: 10n ** 18n - 1n,
+    })
+    expect(notice).toContain('was at least 1 ETH')
+    expect(notice).toContain('now at least 0.999999999999999999 ETH')
+  })
+
+  it('stays silent with nothing to compare against', () => {
+    expect(
+      minimumDropNotice({ ...args, displayedMinimum: null, freshMinimum: 1n }),
+    ).toBeUndefined()
   })
 })

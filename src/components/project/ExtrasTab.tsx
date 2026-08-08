@@ -1,6 +1,6 @@
 'use client'
 
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildDeployProjectPayerTx,
   projectPayerFromDeployLogs,
@@ -27,6 +27,7 @@ import {
 } from '@/lib/project-draft-export'
 import { chainName, toUrn } from '@/lib/urn'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import { explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
 
 /**
  * Extras tab: export a verified create-flow draft, plus the payer-address
@@ -41,7 +42,7 @@ type ExtrasTabProps = {
   /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
   chains: [number, number][]
   /** Per-chain project owner or revnet operator. */
-  authorities: [number, string | null][]
+  authorities: [number, string | null | undefined][]
 }
 
 export function ExtrasTab(props: ExtrasTabProps) {
@@ -219,11 +220,7 @@ function PayerAddressCard({
     retry: 1,
   })
 
-  const chainMeta = JB_CHAINS[chainId]
-  const etherscanHost = chainMeta?.etherscanHostname
-  const txUrl = tx.hash
-    ? `https://${etherscanHost}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
 
   const busy = tx.busy
 
@@ -372,7 +369,7 @@ function PayerAddressCard({
       {tx.phase === 'success' ? (
         <PayerDeployedPanel
           payer={deployedPayer}
-          etherscanHost={etherscanHost}
+          chainId={chainId}
           txUrl={txUrl}
           onReset={resetAll}
         />
@@ -651,12 +648,12 @@ function PayerAddressList({
 /** Success panel: the deployed payer address, ready to copy and share. */
 function PayerDeployedPanel({
   payer,
-  etherscanHost,
+  chainId,
   txUrl,
   onReset,
 }: {
   payer: Address | null
-  etherscanHost?: string
+  chainId: JBChainId
   txUrl: string | null
   onReset: () => void
 }) {
@@ -696,9 +693,9 @@ function PayerDeployedPanel({
         </p>
       )}
       <div className="mt-3 flex gap-3 text-sm font-semibold">
-        {payer && etherscanHost ? (
+        {payer && explorerAddressUrl(chainId, payer) ? (
           <a
-            href={`https://${etherscanHost}/address/${payer}`}
+            href={explorerAddressUrl(chainId, payer)!}
             target="_blank"
             rel="noopener noreferrer"
             className="text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"

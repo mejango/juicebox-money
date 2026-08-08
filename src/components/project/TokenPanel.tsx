@@ -22,14 +22,12 @@ export function TokenPanel({
   chainId,
   projectId,
   chainIds,
-  etherscanHost,
   compact = false,
 }: {
   chainId: JBChainId
   projectId: number
   /** Every chain the project exists on (same token address everywhere). */
   chainIds: number[]
-  etherscanHost?: string
   /** Condense token metadata into one wrapping line above a larger panel. */
   compact?: boolean
 }) {
@@ -98,7 +96,7 @@ export function TokenPanel({
             <dd>
               <AddressLink
                 address={tokenAddress!}
-                host={etherscanHost}
+                chainId={chainId}
                 className="text-ink"
               />
             </dd>

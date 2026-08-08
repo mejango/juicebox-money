@@ -125,6 +125,16 @@ export function loadLaunchSession(): LaunchSession | null {
     ) {
       return null
     }
+    // A pinned plan without `projectName` launched its chains with the store
+    // name as the revnet description name; a resume must re-encode
+    // byte-identically, so backfill from the store instead of leaving the
+    // field undefined.
+    for (const chainId of value.chains) {
+      const plan = (value.plans as Record<number, Partial<LaunchPlan>>)[chainId]
+      if (typeof plan.projectName !== 'string') {
+        plan.projectName = plan.store?.name ?? ''
+      }
+    }
     const statuses: Record<number, LaunchChainStatus> = {}
     for (const chainId of value.chains) {
       const status = (value.statuses as Record<number, unknown>)[chainId]
@@ -208,6 +218,22 @@ export function completeLaunchSession(): void {
   try {
     window.localStorage.removeItem(LAUNCH_SESSION_KEY)
     window.localStorage.removeItem(DRAFT_KEY)
+  } catch {
+    // Storage may be unavailable. There is no sensitive payload to clean up.
+  }
+}
+
+/**
+ * Give up on a failed launch WITHOUT marking it complete: drop the pinned
+ * session (its salt and plans will never be reused) but KEEP the saved form
+ * draft — the user abandons a failed run to fix its configuration, and a
+ * deterministically-reverting config would otherwise loop on Retry forever
+ * with no exit short of hand-clearing localStorage.
+ */
+export function abandonLaunchSession(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(LAUNCH_SESSION_KEY)
   } catch {
     // Storage may be unavailable. There is no sensitive payload to clean up.
   }

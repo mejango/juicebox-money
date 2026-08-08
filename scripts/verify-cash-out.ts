@@ -10,6 +10,7 @@
  *    USDC token/decimals/currency — never assume native.
  */
 import {
+  getCurrentRuleset,
   getHookAwareCashOutQuote,
   resolvePaymentTerminal,
   type CashOutRoute,
@@ -192,9 +193,29 @@ async function main() {
     cashOutCount: 10n ** 18n,
     context: artizenContext,
   })
+  // Without the fee-gating inputs the net is UNKNOWN, not the gross and not
+  // zero — the display paths must render it as such.
+  if (artizenQuote.reclaimAmountAfterFee !== undefined) {
+    throw new Error('expected an unresolved net without a cash-out tax rate')
+  }
+  const artizenRuleset = await getCurrentRuleset(baseClient, {
+    chainId: 8453,
+    projectId: 6n,
+  })
+  const artizenNetQuote = await getContextCashOutQuote(baseClient, {
+    chainId: 8453,
+    projectId: 6n,
+    cashOutCount: 10n ** 18n,
+    context: artizenContext,
+    cashOutTaxRate: BigInt(artizenRuleset.metadata.cashOutTaxRate),
+    feeFreeSurplus: 0n,
+  })
+  if (artizenNetQuote.reclaimAmountAfterFee === undefined) {
+    throw new Error('expected a resolved net once the fee inputs are supplied')
+  }
   console.log('base:6 display quote for 1e18 tokens (USDC, 6 decimals):', {
     reclaimAmount: artizenQuote.reclaimAmount.toString(),
-    reclaimAmountAfterFee: artizenQuote.reclaimAmountAfterFee.toString(),
+    reclaimAmountAfterFee: artizenNetQuote.reclaimAmountAfterFee.toString(),
   })
 
   console.log('\nAll cash-out verifications passed.')

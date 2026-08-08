@@ -379,7 +379,7 @@ function ReviewModal({
           <div className="rounded-xl border border-error-200 bg-error-50 px-4 py-3">
             <p
               id={descriptionId}
-              className="text-sm leading-relaxed text-error-800"
+              className="whitespace-pre-line text-sm leading-relaxed text-error-800"
             >
               {request.description ?? defaultDescription}
             </p>

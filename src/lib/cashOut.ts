@@ -12,6 +12,7 @@ import {
   type V6CashOutTxRequest,
 } from '@bananapus/nana-sdk-core/v6'
 import { formatUnits, type Address, type PublicClient } from 'viem'
+import { formatTokenAmount } from '@/lib/format'
 
 /**
  * Pure cash-out plumbing shared by the TreasuryCard client island and the
@@ -30,6 +31,59 @@ export function cashOutPoolBufferBps(
 ): number | null {
   const buffer = sdkCashOutPoolBufferBps(route)
   return buffer === null ? null : Number(buffer)
+}
+
+/**
+ * Plain-language disclosure for the mandatory review when the minimum being
+ * signed is worse than the one on screen.
+ *
+ * Every cash-out flow re-quotes at submit and floors the SENT minimum from the
+ * fresh number, while the panel keeps showing the render-time one. The exact
+ * payload review does render the fresh argument, but as raw fixed point — no
+ * tolerance band applies here, so any drop at all gets named in words, with
+ * both figures, before a signature is requested.
+ *
+ * Returns undefined when the minimum held or improved.
+ */
+export function minimumDropNotice({
+  displayedMinimum,
+  freshMinimum,
+  decimals,
+  symbol,
+}: {
+  displayedMinimum: bigint | null | undefined
+  freshMinimum: bigint
+  decimals: number
+  symbol: string
+}): string | undefined {
+  if (displayedMinimum === null || displayedMinimum === undefined) return
+  if (freshMinimum >= displayedMinimum) return
+  const [was, now] = distinctAmounts(displayedMinimum, freshMinimum, decimals)
+  return (
+    `The amount you'd receive dropped since you reviewed: was at least ` +
+    `${was} ${symbol}, now at least ${now} ${symbol}. ` +
+    `Approve only if the new amount still works for you — otherwise close this ` +
+    `and start over with a fresh quote.`
+  )
+}
+
+/**
+ * Two amounts rendered so the drop is actually visible: display rounding (and,
+ * past ~15 significant digits, JS number precision) can print two different
+ * amounts identically, which would turn the warning into nonsense. Widen the
+ * precision until they differ, falling back to the exact fixed-point strings.
+ */
+function distinctAmounts(
+  left: bigint,
+  right: bigint,
+  decimals: number,
+): [string, string] {
+  for (const digits of [4, 6, 9, 12]) {
+    const a = formatTokenAmount(left, decimals, digits)
+    const b = formatTokenAmount(right, decimals, digits)
+    if (a !== b) return [a, b]
+  }
+  return [formatUnits(left, decimals), formatUnits(right, decimals)]
 }
 
 export function cashOutExecutionErrorMessage(error: unknown): string {
@@ -86,6 +140,12 @@ export async function getCashOutContext(
  *
  * Hook-blind (`currentReclaimableSurplusOf` skips data hooks) — display-only.
  * Transactions must quote through the SDK's `getHookAwareCashOutQuote`.
+ *
+ * `reclaimAmountAfterFee` is only populated when the fee-gating inputs are
+ * supplied: the ruleset's `cashOutTaxRate`, plus the terminal's
+ * `feeFreeSurplusOf` when that rate is zero. Omit them and the SDK returns
+ * `undefined` for the net rather than fabricating one — callers must render
+ * that as unknown, never as zero and never as the gross.
  */
 export function getContextCashOutQuote(
   client: PublicClient,
@@ -94,12 +154,16 @@ export function getContextCashOutQuote(
     projectId,
     cashOutCount,
     context,
+    cashOutTaxRate,
+    feeFreeSurplus,
   }: {
     chainId: JBChainId
     projectId: bigint
     /** Project tokens to cash out, fixed-point 18 decimals. */
     cashOutCount: bigint
     context: JBAccountingContext
+    cashOutTaxRate?: bigint
+    feeFreeSurplus?: bigint
   },
 ): Promise<CashOutQuote> {
   return getCashOutQuote(client, {
@@ -108,6 +172,8 @@ export function getContextCashOutQuote(
     cashOutCount,
     decimals: BigInt(context.decimals),
     currency: BigInt(context.currency),
+    cashOutTaxRate,
+    feeFreeSurplus,
   })
 }
 

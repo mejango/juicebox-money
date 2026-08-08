@@ -1,7 +1,16 @@
-import { BaseError } from 'viem'
+import { BaseError, ContractFunctionRevertedError } from 'viem'
 
 /** A validation failure with copy that's already user-ready. */
 export class FlowError extends Error {}
+
+/** A revert means the chain answered, so a missing feed (or similar) is a fact about the
+ *  protocol rather than about the network. */
+export function contractReverted(error: unknown): boolean {
+  return (
+    error instanceof BaseError &&
+    !!error.walk(cause => cause instanceof ContractFunctionRevertedError)
+  )
+}
 
 /**
  * Trim a raw simulation/wallet error down to its useful first line, with the

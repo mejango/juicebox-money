@@ -13,6 +13,7 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   decode721RulesetMetadata,
+  DISCOUNT_DENOMINATOR,
   effectiveTierPrice,
   getAccountingContexts,
   getCurrentRuleset,
@@ -74,6 +75,7 @@ import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import { PERSIST } from '@/lib/query-persist'
 import { SPLIT_SALES_TOKEN_CREDIT_TITLE } from '@/lib/shop-copy'
+import { explorerTxUrl } from '@/lib/chainDisplay'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
@@ -205,7 +207,6 @@ export function ShopTab({
   const { address } = useViewedAccount()
   const { quantities: cart, count: cartCount } = useShopCart()
   const chainMeta = JB_CHAINS[chainId]
-  const etherscanHost = chainMeta?.etherscanHostname
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
   const [category, setCategory] = useState<number | null>(null)
@@ -259,8 +260,14 @@ export function ShopTab({
   // Tier display metadata (name/image/category name), resolved from the
   // onchain resolver's data URI or the tier's IPFS JSON. Best-effort — cards
   // render immediately and hydrate as this lands.
+  // The tier set the media was resolved FROM is part of the identity: keyed on
+  // the hook alone, an infinite-staleTime persisted entry survives reloads, so
+  // tiers added from anywhere but this browser rendered as "Item #N" forever.
+  const mediaTierKey = (shop?.tiers ?? [])
+    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
+    .join(',')
   const { data: mediaById } = useQuery({
-    queryKey: ['shop721Media', chainId, shop?.hook],
+    queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
     meta: PERSIST,
     enabled: !!shop && shop.tiers.length > 0,
     staleTime: Infinity,
@@ -468,7 +475,7 @@ export function ShopTab({
             <dd>
               <AddressLink
                 address={shop.hook}
-                host={etherscanHost}
+                chainId={chainId}
                 className="text-ink"
               />
             </dd>
@@ -922,9 +929,16 @@ function ShopCustomers({
             <PartialShopNotice failedChains={owned.data.failedChains} />
           </>
         ) : (
-          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-            You don&apos;t own any items from this shop yet.
-          </p>
+          <>
+            <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+              You don&apos;t own any items from this shop yet.
+            </p>
+            {/* "You own nothing" is the wrong statement to make to someone
+                whose only holdings are on the chain that failed. */}
+            <PartialShopNotice
+              failedChains={owned.data?.failedChains ?? []}
+            />
+          </>
         )}
       </div>
 
@@ -983,6 +997,9 @@ function CustomerAllCard({
         <p className="mt-2 text-sm text-smoke-700">
           No items have been bought yet.
         </p>
+        {/* An absolute "nothing was bought" claim can't be made while some
+            chain's purchases are unknown. */}
+        <PartialShopNotice failedChains={data?.failedChains ?? []} />
       </div>
     )
   }
@@ -1071,8 +1088,8 @@ function PartialShopNotice({ failedChains }: { failedChains: number[] }) {
   if (!failedChains.length) return null
   return (
     <p className="mt-3 text-xs leading-relaxed text-peel-600">
-      Couldn&apos;t load {failedChains.map(chainName).join(', ')}; totals above are
-      partial.
+      Couldn&apos;t load {failedChains.map(chainName).join(', ')} — what&apos;s shown
+      here leaves that chain out.
     </p>
   )
 }
@@ -1102,11 +1119,11 @@ function ExplorerTransaction({
   txHash: string
   timestamp: number
 }) {
-  const host = JB_CHAINS[chainId as JBChainId]?.etherscanHostname
+  const txUrl = explorerTxUrl(chainId, txHash)
   const label = timeAgo(timestamp)
-  return host ? (
+  return txUrl ? (
     <a
-      href={`https://${host}/tx/${txHash}`}
+      href={txUrl}
       target="_blank"
       rel="noopener noreferrer"
       className="shrink-0 font-medium text-bluebs-600 hover:underline"
@@ -1803,9 +1820,9 @@ function plainText(value: string): string {
   ).trim()
 }
 
-/** Shopper-facing "X% off" — discountPercent is out of 200. */
+/** Shopper-facing "X% off" — the stored value is out of the SDK's denominator. */
 function discountLabel(discountPercent: number): string {
-  const pct = discountPercent / 2
+  const pct = (discountPercent * 100) / Number(DISCOUNT_DENOMINATOR)
   return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}% off`
 }
 

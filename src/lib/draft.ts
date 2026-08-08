@@ -261,6 +261,7 @@ export function parseDraft(text: string): CreateDraft {
   const stages = d.stages.map(sanitizeStage)
   if (stages.length === 0) throw new Error('No stages found in that file.')
   stages[0].expanded = true
+  const customAddress = str(d.customAddress, 64)
   return {
     v: 1,
     flavor:
@@ -290,7 +291,7 @@ export function parseDraft(text: string): CreateDraft {
         .slice(0, 2)
       return accepts.length ? accepts : ['eth']
     })(),
-    customAddress: str(d.customAddress, 64),
+    customAddress,
     issuanceBase:
       d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
     linkChains: d.linkChains === undefined ? true : bool(d.linkChains),
@@ -302,17 +303,30 @@ export function parseDraft(text: string): CreateDraft {
     afterMode: ['wait', 'terminal', 'cycle'].includes(d.afterMode as string)
       ? (d.afterMode as CreateDraft['afterMode'])
       : 'wait',
-    approvalDeadline: ['none', '3hours', '1day', '3days', '7days'].includes(
-      d.approvalDeadline as string,
-    )
+    // 'custom' belongs here: it's a legal ApprovalDeadline the wizard and the
+    // project exporter both produce. Dropping it rewrote a configured
+    // JBRulesetApprovalHook to a 1-day deadline on every round trip — including
+    // the localStorage rehydrate that runs on page load.
+    approvalDeadline: [
+      'none',
+      '3hours',
+      '1day',
+      '3days',
+      '7days',
+      'custom',
+    ].includes(d.approvalDeadline as string)
       ? (d.approvalDeadline as ApprovalDeadline)
       : '1day',
+    // 'token' prices shop items in the custom accounting token. Without one
+    // the encoder has no token to price against and falls back to ETH at 18
+    // decimals — "10 TOKEN" would launch as 10 ETH — so it only survives
+    // alongside a custom token.
     storeCurrency:
       d.storeCurrency === 'usd'
         ? 'usd'
         : d.storeCurrency === 'eth'
           ? 'eth'
-          : d.storeCurrency === 'token'
+          : d.storeCurrency === 'token' && customAddress !== ''
             ? 'token'
             : null,
     storeConfig: (() => {

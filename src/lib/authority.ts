@@ -130,6 +130,30 @@ export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
 }
 
 /**
+ * The Relayr view of a group of authority calls. Build this at the moment the
+ * calls are handed to Relayr, never earlier: the simulation pass writes the
+ * measured `gas` onto the shared AuthorityCall objects, and a snapshot taken
+ * before that pass would sign every ForwardRequest with the 500k fallback —
+ * under-capping any larger call AFTER the user paid for the bundle.
+ * (`relayrCallsScope` ignores `gas`, so the pending-session scope is identical
+ * whether it is computed before or after estimation.)
+ */
+function toRelayrCalls(calls: AuthorityCall[]): RelayrCall[] {
+  return calls.map(call => ({
+    chainId: call.chainId,
+    target: call.target,
+    data: call.data,
+    value: call.value,
+    gas: call.gas,
+    label: call.label,
+    abi: call.abi,
+    functionName: call.functionName,
+    args: call.args,
+    contractName: call.contractName,
+  }))
+}
+
+/**
  * Route reviewed project owner/operator calls by the controlling account on
  * each chain. A one-chain EOA action is sent directly; a genuinely
  * multi-chain EOA action signs ERC-2771 requests and pays Relayr once. A Safe
@@ -146,7 +170,6 @@ export async function runAuthorityCalls({
   if (!calls.length) throw new Error('Choose at least one chain.')
   const connected = getAccount(wagmiConfig).address
   if (!connected) throw new Error('Connect a wallet first.')
-  const isMultiChain = new Set(calls.map(call => call.chainId)).size > 1
 
   const groups = new Map<string, AuthorityCall[]>()
   for (const call of calls) {
@@ -157,7 +180,6 @@ export async function runAuthorityCalls({
   type ReviewedGroup = {
     calls: AuthorityCall[]
     mode: 'direct' | 'safe' | 'relayr'
-    relayrCalls?: RelayrCall[]
     pendingScope?: string
     recovered?: boolean
   }
@@ -213,28 +235,18 @@ export async function runAuthorityCalls({
           .join(', ')}. Switch to ${authority}.`,
       )
     }
-    if (!isMultiChain) {
+    // Relaying is decided PER GROUP, so the multi-chain test has to be too:
+    // measured across every call, a single-chain EOA group inside a mixed
+    // EOA+Safe action would pay Relayr for something it can send itself.
+    if (new Set(group.map(call => call.chainId)).size <= 1) {
       reviewedGroups.push({ calls: group, mode: 'direct' })
       continue
     }
 
-    const relayrCalls: RelayrCall[] = group.map(call => ({
-      chainId: call.chainId,
-      target: call.target,
-      data: call.data,
-      value: call.value,
-      gas: call.gas,
-      label: call.label,
-      abi: call.abi,
-      functionName: call.functionName,
-      args: call.args,
-      contractName: call.contractName,
-    }))
     reviewedGroups.push({
       calls: group,
       mode: 'relayr',
-      relayrCalls,
-      pendingScope: relayrCallsScope(relayrCalls),
+      pendingScope: relayrCallsScope(toRelayrCalls(group)),
     })
   }
 
@@ -279,14 +291,13 @@ export async function runAuthorityCalls({
   for (const reviewed of reviewedGroups) {
     if (
       reviewed.mode !== 'relayr' ||
-      !reviewed.relayrCalls ||
       !reviewed.pendingScope ||
       !loadRelayrPendingSession(reviewed.pendingScope)
     ) {
       continue
     }
     const recovered = await runRelayrCalls({
-      calls: reviewed.relayrCalls,
+      calls: toRelayrCalls(reviewed.calls),
       account: connected,
       pendingScope: reviewed.pendingScope,
       onProgress: reportRelayrProgress,
@@ -453,13 +464,14 @@ export async function runAuthorityCalls({
       continue
     }
 
-    const relayrCalls = reviewed.relayrCalls
     const pendingScope = reviewed.pendingScope
-    if (!relayrCalls || !pendingScope) {
+    if (!pendingScope) {
       throw new Error('Relayr authority review is incomplete.')
     }
+    // Built AFTER the simulation pass above, so each call carries its
+    // measured `gas` into the signed ForwardRequest.
     const relayrResult = await runRelayrCalls({
-      calls: relayrCalls,
+      calls: toRelayrCalls(reviewed.calls),
       account: connected,
       pendingScope,
       onProgress: reportRelayrProgress,

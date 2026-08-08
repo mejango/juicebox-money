@@ -53,6 +53,13 @@ export type TxSendOptions = {
    * reviewed write immediately follows an ERC-20 or Permit2 approval.
    */
   simulationBlockNumber?: bigint
+  /**
+   * Plain-language sentence shown at the top of the mandatory review — for
+   * when the freshly re-quoted payload is materially worse than what the
+   * caller's panel displayed. Raw fixed-point arguments alone are not
+   * effective disclosure of that.
+   */
+  reviewNotice?: string
 }
 
 /**
@@ -177,16 +184,24 @@ export function useSafeTx(chainId: number) {
           request,
           expectedAccount: address,
           review: async reviewed => {
-            if (options?.reviewedInParent) return
+            // A review notice always opens the review, even where the caller
+            // already rendered the payload — the notice exists precisely
+            // because what was rendered is no longer what will be signed.
+            if (options?.reviewedInParent && !options?.reviewNotice) return
+            const viaSafe = isSafeConnection(wagmiConfig)
+            const description = [
+              options?.reviewNotice,
+              viaSafe ? SAFE_NONCE_GUIDANCE : null,
+            ]
+              .filter(Boolean)
+              .join('\n\n')
             const approved = await requestContractTransactionReview(
               { ...reviewed, account: address },
               {
                 label: reviewed.label,
-                ...(isSafeConnection(wagmiConfig)
-                  ? {
-                      description: SAFE_NONCE_GUIDANCE,
-                      confirmLabel: 'Agree & continue to Safe',
-                    }
+                ...(description ? { description } : {}),
+                ...(viaSafe
+                  ? { confirmLabel: 'Agree & continue to Safe' }
                   : {}),
               },
             )

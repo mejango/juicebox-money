@@ -1,6 +1,6 @@
 'use client'
 
-import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildAutoIssueTx,
   getAllRulesets,
@@ -53,11 +53,9 @@ type Row = {
  */
 export function AutoIssuanceSection({
   chains,
-  tokenSymbol = 'tokens',
 }: {
   /** [chainId, projectId] pairs across the sucker group. */
   chains: [number, number][]
-  tokenSymbol?: string
 }) {
   const primaryClient = usePublicClient({
     chainId: chains[0]?.[0] as JBChainId,
@@ -85,7 +83,9 @@ export function AutoIssuanceSection({
       })) as string
     },
   })
-  const sym = resolvedSym || (tokenSymbol !== 'tokens' ? tokenSymbol : '')
+  // Blank rather than bendystraw's accounting symbol — labeling a project-token
+  // mint "ETH" is worse than labeling it with nothing.
+  const sym = resolvedSym || ''
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['autoIssuancesAll', chains.map(c => c.join(':')).join(',')],
@@ -205,7 +205,6 @@ function AutoIssueRow({
   onDistributed: () => void
 }) {
   const { chainId, projectId } = row
-  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
   // The stage this allocation belongs to (for the stage number + unlock date),
@@ -273,7 +272,7 @@ function AutoIssueRow({
       <td className="py-2 pr-3">
         <AddressLink
           address={row.beneficiary}
-          host={etherscanHost}
+          chainId={chainId}
           className="text-ink"
         />
       </td>

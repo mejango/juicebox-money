@@ -57,14 +57,34 @@ function projectRow(overrides: Partial<BsProject>): BsProject {
 }
 
 describe('live activity merging', () => {
-  it('prepends newly indexed events without duplicating refreshed rows', () => {
-    const old = { id: 'old' } as BsActivityEvent
+  it('merges newly indexed events without duplicating refreshed rows', () => {
+    const old = { id: 'old', timestamp: 2 } as BsActivityEvent
     const refreshed = { id: 'old', timestamp: 2 } as BsActivityEvent
-    const newest = { id: 'new' } as BsActivityEvent
+    const newest = { id: 'new', timestamp: 5 } as BsActivityEvent
 
     expect(mergeActivityEvents([old], [newest, refreshed])).toEqual([
       newest,
       refreshed,
+    ])
+  })
+
+  // "Load more" feeds OLDER rows through the same merge. Prepending put page 2
+  // above page 1 and scrambled the feed the moment pagination started working.
+  it('sorts an older page below the rows already loaded', () => {
+    const first = [
+      { id: 'a', timestamp: 9 },
+      { id: 'b', timestamp: 8 },
+    ] as BsActivityEvent[]
+    const older = [
+      { id: 'c', timestamp: 7 },
+      { id: 'd', timestamp: 6 },
+    ] as BsActivityEvent[]
+
+    expect(mergeActivityEvents(first, older).map(event => event.id)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
     ])
   })
 })

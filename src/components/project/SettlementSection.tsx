@@ -525,7 +525,10 @@ function QueuedMovementsCard({
         <div className="mt-3 space-y-4">
           {groups.map(g => (
             <MovementGroup
-              key={`${g.sourceChainId}->${g.destChainId}:${g.token}`}
+              // Must match the GROUPING key: two suckers for one pair+token
+              // otherwise render as duplicate React keys, and the 45 s refetch
+              // remounts them — wiping an in-flight Execute's status mid-flow.
+              key={`${g.sourceChainId}->${g.destChainId}:${g.token}:${g.sucker}`}
               group={g}
               chains={chains}
             />

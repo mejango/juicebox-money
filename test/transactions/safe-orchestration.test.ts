@@ -280,4 +280,27 @@ describe('Safe retry and terminal-state orchestration', () => {
     ])
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
+  it('gives each call in a batch its own nonce on the no-service path', async () => {
+    // The onchain nonce only advances at EXECUTION, so approving two calls
+    // against the same nonce would waste one of them.
+    mocks.client.readContract.mockImplementation(async input => {
+      if (input.functionName === 'getThreshold') return 2n
+      if (input.functionName === 'getOwners') return [ALICE, BOB]
+      if (input.functionName === 'nonce') return 7n
+      if (input.functionName === 'approvedHashes') {
+        return input.args?.[0] === ALICE ? 1n : 0n
+      }
+      throw new Error(`Unexpected read ${input.functionName}`)
+    })
+
+    const results = await runSafeCalls({
+      signer: ALICE,
+      calls: [
+        { chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' },
+        { chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x5678' },
+      ],
+    })
+
+    expect(results.map(row => row.nonce)).toEqual([7, 8])
+  })
 })

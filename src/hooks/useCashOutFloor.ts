@@ -1,6 +1,7 @@
 'use client'
 
-import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { jbMultiTerminalAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { getCurrentRuleset, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
@@ -29,23 +30,50 @@ export function useCashOutFloor(
     staleTime: 60_000,
     retry: 0,
     queryFn: async (): Promise<number | null> => {
-      const context = await getCashOutContext(publicClient!, {
+      const client = publicClient!
+      const context = await getCashOutContext(client, {
         chainId,
         projectId: BigInt(projectId),
       })
       if (!context) return null
-      const quote = await getContextCashOutQuote(publicClient!, {
+
+      // The fee is conditional, so the net is only knowable with the ruleset's
+      // cash-out tax rate — and, when that rate is zero, the terminal's
+      // fee-free surplus counter as well. Either read failing leaves the floor
+      // UNKNOWN: the gross would overstate it and zero would erase it, so the
+      // marker is withheld instead.
+      const ruleset = await getCurrentRuleset(client, {
+        chainId,
+        projectId: BigInt(projectId),
+      }).catch(() => null)
+      if (!ruleset) return null
+      const cashOutTaxRate = BigInt(ruleset.metadata.cashOutTaxRate)
+
+      let feeFreeSurplus: bigint | undefined
+      if (cashOutTaxRate === 0n) {
+        // The same JBMultiTerminal the accounting contexts were read from.
+        feeFreeSurplus = await client
+          .readContract({
+            address: v6Address('JBMultiTerminal', chainId),
+            abi: jbMultiTerminalAbi,
+            functionName: 'feeFreeSurplusOf',
+            args: [BigInt(projectId), context.token],
+          })
+          .catch(() => undefined)
+        if (feeFreeSurplus === undefined) return null
+      }
+
+      const quote = await getContextCashOutQuote(client, {
         chainId,
         projectId: BigInt(projectId),
         cashOutCount: ONE_TOKEN,
         context,
+        cashOutTaxRate,
+        feeFreeSurplus,
       })
-      // NET of the protocol fee, matching what the confirm modal quotes and what a holder
-      // actually receives. `reclaimAmount` is the pre-fee figure; the SDK already computes
-      // the fee correctly (it applies only when the cash-out tax is non-zero), so reading
-      // the gross field here overstated the floor on the Market card, the chart marker and
-      // the LP default range alike.
-      const value = Number(formatUnits(quote.reclaimAmountAfterFee, context.decimals))
+      const net = quote.reclaimAmountAfterFee
+      if (net === undefined) return null
+      const value = Number(formatUnits(net, context.decimals))
       return Number.isFinite(value) && value > 0 ? value : null
     },
     }),

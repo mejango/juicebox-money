@@ -20,29 +20,20 @@ export type Split = {
 /**
  * A split's recipient cell: the hook when one is set, a project link when the
  * split pays a project, otherwise the beneficiary address. `showBurn` renders
- * the reserved-split burn sentinel as "Burn". Pass `host` when the explorer
- * hostname is already resolved; otherwise it's looked up from `chainId`.
+ * the reserved-split burn sentinel as "Burn". The explorer host is resolved
+ * from `chainId` by AddressLink.
  */
 export function SplitRecipient({
   split,
   chainId,
-  host,
   showBurn = false,
 }: {
   split: Pick<Split, 'projectId' | 'beneficiary' | 'hook'>
   chainId: JBChainId
-  host?: string
   showBurn?: boolean
 }) {
   if (split.hook !== zeroAddress) {
-    return (
-      <AddressLink
-        address={split.hook}
-        chainId={chainId}
-        host={host}
-        note="hook"
-      />
-    )
+    return <AddressLink address={split.hook} chainId={chainId} note="hook" />
   }
   if (split.projectId > 0n) {
     return (
@@ -57,5 +48,5 @@ export function SplitRecipient({
   if (showBurn && split.beneficiary.toLowerCase() === BURN_ADDRESS) {
     return <span className="text-ink">Burn</span>
   }
-  return <AddressLink address={split.beneficiary} chainId={chainId} host={host} />
+  return <AddressLink address={split.beneficiary} chainId={chainId} />
 }

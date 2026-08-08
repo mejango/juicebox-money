@@ -196,17 +196,25 @@ async function liveSchema(endpoint) {
   return buildClientSchema(envelope.data)
 }
 
+const ENDPOINTS = ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']
+
 // Documents that query fields an unmerged indexer PR adds. They run behind a
 // fallback — a schema error degrades to the on-chain read — so shipping them
 // ahead of the indexer is safe, but they cannot be validated until it deploys.
-// Each entry names the PR that removes it, and the check FAILS once the field
-// exists, so the list cannot quietly rot after the feature lands.
+// Each entry names the PR that removes it and the ONE endpoint still missing the
+// field, and the check FAILS once that endpoint serves it, so the list cannot
+// quietly rot after the feature lands.
 const PENDING_SCHEMA_FIELDS = [
   {
+    // Rolled out testnet-first. testnet.bendystraw.xyz serves this already; bendystraw.xyz is
+    // the same indexer on an older deploy, and its schema differs from the testnet one by this
+    // field alone.
+    endpoint: 'https://bendystraw.xyz/graphql',
     field: 'accountingTokenUsdRate',
     reason:
       'peripheralist/bendystraw#25 — per-point USD rate on suckerGroupMoment and swapEvent; ' +
-      'the price chart asks for it behind a fallback and converts at the live rate without it',
+      'live on testnet, and the price chart asks for it behind a fallback that converts at the ' +
+      'live rate wherever the endpoint still refuses it',
   },
 ]
 
@@ -215,15 +223,16 @@ if (offline) {
   process.exit(0)
 }
 
-for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
+for (const endpoint of ENDPOINTS) {
   const schema = await liveSchema(endpoint)
   const errors = parsedDocuments.flatMap(({ parsed, location }) =>
     validate(schema, parsed).map(error => `${location}: ${error.message}`),
   )
+  const pending = PENDING_SCHEMA_FIELDS.filter(entry => entry.endpoint === endpoint)
   // Shipped = the field no longer produces a validation error. Testing the root-query field
   // set instead would never fire for a NESTED field like accountingTokenUsdRate, letting the
   // entry outlive the indexer PR it names — which is the one thing this list must not do.
-  const shipped = PENDING_SCHEMA_FIELDS.filter(
+  const shipped = pending.filter(
     ({ field }) => !errors.some(error => error.includes(`"${field}"`)),
   )
   if (shipped.length) {
@@ -233,10 +242,10 @@ for (const endpoint of ['https://bendystraw.xyz/graphql', 'https://testnet.bendy
     )
   }
   const blocking = errors.filter(
-    error => !PENDING_SCHEMA_FIELDS.some(({ field }) => error.includes(`"${field}"`)),
+    error => !pending.some(({ field }) => error.includes(`"${field}"`)),
   )
   if (blocking.length) throw new Error(`${endpoint} schema mismatch:\n${blocking.join('\n')}`)
-  for (const { field, reason } of PENDING_SCHEMA_FIELDS) {
+  for (const { field, reason } of pending) {
     console.log(`Pending on ${endpoint}: ${field} (${reason})`)
   }
 }

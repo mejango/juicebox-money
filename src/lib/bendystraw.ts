@@ -161,7 +161,7 @@ const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
     orderDirection: "desc"
     limit: $limit
     offset: $offset
-  ) { items { address balance chainId volumeUsd } totalCount }
+  ) { items { address balance chainId volumeUsd suckerGroupId } totalCount }
 }`
 
 export async function getProject(
@@ -518,11 +518,12 @@ export async function getProjectActivity(
       }
     }`,
     'activityEvents',
-    { suckerGroupId, limit, offset },
+    { suckerGroupId },
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
       max: limit,
+      startOffset: offset,
       policy: 'live',
     },
   )
@@ -575,11 +576,12 @@ export async function getProjectActivityByProject(
       }
     }`,
     'activityEvents',
-    { chainId, projectId, offset },
+    { chainId, projectId },
     {
       network: bendystrawNetworkHint(chainId),
       pageSize: limit,
       max: limit,
+      startOffset: offset,
       policy: 'live',
     },
   )
@@ -648,14 +650,19 @@ export async function getRecentActivity(
 
 /**
  * A revnet's operator (website/ parity): the permissionHolders row flagged
- * isRevnetOperator, preferring one that still holds permissions. Null when
- * the indexer has nothing — callers hide the operator rather than fabricate.
+ * isRevnetOperator, preferring one that still holds permissions.
+ *
+ * Null means the indexer HAS an answer and it is "no operator". A failure
+ * throws — swallowing it to null made an indexer outage indistinguishable
+ * from a revnet with nobody in the role, hiding the operator surface and
+ * letting authority-gated cards act as if none existed. The sibling fetch on
+ * the same page propagates for exactly this reason.
  */
 export async function getRevnetOperator(
   chainId: number,
   projectId: number,
 ): Promise<string | null> {
-  try {
+  {
     const page = await getPagedItems<{
       operator: string
       permissions: number[]
@@ -678,8 +685,6 @@ export async function getRevnetOperator(
     const live = rows.filter(r => r.permissions?.length > 0)
     const pick = live[0] ?? rows[0]
     return pick?.operator ?? null
-  } catch {
-    return null
   }
 }
 
@@ -688,6 +693,12 @@ export type BsParticipant = {
   balance: string
   chainId: number
   volumeUsd: string
+  /**
+   * The group this row was stamped with. When a sucker group is EXTENDED the indexer
+   * re-points only a handful of tables and deletes the old group, so a row can still
+   * carry a group id that no longer exists — which is why holders are read per chain.
+   */
+  suckerGroupId: string | null
 }
 
 export type BsProjectPayer = {
@@ -870,6 +881,60 @@ export async function getParticipants(
   }
 
   return { items, totalCount: totalCount || items.length }
+}
+
+/**
+ * A project's holders read PER CHAIN and unioned, rather than by sucker group.
+ *
+ * The group-keyed read is lossy: extending a sucker group creates a NEW group id, and the
+ * indexer re-points only a few tables before deleting the old group — `participant` is not
+ * one of them, so every holder who has not transacted since the extension carries a group
+ * id that no longer matches and silently disappears from a group-keyed query. Reading each
+ * `(chainId, projectId)` deployment directly is not subject to that: those keys never move.
+ *
+ * `groupExtended` is true when a returned row still carries a superseded group id, which is
+ * positive evidence that the OTHER group-keyed panels (price history, settlement queue) are
+ * missing their pre-extension rows too. Those tables have no project-keyed equivalent the
+ * client can query, so they can only be disclosed, not repaired here.
+ */
+export async function getParticipantsForRefs(
+  refs: readonly { chainId: number; projectId: number }[],
+  suckerGroupId: string | null,
+  limit = 1000,
+): Promise<{
+  items: BsParticipant[]
+  totalCount: number
+  groupExtended: boolean
+}> {
+  const pages = await Promise.all(
+    refs.map(ref =>
+      getParticipants({ chainId: ref.chainId, projectId: ref.projectId }, limit),
+    ),
+  )
+  const seen = new Set<string>()
+  const items: BsParticipant[] = []
+  let totalCount = 0
+  for (const page of pages) {
+    totalCount += page.totalCount
+    for (const row of page.items) {
+      const key = `${row.chainId}:${row.address.toLowerCase()}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      items.push(row)
+    }
+  }
+  items.sort((a, b) => {
+    const left = BigInt(a.balance)
+    const right = BigInt(b.balance)
+    return right > left ? 1 : right < left ? -1 : 0
+  })
+  return {
+    items,
+    totalCount,
+    groupExtended:
+      !!suckerGroupId &&
+      items.some(row => !!row.suckerGroupId && row.suckerGroupId !== suckerGroupId),
+  }
 }
 
 export type ShopProjectRef = {
@@ -1272,11 +1337,18 @@ export async function getPagedItems<T>(
   {
     pageSize = 1_000,
     max = Number.POSITIVE_INFINITY,
+    startOffset = 0,
     network,
     policy = 'standard',
   }: {
     pageSize?: number
     max?: number
+    /**
+     * Row index the run starts at. `offset` inside `variables` is IGNORED — this function
+     * owns paging — so a caller resuming after a first page must say so here. Without it
+     * every "load more" re-fetched rows [0, limit) forever.
+     */
+    startOffset?: number
     network?: BendystrawNetwork
     policy?: BendystrawCachePolicy
   } = {},
@@ -1290,18 +1362,18 @@ export async function getPagedItems<T>(
       Record<string, { items: T[]; totalCount: number }>
     >(
       query,
-      { ...variables, limit: pageLimit, offset: items.length },
+      { ...variables, limit: pageLimit, offset: startOffset + items.length },
       { network, policy },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount
     items.push(...page)
-    if (page.length === 0 || items.length >= totalCount) {
+    if (page.length === 0 || startOffset + items.length >= totalCount) {
       break
     }
   }
 
-  return { items, totalCount: totalCount || items.length }
+  return { items, totalCount: totalCount || startOffset + items.length }
 }
 
 /**
@@ -1406,6 +1478,22 @@ async function withOptionalRateField<T>(
   }
 }
 
+/**
+ * Fields/lists that only a pre-upgrade indexer lacks. Anything else — a
+ * timeout, a 5xx, a transport abort — is a real failure and must surface.
+ */
+const MARKET_SCHEMA_FIELDS = [
+  'sqrtPriceX96',
+  'projectTokenIsCurrency0',
+  'buybackPoolEvents',
+  'initialSqrtPriceX96',
+]
+
+function isMissingMarketSchemaError(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  return MARKET_SCHEMA_FIELDS.some(field => message.includes(field))
+}
+
 export async function getRevnetPriceHistory(
   suckerGroupId: string,
   /** `chainId` is an endpoint-routing hint only (testnet groups live on the
@@ -1456,9 +1544,13 @@ export async function getRevnetPriceHistory(
 
   const marketPromise = Promise.all([enhancedSwaps(), pools()])
     .then(([swaps, poolEvents]) => ({ swaps, pools: poolEvents }))
-    .catch(async () => {
+    .catch(async reason => {
       // Preserve the existing average-price series if a frontend deployment
-      // reaches production before Bendystraw's additive schema fields.
+      // reaches production before Bendystraw's additive schema fields — but
+      // ONLY for that. Catching everything let a transient indexer failure
+      // silently drop the pool-price line with no error state, so the chart
+      // looked complete while missing a whole series.
+      if (!isMissingMarketSchemaError(reason)) throw reason
       const swaps = await getPagedItems<BsSwapEvent>(
         `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
           swapEvents(

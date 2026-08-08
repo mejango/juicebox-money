@@ -2,7 +2,6 @@
 
 import {
   bytes32ToCidV0,
-  JB_CHAINS,
   JBCoreContracts,
   JBRouterTerminalContracts,
   NATIVE_TOKEN,
@@ -34,8 +33,6 @@ import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalCloseButton } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BaseError,
-  ContractFunctionRevertedError,
   encodeFunctionData,
   erc20Abi,
   formatUnits,
@@ -51,6 +48,7 @@ import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
+import { contractReverted } from "@/lib/errors";
 import { formatTokenAmount } from "@/lib/format";
 import {
   TIER_UNLIMITED_SUPPLY,
@@ -85,8 +83,10 @@ import {
   buildDirectPaySwapTx,
   directSwapRouteApplies,
   quoteDirectPaySwap,
+  restampDirectSwapDeadline,
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
+import { explorerTxUrl } from '@/lib/chainDisplay'
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -212,15 +212,6 @@ function routerPayRouteWorks(
     _payRouteCache.set(key, cached);
   }
   return cached;
-}
-
-/** A revert means the chain answered, so a missing feed is a fact about the protocol rather
- *  than about the network. */
-function contractReverted(error: unknown): boolean {
-  return (
-    error instanceof BaseError &&
-    !!error.walk((cause) => cause instanceof ContractFunctionRevertedError)
-  );
 }
 
 type ShopInfo = {
@@ -379,7 +370,6 @@ export function PayPanel({
     return () => clearTimeout(t);
   }, [amount]);
 
-  const chainMeta = JB_CHAINS[chainId];
   const nativeSymbol = "ETH";
 
   // ---- The project's payment surface: accepted tokens + live ruleset ----
@@ -1607,6 +1597,16 @@ export function PayPanel({
 
       await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
+      if (paymentAction.swapInputRoute) {
+        // Stamp the swap deadline NOW, not when the dialog was opened: the
+        // frozen 20-minute EOA window made a late confirm — and every retry
+        // of it — revert in simulation until the dialog was rebuilt. Only the
+        // deadline re-stamps; the reviewed amounts and minimums stay frozen.
+        paymentRequest = restampDirectSwapDeadline(
+          paymentRequest,
+          swapDeadline(isSafeConnection(wagmiConfig)),
+        );
+      }
       const paymentHash = await tx.send(paymentRequest, {
         simulationBlockNumber: latestApprovalBlock,
         reviewedInParent: true,
@@ -1702,9 +1702,9 @@ export function PayPanel({
             ? `You supported ${projectName}.`
             : `${projectName}'s balance grew — no tokens minted.`}
         </p>
-        {tx.hash && chainMeta ? (
+        {tx.hash && explorerTxUrl(chainId, tx.hash) ? (
           <a
-            href={`https://${chainMeta.etherscanHostname}/tx/${tx.hash}`}
+            href={explorerTxUrl(chainId, tx.hash)!}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 text-xs text-smoke-500 underline underline-offset-2 hover:text-ink"
@@ -2662,7 +2662,12 @@ function Permit2SignatureReview({
         <div className="flex items-start gap-1">
           <dt className="shrink-0 text-smoke-500">Expires:</dt>
           <dd className="min-w-0 text-ink">
-            {new Date(action.authorization.expiration * 1000).toLocaleString()}
+            {/* The window is stamped when the signature is requested, not when
+                this card was built — rendering the placeholder verbatim showed
+                "1/1/1970" under an "exact wallet action" banner. */}
+            {action.authorization.expiration === 0
+              ? "30 minutes after you sign"
+              : new Date(action.authorization.expiration * 1000).toLocaleString()}
           </dd>
         </div>
         <div className="flex items-start gap-1">
@@ -2674,6 +2679,15 @@ function Permit2SignatureReview({
       </dl>
       <details className="mt-3 border-t border-smoke-200 pt-3">
         <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
+        {action.authorization.expiration === 0 ? (
+          <p className="mt-2 text-xs leading-relaxed text-smoke-600">
+            <span className="font-medium">expiration</span> and{" "}
+            <span className="font-medium">sigDeadline</span> show 0 here — both
+            are stamped 30 minutes ahead at the moment you sign, so the window
+            can&apos;t run out while an earlier approval confirms. Your wallet
+            will display the real values.
+          </p>
+        ) : null}
         <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
           {JSON.stringify(
             typedData,

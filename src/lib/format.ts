@@ -59,6 +59,19 @@ export function formatDate(timestamp: number): string {
   })
 }
 
+/**
+ * A unix timestamp → the `YYYY-MM-DDTHH:mm` string a `datetime-local` input
+ * expects. Those inputs are LOCAL wall clock in both directions — the browser
+ * renders the value as-is and `new Date(value)` parses it as local — so the
+ * offset has to be folded in here. Emitting `toISOString()` (UTC) instead
+ * shifts every round-trip by the viewer's UTC offset.
+ */
+export function toLocalDateTimeInput(seconds: number): string {
+  const date = new Date(seconds * 1000)
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
 /** Compact relative time for activity rows: "7m", "3h", "2d". */
 export function timeAgo(timestamp: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp)
@@ -212,6 +225,42 @@ export function formatCountdown(
 
 /** One whole unit of 18-decimal fixed-point USD. */
 export const USD_SCALE = 10n ** 18n
+
+/**
+ * USD value of a treasury balance, in 18-decimal fixed point. `null` = not
+ * priceable; never a fabricated zero.
+ *
+ * ONE definition for every surface that shows a project's treasury in dollars.
+ * The Funds tab and the stats header used to disagree — same failed feed, one
+ * card showed a dollar value and the other "unavailable", on the same page.
+ *
+ * `usdPrice` is `JBPrices.pricePerUnitOf(USD, contextCurrency, 18)`, or null
+ * when that read failed. A ZERO response is not a real $0 quote, so it falls
+ * through to the same treatment as a failure — except for USDC, whose
+ * accounting unit IS a dollar and needs no oracle.
+ */
+export function treasuryUsdValue({
+  balance,
+  usdPrice,
+  symbol,
+  decimals,
+}: {
+  balance: bigint
+  usdPrice: bigint | null | undefined
+  symbol: string
+  decimals: number
+}): bigint | null {
+  if (balance === 0n) return 0n
+  const resolved =
+    usdPrice != null && usdPrice > 0n
+      ? usdPrice
+      : symbol.toUpperCase() === 'USDC' && decimals === 6
+        ? USD_SCALE
+        : null
+  return resolved == null
+    ? null
+    : (balance * resolved) / 10n ** BigInt(decimals)
+}
 
 /** 18-decimal fixed-point USD → "$1,234.56" (half-up to the cent). */
 export function formatUsd18(

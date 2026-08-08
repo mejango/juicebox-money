@@ -219,13 +219,12 @@ export function PriceChart({
   const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
   const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
   const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
-  const rawFloorSeries = visibleSeries(
+  const floorSeries = visibleSeries(
     floorHistory,
     floor?.value ?? null,
     t0,
     t1,
   )
-  const floorSeries = rawFloorSeries
   const ammSeries = visibleSeries(
     ammHistory,
     amm?.value ?? null,

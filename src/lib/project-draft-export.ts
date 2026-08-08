@@ -2,6 +2,7 @@ import {
   NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
   USDC_ADDRESSES,
+  jbDirectoryAbi,
   jbFundAccessLimitsAbi,
   jbSplitsAbi,
   type JBChainId,
@@ -11,11 +12,20 @@ import {
   decode721RulesetMetadata,
   getAccountingContexts,
   getCurrentRuleset,
+  getTokenAddress,
+  getUpcomingRuleset,
   payoutSplitGroupId,
   v6Address,
 } from '@bananapus/nana-sdk-core/v6'
-import { CASH_OUTS_OFF_REVNET } from '@/lib/launch'
-import { formatUnits, zeroAddress, type Address, type PublicClient } from 'viem'
+import { CASH_OUTS_OFF_REVNET, lpSplitHookGeneration } from '@/lib/launch'
+import { toLocalDateTimeInput } from '@/lib/format'
+import {
+  erc20Abi,
+  formatUnits,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from 'viem'
 import { newDraftSplit, type DraftSplit } from '@/components/create/SplitsEditor'
 import {
   newDraftStage,
@@ -24,12 +34,36 @@ import {
 import { parseDraft, type CreateDraft } from '@/lib/draft'
 import type { RawSplit } from '@/lib/splits-types'
 
+/**
+ * The project's own ERC-20 ticker, or '' when it has not deployed one. A read failure is
+ * treated as "no token" (the caller warns) rather than falling back to any other symbol.
+ */
+async function readProjectTicker(
+  client: PublicClient,
+  chainId: JBChainId,
+  projectId: number,
+): Promise<string> {
+  try {
+    const token = await getTokenAddress(client, {
+      chainId,
+      projectId: BigInt(projectId),
+    })
+    if (!token) return ''
+    return (await client.readContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'symbol',
+    })) as string
+  } catch {
+    return ''
+  }
+}
+
 const UNLIMITED_FLOOR = 2n ** 200n
 const ZERO_ADDRESS = zeroAddress.toLowerCase()
 
 export type ExportProjectProfile = {
   name: string
-  ticker: string
   tagline: string
   description: string
   payNotice?: string
@@ -57,10 +91,10 @@ function percent(value: number): string {
   return String(Number(value.toFixed(6)))
 }
 
+/** The split's lock as the `datetime-local` wall clock the create flow parses
+ *  back with `new Date(value)` — local in both directions. */
 function lockDate(timestamp: number): string {
-  return timestamp > 0
-    ? new Date(timestamp * 1000).toISOString().slice(0, 16)
-    : ''
+  return timestamp > 0 ? toLocalDateTimeInput(timestamp) : ''
 }
 
 function scaleDecimals(
@@ -81,7 +115,11 @@ function splitRecipient(raw: RawSplit, value: string): DraftSplit {
 
   if (raw.hook.toLowerCase() !== ZERO_ADDRESS) {
     split.kind = 'hook'
-    split.hookKind = 'custom'
+    // A redeploy of a market split should attach the CURRENT hook, which the preset
+    // resolves per chain. A superseded generation stays a literal custom address so the
+    // export round-trips verbatim rather than silently migrating the recipient.
+    split.hookKind =
+      lpSplitHookGeneration(raw.hook) === 'current' ? 'fundmarket' : 'custom'
     split.hookAddress = raw.hook
     if (raw.projectId > 0n) split.projectId = raw.projectId.toString()
     if (raw.beneficiary.toLowerCase() !== ZERO_ADDRESS) {
@@ -219,6 +257,35 @@ async function readContext(
  * Reconstruct the current onchain ruleset into the native create-flow schema.
  * Any unavoidable gaps are returned as warnings for confirmation before save.
  */
+/**
+ * Is the any-token router-registry terminal in this project's terminal list?
+ *
+ * Chains without a registry deployment can't have one, and a directory read
+ * that fails leaves the answer unknown — both report `false`, matching what a
+ * redeploy could actually reproduce there.
+ */
+async function routerTerminalAttached(
+  client: PublicClient,
+  chainId: JBChainId,
+  projectId: bigint,
+): Promise<boolean> {
+  let registry: string
+  try {
+    registry = v6Address('JBRouterTerminalRegistry', chainId)
+  } catch {
+    return false
+  }
+  const terminals = (await client
+    .readContract({
+      address: v6Address('JBDirectory', chainId),
+      abi: jbDirectoryAbi,
+      functionName: 'terminalsOf',
+      args: [projectId],
+    })
+    .catch(() => [])) as readonly string[]
+  return terminals.some((terminal) => sameAddress(terminal, registry))
+}
+
 export async function buildProjectDraftExport({
   client,
   chainId,
@@ -257,8 +324,14 @@ export async function buildProjectDraftExport({
     )
   }
 
+  // Whether this project accepts ANY token via the router-registry terminal is
+  // a real, observable property of the deployment — hardcoding `false` meant a
+  // redeployed clone silently lost (or, read the other way, gained) the
+  // any-token router the original chose.
+  const allowAnyToken = await routerTerminalAttached(client, chainId, pid)
+
   const rulesetId = BigInt(current.ruleset.id)
-  const [access, rawReserved] = await Promise.all([
+  const [access, rawReserved, upcoming] = await Promise.all([
     Promise.all(
       contexts.map((context) =>
         readContext(client, chainId, pid, rulesetId, context),
@@ -270,6 +343,7 @@ export async function buildProjectDraftExport({
       functionName: 'splitsOf',
       args: [pid, rulesetId, RESERVED_TOKEN_SPLIT_GROUP_ID],
     }) as Promise<readonly RawSplit[]>,
+    getUpcomingRuleset(client, { chainId, projectId: pid }).catch(() => null),
   ])
 
   const warnings: string[] = []
@@ -287,6 +361,20 @@ export async function buildProjectDraftExport({
       'The deployment uses a data hook. The draft includes a fresh empty shop, but existing shop inventory and custom hook behavior are not copied.',
     )
   }
+  // The export reconstructs the CURRENT ruleset only. A stored next
+  // configuration — every stage after the first of a multi-stage revnet — has
+  // no representation in the single-stage draft, so say so rather than let the
+  // redeploy silently drop it. An auto-cycling project re-reports its own id
+  // here; only a distinct stored configuration counts.
+  if (
+    upcoming &&
+    BigInt(upcoming.ruleset.id) !== 0n &&
+    BigInt(upcoming.ruleset.id) !== BigInt(current.ruleset.id)
+  ) {
+    warnings.push(
+      `Only the live ${isRevnet ? 'stage' : 'ruleset'} was reconstructed. This project has another ${isRevnet ? 'stage' : 'ruleset'} queued after it, which the draft does not include.`,
+    )
+  }
   if (current.metadata.ownerMustSendPayouts) {
     warnings.push(
       'The live rules require owner-sent payouts; that low-level flag is not editable in the create flow.',
@@ -295,6 +383,16 @@ export async function buildProjectDraftExport({
   if (Number(current.metadata.metadata || 0) !== 0) {
     warnings.push(
       'The live rules contain custom metadata bits which are not editable in the create flow.',
+    )
+  }
+
+  // The ticker is read from the project's OWN ERC-20, never from bendystraw's project
+  // row: that row's `tokenSymbol` is the ACCOUNTING symbol, so inheriting it re-launches
+  // the clone with an ERC-20 tickered after what the original was paid IN ("ETH").
+  const ticker = await readProjectTicker(client, chainId, projectId)
+  if (!ticker) {
+    warnings.push(
+      'This deployment has no ERC-20 token yet, so the draft has no ticker. Pick one before redeploying.',
     )
   }
 
@@ -383,6 +481,19 @@ export async function buildProjectDraftExport({
   stage.issuanceRate = formatUnits(current.ruleset.weight, 18)
   stage.cutOn = Number(current.ruleset.weightCutPercent) > 0
   stage.cutPct = percent(Number(current.ruleset.weightCutPercent) / 10_000_000)
+  // A revnet encodes its issuance-cut cadence as the ruleset DURATION, and the
+  // create flow reads it back from `cutFreqDays` (never `durationValue`). Left
+  // at the new-stage default a 90-day-cut revnet would re-import — and relaunch
+  // — with 30-day cuts, immutably.
+  if (isRevnet && stage.cutOn) {
+    if (duration >= 86_400 && duration % 86_400 === 0) {
+      stage.cutFreqDays = String(duration / 86_400)
+    } else {
+      warnings.push(
+        `The issuance cut runs every ${duration} seconds, which the create editor can only express in whole days. Set the cut frequency before redeploying.`,
+      )
+    }
+  }
   stage.reservedPct = percent(Number(current.metadata.reservedPercent) / 100)
   stage.reservedSplits = reservedRows(
     rawReserved,
@@ -480,7 +591,7 @@ export async function buildProjectDraftExport({
     v: 1,
     flavor: isRevnet ? 'revnet' : 'project',
     name: profile.name,
-    ticker: profile.ticker,
+    ticker,
     tagline: profile.tagline,
     description: profile.description,
     payNotice: profile.payNotice ?? '',
@@ -495,7 +606,7 @@ export async function buildProjectDraftExport({
     },
     owner,
     ownerPerChain: authorityByChain,
-    allowAnyToken: false,
+    allowAnyToken,
     approvalCustom: deadline.custom,
     approvalPerChain: {},
     accepts: accepts.length ? accepts : ['eth'],

@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
@@ -42,10 +41,10 @@ import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { FlowError, shortError } from '@/lib/errors'
 import {
-  USD_SCALE,
   fmtPct,
   formatTokenAmount,
   formatUsd18,
+  treasuryUsdValue,
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import {
@@ -307,21 +306,12 @@ async function readChainFunds(
           })
           .catch(() => null)
       : null
-    // JBPrices is the source of truth. USDC can still be valued safely at its
-    // accounting unit when a price lookup is temporarily unavailable. Never
-    // interpret a zero oracle response as a real $0 quote for a held token.
-    const resolvedUsdPrice =
-      usdPrice != null && usdPrice > 0n
-        ? usdPrice
-        : symbol.toUpperCase() === 'USDC' && ctx.decimals === 6
-          ? USD_SCALE
-          : null
-    const usd =
-      balance === 0n
-        ? 0n
-        : resolvedUsdPrice == null
-          ? null
-          : (balance * resolvedUsdPrice) / 10n ** BigInt(ctx.decimals)
+    const usd = treasuryUsdValue({
+      balance,
+      usdPrice,
+      symbol,
+      decimals: ctx.decimals,
+    })
 
     return {
       chainId,
@@ -344,7 +334,6 @@ async function readChainFunds(
         terminal,
         store,
         limitsAddress,
-        etherscanHost: JB_CHAINS[chainId]?.etherscanHostname,
       },
     }
   } catch {
@@ -651,7 +640,6 @@ export function FundsTab({
                 ctx={home.ctx}
                 tokenSymbol={home.tokenSymbol}
                 balance={home.balance}
-                etherscanHost={home.etherscanHost}
               />
             ) : (
               <p className="mt-1 text-sm text-ink">
@@ -741,7 +729,6 @@ function PayoutsTable({
   ctx,
   tokenSymbol,
   balance,
-  etherscanHost,
 }: {
   chainId: JBChainId
   splits: readonly Split[]
@@ -749,7 +736,6 @@ function PayoutsTable({
   ctx: JBAccountingContext
   tokenSymbol: string
   balance: bigint
-  etherscanHost?: string
 }) {
   // Each recipient's share of what can still be paid out this cycle.
   const distributable = activeLine
@@ -788,7 +774,6 @@ function PayoutsTable({
                   <SplitRecipient
                     split={split}
                     chainId={chainId}
-                    host={etherscanHost}
                   />
                 </td>
                 <td className="py-1.5 text-right">

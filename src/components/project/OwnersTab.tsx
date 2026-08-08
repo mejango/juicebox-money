@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
   jbContractAddress,
@@ -76,6 +75,7 @@ import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
 import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { explorerTxUrl } from '@/lib/chainDisplay'
 
 /**
  * The Owners (revnet) / Tokens (custom) tab (website/ parity:
@@ -89,7 +89,6 @@ export function OwnersTab({
   isRevnet,
   suckerGroupId,
   chains,
-  tokenSymbol = 'tokens',
 }: {
   chainId: JBChainId
   projectId: number
@@ -97,18 +96,13 @@ export function OwnersTab({
   suckerGroupId: string | null
   /** [chainId, projectId] pairs across the sucker group (incl. this chain). */
   chains: [number, number][]
-  /** The project's own token symbol, for the Market card display. */
-  tokenSymbol?: string
 }) {
-  const etherscanHost = JB_CHAINS[chainId]?.etherscanHostname
-
   return (
     <div className="space-y-5">
       <TokenPanel
         chainId={chainId}
         projectId={projectId}
         chainIds={chains.map(([cid]) => cid)}
-        etherscanHost={etherscanHost}
         compact
       />
       <SubTabs
@@ -128,7 +122,7 @@ export function OwnersTab({
                   chainId={chainId}
                   projectId={projectId}
                   suckerGroupId={suckerGroupId}
-                  etherscanHost={etherscanHost}
+                  chains={chains}
                 />
               </div>
             ),
@@ -139,7 +133,6 @@ export function OwnersTab({
               <MarketSection
                 chainId={chainId}
                 projectId={projectId}
-                tokenSymbol={tokenSymbol}
                 suckerGroupId={suckerGroupId}
               />
             ),
@@ -171,10 +164,7 @@ export function OwnersTab({
                 {
                   label: 'Auto issuance',
                   content: (
-                    <AutoIssuanceSection
-                      chains={chains}
-                      tokenSymbol={tokenSymbol}
-                    />
+                    <AutoIssuanceSection chains={chains} />
                   ),
                 },
                 {
@@ -507,8 +497,12 @@ function YourChainRow({
                 args: [
                   BigInt(projectId),
                   balance,
-                  [terminal],
-                  contexts.map(ctx => ctx.token),
+                  // Empty arrays mean ALL terminals / ALL accounting contexts
+                  // (JBTerminalStore.sol:860-885). Naming only the canonical
+                  // terminal underreports every project holding a balance in
+                  // another one.
+                  [],
+                  [],
                   BigInt(primary.decimals),
                   BigInt(primary.currency),
                 ],
@@ -653,7 +647,6 @@ function YourChainRow({
               chainId={chainId}
               projectId={projectId}
               holder={holder}
-              credits={position.credits}
               onDone={refetch}
             />
           </td>
@@ -759,7 +752,6 @@ function ClaimFlow({
   chainId: JBChainId
   projectId: number
   holder: Address
-  credits: bigint
   onDone: () => void
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
@@ -772,10 +764,7 @@ function ClaimFlow({
 
   const busy = checking || tx.busy
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
 
   useEffect(() => {
     if (tx.phase === 'success') onDone()
@@ -1039,32 +1028,36 @@ function AllHoldersCard({
   chainId,
   projectId,
   suckerGroupId,
-  etherscanHost,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   suckerGroupId: string | null
-  etherscanHost?: string
+  chains: [number, number][]
 }) {
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const tokenUnit = projectToken?.symbol || 'tokens'
 
+  // Holders are read PER DEPLOYMENT, never by sucker group: extending a group re-stamps
+  // only a few indexer tables, so a group-keyed read drops every holder who has not
+  // transacted since the extension. `(chainId, projectId)` keys never move.
+  const refs = chains.length ? chains : [[chainId, projectId] as [number, number]]
+  const refsParam = refs.map(([cid, pid]) => `${cid}:${pid}`).join(',')
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['participants', suckerGroupId ?? `${chainId}:${projectId}`],
+    queryKey: ['participants', refsParam, suckerGroupId],
     meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
     queryFn: async () => {
-      // chainId rides along on the suckerGroup branch as an endpoint-routing
-      // hint (testnet groups live on the testnet indexer).
-      const qs = suckerGroupId
-        ? `suckerGroupId=${encodeURIComponent(suckerGroupId)}&chainId=${chainId}`
-        : `chainId=${chainId}&projectId=${projectId}`
-      const res = await fetch(`/api/participants?${qs}`)
+      const qs = new URLSearchParams({ refs: refsParam })
+      if (suckerGroupId) qs.set('suckerGroupId', suckerGroupId)
+      const res = await fetch(`/api/participants?${qs.toString()}`)
       if (!res.ok) throw new Error('Holder data unavailable')
       return (await res.json()) as {
         items: BsParticipant[]
         totalCount: number
+        groupExtended?: boolean
       }
     },
   })
@@ -1129,6 +1122,14 @@ function AllHoldersCard({
           Token owners paid in, received splits, received auto-issuance, or got
           them second-hand.
         </p>
+        {data?.groupExtended ? (
+          <p className="mt-2 rounded-lg bg-smoke-75 px-3 py-2 text-xs leading-relaxed text-smoke-700">
+            This project&apos;s chain group was extended. Holders below are read
+            per chain, so they are complete — but panels the indexer only keys by
+            group (price history, the settlement queue) can be missing activity
+            from before the extension.
+          </p>
+        ) : null}
       </div>
       {isLoading ? (
         <HolderDistributionSkeleton rows={5} />
@@ -1167,7 +1168,7 @@ function AllHoldersCard({
                         <span className="min-w-0">
                           <AddressLink
                             address={holder.address}
-                            host={etherscanHost}
+                            chainId={chainId}
                             className="block truncate text-ink"
                             title={holder.address}
                           />
@@ -1705,10 +1706,7 @@ function DistributeFlow({
 
   const busy = tx.busy
 
-  const chainMeta = JB_CHAINS[chainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
 
   useEffect(() => {
     if (tx.phase === 'success') onDone()

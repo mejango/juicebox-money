@@ -1,7 +1,11 @@
 "use client";
 
 import { ChainIcon } from "@/components/ChainIcon";
-import { FOREVER_SECONDS, autoIssuanceMintChain } from "@/lib/launch";
+import {
+  FOREVER_SECONDS,
+  autoIssuanceMintChain,
+  routesAllFunds,
+} from "@/lib/launch";
 import { chainName } from "@/lib/urn";
 import { CashOutCurve } from "./CashOutCurve";
 import {
@@ -255,12 +259,29 @@ export function stageOk(
   );
 }
 
+/**
+ * Per accepted token: does this stage route EVERYTHING out (no payout limit)?
+ * The input to {@link routesAllFunds} on the draft side — `buildRoutedSplits`
+ * maps these modes onto the encoded limits one-for-one ("all" ⇒ no limit,
+ * "amounts" ⇒ a limit, zero-valued when no amounts are set), so the editor and
+ * the encoder read the same configuration.
+ */
+export function stageRoutesEverything(
+  stage: DraftStage,
+  multiToken: boolean,
+): boolean[] {
+  return multiToken
+    ? [stage.routedMode === "all", stage.routedModeUsdc === "all"]
+    : [stage.routedMode === "all"];
+}
+
 /** Summary parts for a stage (website/'s stageSummaryRaw). */
 export function stageSummaryParts(
   stage: DraftStage,
   index: number,
   unitLabel: string,
   flavor: "project" | "revnet" = "project",
+  multiToken = false,
 ): string[] {
   const parts: string[] = [];
   if (index === 0) {
@@ -308,7 +329,10 @@ export function stageSummaryParts(
         ? `${splitsPct}% to splits`
         : `${splitsPct}% reserved`,
     );
-  const routedAll = stage.payouts === "routed" && stage.routedMode === "all";
+  const routedAll = routesAllFunds(
+    stage.payouts,
+    stageRoutesEverything(stage, multiToken),
+  );
   if (flavor === "revnet") {
     parts.push(
       stage.cashOuts
@@ -327,8 +351,11 @@ export function stageSummary(
   index: number,
   unitLabel: string,
   flavor: "project" | "revnet" = "project",
+  multiToken = false,
 ): string {
-  return stageSummaryParts(stage, index, unitLabel, flavor).join(" | ");
+  return stageSummaryParts(stage, index, unitLabel, flavor, multiToken).join(
+    " | ",
+  );
 }
 
 const CASH_OUT_TAXES = [
@@ -466,7 +493,10 @@ export function StageRulesEditor({
   const reservedPercent = splitsTotal(stage.reservedSplits, "percent");
   const reservedOn = reservedPercent > 0;
   const payoutsMode = stage.routedMode === "all" ? "percent" : "amount";
-  const routedAll = stage.payouts === "routed" && stage.routedMode === "all";
+  const routedAll = routesAllFunds(
+    stage.payouts,
+    stageRoutesEverything(stage, multiToken),
+  );
   const issuanceOk = stageIssuanceOk(stage, isFirst);
 
   const timingSummary = isRevnet
@@ -508,14 +538,18 @@ export function StageRulesEditor({
       : stage.payouts === "flexible"
         ? `Flexible withdrawals${stage.surplusCapOn ? " (capped)" : ""}`
         : validPayoutSplits === 0
-          ? "Routing all funds to the project owner"
+          ? stage.routedMode === "all"
+            ? "Routing all funds to the project owner"
+            : "No payout amounts set"
           : stage.routedMode === "all"
             ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`
             : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
     (stage.payouts !== "none" && stage.holdFees ? " | fees held" : "");
 
   const cashOutsSummary = routedAll
-    ? "Off — all funds routed"
+    ? multiToken
+      ? "Off — every accepted token fully routed"
+      : "Off — all funds routed"
     : stage.cashOuts
       ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${stageCashOutTax(stage) / 100}% tax`}`
       : "Off";
@@ -1061,8 +1095,12 @@ export function StageRulesEditor({
             </div>
           ) : null}
 
+          {/* The toggle must render wherever the encoding would honor it:
+              gating on the ETH mode alone hid it whenever ETH routed everything
+              while USDC kept a cap, silently carrying a stale "yes" into an
+              immutable surplus allowance. */}
           {stage.payouts === "flexible" ||
-          (stage.payouts === "routed" && stage.routedMode === "amounts") ? (
+          (stage.payouts === "routed" && !routedAll) ? (
             <div className="mt-3">
               {stage.payouts === "routed" ? (
                 <CheckRow
@@ -1179,8 +1217,9 @@ export function StageRulesEditor({
           </>
         ) : routedAll ? (
           <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-            Routing all funds by percentage leaves no surplus for token holders
-            to cash out. Switch payouts to fixed amounts to leave a surplus.
+            {multiToken
+              ? "Every accepted token routes all of its funds by percentage, leaving no surplus for token holders to cash out. Switch either token's payouts to fixed amounts to leave a surplus."
+              : "Routing all funds by percentage leaves no surplus for token holders to cash out. Switch payouts to fixed amounts to leave a surplus."}
           </p>
         ) : (
           <TaxPicker

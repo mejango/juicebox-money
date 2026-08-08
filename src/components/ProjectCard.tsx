@@ -10,7 +10,12 @@ import { ProjectLogo } from './ProjectLogo'
  * marked with a version chip.
  */
 export function ProjectCard({ card }: { card: TrendingCard }) {
-  const raised = formatTokenAmount(card.volume, card.decimals)
+  // Omitted rather than guessed: a mixed-accounting group has no single unit
+  // for its total (see `suckerGroupAccountingToken`).
+  const raised =
+    card.decimals !== null && card.symbol !== null
+      ? `${formatTokenAmount(card.volume, card.decimals)} ${card.symbol}`
+      : null
   const className = 'card card-lift group flex flex-col gap-4 p-4 sm:p-5'
 
   const body = (
@@ -35,12 +40,12 @@ export function ProjectCard({ card }: { card: TrendingCard }) {
         ) : null}
       </div>
       <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
-        <span className="min-w-0">
-          <span className="field-label">Raised</span>
-          <span className="text-sm font-bold text-ink">
-            {raised} {card.symbol}
+        {raised ? (
+          <span className="min-w-0">
+            <span className="field-label">Raised</span>
+            <span className="text-sm font-bold text-ink">{raised}</span>
           </span>
-        </span>
+        ) : null}
         <span className="min-w-0">
           <span className="field-label">Payments</span>
           <span className="text-sm font-bold text-ink">

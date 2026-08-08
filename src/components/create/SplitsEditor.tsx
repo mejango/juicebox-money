@@ -1,10 +1,12 @@
 'use client'
 
 import { resolvedAddress } from '@/lib/ens'
+import { truncateAddress } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField, ProjectIdField } from './AddressField'
 import { AddButton, Piped } from './ui'
+import { chainsWithoutLpSplitHook } from '@/lib/launch'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
@@ -36,8 +38,12 @@ export type DraftSplit = {
   /** Per-chain amount overrides ('amount' mode payout rows). */
   perChainAmount: Record<number, string>
   perChainOpen: boolean
-  /** 'hook' kind: the Fund market LP hook, or a custom hook address. */
-  hookKind: 'fundmarket' | 'custom'
+  /**
+   * 'hook' kind: the current Fund market LP hook, a superseded generation of it
+   * (recognized read-only — `hookAddress` is re-encoded verbatim so an existing
+   * split is never silently migrated), or a custom hook address.
+   */
+  hookKind: 'fundmarket' | 'fundmarket-legacy' | 'custom'
   hookAddress: string
   /** Project payout routing: pay (default) or add to balance. */
   preferAddToBalance: boolean
@@ -90,6 +96,8 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
   }
   if (split.kind === 'hook') {
     if (split.hookKind === 'fundmarket') return true
+    if (split.hookKind === 'fundmarket-legacy')
+      return resolvedAddress(split.hookAddress) !== null
     return (
       resolvedAddress(split.hookAddress) !== null &&
       // Optional project + beneficiary riders must be valid when set.
@@ -162,6 +170,11 @@ export function SplitsEditor({
   }
   const total = splitsTotal(splits, mode)
   const multiChain = (chainIds?.length ?? 0) > 1
+  // The market hook is not deployed everywhere (OP Sepolia has none). A reserved split
+  // pointing at a codeless address reverts split processing, so the preset is withheld
+  // rather than encoded and left to fail on chain.
+  const lpGapChains = chainsWithoutLpSplitHook(chainIds ?? [])
+  const fundMarketOk = lpGapChains.length === 0
 
   return (
     <div>
@@ -218,7 +231,14 @@ export function SplitsEditor({
                       aria-label="Hook type"
                       className="input-well select-caret min-h-[44px] w-36 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
                     >
-                      <option value="fundmarket">Fund market</option>
+                      <option value="fundmarket" disabled={!fundMarketOk}>
+                        Fund market
+                      </option>
+                      {split.hookKind === 'fundmarket-legacy' ? (
+                        <option value="fundmarket-legacy">
+                          Fund market (older version)
+                        </option>
+                      ) : null}
                       <option value="custom">Custom</option>
                     </select>
                   ) : null}
@@ -254,11 +274,28 @@ export function SplitsEditor({
               ) : null}
 
               {split.kind === 'hook' ? (
-                split.hookKind === 'fundmarket' && allowFundMarket ? (
+                split.hookKind === 'fundmarket-legacy' && allowFundMarket ? (
                   <p className="mt-2 rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
-                    Pools split tokens into a Uniswap V4 buyback position.
-                    Trading fees route back to your project.
+                    This recipient points at an older version of the market
+                    hook ({truncateAddress(split.hookAddress)}). It is kept as
+                    is; pick &ldquo;Fund market&rdquo; to move it to the current
+                    one.
                   </p>
+                ) : split.hookKind === 'fundmarket' && allowFundMarket ? (
+                  <div className="mt-2">
+                    <p className="rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
+                      Pools split tokens into a Uniswap V4 buyback position.
+                      Trading fees route back to your project.
+                    </p>
+                    {lpGapChains.length > 0 ? (
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-error-600">
+                        No market hook is deployed on{' '}
+                        {lpGapChains.map(chainName).join(', ')} — remove this
+                        recipient or deselect{' '}
+                        {lpGapChains.length > 1 ? 'those chains' : 'that chain'}.
+                      </p>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="mt-2 space-y-2">
                     <AddressField

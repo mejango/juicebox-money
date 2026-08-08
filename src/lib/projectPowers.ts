@@ -1,6 +1,11 @@
-import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
+import {
+  JBCoreContracts,
+  NATIVE_TOKEN,
+  jbContractAddress,
+} from '@bananapus/nana-sdk-core'
 import { buildAccountingContext } from '@bananapus/nana-sdk-core/v6'
 import type { Address } from 'viem'
+import { resolvedAddress } from '@/lib/ens'
 
 export type PowerFlag =
   | 'allowOwnerMinting'
@@ -11,7 +16,14 @@ export type PowerFlag =
   | 'allowSetCustomToken'
   | 'allowAddAccountingContext'
 
-type FieldKind = 'address' | 'amount' | 'uint' | 'decimals' | 'bool'
+type FieldKind =
+  | 'address'
+  /** A per-chain LIST of addresses, entered one per line. */
+  | 'addressList'
+  | 'amount'
+  | 'uint'
+  | 'decimals'
+  | 'bool'
 
 export type FlowField = {
   name: string
@@ -19,12 +31,18 @@ export type FlowField = {
   kind: FieldKind
   placeholder?: string
   help?: string
-  initial?: string | 'ADDR_CONNECTED' | 'ADDR_CONTROLLER' | 'ADDR_TERMINAL'
+  initial?:
+    | string
+    | 'ADDR_CONNECTED'
+    | 'ADDR_CONTROLLER'
+    | 'ADDR_TERMINAL'
+    /** The project's CURRENT terminal list, read on chain. */
+    | 'ADDR_TERMINALS'
 }
 
 export type ResolvedValues = Record<
   string,
-  Address | bigint | number | boolean
+  Address | readonly Address[] | bigint | number | boolean
 >
 
 export type PowerDescriptor = {
@@ -122,25 +140,26 @@ export const POWERS: PowerDescriptor[] = [
   {
     flag: 'allowSetTerminals',
     label: 'Set payment terminals',
-    desc: 'Set the terminals where funds are paid in. Defaults to the standard terminal.',
+    desc: 'Set the complete list of terminals funds can be paid in through.',
     actionLabel: 'Set terminals',
     danger:
-      'Dangerous: this reroutes where funds are paid in. A wrong terminal can misdirect or strand funds.',
+      'Dangerous: this REPLACES the entire terminal list — every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
     target: 'directory',
     functionName: 'setTerminalsOf',
     needsController: false,
     fields: [
       {
-        name: 'terminal',
-        label: 'Terminal',
-        kind: 'address',
-        placeholder: '0x… terminal',
-        initial: 'ADDR_TERMINAL',
+        name: 'terminals',
+        label: 'Terminals',
+        kind: 'addressList',
+        placeholder: '0x… (one per line)',
+        initial: 'ADDR_TERMINALS',
+        help: 'The full list, one address per line. Prefilled with what is set on chain right now.',
       },
     ],
     buildArgs: (projectId, values) => [
       projectId,
-      [values.terminal as Address],
+      values.terminals as readonly Address[],
     ],
   },
   {
@@ -258,3 +277,57 @@ export const POWERS: PowerDescriptor[] = [
     ],
   },
 ]
+
+/** The live per-chain state a field's prefill can read. */
+export type PowerFieldContext = {
+  chainId: number
+  controller: Address | null
+  /** The project's CURRENT terminal list, or null when it could not be read. */
+  terminals: readonly Address[] | null
+}
+
+/** A field's starting value on one chain, resolving the ADDR_* prefill sentinels. */
+export function initialFieldValue(
+  field: FlowField,
+  row: PowerFieldContext,
+  connected: Address | undefined,
+): string {
+  if (field.initial === 'ADDR_CONNECTED') return connected ?? ''
+  if (field.initial === 'ADDR_CONTROLLER') return row.controller ?? ''
+  if (field.initial === 'ADDR_TERMINAL') {
+    return (
+      ((
+        jbContractAddress['6'][JBCoreContracts.JBMultiTerminal] as Record<
+          number,
+          Address | undefined
+        >
+      )[row.chainId] ?? '')
+    )
+  }
+  // An unread list stays EMPTY rather than falling back to the standard terminal alone:
+  // a silent one-entry prefill is exactly how the router terminal got dropped.
+  if (field.initial === 'ADDR_TERMINALS') return (row.terminals ?? []).join('\n')
+  return field.initial ?? ''
+}
+
+/**
+ * One-per-line (or comma-separated) address list → resolved addresses, deduped in order.
+ * Null when the text is empty or any entry does not resolve — a partially-parsed list
+ * would silently drop a terminal, which is the failure this field exists to prevent.
+ */
+export function parseAddressList(raw: string): Address[] | null {
+  const entries = raw
+    .split(/[\s,]+/)
+    .map(entry => entry.trim())
+    .filter(Boolean)
+  if (!entries.length) return null
+  const out: Address[] = []
+  for (const entry of entries) {
+    const resolved = resolvedAddress(entry)
+    if (!resolved) return null
+    if (!out.some(existing => existing.toLowerCase() === resolved.toLowerCase())) {
+      out.push(resolved)
+    }
+  }
+  return out
+}

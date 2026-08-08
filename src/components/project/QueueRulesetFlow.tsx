@@ -40,7 +40,12 @@ import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { runAuthorityCalls, safeOutcomeMessage } from "@/lib/authority";
-import { billionthsToPct, etherscanTxUrl, formatDuration } from "@/lib/format";
+import {
+  billionthsToPct,
+  etherscanTxUrl,
+  formatDuration,
+  toLocalDateTimeInput,
+} from "@/lib/format";
 import { fetchSafeInfo } from "@/lib/safe";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
@@ -1208,12 +1213,6 @@ function sameQueueSource(
     BigInt(a.start) === BigInt(b.start) &&
     BigInt(a.duration) === BigInt(b.duration)
   );
-}
-
-function toLocalDateTimeInput(seconds: number): string {
-  const date = new Date(seconds * 1000);
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
 }
 
 function queueReviewHeading(action: QueueAction, start: number): string {

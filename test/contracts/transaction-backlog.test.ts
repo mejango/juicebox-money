@@ -57,6 +57,7 @@ const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
 const TOKEN = '0x3333333333333333333333333333333333333333' as Address
 const TERMINAL = '0x4444444444444444444444444444444444444444' as Address
+const ROUTER_TERMINAL = '0x4545454545454545454545454545454545454545' as Address
 const HOOK = '0x5555555555555555555555555555555555555555' as Address
 const CONTROLLER = '0x6666666666666666666666666666666666666666' as Address
 const AUTHORITY = '0x7777777777777777777777777777777777777777' as Address
@@ -195,9 +196,12 @@ describe('remaining local transaction builders', () => {
         args: [45n, 2n, 1n, HOOK],
         selector: '0xc6081d71',
       },
+      // setTerminalsOf REPLACES the list, so the form takes the whole list. A
+      // single-address field silently dropped the router terminal jbm's own
+      // launches register alongside the multiterminal.
       allowSetTerminals: {
-        values: { terminal: TERMINAL },
-        args: [45n, [TERMINAL]],
+        values: { terminals: [TERMINAL, ROUTER_TERMINAL] },
+        args: [45n, [TERMINAL, ROUTER_TERMINAL]],
         selector: '0x821b9fd8',
       },
       allowSetController: {

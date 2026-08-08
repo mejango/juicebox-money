@@ -34,6 +34,8 @@ const RELAYR_API = 'https://api.relayr.ba5ed.com'
 const RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:'
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
+/** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
+const RELAYR_NOT_FOUND_ATTEMPTS = 3
 
 export type RelayrEntry = {
   chain: number
@@ -116,7 +118,10 @@ export type RelayrPendingSession = {
   createdAt: number
 }
 
-export type RelayrExecutionErrorCode = 'RELAYR_FAILED' | 'RELAYR_TIMEOUT'
+export type RelayrExecutionErrorCode =
+  | 'RELAYR_FAILED'
+  | 'RELAYR_TIMEOUT'
+  | 'RELAYR_NOT_FOUND'
 
 export class RelayrExecutionError extends Error {
   readonly name = 'RelayrExecutionError'
@@ -184,7 +189,7 @@ export function relayrProgress(
  * days later fails at the forwarder with the payment already made. {@link relayrSessionExpired}
  * lets the resume UI say so instead of offering a retry that cannot succeed.
  */
-export const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
+const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
 
 /**
  * True once a session's signed ForwardRequests can no longer be executed.
@@ -637,6 +642,15 @@ export async function relayrPay(
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
+  // Review is open-ended — the quote can expire while it sits there. Re-check
+  // right before the send, not only before the review, so an expired bundle is
+  // never paid for.
+  if (
+    payment.payment_deadline &&
+    payment.payment_deadline <= Math.floor(Date.now() / 1000) + 15
+  ) {
+    throw new Error('This Relayr quote expired. Review the action again for a new quote.')
+  }
   let hash = await wallet.sendTransaction({
     account,
     to: payment.target,
@@ -665,6 +679,10 @@ export async function relayrPoll(
 ): Promise<RelayrTransactionRecord[]> {
   const started = Date.now()
   let lastRecords: RelayrTransactionRecord[] = []
+  // A bundle Relayr never had 404s forever. Reporting that as the "still
+  // processing, do not submit again" timeout tells the user to wait on
+  // something that does not exist.
+  let consecutiveNotFound = 0
   for (;;) {
     try {
       const elapsed = Date.now() - started
@@ -673,6 +691,20 @@ export async function relayrPoll(
         undefined,
         Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, Math.max(timeoutMs - elapsed, 1)),
       )
+      if (response.status === 404) {
+        consecutiveNotFound += 1
+        if (consecutiveNotFound >= RELAYR_NOT_FOUND_ATTEMPTS) {
+          throw new RelayrExecutionError(
+            `Relayr does not recognize bundle ${uuid}. Nothing is pending under it — start the action again.`,
+            'RELAYR_NOT_FOUND',
+            uuid,
+            lastRecords,
+            false,
+          )
+        }
+      } else {
+        consecutiveNotFound = 0
+      }
       if (response.ok) {
         const body = (await response.json()) as {
           transactions?: RelayrTransactionRecord[]
@@ -873,6 +905,12 @@ export async function runRelayrCalls({
     return resumeSavedRelayrSession(pendingScope, saved, onProgress)
   }
 
+  // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
+  // the session when the payment lands would report a bundle as still valid
+  // for however long the wallet sat on the signatures, and a "not yet expired"
+  // resume would then die at the forwarder. Taken before the first signature,
+  // so it can only understate the remaining validity.
+  const signedAt = Date.now()
   const entries: RelayrEntry[] = []
   for (let index = 0; index < calls.length; index++) {
     onProgress?.({
@@ -905,7 +943,7 @@ export async function runRelayrCalls({
         records: quote.transactions ?? [],
         itemCount: calls.length,
         account,
-        createdAt: Date.now(),
+        createdAt: signedAt,
       })
     }
     onProgress?.({
@@ -926,7 +964,7 @@ export async function runRelayrCalls({
       records: quote.transactions ?? [],
       itemCount: calls.length,
       account,
-      createdAt: Date.now(),
+      createdAt: signedAt,
     })
   }
   onProgress?.({

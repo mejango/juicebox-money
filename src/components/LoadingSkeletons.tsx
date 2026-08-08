@@ -315,7 +315,7 @@ export function TokenPanelSkeleton({ compact = false }: { compact?: boolean }) {
 }
 
 /** Ghost of the standalone market price chart: headline, range pills, plot. */
-export function MarketPriceChartSkeleton() {
+function MarketPriceChartSkeleton() {
   return (
     <div className="card p-5" aria-hidden="true">
       <div className="flex flex-wrap items-start justify-between gap-3">

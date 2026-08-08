@@ -13,8 +13,8 @@ import {
   encodeFunctionData,
   erc20Abi,
   zeroAddress,
-  zeroHash,
   type Address,
+  type Hex,
 } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
@@ -30,7 +30,7 @@ import {
   type AuthorityCall,
 } from '@/lib/authority'
 import { projectLogoUrl } from '@/lib/format'
-import { TOKEN_SYMBOL_RE } from '@/lib/manage'
+import { TOKEN_SYMBOL_RE, omnichainTokenSalt } from '@/lib/manage'
 import {
   customPropertiesText,
   fetchProjectMetadataJson,
@@ -38,7 +38,10 @@ import {
   parseCustomProperties,
   preservedMetadataKeys,
 } from '@/lib/project-metadata'
-import { buildTokenMetadataAuthorityCall } from '@/lib/transaction-builders'
+import {
+  buildDeployTokenAuthorityCall,
+  buildTokenMetadataAuthorityCall,
+} from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 const MAX_LOGO_BYTES = 1024 * 1024
@@ -868,6 +871,29 @@ export function MetadataEditor({
   )
 }
 
+/**
+ * The one CREATE2 salt every `deployERC20For` in a review shares, so all the
+ * chains of a project land the token on the SAME address (the ecosystem's
+ * omnichain ERC-20 convention). It anchors on the metadata of a token the
+ * project already holds on some chain when there is one, so extending onto a
+ * new chain reproduces the original address even after a rename.
+ */
+export function tokenDeploySalt(
+  rows: readonly {
+    token: Address | null
+    tokenName: string | null
+    tokenSymbol: string | null
+  }[],
+  name: string,
+  symbol: string,
+): Hex {
+  const deployed = rows.find(row => row.token && row.tokenName && row.tokenSymbol)
+  return omnichainTokenSalt(
+    deployed?.tokenName ?? name,
+    deployed?.tokenSymbol ?? symbol,
+  )
+}
+
 function TokenEditor({
   rows,
   fallbackName,
@@ -913,6 +939,7 @@ function TokenEditor({
       return
     }
     try {
+      const salt = tokenDeploySalt(rows, name, symbol)
       setReview(
         chosen.map(row => {
           if (!row.authority || !row.controller) {
@@ -928,22 +955,15 @@ function TokenEditor({
               symbol,
             })
           }
-          return {
+          return buildDeployTokenAuthorityCall({
             chainId: row.chainId,
             authority: row.authority,
-            target: row.controller,
-            data: encodeFunctionData({
-              abi: jbControllerAbi,
-              functionName: 'deployERC20For',
-              args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
-            }),
-            abi: jbControllerAbi,
-            functionName: 'deployERC20For',
-            args: [BigInt(row.projectId), name.trim(), symbol, zeroHash],
-            contractName: 'JBController',
-            gas: 500_000n,
-            label: 'Deploy ERC-20',
-          }
+            controller: row.controller,
+            projectId: BigInt(row.projectId),
+            name: name.trim(),
+            symbol,
+            salt,
+          })
         }),
       )
     } catch (reviewError) {
@@ -1055,6 +1075,12 @@ function TokenEditor({
             Final metadata: <span className="font-medium">{name.trim()}</span>{' '}
             ({symbol}). Existing balances are unchanged.
           </p>
+          {review.some(call => call.functionName === 'deployERC20For') ? (
+            <p className="mt-2">
+              Every deploy here uses the same salt, so the ERC-20 lands on one
+              address across the chains you sign from this account.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

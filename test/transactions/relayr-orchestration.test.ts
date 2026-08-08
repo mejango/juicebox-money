@@ -226,6 +226,26 @@ describe('Relayr quote and payment boundaries', () => {
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
+
+  it('re-checks the payment deadline after review, not only before it', async () => {
+    // The review has no time limit; a quote that was live when it opened can
+    // be dead by the time it is approved.
+    const start = Date.now()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start)
+    mocks.requireReview.mockImplementationOnce(async () => {
+      now.mockReturnValue(start + 120_000)
+    })
+
+    await expect(
+      relayrPay(
+        { ...payment, payment_deadline: Math.floor(start / 1000) + 60 },
+        ALICE,
+      ),
+    ).rejects.toThrow(/quote expired/i)
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    now.mockRestore()
+  })
 })
 
 describe('Relayr polling and resume semantics', () => {
@@ -266,6 +286,38 @@ describe('Relayr polling and resume semantics', () => {
         retryable: false,
       }),
     )
+  })
+
+  it('treats a persistently unknown bundle as a distinct non-retryable outcome', async () => {
+    // 404 means Relayr never had this uuid — the "still processing, do not
+    // submit again" timeout would tell the user to wait on nothing.
+    vi.mocked(fetch).mockResolvedValue(response({ error: 'not found' }, 404))
+
+    await expect(relayrPoll('bundle', undefined, 0, 60_000)).rejects.toEqual(
+      expect.objectContaining({
+        name: 'RelayrExecutionError',
+        code: 'RELAYR_NOT_FOUND',
+        retryable: false,
+      }),
+    )
+  })
+
+  it('does not treat a single 404 blip as terminal', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(response({ error: 'not found' }, 404))
+      .mockResolvedValueOnce(
+        response({
+          transactions: [
+            { status: { state: 'completed', data: { hash: DESTINATION_HASH } } },
+          ],
+        }),
+      )
+
+    await expect(relayrPoll('bundle', undefined, 0, 60_000)).resolves.toEqual([
+      expect.objectContaining({
+        status: expect.objectContaining({ state: 'completed' }),
+      }),
+    ])
   })
 
   it('times out as uncertain because a paid bundle can still execute', async () => {

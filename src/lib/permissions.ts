@@ -92,6 +92,16 @@ export function permissionDefinition(id: number): PermissionDefinition {
   )
 }
 
+/**
+ * Whether the SDK catalog knows this id. Callers that must preserve bits this
+ * build cannot render — the permission editor rewrites the whole set — key off
+ * the catalog rather than a hard-coded ceiling, so a future id stays preserved
+ * instead of becoming an irrevocable checkbox the moment the catalog grows.
+ */
+export function isKnownPermissionId(id: number): boolean {
+  return BY_ID.has(id)
+}
+
 export function decodePermissionBitmap(bitmap: bigint): number[] {
   return decodeSdkPermissionBitmap(bitmap, { includeUnknown: true })
 }

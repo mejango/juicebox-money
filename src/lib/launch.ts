@@ -1,8 +1,10 @@
 import {
+  JBUniswapV4LPSplitHookContracts,
   MappableAsset,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
   jb721TiersHookProjectDeployerAbi,
+  jbContractAddress,
   jbOmnichainDeployerAbi,
   parseSuckerDeployerConfig,
   type JBChainId,
@@ -19,11 +21,15 @@ import {
   buildRulesetMetadata,
   buildTerminalConfigurations,
   projectIdFromLaunchLogs,
+  requiredFeedPairs as sdkRequiredFeedPairs,
   TIER_UNLIMITED_SUPPLY,
   tokenCurrencyId,
   v6Address,
+  type JBAccountingContext,
+  type JBFeedPair,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
+import { chainName } from '@/lib/urn'
 
 /** 10,000 tokens per ETH/USD paid (18-decimal fixed point). */
 const DEFAULT_WEIGHT = 10n ** 22n
@@ -43,6 +49,32 @@ export const CASH_OUTS_OFF_REVNET = 9_999
 
 /** JBFundAccessLimitGroup "unlimited" payout amount sentinel. */
 const UNLIMITED_PAYOUT = 2n ** 224n - 1n
+
+/**
+ * Whether a stage routes EVERY accepted token's funds out entirely, leaving no
+ * surplus anywhere — the one payout configuration where cash outs are formally
+ * disabled.
+ *
+ * A token whose routed payouts have no limit ("route all funds by percentage")
+ * retains no surplus, but a project accepting ETH and USDC can route one and
+ * cap the other: the capped token keeps a surplus, so cash outs stay ON. Only
+ * an every-token sweep turns them off.
+ *
+ * ONE predicate for the whole flow — the encoder below, the create-flow plan
+ * builder, and the stage editor's summary all call this, so what the review
+ * screen says and what the immutable ruleset encodes cannot disagree.
+ */
+export function routesAllFunds(
+  payouts: StageRules['payouts'],
+  /** Per accepted token: does that token route everything (no payout limit)? */
+  perTokenRoutesEverything: readonly boolean[],
+): boolean {
+  return (
+    payouts === 'routed' &&
+    perTokenRoutesEverything.length > 0 &&
+    perTokenRoutesEverything.every(Boolean)
+  )
+}
 
 /**
  * `REVDeployer.deploySuckersFor` reads bit 2 of the CURRENT stage's app
@@ -97,10 +129,68 @@ export type StoreItem = {
   perChainSplits?: Record<number, SplitConfig[]>
 }
 
-/** The Uniswap V4 LP split hook ("Fund market") — same address on every
- *  supported chain (website/ deployments). */
-export const LP_SPLIT_HOOK =
-  '0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0' as Address
+/**
+ * The Uniswap V4 LP split hook ("Fund market"), from the SDK's generated
+ * deployment table — the same address on every chain that has one, but NOT every
+ * chain has one, which is the whole reason the lookup below exists: a reserved
+ * split whose `hook` has no code makes split processing revert, so the option has
+ * to be withheld per chain. Optimism Sepolia (11155420) is absent from the table
+ * because deploy-all has no `JBUniswapV4LPSplitHook.json` there.
+ */
+const LP_SPLIT_HOOK_ADDRESSES = jbContractAddress['6'][
+  JBUniswapV4LPSplitHookContracts.JBUniswapV4LPSplitHook
+] as Partial<Record<JBChainId, Address>>
+
+export const LP_SPLIT_HOOK = LP_SPLIT_HOOK_ADDRESSES[1] as Address
+
+/**
+ * Superseded LP-split-hook generations, newest first. Splits written by earlier releases
+ * still point at these; the editor must RECOGNIZE them so the row reads as a market split
+ * instead of an opaque custom hook, but it must never encode one into a new split.
+ */
+export const LEGACY_LP_SPLIT_HOOKS: readonly Address[] = [
+  // generation 2 — `JBUniswapV4LPSplitHook_deprecated2`
+  '0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0',
+  // generation 1 — `JBUniswapV4LPSplitHook_deprecated`
+  '0x2f23b09975eb9305670b01e94c11e702792f25a3',
+] as Address[]
+
+/** The market-split hook to encode on `chainId`, or null when it has no deployment. */
+export function lpSplitHookOn(chainId: number): Address | null {
+  return LP_SPLIT_HOOK_ADDRESSES[chainId as JBChainId] ?? null
+}
+
+/** Which generation `hook` belongs to, or null when it is an unrelated contract. */
+export function lpSplitHookGeneration(
+  hook: string,
+): 'current' | 'legacy' | null {
+  const address = hook.toLowerCase()
+  if (address === LP_SPLIT_HOOK.toLowerCase()) return 'current'
+  return LEGACY_LP_SPLIT_HOOKS.some(h => h.toLowerCase() === address)
+    ? 'legacy'
+    : null
+}
+
+/** The selected chains that cannot carry a market split. */
+export function chainsWithoutLpSplitHook(
+  chainIds: readonly number[],
+): number[] {
+  return chainIds.filter(id => !lpSplitHookOn(id))
+}
+
+/**
+ * The market-split hook for `chainId`, throwing rather than encoding a codeless address.
+ * The UI blocks this combination up front; this is the encoder's fail-closed backstop.
+ */
+export function requireLpSplitHook(chainId: number): Address {
+  const hook = lpSplitHookOn(chainId)
+  if (!hook) {
+    throw new Error(
+      `${chainName(chainId)} has no market split hook deployed — remove the "Fund market" recipient or deselect that chain.`,
+    )
+  }
+  return hook
+}
 
 /** One split recipient: an address, a project (its tokens go to
  *  `beneficiary`), or a split hook. Percent is out of 1e9. */
@@ -231,6 +321,10 @@ export type LaunchPlan = {
   /** 'project' launches via the 721 project deployer with owner-changeable
    *  rules; 'revnet' deploys fixed-forever stages via REVDeployer. */
   flavor: 'project' | 'revnet'
+  /** The project name. Revnets also use it as the ERC-20 name — REVDeployer
+   *  folds it into the cross-chain config hash and the token's deploy salt.
+   *  The 721 collection name is `store.name`. */
+  projectName: string
   /** Revnet only: the operator address and the token ticker. */
   operator: Address | null
   ticker: string
@@ -419,6 +513,82 @@ function treasuryToken(
   return currency === 'usdc' ? USDC_ADDRESSES[chainId] : NATIVE_TOKEN
 }
 
+/**
+ * The accounting contexts and ruleset base currency a plan encodes on
+ * `chainId`. ONE derivation, shared by {@link buildLaunchRequest} (which
+ * encodes them) and {@link requiredFeedPairs} (which proves the price feeds
+ * they imply exist) — a second copy is how the guard could drift from the
+ * launch it guards.
+ *
+ * Custom tokens are exclusive and price everything in themselves (their
+ * token-keyed currency id); otherwise ETH and/or USDC contexts, with the base
+ * currency following ETH when present.
+ */
+function launchAccounting(
+  accounting: AccountingConfig,
+  issuanceBase: LaunchPlan['issuanceBase'],
+  chainId: JBChainId,
+): { contexts: JBAccountingContext[]; baseCurrency: number } {
+  const contexts = accounting.custom
+    ? [
+        buildAccountingContext(
+          accounting.custom.address,
+          accounting.custom.decimals,
+        ),
+      ]
+    : accounting.tokens.map(t =>
+        buildAccountingContext(treasuryToken(t, chainId), t === 'usdc' ? 6 : 18),
+      )
+  const baseCurrency = accounting.custom
+    ? tokenCurrencyId(accounting.custom.address)
+    : (issuanceBase ?? (accounting.tokens.includes('eth') ? 'eth' : 'usd')) ===
+        'eth'
+      ? BASE_CURRENCY_ETH
+      : BASE_CURRENCY_USD
+  return { contexts, baseCurrency }
+}
+
+/** One JBPrices pair a launched project's terminal will read at runtime,
+ *  carrying the human denomination names the launch-guard copy needs.
+ *  Order is irrelevant — JBPrices resolves direct and inverse feeds. */
+export type FeedPair = JBFeedPair & {
+  aLabel: string
+  bLabel: string
+}
+
+/**
+ * Every JBPrices pair the launched project's terminal must be able to resolve
+ * (SDK `requiredFeedPairs`, fed the exact contexts and base currency
+ * {@link buildLaunchRequest} encodes), labelled for the block copy.
+ *
+ * Custom-token plans yield nothing: their single context's currency IS the base
+ * currency, and the terminal short-circuits equal currencies.
+ */
+export function requiredFeedPairs(
+  accounting: AccountingConfig,
+  issuanceBase: LaunchPlan['issuanceBase'],
+  chainId: JBChainId,
+): FeedPair[] {
+  const { contexts, baseCurrency } = launchAccounting(
+    accounting,
+    issuanceBase,
+    chainId,
+  )
+  const labels = new Map<number, string>([
+    [BASE_CURRENCY_ETH, 'ETH'],
+    [BASE_CURRENCY_USD, 'USD'],
+    [tokenCurrencyId(NATIVE_TOKEN), 'ETH'],
+    [tokenCurrencyId(USDC_ADDRESSES[chainId]), 'USDC'],
+  ])
+  const label = (currency: number) =>
+    labels.get(currency) ?? `currency ${currency}`
+  return sdkRequiredFeedPairs(contexts, baseCurrency).map(pair => ({
+    ...pair,
+    aLabel: label(pair.pricingCurrency),
+    bLabel: label(pair.unitCurrency),
+  }))
+}
+
 /** The ONE chain an auto-issuance row mints on: the row's stored choice
  *  while it's still a selected chain, else the first selected chain. Must
  *  be config-chain independent — every chain encodes the SAME row list and
@@ -457,11 +627,15 @@ function scaleDecimals(amount: bigint, from: number, to: number): bigint {
  * ruleset tuple omits dataHook/useDataHookForPay, and viem drops those extra
  * metadata keys by name.
  *
- * Multi-chain launches are independent per-chain transactions — no suckers
- * are configured, so byte-identical rulesets aren't required.
+ * Multi-chain launches are independent per-chain transactions. When
+ * `plan.linkChains` is set and more than one chain is selected, the omnichain
+ * branch below ALSO configures suckers (`suckerConfigFor`) — the plan is the
+ * same on every chain, so the rulesets come out byte-identical either way.
  */
 export function buildLaunchRequest(args: {
   chainId: JBChainId
+  /** The sending wallet. Only used for sessions pinned before `plan.owner`
+   *  became concrete — see `owner` below. */
   owner: Address
   projectUri: string
   creationFee: bigint
@@ -471,28 +645,17 @@ export function buildLaunchRequest(args: {
 }) {
   const { chainId, plan } = args
   const { accounting } = plan
-  // Custom tokens are exclusive and price everything in themselves (their
-  // token-keyed currency id) so no feed is needed; otherwise ETH and/or
-  // USDC contexts, with the base currency following ETH when present.
-  const contexts = accounting.custom
-    ? [
-        buildAccountingContext(
-          accounting.custom.address,
-          accounting.custom.decimals,
-        ),
-      ]
-    : accounting.tokens.map(t =>
-        buildAccountingContext(
-          treasuryToken(t, chainId),
-          t === 'usdc' ? 6 : 18,
-        ),
-      )
-  const baseCurrency = accounting.custom
-    ? tokenCurrencyId(accounting.custom.address)
-    : (plan.issuanceBase ?? (accounting.tokens.includes('eth') ? 'eth' : 'usd')) ===
-        'eth'
-      ? BASE_CURRENCY_ETH
-      : BASE_CURRENCY_USD
+  // The plan is the authority: its owner was frozen when the run was pinned.
+  // A multichain launch is sucker-linked, so resolving "the connected wallet"
+  // per chain at SEND time would hand a run resumed from a different wallet
+  // split-brain ownership across the group. `args.owner` is the fallback for
+  // sessions persisted before the freeze, which recorded no owner at all.
+  const owner = plan.owner ?? args.owner
+  const { contexts, baseCurrency } = launchAccounting(
+    accounting,
+    plan.issuanceBase,
+    chainId,
+  )
 
   if (plan.flavor === 'revnet') {
     // Fixed-forever stages via REVDeployer (website/ parity). Stage starts
@@ -500,7 +663,7 @@ export function buildLaunchRequest(args: {
     // mustStartAtOrAfter. Reserved% / reservedSplits map to the stage's
     // splitPercent / splits; the split bucket must total exactly 1e9, so
     // any unallocated remainder goes to the operator.
-    const operator = plan.operator ?? args.owner
+    const operator = plan.operator ?? owner
     const stageConfigurations = plan.stages.map(stage => {
       const splits = [...toJbSplits(stage.reservedSplits)]
       const allocated = splits.reduce((sum, split) => sum + split.percent, 0)
@@ -547,7 +710,7 @@ export function buildLaunchRequest(args: {
       chainId,
       config: {
         description: {
-          name: plan.store.name,
+          name: plan.projectName,
           ticker: plan.ticker,
           uri: args.projectUri,
           salt: args.salt,
@@ -606,13 +769,18 @@ export function buildLaunchRequest(args: {
       metadata: buildRulesetMetadata({
         baseCurrency,
         reservedPercent: stage.reservedPercent,
-        // Routing ALL funds (unlimited payout limit) leaves no surplus for
-        // cash outs — keep them formally disabled in that mode. Fixed-amount
-        // routing and flexible (surplus allowance) leave surplus intact.
-        cashOutTaxRate:
-          stage.payouts === 'routed' && stage.payoutLimitAmount === null
-            ? CASH_OUTS_OFF
-            : (stage.cashOutTaxRate ?? CASH_OUTS_OFF),
+        // Routing EVERY accepted token's funds (unlimited payout limit on each)
+        // leaves no surplus for cash outs — keep them formally disabled in that
+        // mode. One token capped at fixed amounts, or flexible (surplus
+        // allowance), leaves surplus intact.
+        cashOutTaxRate: routesAllFunds(
+          stage.payouts,
+          contexts.map(
+            ctx => payoutLimitFor(plan, stage, ctx.token, chainId) === null,
+          ),
+        )
+          ? CASH_OUTS_OFF
+          : (stage.cashOutTaxRate ?? CASH_OUTS_OFF),
         allowOwnerMinting: stage.allowOwnerMinting,
         holdFees: stage.holdFees,
         pausePay: stage.pausePay,
@@ -711,7 +879,7 @@ export function buildLaunchRequest(args: {
       abi: jbOmnichainDeployerAbi,
       functionName: 'launchProjectFor' as const,
       args: [
-        args.owner,
+        owner,
         args.projectUri,
         {
           deployTiersHookConfig: build721HookConfig(
@@ -738,7 +906,7 @@ export function buildLaunchRequest(args: {
     abi: jb721TiersHookProjectDeployerAbi,
     functionName: 'launchProjectFor' as const,
     args: [
-      args.owner,
+      owner,
       build721HookConfig(args.plan.store, args.projectUri, accounting, chainId),
       {
         projectUri: args.projectUri,
@@ -771,6 +939,23 @@ export function nativeBridgeViable(
     tokens.length === 1 &&
     tokens[0] === 'eth'
   )
+}
+
+/**
+ * The per-chain address overrides actually in play for a launch: the non-empty
+ * entries belonging to the SELECTED chains, trimmed.
+ *
+ * Deselecting a chain keeps its override in the draft (re-selecting restores
+ * it) and the encode reads only the selected chains — so a leftover entry must
+ * never gate validation or a summary either. Validating every entry ever typed
+ * let a half-typed address on a deselected chain dead-end the launch button
+ * with no rendered field and no error to explain it.
+ */
+export function activeChainOverrides(
+  byChain: Record<number, string>,
+  chains: number[],
+): string[] {
+  return chains.map(chainId => byChain[chainId]?.trim() ?? '').filter(Boolean)
 }
 
 /** Sucker deployment config for one chain: CCIP deployer + token mappings
@@ -909,6 +1094,15 @@ function build721HookConfig(
 ) {
   // Tier pricing: a standard currency, or the custom accounting token
   // itself (token-keyed id, its own decimals — no feed needed).
+  //
+  // Refuse the combination the fallback would silently mis-encode: 'token'
+  // without a custom accounting token has nothing to price against, and
+  // dropping through to ETH/18 turns "10 TOKEN" into 10 ETH.
+  if (store.currency === 'token' && !accounting.custom) {
+    throw new Error(
+      'Shop items are priced in the project token, but no custom accounting token is configured. Pick ETH or USD pricing.',
+    )
+  }
   const pricing =
     store.currency === 'token' && accounting.custom
       ? {

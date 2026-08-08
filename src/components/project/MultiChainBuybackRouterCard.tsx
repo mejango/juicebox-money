@@ -571,8 +571,17 @@ function BuybackActionForm({
         if (parsed.tickSpacing < 1 || parsed.tickSpacing > 0x7fffff) {
           throw new Error('Tick spacing must be a positive int24 value.')
         }
-        if (parsed.twapWindow < 1 || parsed.twapWindow > 0xffffffff) {
-          throw new Error('TWAP window must be between 1 and 4,294,967,295 seconds.')
+        // Pool registration runs the SAME `_requireValidTwapWindow` bound the
+        // standalone TWAP edit does; the uint32 range let an out-of-bounds
+        // value through review and the danger acknowledgement, only to die in
+        // the pre-flight eth_call with a raw JBBuybackHook_InvalidTwapWindow.
+        if (
+          parsed.twapWindow < MIN_TWAP_WINDOW ||
+          parsed.twapWindow > MAX_TWAP_WINDOW
+        ) {
+          throw new Error(
+            `The hook only accepts a TWAP window between ${MIN_TWAP_WINDOW} and ${MAX_TWAP_WINDOW} seconds.`,
+          )
         }
         if (parsed.sqrtPriceX96 <= 0n || parsed.sqrtPriceX96 >= 2n ** 160n) {
           throw new Error('Initial price must be a positive uint160 value.')

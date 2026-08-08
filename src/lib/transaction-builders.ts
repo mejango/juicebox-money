@@ -328,6 +328,48 @@ export function buildTokenMetadataAuthorityCall({
   })
 }
 
+/**
+ * Exact `JBController.deployERC20For` routed through the project's authority.
+ *
+ * The salt is REQUIRED and must be the same across every chain of one deploy:
+ * it is what makes the token land on the same address everywhere (see
+ * `omnichainTokenSalt`). A zero salt would deploy a nonce-keyed clone —
+ * a different address per chain, irreversibly.
+ */
+export function buildDeployTokenAuthorityCall({
+  chainId,
+  authority,
+  controller,
+  projectId,
+  name,
+  symbol,
+  salt,
+  gas = 500_000n,
+  label = 'Deploy ERC-20',
+}: {
+  chainId: JBChainId
+  authority: Address
+  controller: Address
+  projectId: bigint
+  name: string
+  symbol: string
+  salt: Hex
+  gas?: bigint
+  label?: string
+}): AuthorityCall {
+  return buildAuthorityCall({
+    chainId,
+    authority,
+    target: controller,
+    abi: jbControllerAbi,
+    functionName: 'deployERC20For',
+    args: [projectId, name, symbol, salt],
+    contractName: 'JBController',
+    gas,
+    label,
+  })
+}
+
 /** Exact JBProjects NFT ownership transfer routed through the current owner. */
 export function buildProjectOwnershipAuthorityCall({
   chainId,

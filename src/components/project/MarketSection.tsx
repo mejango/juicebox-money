@@ -279,7 +279,11 @@ export async function resolveMarket(
   // through the registry (website ~line 2853).
   let hook: Address | null = null
   const d = lc(dataHook)
-  if ((registry && d === lc(registry)) || (revOwner && d === lc(revOwner))) {
+  // The registry is what gets READ, so it has to be present for BOTH arms of
+  // this match: a chain with a revOwner but no buyback registry satisfied the
+  // revOwner arm alone and then read `hookOf` from `undefined`, throwing the
+  // whole tab into its generic error card instead of "no market pool yet".
+  if (registry && (d === lc(registry) || (revOwner && d === lc(revOwner)))) {
     const h = (await client.readContract({
       address: registry as Address,
       abi: jbBuybackHookRegistryAbi,
@@ -900,23 +904,22 @@ export async function readUserLpPositions(
 export function MarketSection({
   chainId,
   projectId,
-  tokenSymbol,
   suckerGroupId,
 }: {
   chainId: JBChainId
   projectId: number
-  tokenSymbol: string
   suckerGroupId: string | null
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const chainMeta = JB_CHAINS[chainId]
-  const etherscanHost = chainMeta?.etherscanHostname
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
-  // The project's OWN token symbol — the passed-in prop is the bendystraw
-  // accounting-token symbol (e.g. "ETH"), which is NOT the project token.
+  // The project's OWN token symbol, always read on chain. There is deliberately no
+  // fallback to bendystraw's project row: its `tokenSymbol` is the ACCOUNTING symbol
+  // (e.g. "ETH"), so using it here labels project-token amounts with what the project
+  // is paid IN. Unresolved falls back to the unit-agnostic "tokens".
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
-  const sym = projectToken?.symbol || tokenSymbol || 'tokens'
+  const sym = projectToken?.symbol || 'tokens'
 
   const {
     data: market,
@@ -950,7 +953,18 @@ export function MarketSection({
     isError: lpError,
   } = useQuery(
     cachedQuery({
-      queryKey: ['marketLp', chainId, projectId],
+      // The positions are priced from the captured `market` snapshot, and the
+      // market refreshes 4× faster than this cache. Without the pool identity
+      // and a coarse price in the key, a pool migration or a moved price kept
+      // serving amounts computed at a stale sqrtP.
+      queryKey: [
+        'marketLp',
+        chainId,
+        projectId,
+        hasPool ? market.poolId : null,
+        // Coarse: full precision would re-fetch on every tick.
+        hasPool ? (market.sqrtP >> 32n).toString() : null,
+      ],
       enabled: !!publicClient && hasPool,
       staleTime: 60_000,
       retry: 0,
@@ -1020,10 +1034,10 @@ export function MarketSection({
             >
               AMM
             </span>
-            {pm && etherscanHost ? (
+            {pm ? (
               <AddressLink
                 address={pm}
-                host={etherscanHost}
+                chainId={chainId}
                 className="text-xs text-smoke-500 hover:text-ink"
               />
             ) : null}

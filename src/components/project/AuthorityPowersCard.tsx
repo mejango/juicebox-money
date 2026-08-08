@@ -16,10 +16,12 @@ import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
+import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   POWERS,
-  type FlowField,
+  initialFieldValue,
+  parseAddressList,
   type PowerDescriptor,
   type PowerFlag,
   type ResolvedValues,
@@ -41,6 +43,8 @@ type PowerChainState = AuthorityDeployment & {
   name: string
   authority: Address | null
   controller: Address | null
+  /** The project's CURRENT terminal list — `setTerminalsOf` replaces it wholesale. */
+  terminals: readonly Address[] | null
   metadata: Partial<Record<PowerFlag, boolean>> | null
   error: string | null
 }
@@ -49,7 +53,7 @@ async function readPowerState(
   deployment: AuthorityDeployment,
 ): Promise<PowerChainState> {
   const client = clientFor(deployment.chainId)
-  const [authority, controller, ruleset] = await Promise.all([
+  const [authority, controller, terminals, ruleset] = await Promise.all([
     readAuthorityOf(client, deployment),
     client
       .readContract({
@@ -58,6 +62,18 @@ async function readPowerState(
         ],
         abi: jbDirectoryAbi,
         functionName: 'controllerOf',
+        args: [BigInt(deployment.projectId)],
+      })
+      .catch(() => null),
+    // "Set terminals" replaces the whole list, so the form has to start from the live
+    // one. Read here rather than in the form: a failure must NOT prefill an empty list.
+    client
+      .readContract({
+        address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
+          deployment.chainId
+        ],
+        abi: jbDirectoryAbi,
+        functionName: 'terminalsOf',
         args: [BigInt(deployment.projectId)],
       })
       .catch(() => null),
@@ -71,6 +87,7 @@ async function readPowerState(
     name: chainName(deployment.chainId),
     authority,
     controller: (controller as Address | null) ?? null,
+    terminals: (terminals as readonly Address[] | null) ?? null,
     metadata: ruleset?.metadata ?? null,
     error:
       !authority || !controller || !ruleset
@@ -222,23 +239,6 @@ function PowerRow({
   )
 }
 
-function initialAddress(
-  field: FlowField,
-  row: PowerChainState,
-  connected: Address | undefined,
-): string {
-  if (field.initial === 'ADDR_CONNECTED') return connected ?? ''
-  if (field.initial === 'ADDR_CONTROLLER') return row.controller ?? ''
-  if (field.initial === 'ADDR_TERMINAL') {
-    return (
-      (jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
-        row.chainId
-      ] as Address | undefined) ?? ''
-    )
-  }
-  return field.initial ?? ''
-}
-
 function PowerActionForm({
   power,
   rows,
@@ -261,7 +261,12 @@ function PowerActionForm({
   const [scalars, setScalars] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       power.fields
-        .filter(field => field.kind !== 'address' && field.kind !== 'bool')
+        .filter(
+          field =>
+            field.kind !== 'address' &&
+            field.kind !== 'addressList' &&
+            field.kind !== 'bool',
+        )
         .map(field => [field.name, field.initial ?? '']),
     ),
   )
@@ -277,11 +282,11 @@ function PowerActionForm({
   >(() =>
     Object.fromEntries(
       power.fields
-        .filter(field => field.kind === 'address')
+        .filter(field => field.kind === 'address' || field.kind === 'addressList')
         .map(field => [
           field.name,
           Object.fromEntries(
-            enabledRows.map(row => [row.chainId, initialAddress(field, row, address)]),
+            enabledRows.map(row => [row.chainId, initialFieldValue(field, row, address)]),
           ),
         ]),
     ),
@@ -325,7 +330,7 @@ function PowerActionForm({
   const resolveSharedValues = (): ResolvedValues => {
     const values: ResolvedValues = {}
     for (const field of power.fields) {
-      if (field.kind === 'address') continue
+      if (field.kind === 'address' || field.kind === 'addressList') continue
       if (field.kind === 'bool') {
         values[field.name] = bools[field.name] ?? false
         continue
@@ -377,8 +382,22 @@ function PowerActionForm({
         const values: ResolvedValues = { ...shared }
         const display: string[] = []
         for (const field of power.fields) {
+          const raw = addresses[field.name]?.[row.chainId] ?? ''
+          if (field.kind === 'addressList') {
+            const list = parseAddressList(raw)
+            if (!list) {
+              throw new Error(
+                `${row.name}: list at least one valid address for “${field.label}”.`,
+              )
+            }
+            values[field.name] = list
+            display.push(
+              `${field.label} ${list.map(truncateAddress).join(', ')}`,
+            )
+            continue
+          }
           if (field.kind !== 'address') continue
-          const value = resolvedAddress(addresses[field.name]?.[row.chainId] ?? '')
+          const value = resolvedAddress(raw)
           if (!value) {
             throw new Error(`${row.name}: enter a valid address for “${field.label}”.`)
           }
@@ -501,7 +520,21 @@ function PowerActionForm({
 
       <div className="mt-4 space-y-4">
         {power.fields.map(field =>
-          field.kind === 'address' ? (
+          field.kind === 'addressList' ? (
+            <PerChainAddressListField
+              key={field.name}
+              fieldLabel={field.label}
+              rows={enabledRows}
+              selected={selected}
+              values={addresses[field.name] ?? {}}
+              onChange={values =>
+                setAddresses(current => ({ ...current, [field.name]: values }))
+              }
+              disabled={busy}
+              placeholder={field.placeholder}
+              help={field.help}
+            />
+          ) : field.kind === 'address' ? (
             <PerChainAddressField
               key={field.name}
               fieldLabel={field.label}

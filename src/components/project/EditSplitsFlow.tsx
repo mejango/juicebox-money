@@ -35,8 +35,12 @@ import { useWallet } from '@/hooks/useWallet'
 import { runAuthorityCalls } from '@/lib/authority'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
-import { billionthsToPct, truncateAddress } from '@/lib/format'
-import { LP_SPLIT_HOOK } from '@/lib/launch'
+import {
+  billionthsToPct,
+  toLocalDateTimeInput,
+  truncateAddress,
+} from '@/lib/format'
+import { lpSplitHookGeneration, requireLpSplitHook } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
 import { fetchSafeInfo } from '@/lib/safe'
 import type { RawSplit } from '@/lib/splits-types'
@@ -56,22 +60,29 @@ function fingerprint(splits: readonly RawSplit[]): string {
   )
 }
 
-/** One live split → an editable draft row (percents are 0-100 strings). */
-function splitToDraft(sp: RawSplit): DraftSplit {
+/** One live split → an editable draft row (percents are 0-100 strings). The
+ *  lock renders as LOCAL wall clock because `draftToSplit` parses it back as
+ *  local — a UTC string here would re-encode the lock shifted by the viewer's
+ *  offset. */
+export function splitToDraft(sp: RawSplit): DraftSplit {
   const base = newDraftSplit()
   const value = billionthsToPct(sp.percent, 6)
   const lockedUntil =
-    sp.lockedUntil > 0
-      ? new Date(sp.lockedUntil * 1000).toISOString().slice(0, 16)
-      : ''
+    sp.lockedUntil > 0 ? toLocalDateTimeInput(sp.lockedUntil) : ''
   if (sp.hook !== zeroAddress) {
     return {
       ...base,
       value,
       kind: 'hook',
-      hookKind: sp.hook.toLowerCase() === LP_SPLIT_HOOK.toLowerCase()
-        ? 'fundmarket'
-        : 'custom',
+      // Both the current market hook and every superseded generation read as a market
+      // split; the legacy kind re-encodes `hookAddress` verbatim so an existing split is
+      // never silently migrated to a different hook by an unrelated edit.
+      hookKind:
+        lpSplitHookGeneration(sp.hook) === 'current'
+          ? 'fundmarket'
+          : lpSplitHookGeneration(sp.hook) === 'legacy'
+            ? 'fundmarket-legacy'
+            : 'custom',
       hookAddress: sp.hook,
       projectId: sp.projectId > 0n ? String(sp.projectId) : '',
       beneficiary: sp.beneficiary !== zeroAddress ? sp.beneficiary : '',
@@ -100,7 +111,7 @@ function splitToDraft(sp: RawSplit): DraftSplit {
 
 /** An editable draft row → a JBSplit (percent out of 1e9). Assumes the row
  *  passed `splitOk`, so every referenced address resolves. */
-function draftToSplit(row: DraftSplit): JBSplit {
+function draftToSplit(row: DraftSplit, chainId: number): JBSplit {
   const lockedUntil = row.lockedUntil
     ? Math.floor(new Date(row.lockedUntil).getTime() / 1000)
     : 0
@@ -115,7 +126,7 @@ function draftToSplit(row: DraftSplit): JBSplit {
       lockedUntil,
       hook:
         row.hookKind === 'fundmarket'
-          ? LP_SPLIT_HOOK
+          ? requireLpSplitHook(chainId)
           : resolvedAddress(row.hookAddress)!,
     }
   }
@@ -198,11 +209,17 @@ export function assembleSplits(
   lockedRows: readonly RawSplit[],
   drafts: readonly DraftSplit[],
   fallback: FallbackSplits,
+  chainId: number,
 ): { splits: JBSplit[] } | { error: string } {
   if (!drafts.every(s => splitOk(s, 'percent'))) {
     return { error: 'Fix the highlighted recipients before saving.' }
   }
-  const editable = drafts.map(draftToSplit)
+  let editable: JBSplit[]
+  try {
+    editable = drafts.map(row => draftToSplit(row, chainId))
+  } catch (err) {
+    return { error: (err as Error).message }
+  }
   if (editable.some(s => s.percent <= 0)) {
     return { error: 'Every recipient needs a share above 0%.' }
   }
@@ -540,7 +557,12 @@ function EditSplitsModal({
       }
     }
 
-    const assembled = assembleSplits(lockedRows, drafts, freshFallback)
+    const assembled = assembleSplits(
+      lockedRows,
+      drafts,
+      freshFallback,
+      chainId,
+    )
     if ('error' in assembled) {
       setFlowError(assembled.error)
       return

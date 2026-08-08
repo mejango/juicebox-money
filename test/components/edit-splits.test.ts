@@ -1,10 +1,11 @@
 import { zeroAddress } from 'viem'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   CLEARED_RESERVED_NOTE,
   assembleSplits,
   clearBlockReason,
   describeFallbackSplits,
+  splitToDraft,
 } from '@/components/project/EditSplitsFlow'
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 import type { RawSplit } from '@/lib/splits-types'
@@ -92,30 +93,71 @@ describe('CLEARED_RESERVED_NOTE', () => {
   })
 })
 
+describe('lock round trip', () => {
+  // The lock field is a `datetime-local` input: local wall clock in both
+  // directions. Pin a west-of-UTC zone, where a UTC-emitting draft would
+  // re-encode a just-expired lock as still-locked (7-8h into the future).
+  const originalTz = process.env.TZ
+  beforeAll(() => {
+    process.env.TZ = 'America/Los_Angeles'
+  })
+  afterAll(() => {
+    process.env.TZ = originalTz
+  })
+
+  // 2025-08-06T17:06:00Z — minute-aligned, since the input is minute-precise.
+  const LOCKED_UNTIL = 1_754_499_960
+  const expiredLock: RawSplit = {
+    percent: 100_000_000,
+    projectId: 0n,
+    beneficiary: RECIPIENT,
+    preferAddToBalance: false,
+    lockedUntil: LOCKED_UNTIL,
+    hook: zeroAddress,
+  }
+
+  it('renders the lock as local wall clock, not UTC', () => {
+    expect(splitToDraft(expiredLock).lockedUntil).toBe('2025-08-06T10:06')
+  })
+
+  it('re-encodes an untouched lock to the same timestamp', () => {
+    const result = assembleSplits([], [splitToDraft(expiredLock)], EMPTY_FALLBACK, 8453)
+    if ('error' in result) throw new Error(result.error)
+    expect(result.splits[0].lockedUntil).toBe(LOCKED_UNTIL)
+  })
+
+  it('leaves an unlocked split unlocked', () => {
+    expect(splitToDraft(fallbackRow).lockedUntil).toBe('')
+    const result = assembleSplits([], [splitToDraft(fallbackRow)], EMPTY_FALLBACK, 8453)
+    if ('error' in result) throw new Error(result.error)
+    expect(result.splits[0].lockedUntil).toBe(0)
+  })
+})
+
 describe('assembleSplits', () => {
   it('an emptied group is a valid submission when the ruleset-0 fallback is verified empty', () => {
-    expect(assembleSplits([], [], EMPTY_FALLBACK)).toEqual({ splits: [] })
+    expect(assembleSplits([], [], EMPTY_FALLBACK, 8453)).toEqual({ splits: [] })
   })
 
   it('blocks the empty save when a non-empty fallback would take over', () => {
-    const result = assembleSplits([], [], { status: 'nonEmpty', count: 2 })
+    const result = assembleSplits([], [], { status: 'nonEmpty', count: 2 }, 8453)
     expect(result).toEqual({ error: clearBlockReason({ status: 'nonEmpty', count: 2 }) })
     expect((result as { error: string }).error).toContain('2 recipients')
   })
 
   it('blocks the empty save when the fallback read failed', () => {
-    const result = assembleSplits([], [], { status: 'unknown' })
+    const result = assembleSplits([], [], { status: 'unknown' }, 8453)
     expect(result).toEqual({ error: clearBlockReason({ status: 'unknown' }) })
   })
 
   it('blocks the empty save while the fallback is still being checked', () => {
-    expect(assembleSplits([], [], { status: 'checking' })).toEqual({
+    expect(assembleSplits([], [], { status: 'checking' }, 8453)).toEqual({
       error: clearBlockReason({ status: 'checking' }),
     })
   })
 
   it('re-submits locked rows verbatim even when every editable row was removed', () => {
-    const result = assembleSplits([lockedRow], [], EMPTY_FALLBACK)
+    const result = assembleSplits([lockedRow], [], EMPTY_FALLBACK, 8453)
     expect(result).toEqual({
       splits: [
         {
@@ -131,12 +173,12 @@ describe('assembleSplits', () => {
   })
 
   it('a locked-row-only save is not a clear, so an unverified fallback does not block it', () => {
-    const result = assembleSplits([lockedRow], [], { status: 'unknown' })
+    const result = assembleSplits([lockedRow], [], { status: 'unknown' }, 8453)
     expect(result).toHaveProperty('splits')
   })
 
   it('rebuilds editable drafts after the locked rows', () => {
-    const result = assembleSplits([lockedRow], [addressDraft('25')], EMPTY_FALLBACK)
+    const result = assembleSplits([lockedRow], [addressDraft('25')], EMPTY_FALLBACK, 8453)
     if ('error' in result) throw new Error(result.error)
     expect(result.splits).toHaveLength(2)
     expect(result.splits[1]).toMatchObject({
@@ -150,13 +192,13 @@ describe('assembleSplits', () => {
     const result = assembleSplits([], [addressDraft('25')], {
       status: 'nonEmpty',
       count: 4,
-    })
+    }, 8453)
     if ('error' in result) throw new Error(result.error)
     expect(result.splits).toHaveLength(1)
   })
 
   it('rejects a zero-share editable row instead of silently dropping it', () => {
-    const result = assembleSplits([], [addressDraft('0')], EMPTY_FALLBACK)
+    const result = assembleSplits([], [addressDraft('0')], EMPTY_FALLBACK, 8453)
     expect(result).toHaveProperty('error')
   })
 })

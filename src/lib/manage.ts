@@ -8,7 +8,7 @@ import {
   buildDeployErc20Tx,
   type V6DeployErc20TxRequest,
 } from '@bananapus/nana-sdk-core/v6'
-import { toHex, type Address, type Hex } from 'viem'
+import { keccak256, toHex, type Address, type Hex } from 'viem'
 
 /**
  * Pure owner-management plumbing shared by the OwnerPanel client island and
@@ -86,6 +86,26 @@ export const TOKEN_SYMBOL_RE = /^[A-Z0-9]{1,8}$/
 /** A random CREATE2 salt (32 bytes). */
 export function randomSalt(): Hex {
   return toHex(crypto.getRandomValues(new Uint8Array(32)))
+}
+
+/**
+ * The CREATE2 salt an omnichain ERC-20 deploy must reuse on every chain.
+ *
+ * `JBController.deployERC20For` hashes `(caller, salt)` and hands that to
+ * `JBTokens`, which clones deterministically only when the salt is non-zero —
+ * a zero salt falls back to a nonce-keyed clone, i.e. a DIFFERENT token
+ * address on every chain, permanently. Since the controller, the token
+ * implementation and `JBTokens` share one address across chains, the same
+ * signer plus the same salt lands the token on the same address everywhere,
+ * which is what the ecosystem's same-address ERC-20 convention assumes.
+ *
+ * Deriving it from the token's name and symbol (rather than a random value,
+ * which the launch flow can afford because it pins one salt in a resumable
+ * session) keeps the salt stable across retries, reloads, and a later deploy
+ * onto a chain the project was extended to.
+ */
+export function omnichainTokenSalt(name: string, symbol: string): Hex {
+  return keccak256(toHex(`jb-erc20:${name.trim()}:${symbol.trim()}`))
 }
 
 /**

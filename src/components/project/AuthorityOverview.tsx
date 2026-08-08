@@ -35,6 +35,7 @@ import {
 import { resolvedAddress } from "@/lib/ens";
 import {
   decodePermissionBitmap,
+  isKnownPermissionId,
   permissionDefinition,
   V6_PERMISSIONS,
 } from "@/lib/permissions";
@@ -89,10 +90,20 @@ async function readAuthorityRows(
         safe = await fetchSafeInfo(deployment.chainId, authority);
         if (safe) accountType = "Safe Multisig";
         else {
+          // "This owner is an EOA" is a trust statement, not a default. An
+          // absent result legitimately MEANS no code, so the read failure
+          // needs its own sentinel — swallowing it to null turned an RPC blip
+          // into a confident (and possibly wrong) claim that a Safe-controlled
+          // project is controlled by one key.
           const code = await client
             .getBytecode({ address: authority })
-            .catch(() => null);
-          accountType = !code || code === "0x" ? "EOA" : "Contract";
+            .catch(() => "unreadable" as const);
+          accountType =
+            code === "unreadable"
+              ? "Unknown"
+              : !code || code === "0x"
+                ? "EOA"
+                : "Contract";
         }
       }
       return {
@@ -724,7 +735,7 @@ function PermissionsAcrossChains({
             onClick={() => setEditing("new")}
             className="btn-secondary mt-4 min-h-[40px] px-4 text-sm"
           >
-            + Add revnet operator
+            + Add operator
           </button>
         )
       ) : null}
@@ -764,7 +775,7 @@ function PermissionEditor({
   const submit = async () => {
     const operator = resolvedAddress(operatorInput);
     if (!operator || operator === zeroAddress) {
-      setError("Enter a valid non-zero revnet operator address or ENS name.");
+      setError("Enter a valid non-zero operator address or ENS name.");
       return;
     }
     const chosen = deployments.filter((row) => selectedChains.has(row.chainId));
@@ -792,7 +803,7 @@ function PermissionEditor({
           args: [operator, authority, BigInt(deployment.projectId)],
         })) as bigint;
         const unknownIds = decodePermissionBitmap(bitmap).filter(
-          (id) => id > 39,
+          (id) => !isKnownPermissionId(id),
         );
         const finalIds = [...new Set([...selected, ...unknownIds])].sort(
           (a, b) => a - b,
@@ -805,7 +816,7 @@ function PermissionEditor({
             operator,
             projectId: BigInt(deployment.projectId),
             permissionIds: finalIds,
-            label: grant ? "Edit permissions" : "Add revnet operator",
+            label: grant ? "Edit permissions" : "Add operator",
           }),
         );
       }
@@ -837,7 +848,7 @@ function PermissionEditor({
     <div className="mt-5 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
-          {grant ? "Edit permissions" : "Add revnet operator"}
+          {grant ? "Edit permissions" : "Add operator"}
         </p>
         <button
           type="button"
@@ -850,7 +861,7 @@ function PermissionEditor({
       </div>
 
       <label className="mt-4 block">
-        <span className="field-label">Revnet operator</span>
+        <span className="field-label">Operator</span>
         <div className="mt-1.5">
           <AddressField
             value={operatorInput}
@@ -859,7 +870,7 @@ function PermissionEditor({
               setError(null);
             }}
             disabled={busy || !!grant}
-            ariaLabel="Revnet operator address"
+            ariaLabel="Operator address"
           />
         </div>
       </label>
@@ -911,7 +922,7 @@ function PermissionEditor({
         />
         <span className="text-xs leading-relaxed text-red-700">
           I verified the operator address and every checked power. A malicious
-          revnet operator can use these permissions against the project.
+          operator can use these permissions against the project.
         </span>
       </label>
 
@@ -925,7 +936,7 @@ function PermissionEditor({
           ? (status ?? "Preparing…")
           : grant
             ? "Update permissions"
-            : "Add revnet operator"}
+            : "Add operator"}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error ? <ErrorNote message={error} /> : null}

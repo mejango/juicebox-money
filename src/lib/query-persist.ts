@@ -32,7 +32,7 @@ const STORE_KEY = 'jbm:query-cache:v1'
 const MAX_BYTES = 2_500_000
 const WRITE_DEBOUNCE_MS = 1_000
 
-export type PersistTier = 'immutable' | 'revalidate'
+type PersistTier = 'immutable' | 'revalidate'
 
 export type PersistMeta = { persist?: PersistTier }
 

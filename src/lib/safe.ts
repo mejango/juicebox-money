@@ -1,7 +1,5 @@
 'use client'
 
-import { SAFE_PREFIX } from '@/lib/safe-connector'
-
 import { getAccount } from '@wagmi/core'
 import {
   encodeFunctionData,
@@ -15,6 +13,7 @@ import {
 } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
+import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
 import {
@@ -28,6 +27,9 @@ import {
 } from '@/lib/transaction-review'
 import {
   isSafeConnection,
+  safeServiceBase,
+  SAFE_PREFIX,
+  SAFE_SERVICE_PREFIX,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -189,43 +191,17 @@ const SAFE_TX_BASE: Partial<Record<number, string>> = {
   11155111: 'https://safe-transaction-sepolia.safe.global',
 }
 
-/**
- * Chains with a HOSTED Safe Transaction Service, which is a smaller set than the chains Safe
- * links work on: `api.safe.global/tx-service/{opsepolia,arb1-sep}` both 404, while `basesep`
- * is live and was previously missing here — Base Sepolia Safes were invisible to this app.
- * Probed against `/api/v1/about/`. `SAFE_PREFIX` (imported, for app.safe.global URLs) stays
- * the wider set; conflating the two is what made service calls fire at chains with none.
- */
-const SAFE_SERVICE_PREFIX: Partial<Record<number, string>> = {
-  1: 'eth',
-  10: 'oeth',
-  8453: 'base',
-  42161: 'arb1',
-  11155111: 'sep',
-  84532: 'basesep',
-}
-
-
+// `SAFE_SERVICE_PREFIX` (hosted-service chains, the smaller set) and
+// `SAFE_PREFIX` (app.safe.global URLs, the wider set) both live in
+// safe-connector.ts — the split is deliberate; conflating the two is what
+// made service calls fire at chains with none.
 
 let safeActive = 0
 const safeWaiters: (() => void)[] = []
 const SAFE_MAX_CONCURRENT = 3
 const nonceInflight = new Map<string, Promise<number | null>>()
 
-function txBase(chainId: number): string | null {
-  try {
-    const custom = JSON.parse(
-      window.localStorage.getItem('jb-safe-tx-base') ?? 'null',
-    ) as Record<string, string> | null
-    if (custom?.[chainId]) return custom[chainId].replace(/\/$/, '')
-  } catch {
-    // Local overrides are optional.
-  }
-  const prefix = SAFE_SERVICE_PREFIX[chainId]
-  return prefix
-    ? `https://api.safe.global/tx-service/${prefix}`
-    : null
-}
+const txBase = safeServiceBase
 
 function legacyBase(chainId: number): string | null {
   return SAFE_TX_BASE[chainId] ?? null
@@ -740,7 +716,7 @@ async function sendContractAndConfirm({
     args,
     account,
     ...fees,
-    type: 'eip1559',
+    ...('maxFeePerGas' in fees ? { type: 'eip1559' as const } : {}),
   })
   if (isSafeConnection(wagmiConfig)) {
     hash = await waitForSafeExecutionHash(chainId, hash)
@@ -764,17 +740,23 @@ async function sendContractAndConfirm({
   return { hash, status: 'confirmed' }
 }
 
+type SafeFeeOverrides =
+  | { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+  | Record<string, never>
+
 /**
  * Fees for a Safe execution.
  *
  * Asks the node what the network currently wants, because a flat tip is wrong in both
  * directions: 0.05 gwei is far below mainnet's ask under congestion (the transaction just
- * sits unmined) while being needlessly generous on an L2. The previous flat values remain the
- * fallback for nodes that don't implement fee estimation.
+ * sits unmined) while being needlessly generous on an L2.
+ *
+ * Every returned cap is derived from a fee value the node actually reported. When neither
+ * read succeeds there is no evidence to build one from, so nothing is overridden and the
+ * wallet picks — a fabricated cap on an unknown network is how a signed execution ends up
+ * rejected or stuck AFTER signing.
  */
-async function safeFeeOverrides(
-  client: PublicClient,
-): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+async function safeFeeOverrides(client: PublicClient): Promise<SafeFeeOverrides> {
   const tip = 50_000_000n // 0.05 gwei
   const floor = 1_000_000_000n // a cap; actual cost remains base fee + tip
   try {
@@ -793,14 +775,15 @@ async function safeFeeOverrides(
   }
   try {
     const block = await client.getBlock()
-    const base = block.baseFeePerGas ?? 0n
-    const buffered = base * 3n + tip
+    // A chain with no base fee is not EIP-1559; there is no 1559 cap to derive.
+    if (block?.baseFeePerGas == null) return {}
+    const buffered = block.baseFeePerGas * 3n + tip
     return {
       maxFeePerGas: buffered > floor ? buffered : floor,
       maxPriorityFeePerGas: tip,
     }
   } catch {
-    return { maxFeePerGas: floor, maxPriorityFeePerGas: tip }
+    return {}
   }
 }
 
@@ -1024,6 +1007,12 @@ export async function runSafeCalls({
 }): Promise<SafeCallResult[]> {
   assertNoViewAs()
   const results: SafeCallResult[] = []
+  // No-service path: the on-chain nonce does not advance until a transaction
+  // EXECUTES, so a multi-call batch through one threshold>1 Safe would approve
+  // hash(nonce=N) for every call — only one could ever execute and the rest
+  // would sit as wasted gas reported as "waiting". Hand out sequential
+  // provisional nonces per Safe, mirroring what the service path does.
+  const provisionalNonce = new Map<string, number>()
   for (let index = 0; index < calls.length; index++) {
     const call = calls[index]
     const info = await fetchSafeInfo(call.chainId, call.safe)
@@ -1034,9 +1023,19 @@ export async function runSafeCalls({
 
     if (hasSafeService(call.chainId)) {
       onProgress?.(`Signing ${index + 1}/${calls.length} Safe proposal…`)
+      // The pending list is load-bearing twice over: it dedupes against an
+      // existing proposal and it picks a free nonce. Swallowing a failure
+      // makes an outage read as an empty queue, so this proposal lands at
+      // `nextNonce` on top of whatever is really queued — one of the two is
+      // then stranded. The listing already retries across two hosts; if it
+      // still fails, stop.
       const [nextNonce, pending] = await Promise.all([
         getSafeNextNonce(call.chainId, call.safe),
-        listPendingSafeTxs(call.chainId, call.safe).catch(() => []),
+        listPendingSafeTxs(call.chainId, call.safe).catch(() => {
+          throw new Error(
+            `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed — try again shortly.`,
+          )
+        }),
       ])
       if (nextNonce === null) throw new Error('Could not read the Safe nonce.')
       const matching = pending.find(tx => safeCallMatches(tx, call))
@@ -1082,6 +1081,9 @@ export async function runSafeCalls({
 
     onProgress?.(`Checking onchain Safe approvals ${index + 1}/${calls.length}…`)
     const context = await safeOnChainContext(call.chainId, call.safe)
+    const safeKey = `${call.chainId}:${call.safe.toLowerCase()}`
+    const nonce = Math.max(context.nonce, provisionalNonce.get(safeKey) ?? 0)
+    provisionalNonce.set(safeKey, nonce + 1)
     const queued: SafeQueuedTx = {
       to: call.target,
       value: (call.value ?? 0n).toString(),
@@ -1092,7 +1094,7 @@ export async function runSafeCalls({
       gasPrice: '0',
       gasToken: zeroAddress,
       refundReceiver: zeroAddress,
-      nonce: context.nonce,
+      nonce,
     }
     const hash = safeTxHashOf(call.chainId, call.safe, queued)
     let approvals = await safeApprovalsOf(
@@ -1114,7 +1116,7 @@ export async function runSafeCalls({
           chainId: call.chainId,
           mode: 'onchain',
           status: 'submitted',
-          nonce: context.nonce,
+          nonce,
           safeTxHash: hash,
           transactionHash: approval.hash,
         })
@@ -1133,7 +1135,7 @@ export async function runSafeCalls({
         mode: 'onchain',
         status:
           execution.status === 'confirmed' ? 'executed' : 'submitted',
-        nonce: context.nonce,
+        nonce,
         safeTxHash: hash,
         transactionHash: execution.hash,
       })
@@ -1142,7 +1144,7 @@ export async function runSafeCalls({
         chainId: call.chainId,
         mode: 'onchain',
         status: 'waiting',
-        nonce: context.nonce,
+        nonce,
         safeTxHash: hash,
       })
     }
@@ -1174,9 +1176,11 @@ export async function fetchSafeCreation(safe: Address): Promise<SafeCreation | n
   // Derived from SAFE_TX_BASE rather than restated: a hard-coded list silently skips any
   // chain added to the service map. Testnet first — a Safe being looked up during
   // development is far more likely to live there.
+  const isTestnet = (chainId: number) =>
+    TESTNET_CHAINS.some(chain => chain.id === chainId)
   const searchOrder = Object.keys(SAFE_SERVICE_PREFIX)
     .map(Number)
-    .sort((a, b) => (a > 1_000_000 ? -1 : 0) - (b > 1_000_000 ? -1 : 0))
+    .sort((a, b) => Number(isTestnet(b)) - Number(isTestnet(a)))
   for (const chainId of searchOrder) {
     const base = txBase(chainId)
     if (!base) continue

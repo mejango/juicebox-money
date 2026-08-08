@@ -1,4 +1,4 @@
-import { JB_CHAINS, type JBChainId } from "@bananapus/nana-sdk-core";
+import type { JBChainId } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { notFound } from "next/navigation";
@@ -157,7 +157,6 @@ async function DegradedProjectShell({
 }) {
   const metadata = await fetchProjectMetadata(project.metadataUri);
   const name = metadata?.name ?? `Project ${project.projectId}`;
-  const etherscan = JB_CHAINS[urnChainId]?.etherscanHostname;
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
@@ -183,7 +182,7 @@ async function DegradedProjectShell({
                   <span className="text-smoke-500">Owner:</span>{" "}
                   <AddressLink
                     address={project.owner}
-                    host={etherscan}
+                    chainId={urnChainId}
                     className="text-smoke-700"
                   />
                 </span>
@@ -249,8 +248,13 @@ export default async function ProjectPage({
     )
       .then(projects => ({ projects, error: false }))
       .catch(() => ({ projects: [] as BsProject[], error: true })),
+    // `undefined` = the indexer couldn't be read, which is NOT the same claim
+    // as "this revnet has no operator" (null). The UI says so rather than
+    // hiding the role.
     isRevnet
-      ? getRevnetOperatorCached(urn.chainId, urn.projectId)
+      ? getRevnetOperatorCached(urn.chainId, urn.projectId).catch(
+          () => undefined,
+        )
       : Promise.resolve(null),
   ]);
   const activity = activityResult.events;
@@ -263,7 +267,6 @@ export default async function ProjectPage({
   const logoUri = metadata?.logoUri?.trim() || project.logoUri;
   const chains = resolveProjectDeployments(project, siblingProjects);
   const accountingToken = suckerGroupAccountingToken(chains);
-  const etherscan = JB_CHAINS[urn.chainId]?.etherscanHostname;
   const description = metadata?.description?.trim() ?? "";
   const descriptionFallback = description ? toParagraphs(description) : [];
   const infoUri = httpsOnly(metadata?.infoUri);
@@ -301,14 +304,16 @@ export default async function ProjectPage({
   // The owner (custom) / operator (revnet) can DIFFER per chain, so resolve
   // it for every deployment — custom owners come from bendystraw per sibling,
   // revnet operators from the per-chain permissionHolders query.
-  const authorities: [number, string | null][] = isRevnet
+  const authorities: [number, string | null | undefined][] = isRevnet
     ? await Promise.all(
         chains.map(
           async (p) =>
             [
               p.chainId,
-              await getRevnetOperatorCached(p.chainId, p.projectId),
-            ] as [number, string | null],
+              await getRevnetOperatorCached(p.chainId, p.projectId).catch(
+                () => undefined,
+              ),
+            ] as [number, string | null | undefined],
         ),
       )
     : chains.map((p) => [p.chainId, p.owner] as [number, string | null]);
@@ -396,7 +401,7 @@ export default async function ProjectPage({
                         </span>{" "}
                         <AddressLink
                           address={authority}
-                          host={etherscan}
+                          chainId={urn.chainId}
                           className="text-smoke-700"
                         />
                       </span>
@@ -448,7 +453,7 @@ export default async function ProjectPage({
                       </span>{" "}
                       <AddressLink
                         address={authority}
-                        host={etherscan}
+                        chainId={urn.chainId}
                         className="text-smoke-700"
                       />
                     </span>
@@ -522,7 +527,6 @@ export default async function ProjectPage({
                   authorities={authorities}
                   chains={chainPairs}
                   suckerGroupId={project.suckerGroupId}
-                  etherscanHost={etherscan}
                 />
               ),
             },
@@ -569,7 +573,6 @@ export default async function ProjectPage({
                   isRevnet={isRevnet}
                   suckerGroupId={project.suckerGroupId}
                   chains={chainPairs}
-                  tokenSymbol={project.tokenSymbol ?? "tokens"}
                 />
               ),
             },
@@ -595,7 +598,6 @@ export default async function ProjectPage({
                   authorities={authorities}
                   profile={{
                     name: metadata?.name ?? name,
-                    ticker: project.tokenSymbol ?? "",
                     tagline:
                       metadata?.projectTagline ?? project.projectTagline ?? "",
                     description: metadata?.description ?? "",
@@ -618,7 +620,7 @@ export default async function ProjectPage({
                   projectId={project.projectId}
                   isRevnet={isRevnet}
                   owner={project.owner}
-                  operator={operator}
+                  operator={operator ?? null}
                   deployments={authorityDeployments}
                   profile={{
                     name: metadata?.name ?? name,

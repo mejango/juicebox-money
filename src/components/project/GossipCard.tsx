@@ -1,11 +1,8 @@
 'use client'
 
 import {
-  JB_CHAINS,
   JBCoreContracts,
   JBSuckerContracts,
-  NATIVE_TOKEN,
-  USDC_ADDRESSES,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
@@ -23,6 +20,7 @@ import {
   getAccountingContexts,
   getV6SuckerPairs,
   relativeSuckerDrift,
+  suckerAccountingContextKey,
   suckerBytes32ToAddress,
   suckerTimestampSeconds,
 } from '@bananapus/nana-sdk-core/v6'
@@ -44,6 +42,7 @@ import { formatTokenAmount } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { explorerTxUrl } from '@/lib/chainDisplay'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -127,27 +126,17 @@ function stalenessFromPct(worst: number): Staleness {
 
 type GossipContext = { token: Address; decimals: number; balance: bigint }
 
-/**
- * Normalize a token to a comparison key that survives the per-chain address
- * differences of the same logical asset. Native and USDC normalize to shared
- * keys (they carry different addresses per chain); everything else keys by its
- * own address in the given chain's namespace.
- */
-function contextKey(token: Address, chainId: number, decimals: number): string {
-  const lower = token.toLowerCase()
-  if (lower === NATIVE_TOKEN.toLowerCase()) return `native@${decimals}`
-  const usdc = USDC_ADDRESSES[chainId as JBChainId]
-  if (usdc && lower === usdc.toLowerCase()) return `usdc@${decimals}`
-  return `${lower}@${decimals}`
-}
-
 /** Fold per-context balances into a key→amount map with u128 saturation, both
  *  per source context and on the running sum. (website/ parity:
  *  gossipContextBalances.) */
 function foldBalances(rows: GossipContext[], chainId: number): Record<string, bigint> {
   const out: Record<string, bigint> = {}
   for (const row of rows) {
-    const key = contextKey(row.token, chainId, row.decimals)
+    const key = suckerAccountingContextKey(
+      row.token,
+      chainId as JBChainId,
+      row.decimals,
+    )
     let amount = row.balance
     if (amount > U128_MAX) amount = U128_MAX
     const sum = (out[key] ?? 0n) + amount
@@ -738,10 +727,7 @@ function GossipRow({
 
   const busy = checking || tx.busy
 
-  const chainMeta = JB_CHAINS[peer.peerChainId as JBChainId]
-  const txUrl = tx.hash
-    ? `https://${chainMeta?.etherscanHostname}/tx/${tx.hash}`
-    : null
+  const txUrl = tx.hash ? explorerTxUrl(peer.peerChainId, tx.hash) : null
 
   // Sync only when there's drift to reconcile (or a push is mid-flight) and the
   // row isn't already covered by another syncable peer's sync.

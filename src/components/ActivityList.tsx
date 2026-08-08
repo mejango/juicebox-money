@@ -152,15 +152,22 @@ function ActivityTypeFilter({
   )
 }
 
+/**
+ * Merge a fetched page into the feed, deduped by id and re-sorted newest-first.
+ *
+ * Incoming rows are NOT simply prepended: the same merge serves both the poll (newer
+ * rows, which belong at the top) and "load more" (an older page, which belongs at the
+ * bottom). Sorting on the server's own ordering key is the only thing that keeps both
+ * correct, with the id as a stable tiebreak for same-timestamp rows.
+ */
 export function mergeActivityEvents<T extends BsActivityEvent>(
   current: T[],
   incoming: T[],
 ): T[] {
   const incomingIds = new Set(incoming.map(event => event.id))
-  return [
-    ...incoming,
-    ...current.filter(event => !incomingIds.has(event.id)),
-  ]
+  return [...incoming, ...current.filter(event => !incomingIds.has(event.id))].sort(
+    (a, b) => b.timestamp - a.timestamp || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+  )
 }
 
 /** Holder permission grants are useful in account history, not project feeds. */

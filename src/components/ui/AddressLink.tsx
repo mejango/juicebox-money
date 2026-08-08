@@ -1,19 +1,21 @@
 import type { ReactNode } from 'react'
-import { explorerHostname } from '@/lib/chainDisplay'
+import { explorerAddressUrl } from '@/lib/chainDisplay'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 
 /**
  * A truncated address that links to the chain's block explorer, or a plain
- * span when the chain has none. Pass `host` when the explorer hostname is
- * already resolved, or `chainId` to look it up. `className` styles both the
- * link and the fallback span (the link additionally gets hover:underline);
- * `children` replaces the truncated-address label and `note` appends the
- * muted annotation some tables show after the address.
+ * span when the chain has none. `className` styles both the link and the
+ * fallback span (the link additionally gets hover:underline); `children`
+ * replaces the truncated-address label and `note` appends the muted
+ * annotation some tables show after the address.
+ *
+ * The hostname is ALWAYS resolved from `chainId` here. There is deliberately
+ * no pre-resolved-host escape hatch: every one that existed was filled from
+ * the SDK's `etherscanHostname`, which is dead for OP mainnet.
  */
 export function AddressLink({
   address,
   chainId,
-  host,
   className = 'text-ink',
   children,
   note,
@@ -21,20 +23,17 @@ export function AddressLink({
 }: {
   address: string
   chainId?: number
-  host?: string
   className?: string
   children?: ReactNode
   note?: ReactNode
   title?: string
 }) {
-  // Resolved through the app's single explorer registry (lib/chainDisplay), not a fourth
-  // source — the SDK hostname was one of the maps that drifted on OP mainnet.
-  const explorerHost =
-    host ?? (chainId !== undefined ? (explorerHostname(chainId) ?? undefined) : undefined)
+  // Resolved through the app's single explorer registry (lib/chainDisplay).
+  const url = chainId !== undefined ? explorerAddressUrl(chainId, address) : null
   const label = children ?? <AddressLabel address={address} />
-  const core = explorerHost ? (
+  const core = url ? (
     <a
-      href={`https://${explorerHost}/address/${address}`}
+      href={url}
       target="_blank"
       rel="noopener noreferrer"
       title={title}

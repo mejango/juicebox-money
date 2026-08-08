@@ -39,6 +39,7 @@ import {
   cashOutPoolBufferBps,
   getCashOutContext,
   isNativeToken,
+  minimumDropNotice,
 } from '@/lib/cashOut'
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -377,6 +378,8 @@ export function CashOutPanel({
     )
       return
     setErrorMsg(null)
+    // What the panel promised, captured before anything is re-quoted.
+    const displayedMinimum = bestRoute?.minimumReturn ?? route.minimumReturn
     try {
       if (directSellWins && market?.status === 'pool' && projectToken && swapDeployment) {
         if (needsTokenApproval) {
@@ -442,11 +445,22 @@ export function CashOutPanel({
           deadline: swapDeadline(tx.isSafe),
         })
         setUsedDirectSell(true)
-        await tx.send({
-          ...request,
-          args: request.args as unknown as readonly unknown[],
-          label: 'Sell claimed project tokens through the best available pool route',
-        })
+        await tx.send(
+          {
+            ...request,
+            args: request.args as unknown as readonly unknown[],
+            label:
+              'Sell claimed project tokens through the best available pool route',
+          },
+          {
+            reviewNotice: minimumDropNotice({
+              displayedMinimum,
+              freshMinimum: refreshedBest.minimumReturn,
+              decimals: receiveDecimals,
+              symbol: receiveSymbol,
+            }),
+          },
+        )
         return
       }
       // Quote, lock and build one matching request from fresh protocol state.
@@ -466,7 +480,20 @@ export function CashOutPanel({
         )
       }
       const request = prepared.transaction
-      await tx.send({ ...request, abi: request.abi as Abi })
+      // The terminal route is not a pool sale — clear any flag left by an
+      // earlier attempt so the success copy names the route actually taken.
+      setUsedDirectSell(false)
+      await tx.send(
+        { ...request, abi: request.abi as Abi },
+        {
+          reviewNotice: minimumDropNotice({
+            displayedMinimum,
+            freshMinimum: prepared.route.minimumReturn,
+            decimals: receiveDecimals,
+            symbol: receiveSymbol,
+          }),
+        },
+      )
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }
@@ -477,6 +504,7 @@ export function CashOutPanel({
     setAmount('')
     setDebouncedAmount('')
     setErrorMsg(null)
+    setUsedDirectSell(false)
   }
 
   if (success) {
