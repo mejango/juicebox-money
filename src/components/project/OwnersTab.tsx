@@ -76,6 +76,7 @@ import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 
 /**
  * The Owners (revnet) / Tokens (custom) tab (website/ parity:
@@ -307,7 +308,10 @@ function YouCard({
                     className="whitespace-nowrap px-4 py-3 text-right font-normal"
                     title="Estimated proceeds after the protocol, REV, and minimum source fees"
                   >
-                    Max loan
+                    <span className="inline-flex items-center gap-1">
+                      Max loan
+                      <ChartNoteTip note="Estimated proceeds after the protocol, REV, and minimum source fees." />
+                    </span>
                   </th>
                   <th className="whitespace-nowrap px-4 py-3 text-right font-normal">
                     LP
@@ -679,8 +683,9 @@ function YourLpCell({
   // An incomplete log scan must not read as "you have no positions".
   if (summary.isError) {
     return (
-      <span className="text-smoke-500" title="Could not verify the complete position history on this chain.">
+      <span className="inline-flex items-center gap-1 text-smoke-500">
         Unavailable
+        <ChartNoteTip note="Could not verify the complete position history on this chain." />
       </span>
     )
   }

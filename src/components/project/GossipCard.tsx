@@ -43,6 +43,7 @@ import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -818,8 +819,9 @@ function GossipRow({
       </td>
       <td className="py-1.5 pr-3">
         {pending ? (
-          <span className="text-amber-600" title="A snapshot was pushed and is arriving over the bridge (a few minutes).">
+          <span className="inline-flex items-center gap-1 text-amber-600">
             Syncing…
+            <ChartNoteTip note="A snapshot was pushed and is arriving over the bridge (a few minutes)." />
           </span>
         ) : (
           <span className={`whitespace-nowrap ${STATUS_COLOR[staleness.level]}`}>

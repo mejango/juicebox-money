@@ -32,6 +32,8 @@ import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
+import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 const BURN_TOKENS = JBPermissionIdsV6.BURN_TOKENS
 
@@ -438,7 +440,10 @@ export function GetLoanFlow({
           ) : null}
 
           <label className="block">
-            <span className="field-label">Prepaid fee</span>
+            <span className="field-label inline-flex items-center gap-1">
+              Prepaid fee
+              <ChartNoteTip note={PROTOCOL_CONCEPTS.prepaidFee} kind="help" />
+            </span>
             <select
               value={prepaid}
               disabled={busy}

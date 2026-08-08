@@ -38,6 +38,8 @@ import {
   buildSetBuybackTwapAuthorityCall,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
+import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 type BuybackChainState = AuthorityDeployment & {
   name: string
@@ -763,6 +765,7 @@ function BuybackActionForm({
         <div className="mt-4 sm:max-w-xs">
           <NumberField
             label="TWAP window (seconds)"
+            note={PROTOCOL_CONCEPTS.twapWindow}
             value={twapWindow}
             onChange={setTwapWindow}
             disabled={busy}
@@ -789,6 +792,7 @@ function BuybackActionForm({
           />
           <NumberField
             label="TWAP window (seconds)"
+            note={PROTOCOL_CONCEPTS.twapWindow}
             value={twapWindow}
             onChange={setTwapWindow}
             disabled={busy}
@@ -850,16 +854,22 @@ function NumberField({
   onChange,
   disabled,
   placeholder,
+  note,
 }: {
   label: string
   value: string
   onChange: (value: string) => void
   disabled: boolean
   placeholder: string
+  /** What the field MEANS, for a term the operator may not know. */
+  note?: string
 }) {
   return (
     <label className="block">
-      <span className="field-label">{label}</span>
+      <span className="field-label inline-flex items-center gap-1">
+        {label}
+        {note ? <ChartNoteTip note={note} kind="help" /> : null}
+      </span>
       <input
         type="text"
         inputMode="numeric"
