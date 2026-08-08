@@ -24,12 +24,14 @@ export type CreateDraft = {
   links: Record<string, string>
   owner: string
   ownerPerChain: Record<number, string>
+  /** Attach the any-token router terminal. Revnets always do. */
   allowAnyToken: boolean
   approvalCustom: string
   approvalPerChain: Record<number, string>
   accepts: TreasuryCurrency[]
   customAddress: string
   issuanceBase: 'eth' | 'usd' | null
+  /** Link the chains with suckers. Only applies above one chain. */
   linkChains: boolean
   bridge: 'ccip' | 'native' | 'both'
   chains: number[]
@@ -282,6 +284,11 @@ export function parseDraft(text: string): CreateDraft {
     links,
     owner: str(d.owner, 64),
     ownerPerChain: sanitizeChainMap(d.ownerPerChain),
+    // Both launch-shape levers default ON when a file omits them: that's the
+    // wizard's own default, so a hand-written or truncated .jb lands on the
+    // configuration the create flow describes rather than a quieter one.
+    // Only a literal `true` reads as on, so any present-but-not-true value
+    // turns the lever off rather than inheriting the default.
     allowAnyToken: d.allowAnyToken === undefined ? true : bool(d.allowAnyToken),
     approvalCustom: str(d.approvalCustom, 64),
     approvalPerChain: sanitizeChainMap(d.approvalPerChain),

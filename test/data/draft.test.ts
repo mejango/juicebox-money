@@ -49,6 +49,47 @@ describe('.jb draft approval deadline', () => {
   })
 })
 
+describe('.jb draft launch-shape levers', () => {
+  it('defaults both levers on when the file omits them', () => {
+    // These are the wizard's own defaults, so a hand-written or truncated .jb
+    // lands on the configuration the create flow describes rather than a
+    // quieter one the review step wouldn't mention.
+    const draft = parseDraft(jbDraft({}))
+    expect(draft.allowAnyToken).toBe(true)
+    expect(draft.linkChains).toBe(true)
+  })
+
+  it('carries an explicit false on both through a second pass', () => {
+    const draft = parseDraft(
+      jbDraft({ allowAnyToken: false, linkChains: false }),
+    )
+    expect(draft.allowAnyToken).toBe(false)
+    expect(draft.linkChains).toBe(false)
+    // Export → import of an already-imported draft (and the localStorage
+    // rehydrate that runs on page load) must not flip them back on.
+    expect(parseDraft(JSON.stringify(draft))).toMatchObject({
+      allowAnyToken: false,
+      linkChains: false,
+    })
+  })
+
+  it('carries an explicit true on both through a second pass', () => {
+    const draft = parseDraft(jbDraft({ allowAnyToken: true, linkChains: true }))
+    expect(parseDraft(JSON.stringify(draft))).toMatchObject({
+      allowAnyToken: true,
+      linkChains: true,
+    })
+  })
+
+  it('reads a non-boolean value as off, not as the default', () => {
+    // The sanitizer is the security boundary for untrusted files: only a
+    // literal `true` turns a lever on.
+    const draft = parseDraft(jbDraft({ allowAnyToken: 'yes', linkChains: 1 }))
+    expect(draft.allowAnyToken).toBe(false)
+    expect(draft.linkChains).toBe(false)
+  })
+})
+
 describe('.jb draft shop pricing currency', () => {
   it("keeps 'token' pricing alongside the custom accounting token", () => {
     const draft = parseDraft(

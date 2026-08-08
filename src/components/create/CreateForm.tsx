@@ -64,6 +64,7 @@ import {
   autoIssuanceMintChain,
   buildLaunchRequest,
   createSimpleProjectStage,
+  launchAcceptsAnyToken,
   nativeBridgeViable,
   projectIdFromReceipt,
   routesAllFunds,
@@ -286,6 +287,10 @@ export function CreateForm() {
     setLinks((prev) => ({ ...prev, [key]: value.slice(0, 300) }));
   /** Standard accounting tokens (multi-select), or one custom ERC-20. */
   const [accepts, setAccepts] = useState<TreasuryCurrency[]>(["eth"]);
+  /** Attach the any-token router terminal so payers can pay in any token,
+   *  swap-routed into the accounting token(s). Revnets always attach it —
+   *  `launchAcceptsAnyToken` resolves that. */
+  const [allowAnyToken, setAllowAnyToken] = useState(true);
   const [customOn, setCustomOn] = useState(false);
   const [customAddress, setCustomAddress] = useState("");
   const [customMeta, setCustomMeta] = useState<{
@@ -296,7 +301,10 @@ export function CreateForm() {
   const [issuanceBase, setIssuanceBase] = useState<"eth" | "usd" | null>(null);
   const [bridge, setBridge] = useState<LaunchPlan["bridge"]>("ccip");
   const [bridgeOpen, setBridgeOpen] = useState(false);
-  /** Link selected chains with CCIP suckers (multichain launches). */
+  /** Link the selected chains with suckers so the token and treasury bridge
+   *  between them. Unlinked, each chain gets an independent project that
+   *  shares only the configuration. Only meaningful above one chain. */
+  const [linkChains, setLinkChains] = useState(true);
   const [ownerPerChain, setOwnerPerChain] = useState<Record<number, string>>(
     {},
   );
@@ -625,7 +633,18 @@ export function CreateForm() {
           (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
         );
   const itemsOk = items.every(itemOk);
+  // Revnets always accept any token — REVDeployer attaches the router terminal
+  // itself — so the wizard states it as a fact there instead of offering a
+  // switch the encoder would ignore.
+  const anyTokenAccepted = launchAcceptsAnyToken(flavor, allowAnyToken);
+  // The chain-linking disclosure opens itself whenever the launch is off the
+  // defaults, so an imported draft can never hide what it changed behind a
+  // collapsed control.
+  const linkingOpen = bridgeOpen || bridge !== "ccip" || !linkChains;
+  // Bridge infrastructure only exists on a linked launch — an unlinked one
+  // deploys no suckers, so its bridge choice can't block anything.
   const bridgeOk =
+    !linkChains ||
     bridge !== "native" ||
     selected.length < 2 ||
     nativeBridgeViable(selected, accepts, customOn);
@@ -1023,10 +1042,10 @@ export function CreateForm() {
           chainId,
           {
             chains: selected,
-            linkChains: true,
+            linkChains,
             bridge,
             issuanceBase,
-            allowAnyToken: true,
+            allowAnyToken: anyTokenAccepted,
             owner:
               resolvedAddress(ownerPerChain[chainId]?.trim() || owner) ??
               launchAccount,
@@ -1526,13 +1545,13 @@ export function CreateForm() {
     links,
     owner,
     ownerPerChain,
-    allowAnyToken: true,
+    allowAnyToken: anyTokenAccepted,
     approvalCustom,
     approvalPerChain,
     accepts,
     customAddress: customOn ? customAddress : "",
     issuanceBase,
-    linkChains: true,
+    linkChains,
     bridge,
     chains: selected,
     stages,
@@ -1565,9 +1584,11 @@ export function CreateForm() {
     setApprovalCustom(draft.approvalCustom);
     setApprovalPerChain(draft.approvalPerChain);
     setAccepts(draft.accepts);
+    setAllowAnyToken(draft.allowAnyToken);
     setCustomOn(draft.customAddress !== "");
     setCustomAddress(draft.customAddress);
     setIssuanceBase(draft.issuanceBase);
+    setLinkChains(draft.linkChains);
     setBridge(draft.bridge);
     const validChains = draft.chains.filter((id) =>
       SUPPORTED_CHAINS.some((chain) => chain.id === id),
@@ -1979,41 +2000,55 @@ export function CreateForm() {
                 <button
                   onClick={() => !busy && setBridgeOpen((o) => !o)}
                   disabled={busy}
-                  aria-expanded={bridgeOpen || bridge !== "ccip"}
+                  aria-expanded={linkingOpen}
                   className="font-medium text-ink underline underline-offset-2 hover:text-smoke-700 disabled:opacity-60"
                 >
-                  linked
+                  {linkChains ? "linked" : "unlinked"}
                 </button>{" "}
-                so your token{customOn ? "" : " and treasury"} can move between
-                them.
+                {linkChains
+                  ? `so your token${
+                      customOn ? "" : " and treasury"
+                    } can move between them.`
+                  : "— each chain launches its own project and nothing moves between them."}
               </p>
-              {bridgeOpen || bridge !== "ccip" ? (
+              {linkingOpen ? (
                 <div className="mt-3">
-                  <div className="flex items-center gap-3">
-                    <span className="whitespace-nowrap text-sm text-smoke-700">
-                      Connect chains via
-                    </span>
-                    <select
-                      value={bridge}
-                      onChange={(e) =>
-                        !busy &&
-                        setBridge(e.target.value as LaunchPlan["bridge"])
-                      }
-                      disabled={busy}
-                      aria-label="Bridge infrastructure"
-                      className="select-caret input-well min-h-[44px] !w-auto pl-3.5 pr-8 text-sm disabled:opacity-60"
-                    >
-                      <option value="ccip">CCIP</option>
-                      <option value="native">Native bridges</option>
-                      <option value="both">Native and CCIP</option>
-                    </select>
-                  </div>
-                  {bridge !== "ccip" ? (
-                    <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
-                      {bridge === "native"
-                        ? "Ethereum’s own rollup bridges — strongest guarantees. Ethereum + one L2 only, ETH only, and moves back to Ethereum take ~7 days."
-                        : "Both bridges on every pair of chains — whatever the native bridges can’t carry rides CCIP."}
-                    </p>
+                  <CheckRow
+                    checked={linkChains}
+                    onToggle={() => !busy && setLinkChains((on) => !on)}
+                    disabled={busy}
+                    title="Link these chains"
+                    blurb="Deploys suckers so the token and treasury bridge between every selected chain. Unlinked, each chain gets a separate project that only shares this configuration."
+                  />
+                  {linkChains ? (
+                    <div className="mt-3">
+                      <div className="flex items-center gap-3">
+                        <span className="whitespace-nowrap text-sm text-smoke-700">
+                          Connect chains via
+                        </span>
+                        <select
+                          value={bridge}
+                          onChange={(e) =>
+                            !busy &&
+                            setBridge(e.target.value as LaunchPlan["bridge"])
+                          }
+                          disabled={busy}
+                          aria-label="Bridge infrastructure"
+                          className="select-caret input-well min-h-[44px] !w-auto pl-3.5 pr-8 text-sm disabled:opacity-60"
+                        >
+                          <option value="ccip">CCIP</option>
+                          <option value="native">Native bridges</option>
+                          <option value="both">Native and CCIP</option>
+                        </select>
+                      </div>
+                      {bridge !== "ccip" ? (
+                        <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+                          {bridge === "native"
+                            ? "Ethereum’s own rollup bridges — strongest guarantees. Ethereum + one L2 only, ETH only, and moves back to Ethereum take ~7 days."
+                            : "Both bridges on every pair of chains — whatever the native bridges can’t carry rides CCIP."}
+                        </p>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               ) : null}
@@ -2032,9 +2067,11 @@ export function CreateForm() {
           <span className="field-label">Accounting</span>
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             The token(s) that make up your{" "}
-            {flavor === "revnet" ? "revnet" : "project"}&apos;s balance. Other
-            payment tokens auto-swap as they&apos;re paid in. Accounting tokens
-            cannot be removed later.
+            {flavor === "revnet" ? "revnet" : "project"}&apos;s balance.{" "}
+            {anyTokenAccepted
+              ? "Other payment tokens auto-swap as they’re paid in."
+              : "Only these tokens can be paid in."}{" "}
+            Accounting tokens cannot be removed later.
           </p>
           <div className="mt-2.5 grid gap-1 sm:grid-cols-3">
             {(
@@ -2123,6 +2160,17 @@ export function CreateForm() {
               Checking price feeds on every selected chain…
             </p>
           ) : null}
+          {flavor === "revnet" ? null : (
+            <div className="mt-3">
+              <CheckRow
+                checked={allowAnyToken}
+                onToggle={() => !busy && setAllowAnyToken((on) => !on)}
+                disabled={busy}
+                title="Accept any token"
+                blurb="Adds the router terminal, which swaps whatever a payer sends into your accounting token(s). Without it, payers can only pay in the tokens above."
+              />
+            </div>
+          )}
         </div>
 
         <div className="mt-6">
@@ -2993,6 +3041,24 @@ export function CreateForm() {
               on {selected.map((id) => chainName(id)).join(", ") || "—"}
             </dd>
           </div>
+          {/* Both levers default to on and every other line here reads as if
+              they are, so call them out only when this launch turns one off. */}
+          {anyTokenAccepted ? null : (
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-smoke-700">Payments</dt>
+              <dd className="font-medium text-ink">
+                Accounting tokens only — no any-token swaps
+              </dd>
+            </div>
+          )}
+          {selected.length > 1 && !linkChains ? (
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-smoke-700">Chains</dt>
+              <dd className="font-medium text-ink">
+                Not linked — {selected.length} independent projects
+              </dd>
+            </div>
+          ) : null}
           {isSimpleProject ? (
             <div>
               <dt className="text-smoke-700">Rules</dt>

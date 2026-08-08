@@ -26,6 +26,7 @@ import {
   build721TierConfigs,
   buildLaunchRequest,
   createSimpleProjectStage,
+  launchAcceptsAnyToken,
   nativeBridgeViable,
   requiredFeedPairs,
   resolveStages,
@@ -389,6 +390,43 @@ describe('project launch encoding', () => {
     expect(decodeFunctionData({ abi: request.abi, data }).functionName).toBe(
       'launchProjectFor',
     )
+  })
+
+  // The .jb draft carries both levers and the wizard now honors them on
+  // import, so each one has to reach the calldata rather than a literal.
+  it('leaves multichain launches unlinked when the plan says so', () => {
+    const request = requestFor(plan({ chains: [1, 10], linkChains: false }))
+
+    expect(request.address).toBe(
+      jbContractAddress['6'].JB721TiersHookProjectDeployer[1],
+    )
+    expect(request.args).toHaveLength(5)
+    expect(() => encode(request)).not.toThrow()
+  })
+
+  it('attaches the any-token router terminal only when the plan allows it', () => {
+    expect(
+      projectConfig(requestFor(plan({ allowAnyToken: false })))
+        .terminalConfigurations.map(terminal => terminal.terminal),
+    ).toEqual([jbContractAddress['6'].JBMultiTerminal[1]])
+
+    expect(
+      projectConfig(requestFor(plan({ allowAnyToken: true })))
+        .terminalConfigurations.map(terminal => terminal.terminal),
+    ).toEqual([
+      jbContractAddress['6'].JBMultiTerminal[1],
+      jbContractAddress['6'].JBRouterTerminalRegistry[1],
+    ])
+  })
+
+  it('forces any-token acceptance on for revnets, whatever a draft says', () => {
+    // REVDeployer builds its own terminal list and always includes the router
+    // registry, so a revnet draft cannot opt out — the wizard must not offer to.
+    expect(launchAcceptsAnyToken('revnet', false)).toBe(true)
+    expect(launchAcceptsAnyToken('revnet', true)).toBe(true)
+    expect(launchAcceptsAnyToken('project', false)).toBe(false)
+    expect(launchAcceptsAnyToken('simple', false)).toBe(false)
+    expect(launchAcceptsAnyToken('project', true)).toBe(true)
   })
 
   it('encodes a revnet deployment through the SDK-provided request', () => {

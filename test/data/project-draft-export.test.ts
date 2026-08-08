@@ -22,6 +22,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   }
 })
 
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { parseDraft } from '@/lib/draft'
 import { buildProjectDraftExport } from '@/lib/project-draft-export'
 
 const CHAIN = 1 as JBChainId
@@ -31,7 +33,10 @@ const TOKEN = `0x${'33'.repeat(20)}` as Address
 const DAY = 86_400
 
 /** Every live read the export makes beyond the three mocked SDK helpers. */
-function client(splits: Record<string, unknown[]> = {}): PublicClient {
+function client(
+  splits: Record<string, unknown[]> = {},
+  terminals: readonly string[] = [],
+): PublicClient {
   return {
     readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
       switch (functionName) {
@@ -40,6 +45,8 @@ function client(splits: Record<string, unknown[]> = {}): PublicClient {
           return []
         case 'splitsOf':
           return splits[functionName] ?? []
+        case 'terminalsOf':
+          return terminals
         case 'symbol':
           return 'TEST'
         default:
@@ -212,6 +219,45 @@ describe('queued rulesets the export cannot represent', () => {
     const { warnings } = await exportDraft({ isRevnet: false })
 
     expect(warnings).toEqual([])
+  })
+})
+
+describe('launch-shape levers round trip', () => {
+  // Both are real properties of the deployment and the create flow now honors
+  // them on import, so a clone must reproduce what the original actually has.
+  const OTHER = `0x${'99'.repeat(20)}`
+
+  beforeEach(() => {
+    mocks.getCurrentRuleset.mockResolvedValue(ruleset())
+  })
+
+  it('reports the any-token router terminal when the directory lists it', async () => {
+    const { draft } = await exportDraft({
+      client: client({}, [OTHER, v6Address('JBRouterTerminalRegistry', CHAIN)]),
+    })
+
+    expect(draft.allowAnyToken).toBe(true)
+    expect(parseDraft(JSON.stringify(draft)).allowAnyToken).toBe(true)
+  })
+
+  it('reports no any-token router terminal when the directory omits it', async () => {
+    const { draft } = await exportDraft({ client: client({}, [OTHER]) })
+
+    expect(draft.allowAnyToken).toBe(false)
+    expect(parseDraft(JSON.stringify(draft)).allowAnyToken).toBe(false)
+  })
+
+  it('carries the linked-chain flag from the sucker group', async () => {
+    const single = await exportDraft()
+    expect(single.draft.linkChains).toBe(false)
+    expect(parseDraft(JSON.stringify(single.draft)).linkChains).toBe(false)
+
+    const linked = await exportDraft({
+      chains: [CHAIN, 10],
+      authorityByChain: { [CHAIN]: OWNER, 10: OWNER },
+    })
+    expect(linked.draft.linkChains).toBe(true)
+    expect(parseDraft(JSON.stringify(linked.draft)).linkChains).toBe(true)
   })
 })
 

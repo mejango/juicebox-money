@@ -921,6 +921,24 @@ export function buildLaunchRequest(args: {
   } as const
 }
 
+/**
+ * Whether a launch attaches the any-token router-terminal registry — the
+ * terminal that lets payers pay in ANY token, swap-routed into the accounting
+ * token(s).
+ *
+ * Revnets always attach it: REVDeployer builds its own terminal list and
+ * includes `JBRouterTerminalRegistry` on every chain where that registry is
+ * deployed, so `allowAnyToken` only decides the project flavors. Resolving it
+ * in one place keeps the wizard's copy, the draft it saves and the calldata it
+ * encodes on the same answer.
+ */
+export function launchAcceptsAnyToken(
+  flavor: 'simple' | 'project' | 'revnet',
+  allowAnyToken: boolean,
+): boolean {
+  return flavor === 'revnet' || allowAnyToken
+}
+
 /** Whether 'native' bridging can serve this selection. Native bridges only
  *  connect Ethereum with an L2 (so every pair must include the L1 — i.e.
  *  exactly two chains, one of them Ethereum) and only carry ETH (USDC
