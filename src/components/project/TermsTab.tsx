@@ -27,7 +27,7 @@ import {
 } from '@/lib/format'
 import { IssuanceLadder } from './IssuanceLadder'
 import { PERSIST } from '@/lib/query-persist'
-import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
@@ -222,10 +222,7 @@ export function TermsTab({
                 </th>
                 <th className="pb-2 pr-4 font-medium">Split limit</th>
                 <th className="pb-2 font-medium">
-                  <span className="inline-flex items-center gap-1">
-                    Cash out tax
-                    <ChartNoteTip note={PROTOCOL_CONCEPTS.cashOutTax} kind="help" />
-                  </span>
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash out tax</ConceptTerm>
                 </th>
               </tr>
             </thead>

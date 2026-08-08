@@ -34,7 +34,7 @@ import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { PERSIST } from '@/lib/query-persist'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { explorerTokenUrl } from '@/lib/chainDisplay'
-import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 export function revLoansAddress(chainId: JBChainId): Address {
@@ -259,10 +259,7 @@ function LoanTable({
             <th className="pb-1.5 font-normal">Borrowed</th>
             <th className="pb-1.5 text-right font-normal">Collateral</th>
             <th className="pb-1.5 text-right font-normal">
-              <span className="inline-flex items-center justify-end gap-1">
-                Prepaid fee
-                <ChartNoteTip note={PROTOCOL_CONCEPTS.prepaidFee} kind="help" />
-              </span>
+              <ConceptTerm note={PROTOCOL_CONCEPTS.prepaidFee}>Prepaid fee</ConceptTerm>
             </th>
             <th className="pb-1.5 text-right font-normal">Opened</th>
             {holder ? <th className="pb-1.5 text-right font-normal" /> : null}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
-import { QuestionMarkCircle } from '@/components/project/QuestionMarkCircle'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { priceConcept } from '@/lib/price-concepts'
 import {
   buildStepPoints,
@@ -167,18 +167,14 @@ function PriceSummary({
   note?: string
 }) {
   return (
-    <div
-      className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2"
-      title={note}
-    >
+    <div className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2">
       <div className="flex items-center gap-2 text-[11px] font-medium text-ink">
         <span
           aria-hidden="true"
           className="h-2 w-2 shrink-0 rounded-full"
           style={{ backgroundColor: color }}
         />
-        <span>{label}</span>
-        {note ? <QuestionMarkCircle className="h-3.5 w-3.5 shrink-0 text-smoke-400" /> : null}
+        {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : <span>{label}</span>}
       </div>
       <p className="mt-0.5 truncate text-[11px] text-smoke-700">
         <Revalidating pending={pending && !!value && value > 0}>

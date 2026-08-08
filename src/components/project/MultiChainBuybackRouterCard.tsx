@@ -38,7 +38,7 @@ import {
   buildSetBuybackTwapAuthorityCall,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
-import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 type BuybackChainState = AuthorityDeployment & {
@@ -866,9 +866,8 @@ function NumberField({
 }) {
   return (
     <label className="block">
-      <span className="field-label inline-flex items-center gap-1">
-        {label}
-        {note ? <ChartNoteTip note={note} kind="help" /> : null}
+      <span className="field-label">
+        {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : label}
       </span>
       <input
         type="text"
