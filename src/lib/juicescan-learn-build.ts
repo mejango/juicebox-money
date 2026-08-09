@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars, no-var */
-// @ts-nocheck -- mirrored DOM renderer; Juicescan remains the typed/content source of truth.
-// Mirrored from webclients/juicescan/src/learn-build.js. Keep the guide copy in sync.
+// @ts-nocheck -- adapted DOM renderer; Juicescan remains the protocol-content source of truth.
+// Mirrored from webclients/juicescan/src/learn-build.js. Client-specific guidance may diverge.
 // src/learn-build.js
 // Learn & Build tab content — engaging walkthrough of the Juicebox protocol
 
@@ -488,7 +488,7 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
-    '<a class="guide-toc-link" href="#build-clients">20. Copy This Site</a>';
+    '<a class="guide-toc-link" href="#build-clients">20. Build From This Client</a>';
   wrap.appendChild(toc);
 
   // --- Life of a Project ---
@@ -951,21 +951,21 @@ export function renderBuildTab() {
   ownHeader.textContent = 'BUILD YOUR OWN';
   wrap.appendChild(ownHeader);
 
-  wrap.appendChild(guideSection('build-clients', '20. COPY THIS SITE', [
-    'This explorer is a complete, client-only reference implementation — there is no backend. It is a static bundle (loaded from IPFS) that reads the chain over public RPCs and builds every Juicebox transaction in the browser. The code ships unminified on purpose, so everything you see here is code you can read.',
-    'That makes it a working spec you can hand to an LLM. Every section in Build and Learn has a link icon next to its header that copies a deep link — paste it to your LLM and ask it to recreate that feature against the V6 contracts. And every interactive component in Discover (Pay, Cash Out, Mint, and the rest) has a link icon at its bottom that copies a ready-made prompt — naming the exact code file and contract function — so you can hand a whole feature like your pay flow straight to a model.'
+  wrap.appendChild(guideSection('build-clients', '20. BUILD FROM THIS CLIENT', [
+    'Juicebox Money is a production V6 client you can study, fork, or use as a reference for your own product. Its Next.js interface combines server-assisted indexing and IPFS services with wallet flows that build and verify Juicebox transactions from the current V6 contracts.',
+    'Treat each working flow as an implementation example, not a black box. The project, account, shop, and create surfaces show how product interactions map to indexed reads, fresh onchain checks, transaction builders, ABI round trips, and clear signing previews. Give the relevant source and tests to your coding agent when you want to reuse one of those patterns.'
   ], [
     stepList([
-      'In Discover, click the link icon at the bottom of a component (e.g. the Pay card) to copy a recreation prompt; or in Build/Learn, click the icon by a section header to copy its link.',
-      'Paste it to your LLM and ask: "Recreate this against the Juicebox V6 contracts."',
-      'Give it the two repos below. The README’s transaction→contract map shows exactly which function each action calls.',
-      'Mirror the pattern: every transaction is a pure buildXArgs() that round-trips through the contract ABI — copy the builder and keep its round-trip test.'
+      'Start from the product flow closest to yours — such as Pay, Cash Out, project creation, ruleset editing, or the Shop — and identify its component, supporting reads, and transaction builder.',
+      'Give your coding agent that source, its tests, this guide’s deep link, and the current V6 contract repository below.',
+      'Keep indexed data for fast discovery and display, but re-read signing-critical state onchain immediately before building and submitting a transaction.',
+      'Reuse the pure transaction-builder and ABI round-trip pattern, then add product-specific invariants and browser tests before asking a wallet to sign.'
     ]),
     (function () {
       var box = document.createElement('p'); box.className = 'guide-text';
       box.appendChild(document.createTextNode('Reference: '));
       var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
-      box.appendChild(lk('https://github.com/mejango/juicescan', 'this site’s repo (README + tests)'));
+      box.appendChild(lk('https://github.com/mejango/juicebox-money', 'Juicebox Money’s repo (source + tests)'));
       box.appendChild(document.createTextNode(' and '));
       box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
       box.appendChild(document.createTextNode('.'));
@@ -973,7 +973,7 @@ export function renderBuildTab() {
     })(),
     (function () {
       var p = document.createElement('p'); p.className = 'guide-text';
-      p.textContent = 'The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.';
+      p.textContent = 'Use the app as a product reference and the repository as the implementation reference. Server routes improve indexing, search, media, and transaction preparation; signing remains explicit, and each wallet-bound action is decoded and checked against the V6 ABI before submission.';
       return p;
     })()
   ]));

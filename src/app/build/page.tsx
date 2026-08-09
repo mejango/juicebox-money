@@ -18,8 +18,9 @@ export default function BuildPage() {
           Build on Juicebox<span className="text-split-500">.</span>
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
-          The same contract-level implementation guide published by Juicescan, hosted here for
-          builders working from the main Juicebox client.
+          Start with the experience you want to create. Use this guide to choose the right
+          Juicebox building blocks, map each user action to V6 reads and transactions, and ship a
+          safe first version.
         </p>
       </div>
       <ProtocolGuide guide="build" />

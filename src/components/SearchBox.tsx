@@ -49,10 +49,12 @@ export function SearchBox({
   expanded = false,
   placeholder = 'Search projects',
   compactPlaceholder,
+  onFocusChange,
 }: {
   expanded?: boolean
   placeholder?: string
   compactPlaceholder?: string
+  onFocusChange?: (focused: boolean) => void
 }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
@@ -337,7 +339,16 @@ export function SearchBox({
 
   if (expanded) {
     return (
-      <div ref={boxRef} className="relative w-full">
+      <div
+        ref={boxRef}
+        className="relative w-full"
+        onFocusCapture={() => onFocusChange?.(true)}
+        onBlurCapture={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            onFocusChange?.(false)
+          }
+        }}
+      >
         {input}
       </div>
     )

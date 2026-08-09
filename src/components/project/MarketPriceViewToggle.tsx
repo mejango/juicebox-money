@@ -10,30 +10,35 @@ export function MarketPriceViewToggle({
   onChange: (value: MarketPriceView) => void
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Pool price detail"
-      className="flex shrink-0 items-center gap-3"
-    >
-      {([
-        ['smooth', 'Smooth', 'Show time-weighted averages of the pool price'],
-        ['trades', 'Every trade', 'Show every exact post-trade pool price'],
-      ] as const).map(([option, label, title]) => (
-        <button
-          key={option}
-          type="button"
-          title={title}
-          aria-pressed={value === option}
-          onClick={() => onChange(option)}
-          className={`py-1 text-xs font-medium transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 ${
-            value === option
-              ? 'text-bluebs-700 underline decoration-bluebs-300 underline-offset-4'
-              : 'text-smoke-600 hover:text-ink'
-          }`}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="relative inline-flex shrink-0 items-center border-b border-bluebs-300 text-bluebs-700">
+      <select
+        value={value}
+        onChange={event => onChange(event.target.value as MarketPriceView)}
+        aria-label="Pool price detail"
+        title={
+          value === 'smooth'
+            ? 'Show time-weighted averages of the pool price'
+            : 'Show every exact post-trade pool price'
+        }
+        className="cursor-pointer appearance-none bg-transparent py-1 pl-0 pr-4 text-xs font-medium text-current focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400"
+      >
+        <option value="smooth">Smooth</option>
+        <option value="trades">Every trade</option>
+      </select>
+      <svg
+        viewBox="0 0 12 12"
+        aria-hidden="true"
+        className="pointer-events-none absolute right-0 h-3 w-3"
+      >
+        <path
+          d="m2.5 4.25 3.5 3.5 3.5-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     </div>
   )
 }
