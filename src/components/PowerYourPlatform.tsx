@@ -15,10 +15,6 @@ For each transaction, identify the contract, function, arguments, units, permiss
 
 Deliver: (1) a plain-language product flow, (2) the onchain architecture, (3) a threat model and trust assumptions, (4) an incremental implementation plan, (5) test cases and invariants, and (6) the first working vertical slice. Keep the interface branded as my product; treat Juicebox as open infrastructure, not a hosted dependency.`
 
-const PLATFORM_PROMPT_PREVIEW = `My product: [describe the users, the value they exchange, and the experience I want].
-
-Help me design the smallest safe architecture for it on Juicebox V6…`
-
 export function PowerYourPlatform() {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -126,31 +122,17 @@ export function PowerYourPlatform() {
               </div>
               <p className="mt-5 text-xs leading-relaxed text-smoke-600">
                 This is a living list. As more platforms emerge and prove useful, safe, and
-                legitimate in practice, we&apos;ll add them here.
+                legitimate in practice, we&apos;ll add them here. Want to build yours?{' '}
+                <button
+                  type="button"
+                  onClick={copyPrompt}
+                  className="font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
+                >
+                  {copied ? 'Build prompt copied' : 'Copy the build prompt'}
+                </button>
+                , fill in its first line, and give it to your coding agent.
               </p>
             </div>
-          </div>
-        </div>
-
-        <div className="mt-10 rounded-xl border border-smoke-200 bg-white p-5 sm:p-6">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="font-agrandir text-lg font-medium text-ink">Build yours with an agent</p>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-600">
-                Copy the full architecture prompt, fill in its first line, and give it to your
-                coding agent.
-              </p>
-              <pre className="mt-4 whitespace-pre-wrap rounded-lg bg-smoke-75 p-4 font-mono text-xs leading-6 text-smoke-800">
-                {PLATFORM_PROMPT_PREVIEW}
-              </pre>
-            </div>
-            <button
-              type="button"
-              onClick={copyPrompt}
-              className="btn-secondary min-h-10 shrink-0 px-4 text-xs"
-            >
-              {copied ? 'Full prompt copied' : 'Copy full prompt'}
-            </button>
           </div>
         </div>
       </div>

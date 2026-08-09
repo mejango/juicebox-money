@@ -28,12 +28,12 @@ describe('PowerYourPlatform', () => {
     expect(text).not.toContain('Deliver: (1)')
 
     const copyButton = renderer.root.findAllByType('button').find(button =>
-      renderedText(button).includes('Copy full prompt'),
+      renderedText(button).includes('Copy the build prompt'),
     )
     expect(copyButton).toBeDefined()
     await act(async () => copyButton!.props.onClick())
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Deliver: (1)'))
-    expect(renderedText(renderer.root)).toContain('Full prompt copied')
+    expect(renderedText(renderer.root)).toContain('Build prompt copied')
   })
 })
