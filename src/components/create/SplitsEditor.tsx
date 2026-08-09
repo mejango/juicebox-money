@@ -350,7 +350,7 @@ export function SplitsEditor({
                     aria-label="Payout routing"
                     className="input-well select-caret min-h-[40px] w-40 px-3 pr-8 text-xs disabled:opacity-60"
                   >
-                    <option value="pay">Pay (mints tokens)</option>
+                    <option value="pay">Pay</option>
                     <option value="balance">Add to balance</option>
                   </select>
                 </div>

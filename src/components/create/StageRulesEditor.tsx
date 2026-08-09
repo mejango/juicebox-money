@@ -1,6 +1,7 @@
 "use client";
 
 import { ChainIcon } from "@/components/ChainIcon";
+import { ProjectLink } from "@/components/ProjectLink";
 import {
   FOREVER_SECONDS,
   autoIssuanceMintChain,
@@ -547,9 +548,7 @@ export function StageRulesEditor({
     (stage.payouts !== "none" && stage.holdFees ? " | fees held" : "");
 
   const cashOutsSummary = routedAll
-    ? multiToken
-      ? "Off — every accepted token fully routed"
-      : "Off — all funds routed"
+    ? "Off — all funds committed to payouts"
     : stage.cashOuts
       ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${stageCashOutTax(stage) / 100}% tax`}`
       : "Off";
@@ -1170,10 +1169,17 @@ export function StageRulesEditor({
                 <>
                   <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                     Funds leaving the project — payouts and withdrawals — pay a
-                    small fee to the Juicebox protocol. Paying it makes you a
-                    part-owner of Juicebox itself, earning a cut of everyone
-                    else&apos;s fees. Money moving between Juicebox projects
-                    never pays a fee.
+                    small fee to{" "}
+                    <ProjectLink
+                      href="/eth:1"
+                      projectHint={{ name: "Juicebox", logoUri: null }}
+                      className="underline underline-offset-2 hover:text-ink"
+                    >
+                      this
+                    </ProjectLink>{" "}
+                    Juicebox project. Paying it makes you a part-owner of
+                    Juicebox itself, earning a cut of everyone else&apos;s fees.
+                    Money moving between Juicebox projects never pays a fee.
                   </p>
                   <div className="mt-2.5">
                     <CheckRow
