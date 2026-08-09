@@ -10,7 +10,7 @@ export function MarketPriceViewToggle({
   onChange: (value: MarketPriceView) => void
 }) {
   return (
-    <div className="relative inline-flex shrink-0 items-center border-b border-bluebs-300 text-bluebs-700">
+    <div className="relative inline-flex shrink-0 items-center text-bluebs-700">
       <select
         value={value}
         onChange={event => onChange(event.target.value as MarketPriceView)}
@@ -20,7 +20,8 @@ export function MarketPriceViewToggle({
             ? 'Show time-weighted averages of the pool price'
             : 'Show every exact post-trade pool price'
         }
-        className="cursor-pointer appearance-none bg-transparent py-1 pl-0 pr-4 text-xs font-medium text-current focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400"
+        className="w-[4.15rem] cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline data-[view=trades]:w-[5.7rem]"
+        data-view={value}
       >
         <option value="smooth">Smooth</option>
         <option value="trades">Every trade</option>

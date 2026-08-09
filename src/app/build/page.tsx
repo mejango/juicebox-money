@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { CopyBuildPrompt } from '@/components/CopyBuildPrompt'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function BuildPage() {
           Juicebox building blocks, map each user action to V6 reads and transactions, and ship a
           safe first version.
         </p>
+        <CopyBuildPrompt className="mt-6 text-sm text-smoke-700" />
       </div>
       <ProtocolGuide guide="build" />
     </div>

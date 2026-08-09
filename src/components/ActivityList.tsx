@@ -39,6 +39,7 @@ export type ActivityCategory =
   | 'nftMint'
   | 'tokenDeploy'
   | 'projectCreate'
+  | 'reconfigure'
   | 'addToBalance'
   | 'infoUpdate'
   | 'ownershipTransfer'
@@ -61,6 +62,7 @@ const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
   nftMint: 'NFT mints',
   tokenDeploy: 'Token deploys',
   projectCreate: 'Project creation',
+  reconfigure: 'Reconfigurations',
   addToBalance: 'Add to balance',
   infoUpdate: 'Info updates',
   ownershipTransfer: 'Ownership transfers',
@@ -85,6 +87,7 @@ export function activityCategory(event: BsActivityEvent): ActivityCategory | nul
   if (event.mintNftEvent) return 'nftMint'
   if (event.deployErc20Event) return 'tokenDeploy'
   if (event.projectCreateEvent) return 'projectCreate'
+  if (event.rulesetQueuedEvent) return 'reconfigure'
   if (event.setUriEvent) return 'infoUpdate'
   if (event.projectTransferEvent) return 'ownershipTransfer'
   if (event.addNftTierEvent) return 'addShopItem'
@@ -264,6 +267,7 @@ export function activityParts(
     event.setUriEvent?.caller ??
     event.projectTransferEvent?.previousOwner ??
     event.operatorPermissionsSetEvent?.caller ??
+    event.rulesetQueuedEvent?.caller ??
     event.addNftTierEvent?.caller ??
     event.removeNftTierEvent?.caller ??
     // PoolManager emits the swap, so `caller` is infrastructure. Bendystraw's
@@ -388,6 +392,8 @@ export function activityParts(
       permissions for{' '}
       <AddressLabel address={event.operatorPermissionsSetEvent.operator} />
     </>
+  ) : event.rulesetQueuedEvent ? (
+    <>reconfigured the project</>
   ) : event.addNftTierEvent ? (
     <>added shop item #{event.addNftTierEvent.tierId}</>
   ) : event.removeNftTierEvent ? (

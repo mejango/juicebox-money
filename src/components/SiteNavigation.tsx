@@ -21,6 +21,10 @@ function GuideLinks({ className = '' }: { className?: string }) {
       <Link href="/build" className="hover:text-bluebs-600">
         Build
       </Link>
+      <span aria-hidden>|</span>
+      <Link href="/audit" className="hover:text-bluebs-600">
+        Audit
+      </Link>
     </div>
   )
 }

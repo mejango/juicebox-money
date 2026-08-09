@@ -1,6 +1,6 @@
 import Image from 'next/image'
 import Link from 'next/link'
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import accountsIllustration from '@/assets/illustrations/accounts.png'
 import autoIssuanceIllustration from '@/assets/illustrations/auto-issuance.png'
 import extrasIllustration from '@/assets/illustrations/extras.png'
@@ -22,11 +22,12 @@ import splitsIllustration from '@/assets/illustrations/splits.png'
 import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
+import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { FreshActivity } from '@/components/FreshActivity'
-import { HomepageDiscoveryTabs } from '@/components/HomepageDiscoveryTabs'
-import { ProjectCard } from '@/components/ProjectCard'
-import { HomepageDiscoverySkeleton } from '@/components/LoadingSkeletons'
+import { HomepageDiscoveryLayout } from '@/components/HomepageDiscoveryLayout'
+import { ProjectLogo } from '@/components/ProjectLogo'
+import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 
 export const revalidate = 120
@@ -177,63 +178,158 @@ function FruitSeparator() {
 }
 
 async function HomepageDiscovery() {
-  const [cardsResult, activityResult] = await Promise.allSettled([
-    withTimeout(getTrendingCards(12), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getRecentActivity(12), HOMEPAGE_DATA_TIMEOUT_MS),
+  const [cardsResult, activityResult, topResult] = await Promise.allSettled([
+    withTimeout(getTrendingCards(8), HOMEPAGE_DATA_TIMEOUT_MS),
+    withTimeout(getRecentActivity(8), HOMEPAGE_DATA_TIMEOUT_MS),
+    withTimeout(getTopBalanceProjects(8), HOMEPAGE_DATA_TIMEOUT_MS),
   ])
   // Data hiccups degrade to empty regions; the page always renders.
   const cards: TrendingCard[] =
     cardsResult.status === 'fulfilled' ? cardsResult.value : []
   const activity: BsFreshActivityEvent[] =
     activityResult.status === 'fulfilled' ? activityResult.value : []
+  const top: TopBalanceProject[] =
+    topResult.status === 'fulfilled' ? topResult.value : []
 
   return (
     <section
       id="trending"
-      className="mx-auto max-w-6xl px-4 pb-0 pt-8 sm:px-6 sm:pb-0 sm:pt-16"
+      className="mx-auto max-w-[1800px] px-4 pb-0 pt-8 sm:px-6 sm:pt-12"
     >
-      <HomepageDiscoveryTabs
-        trending={
-          <>
-            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
-              Trending projects
-            </h2>
-            {cards.length === 0 ? (
-              <p className="card p-8 text-sm text-smoke-700">
-                Projects are temporarily unavailable. Please try again shortly.
-              </p>
-            ) : (
-              <>
-                <div className="space-y-3 sm:hidden">
-                  {cards.map(card => (
-                    <ProjectCard key={card.key} card={card} />
-                  ))}
-                </div>
-                <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
-                  {[0, 1].map(column => (
-                    <div key={column} className="flex flex-col gap-3">
-                      {cards
-                        .filter((_, index) => index % 2 === column)
-                        .map(card => (
-                          <ProjectCard key={card.key} card={card} />
-                        ))}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </>
-        }
+      <HomepageDiscoveryLayout
+        hero={<HeroColumn />}
         activity={
-          <>
-            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
-              Fresh activity
-            </h2>
-            <div className="card overflow-hidden">
-              <FreshActivity initialEvents={activity} />
-            </div>
-          </>
+          <DashboardColumn title="Fresh activity">
+            <FreshActivity initialEvents={activity} />
+          </DashboardColumn>
         }
+        trending={
+          <DashboardColumn title="Trending projects">
+            <ProjectRows cards={cards} />
+          </DashboardColumn>
+        }
+        top={
+          <DashboardColumn title="Top projects">
+            <TopProjectRows projects={top} />
+          </DashboardColumn>
+        }
+      />
+    </section>
+  )
+}
+
+function DashboardColumn({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}>
+      <h2
+        id={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
+        className="mb-4 hidden font-agrandir text-xl font-medium sm:text-2xl xl:block"
+      >
+        {title}
+      </h2>
+      <div className="card min-h-[420px] overflow-hidden">{children}</div>
+    </section>
+  )
+}
+
+function ProjectRows({ cards }: { cards: TrendingCard[] }) {
+  if (!cards.length) return <EmptyProjects />
+  return (
+    <ol className="divide-y divide-smoke-100">
+      {cards.map((card, index) => (
+        <li key={card.key}>
+          <ProjectLink
+            href={card.href}
+            projectHint={{ name: card.name, logoUri: card.logoUri, tagline: card.tagline }}
+            className="group flex items-center gap-3 px-4 py-4"
+          >
+            <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
+              {index + 1}
+            </span>
+            <ProjectLogo name={card.name} logoUri={card.logoUri} size={40} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
+                {card.name}
+              </span>
+              <span className="mt-0.5 block truncate text-xs text-smoke-600">
+                {card.paymentsCount.toLocaleString('en-US')} payments
+              </span>
+            </span>
+          </ProjectLink>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function TopProjectRows({ projects }: { projects: TopBalanceProject[] }) {
+  if (!projects.length) return <EmptyProjects />
+  return (
+    <ol className="divide-y divide-smoke-100">
+      {projects.map((project, index) => (
+        <li key={project.key}>
+          <ProjectLink
+            href={project.href}
+            projectHint={{
+              name: project.name,
+              logoUri: project.logoUri,
+              tagline: project.tagline,
+            }}
+            className="group flex items-center gap-3 px-4 py-4"
+          >
+            <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
+              {index + 1}
+            </span>
+            <ProjectLogo name={project.name} logoUri={project.logoUri} size={40} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:text-bluebs-600">
+              {project.name}
+            </span>
+            <span className="shrink-0 text-xs tabular-nums text-smoke-700">
+              {project.balanceUsd.toLocaleString('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                maximumFractionDigits: 0,
+              })}
+            </span>
+          </ProjectLink>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function EmptyProjects() {
+  return (
+    <p className="flex min-h-[420px] items-center justify-center px-6 text-center text-sm text-smoke-600">
+      Projects are temporarily unavailable.
+    </p>
+  )
+}
+
+function HeroColumn() {
+  return (
+    <section className="flex min-h-[460px] flex-col justify-between overflow-hidden rounded-xl bg-smoke-50 p-6 text-center xl:text-left">
+      <div>
+        <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-6xl">
+          Fund your thing<span className="text-split-500">.</span>
+        </h1>
+        <p className="mt-5 text-base leading-relaxed text-smoke-700">
+          Raise money from anyone, anywhere, transparently on your terms.
+        </p>
+        <Link
+          href="/create"
+          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm"
+        >
+          Start a project
+        </Link>
+        <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
+      </div>
+      <Image
+        src={juiceboxHero}
+        alt=""
+        priority
+        sizes="(min-width: 1280px) 360px, 280px"
+        className="mx-auto mt-8 h-auto w-full max-w-[330px]"
       />
     </section>
   )
@@ -242,41 +338,7 @@ async function HomepageDiscovery() {
 export default function HomePage() {
   return (
     <>
-      {/* Hero band — statement, actions, and one brand illustration. */}
-      <section>
-        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-24 lg:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="text-center lg:text-left">
-            <h1 className="mx-auto max-w-3xl font-agrandir-wide text-4xl font-bold leading-[1.08] sm:text-6xl lg:mx-0 lg:text-7xl">
-              Fund your thing<span className="text-split-500">.</span>
-            </h1>
-            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg lg:mx-0">
-              Raise money from anyone, anywhere,{' '}
-              <br className="lg:hidden" />
-              transparently on your terms.
-            </p>
-            <div className="mt-9 flex flex-wrap justify-center gap-3 lg:justify-start">
-              <Link href="/create" className="btn-primary min-h-[48px] px-7 text-sm">
-                Start a project
-              </Link>
-            </div>
-            <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
-          </div>
-          <div
-            className="order-first mx-auto w-full max-w-[280px] lg:order-none lg:max-w-none"
-            aria-hidden
-          >
-            <Image
-              src={juiceboxHero}
-              alt=""
-              priority
-              sizes="(min-width: 1024px) 400px, 280px"
-              className="h-auto w-full"
-            />
-          </div>
-        </div>
-      </section>
-
-      <Suspense fallback={<HomepageDiscoverySkeleton />}>
+      <Suspense fallback={<div className="mx-auto min-h-[520px] max-w-[1800px] animate-pulse px-4 pt-8 sm:px-6" />}>
         <HomepageDiscovery />
       </Suspense>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">

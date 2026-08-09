@@ -383,6 +383,11 @@ export type BsActivityEvent = {
     caller: string
     from: string
   } | null
+  rulesetQueuedEvent?: {
+    cycleNumber: number
+    caller: string
+    from: string
+  } | null
   addNftTierEvent?: {
     tierId: string
     price: string
@@ -459,6 +464,7 @@ const ACTIVITY_EVENT_FIELDS = `
   operatorPermissionsSetEvent {
     account operator isRevnetOperator caller from
   }
+  rulesetQueuedEvent { cycleNumber caller from }
   addNftTierEvent { tierId price category caller from }
   removeNftTierEvent { tierId caller from }
   swapEvent {
@@ -589,36 +595,18 @@ export async function getProjectActivityByProject(
   return page
 }
 
-export type BsFreshActivityEvent = {
-  id: string
-  chainId: number
-  projectId: number
-  timestamp: number
-  txHash: string
-  from: string
+export type BsFreshActivityEvent = BsActivityEvent & {
   project: {
     name: string | null
     logoUri: string | null
     tokenSymbol: string | null
     decimals: number | null
   } | null
-  payEvent: {
-    amount: string
-    amountUsd: string | null
-    beneficiary: string
-    newlyIssuedTokenCount: string
-  } | null
-  cashOutTokensEvent: {
-    cashOutCount: string
-    reclaimAmount: string
-    reclaimAmountUsd: string | null
-    beneficiary: string
-  } | null
 }
 
 /**
- * The "Fresh activity" rail: latest pay/cash-out events across ALL V6
- * projects, in one query — the nested `project` field carries the name.
+ * The homepage activity rail: latest project-oriented events across ALL V6
+ * projects. The nested `project` field gives each event its local identity.
  */
 export async function getRecentActivity(
   limit = 12,
@@ -628,18 +616,25 @@ export async function getRecentActivity(
   }>(
     `query($limit: Int!) {
       activityEvents(
-        where: { version: 6, type_in: [payEvent, cashOutTokensEvent] }
+        where: {
+          version: 6
+          OR: [
+            { payEvent_not: null }
+            { cashOutTokensEvent_not: null }
+            { swapEvent_not: null }
+            { sendPayoutsEvent_not: null }
+            { rulesetQueuedEvent_not: null }
+            { projectCreateEvent_not: null }
+            { addToBalanceEvent_not: null }
+          ]
+        }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
       ) {
         items {
-          id chainId projectId timestamp txHash from
+          ${ACTIVITY_EVENT_FIELDS}
           project { name logoUri tokenSymbol decimals }
-          payEvent { amount amountUsd beneficiary newlyIssuedTokenCount }
-          cashOutTokensEvent {
-            cashOutCount reclaimAmount reclaimAmountUsd beneficiary
-          }
         }
       }
     }`,

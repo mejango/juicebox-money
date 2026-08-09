@@ -5,9 +5,10 @@ import { useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
-import { formatCompactTokenAmount, timeAgo } from '@/lib/format'
+import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
+import { activityParts } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
@@ -15,8 +16,7 @@ import { ProjectLink } from './ProjectLink'
 const POLL_MS = 15_000
 
 /**
- * The "Fresh activity" rail (DESIGN.md §Activity rail): latest V6 pay and
- * cash-out events across every project. Server-renders the initial rows,
+ * The "Fresh activity" rail: latest project-oriented V6 events. Server-renders the initial rows,
  * then a lightweight poll keeps them fresh.
  */
 export function FreshActivity({
@@ -68,8 +68,6 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
     name,
     logoUri: event.project?.logoUri ?? null,
   }
-  const pay = event.payEvent
-  const cashOut = event.cashOutTokensEvent
   // Bendystraw's project.tokenSymbol is the accounting token (ETH/USDC),
   // not the project's issued token. Resolve the latter on-chain so projects
   // without an ERC-20 correctly say "token credits".
@@ -78,16 +76,12 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
     event.projectId,
   )
 
-  if (!pay && !cashOut) return null
-
-  const isPay = !!pay
-  const actor = pay?.beneficiary ?? cashOut?.beneficiary ?? event.from
+  const parts = activityParts(event, tokenUnit)
+  const actor = parts.actor
   const explorer = explorerHostname(event.chainId)
   const actorUrl = explorer
     ? `https://${explorer}/address/${actor}`
     : null
-  const rawTokenCount = pay?.newlyIssuedTokenCount ?? cashOut?.cashOutCount ?? '0'
-  const tokenCount = formatCompactTokenAmount(rawTokenCount)
   const relativeTime = timeAgo(event.timestamp)
   const actorNode = <ActorLink href={actorUrl} actor={actor} />
 
@@ -114,8 +108,8 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
             <ActivityMeta
               chainId={event.chainId}
               txHash={event.txHash}
-              amountUsd={pay?.amountUsd ?? cashOut?.reclaimAmountUsd}
-              direction={isPay ? 'in' : 'out'}
+              amountUsd={parts.amountUsd}
+              direction={parts.direction}
             />
           </div>
           <ProjectLink
@@ -126,10 +120,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
             {name}
           </ProjectLink>
           <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
-            {actorNode} {isPay ? 'got' : 'cashed out'}{' '}
-            <span className="font-medium text-bluebs-600">
-              {tokenCount} {tokenUnit}
-            </span>
+            {actorNode} {parts.action}
           </p>
         </div>
       </div>
