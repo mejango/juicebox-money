@@ -33,10 +33,6 @@ function Logo({ iconOnly }: { iconOnly: boolean }) {
         <Link href="/build" className="hover:text-bluebs-600">
           Build
         </Link>
-        <span aria-hidden>|</span>
-        <Link href="/eth:1" className="hover:text-bluebs-600">
-          $JBP6
-        </Link>
       </div>
     </div>
   )
