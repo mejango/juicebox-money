@@ -10,10 +10,10 @@ import { WalletButton } from './WalletButton'
 
 function Logo({ iconOnly }: { iconOnly: boolean }) {
   return (
-    <div className="flex shrink-0 flex-col items-start">
+    <div className="flex shrink-0 flex-col items-start md:flex-row md:items-center md:gap-3">
       <Link
         href="/"
-        className="flex min-h-10 min-w-11 items-center justify-start"
+        className="flex min-h-10 min-w-11 items-center justify-start md:min-w-0"
         aria-label="Juicebox home"
       >
         <Image
@@ -25,7 +25,7 @@ function Logo({ iconOnly }: { iconOnly: boolean }) {
           className="h-8 w-auto"
         />
       </Link>
-      <div className="flex items-center gap-1.5 pl-0.5 font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px]">
+      <div className="flex items-center gap-1.5 pl-0.5 font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px] md:pl-0">
         <Link href="/learn" className="hover:text-bluebs-600">
           Learn
         </Link>

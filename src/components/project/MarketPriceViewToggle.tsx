@@ -13,7 +13,7 @@ export function MarketPriceViewToggle({
     <div
       role="group"
       aria-label="Pool price detail"
-      className="flex shrink-0 gap-1 rounded-lg bg-smoke-75 p-1"
+      className="flex shrink-0 items-center gap-3"
     >
       {([
         ['smooth', 'Smooth', 'Show time-weighted averages of the pool price'],
@@ -25,10 +25,10 @@ export function MarketPriceViewToggle({
           title={title}
           aria-pressed={value === option}
           onClick={() => onChange(option)}
-          className={`min-h-11 rounded-md px-3 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 ${
+          className={`py-1 text-xs font-medium transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 ${
             value === option
-              ? 'bg-white text-bluebs-700 shadow-sm'
-              : 'text-smoke-700 hover:bg-white/70 hover:text-ink'
+              ? 'text-bluebs-700 underline decoration-bluebs-300 underline-offset-4'
+              : 'text-smoke-600 hover:text-ink'
           }`}
         >
           {label}

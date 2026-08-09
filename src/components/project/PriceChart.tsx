@@ -336,12 +336,6 @@ export function PriceChart({
             <span className="text-xs text-smoke-500">Price</span>
             <div className="flex flex-wrap items-center justify-end gap-1">
               {note ? <ChartNoteTip note={note} /> : null}
-              {exactAmmSeries.length > 1 ? (
-                <MarketPriceViewToggle
-                  value={marketPriceView}
-                  onChange={setMarketPriceView}
-                />
-              ) : null}
               {PRICE_RANGES.map(r => (
                 <ChartRangeButton
                   key={r.label}
@@ -352,6 +346,14 @@ export function PriceChart({
               ))}
             </div>
           </div>
+          {exactAmmSeries.length > 1 ? (
+            <div className="mt-2 flex justify-end">
+              <MarketPriceViewToggle
+                value={marketPriceView}
+                onChange={setMarketPriceView}
+              />
+            </div>
+          ) : null}
         </>
       }
       renderSeries={({ X, Y }) => {

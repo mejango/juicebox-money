@@ -181,15 +181,6 @@ export function MarketPriceChart({
           ) : null}
         </div>
         <div className="flex flex-col items-end gap-2">
-          {exactSeries.length > 1 ? (
-            <MarketPriceViewToggle
-              value={marketPriceView}
-              onChange={value => {
-                setMarketPriceView(value)
-                setHover(null)
-              }}
-            />
-          ) : null}
           <div className="flex flex-wrap justify-end gap-1">
             {RANGES.map(range => (
               <ChartRangeButton
@@ -205,6 +196,18 @@ export function MarketPriceChart({
           </div>
         </div>
       </div>
+
+      {exactSeries.length > 1 ? (
+        <div className="mt-2 flex justify-end">
+          <MarketPriceViewToggle
+            value={marketPriceView}
+            onChange={value => {
+              setMarketPriceView(value)
+              setHover(null)
+            }}
+          />
+        </div>
+      ) : null}
 
       {isPending && !series.length ? (
         <div className="skeleton-shimmer mt-4 h-40 w-full rounded-lg" aria-hidden="true" />

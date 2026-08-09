@@ -2046,17 +2046,6 @@ export function PayPanel({
         ) : null}
       </div>
 
-      {/* Note — always present, optional */}
-      <input
-        type="text"
-        value={memo}
-        onChange={(e) => setMemo(e.target.value.slice(0, 256))}
-        disabled={busy}
-        placeholder="Add a note (optional)"
-        aria-label="Note"
-        className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-      />
-
       {/* Selected shop items share the payment receipt shown above. */}
       {mode === "pay" && cartCount > 0 ? (
         <div className="mt-4">
@@ -2187,6 +2176,18 @@ export function PayPanel({
           ) : null}
         </div>
       ) : null}
+
+      {/* The note follows the full receipt preview: tokens, shop items, and splits. */}
+      <input
+        type="text"
+        value={memo}
+        onChange={(e) => setMemo(e.target.value.slice(0, 256))}
+        disabled={busy}
+        placeholder="Add a note (optional)"
+        aria-label="Note"
+        className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+      />
+
       {mode === "pay" && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
