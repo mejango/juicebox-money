@@ -18,8 +18,8 @@ export default function LearnPage() {
           Learn Juicebox<span className="text-split-500">.</span>
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
-          The same complete guide published by Juicescan, from the basic payment loop through
-          protocol architecture and extensions.
+          Understand how payments, balances, tokens, payouts, cash outs, rulesets, hooks, and
+          multichain projects fit together before you participate or launch.
         </p>
       </div>
       <ProtocolGuide guide="learn" />
