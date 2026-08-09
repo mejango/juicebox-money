@@ -1,12 +1,13 @@
 'use client'
 
 import { resolvedAddress } from '@/lib/ens'
-import { truncateAddress } from '@/lib/format'
+import { toLocalDateTimeInput, truncateAddress } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField, ProjectIdField } from './AddressField'
 import { AddButton, Piped } from './ui'
 import { chainsWithoutLpSplitHook } from '@/lib/launch'
+import { DateTimeField } from '@/components/ui/DateTimeField'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
@@ -184,20 +185,33 @@ export function SplitsEditor({
           className="mt-2 rounded-lg border border-smoke-200 bg-smoke-75 p-2.5"
         >
           <div className="flex items-start gap-2">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={split.value}
-              onChange={e => update(split.id, { value: e.target.value.slice(0, 10) })}
-              disabled={disabled}
-              placeholder={mode === 'percent' ? '%' : amountLabel}
-              aria-label={mode === 'percent' ? 'Percent' : `Amount (${amountLabel})`}
-              className={`input-well min-h-[44px] w-20 shrink-0 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                split.value && !splitValueOk(split.value, mode)
-                  ? '!border-red-400'
-                  : ''
-              }`}
-            />
+            <div className="relative w-20 shrink-0">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={split.value}
+                onChange={e =>
+                  update(split.id, { value: e.target.value.slice(0, 10) })
+                }
+                disabled={disabled}
+                placeholder={mode === 'percent' ? undefined : amountLabel}
+                aria-label={
+                  mode === 'percent' ? 'Percent' : `Amount (${amountLabel})`
+                }
+                className={`input-well min-h-[44px] w-full px-3 text-sm tabular-nums disabled:opacity-60 ${
+                  mode === 'percent' ? 'pr-7' : ''
+                } ${
+                  split.value && !splitValueOk(split.value, mode)
+                    ? '!border-red-400'
+                    : ''
+                }`}
+              />
+              {mode === 'percent' ? (
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-smoke-500">
+                  %
+                </span>
+              ) : null}
+            </div>
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
@@ -381,9 +395,9 @@ export function SplitsEditor({
                       onChange={e =>
                         update(split.id, {
                           lockedUntil: e.target.checked
-                            ? new Date(Date.now() + 30 * 86_400_000)
-                                .toISOString()
-                                .slice(0, 16)
+                            ? toLocalDateTimeInput(
+                                Math.floor(Date.now() / 1000) + 30 * 86_400,
+                              )
                             : '',
                         })
                       }
@@ -393,14 +407,15 @@ export function SplitsEditor({
                     Lock until
                   </label>
                   {split.lockedUntil !== '' ? (
-                    <input
-                      type="datetime-local"
+                    <DateTimeField
                       value={split.lockedUntil}
-                      onChange={e =>
-                        update(split.id, { lockedUntil: e.target.value })
+                      onChange={lockedUntil =>
+                        update(split.id, { lockedUntil })
                       }
                       disabled={disabled}
-                      className="input-well min-h-[36px] px-2.5 text-xs disabled:opacity-60"
+                      ariaLabel="Split lock date and time"
+                      wrapperClassName="min-w-[15rem] flex-1"
+                      inputClassName="input-well min-h-[36px] w-full px-2.5 text-xs disabled:opacity-60"
                     />
                   ) : (
                     <span className="text-[11px] text-smoke-500">

@@ -59,6 +59,7 @@ import {
 } from "@/lib/ruleset-queue";
 import { ConceptTerm } from "@/components/project/ConceptTerm";
 import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
+import { DateTimeField } from "@/components/ui/DateTimeField";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -873,19 +874,20 @@ function RulesetEditorForm({
       />
 
       {source.option.requiresStartDate ? (
-        <label className="mt-4 block">
+        <div className="mt-4">
           <span className="field-label">Start following rules</span>
-          <input
-            type="datetime-local"
+          <DateTimeField
             value={scheduledStart}
             min={toLocalDateTimeInput(minimumScheduledStart)}
             disabled={busy || review !== null}
-            onChange={(event) => {
-              setScheduledStart(event.target.value);
+            onChange={(value) => {
+              setScheduledStart(value);
               setReview(null);
               setFlowError(null);
             }}
-            className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+            ariaLabel="Following rules start date and time"
+            wrapperClassName="mt-1.5"
+            inputClassName="input-well min-h-[40px] w-full px-3 text-sm"
           />
           <span className="mt-1 block text-xs text-smoke-600">
             This queued ruleset has no duration, so it has no automatic end.
@@ -896,7 +898,7 @@ function RulesetEditorForm({
               Choose a future time after the queued ruleset starts.
             </span>
           ) : null}
-        </label>
+        </div>
       ) : null}
 
       <div className="mt-4 space-y-5">

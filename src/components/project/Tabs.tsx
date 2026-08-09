@@ -251,13 +251,13 @@ export function ProjectTabs({
                 </button>
               )
             })}
+            <ProjectOverflowMenu
+              tabs={overflowTabs}
+              activeSlug={activityActive ? activitySlug : normalActiveSlug}
+              expanded={overflowExpanded}
+              onToggle={() => setOverflowExpanded(current => !current)}
+            />
           </div>
-          <ProjectOverflowMenu
-            tabs={overflowTabs}
-            activeSlug={activityActive ? activitySlug : normalActiveSlug}
-            expanded={overflowExpanded}
-            onToggle={() => setOverflowExpanded(current => !current)}
-          />
         </div>
 
         <div
@@ -300,7 +300,7 @@ function ProjectOverflowMenu({
       aria-label={`More project sections${activeTab ? `, current: ${activeTab.label}` : ''}`}
       aria-expanded={expanded}
       onClick={onToggle}
-      className={`ml-auto flex min-h-[44px] min-w-[44px] shrink-0 self-start items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
+      className={`flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center border-b-2 px-3 text-xl leading-none transition-colors ${
         activeTab && !expanded
           ? 'border-ink text-ink'
           : 'border-transparent text-smoke-500 hover:text-ink'

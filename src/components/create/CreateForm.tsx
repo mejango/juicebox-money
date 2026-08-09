@@ -125,6 +125,9 @@ import {
 } from "@/lib/chains";
 import { StoreEditor, itemOk, type DraftItem } from "./StoreEditor";
 
+const PERMANENTLY_DISABLED_AUTHORITY =
+  "0xdead000000000000000000000000000000000000";
+
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
 
 const MAX_LOGO_BYTES = 1024 * 1024;
@@ -332,8 +335,9 @@ export function CreateForm() {
 
   // --- 0: Flavor ---
   const [flavor, setFlavor] = useState<CreateDraft["flavor"]>("simple");
-  /** Project owner (or revnet operator). Empty = the connected wallet. */
-  const [owner, setOwner] = useState("");
+  /** Project owner (or revnet operator). The dead address permanently disables
+   *  retained authority; an empty enabled field uses the connected wallet. */
+  const [owner, setOwner] = useState(PERMANENTLY_DISABLED_AUTHORITY);
   const [ticker, setTicker] = useState("");
 
   // --- 2: Rules (one entry per queued ruleset/stage) ---
@@ -610,6 +614,17 @@ export function CreateForm() {
     ? null
     : feedReachabilityBlock(feedCheck, flavor === "revnet");
   const ownerOverrides = activeChainOverrides(ownerPerChain, selected);
+  const authorityEnabled = !(
+    owner.trim().toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY &&
+    ownerOverrides.every(
+      (value) => value.trim().toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY,
+    )
+  );
+  const setAuthorityEnabled = (enabled: boolean) => {
+    setOwner(enabled ? "" : PERMANENTLY_DISABLED_AUTHORITY);
+    setOwnerPerChain({});
+    setOwnerPerChainOpen(false);
+  };
   const ownerOk =
     (owner.trim() === "" || resolvedAddress(owner) !== null) &&
     ownerOverrides.every((v) => resolvedAddress(v) !== null);
@@ -949,7 +964,10 @@ export function CreateForm() {
       allowOwnerMinting: false,
       pausePay: false,
       pauseCreditTransfers: false,
-      pause721Transfers: stage.pause721Transfers,
+      // Revnet stages are immutable and permanently close the collection-level
+      // transfer gate. Each item's immutable transfersPausable flag therefore
+      // becomes its final policy: false = transferable, true = non-transferable.
+      pause721Transfers: true,
       metadataExtra: stage.metadataExtra,
       // Each row's beneficiary resolves against the ROW's mint chain (where
       // the tokens land), never the config chain — every chain must encode
@@ -2205,80 +2223,102 @@ export function CreateForm() {
           )}
         </div>
 
-        <div className="mt-6">
-          <span className="field-label">
-            {flavor === "revnet" ? "Revnet operator" : "Project owner"}
-          </span>
-          <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-            {flavor === "revnet"
-              ? "The address that operates the few controls available in revnets."
-              : "Receives the project and full control over its rules."}{" "}
-            Leave empty to use your connected wallet.
-          </p>
-          <AddressField
-            value={owner}
-            onChange={setOwner}
+        <div className="mt-6 border-t border-smoke-200 pt-5">
+          <CheckRow
+            checked={authorityEnabled}
+            onToggle={() => !busy && setAuthorityEnabled(!authorityEnabled)}
             disabled={busy}
-            ariaLabel={
-              flavor === "revnet" ? "Revnet operator" : "Project owner"
+            title={
+              flavor === "revnet"
+                ? "Enable limited operator controls"
+                : "Allow changes"
             }
-            className="mt-2"
+            blurb={
+              flavor === "revnet"
+                ? "A revnet operator can update its name, logo, and description; redirect only the precommitted split share; manage shop items only where those permissions were enabled; and add matching chains when the original deployer is the operator. It cannot rewrite the revnet’s staged issuance or cash-out rules."
+                : "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
+            }
           />
-          <p className="mt-1.5 text-xs text-smoke-700">
-            Currently set to{" "}
-            <span className="font-medium text-ink">
-              {ownerOverrides.length > 0
-                ? "the per-chain addresses below"
-                : owner.trim()
-                ? owner.trim()
-                : connected && address
-                  ? `${address} (connected wallet)`
-                  : "the wallet connected at launch"}
-            </span>
-            .
-          </p>
-          {selected.length > 1 ? (
-            <div className="mt-2">
-              <button
-                onClick={() => setOwnerPerChainOpen((o) => !o)}
+          {authorityEnabled ? (
+            <div className="mt-4 pl-1">
+              <span className="field-label">
+                {flavor === "revnet" ? "Revnet operator" : "Project owner"}
+              </span>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                Leave empty to use your connected wallet.
+              </p>
+              <AddressField
+                value={owner}
+                onChange={setOwner}
                 disabled={busy}
-                aria-expanded={ownerPerChainOpen}
-                className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
-              >
-                {ownerPerChainOpen
-                  ? "Same on every chain"
-                  : `Set per chain — if the ${flavor === "revnet" ? "revnet operator" : "project owner"} differs by chain`}
-              </button>
-              {ownerPerChainOpen ? (
-                <div className="mt-2 space-y-2">
-                  {selected.map((chainId) => (
-                    <div key={chainId} className="flex items-start gap-2">
-                      <span className="mt-1.5 flex w-9 shrink-0 items-center justify-center">
-                        <ChainIcon chainId={chainId} size={28} />
-                      </span>
-                      <AddressField
-                        value={ownerPerChain[chainId] ?? ""}
-                        onChange={(v) =>
-                          setOwnerPerChain((prev) => ({
-                            ...prev,
-                            [chainId]: v,
-                          }))
-                        }
-                        disabled={busy}
-                        placeholder={owner.trim() || "default"}
-                        ariaLabel={`${flavor === "revnet" ? "Revnet operator" : "Project owner"} on ${chainName(chainId)}`}
-                        className="flex-1"
-                        compact
-                      />
+                ariaLabel={
+                  flavor === "revnet" ? "Revnet operator" : "Project owner"
+                }
+                className="mt-2"
+              />
+              <p className="mt-1.5 text-xs text-smoke-700">
+                Currently set to{" "}
+                <span className="font-medium text-ink">
+                  {ownerOverrides.length > 0
+                    ? "the per-chain addresses below"
+                    : owner.trim()
+                      ? owner.trim()
+                      : connected && address
+                        ? `${address} (connected wallet)`
+                        : "the wallet connected at launch"}
+                </span>
+                .
+              </p>
+              {selected.length > 1 ? (
+                <div className="mt-2">
+                  <button
+                    onClick={() => setOwnerPerChainOpen((o) => !o)}
+                    disabled={busy}
+                    aria-expanded={ownerPerChainOpen}
+                    className="text-[11px] font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+                  >
+                    {ownerPerChainOpen
+                      ? "Same on every chain"
+                      : `Set per chain — if the ${flavor === "revnet" ? "revnet operator" : "project owner"} differs by chain`}
+                  </button>
+                  {ownerPerChainOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {selected.map((chainId) => (
+                        <div key={chainId} className="flex items-start gap-2">
+                          <span className="mt-1.5 flex w-9 shrink-0 items-center justify-center">
+                            <ChainIcon chainId={chainId} size={28} />
+                          </span>
+                          <AddressField
+                            value={ownerPerChain[chainId] ?? ""}
+                            onChange={(v) =>
+                              setOwnerPerChain((prev) => ({
+                                ...prev,
+                                [chainId]: v,
+                              }))
+                            }
+                            disabled={busy}
+                            placeholder={owner.trim() || "default"}
+                            ariaLabel={`${flavor === "revnet" ? "Revnet operator" : "Project owner"} on ${chainName(chainId)}`}
+                            className="flex-1"
+                            compact
+                          />
+                        </div>
+                      ))}
+                      <p className="text-[11px] leading-relaxed text-smoke-500">
+                        Empty fields use the default above.
+                      </p>
                     </div>
-                  ))}
-                  <p className="text-[11px] leading-relaxed text-smoke-500">
-                    Empty fields use the default above.
-                  </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
-          ) : null}
+          ) : (
+            <p className="mt-3 pl-1 text-xs leading-relaxed text-smoke-600">
+              {flavor === "revnet"
+                ? "No operator address will retain these limited controls."
+                : "No owner address will retain project-level control."}
+            </p>
+          )}
         </div>
       </section>
 
@@ -3039,7 +3079,9 @@ export function CreateForm() {
               {flavor === "revnet" ? "Revnet operator" : "Project owner"}
             </dt>
             <dd className="font-medium text-ink">
-              {ownerOverrides.length > 0 ? (
+              {!authorityEnabled ? (
+                "No retained authority"
+              ) : ownerOverrides.length > 0 ? (
                 "Set per chain"
               ) : resolvedAddress(owner.trim()) ? (
                 <AddressLabel address={resolvedAddress(owner.trim())!} />

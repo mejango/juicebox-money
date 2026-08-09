@@ -499,7 +499,7 @@ describe('project launch encoding', () => {
     expect(tiered721.baseline721HookConfiguration.name).toBe('Shop collection')
   })
 
-  it('encodes eligible 721 transfer pauses for project rulesets and revnet stages', () => {
+  it('encodes project pauses and permanently closes the revnet transfer gate', () => {
     const projectStage = {
       ...createSimpleProjectStage(),
       pause721Transfers: true,
@@ -515,12 +515,15 @@ describe('project launch encoding', () => {
         flavor: 'revnet',
         operator: BOB,
         ticker: 'REV',
-        stages: [projectStage],
+        stages: [{ ...projectStage, pause721Transfers: false }],
       }),
     )
     const revnetConfig = revnetRequest.args[1] as unknown as {
       stageConfigurations: readonly { extraMetadata: number }[]
     }
+    // Tier-level transfersPausable is the immutable per-item choice. Revnet
+    // stages keep the collection-level gate closed regardless of stale draft
+    // state so the item can never switch behavior later.
     expect(revnetConfig.stageConfigurations[0].extraMetadata).toBe(5)
   })
 

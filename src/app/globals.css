@@ -324,6 +324,125 @@
   }
 }
 
+/* Learn and Build intentionally render the same source content as Juicescan.
+   These scoped styles translate that shared document into Juicebox Money's
+   Beatrice/Agrandir, Bone, Smoke, Bluebs, and Split visual system. */
+@layer components {
+  .juicebox-guide .guide-wrap {
+    @apply max-w-4xl;
+  }
+
+  .juicebox-guide .guide-toc {
+    @apply mb-10 rounded-xl border border-smoke-200 bg-white p-5 sm:columns-2 sm:gap-8;
+  }
+
+  .juicebox-guide .guide-toc-title {
+    @apply mb-3 break-after-avoid font-agrandir text-xs font-medium uppercase tracking-[0.14em] text-ink;
+  }
+
+  .juicebox-guide .guide-toc-group-label {
+    @apply mb-1 mt-3 break-after-avoid font-agrandir text-xs font-medium text-bluebs-600;
+  }
+
+  .juicebox-guide .guide-toc-link {
+    @apply block min-h-8 break-inside-avoid py-1 text-sm text-smoke-700 underline decoration-smoke-300 underline-offset-2 hover:text-bluebs-600;
+  }
+
+  .juicebox-guide .guide-toc-link.indent {
+    @apply pl-4;
+  }
+
+  .juicebox-guide .guide-part-header {
+    @apply mb-4 mt-14 border-b-2 border-bluebs-500 pb-2 font-agrandir text-sm font-medium uppercase tracking-[0.14em] text-bluebs-600;
+  }
+
+  .juicebox-guide .guide-section {
+    @apply scroll-mt-28 border-b border-smoke-200 py-7;
+  }
+
+  .juicebox-guide .guide-section:last-child {
+    @apply border-b-0;
+  }
+
+  .juicebox-guide .guide-section-title {
+    @apply mb-3 flex items-center gap-2 font-agrandir text-xl font-medium text-ink sm:text-2xl;
+  }
+
+  .juicebox-guide .guide-copy-link {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-smoke-400 opacity-70 hover:bg-bluebs-25 hover:text-bluebs-600 hover:opacity-100;
+  }
+
+  .juicebox-guide .guide-copy-link--ok {
+    @apply bg-bluebs-25 text-bluebs-600 opacity-100;
+  }
+
+  .juicebox-guide .guide-text {
+    @apply mb-3 text-sm leading-7 text-smoke-800 sm:text-base;
+  }
+
+  .juicebox-guide .guide-text a,
+  .juicebox-guide .guide-info a {
+    @apply text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700;
+  }
+
+  .juicebox-guide .guide-diagram,
+  .juicebox-guide .guide-code {
+    @apply my-4 overflow-x-auto rounded-xl border border-smoke-200 bg-white;
+  }
+
+  .juicebox-guide .guide-diagram-title,
+  .juicebox-guide .guide-code-title,
+  .juicebox-guide .guide-prop-title,
+  .juicebox-guide .guide-fn-title {
+    @apply border-b border-smoke-200 px-4 py-2 font-agrandir text-xs font-medium uppercase tracking-[0.12em] text-smoke-600;
+  }
+
+  .juicebox-guide .guide-diagram-pre,
+  .juicebox-guide .guide-code-pre {
+    @apply m-0 min-w-max whitespace-pre p-4 font-mono text-xs leading-6 text-ink sm:text-sm;
+  }
+
+  .juicebox-guide .guide-prop-table,
+  .juicebox-guide .guide-fn-table {
+    @apply my-4 overflow-hidden rounded-xl border border-smoke-200 bg-white;
+  }
+
+  .juicebox-guide .guide-prop-row,
+  .juicebox-guide .guide-fn-row {
+    @apply grid gap-1 border-b border-smoke-100 px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(9rem,0.8fr)_minmax(0,1.5fr)] sm:gap-5;
+  }
+
+  .juicebox-guide .guide-prop-name,
+  .juicebox-guide .guide-fn-name {
+    @apply break-words font-mono text-xs font-medium text-bluebs-700;
+  }
+
+  .juicebox-guide .guide-prop-desc,
+  .juicebox-guide .guide-fn-desc {
+    @apply text-xs leading-5 text-smoke-700 sm:text-sm;
+  }
+
+  .juicebox-guide .guide-info {
+    @apply my-4 rounded-xl border border-split-200 bg-split-50 px-4 py-3 text-sm font-medium leading-6 text-split-800;
+  }
+
+  .juicebox-guide .guide-steps {
+    @apply my-4 space-y-2;
+  }
+
+  .juicebox-guide .guide-step {
+    @apply grid grid-cols-[1.75rem_minmax(0,1fr)] items-start gap-2;
+  }
+
+  .juicebox-guide .guide-step-num {
+    @apply flex h-7 w-7 items-center justify-center rounded-full bg-bluebs-100 font-agrandir text-xs font-medium text-bluebs-700;
+  }
+
+  .juicebox-guide .guide-step-text {
+    @apply pt-0.5 text-sm leading-6 text-smoke-800;
+  }
+}
+
 @keyframes skeleton-sweep {
   to {
     transform: translateX(100%);

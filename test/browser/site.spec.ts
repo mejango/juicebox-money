@@ -202,7 +202,7 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
   }
 
   await expect(
-    page.getByText('Wallet connected at launch', { exact: true }),
+    page.getByText('No retained authority', { exact: true }),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sign in to launch' })).toBeVisible()
 }

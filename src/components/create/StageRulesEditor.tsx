@@ -1,13 +1,12 @@
 "use client";
 
-import { ChainIcon } from "@/components/ChainIcon";
 import { ProjectLink } from "@/components/ProjectLink";
 import {
+  CASH_OUTS_OFF_REVNET,
   FOREVER_SECONDS,
   autoIssuanceMintChain,
   routesAllFunds,
 } from "@/lib/launch";
-import { chainName } from "@/lib/urn";
 import { CashOutCurve } from "./CashOutCurve";
 import {
   SplitsEditor,
@@ -18,6 +17,8 @@ import {
 import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from "./ui";
 import { AddressField } from "./AddressField";
 import { resolvedAddress } from "@/lib/ens";
+import { DateTimeField } from "@/components/ui/DateTimeField";
+import { ChainSelect } from "@/components/ChainSelect";
 
 /**
  * One stage = one queued ruleset (website/ parity). Every rule here is
@@ -330,15 +331,20 @@ export function stageSummaryParts(
         ? `${splitsPct}% to splits`
         : `${splitsPct}% reserved`,
     );
-  const routedAll = routesAllFunds(
-    stage.payouts,
-    stageRoutesEverything(stage, multiToken),
-  );
+  // Revnets never encode payout limits. Imported drafts may still carry an
+  // old project payout mode, but it must not leak into a revnet summary and
+  // falsely imply that cash outs are unavailable.
+  const routedAll = flavor === "revnet"
+    ? false
+    : routesAllFunds(
+        stage.payouts,
+        stageRoutesEverything(stage, multiToken),
+      );
   if (flavor === "revnet") {
     parts.push(
       stage.cashOuts
         ? `${stageCashOutTax(stage) / 100}% cash out tax`
-        : "Cash outs off",
+        : "99.99% cash out tax",
     );
   } else if (stage.cashOuts && !routedAll) {
     parts.push("Cash outs on");
@@ -373,40 +379,55 @@ function TaxPicker({
   disabled,
   offBlurb,
   onBlurb,
+  required = false,
 }: {
   stage: DraftStage;
   set: (patch: Partial<DraftStage>) => void;
   disabled: boolean;
   offBlurb: string;
   onBlurb: string;
+  required?: boolean;
 }) {
+  const cashOutsOn = required || stage.cashOuts;
   return (
     <>
-      <div className="space-y-2">
-        <OptionRow
-          checked={!stage.cashOuts}
-          onSelect={() => set({ cashOuts: false })}
-          disabled={disabled}
-          title="Off"
-          blurb={offBlurb}
-        />
-        <OptionRow
-          checked={stage.cashOuts}
-          onSelect={() => set({ cashOuts: true })}
-          disabled={disabled}
-          title="On"
-          blurb={onBlurb}
-        />
-      </div>
-      {stage.cashOuts ? (
+      {required ? (
+        <p className="text-xs leading-relaxed text-smoke-700">{onBlurb}</p>
+      ) : (
+        <div className="space-y-2">
+          <OptionRow
+            checked={!stage.cashOuts}
+            onSelect={() => set({ cashOuts: false })}
+            disabled={disabled}
+            title="Off"
+            blurb={offBlurb}
+          />
+          <OptionRow
+            checked={stage.cashOuts}
+            onSelect={() => set({ cashOuts: true })}
+            disabled={disabled}
+            title="On"
+            blurb={onBlurb}
+          />
+        </div>
+      )}
+      {cashOutsOn ? (
         <>
           <div className="mt-3 flex flex-wrap gap-2">
             {CASH_OUT_TAXES.map((tax) => (
               <ChipButton
                 key={tax.rate}
-                active={!stage.taxCustomOn && stage.cashOutTax === tax.rate}
+                active={
+                  stage.cashOuts &&
+                  !stage.taxCustomOn &&
+                  stage.cashOutTax === tax.rate
+                }
                 onClick={() =>
-                  set({ cashOutTax: tax.rate, taxCustomOn: false })
+                  set({
+                    cashOuts: true,
+                    cashOutTax: tax.rate,
+                    taxCustomOn: false,
+                  })
                 }
                 disabled={disabled}
               >
@@ -415,7 +436,7 @@ function TaxPicker({
             ))}
             <ChipButton
               active={stage.taxCustomOn}
-              onClick={() => set({ taxCustomOn: true })}
+              onClick={() => set({ cashOuts: true, taxCustomOn: true })}
               disabled={disabled}
             >
               Custom…
@@ -428,7 +449,10 @@ function TaxPicker({
                 inputMode="decimal"
                 value={stage.taxCustomPct}
                 onChange={(e) =>
-                  set({ taxCustomPct: e.target.value.slice(0, 5) })
+                  set({
+                    cashOuts: true,
+                    taxCustomPct: e.target.value.slice(0, 5),
+                  })
                 }
                 disabled={disabled}
                 placeholder="15"
@@ -444,7 +468,9 @@ function TaxPicker({
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
             A tax leaves part of each cash out behind for holders who stay.
           </p>
-          <CashOutCurve rate={stageCashOutTax(stage)} />
+          <CashOutCurve
+            rate={stage.cashOuts ? stageCashOutTax(stage) : CASH_OUTS_OFF_REVNET}
+          />
         </>
       ) : null}
     </>
@@ -494,10 +520,12 @@ export function StageRulesEditor({
   const reservedPercent = splitsTotal(stage.reservedSplits, "percent");
   const reservedOn = reservedPercent > 0;
   const payoutsMode = stage.routedMode === "all" ? "percent" : "amount";
-  const routedAll = routesAllFunds(
-    stage.payouts,
-    stageRoutesEverything(stage, multiToken),
-  );
+  const routedAll = isRevnet
+    ? false
+    : routesAllFunds(
+        stage.payouts,
+        stageRoutesEverything(stage, multiToken),
+      );
   const issuanceOk = stageIssuanceOk(stage, isFirst);
 
   const timingSummary = isRevnet
@@ -549,7 +577,9 @@ export function StageRulesEditor({
 
   const cashOutsSummary = routedAll
     ? "Off — all funds committed to payouts"
-    : stage.cashOuts
+    : isRevnet && !stage.cashOuts
+      ? "On | 99.99% tax"
+      : stage.cashOuts
       ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${stageCashOutTax(stage) / 100}% tax`}`
       : "Off";
 
@@ -572,12 +602,13 @@ export function StageRulesEditor({
               blurb="Rules take effect the moment your project deploys. Uncheck to schedule a start time."
             />
             {stage.scheduleOn ? (
-              <input
-                type="datetime-local"
+              <DateTimeField
                 value={stage.schedule}
-                onChange={(e) => set({ schedule: e.target.value })}
+                onChange={(schedule) => set({ schedule })}
                 disabled={disabled}
-                className="input-well mt-2 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                ariaLabel="Project launch date and time"
+                wrapperClassName="mt-2"
+                inputClassName="input-well min-h-[44px] w-full px-3.5 text-sm disabled:opacity-60"
               />
             ) : null}
           </div>
@@ -830,78 +861,77 @@ export function StageRulesEditor({
                   : ""}
               </p>
               {stage.autoIssuances.map((row) => (
-                <div key={row.id} className="mt-2 flex items-start gap-2">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={row.count}
-                    onChange={(e) =>
-                      set({
-                        autoIssuances: stage.autoIssuances.map((a) =>
-                          a.id === row.id
-                            ? { ...a, count: e.target.value.slice(0, 15) }
-                            : a,
-                        ),
-                      })
-                    }
-                    disabled={disabled}
-                    placeholder="1000"
-                    aria-label="Auto-issuance amount"
-                    className="input-well min-h-[44px] w-28 shrink-0 px-3 text-sm tabular-nums disabled:opacity-60"
-                  />
-                  <span className="mt-3 shrink-0 text-xs text-smoke-700">
-                    to
-                  </span>
-                  <AddressField
-                    value={row.address}
-                    onChange={(v) =>
-                      set({
-                        autoIssuances: stage.autoIssuances.map((a) =>
-                          a.id === row.id ? { ...a, address: v } : a,
-                        ),
-                      })
-                    }
-                    disabled={disabled}
-                    ariaLabel="Auto-issuance beneficiary"
-                    className="flex-1"
-                  />
-                  {chainIds.length > 1 ? (
-                    <>
-                      <span className="mt-3 shrink-0 text-xs text-smoke-700">
-                        on
+                <div
+                  key={row.id}
+                  className="mt-2 rounded-lg border border-smoke-200 bg-smoke-75 p-3"
+                >
+                  <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-smoke-700">
+                        Amount
                       </span>
-                      {/*
-                       * An <option> cannot carry an image, so the mark for the
-                       * CURRENTLY selected chain sits beside the control.
-                       */}
-                      <span className="mt-2.5 shrink-0">
-                        <ChainIcon
-                          chainId={autoIssuanceMintChain(chainIds, row.chainId)}
-                          size={16}
+                      <div className="relative">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={row.count}
+                          onChange={(e) =>
+                            set({
+                              autoIssuances: stage.autoIssuances.map((a) =>
+                                a.id === row.id
+                                  ? { ...a, count: e.target.value.slice(0, 15) }
+                                  : a,
+                              ),
+                            })
+                          }
+                          disabled={disabled}
+                          placeholder="1000"
+                          aria-label="Auto-issuance amount"
+                          className="input-well min-h-[44px] w-full px-3 pr-12 text-sm tabular-nums disabled:opacity-60"
                         />
+                        <span className="pointer-events-none absolute right-3 top-1/2 max-w-10 -translate-y-1/2 truncate text-xs text-smoke-500">
+                          {tokenLabel}
+                        </span>
+                      </div>
+                    </label>
+                    <div>
+                      <span className="mb-1 block text-[11px] font-medium text-smoke-700">
+                        Beneficiary
                       </span>
-                      <select
+                      <AddressField
+                        value={row.address}
+                        onChange={(v) =>
+                          set({
+                            autoIssuances: stage.autoIssuances.map((a) =>
+                              a.id === row.id ? { ...a, address: v } : a,
+                            ),
+                          })
+                        }
+                        disabled={disabled}
+                        ariaLabel="Auto-issuance beneficiary"
+                      />
+                    </div>
+                  </div>
+                  {chainIds.length > 1 ? (
+                    <div className="mt-3 max-w-sm">
+                      <span className="mb-1 block text-[11px] font-medium text-smoke-700">
+                        Mint once on
+                      </span>
+                      <ChainSelect
+                        options={chainIds}
                         value={autoIssuanceMintChain(chainIds, row.chainId)}
-                        onChange={(e) =>
+                        onChange={(chainId) =>
                           set({
                             autoIssuances: stage.autoIssuances.map((a) =>
                               a.id === row.id
-                                ? { ...a, chainId: Number(e.target.value) }
+                                ? { ...a, chainId }
                                 : a,
                             ),
                           })
                         }
                         disabled={disabled}
-                        aria-label="Auto-issuance chain"
-                        className="input-well select-caret min-h-[44px] shrink-0 pl-3 pr-8 text-sm disabled:opacity-60"
-                      >
-                        {chainIds.map((chainId) => (
-                          <option key={chainId} value={chainId}>
-                            {chainName(chainId)}
-                          </option>
-                        ))}
-                      </select>
-                    </>
+                      />
+                    </div>
                   ) : null}
                   <button
                     onClick={() =>
@@ -913,7 +943,7 @@ export function StageRulesEditor({
                     }
                     disabled={disabled}
                     aria-label="Remove auto-issuance"
-                    className="mt-3 shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
+                    className="mt-3 inline-flex min-h-[36px] items-center text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
                   >
                     Remove
                   </button>
@@ -1210,6 +1240,7 @@ export function StageRulesEditor({
               stage={stage}
               set={set}
               disabled={disabled}
+              required
               offBlurb="Tokens are for support and standing — cashing out returns almost nothing."
               onBlurb={`Holders can cash out ${tokenLabel} any time for their share of the treasury.`}
             />
@@ -1357,24 +1388,6 @@ export function StageRulesEditor({
           </div>
         </SubSection>
       )}
-      {isRevnet ? (
-        <SubSection
-          label="Shop item transfers"
-          summary={stage.pause721Transfers ? "Eligible items paused" : "Allowed"}
-          open={!!stage.open.shopTransfers}
-          onToggle={() => toggleOpen("shopTransfers")}
-        >
-          <CheckRow
-            checked={stage.pause721Transfers}
-            onToggle={() =>
-              set({ pause721Transfers: !stage.pause721Transfers })
-            }
-            disabled={disabled}
-            title="Pause eligible shop item transfers"
-            blurb="This stage is permanent once deployed. Items whose tier allows ruleset pauses can't move between wallets while this stage is active; minting and burning still work."
-          />
-        </SubSection>
-      ) : null}
     </div>
   );
 }

@@ -10,6 +10,16 @@ const source = readFileSync('src/components/create/CreateForm.tsx', 'utf8')
  * builder, the draft writer, and the importer that restores form state.
  */
 describe('create flow draft levers', () => {
+  it('uses the requested 0xdead address when retained authority is disabled', () => {
+    expect(source).toContain('0xdead000000000000000000000000000000000000')
+    expect(source).toContain(
+      'useState(PERMANENTLY_DISABLED_AUTHORITY)',
+    )
+    expect(source).toContain(
+      'setOwner(enabled ? "" : PERMANENTLY_DISABLED_AUTHORITY)',
+    )
+  })
+
   it('never hardcodes either lever in the plan builder or the draft writer', () => {
     expect(source).not.toMatch(/allowAnyToken:\s*(true|false)/)
     expect(source).not.toMatch(/linkChains:\s*(true|false)/)

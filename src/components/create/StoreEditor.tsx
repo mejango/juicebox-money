@@ -172,7 +172,7 @@ export function StoreEditor({
   categories: StoreCategory[];
   onAddCategory: (name: string) => number;
   chainIds: number[];
-  /** Revnet items cannot opt into ruleset-controlled transfer pauses. */
+  /** Revnet item transferability is fixed per item at launch. */
   isRevnet?: boolean;
 }) {
   const update = (id: string, patch: Partial<DraftItem>) => {
@@ -546,9 +546,9 @@ export function StoreEditor({
                     ],
                     [
                       "transfersPausable",
-                      "Allow rulesets to pause transfers",
+                      isRevnet ? "Non-transferable" : "Allow rulesets to pause transfers",
                       isRevnet
-                        ? "The active precommitted stage can pause transfers of this item."
+                        ? "This item can be minted and burned, but never moved between wallets. Leave this off to keep it transferable."
                         : "The active ruleset can pause transfers of this item. Minting and burning stay available.",
                     ],
                     [

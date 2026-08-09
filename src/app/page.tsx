@@ -27,6 +27,7 @@ import { FreshActivity } from '@/components/FreshActivity'
 import { HomepageDiscoveryTabs } from '@/components/HomepageDiscoveryTabs'
 import { ProjectCard } from '@/components/ProjectCard'
 import { HomepageDiscoverySkeleton } from '@/components/LoadingSkeletons'
+import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 
 export const revalidate = 120
 
@@ -377,6 +378,7 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+      <PowerYourPlatform />
     </>
   )
 }

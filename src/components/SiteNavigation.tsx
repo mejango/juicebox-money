@@ -10,26 +10,41 @@ import { WalletButton } from './WalletButton'
 
 function Logo({ iconOnly }: { iconOnly: boolean }) {
   return (
-    <Link
-      href="/"
-      className="flex min-h-11 min-w-11 shrink-0 items-center justify-center"
-      aria-label="Juicebox home"
-    >
-      <Image
-        src={iconOnly ? logoIcon : logoFull}
-        alt="Juicebox"
-        width={iconOnly ? 25 : 144}
-        height={iconOnly ? 32 : 33}
-        priority
-        className="h-8 w-auto"
-      />
-    </Link>
+    <div className="flex shrink-0 flex-col items-start">
+      <Link
+        href="/"
+        className="flex min-h-10 min-w-11 items-center justify-start"
+        aria-label="Juicebox home"
+      >
+        <Image
+          src={iconOnly ? logoIcon : logoFull}
+          alt="Juicebox"
+          width={iconOnly ? 25 : 144}
+          height={iconOnly ? 32 : 33}
+          priority
+          className="h-8 w-auto"
+        />
+      </Link>
+      <div className="flex items-center gap-1.5 pl-0.5 font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px]">
+        <Link href="/learn" className="hover:text-bluebs-600">
+          Learn
+        </Link>
+        <span aria-hidden>|</span>
+        <Link href="/build" className="hover:text-bluebs-600">
+          Build
+        </Link>
+        <span aria-hidden>|</span>
+        <Link href="/eth:1" className="hover:text-bluebs-600">
+          $JBP6
+        </Link>
+      </div>
+    </div>
   )
 }
 
 function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
   return (
-    <nav className="mx-auto hidden h-[72px] w-full max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-6 md:grid">
+    <nav className="mx-auto hidden min-h-[84px] w-full max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-6 py-2 md:grid">
       <div className="justify-self-start">
         <Logo iconOnly={iconOnly} />
       </div>
@@ -45,7 +60,7 @@ function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
 
 function MobileNavigation() {
   return (
-    <nav className="mx-auto grid h-[72px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 md:hidden">
+    <nav className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 md:hidden">
       <Logo iconOnly={false} />
       <div className="w-full max-w-[280px] min-w-0 justify-self-center">
         <SearchBox expanded placeholder="Search" />

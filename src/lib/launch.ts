@@ -701,7 +701,10 @@ export function buildLaunchRequest(args: {
         extraMetadata:
           build721RulesetMetadata({
             metadata: stage.metadataExtra,
-            pauseTransfers: stage.pause721Transfers,
+            // A revnet cannot change this in a later stage. Keep the global
+            // gate closed forever and let each tier's immutable flag choose
+            // transferable (false) or non-transferable (true).
+            pauseTransfers: true,
           }) | REV_METADATA_ALLOW_SUCKER_DEPLOYMENT,
       })
     })
