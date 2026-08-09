@@ -9,6 +9,22 @@ import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
+function GuideLinks({ className = '' }: { className?: string }) {
+  return (
+    <div
+      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px] ${className}`}
+    >
+      <Link href="/learn" className="hover:text-bluebs-600">
+        Learn
+      </Link>
+      <span aria-hidden>|</span>
+      <Link href="/build" className="hover:text-bluebs-600">
+        Build
+      </Link>
+    </div>
+  )
+}
+
 function Logo({
   iconOnly,
   inlineOnMobile = false,
@@ -20,8 +36,8 @@ function Logo({
 }) {
   return (
     <div
-      className={`flex shrink-0 items-start md:flex-row md:items-center md:gap-3 ${
-        inlineOnMobile ? 'flex-row gap-2' : 'flex-col'
+      className={`flex shrink-0 md:flex-row md:items-center md:gap-3 ${
+        inlineOnMobile ? 'flex-row items-center gap-2' : 'flex-col items-start'
       }`}
     >
       <Link
@@ -39,19 +55,11 @@ function Logo({
         />
       </Link>
       {showGuideLinks ? (
-        <div
-          className={`flex items-center gap-1.5 font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px] md:pl-0 ${
-            inlineOnMobile ? 'pl-0' : 'pl-0.5'
+        <GuideLinks
+          className={`md:self-center md:pl-0 ${
+            inlineOnMobile ? 'self-center pl-0' : 'self-start pl-0.5'
           }`}
-        >
-          <Link href="/learn" className="hover:text-bluebs-600">
-            Learn
-          </Link>
-          <span aria-hidden>|</span>
-          <Link href="/build" className="hover:text-bluebs-600">
-            Build
-          </Link>
-        </div>
+        />
       ) : null}
     </div>
   )
@@ -59,9 +67,12 @@ function Logo({
 
 function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
   return (
-    <nav className="mx-auto hidden min-h-[84px] w-full max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-6 px-6 py-2 md:grid">
+    <nav className="mx-auto hidden min-h-[84px] w-full max-w-6xl grid-cols-[auto_minmax(4.75rem,1fr)_minmax(10rem,24rem)_auto] items-center gap-4 px-6 py-2 md:grid lg:gap-6">
       <div className="justify-self-start">
-        <Logo iconOnly={iconOnly} />
+        <Logo iconOnly={iconOnly} showGuideLinks={false} />
+      </div>
+      <div className="justify-self-center">
+        <GuideLinks />
       </div>
       <div className="w-full min-w-0 max-w-96 justify-self-center">
         <SearchBox expanded compactPlaceholder="Search" />
