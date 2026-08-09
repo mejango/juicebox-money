@@ -4,8 +4,17 @@ import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import { cachedQuery } from '@/lib/query-persist'
-import { ammSeriesFrom, visibleSeries, type PricePoint } from '@/lib/price-series'
+import {
+  ammSeriesFrom,
+  smoothPriceSeries,
+  visibleSeries,
+  type PricePoint,
+} from '@/lib/price-series'
 import { chartDateLabel, formatPrice } from './chartUtils'
+import {
+  MarketPriceViewToggle,
+  type MarketPriceView,
+} from './MarketPriceViewToggle'
 import { ChartRangeButton } from './StepChartBase'
 
 /**
@@ -63,6 +72,8 @@ export function MarketPriceChart({
   livePrice: number
 }) {
   const [rangeSeconds, setRangeSeconds] = useState<number>(30 * DAY)
+  const [marketPriceView, setMarketPriceView] =
+    useState<MarketPriceView>('smooth')
   const [hover, setHover] = useState<{ index: number; x: number } | null>(null)
 
   // Shares the Overview chart's query — one fetch per project, not two.
@@ -95,9 +106,12 @@ export function MarketPriceChart({
     now - 1,
     rangeSeconds === 0 ? first : Math.max(first, now - rangeSeconds),
   )
-  const series: PricePoint[] = visibleSeries(observed, livePrice, t0, now)
+  const exactSeries: PricePoint[] = visibleSeries(observed, livePrice, t0, now)
+  const series = marketPriceView === 'trades'
+    ? exactSeries
+    : smoothPriceSeries(exactSeries)
 
-  const opening = series[0]?.value ?? livePrice
+  const opening = exactSeries[0]?.value ?? livePrice
   const change = opening > 0 ? (livePrice - opening) / opening : 0
   const span = now - t0
 
@@ -166,18 +180,29 @@ export function MarketPriceChart({
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap justify-end gap-1">
-          {RANGES.map(range => (
-            <ChartRangeButton
-              key={range.label}
-              label={range.label}
-              active={rangeSeconds === range.seconds}
-              onClick={() => {
-                setRangeSeconds(range.seconds)
+        <div className="flex flex-col items-end gap-2">
+          {exactSeries.length > 1 ? (
+            <MarketPriceViewToggle
+              value={marketPriceView}
+              onChange={value => {
+                setMarketPriceView(value)
                 setHover(null)
               }}
             />
-          ))}
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-1">
+            {RANGES.map(range => (
+              <ChartRangeButton
+                key={range.label}
+                label={range.label}
+                active={rangeSeconds === range.seconds}
+                onClick={() => {
+                  setRangeSeconds(range.seconds)
+                  setHover(null)
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
@@ -193,7 +218,7 @@ export function MarketPriceChart({
             viewBox={`0 0 ${VW} ${VH}`}
             className="h-auto w-full cursor-crosshair touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400"
             role="img"
-            aria-label={`${symbol} market price in ${pairSymbol} over the selected range`}
+            aria-label={`${symbol} ${marketPriceView === 'smooth' ? 'smoothed market' : 'post-trade pool'} price in ${pairSymbol} over the selected range`}
             tabIndex={0}
             onPointerMove={onPointerMove}
             onPointerLeave={() => setHover(null)}
@@ -293,8 +318,11 @@ export function MarketPriceChart({
       )}
 
       <p className="mt-4 border-t border-smoke-100 pt-3 text-xs leading-relaxed text-smoke-500">
-        Each point is a trade&apos;s exact post-trade pool price. Arbitrage keeps
-        it between the issuance ceiling and the cash-out floor.
+        {marketPriceView === 'smooth'
+          ? 'Smooth uses time-weighted averages, so brief spikes carry only the weight of how long they lasted.'
+          : 'Every trade shows each exact post-trade pool price.'}{' '}
+        Arbitrage keeps the pool price between the issuance ceiling and the
+        cash-out floor.
       </p>
     </div>
   )

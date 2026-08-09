@@ -120,10 +120,23 @@ function ActivityTypeFilter({
   }
 
   return (
-    <details className="relative z-20">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1 border border-smoke-300 bg-bone px-3 text-sm text-smoke-700 hover:border-smoke-500 [&::-webkit-details-marker]:hidden">
-        {selectedLabel}
-        <span aria-hidden>⌄</span>
+    <details className="group relative z-20">
+      <summary className="flex min-h-11 cursor-pointer list-none select-none items-center justify-between gap-2 rounded-lg border border-smoke-300 bg-bone px-3 text-sm text-smoke-700 transition-colors hover:border-smoke-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 [&::-webkit-details-marker]:hidden">
+        <span>{selectedLabel}</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 20 20"
+          className="h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
+          fill="none"
+        >
+          <path
+            d="m6 8 4 4 4-4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </summary>
       <div className="absolute right-0 top-full mt-1 min-w-56 border border-smoke-400 bg-bone p-2 shadow-lg">
         <label className="flex cursor-pointer items-center gap-2 border-b border-smoke-200 px-1 py-2 text-sm text-smoke-700">

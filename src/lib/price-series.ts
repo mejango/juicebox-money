@@ -20,6 +20,92 @@ export type PricePoint = {
 }
 
 /**
+ * Turn exact post-trade spots into a calmer display series without inventing
+ * prices. Each bucket is the time-weighted average of the spot that was in
+ * force during that bucket, so a price that lasted for seconds has less visual
+ * weight than one that held for days. The exact opening and latest values stay
+ * pinned to the ends of the line.
+ */
+export function smoothPriceSeries(
+  points: PricePoint[],
+  maxBuckets = 96,
+): PricePoint[] {
+  const sorted = points
+    .filter(
+      point =>
+        Number.isFinite(point.timestamp) &&
+        Number.isFinite(point.value) &&
+        point.value > 0,
+    )
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .reduce<PricePoint[]>((deduped, point) => {
+      if (deduped.at(-1)?.timestamp === point.timestamp) {
+        deduped[deduped.length - 1] = point
+      }
+      else deduped.push(point)
+      return deduped
+    }, [])
+
+  if (sorted.length < 4 || maxBuckets < 1) return sorted
+
+  const start = sorted[0].timestamp
+  const end = sorted.at(-1)!.timestamp
+  const duration = end - start
+  if (!(duration > 0)) return sorted
+
+  const bucketCount = Math.min(
+    maxBuckets,
+    Math.max(2, (sorted.length - 1) * 2),
+  )
+  const bucketWidth = duration / bucketCount
+  const smoothed: PricePoint[] = [{ timestamp: start, value: sorted[0].value }]
+  let eventIndex = 1
+  let currentValue = sorted[0].value
+
+  for (let bucket = 0; bucket < bucketCount; bucket += 1) {
+    const bucketStart = start + bucket * bucketWidth
+    const bucketEnd = bucket === bucketCount - 1
+      ? end
+      : start + (bucket + 1) * bucketWidth
+
+    while (
+      eventIndex < sorted.length &&
+      sorted[eventIndex].timestamp <= bucketStart
+    ) {
+      currentValue = sorted[eventIndex].value
+      eventIndex += 1
+    }
+
+    let cursor = bucketStart
+    let weightedTotal = 0
+    let nextIndex = eventIndex
+    let bucketValue = currentValue
+    while (
+      nextIndex < sorted.length &&
+      sorted[nextIndex].timestamp < bucketEnd
+    ) {
+      const event = sorted[nextIndex]
+      weightedTotal += bucketValue * (event.timestamp - cursor)
+      cursor = event.timestamp
+      bucketValue = event.value
+      nextIndex += 1
+    }
+    weightedTotal += bucketValue * (bucketEnd - cursor)
+    currentValue = bucketValue
+    eventIndex = nextIndex
+
+    smoothed.push({
+      timestamp: bucketStart + (bucketEnd - bucketStart) / 2,
+      value: weightedTotal / (bucketEnd - bucketStart),
+    })
+  }
+
+  const latest = sorted.at(-1)!
+  smoothed.push({ timestamp: end, value: latest.value })
+  return smoothed
+}
+
+/**
  * The observations inside [t0, t1], with the last observation before t0 pinned
  * at t0 so a line entering the window starts at its true level, and `live`
  * appended at t1 so it terminates at the on-chain value.

@@ -1867,10 +1867,40 @@ export function CreateForm() {
         />
       </div>
 
+      {/* Draft import/export — utilities belong to the wizard they operate on. */}
+      <div className="mt-8 flex flex-wrap items-center gap-2">
+        <label className="inline-flex min-h-[28px] cursor-pointer items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink">
+          <span aria-hidden>↑</span> Import .jb
+          <input
+            type="file"
+            accept=".jb,application/json"
+            disabled={busy}
+            className="sr-only"
+            onChange={(e) => {
+              void importDraftFile(e.target.files?.[0] ?? null);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <button
+          onClick={exportDraft}
+          disabled={busy}
+          className="inline-flex min-h-[28px] items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
+        >
+          <span aria-hidden>↓</span> Export
+        </button>
+        <span className="text-[11px] text-smoke-500">
+          Your draft saves as you go.
+        </span>
+        {importError ? (
+          <span className="text-[11px] text-red-600">{importError}</span>
+        ) : null}
+      </div>
+
       {/* Horizontal stepper */}
       <nav
         aria-label="Create steps"
-        className="mt-8 flex min-w-0 items-start gap-1.5 sm:items-center"
+        className="mt-4 flex min-w-0 items-start gap-1.5 sm:items-center"
       >
         {wizardSteps.map((label, i) => (
           <Fragment key={label}>
@@ -2068,9 +2098,6 @@ export function CreateForm() {
           <p className="mt-1 text-xs leading-relaxed text-smoke-700">
             The token(s) that make up your{" "}
             {flavor === "revnet" ? "revnet" : "project"}&apos;s balance.{" "}
-            {anyTokenAccepted
-              ? "Other payment tokens auto-swap as they’re paid in."
-              : "Only these tokens can be paid in."}{" "}
             Accounting tokens cannot be removed later.
           </p>
           <div className="mt-2.5 grid gap-1 sm:grid-cols-3">
@@ -2161,7 +2188,12 @@ export function CreateForm() {
             </p>
           ) : null}
           {flavor === "revnet" ? null : (
-            <div className="mt-3">
+            <div className="mt-6 border-t border-smoke-200 pt-5">
+              <span className="field-label">Payment routing</span>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                Choose what payers can send. This does not change the
+                accounting tokens held in your project&apos;s balance.
+              </p>
               <CheckRow
                 checked={allowAnyToken}
                 onToggle={() => !busy && setAllowAnyToken((on) => !on)}
@@ -3361,35 +3393,6 @@ export function CreateForm() {
         ) : null}
       </div>
 
-      {/* Draft import/export — quiet utilities at the very bottom */}
-      <div className="mt-8 flex flex-wrap items-center gap-2 border-t border-smoke-200 pt-4">
-        <label className="inline-flex min-h-[28px] cursor-pointer items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink">
-          <span aria-hidden>↑</span> Import .jb
-          <input
-            type="file"
-            accept=".jb,application/json"
-            disabled={busy}
-            className="sr-only"
-            onChange={(e) => {
-              void importDraftFile(e.target.files?.[0] ?? null);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <button
-          onClick={exportDraft}
-          disabled={busy}
-          className="inline-flex min-h-[28px] items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
-        >
-          <span aria-hidden>↓</span> Export
-        </button>
-        <span className="text-[11px] text-smoke-500">
-          Your draft saves as you go.
-        </span>
-        {importError ? (
-          <span className="text-[11px] text-red-600">{importError}</span>
-        ) : null}
-      </div>
     </div>
   );
 }

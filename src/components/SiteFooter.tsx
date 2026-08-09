@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import logoFull from '@/assets/brand/logo-full.svg'
+import { AuditPromptLink } from '@/components/AuditPromptLink'
 
 type FooterLink = {
   label: string
@@ -175,6 +176,30 @@ export function SiteFooter() {
               ))}
             </div>
           </div>
+        </div>
+        <div className="mt-6 border-t border-slate-700 pt-5 text-sm leading-relaxed text-slate-300">
+          <p>
+            Review the{' '}
+            <a
+              href="https://github.com/Bananapus/version-6"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 transition-colors hover:text-bluebs-400"
+            >
+              protocol code
+            </a>{' '}
+            and the{' '}
+            <a
+              href="https://github.com/mejango/juicebox-money"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2 transition-colors hover:text-bluebs-400"
+            >
+              website code
+            </a>
+            .
+          </p>
+          <AuditPromptLink className="mt-1 text-slate-300 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
         </div>
       </div>
     </footer>

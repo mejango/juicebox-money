@@ -75,6 +75,8 @@ describe('standalone market price chart', () => {
     // which a zero-anchored scale would flatten to a few pixels.
     expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(100)
     expect(container.textContent).toContain('+20.0%')
+    expect(container.textContent).toContain('Smooth')
+    expect(container.textContent).toContain('Every trade')
 
     // The scale is only readable if both ends are labelled — a min-max scale
     // with no labels can't be told apart from a zero-anchored one.

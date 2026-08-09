@@ -26,4 +26,19 @@ describe('create flow draft levers', () => {
     expect(source).toContain('setAllowAnyToken((on) => !on)')
     expect(source).toContain('setLinkChains((on) => !on)')
   })
+
+  it('presents any-token routing separately from accounting-token choices', () => {
+    expect(source.indexOf('field-label">Accounting')).toBeLessThan(
+      source.indexOf('field-label">Payment routing'),
+    )
+    expect(source).toMatch(
+      /This does not change the\s+accounting tokens held in your project&apos;s balance\./,
+    )
+  })
+
+  it('keeps draft utilities directly above the wizard steps', () => {
+    expect(source.indexOf('Import .jb')).toBeLessThan(
+      source.indexOf('aria-label="Create steps"'),
+    )
+  })
 })

@@ -23,7 +23,15 @@ import {
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 import { Revalidating } from '@/components/ui/Revalidating'
-import { visibleSeries, type PricePoint } from '@/lib/price-series'
+import {
+  smoothPriceSeries,
+  visibleSeries,
+  type PricePoint,
+} from '@/lib/price-series'
+import {
+  MarketPriceViewToggle,
+  type MarketPriceView,
+} from './MarketPriceViewToggle'
 
 /**
  * The issuance price ceiling over time: price = 1 / issuance rate (base units
@@ -218,6 +226,8 @@ export function PriceChart({
   note?: string | null
 }) {
   const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
+  const [marketPriceView, setMarketPriceView] =
+    useState<MarketPriceView>('smooth')
 
   const now = Math.floor(Date.now() / 1000)
   const resolved = useMemo(() => resolveStages(stages), [stages])
@@ -236,12 +246,15 @@ export function PriceChart({
     t0,
     t1,
   )
-  const ammSeries = visibleSeries(
+  const exactAmmSeries = visibleSeries(
     ammHistory,
     amm?.value ?? null,
     t0,
     t1,
   )
+  const ammSeries = marketPriceView === 'trades'
+    ? exactAmmSeries
+    : smoothPriceSeries(exactAmmSeries)
   const sortedTaxHistory = [...cashOutTaxHistory].sort(
     (a, b) => a.timestamp - b.timestamp,
   )
@@ -323,6 +336,12 @@ export function PriceChart({
             <span className="text-xs text-smoke-500">Price</span>
             <div className="flex flex-wrap items-center justify-end gap-1">
               {note ? <ChartNoteTip note={note} /> : null}
+              {exactAmmSeries.length > 1 ? (
+                <MarketPriceViewToggle
+                  value={marketPriceView}
+                  onChange={setMarketPriceView}
+                />
+              ) : null}
               {PRICE_RANGES.map(r => (
                 <ChartRangeButton
                   key={r.label}
@@ -435,7 +454,7 @@ export function PriceChart({
               symbol={symbol}
             />
             <TooltipPriceRow
-              label="AMM"
+                label={marketPriceView === 'smooth' ? 'AMM average' : 'AMM'}
               color={AMM_COLOR}
               value={ammPoint?.value ?? null}
               baseSymbol={baseSymbol}

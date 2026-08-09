@@ -64,6 +64,8 @@ describe('price history inspection', () => {
     expect(chart).not.toBeNull()
     expect(container.textContent).toContain('1H')
     expect(container.textContent).toContain('6H')
+    expect(container.textContent).toContain('Smooth')
+    expect(container.textContent).toContain('Every trade')
     Object.defineProperty(chart, 'getBoundingClientRect', {
       value: () => ({
         left: 0,
