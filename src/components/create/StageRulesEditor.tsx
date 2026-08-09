@@ -1329,24 +1329,26 @@ export function StageRulesEditor({
           open={!!stage.open.extras}
           onToggle={() => toggleOpen("extras")}
         >
-          <CheckRow
-            checked={stage.pauseCreditTransfers}
-            onToggle={() =>
-              set({ pauseCreditTransfers: !stage.pauseCreditTransfers })
-            }
-            disabled={disabled}
-            title="Pause credit transfers"
-            blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
-          />
-          <CheckRow
-            checked={stage.pause721Transfers}
-            onToggle={() =>
-              set({ pause721Transfers: !stage.pause721Transfers })
-            }
-            disabled={disabled}
-            title="Pause eligible shop item transfers"
-            blurb="Items created with ‘Transfers pausable’ can't move between wallets during this ruleset. Minting and burning still work."
-          />
+          <div className="space-y-2">
+            <CheckRow
+              checked={stage.pauseCreditTransfers}
+              onToggle={() =>
+                set({ pauseCreditTransfers: !stage.pauseCreditTransfers })
+              }
+              disabled={disabled}
+              title="Pause credit transfers"
+              blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
+            />
+            <CheckRow
+              checked={stage.pause721Transfers}
+              onToggle={() =>
+                set({ pause721Transfers: !stage.pause721Transfers })
+              }
+              disabled={disabled}
+              title="Pause eligible shop item transfers"
+              blurb="Items created with ‘Transfers pausable’ can't move between wallets during this ruleset. Minting and burning still work."
+            />
+          </div>
         </SubSection>
       )}
       {isRevnet ? (
