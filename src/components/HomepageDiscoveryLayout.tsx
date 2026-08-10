@@ -3,12 +3,61 @@
 import { useState, type ReactNode } from 'react'
 
 type Feed = 'activity' | 'trending' | 'top'
+type RankingFeed = Exclude<Feed, 'activity'>
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
   { id: 'activity', label: 'Fresh activity' },
   { id: 'top', label: 'Top projects' },
   { id: 'trending', label: 'Trending' },
 ]
+
+const RANKING_FEEDS = FEEDS.filter(
+  (feed): feed is { id: RankingFeed; label: string } =>
+    feed.id !== 'activity',
+)
+
+function FeedTabs({
+  feeds,
+  active,
+  onChange,
+  idPrefix,
+  label,
+  className = '',
+}: {
+  feeds: readonly { id: Feed; label: string }[]
+  active: Feed
+  onChange: (feed: Feed) => void
+  idPrefix: string
+  label: string
+  className?: string
+}) {
+  return (
+    <div
+      className={`min-w-0 gap-5 overflow-x-auto border-b border-smoke-200 ${className}`}
+      role="tablist"
+      aria-label={label}
+    >
+      {feeds.map(feed => (
+        <button
+          key={feed.id}
+          type="button"
+          role="tab"
+          id={`${idPrefix}-${feed.id}-tab`}
+          aria-controls={`home-${feed.id}-panel`}
+          aria-selected={active === feed.id}
+          onClick={() => onChange(feed.id)}
+          className={`min-h-11 shrink-0 border-b-2 font-agrandir text-sm font-medium transition-colors ${
+            active === feed.id
+              ? 'border-bluebs-600 text-bluebs-600'
+              : 'border-transparent text-smoke-600 hover:text-ink'
+          }`}
+        >
+          {feed.label}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 export function HomepageDiscoveryLayout({
   hero,
@@ -24,56 +73,70 @@ export function HomepageDiscoveryLayout({
   top: ReactNode
 }) {
   const [activeFeed, setActiveFeed] = useState<Feed>('activity')
-  const panels: Record<Feed, ReactNode> = { activity, trending, top }
+  const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
-    <div className="grid items-start gap-5 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
-      <div className="order-1 min-w-0 xl:col-start-4 xl:row-span-2 xl:row-start-1">{hero}</div>
-
-      <div className="order-2 min-w-0 xl:col-span-2 xl:row-start-1">{summary}</div>
-
-      <div
-        className="order-3 flex min-w-0 gap-5 overflow-x-auto border-b border-smoke-200 xl:hidden"
-        role="tablist"
-        aria-label="Project feeds"
-      >
-        {FEEDS.map(feed => (
-          <button
-            key={feed.id}
-            type="button"
-            role="tab"
-            id={`home-${feed.id}-tab`}
-            aria-controls={`home-${feed.id}-panel`}
-            aria-selected={activeFeed === feed.id}
-            onClick={() => setActiveFeed(feed.id)}
-            className={`min-h-11 shrink-0 border-b-2 font-agrandir text-sm font-medium transition-colors ${
-              activeFeed === feed.id
-                ? 'border-bluebs-600 text-bluebs-600'
-                : 'border-transparent text-smoke-600 hover:text-ink'
-            }`}
-          >
-            {feed.label}
-          </button>
-        ))}
+    <div className="grid items-start gap-5 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
+      <div className="order-1 min-w-0 md:col-span-2 md:row-start-1 lg:col-span-1 lg:col-start-3 lg:row-span-2 lg:row-start-1 2xl:col-start-4">
+        {hero}
       </div>
 
-      {FEEDS.map(feed => (
+      <div className="order-2 min-w-0 md:col-span-2 md:row-start-2 lg:col-start-1 lg:row-start-1 2xl:col-span-2">
+        {summary}
+      </div>
+
+      <FeedTabs
+        feeds={FEEDS}
+        active={activeFeed}
+        onChange={setActiveFeed}
+        idPrefix="home-all"
+        label="Project feeds"
+        className="order-3 flex md:hidden"
+      />
+
+      <div
+        id="home-activity-panel"
+        role="tabpanel"
+        aria-labelledby="home-all-activity-tab"
+        className={`${
+          activeFeed === 'activity' ? 'block' : 'hidden'
+        } order-4 min-w-0 md:col-start-1 md:row-start-3 md:block lg:row-start-2 2xl:col-start-1`}
+      >
+        {activity}
+      </div>
+
+      <div className="order-5 min-w-0 md:col-start-2 md:row-start-3 lg:row-start-2 2xl:contents">
+        <FeedTabs
+          feeds={RANKING_FEEDS}
+          active={rankingFeed}
+          onChange={feed => setRankingFeed(feed as RankingFeed)}
+          idPrefix="home-ranking"
+          label="Project rankings"
+          className="mb-4 hidden md:flex 2xl:hidden"
+        />
+
         <div
-          key={feed.id}
-          id={`home-${feed.id}-panel`}
+          id="home-top-panel"
           role="tabpanel"
-          aria-labelledby={`home-${feed.id}-tab`}
-          className={`${activeFeed === feed.id ? 'block' : 'hidden'} order-4 min-w-0 xl:block ${
-            feed.id === 'activity'
-              ? 'xl:col-start-1 xl:row-start-2'
-              : feed.id === 'top'
-                ? 'xl:col-start-2 xl:row-start-2'
-                : 'xl:col-start-3 xl:row-span-2 xl:row-start-1'
-          }`}
+          aria-labelledby="home-all-top-tab home-ranking-top-tab"
+          className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
+            rankingFeed === 'top' ? 'md:block' : 'md:hidden'
+          } min-w-0 2xl:col-start-2 2xl:row-start-2 2xl:block`}
         >
-          {panels[feed.id]}
+          {top}
         </div>
-      ))}
+
+        <div
+          id="home-trending-panel"
+          role="tabpanel"
+          aria-labelledby="home-all-trending-tab home-ranking-trending-tab"
+          className={`${activeFeed === 'trending' ? 'block' : 'hidden'} ${
+            rankingFeed === 'trending' ? 'md:block' : 'md:hidden'
+          } min-w-0 2xl:col-start-3 2xl:row-span-2 2xl:row-start-1 2xl:block`}
+        >
+          {trending}
+        </div>
+      </div>
     </div>
   )
 }

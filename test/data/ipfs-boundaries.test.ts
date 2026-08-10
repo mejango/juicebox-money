@@ -297,10 +297,30 @@ describe('same-origin IPFS proxy boundary', () => {
     expect(response.headers.get('content-disposition')).toContain('attachment')
     expect(response.headers.get('content-security-policy')).toContain('sandbox')
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('cache-control')).toContain('max-age=31536000')
+    expect(response.headers.get('cache-control')).toContain('immutable')
+    expect(response.headers.get('etag')).toBe(`"ipfs:${CID}"`)
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(CID),
       expect.objectContaining({ cache: 'no-store' }),
     )
+  })
+
+  it('revalidates immutable assets from the ETag without fetching a gateway', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await proxyIpfs(
+      new NextRequest(`http://localhost/api/ipfs/${CID}`, {
+        headers: { 'if-none-match': `"ipfs:${CID}"` },
+      }),
+      { params: Promise.resolve({ path: [CID] }) },
+    )
+
+    expect(response.status).toBe(304)
+    expect(response.headers.get('cache-control')).toContain('immutable')
+    expect(response.headers.get('etag')).toBe(`"ipfs:${CID}"`)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('falls back from Pinata to an independent read gateway', async () => {

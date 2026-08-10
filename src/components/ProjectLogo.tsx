@@ -62,6 +62,7 @@ export function ProjectLogo({
           }
           loading={eager ? 'eager' : 'lazy'}
           fetchPriority={eager ? 'high' : 'auto'}
+          decoding={eager ? 'sync' : 'async'}
           onError={() => {
             setFailedSrc(visibleSrc)
             onError?.()

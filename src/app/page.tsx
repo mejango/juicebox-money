@@ -206,7 +206,7 @@ async function HomepageDiscovery() {
         hero={<HeroColumn />}
         summary={reserves ? <SecuredReserves data={reserves} /> : null}
         activity={
-          <DashboardColumn title="Fresh activity">
+          <DashboardColumn title="Fresh activity" headingClassName="hidden md:flex">
             <FreshActivity
               initialEvents={activity.slice(0, 8)}
               initialHasMore={activity.length > 8}
@@ -214,12 +214,12 @@ async function HomepageDiscovery() {
           </DashboardColumn>
         }
         trending={
-          <DashboardColumn title="Trending">
+          <DashboardColumn title="Trending" headingClassName="hidden 2xl:flex">
             <ProjectRows cards={cards} />
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top projects">
+          <DashboardColumn title="Top projects" headingClassName="hidden 2xl:flex">
             <TopProjectRows
               initialProjects={top.slice(0, 8)}
               initialHasMore={top.length > 8}
@@ -231,16 +231,24 @@ async function HomepageDiscovery() {
   )
 }
 
-function DashboardColumn({ title, children }: { title: string; children: ReactNode }) {
+function DashboardColumn({
+  title,
+  children,
+  headingClassName,
+}: {
+  title: string
+  children: ReactNode
+  headingClassName: string
+}) {
   return (
     <section aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}>
       <h2
         id={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
-        className="mb-4 hidden font-agrandir text-xl font-medium sm:text-2xl xl:block"
+        className={`mb-4 min-h-11 items-center font-agrandir text-xl font-medium sm:text-2xl ${headingClassName}`}
       >
         {title}
       </h2>
-      <div className="card min-h-[420px] overflow-hidden xl:h-[calc(100svh-12rem)] xl:min-h-0 xl:overflow-y-auto">
+      <div className="card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px]">
         {children}
       </div>
     </section>

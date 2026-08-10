@@ -12,7 +12,7 @@ import { WalletButton } from './WalletButton'
 function GuideLinks({ className = '' }: { className?: string }) {
   return (
     <div
-      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-none text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
+      className={`flex h-10 items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-normal text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
     >
       <Link href="/learn" className="hover:text-bluebs-600">
         Learn
@@ -76,9 +76,9 @@ function DesktopNavigation({ iconOnly, isHomepage }: { iconOnly: boolean; isHome
         isHomepage ? 'max-w-[1800px]' : 'max-w-6xl'
       }`}
     >
-      <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start min-[900px]:flex-row min-[900px]:items-center min-[900px]:gap-x-3">
+      <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-3">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
-        <GuideLinks className="min-[900px]:-translate-y-px min-[900px]:self-center" />
+        <GuideLinks className="md:self-center" />
       </div>
       <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center">
         <SearchBox expanded compactPlaceholder="Search" />

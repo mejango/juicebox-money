@@ -15,6 +15,17 @@ const SAFE_RESPONSE_HEADERS = {
   'cross-origin-resource-policy': 'same-origin',
   'x-content-type-options': 'nosniff',
 }
+const IMMUTABLE_CACHE_CONTROL =
+  'public, max-age=31536000, s-maxage=31536000, immutable'
+
+function immutableHeaders(etag: string) {
+  return {
+    ...SAFE_RESPONSE_HEADERS,
+    'cache-control': IMMUTABLE_CACHE_CONTROL,
+    'cdn-cache-control': IMMUTABLE_CACHE_CONTROL,
+    etag,
+  }
+}
 
 function safePath(parts: string[]): string | null {
   if (parts.length < 1 || parts.length > 8) return null
@@ -49,7 +60,7 @@ function downloadOnlyContent(type: string): boolean {
  * not persist attacker-selected CID keys in Next's data cache.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
   const path = safePath((await params).path)
@@ -58,6 +69,11 @@ export async function GET(
       { error: 'Invalid IPFS path' },
       { status: 400, headers: SAFE_RESPONSE_HEADERS },
     )
+  }
+  const etag = `"ipfs:${path}"`
+  const cacheHeaders = immutableHeaders(etag)
+  if (req.headers.get('if-none-match')?.split(',').map(value => value.trim()).includes(etag)) {
+    return new Response(null, { status: 304, headers: cacheHeaders })
   }
 
   let upstream: Response | null = null
@@ -122,9 +138,8 @@ export async function GET(
   return new Response(body, {
     status: 200,
     headers: {
-      ...SAFE_RESPONSE_HEADERS,
+      ...cacheHeaders,
       'content-type': type,
-      'cache-control': 'public, max-age=31536000, immutable',
       ...(forceDownload
         ? { 'content-disposition': 'attachment; filename="ipfs-asset"' }
         : {}),

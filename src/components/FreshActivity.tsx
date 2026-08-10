@@ -17,6 +17,15 @@ import { ProjectLink } from './ProjectLink'
 const POLL_MS = 15_000
 const PAGE_SIZE = 8
 
+function hasPositiveIndexedAmount(value: string | null | undefined): boolean {
+  if (!value) return false
+  try {
+    return BigInt(value) > 0n
+  } catch {
+    return false
+  }
+}
+
 /**
  * The "Fresh activity" rail: latest project-oriented V6 events. Server-renders the initial rows,
  * then a lightweight poll keeps them fresh.
@@ -139,6 +148,16 @@ function Row({
   )
 
   const parts = activityParts(event, tokenUnit)
+  const rawAmountFallback =
+    !hasPositiveIndexedAmount(parts.amountUsd) &&
+    event.project?.tokenSymbol &&
+    event.project.decimals !== null
+      ? {
+          raw: parts.amountRaw,
+          symbol: event.project.tokenSymbol.replace(/^\$+/, ''),
+          decimals: event.project.decimals,
+        }
+      : null
   const actor = parts.actor
   const explorer = explorerHostname(event.chainId)
   const actorUrl = explorer
@@ -172,6 +191,7 @@ function Row({
               chainId={event.chainId}
               txHash={event.txHash}
               amountUsd={parts.amountUsd}
+              amountToken={rawAmountFallback}
               direction={parts.direction}
             />
           </div>
