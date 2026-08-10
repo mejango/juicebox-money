@@ -1284,6 +1284,7 @@ export function suckerGroupAccountingToken(
 export type BsPriceMoment = {
   timestamp: number
   balance: string
+  volume: string
   tokenSupply: string
   /** 18-dec USD per one whole accounting token, as of THIS moment's block.
    *  Null for a moment the indexer could not value. */
@@ -1404,7 +1405,7 @@ const MOMENTS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int
     limit: $limit
     offset: $offset
   ) {
-    items { timestamp balance tokenSupply accountingTokenUsdRate }
+    items { timestamp balance volume tokenSupply accountingTokenUsdRate }
     totalCount
   }
 }`

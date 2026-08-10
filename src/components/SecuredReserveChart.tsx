@@ -17,6 +17,9 @@ function usd(value: number) {
 }
 
 function compactUsd(value: number) {
+  // Node and browser ICU disagree on compact-formatting zero ("$0.0" vs "$0"),
+  // which breaks hydration of the axis labels.
+  if (value === 0) return '$0'
   return value.toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -33,7 +36,13 @@ function date(timestamp: number, short = false) {
   })
 }
 
-export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
+export function SecuredReserveChart({
+  points,
+  ariaLabel = 'Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect values.',
+}: {
+  points: ReservePoint[]
+  ariaLabel?: string
+}) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const chart = useMemo(() => {
     if (!points.length) return null
@@ -107,7 +116,7 @@ export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
             onFocus={() => setHoveredIndex(chart.plotted.length - 1)}
             onBlur={() => setHoveredIndex(null)}
             onKeyDown={moveSelection}
-            aria-label="Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect values."
+            aria-label={ariaLabel}
           >
             <line x1="0" y1={HEIGHT - BOTTOM} x2="100" y2={HEIGHT - BOTTOM} stroke="currentColor" className="text-smoke-200" vectorEffect="non-scaling-stroke" />
             {chart.bars.map((bar, index) => (

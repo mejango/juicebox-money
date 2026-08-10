@@ -346,7 +346,8 @@ function HeroColumn() {
           Fund your thing<span className="text-split-500">.</span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-smoke-700 xl:mt-2">
-          Raise money from anyone, anywhere, transparently on your terms.
+          Raise money from anyone, anywhere,{' '}
+          <span className="inline-block">transparently on your terms.</span>
         </p>
         <Link
           href="/create"

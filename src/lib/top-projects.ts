@@ -15,6 +15,7 @@ export type TopBalanceProject = {
 export type BalanceGroup = {
   id: string
   balance: string
+  volume: string
   projects: { items: BsProject[] }
 }
 
@@ -50,7 +51,7 @@ const cachedBalanceGroups = unstable_cache(
           ) {
             totalCount
             items {
-              id balance
+              id balance volume
               projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
                 items {
                   projectId chainId version name logoUri projectTagline volume volumeUsd balance
@@ -71,7 +72,7 @@ const cachedBalanceGroups = unstable_cache(
     } while (items.length < totalCount)
     return items
   },
-  ['juicebox-home-balance-groups-v1'],
+  ['juicebox-home-balance-groups-v2'],
   { revalidate: 600 },
 )
 
