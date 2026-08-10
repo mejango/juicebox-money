@@ -12,7 +12,7 @@ import { WalletButton } from './WalletButton'
 function GuideLinks({ className = '' }: { className?: string }) {
   return (
     <div
-      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-[10px] font-medium leading-none text-smoke-600 sm:text-[11px] ${className}`}
+      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-none text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
     >
       <Link href="/learn" className="hover:text-bluebs-600">
         Learn
