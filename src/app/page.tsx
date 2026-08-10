@@ -243,7 +243,7 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
           <ProjectLink
             href={card.href}
             projectHint={{ name: card.name, logoUri: card.logoUri, tagline: card.tagline }}
-            className="group flex items-center gap-3 px-4 py-4"
+            className="group flex h-28 items-center gap-3 px-4 py-3"
           >
             <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
               {index + 1}
@@ -282,7 +282,7 @@ function TopProjectRows({ projects }: { projects: TopBalanceProject[] }) {
               logoUri: project.logoUri,
               tagline: project.tagline,
             }}
-            className="group flex items-center gap-3 px-4 py-4"
+            className="group flex h-28 items-center gap-3 px-4 py-3"
           >
             <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
               {index + 1}

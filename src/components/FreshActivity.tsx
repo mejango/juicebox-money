@@ -94,7 +94,7 @@ function Row({
   const actorNode = <ActorLink href={actorUrl} actor={actor} />
 
   return (
-    <li className="px-4 py-4 transition-colors hover:bg-smoke-25">
+    <li className="h-28 overflow-hidden px-4 py-3 transition-colors hover:bg-smoke-25">
       <div className="flex items-start gap-3">
         <ProjectLink
           href={href}
@@ -128,7 +128,7 @@ function Row({
           >
             {name}
           </ProjectLink>
-          <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
+          <p className="mt-1 line-clamp-2 break-words text-[13px] leading-relaxed text-ink">
             {actorNode} {parts.action}
           </p>
         </div>

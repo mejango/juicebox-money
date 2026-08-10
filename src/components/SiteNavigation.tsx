@@ -78,7 +78,7 @@ function DesktopNavigation({ iconOnly, isHomepage }: { iconOnly: boolean; isHome
     >
       <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start min-[900px]:flex-row min-[900px]:items-center min-[900px]:gap-x-3">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
-        <GuideLinks />
+        <GuideLinks className="min-[900px]:self-stretch" />
       </div>
       <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center">
         <SearchBox expanded compactPlaceholder="Search" />
