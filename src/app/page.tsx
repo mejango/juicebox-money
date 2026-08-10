@@ -227,7 +227,7 @@ function DashboardColumn({ title, children }: { title: string; children: ReactNo
       >
         {title}
       </h2>
-      <div className="card min-h-[420px] overflow-hidden xl:h-[calc(100svh-12rem)] xl:min-h-[520px] xl:overflow-y-auto">
+      <div className="card min-h-[420px] overflow-hidden xl:h-[calc(100svh-12rem)] xl:min-h-0 xl:overflow-y-auto">
         {children}
       </div>
     </section>
@@ -320,28 +320,28 @@ function EmptyProjects() {
 
 function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-[570px] xl:overflow-y-auto xl:text-left">
+    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3 xl:text-left">
       <Image
         src={juiceboxHero}
         alt=""
         priority
         sizes="(min-width: 1280px) 360px, 280px"
-        className="mx-auto mb-8 h-auto w-full max-w-[330px]"
+        className="mx-auto mb-8 h-auto w-full max-w-[330px] xl:mb-3 xl:max-w-[clamp(9rem,28svh,17rem)]"
       />
       <div>
-        <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-6xl">
+        <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-[clamp(2.5rem,5.5svh,3.75rem)]">
           Fund your thing<span className="text-split-500">.</span>
         </h1>
-        <p className="mt-5 text-base leading-relaxed text-smoke-700">
+        <p className="mt-5 text-base leading-relaxed text-smoke-700 xl:mt-2">
           Raise money from anyone, anywhere, transparently on your terms.
         </p>
         <Link
           href="/create"
-          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm"
+          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm xl:mt-4"
         >
           Start a project
         </Link>
-        <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
+        <AuditPromptLink className="mt-5 text-sm text-smoke-600 xl:mt-3" />
       </div>
     </section>
   )
