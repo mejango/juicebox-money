@@ -106,7 +106,7 @@ export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
             aria-label="Secured reserve value over time. Focus and use arrow keys to inspect values."
           >
             <line x1="0" y1={HEIGHT - BOTTOM} x2="100" y2={HEIGHT - BOTTOM} stroke="currentColor" className="text-smoke-200" vectorEffect="non-scaling-stroke" />
-            <polyline points={path} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            <polyline points={path} fill="none" stroke="currentColor" strokeWidth="3" vectorEffect="non-scaling-stroke" />
             {hovered ? (
               <>
                 <line x1={hovered.x} y1={TOP} x2={hovered.x} y2={HEIGHT - BOTTOM} stroke="currentColor" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />

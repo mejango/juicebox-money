@@ -17,9 +17,8 @@ function usd(value: number) {
 export function SecuredReserves({ data }: { data: HomepageReserves }) {
   return (
     <section className="flex flex-col gap-3 border-b border-smoke-200 pb-4 sm:gap-4">
-      <p className="font-agrandir text-base font-medium leading-snug sm:text-lg">
-        Juicebox currently secures{' '}
-        <span className="group relative inline-flex">
+      <div className="flex flex-col items-start gap-1">
+        <span className="group relative inline-flex font-agrandir text-3xl font-medium leading-none sm:text-4xl">
           <span
             tabIndex={0}
             aria-describedby="secured-reserves-breakdown"
@@ -41,8 +40,10 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
             ) : null}
           </span>
         </span>
-        .
-      </p>
+        <span className="font-agrandir text-xs text-smoke-500 sm:text-sm">
+          Secured by Juicebox
+        </span>
+      </div>
       <SecuredReserveChart points={data.points} />
     </section>
   )

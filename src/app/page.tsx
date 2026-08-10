@@ -241,14 +241,17 @@ function DashboardColumn({
   headingClassName: string
 }) {
   return (
-    <section aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}>
+    <section
+      className="flex min-w-0 flex-col lg:h-full"
+      aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
+    >
       <h2
         id={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
         className={`mb-4 min-h-11 items-center font-agrandir text-xl font-medium sm:text-2xl ${headingClassName}`}
       >
         {title}
       </h2>
-      <div className="card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px]">
+      <div className="card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] lg:h-auto lg:flex-1">
         {children}
       </div>
     </section>

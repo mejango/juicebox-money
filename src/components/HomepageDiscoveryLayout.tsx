@@ -76,7 +76,7 @@ export function HomepageDiscoveryLayout({
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
-    <div className="grid items-start gap-5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
+    <div className="grid items-start gap-5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)] lg:items-stretch">
       <div className="order-1 min-w-0 sm:col-span-2 sm:row-start-1 md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 lg:col-start-4">
         {hero}
       </div>
