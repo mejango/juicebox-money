@@ -16,6 +16,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { gasWithHeadroom } from '@/lib/gas'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
@@ -702,6 +703,15 @@ async function sendContractAndConfirm({
   if (functionName === 'execTransaction' && simulation.result !== true) {
     throw new Error('Safe simulation reported that the transaction would fail.')
   }
+  const gas = gasWithHeadroom(
+    await client.estimateContractGas({
+      address,
+      abi,
+      functionName,
+      args,
+      account,
+    }),
+  )
   const live = getAccount(wagmiConfig).address
   if (!live || live.toLowerCase() !== account.toLowerCase()) {
     throw new Error('Connected account changed. Review the transaction again.')
@@ -715,6 +725,7 @@ async function sendContractAndConfirm({
     functionName,
     args,
     account,
+    gas,
     ...fees,
     ...('maxFeePerGas' in fees ? { type: 'eip1559' as const } : {}),
   })

@@ -27,6 +27,7 @@ import { ProjectLink } from "@/components/ProjectLink";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
+import { gasWithHeadroom } from "@/lib/gas";
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -1362,11 +1363,23 @@ export function CreateForm() {
             // `buildLaunchRequest` is a union of deployer ABIs; viem cannot
             // infer its tuple branch after runtime chain selection.
             simulate: async (reviewed) => {
-              const { request: simulated } = await client.simulateContract({
+              const simulationRequest = {
                 ...reviewed,
                 account: address,
-              } as unknown as Parameters<typeof client.simulateContract>[0]);
-              return simulated;
+              };
+              const [{ request: simulated }, estimate] = await Promise.all([
+                client.simulateContract(
+                  simulationRequest as unknown as Parameters<
+                    typeof client.simulateContract
+                  >[0],
+                ),
+                client.estimateContractGas(
+                  simulationRequest as unknown as Parameters<
+                    typeof client.estimateContractGas
+                  >[0],
+                ),
+              ]);
+              return { ...simulated, gas: gasWithHeadroom(estimate) };
             },
             write: (simulated) =>
               writeContractAsync(

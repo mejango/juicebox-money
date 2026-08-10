@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   connected: true,
-  publicClient: { simulateContract: vi.fn() },
+  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn() },
   receipt: { data: undefined, isError: false } as {
     data?: { status: 'success' | 'reverted'; blockNumber?: bigint }
     isError: boolean
@@ -91,6 +91,7 @@ beforeEach(() => {
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
+  mocks.publicClient.estimateContractGas.mockResolvedValue(50_000n)
   mocks.writeContract.mockResolvedValue(HASH)
 })
 
@@ -140,7 +141,7 @@ describe('useSafeTx', () => {
       account: ALICE,
     })
     expect(mocks.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ gas: 100n }),
+      expect.objectContaining({ gas: 100_000n }),
     )
     expect(hook.ref.current).toMatchObject({
       phase: 'pending',

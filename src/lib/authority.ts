@@ -13,6 +13,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { gasWithHeadroom } from '@/lib/gas'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
@@ -342,20 +343,20 @@ export async function runAuthorityCalls({
       // Measure what the call actually needs and sign THAT, with headroom. The forwarder
       // caps the inner call at `request.gas` and reverts `execute` when the inner call
       // fails (OZ ERC2771Forwarder), so a hard-coded cap that turns out too small burns the
-      // bundle AFTER the user has paid Relayr for it. A failed estimate leaves `gas` unset
-      // and the signer falls back to its default — no worse than before.
-      if (call.gas === undefined) {
-        try {
-          const estimate = await client.estimateGas({
-            account: call.authority,
-            to: call.target,
-            data: call.data,
-            value: call.value ?? 0n,
-          })
-          call.gas = (estimate * 3n) / 2n
-        } catch {
-          // Estimation is best-effort; the eth_call above is the real gate.
-        }
+      // bundle AFTER the user has paid Relayr for it. Keep a larger builder
+      // floor when one exists, but never let it suppress a higher live 2x
+      // estimate. A failed estimate leaves the existing fallback untouched.
+      try {
+        const estimate = await client.estimateGas({
+          account: call.authority,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+        })
+        const buffered = gasWithHeadroom(estimate)
+        if (call.gas === undefined || call.gas < buffered) call.gas = buffered
+      } catch {
+        // Estimation is best-effort; the eth_call above is the real gate.
       }
     } catch (simulationError) {
       const detail =
@@ -450,6 +451,7 @@ export async function runAuthorityCalls({
           to: call.target,
           data: call.data,
           value: call.value ?? 0n,
+          gas: call.gas,
         })
         const receipt = await client.waitForTransactionReceipt({ hash })
         if (receipt.status !== 'success') {

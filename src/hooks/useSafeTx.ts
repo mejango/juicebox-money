@@ -11,6 +11,7 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { gasWithHeadroom } from '@/lib/gas'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'
@@ -218,7 +219,7 @@ export function useSafeTx(chainId: number) {
           // value must succeed before a signature is requested. Only the
           // simulation result reaches the wallet writer.
           simulate: async reviewed => {
-            const { request: simulated } = await publicClient.simulateContract({
+            const simulationRequest = {
               address: reviewed.address,
               abi: reviewed.abi,
               functionName: reviewed.functionName,
@@ -228,8 +229,12 @@ export function useSafeTx(chainId: number) {
               ...(options?.simulationBlockNumber !== undefined
                 ? { blockNumber: options.simulationBlockNumber }
                 : {}),
-            })
-            return simulated
+            }
+            const [{ request: simulated }, estimate] = await Promise.all([
+              publicClient.simulateContract(simulationRequest),
+              publicClient.estimateContractGas(simulationRequest),
+            ])
+            return { ...simulated, gas: gasWithHeadroom(estimate) }
           },
           write: simulated => writeContractAsync(simulated),
           onPhase: setPhase,

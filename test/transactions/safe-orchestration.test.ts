@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   client: {
     readContract: vi.fn(),
     simulateContract: vi.fn(),
+    estimateContractGas: vi.fn(),
     getBlock: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
   },
@@ -75,6 +76,7 @@ beforeEach(() => {
     throw new Error(`Unexpected read ${input.functionName}`)
   })
   mocks.client.simulateContract.mockResolvedValue({ result: true })
+  mocks.client.estimateContractGas.mockResolvedValue(100_000n)
   mocks.client.getBlock.mockResolvedValue({ baseFeePerGas: 2_000_000_000n })
   mocks.client.waitForTransactionReceipt.mockResolvedValue({ status: 'success' })
   mocks.wallet.writeContract.mockResolvedValue(HASH)
@@ -124,6 +126,7 @@ describe('Safe execution boundary', () => {
         address: SAFE,
         functionName: 'execTransaction',
         account: ALICE,
+        gas: 200_000n,
         type: 'eip1559',
         maxFeePerGas: 6_050_000_000n,
         maxPriorityFeePerGas: 50_000_000n,

@@ -27,6 +27,7 @@ import {
 import { ModalShell } from '@/components/ui/ModalShell'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { gasWithHeadroom } from '@/lib/gas'
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
@@ -198,11 +199,15 @@ export function MintShopItemModal({
             isRevnet,
           }),
         simulate: async reviewed => {
-          const { request: simulated } = await client.simulateContract({
+          const simulationRequest = {
             ...reviewed,
             account: address,
-          })
-          return simulated
+          }
+          const [{ request: simulated }, estimate] = await Promise.all([
+            client.simulateContract(simulationRequest),
+            client.estimateContractGas(simulationRequest),
+          ])
+          return { ...simulated, gas: gasWithHeadroom(estimate) }
         },
         write: simulated =>
           writeContractAsync(

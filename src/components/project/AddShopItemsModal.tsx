@@ -33,6 +33,7 @@ import {
 } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { gasWithHeadroom } from '@/lib/gas'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -348,11 +349,15 @@ export function AddShopItemsModal({
               switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
             currentAccount: () => getAccount(config).address,
             simulate: async reviewed => {
-              const { request: simulated } = await client.simulateContract({
+              const simulationRequest = {
                 ...reviewed,
                 account: address,
-              })
-              return simulated
+              }
+              const [{ request: simulated }, estimate] = await Promise.all([
+                client.simulateContract(simulationRequest),
+                client.estimateContractGas(simulationRequest),
+              ])
+              return { ...simulated, gas: gasWithHeadroom(estimate) }
             },
             // wagmi's generated union cannot retain tuple inference after a
             // runtime chain switch, but this is the exact simulated request.

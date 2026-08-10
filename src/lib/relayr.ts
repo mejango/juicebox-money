@@ -20,6 +20,7 @@ import {
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { gasWithHeadroom } from '@/lib/gas'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -632,12 +633,12 @@ export async function relayrPay(
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
   const client = publicClient(chainId)
-  await client.estimateGas({
+  const gas = gasWithHeadroom(await client.estimateGas({
     account,
     to: payment.target,
     value,
     data: payment.calldata,
-  })
+  }))
   const live = getAccount(wagmiConfig).address
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
@@ -656,6 +657,7 @@ export async function relayrPay(
     to: payment.target,
     value,
     data: payment.calldata,
+    gas,
   })
   onSubmitted?.(hash)
   if (isSafeConnection(wagmiConfig)) {

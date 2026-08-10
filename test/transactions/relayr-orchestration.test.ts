@@ -184,6 +184,7 @@ describe('Relayr quote and payment boundaries', () => {
       to: TARGET,
       value: 100n,
       data: '0x1234',
+      gas: 42_000n,
     })
     expect(submitted).toHaveBeenCalledWith(HASH)
   })

@@ -101,7 +101,7 @@ beforeEach(() => {
 })
 
 describe('Authority gas estimation reaches the signed Relayr request', () => {
-  it('signs each ForwardRequest with the measured 1.5x estimate, not the 500k fallback', async () => {
+  it('signs each ForwardRequest with the measured 2x estimate, not the 500k fallback', async () => {
     // A forwarded call that needs more than the 500k fallback: the OZ
     // forwarder caps the inner call at request.gas and reverts execute() when
     // the inner call runs out — AFTER the user paid Relayr for the bundle.
@@ -121,7 +121,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     const signedGas = mocks.wallet.signTypedData.mock.calls.map(
       ([{ message }]) => message.gas,
     )
-    expect(signedGas).toEqual([1_200_000n, 900_000n])
+    expect(signedGas).toEqual([1_600_000n, 1_200_000n])
   })
 
   it('keeps a builder-pinned gas value instead of re-estimating it', async () => {
