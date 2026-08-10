@@ -72,20 +72,18 @@ function Logo({
 function DesktopNavigation({ iconOnly, isHomepage }: { iconOnly: boolean; isHomepage: boolean }) {
   return (
     <nav
-      className={`mx-auto hidden min-h-[100px] w-full grid-cols-[auto_minmax(10rem,24rem)_auto] items-center gap-x-4 gap-y-1 px-6 py-2 md:grid lg:gap-x-6 2xl:min-h-[84px] 2xl:grid-cols-[auto_minmax(4.75rem,1fr)_minmax(10rem,24rem)_auto] ${
+      className={`mx-auto hidden min-h-[84px] w-full grid-cols-[minmax(max-content,1fr)_minmax(10rem,24rem)_minmax(max-content,1fr)] items-center gap-x-[clamp(0.5rem,1.5vw,1.5rem)] px-6 py-2 md:grid ${
         isHomepage ? 'max-w-[1800px]' : 'max-w-6xl'
       }`}
     >
-      <div className="col-start-1 row-start-1 justify-self-start">
+      <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start min-[900px]:flex-row min-[900px]:items-center min-[900px]:gap-x-3">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
-      </div>
-      <div className="col-start-1 row-start-2 justify-self-start 2xl:col-start-2 2xl:row-start-1 2xl:justify-self-center">
         <GuideLinks />
       </div>
-      <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center 2xl:col-start-3">
+      <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center">
         <SearchBox expanded compactPlaceholder="Search" />
       </div>
-      <div className="col-start-3 row-start-1 justify-self-end 2xl:col-start-4">
+      <div className="col-start-3 row-start-1 justify-self-end">
         <WalletButton />
       </div>
     </nav>
