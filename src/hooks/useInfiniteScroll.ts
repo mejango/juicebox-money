@@ -16,12 +16,13 @@ export function useInfiniteScroll({
   useEffect(() => {
     const marker = markerRef.current
     if (!marker || !hasMore || loading) return
+    const root = marker.closest<HTMLElement>('[data-scroll-container]')
 
     const observer = new IntersectionObserver(
       entries => {
         if (entries.some(entry => entry.isIntersecting)) loadMore()
       },
-      { rootMargin: '240px 0px' },
+      { root, rootMargin: '240px 0px' },
     )
     observer.observe(marker)
     return () => observer.disconnect()

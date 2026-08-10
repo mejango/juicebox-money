@@ -214,7 +214,11 @@ async function HomepageDiscovery() {
           </DashboardColumn>
         }
         trending={
-          <DashboardColumn title="Trending" headingClassName="hidden lg:flex">
+          <DashboardColumn
+            title="Trending"
+            headingClassName="hidden lg:flex"
+            panelClassName="lg:h-auto lg:flex-1"
+          >
             <ProjectRows cards={cards} />
           </DashboardColumn>
         }
@@ -235,10 +239,12 @@ function DashboardColumn({
   title,
   children,
   headingClassName,
+  panelClassName = '',
 }: {
   title: string
   children: ReactNode
   headingClassName: string
+  panelClassName?: string
 }) {
   return (
     <section
@@ -251,7 +257,10 @@ function DashboardColumn({
       >
         {title}
       </h2>
-      <div className="card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] lg:h-auto lg:flex-1">
+      <div
+        data-scroll-container
+        className={`card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] ${panelClassName}`}
+      >
         {children}
       </div>
     </section>
