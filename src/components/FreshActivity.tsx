@@ -55,13 +55,21 @@ export function FreshActivity({
           No recent activity yet.
         </li>
       ) : (
-        events.map(event => <Row key={event.id} event={event} />)
+        events.map((event, index) => (
+          <Row key={event.id} event={event} eagerLogo={index < 4} />
+        ))
       )}
     </ul>
   )
 }
 
-function Row({ event }: { event: BsFreshActivityEvent }) {
+function Row({
+  event,
+  eagerLogo,
+}: {
+  event: BsFreshActivityEvent
+  eagerLogo: boolean
+}) {
   const name = event.project?.name ?? `Project ${event.projectId}`
   const href = `/${toUrn(event.chainId, event.projectId)}`
   const projectHint = {
@@ -98,6 +106,7 @@ function Row({ event }: { event: BsFreshActivityEvent }) {
             name={name}
             logoUri={event.project?.logoUri ?? null}
             size={46}
+            eager={eagerLogo}
           />
         </ProjectLink>
         <div className="min-w-0 flex-1">

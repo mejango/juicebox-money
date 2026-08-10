@@ -1,4 +1,7 @@
+'use client'
+
 import Image from 'next/image'
+import { useState } from 'react'
 import { projectLogoUrl } from '@/lib/format'
 
 // Fruit-scale placeholder tiles (DESIGN.md §Icons) with checked contrast:
@@ -19,6 +22,7 @@ export type ProjectLogoProps = {
   size: number
   className?: string
   onError?: () => void
+  eager?: boolean
 }
 
 export function ProjectLogo({
@@ -27,24 +31,12 @@ export function ProjectLogo({
   size,
   className = '',
   onError,
+  eager = false,
 }: ProjectLogoProps) {
   const src = projectLogoUrl(logoUri)
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const label = name?.trim() || '?'
-
-  if (src) {
-    return (
-      <Image
-        src={src}
-        alt=""
-        width={size}
-        height={size}
-        className={`shrink-0 rounded-lg border border-smoke-200 bg-smoke-75 object-cover ${className}`}
-        style={{ width: size, height: size }}
-        unoptimized={src.startsWith('data:')}
-        onError={onError}
-      />
-    )
-  }
+  const visibleSrc = src && failedSrc !== src ? src : null
 
   // Deterministic color from the name so placeholders are stable.
   let hash = 0
@@ -54,10 +46,28 @@ export function ProjectLogo({
   return (
     <span
       aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded-lg font-agrandir font-medium ${tile} ${className}`}
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-smoke-200 font-agrandir font-medium ${tile} ${className}`}
       style={{ width: size, height: size, fontSize: size * 0.42 }}
     >
       {label[0].toUpperCase()}
+      {visibleSrc ? (
+        <Image
+          src={visibleSrc}
+          alt=""
+          width={size}
+          height={size}
+          className="absolute inset-0 size-full object-cover"
+          unoptimized={
+            visibleSrc.startsWith('data:') || visibleSrc.startsWith('/api/ipfs/')
+          }
+          loading={eager ? 'eager' : 'lazy'}
+          fetchPriority={eager ? 'high' : 'auto'}
+          onError={() => {
+            setFailedSrc(visibleSrc)
+            onError?.()
+          }}
+        />
+      ) : null}
     </span>
   )
 }

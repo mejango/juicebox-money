@@ -69,19 +69,23 @@ function Logo({
   )
 }
 
-function DesktopNavigation({ iconOnly }: { iconOnly: boolean }) {
+function DesktopNavigation({ iconOnly, isHomepage }: { iconOnly: boolean; isHomepage: boolean }) {
   return (
-    <nav className="mx-auto hidden min-h-[84px] w-full max-w-6xl grid-cols-[auto_minmax(4.75rem,1fr)_minmax(10rem,24rem)_auto] items-center gap-4 px-6 py-2 md:grid lg:gap-6">
-      <div className="justify-self-start">
+    <nav
+      className={`mx-auto hidden min-h-[100px] w-full grid-cols-[auto_minmax(10rem,24rem)_auto] items-center gap-x-4 gap-y-1 px-6 py-2 md:grid lg:gap-x-6 2xl:min-h-[84px] 2xl:grid-cols-[auto_minmax(4.75rem,1fr)_minmax(10rem,24rem)_auto] ${
+        isHomepage ? 'max-w-[1800px]' : 'max-w-6xl'
+      }`}
+    >
+      <div className="col-start-1 row-start-1 justify-self-start">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
       </div>
-      <div className="justify-self-center">
+      <div className="col-start-1 row-start-2 justify-self-start 2xl:col-start-2 2xl:row-start-1 2xl:justify-self-center">
         <GuideLinks />
       </div>
-      <div className="w-full min-w-0 max-w-96 justify-self-center">
+      <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center 2xl:col-start-3">
         <SearchBox expanded compactPlaceholder="Search" />
       </div>
-      <div className="justify-self-end">
+      <div className="col-start-3 row-start-1 justify-self-end 2xl:col-start-4">
         <WalletButton />
       </div>
     </nav>
@@ -121,10 +125,11 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
 export function SiteNavigation() {
   const pathname = usePathname()
   const iconOnly = /^\/[^/]+:\d+$/.test(pathname)
+  const isHomepage = pathname === '/'
 
   return (
     <>
-      <DesktopNavigation iconOnly={iconOnly} />
+      <DesktopNavigation iconOnly={iconOnly} isHomepage={isHomepage} />
       <MobileNavigation iconOnly={iconOnly} />
     </>
   )

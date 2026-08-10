@@ -227,7 +227,9 @@ function DashboardColumn({ title, children }: { title: string; children: ReactNo
       >
         {title}
       </h2>
-      <div className="card min-h-[420px] overflow-hidden">{children}</div>
+      <div className="card min-h-[420px] overflow-hidden xl:h-[calc(100svh-12rem)] xl:min-h-[520px] xl:overflow-y-auto">
+        {children}
+      </div>
     </section>
   )
 }
@@ -246,7 +248,12 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
             <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
               {index + 1}
             </span>
-            <ProjectLogo name={card.name} logoUri={card.logoUri} size={40} />
+            <ProjectLogo
+              name={card.name}
+              logoUri={card.logoUri}
+              size={40}
+              eager={index < 4}
+            />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
                 {card.name}
@@ -280,7 +287,12 @@ function TopProjectRows({ projects }: { projects: TopBalanceProject[] }) {
             <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
               {index + 1}
             </span>
-            <ProjectLogo name={project.name} logoUri={project.logoUri} size={40} />
+            <ProjectLogo
+              name={project.name}
+              logoUri={project.logoUri}
+              size={40}
+              eager={index < 4}
+            />
             <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:text-bluebs-600">
               {project.name}
             </span>
@@ -308,7 +320,14 @@ function EmptyProjects() {
 
 function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col justify-between overflow-hidden rounded-xl bg-smoke-50 p-6 text-center xl:text-left">
+    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-[570px] xl:overflow-y-auto xl:text-left">
+      <Image
+        src={juiceboxHero}
+        alt=""
+        priority
+        sizes="(min-width: 1280px) 360px, 280px"
+        className="mx-auto mb-8 h-auto w-full max-w-[330px]"
+      />
       <div>
         <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-6xl">
           Fund your thing<span className="text-split-500">.</span>
@@ -324,13 +343,6 @@ function HeroColumn() {
         </Link>
         <AuditPromptLink className="mt-5 text-sm text-smoke-600" />
       </div>
-      <Image
-        src={juiceboxHero}
-        alt=""
-        priority
-        sizes="(min-width: 1280px) 360px, 280px"
-        className="mx-auto mt-8 h-auto w-full max-w-[330px]"
-      />
     </section>
   )
 }

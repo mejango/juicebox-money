@@ -90,6 +90,25 @@ export function ipfsUrl(uri: string | null | undefined): string | null {
   return `https://gateway.pinata.cloud/ipfs/${uri.replace('ipfs://', '')}`
 }
 
+function appIpfsUrl(uri: string): string | null {
+  const suffix = uri.replace(/^ipfs:\/\//i, '')
+  const segments = suffix.split('/')
+  if (
+    segments.length < 1 ||
+    segments.length > 8 ||
+    segments.some(
+      segment =>
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        !/^[A-Za-z\d._~-]{1,128}$/.test(segment),
+    )
+  ) {
+    return null
+  }
+  return `/api/ipfs/${segments.map(encodeURIComponent).join('/')}`
+}
+
 const MAX_INLINE_LOGO_LENGTH = 1_000_000
 const SAFE_RASTER_DATA_IMAGE =
   /^data:image\/(?:avif|bmp|gif|jpe?g|png|webp);base64,[A-Za-z\d+/]+={0,2}$/i
@@ -124,13 +143,13 @@ export function projectLogoUrl(uri: string | null | undefined): string | null {
     return null
   }
   if (/^ipfs:\/\//i.test(value)) {
-    return ipfsUrl(value.replace(/^ipfs:\/\//i, 'ipfs://'))
+    return appIpfsUrl(value)
   }
 
   // Keep supporting the bare CIDs accepted historically, but reject another
   // explicit scheme (javascript:, data:text/html, blob:, and so on).
   if (!/^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith('//')) {
-    return ipfsUrl(value)
+    return appIpfsUrl(value)
   }
   return null
 }

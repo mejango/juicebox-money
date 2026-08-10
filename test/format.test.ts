@@ -29,9 +29,7 @@ describe('project logo URLs', () => {
   })
 
   it('keeps IPFS support and rejects script-bearing or non-image schemes', () => {
-    expect(projectLogoUrl('ipfs://QmLogo')).toBe(
-      'https://gateway.pinata.cloud/ipfs/QmLogo',
-    )
+    expect(projectLogoUrl('ipfs://QmLogo')).toBe('/api/ipfs/QmLogo')
     expect(projectLogoUrl('data:text/html,<script>alert(1)</script>')).toBeNull()
     expect(
       projectLogoUrl(

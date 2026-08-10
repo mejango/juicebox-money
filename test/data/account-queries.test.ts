@@ -70,6 +70,7 @@ function completeActivityRow(
     setUriEvent: null,
     projectTransferEvent: null,
     operatorPermissionsSetEvent: null,
+    rulesetQueuedEvent: null,
     addNftTierEvent: null,
     removeNftTierEvent: null,
     swapEvent: null,
