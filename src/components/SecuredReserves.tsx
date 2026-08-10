@@ -1,4 +1,5 @@
 import type { HomepageReserves } from '@/lib/homepage-reserves'
+import { SecuredReserveChart } from './SecuredReserveChart'
 
 function amount(value: number, maximumFractionDigits: number) {
   return value.toLocaleString('en-US', { maximumFractionDigits })
@@ -8,23 +9,12 @@ function usd(value: number) {
   return value.toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   })
 }
 
 export function SecuredReserves({ data }: { data: HomepageReserves }) {
-  const values = data.points.map(point => point.valueUsd)
-  const min = Math.min(...values, 0)
-  const max = Math.max(...values, 1)
-  const span = Math.max(max - min, 1)
-  const path = data.points
-    .map((point, index) => {
-      const x = data.points.length < 2 ? 100 : (index / (data.points.length - 1)) * 100
-      const y = 50 - ((point.valueUsd - min) / span) * 44
-      return `${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(' ')
-
   return (
     <section className="flex flex-col gap-3 border-y border-smoke-200 py-4 sm:gap-4">
       <p className="font-agrandir text-base font-medium leading-snug sm:text-lg">
@@ -53,24 +43,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
         </span>
         .
       </p>
-      {path ? (
-        <svg
-          viewBox="0 0 100 54"
-          preserveAspectRatio="none"
-          className="h-14 w-full overflow-visible sm:h-16"
-          role="img"
-          aria-label="Change in secured reserve value over time, valued at current prices"
-        >
-          <polyline
-            points={path}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.25"
-            vectorEffect="non-scaling-stroke"
-            className="text-bluebs-500"
-          />
-        </svg>
-      ) : null}
+      <SecuredReserveChart points={data.points} />
     </section>
   )
 }

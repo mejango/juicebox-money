@@ -6,8 +6,8 @@ type Feed = 'activity' | 'trending' | 'top'
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
   { id: 'activity', label: 'Fresh activity' },
-  { id: 'trending', label: 'Trending' },
   { id: 'top', label: 'Top projects' },
+  { id: 'trending', label: 'Trending' },
 ]
 
 export function HomepageDiscoveryLayout({
@@ -30,7 +30,7 @@ export function HomepageDiscoveryLayout({
     <div className="grid items-start gap-5 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
       <div className="order-1 min-w-0 xl:col-start-4 xl:row-span-2 xl:row-start-1">{hero}</div>
 
-      <div className="order-2 min-w-0 xl:col-span-3 xl:row-start-1">{summary}</div>
+      <div className="order-2 min-w-0 xl:col-span-2 xl:row-start-1">{summary}</div>
 
       <div
         className="order-3 flex min-w-0 gap-5 overflow-x-auto border-b border-smoke-200 xl:hidden"
@@ -57,14 +57,18 @@ export function HomepageDiscoveryLayout({
         ))}
       </div>
 
-      {FEEDS.map((feed, index) => (
+      {FEEDS.map(feed => (
         <div
           key={feed.id}
           id={`home-${feed.id}-panel`}
           role="tabpanel"
           aria-labelledby={`home-${feed.id}-tab`}
-          className={`${activeFeed === feed.id ? 'block' : 'hidden'} order-4 min-w-0 xl:row-start-2 xl:block ${
-            index === 0 ? 'xl:col-start-1' : index === 1 ? 'xl:col-start-2' : 'xl:col-start-3'
+          className={`${activeFeed === feed.id ? 'block' : 'hidden'} order-4 min-w-0 xl:block ${
+            feed.id === 'activity'
+              ? 'xl:col-start-1 xl:row-start-2'
+              : feed.id === 'top'
+                ? 'xl:col-start-2 xl:row-start-2'
+                : 'xl:col-start-3 xl:row-span-2 xl:row-start-1'
           }`}
         >
           {panels[feed.id]}
