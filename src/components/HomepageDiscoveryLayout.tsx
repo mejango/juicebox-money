@@ -6,8 +6,8 @@ type Feed = 'activity' | 'trending' | 'top'
 type RankingFeed = Exclude<Feed, 'activity'>
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
-  { id: 'activity', label: 'Fresh activity' },
-  { id: 'top', label: 'Top projects' },
+  { id: 'activity', label: 'Latest' },
+  { id: 'top', label: 'Top' },
   { id: 'trending', label: 'Trending' },
 ]
 

@@ -620,8 +620,7 @@ export function ActivityList({
   const header = (
     <div className="mb-3 flex items-center justify-between gap-3">
       <h2 className="font-agrandir text-xl font-medium">
-        <span className="min-[801px]:hidden">Recent</span>
-        <span className="hidden min-[801px]:inline">Activity</span>
+        Latest
       </h2>
       <ActivityTypeFilter
         categories={categories}

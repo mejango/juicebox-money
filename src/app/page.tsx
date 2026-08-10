@@ -206,7 +206,7 @@ async function HomepageDiscovery() {
         hero={<HeroColumn />}
         summary={reserves ? <SecuredReserves data={reserves} /> : null}
         activity={
-          <DashboardColumn title="Fresh activity" headingClassName="hidden sm:flex">
+          <DashboardColumn title="Latest" headingClassName="hidden sm:flex">
             <FreshActivity
               initialEvents={activity.slice(0, 8)}
               initialHasMore={activity.length > 8}
@@ -223,7 +223,7 @@ async function HomepageDiscovery() {
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top projects" headingClassName="hidden lg:flex">
+          <DashboardColumn title="Top" headingClassName="hidden lg:flex">
             <TopProjectRows
               initialProjects={top.slice(0, 8)}
               initialHasMore={top.length > 8}
@@ -292,14 +292,17 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
                 {card.name}
               </span>
               <span className="mt-0.5 block text-xs leading-snug text-smoke-600">
+                <span className="block text-[10px] uppercase tracking-wide text-smoke-500">
+                  Recent
+                </span>
                 <span className="block">
-                  Recent payments:{' '}
+                  Payments:{' '}
                   <span className="tabular-nums text-smoke-700">
                     {card.paymentsCount.toLocaleString('en-US')}
                   </span>
                 </span>
                 <span className="block">
-                  Recent volume:{' '}
+                  Volume:{' '}
                   <span className="tabular-nums text-smoke-700">
                     {formatRecentVolume(card)}
                   </span>
@@ -329,13 +332,13 @@ function EmptyProjects() {
 function HeroColumn() {
   return (
     <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3 xl:text-left">
-      <div className="xl:mb-3 xl:flex xl:min-h-0 xl:flex-1 xl:items-center xl:justify-center">
+      <div className="mb-3 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
           alt=""
           priority
           sizes="(min-width: 1280px) 360px, 280px"
-          className="mx-auto mb-8 h-auto w-full max-w-[330px] xl:mb-0 xl:h-full xl:max-h-[360px] xl:max-w-[360px] xl:object-contain"
+          className="mx-auto mb-2 h-auto w-full max-w-[330px] xl:mb-0 xl:max-h-[390px] xl:max-w-[390px] xl:object-contain"
         />
       </div>
       <div>
