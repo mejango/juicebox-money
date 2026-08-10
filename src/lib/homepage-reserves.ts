@@ -13,6 +13,7 @@ export type ReservePoint = { timestamp: number; valueUsd: number }
 export type HomepageReserves = {
   eth: number
   usdc: number
+  totalUsd: number
   otherAssets: number
   points: ReservePoint[]
 }
@@ -74,9 +75,15 @@ const cachedHomepageReserves = unstable_cache(
     const points = rawPoints.filter(
       (_, index) => index % stride === 0 || index === rawPoints.length - 1,
     )
-    return { eth, usdc, otherAssets: otherSymbols.size, points }
+    return {
+      eth,
+      usdc,
+      totalUsd: eth * (ethPrice ?? 0) + usdc,
+      otherAssets: otherSymbols.size,
+      points,
+    }
   },
-  ['juicebox-homepage-reserves-v1'],
+  ['juicebox-homepage-reserves-v2'],
   { revalidate: 600 },
 )
 
@@ -84,6 +91,6 @@ export async function getHomepageReserves(): Promise<HomepageReserves> {
   try {
     return await cachedHomepageReserves()
   } catch {
-    return { eth: 0, usdc: 0, otherAssets: 0, points: [] }
+    return { eth: 0, usdc: 0, totalUsd: 0, otherAssets: 0, points: [] }
   }
 }

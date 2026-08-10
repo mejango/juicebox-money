@@ -202,9 +202,9 @@ async function HomepageDiscovery() {
       id="trending"
       className="mx-auto max-w-[1800px] px-4 pb-0 pt-8 sm:px-6 sm:pt-12"
     >
-      {reserves ? <SecuredReserves data={reserves} /> : null}
       <HomepageDiscoveryLayout
         hero={<HeroColumn />}
+        summary={reserves ? <SecuredReserves data={reserves} /> : null}
         activity={
           <DashboardColumn title="Fresh activity">
             <FreshActivity
