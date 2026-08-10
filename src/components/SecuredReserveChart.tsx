@@ -43,25 +43,18 @@ export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
     const valueSpan = Math.max(maxValue - minValue, 1)
     const minTime = Math.min(...points.map(point => point.timestamp))
     const maxTime = Math.max(...points.map(point => point.timestamp))
-    const timeSpan = Math.max(maxTime - minTime, 1)
-    const plotted = points.map(point => ({
+    const slotWidth = 100 / points.length
+    const barWidth = slotWidth * 0.78
+    const plotted = points.map((point, index) => ({
       ...point,
-      x: ((point.timestamp - minTime) / timeSpan) * 100,
+      x: (index + 0.5) * slotWidth,
       y: HEIGHT - BOTTOM - ((point.valueUsd - minValue) / valueSpan) * (HEIGHT - TOP - BOTTOM),
     }))
-    const bars = plotted.map((point, index) => {
-      const previous = plotted[index - 1]
-      const next = plotted[index + 1]
-      const left = previous ? (previous.x + point.x) / 2 : 0
-      const right = next ? (point.x + next.x) / 2 : 100
-      const gap = Math.min(0.7, (right - left) * 0.18)
-
-      return {
-        ...point,
-        x: left + gap / 2,
-        width: Math.max(right - left - gap, 0.2),
-      }
-    })
+    const bars = plotted.map(point => ({
+      ...point,
+      x: point.x - barWidth / 2,
+      width: barWidth,
+    }))
     return { plotted, bars, minValue, maxValue, minTime, maxTime }
   }, [points])
 
