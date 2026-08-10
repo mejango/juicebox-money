@@ -6,7 +6,7 @@ type Feed = 'activity' | 'trending' | 'top'
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
   { id: 'activity', label: 'Fresh activity' },
-  { id: 'trending', label: 'Trending projects' },
+  { id: 'trending', label: 'Trending' },
   { id: 'top', label: 'Top projects' },
 ]
 
@@ -25,7 +25,7 @@ export function HomepageDiscoveryLayout({
   const panels: Record<Feed, ReactNode> = { activity, trending, top }
 
   return (
-    <div className="grid items-start gap-5 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.25fr)]">
+    <div className="grid items-start gap-5 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
       <div className="order-1 min-w-0 xl:order-4">{hero}</div>
 
       <div

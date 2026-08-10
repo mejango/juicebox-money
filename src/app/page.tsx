@@ -29,6 +29,7 @@ import { HomepageDiscoveryLayout } from '@/components/HomepageDiscoveryLayout'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
+import { formatTokenAmount } from '@/lib/format'
 
 export const revalidate = 120
 
@@ -204,7 +205,7 @@ async function HomepageDiscovery() {
           </DashboardColumn>
         }
         trending={
-          <DashboardColumn title="Trending projects">
+          <DashboardColumn title="Trending">
             <ProjectRows cards={cards} />
           </DashboardColumn>
         }
@@ -258,8 +259,19 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
               <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
                 {card.name}
               </span>
-              <span className="mt-0.5 block truncate text-xs text-smoke-600">
-                {card.paymentsCount.toLocaleString('en-US')} payments
+              <span className="mt-0.5 block text-xs leading-snug text-smoke-600">
+                <span className="block">
+                  Recent payments:{' '}
+                  <span className="tabular-nums text-smoke-700">
+                    {card.paymentsCount.toLocaleString('en-US')}
+                  </span>
+                </span>
+                <span className="block">
+                  Recent volume:{' '}
+                  <span className="tabular-nums text-smoke-700">
+                    {formatRecentVolume(card)}
+                  </span>
+                </span>
               </span>
             </span>
           </ProjectLink>
@@ -293,21 +305,31 @@ function TopProjectRows({ projects }: { projects: TopBalanceProject[] }) {
               size={40}
               eager={index < 4}
             />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:text-bluebs-600">
-              {project.name}
-            </span>
-            <span className="shrink-0 text-xs tabular-nums text-smoke-700">
-              {project.balanceUsd.toLocaleString('en-US', {
-                style: 'currency',
-                currency: 'USD',
-                maximumFractionDigits: 0,
-              })}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
+                {project.name}
+              </span>
+              <span className="mt-0.5 block text-xs text-smoke-600">
+                Balance:{' '}
+                <span className="tabular-nums text-smoke-700">
+                  {project.balanceUsd.toLocaleString('en-US', {
+                    style: 'currency',
+                    currency: 'USD',
+                    maximumFractionDigits: 0,
+                  })}
+                </span>
+              </span>
             </span>
           </ProjectLink>
         </li>
       ))}
     </ol>
   )
+}
+
+function formatRecentVolume(card: TrendingCard): string {
+  if (card.decimals === null || card.symbol === null) return '—'
+  return `${formatTokenAmount(card.volume, card.decimals)} ${card.symbol.replace(/^\$+/, '')}`
 }
 
 function EmptyProjects() {
