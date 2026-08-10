@@ -49,14 +49,25 @@ export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
       x: ((point.timestamp - minTime) / timeSpan) * 100,
       y: HEIGHT - BOTTOM - ((point.valueUsd - minValue) / valueSpan) * (HEIGHT - TOP - BOTTOM),
     }))
-    return { plotted, minValue, maxValue, minTime, maxTime }
+    const bars = plotted.map((point, index) => {
+      const previous = plotted[index - 1]
+      const next = plotted[index + 1]
+      const left = previous ? (previous.x + point.x) / 2 : 0
+      const right = next ? (point.x + next.x) / 2 : 100
+      const gap = Math.min(0.7, (right - left) * 0.18)
+
+      return {
+        ...point,
+        x: left + gap / 2,
+        width: Math.max(right - left - gap, 0.2),
+      }
+    })
+    return { plotted, bars, minValue, maxValue, minTime, maxTime }
   }, [points])
 
   if (!chart) return null
 
   const hovered = hoveredIndex === null ? null : chart.plotted[hoveredIndex]
-  const path = chart.plotted.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
-
   function selectNearest(event: PointerEvent<SVGRectElement>) {
     const box = event.currentTarget.getBoundingClientRect()
     const x = ((event.clientX - box.left) / box.width) * 100
@@ -103,10 +114,22 @@ export function SecuredReserveChart({ points }: { points: ReservePoint[] }) {
             onFocus={() => setHoveredIndex(chart.plotted.length - 1)}
             onBlur={() => setHoveredIndex(null)}
             onKeyDown={moveSelection}
-            aria-label="Secured reserve value over time. Focus and use arrow keys to inspect values."
+            aria-label="Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect values."
           >
             <line x1="0" y1={HEIGHT - BOTTOM} x2="100" y2={HEIGHT - BOTTOM} stroke="currentColor" className="text-smoke-200" vectorEffect="non-scaling-stroke" />
-            <polyline points={path} fill="none" stroke="currentColor" strokeWidth="4" vectorEffect="non-scaling-stroke" />
+            {chart.bars.map((bar, index) => (
+              <rect
+                key={`${bar.timestamp}-${index}`}
+                x={bar.x}
+                y={bar.y}
+                width={bar.width}
+                height={Math.max(HEIGHT - BOTTOM - bar.y, 0)}
+                rx="0.55"
+                fill="currentColor"
+                opacity={hoveredIndex === null ? 0.42 : hoveredIndex === index ? 0.92 : 0.2}
+                className="transition-opacity duration-150"
+              />
+            ))}
             {hovered ? (
               <>
                 <line x1={hovered.x} y1={TOP} x2={hovered.x} y2={HEIGHT - BOTTOM} stroke="currentColor" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
