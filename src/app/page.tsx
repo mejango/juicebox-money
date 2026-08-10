@@ -206,7 +206,7 @@ async function HomepageDiscovery() {
         hero={<HeroColumn />}
         summary={reserves ? <SecuredReserves data={reserves} /> : null}
         activity={
-          <DashboardColumn title="Fresh activity" headingClassName="hidden md:flex">
+          <DashboardColumn title="Fresh activity" headingClassName="hidden sm:flex">
             <FreshActivity
               initialEvents={activity.slice(0, 8)}
               initialHasMore={activity.length > 8}
@@ -214,12 +214,12 @@ async function HomepageDiscovery() {
           </DashboardColumn>
         }
         trending={
-          <DashboardColumn title="Trending" headingClassName="hidden 2xl:flex">
+          <DashboardColumn title="Trending" headingClassName="hidden lg:flex">
             <ProjectRows cards={cards} />
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top projects" headingClassName="hidden 2xl:flex">
+          <DashboardColumn title="Top projects" headingClassName="hidden lg:flex">
             <TopProjectRows
               initialProjects={top.slice(0, 8)}
               initialHasMore={top.length > 8}

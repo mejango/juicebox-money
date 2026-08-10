@@ -76,12 +76,12 @@ export function HomepageDiscoveryLayout({
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
-    <div className="grid items-start gap-5 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
-      <div className="order-1 min-w-0 md:col-span-2 md:row-start-1 lg:col-span-1 lg:col-start-3 lg:row-span-2 lg:row-start-1 2xl:col-start-4">
+    <div className="grid items-start gap-5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)]">
+      <div className="order-1 min-w-0 sm:col-span-2 sm:row-start-1 md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 lg:col-start-4">
         {hero}
       </div>
 
-      <div className="order-2 min-w-0 md:col-span-2 md:row-start-2 lg:col-start-1 lg:row-start-1 2xl:col-span-2">
+      <div className="order-2 min-w-0 sm:col-span-2 sm:row-start-2 md:col-start-1 md:row-start-1 lg:col-span-2">
         {summary}
       </div>
 
@@ -91,7 +91,7 @@ export function HomepageDiscoveryLayout({
         onChange={setActiveFeed}
         idPrefix="home-all"
         label="Project feeds"
-        className="order-3 flex md:hidden"
+        className="order-3 flex sm:hidden"
       />
 
       <div
@@ -100,19 +100,19 @@ export function HomepageDiscoveryLayout({
         aria-labelledby="home-all-activity-tab"
         className={`${
           activeFeed === 'activity' ? 'block' : 'hidden'
-        } order-4 min-w-0 md:col-start-1 md:row-start-3 md:block lg:row-start-2 2xl:col-start-1`}
+        } order-4 min-w-0 sm:col-start-1 sm:row-start-3 sm:block md:row-start-2 lg:col-start-1`}
       >
         {activity}
       </div>
 
-      <div className="order-5 min-w-0 md:col-start-2 md:row-start-3 lg:row-start-2 2xl:contents">
+      <div className="order-5 min-w-0 sm:col-start-2 sm:row-start-3 md:row-start-2 lg:contents">
         <FeedTabs
           feeds={RANKING_FEEDS}
           active={rankingFeed}
           onChange={feed => setRankingFeed(feed as RankingFeed)}
           idPrefix="home-ranking"
           label="Project rankings"
-          className="mb-4 hidden md:flex 2xl:hidden"
+          className="mb-4 hidden sm:flex lg:hidden"
         />
 
         <div
@@ -120,8 +120,8 @@ export function HomepageDiscoveryLayout({
           role="tabpanel"
           aria-labelledby="home-all-top-tab home-ranking-top-tab"
           className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
-            rankingFeed === 'top' ? 'md:block' : 'md:hidden'
-          } min-w-0 2xl:col-start-2 2xl:row-start-2 2xl:block`}
+            rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
+          } min-w-0 lg:col-start-2 lg:row-start-2 lg:block`}
         >
           {top}
         </div>
@@ -131,8 +131,8 @@ export function HomepageDiscoveryLayout({
           role="tabpanel"
           aria-labelledby="home-all-trending-tab home-ranking-trending-tab"
           className={`${activeFeed === 'trending' ? 'block' : 'hidden'} ${
-            rankingFeed === 'trending' ? 'md:block' : 'md:hidden'
-          } min-w-0 2xl:col-start-3 2xl:row-span-2 2xl:row-start-1 2xl:block`}
+            rankingFeed === 'trending' ? 'sm:block' : 'sm:hidden'
+          } min-w-0 lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:block`}
         >
           {trending}
         </div>
