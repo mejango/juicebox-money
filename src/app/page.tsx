@@ -321,13 +321,15 @@ function EmptyProjects() {
 function HeroColumn() {
   return (
     <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3 xl:text-left">
-      <Image
-        src={juiceboxHero}
-        alt=""
-        priority
-        sizes="(min-width: 1280px) 360px, 280px"
-        className="mx-auto mb-8 h-auto w-full max-w-[330px] xl:mb-3 xl:max-w-[clamp(9rem,28svh,17rem)]"
-      />
+      <div className="xl:mb-3 xl:flex xl:min-h-0 xl:flex-1 xl:items-center xl:justify-center">
+        <Image
+          src={juiceboxHero}
+          alt=""
+          priority
+          sizes="(min-width: 1280px) 360px, 280px"
+          className="mx-auto mb-8 h-auto w-full max-w-[330px] xl:mb-0 xl:h-full xl:max-h-[360px] xl:max-w-[360px] xl:object-contain"
+        />
+      </div>
       <div>
         <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-[clamp(2.5rem,5.5svh,3.75rem)]">
           Fund your thing<span className="text-split-500">.</span>
