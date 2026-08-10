@@ -12,10 +12,14 @@ export type TopBalanceProject = {
   balanceUsd: number
 }
 
-type BalanceGroup = {
+export type BalanceGroup = {
   id: string
   balance: string
   projects: { items: BsProject[] }
+}
+
+type BalanceGroupsPage = {
+  suckerGroups: { items: BalanceGroup[]; totalCount: number }
 }
 
 const cachedEthPrice = unstable_cache(
@@ -30,17 +34,21 @@ const cachedEthPrice = unstable_cache(
   { revalidate: 1200 },
 )
 
-export async function getTopBalanceProjects(limit = 8): Promise<TopBalanceProject[]> {
-  try {
-    const [data, ethPrice] = await Promise.all([
-      bendystraw<{ suckerGroups: { items: BalanceGroup[] } }>(
-        `query($limit: Int!) {
+const cachedBalanceGroups = unstable_cache(
+  async () => {
+    const items: BalanceGroup[] = []
+    let totalCount = 0
+    do {
+      const data = await bendystraw<BalanceGroupsPage>(
+        `query($limit: Int!, $offset: Int!) {
           suckerGroups(
             where: { version: 6 }
             orderBy: "balance"
             orderDirection: "desc"
             limit: $limit
+            offset: $offset
           ) {
+            totalCount
             items {
               id balance
               projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
@@ -53,13 +61,47 @@ export async function getTopBalanceProjects(limit = 8): Promise<TopBalanceProjec
             }
           }
         }`,
-        { limit: Math.max(limit * 3, 24) },
+        { limit: 250, offset: items.length },
         { policy: 'stable' },
-      ),
+      )
+      const page = data.suckerGroups.items
+      totalCount = data.suckerGroups.totalCount
+      items.push(...page)
+      if (!page.length) break
+    } while (items.length < totalCount)
+    return items
+  },
+  ['juicebox-home-balance-groups-v1'],
+  { revalidate: 600 },
+)
+
+export async function getHomepageBalanceGroups(): Promise<BalanceGroup[]> {
+  try {
+    return await cachedBalanceGroups()
+  } catch {
+    return []
+  }
+}
+
+export async function getHomepageEthPrice(): Promise<number | null> {
+  try {
+    return await cachedEthPrice()
+  } catch {
+    return null
+  }
+}
+
+export async function getTopBalanceProjects(
+  limit = 8,
+  offset = 0,
+): Promise<TopBalanceProject[]> {
+  try {
+    const [groups, ethPrice] = await Promise.all([
+      cachedBalanceGroups(),
       cachedEthPrice().catch(() => null),
     ])
 
-    return data.suckerGroups.items
+    return groups
       .flatMap(group => {
         const project = group.projects.items.find(item => item.name) ?? group.projects.items[0]
         if (!project || project.decimals == null) return []
@@ -79,7 +121,7 @@ export async function getTopBalanceProjects(limit = 8): Promise<TopBalanceProjec
         }]
       })
       .sort((a, b) => b.balanceUsd - a.balanceUsd)
-      .slice(0, limit)
+      .slice(offset, offset + limit)
   } catch {
     return []
   }

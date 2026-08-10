@@ -1,8 +1,9 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
@@ -14,6 +15,7 @@ import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
 
 const POLL_MS = 15_000
+const PAGE_SIZE = 8
 
 /**
  * The "Fresh activity" rail: latest project-oriented V6 events. Server-renders the initial rows,
@@ -21,22 +23,33 @@ const POLL_MS = 15_000
  */
 export function FreshActivity({
   initialEvents,
+  initialHasMore,
 }: {
   initialEvents: BsFreshActivityEvent[]
+  initialHasMore: boolean
 }) {
   const [events, setEvents] = useState(initialEvents)
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     let stopped = false
     const tick = async () => {
       if (document.visibilityState === 'hidden') return
       try {
-        const res = await fetch('/api/activity')
+        const res = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=0`)
         if (!res.ok) return
         const json = (await res.json()) as {
           events?: BsFreshActivityEvent[]
         }
-        if (!stopped && json.events?.length) setEvents(json.events)
+        if (!stopped && json.events?.length) {
+          setEvents(current => [
+            ...json.events!,
+            ...current.filter(
+              event => !json.events!.some(fresh => fresh.id === event.id),
+            ),
+          ])
+        }
       } catch {
         // Transient — the next tick retries.
       }
@@ -48,6 +61,34 @@ export function FreshActivity({
     }
   }, [])
 
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore) return
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `/api/activity?limit=${PAGE_SIZE}&offset=${events.length}`,
+      )
+      if (!response.ok) throw new Error('Activity unavailable')
+      const page = (await response.json()) as {
+        events?: BsFreshActivityEvent[]
+        hasMore?: boolean
+      }
+      const next = page.events ?? []
+      setEvents(current => [
+        ...current,
+        ...next.filter(
+          event => !current.some(existing => existing.id === event.id),
+        ),
+      ])
+      setHasMore(Boolean(page.hasMore))
+    } catch {
+      setHasMore(false)
+    } finally {
+      setLoading(false)
+    }
+  }, [events.length, hasMore, loading])
+  const markerRef = useInfiniteScroll({ hasMore, loading, loadMore })
+
   return (
     <ul className="min-h-[420px] divide-y divide-smoke-100">
       {events.length === 0 ? (
@@ -55,9 +96,22 @@ export function FreshActivity({
           No recent activity yet.
         </li>
       ) : (
-        events.map((event, index) => (
-          <Row key={event.id} event={event} eagerLogo={index < 4} />
-        ))
+        <>
+          {events.map((event, index) => (
+            <Row key={event.id} event={event} eagerLogo={index < 4} />
+          ))}
+          {(hasMore || loading) && (
+            <li
+              ref={markerRef}
+              className="flex h-16 items-center justify-center text-xs text-smoke-500"
+              aria-live="polite"
+            >
+              <span className={loading ? 'animate-pulse' : ''}>
+                {loading ? 'Loading more activity…' : 'More activity'}
+              </span>
+            </li>
+          )}
+        </>
       )}
     </ul>
   )

@@ -29,7 +29,10 @@ import { HomepageDiscoveryLayout } from '@/components/HomepageDiscoveryLayout'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
+import { TopProjectRows } from '@/components/TopProjectRows'
+import { SecuredReserves } from '@/components/SecuredReserves'
 import { formatTokenAmount } from '@/lib/format'
+import { getHomepageReserves } from '@/lib/homepage-reserves'
 
 export const revalidate = 120
 
@@ -179,10 +182,11 @@ function FruitSeparator() {
 }
 
 async function HomepageDiscovery() {
-  const [cardsResult, activityResult, topResult] = await Promise.allSettled([
+  const [cardsResult, activityResult, topResult, reservesResult] = await Promise.allSettled([
     withTimeout(getTrendingCards(8), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getRecentActivity(8), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getTopBalanceProjects(8), HOMEPAGE_DATA_TIMEOUT_MS),
+    withTimeout(getRecentActivity(9), HOMEPAGE_DATA_TIMEOUT_MS),
+    withTimeout(getTopBalanceProjects(9), HOMEPAGE_DATA_TIMEOUT_MS),
+    withTimeout(getHomepageReserves(), HOMEPAGE_DATA_TIMEOUT_MS),
   ])
   // Data hiccups degrade to empty regions; the page always renders.
   const cards: TrendingCard[] =
@@ -191,17 +195,22 @@ async function HomepageDiscovery() {
     activityResult.status === 'fulfilled' ? activityResult.value : []
   const top: TopBalanceProject[] =
     topResult.status === 'fulfilled' ? topResult.value : []
+  const reserves = reservesResult.status === 'fulfilled' ? reservesResult.value : null
 
   return (
     <section
       id="trending"
       className="mx-auto max-w-[1800px] px-4 pb-0 pt-8 sm:px-6 sm:pt-12"
     >
+      {reserves ? <SecuredReserves data={reserves} /> : null}
       <HomepageDiscoveryLayout
         hero={<HeroColumn />}
         activity={
           <DashboardColumn title="Fresh activity">
-            <FreshActivity initialEvents={activity} />
+            <FreshActivity
+              initialEvents={activity.slice(0, 8)}
+              initialHasMore={activity.length > 8}
+            />
           </DashboardColumn>
         }
         trending={
@@ -211,7 +220,10 @@ async function HomepageDiscovery() {
         }
         top={
           <DashboardColumn title="Top projects">
-            <TopProjectRows projects={top} />
+            <TopProjectRows
+              initialProjects={top.slice(0, 8)}
+              initialHasMore={top.length > 8}
+            />
           </DashboardColumn>
         }
       />
@@ -271,52 +283,6 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
                   <span className="tabular-nums text-smoke-700">
                     {formatRecentVolume(card)}
                   </span>
-                </span>
-              </span>
-            </span>
-          </ProjectLink>
-        </li>
-      ))}
-    </ol>
-  )
-}
-
-function TopProjectRows({ projects }: { projects: TopBalanceProject[] }) {
-  if (!projects.length) return <EmptyProjects />
-  return (
-    <ol className="divide-y divide-smoke-100">
-      {projects.map((project, index) => (
-        <li key={project.key}>
-          <ProjectLink
-            href={project.href}
-            projectHint={{
-              name: project.name,
-              logoUri: project.logoUri,
-              tagline: project.tagline,
-            }}
-            className="group flex h-28 items-center gap-3 px-4 py-3"
-          >
-            <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
-              {index + 1}
-            </span>
-            <ProjectLogo
-              name={project.name}
-              logoUri={project.logoUri}
-              size={40}
-              eager={index < 4}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
-                {project.name}
-              </span>
-              <span className="mt-0.5 block text-xs text-smoke-600">
-                Balance:{' '}
-                <span className="tabular-nums text-smoke-700">
-                  {project.balanceUsd.toLocaleString('en-US', {
-                    style: 'currency',
-                    currency: 'USD',
-                    maximumFractionDigits: 0,
-                  })}
                 </span>
               </span>
             </span>

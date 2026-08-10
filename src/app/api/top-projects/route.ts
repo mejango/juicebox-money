@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server'
 import { publicReadHeaders } from '@/lib/api-cache'
-import { getRecentActivity } from '@/lib/bendystraw'
-
-export const dynamic = 'force-dynamic'
+import { getTopBalanceProjects } from '@/lib/top-projects'
 
 const DEFAULT_LIMIT = 8
 const MAX_LIMIT = 32
@@ -13,20 +11,19 @@ function pageParam(value: string | null, fallback: number, max?: number) {
   return max === undefined ? parsed : Math.min(parsed, max)
 }
 
-/** Paginated fresh activity and the poll target for the client-side rail. */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const limit = pageParam(searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT)
   const offset = pageParam(searchParams.get('offset'), 0)
   try {
-    const page = await getRecentActivity(limit + 1, offset)
+    const page = await getTopBalanceProjects(limit + 1, offset)
     return NextResponse.json(
-      { events: page.slice(0, limit), hasMore: page.length > limit },
+      { projects: page.slice(0, limit), hasMore: page.length > limit },
       { headers: publicReadHeaders },
     )
   } catch {
     return NextResponse.json(
-      { events: [], hasMore: false },
+      { projects: [], hasMore: false },
       { status: 502 },
     )
   }

@@ -610,11 +610,12 @@ export type BsFreshActivityEvent = BsActivityEvent & {
  */
 export async function getRecentActivity(
   limit = 12,
+  offset = 0,
 ): Promise<BsFreshActivityEvent[]> {
   const data = await bendystraw<{
     activityEvents: { items: BsFreshActivityEvent[] }
   }>(
-    `query($limit: Int!) {
+    `query($limit: Int!, $offset: Int!) {
       activityEvents(
         where: {
           version: 6
@@ -631,6 +632,7 @@ export async function getRecentActivity(
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
+        offset: $offset
       ) {
         items {
           ${ACTIVITY_EVENT_FIELDS}
@@ -638,7 +640,7 @@ export async function getRecentActivity(
         }
       }
     }`,
-    { limit },
+    { limit, offset },
     { policy: 'live' },
   )
   return data.activityEvents.items
@@ -1279,13 +1281,25 @@ export function suckerGroupAccountingToken(
     : null
 }
 
-type BsPriceMoment = {
+export type BsPriceMoment = {
   timestamp: number
   balance: string
   tokenSupply: string
   /** 18-dec USD per one whole accounting token, as of THIS moment's block.
    *  Null for a moment the indexer could not value. */
   accountingTokenUsdRate?: string | null
+}
+
+export async function getSuckerGroupMoments(
+  suckerGroupId: string,
+): Promise<BsPriceMoment[]> {
+  const page = await getPagedItems<BsPriceMoment>(
+    MOMENTS_QUERY,
+    'suckerGroupMoments',
+    { suckerGroupId },
+    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+  )
+  return page.items
 }
 
 type BsSwapEvent = {
