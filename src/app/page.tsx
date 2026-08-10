@@ -332,7 +332,7 @@ function EmptyProjects() {
 function HeroColumn() {
   return (
     <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3 xl:text-left">
-      <div className="mb-3 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
+      <div className="mb-3 translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
           alt=""

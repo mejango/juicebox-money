@@ -10,13 +10,22 @@ import {
 } from './top-projects'
 
 export type ReservePoint = { timestamp: number; valueUsd: number }
+export type ChainReserveBreakdown = {
+  chainId: number
+  eth: number
+  usdc: number
+  otherAssets: string[]
+}
 export type HomepageReserves = {
   eth: number
   usdc: number
   totalUsd: number
   otherAssets: number
+  chains: ChainReserveBreakdown[]
   points: ReservePoint[]
 }
+
+const RESERVE_CHAIN_IDS = [1, 42161, 8453, 10] as const
 
 const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
@@ -34,11 +43,31 @@ const cachedHomepageReserves = unstable_cache(
     let eth = 0
     let usdc = 0
     const otherSymbols = new Set<string>()
+    const perChain = new Map<
+      number,
+      { eth: number; usdc: number; otherAssets: Set<string> }
+    >(
+      RESERVE_CHAIN_IDS.map(chainId => [
+        chainId,
+        { eth: 0, usdc: 0, otherAssets: new Set<string>() },
+      ] as const),
+    )
     for (const { group, symbol, decimals } of supported) {
       const amount = Number(formatUnits(BigInt(group.balance), decimals))
       if (symbol === 'ETH') eth += amount
       else if (symbol === 'USDC') usdc += amount
       else otherSymbols.add(symbol)
+
+      for (const project of group.projects.items) {
+        const chain = perChain.get(project.chainId)
+        if (!chain) continue
+        const chainAmount = Number(
+          formatUnits(BigInt(project.balance), decimals),
+        )
+        if (symbol === 'ETH') chain.eth += chainAmount
+        else if (symbol === 'USDC') chain.usdc += chainAmount
+        else chain.otherAssets.add(symbol)
+      }
     }
 
     const histories = await Promise.all(
@@ -80,10 +109,19 @@ const cachedHomepageReserves = unstable_cache(
       usdc,
       totalUsd: eth * (ethPrice ?? 0) + usdc,
       otherAssets: otherSymbols.size,
+      chains: RESERVE_CHAIN_IDS.map(chainId => {
+        const chain = perChain.get(chainId)!
+        return {
+          chainId,
+          eth: chain.eth,
+          usdc: chain.usdc,
+          otherAssets: [...chain.otherAssets].sort(),
+        }
+      }),
       points,
     }
   },
-  ['juicebox-homepage-reserves-v2'],
+  ['juicebox-homepage-reserves-v3'],
   { revalidate: 600 },
 )
 
@@ -91,6 +129,18 @@ export async function getHomepageReserves(): Promise<HomepageReserves> {
   try {
     return await cachedHomepageReserves()
   } catch {
-    return { eth: 0, usdc: 0, totalUsd: 0, otherAssets: 0, points: [] }
+    return {
+      eth: 0,
+      usdc: 0,
+      totalUsd: 0,
+      otherAssets: 0,
+      chains: RESERVE_CHAIN_IDS.map(chainId => ({
+        chainId,
+        eth: 0,
+        usdc: 0,
+        otherAssets: [],
+      })),
+      points: [],
+    }
   }
 }
