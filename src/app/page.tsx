@@ -331,7 +331,7 @@ function EmptyProjects() {
 
 function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3 xl:text-left">
+    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
       <div className="mb-3 translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
@@ -341,11 +341,11 @@ function HeroColumn() {
           className="mx-auto mb-2 h-auto w-full max-w-[330px] xl:mb-0 xl:max-h-[390px] xl:max-w-[390px] xl:object-contain"
         />
       </div>
-      <div>
+      <div className="mx-auto w-full">
         <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-[clamp(2.5rem,5.5svh,3.75rem)]">
           Fund your thing<span className="text-split-500">.</span>
         </h1>
-        <p className="mt-5 text-base leading-relaxed text-smoke-700 xl:mt-2">
+        <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-smoke-700 xl:mt-2">
           Raise money from anyone, anywhere, transparently on your terms.
         </p>
         <Link
