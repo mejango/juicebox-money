@@ -216,14 +216,14 @@ async function HomepageDiscovery() {
         trending={
           <DashboardColumn
             title="Trending"
-            headingClassName="hidden lg:flex"
-            panelClassName="lg:h-auto lg:flex-1"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:flex-1"
           >
             <ProjectRows cards={cards} />
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top" headingClassName="hidden lg:flex">
+          <DashboardColumn title="Top" headingClassName="hidden xl:flex">
             <TopProjectRows
               initialProjects={top.slice(0, 8)}
               initialHasMore={top.length > 8}
@@ -248,7 +248,7 @@ function DashboardColumn({
 }) {
   return (
     <section
-      className="flex min-w-0 flex-col lg:h-full"
+      className="flex min-w-0 flex-col xl:h-full"
       aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
     >
       <h2
