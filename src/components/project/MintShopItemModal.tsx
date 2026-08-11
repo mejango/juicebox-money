@@ -22,12 +22,15 @@ import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
 import {
   getAccount,
   getPublicClient,
-  waitForTransactionReceipt,
 } from 'wagmi/actions'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom } from '@/lib/gas'
+import {
+  isTransactionReceiptUnavailableError,
+  waitForTrackedReceipt,
+} from '@/lib/receipt'
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
@@ -75,7 +78,7 @@ export function MintShopItemModal({
   const [quantity, setQuantity] = useState('1')
   const [review, setReview] = useState<MintReview | null>(null)
   const [phase, setPhase] = useState<
-    'form' | 'checking' | 'review' | 'sending' | 'confirming' | 'done'
+    'form' | 'checking' | 'review' | 'sending' | 'confirming' | 'uncertain' | 'done'
   >('form')
   const [message, setMessage] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
@@ -222,10 +225,7 @@ export function MintShopItemModal({
         submitted = await waitForSafeExecutionHash(chainId, submitted)
         setHash(submitted)
       }
-      const receipt = await waitForTransactionReceipt(config, {
-        chainId: chainId as SupportedChainId,
-        hash: submitted,
-      })
+      const receipt = await waitForTrackedReceipt(client, submitted)
       if (receipt.status !== 'success') throw new Error('The mint failed.')
 
       await Promise.all([
@@ -239,13 +239,13 @@ export function MintShopItemModal({
       setPhase('done')
     } catch (error) {
       setMessage(shortError(error, 'Could not mint this item.'))
-      setPhase(review ? 'review' : 'form')
+      setPhase(isTransactionReceiptUnavailableError(error) ? 'uncertain' : review ? 'review' : 'form')
     }
   }
 
-  const footer = phase === 'done' ? (
+  const footer = phase === 'done' || phase === 'uncertain' ? (
     <button type="button" onClick={onClose} className="btn-primary min-h-[44px] px-5 text-sm">
-      Done
+      {phase === 'done' ? 'Done' : 'Close'}
     </button>
   ) : review ? (
     <div className="flex justify-end gap-2">
@@ -297,6 +297,11 @@ export function MintShopItemModal({
             {review?.quantity} × {itemName} sent to {review?.beneficiary}.
           </p>
           {hash ? <p className="mt-2 break-all font-mono text-xs text-smoke-500">{hash}</p> : null}
+        </div>
+      ) : phase === 'uncertain' ? (
+        <div className="callout callout-info text-sm">
+          The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.
+          {hash ? <p className="mt-2 break-all font-mono text-xs">{hash}</p> : null}
         </div>
       ) : review ? (
         <div className="space-y-4">

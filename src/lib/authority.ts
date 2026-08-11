@@ -14,6 +14,7 @@ import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { gasWithHeadroom } from '@/lib/gas'
+import { waitForTrackedReceipt } from '@/lib/receipt'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
@@ -453,7 +454,7 @@ export async function runAuthorityCalls({
           value: call.value ?? 0n,
           gas: call.gas,
         })
-        const receipt = await client.waitForTransactionReceipt({ hash })
+        const receipt = await waitForTrackedReceipt(client, hash)
         if (receipt.status !== 'success') {
           throw new Error(
             `${call.label ?? 'Project action'} reverted on ${
