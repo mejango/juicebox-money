@@ -42,6 +42,10 @@ export function SiteFooter() {
             </p>
             <AuditPromptLink className="mt-1 text-slate-300 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
             <p className="mt-1">
+              Defenders who manage to steal funds and return them are encouraged to keep 10% as a
+              reward, paid by all projects together.
+            </p>
+            <p className="mt-1">
               Terms of Service: Risks are borne entirely by the users of the open source code.
             </p>
           </div>
