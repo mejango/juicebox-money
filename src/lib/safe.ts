@@ -20,6 +20,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { gasWithinCap } from '@/lib/gas'
 import {
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,
@@ -1007,7 +1008,7 @@ async function sendContractAndConfirm({
   const { wallet, account } = await connectedWallet(chainId, expectedAccount)
   const client = publicClient(chainId)
   const data = encodeFunctionData({ abi, functionName, args })
-  const gas = safeWriteGas(functionName)
+  const gasCap = safeWriteGas(functionName)
   const before = safeContext
     ? await verifySafeWriteContext(
         chainId,
@@ -1020,8 +1021,14 @@ async function sendContractAndConfirm({
     from: account,
     to: address,
     data,
-    gas,
+    gas: gasCap,
   })
+  // The cap is a simulation bound, not a price. Sending it would make the
+  // wallet reserve cap * maxFeePerGas — 10M gas on Ethereum is a ~0.01 ETH
+  // balance requirement for an execution that costs a fraction of it.
+  const gas =
+    (await gasWithinCap(client, { account, to: address, data }, gasCap)) ??
+    gasCap
   if (functionName === 'execTransaction') {
     let result = false
     try {

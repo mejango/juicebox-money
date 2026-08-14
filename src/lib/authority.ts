@@ -23,7 +23,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithHeadroom } from '@/lib/gas'
+import { gasWithinCap } from '@/lib/gas'
 import { waitForTrackedReceipt } from '@/lib/receipt'
 import {
   loadRelayrPendingSession,
@@ -534,23 +534,21 @@ export async function runAuthorityCalls({
         value: call.value ?? 0n,
         gas: call.gas,
       })
-      // An explicit builder cap is part of the reviewed call and already
-      // succeeded in the raw preflight above. Do not follow it with an
-      // unbounded estimator against a target-controlled contract. Calls
-      // without a reviewed cap are measured with headroom for Relayr.
-      if (call.gas === undefined) {
-        try {
-          const estimate = await client.estimateGas({
-            account: call.authority,
-            to: call.target,
-            data: call.data,
-            value: call.value ?? 0n,
-          })
-          call.gas = gasWithHeadroom(estimate)
-        } catch {
-          // Estimation is best-effort; the raw eth_call above is the real gate.
-        }
-      }
+      // A builder cap bounds the raw preflight above against a
+      // target-controlled contract; it is not the cost of the call, and a
+      // wallet asked to reserve the whole cap rejects accounts that can
+      // comfortably afford the transaction. Measure inside the cap, so the
+      // estimator is never unbounded and the sent limit is the real one.
+      call.gas = await gasWithinCap(
+        client,
+        {
+          account: call.authority,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+        },
+        call.gas,
+      )
     } catch (simulationError) {
       const detail =
         simulationError instanceof Error &&

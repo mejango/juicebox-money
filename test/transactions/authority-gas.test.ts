@@ -486,7 +486,12 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(signedGas).toEqual([1_600_000n, 1_200_000n])
   })
 
-  it('keeps a builder-pinned gas value instead of re-estimating it', async () => {
+  it('sends the measured gas, not the builder cap the wallet would reserve', async () => {
+    // A wallet reserves gas * maxFeePerGas up front, so sending a 1M-gas
+    // simulation cap demands ~0.003 ETH on Ethereum for a handle claim that
+    // burns a fraction of it — funded accounts were rejected before signing.
+    mocks.client.estimateGas.mockResolvedValue(120_000n)
+
     const calls: AuthorityCall[] = [
       {
         chainId: 1,
@@ -503,7 +508,50 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
         params: [expect.objectContaining({ gas: '0xf4240' }), 'latest'],
       }),
     )
-    expect(mocks.client.estimateGas).not.toHaveBeenCalled()
+    // Estimation stays bounded by the reviewed cap.
+    expect(mocks.client.estimateGas).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 1_000_000n }),
+    )
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 240_000n }),
+    )
+  })
+
+  it('never sends more than the builder cap', async () => {
+    mocks.client.estimateGas.mockResolvedValue(900_000n)
+
+    await runAuthorityCalls({
+      calls: [
+        {
+          chainId: 1,
+          authority: ALICE,
+          target: TARGET,
+          data: '0x1234',
+          gas: 1_000_000n,
+        },
+      ],
+    })
+
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 1_000_000n }),
+    )
+  })
+
+  it('keeps the builder cap when the node cannot estimate', async () => {
+    mocks.client.estimateGas.mockRejectedValue(new Error('cannot estimate'))
+
+    await runAuthorityCalls({
+      calls: [
+        {
+          chainId: 1,
+          authority: ALICE,
+          target: TARGET,
+          data: '0x1234',
+          gas: 1_000_000n,
+        },
+      ],
+    })
+
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ gas: 1_000_000n }),
     )
