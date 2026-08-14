@@ -12,6 +12,7 @@ import {
 } from '@/components/project/AuthorityEditsCard'
 import { MultiChainBuybackRouterCard } from '@/components/project/MultiChainBuybackRouterCard'
 import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
+import { ProjectHandleCard } from '@/components/project/ProjectHandleCard'
 
 /**
  * The back-office cards on the Owner/Operator tab: who controls the project
@@ -22,8 +23,11 @@ import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
  * through useSafeTx (simulate-first).
  */
 export function BackOfficeTab({
+  chainId,
+  projectId,
   isRevnet,
   deployments,
+  revnetOperatorCandidates,
   profile,
 }: {
   chainId: JBChainId
@@ -35,10 +39,16 @@ export function BackOfficeTab({
   operator: string | null
   /** Every omnichain deployment and its indexed owner/operator. */
   deployments: AuthorityDeployment[]
+  /** Indexed candidates; the handle editor live-verifies all of them. */
+  revnetOperatorCandidates?: readonly `0x${string}`[]
   /** Current pinned profile used to prefill the chain-aware metadata editor. */
   profile: AuthorityEditProfile
 }) {
   usePreloadTransactionAnimation()
+  const currentDeployment = deployments.find(
+    deployment =>
+      deployment.chainId === chainId && deployment.projectId === projectId,
+  )
   return (
     <div className="space-y-5">
       <AuthorityOverview
@@ -46,6 +56,13 @@ export function BackOfficeTab({
         isRevnet={isRevnet}
         beforePermissions={
           <>
+            {currentDeployment ? (
+              <ProjectHandleCard
+                deployment={currentDeployment}
+                isRevnet={isRevnet}
+                revnetOperatorCandidates={revnetOperatorCandidates}
+              />
+            ) : null}
             <AuthorityEditsCard
               deployments={deployments}
               isRevnet={isRevnet}

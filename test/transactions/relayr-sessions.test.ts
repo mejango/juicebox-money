@@ -167,4 +167,34 @@ describe('resume-by-session entry point', () => {
     ).rejects.toThrow('could not execute this action on any selected chain')
     expect(storage.getItem(`${PREFIX}authority:0xaaa`)).toBeNull()
   })
+
+  it('never clears a SafeQueue session from API status without onchain proof', async () => {
+    const scope = `safe-queue:${ALICE.toLowerCase()}`
+    seed(
+      scope,
+      session({
+        chainIds: [1],
+        expectedCount: 1,
+        itemCount: 1,
+        records: [{ chain: 1, status: { state: 'success' } }],
+        expectedEntries: [
+          { chain: 1, target: ALICE, data: '0x1234', value: '0' },
+        ],
+        expectedSafeExecutions: [
+          {
+            chainId: 1,
+            safe: ALICE,
+            nonce: 7,
+            safeTxHash: `0x${'ab'.repeat(32)}`,
+            txUuid: 'fedcba98-7654-3210-fedc-ba9876543210',
+          },
+        ],
+      }),
+    )
+
+    await expect(
+      resumeRelayrSession({ scope, account: ALICE }),
+    ).rejects.toThrow(/Owner\/Operator queue/i)
+    expect(storage.getItem(`${PREFIX}${scope}`)).not.toBeNull()
+  })
 })

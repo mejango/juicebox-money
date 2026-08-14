@@ -10,6 +10,10 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
 import {
+  navigateToProjectHandle,
+  projectHandleFromRoute,
+} from '@/lib/project-handles'
+import {
   rememberProjectNavigation,
   type ProjectNavigationHint,
 } from '@/lib/project-navigation'
@@ -69,8 +73,13 @@ export function SearchBox({
   const boxRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const searchGenerationRef = useRef(0)
 
   const urn = parseUrn(query.trim())
+  const projectHandle = projectHandleFromRoute(query.trim())
+  const handlePath = projectHandle
+    ? `/@${encodeURIComponent(projectHandle.handle)}`
+    : null
 
   // The navigation lets this field absorb the available space between the
   // logo and wallet control. Keep the descriptive placeholder while it fits,
@@ -111,44 +120,61 @@ export function SearchBox({
 
   // Debounced free-text search against bendystraw (via our API route).
   useEffect(() => {
+    const generation = ++searchGenerationRef.current
+    abortRef.current?.abort()
+    abortRef.current = null
     const text = query.trim()
-    if (urn || (text.length < 2 && !/^\d+$/.test(text))) {
+    if (urn || handlePath || (text.length < 2 && !/^\d+$/.test(text))) {
       setResults([])
       setSearchUnavailable(false)
       return
     }
+    let controller: AbortController | null = null
     const t = setTimeout(async () => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
+      controller = new AbortController()
       abortRef.current = controller
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(text)}`, {
           signal: controller.signal,
         })
+        if (generation !== searchGenerationRef.current) return
         if (!res.ok) {
           setSearchUnavailable(true)
           setOpen(true)
           return
         }
         const json = (await res.json()) as { projects: Result[] }
+        if (generation !== searchGenerationRef.current) return
         setSearchUnavailable(false)
         setResults(json.projects)
         setOpen(true)
       } catch (reason) {
         // An abort is the next keystroke, not an outage — keep previous results.
         if ((reason as Error)?.name === 'AbortError') return
+        if (generation !== searchGenerationRef.current) return
         setSearchUnavailable(true)
         setOpen(true)
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null
       }
     }, 300)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      controller?.abort()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query])
+  }, [handlePath, query])
 
   // Account queries: a literal address matches immediately; a plausible ENS
   // name debounce-resolves, showing a pending row while it's in flight.
   useEffect(() => {
     const text = query.trim()
+    if (handlePath) {
+      setAccount(null)
+      setEnsPending(false)
+      setOpen(true)
+      return
+    }
     if (isAddress(text)) {
       setAccount({ address: text, ensName: null })
       setEnsPending(false)
@@ -176,7 +202,7 @@ export function SearchBox({
       stale = true
       clearTimeout(t)
     }
-  }, [query])
+  }, [handlePath, query])
 
   // Close on outside pointer.
   useOutsideClose(boxRef, () => {
@@ -185,6 +211,8 @@ export function SearchBox({
   })
 
   const go = (path: string, projectHint?: ProjectNavigationHint) => {
+    searchGenerationRef.current += 1
+    abortRef.current?.abort()
     if (projectHint) rememberProjectNavigation(path, projectHint)
     setOpen(false)
     setMobileOpen(false)
@@ -195,6 +223,21 @@ export function SearchBox({
     router.push(path)
   }
 
+  // Handles are mutable ENS aliases. A document navigation deliberately
+  // bypasses Next's Router Cache so revisiting the same `/@handle` cannot
+  // retain a tuple resolved before the ENS record was rebound.
+  const goHandle = (path: string) => {
+    searchGenerationRef.current += 1
+    abortRef.current?.abort()
+    setOpen(false)
+    setMobileOpen(false)
+    setQuery('')
+    setResults([])
+    setAccount(null)
+    setEnsPending(false)
+    navigateToProjectHandle(path)
+  }
+
   // The route takes an ENS name as-is and resolves it server-side.
   const accountPath = account
     ? `/account/${account.ensName ?? account.address}`
@@ -202,6 +245,7 @@ export function SearchBox({
 
   const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
+    else if (handlePath) goHandle(handlePath)
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
@@ -237,7 +281,12 @@ export function SearchBox({
         className="input-well min-h-[44px] pl-10 pr-4 text-sm"
       />
       {open &&
-      (results.length > 0 || urn || account || ensPending || searchUnavailable) ? (
+      (results.length > 0 ||
+        urn ||
+        handlePath ||
+        account ||
+        ensPending ||
+        searchUnavailable) ? (
         <ul className="card absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {ensPending && !account ? (
             <li className="px-4 py-2.5 text-xs text-smoke-500">
@@ -279,6 +328,16 @@ export function SearchBox({
                     <span>View account →</span>
                   </span>
                 </span>
+              </button>
+            </li>
+          ) : null}
+          {projectHandle && handlePath ? (
+            <li>
+              <button
+                onClick={() => goHandle(handlePath)}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-smoke-25"
+              >
+                Go to project @{projectHandle.handle}
               </button>
             </li>
           ) : null}

@@ -314,6 +314,12 @@
         "Configure buyback/router"
       ]
     },
+    "src/components/project/ProjectHandleCard.tsx": {
+      "calls": 2,
+      "actions": [
+        "Set project handle"
+      ]
+    },
     "src/components/project/QueueRulesetFlow.tsx": {
       "calls": 1,
       "actions": [
@@ -366,7 +372,7 @@
       "src/lib/safe.ts": 1
     },
     "sendTransaction": {
-      "src/lib/authority.ts": 1,
+      "src/lib/authority.ts": 2,
       "src/lib/relayr.ts": 1
     },
     "useSignTypedData": {

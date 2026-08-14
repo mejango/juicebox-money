@@ -1,9 +1,13 @@
-import type { JBChainId } from "@bananapus/nana-sdk-core";
+import {
+  RevnetCoreContracts,
+  jbContractAddress,
+  type JBChainId,
+} from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import type { Address } from "viem";
+import { isAddressEqual, type Address } from "viem";
 import { ActivityList } from "@/components/ActivityList";
 import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
@@ -13,7 +17,9 @@ import { AddressLink } from "@/components/ui/AddressLink";
 import { OverviewTab } from "@/components/project/OverviewTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
 import { ProjectTabs } from "@/components/project/Tabs";
+import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
+import { ProjectRouteSync } from "@/providers/ProjectRouteContext";
 import {
   BackOfficeTab,
   ExtrasTab,
@@ -29,20 +35,135 @@ import {
   getProjectActivity,
   getProjectActivityByProject,
   getRevnetOperator,
+  getRevnetOperatorCandidates,
   getSuckerGroupProjects,
   projectGroupPaymentsCount,
   resolveProjectDeployments,
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
-import { getProjectPageData } from "@/lib/project-fallback";
+import {
+  getProjectPageData,
+  projectAuthorityMatchesMainnet,
+  readLiveProjectAuthorityContext,
+  revnetOperatorFromPermissionHistory,
+} from "@/lib/project-fallback";
 import { projectPreviewSlogan } from "@/lib/project-link-preview";
 import { formatDate, ipfsUrl } from "@/lib/format";
+import {
+  lookupProjectHandleTarget,
+  lookupVerifiedProjectHandle,
+} from "@/lib/ens";
+import {
+  decodeProjectRouteSegment,
+  projectHandleFromRoute,
+  verifyProjectHandleAuthorityWithFallback,
+} from "@/lib/project-handles";
 import { chainName, parseUrn, toUrn } from "@/lib/urn";
+import { SUPPORTED_CHAINS } from "@/lib/chains";
 
 // getProjectPageData is backed by a POST, which Next's fetch cache doesn't
 // dedupe — memoize per request so generateMetadata + page share one call.
 const getPageDataCached = cache(getProjectPageData);
 const getRevnetOperatorCached = cache(getRevnetOperator);
+const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
+
+type ResolvedProjectRoute = {
+  chainId: JBChainId;
+  projectId: number;
+  handle: string | null;
+  verifiedAuthority: Address | null;
+  verifiedIsRevnet: boolean | null;
+};
+
+/**
+ * Resolve either the normal chain/project URN or the bidirectionally verified
+ * `/@handle` form. ENS supplies the forward pointer; JBProjectHandles must
+ * independently confirm that the project's current effective authority made
+ * the matching reverse claim.
+ */
+const resolveProjectRouteCached = cache(
+  async (segment: string): Promise<ResolvedProjectRoute | null> => {
+    // Depending on the Next runtime, a dynamic segment containing `@` can
+    // arrive as either `@handle` or `%40handle`. Decode exactly once so a
+    // double-encoded input never gains route syntax by accident.
+    const decodedSegment = decodeProjectRouteSegment(segment);
+    if (!decodedSegment) return null;
+    const urn = parseUrn(decodedSegment);
+    if (urn) {
+      return {
+        ...urn,
+        handle: null,
+        verifiedAuthority: null,
+        verifiedIsRevnet: null,
+      };
+    }
+
+    const requestedHandle = projectHandleFromRoute(decodedSegment);
+    if (!requestedHandle) return null;
+    const target = await lookupProjectHandleTarget(requestedHandle.handle);
+    if (!target) return null;
+    if (!SUPPORTED_CHAINS.some((chain) => chain.id === target.chainId)) {
+      return null;
+    }
+
+    const result = await getPageDataCached(target.chainId, target.projectId);
+    if (!result) return null;
+    // Bendystraw supplies a candidate only. Live NFT ownership below decides
+    // whether this is a revnet, and REVOwner then verifies the candidate.
+    const indexedCandidates = await getRevnetOperatorCandidatesCached(
+      target.chainId,
+      target.projectId,
+    ).catch(() => []);
+    const initialAuthorityContext = await readLiveProjectAuthorityContext({
+      chainId: target.chainId,
+      projectId: target.projectId,
+      revnetOperatorCandidates: indexedCandidates,
+    });
+    // Bendystraw is the fast discovery path only. Enumerate authoritative
+    // REVOwner-scoped JBPermissions history when no live candidate was found,
+    // never when a known live authority simply has a different reverse claim.
+    const authorityContext = await verifyProjectHandleAuthorityWithFallback({
+      requestedHandle: requestedHandle.handle,
+      authorityContext: initialAuthorityContext,
+      lookupHandle: setter =>
+        lookupVerifiedProjectHandle({
+          chainId: target.chainId,
+          projectId: target.projectId,
+          setter,
+        }),
+      recoverAuthority: async () => {
+        const permissionOperator = await revnetOperatorFromPermissionHistory({
+          chainId: target.chainId,
+          projectId: target.projectId,
+        });
+        return permissionOperator
+          ? readLiveProjectAuthorityContext({
+              chainId: target.chainId,
+              projectId: target.projectId,
+              revnetOperatorCandidates: [permissionOperator],
+            })
+          : null;
+      },
+    });
+    if (!authorityContext) return null;
+    if (
+      !(await projectAuthorityMatchesMainnet({
+        chainId: target.chainId,
+        authority: authorityContext.authority,
+      }))
+    ) {
+      return null;
+    }
+
+    return {
+      chainId: target.chainId as JBChainId,
+      projectId: target.projectId,
+      handle: requestedHandle.handle,
+      verifiedAuthority: authorityContext.authority,
+      verifiedIsRevnet: authorityContext.isRevnet,
+    };
+  },
+);
 
 type ProjectMetadata = {
   name?: string;
@@ -117,7 +238,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   // notFound() here (not just in the page) so the 404 status is set before
   // streaming starts — metadata is awaited ahead of the response shell.
-  const urn = parseUrn((await params).urn);
+  const urn = await resolveProjectRouteCached((await params).urn);
   if (!urn) notFound();
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
@@ -139,7 +260,10 @@ export async function generateMetadata({
     railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
       ? `https://${railwayDomain}`
       : siteOrigin;
-  const pageUrl = new URL(`/${toUrn(urn.chainId, urn.projectId)}`, siteOrigin).href;
+  const pagePath = urn.handle
+    ? `/@${encodeURIComponent(urn.handle)}`
+    : `/${toUrn(urn.chainId, urn.projectId)}`;
+  const pageUrl = new URL(pagePath, siteOrigin).href;
   const imageUrl = new URL(
     `/api/project-og/${urn.chainId}/${urn.projectId}`,
     assetOrigin,
@@ -180,16 +304,36 @@ export async function generateMetadata({
  * from on-chain metadata with a plain-language notice instead of a 404/500.
  */
 async function DegradedProjectShell({
-  urnChainId,
+  route,
   project,
   reason,
 }: {
-  urnChainId: JBChainId;
+  route: ResolvedProjectRoute;
   project: BsProject;
   reason: "not-indexed" | "indexer-error";
 }) {
   const metadata = await fetchProjectMetadata(project.metadataUri);
   const name = metadata?.name ?? `Project ${project.projectId}`;
+  const canonicalRevOwner = jbContractAddress["6"][
+    RevnetCoreContracts.REVOwner
+  ]?.[route.chainId] as Address | undefined;
+  const projectOwner = project.owner as Address | null;
+  const isRevnet =
+    route.verifiedIsRevnet ??
+    (!!canonicalRevOwner &&
+      !!projectOwner &&
+      isAddressEqual(projectOwner, canonicalRevOwner));
+  const authority =
+    route.verifiedAuthority ?? (isRevnet ? null : projectOwner);
+  const roleLabel = isRevnet ? "Operator" : "Owner";
+  const notice = (
+    <div className="rounded-xl border border-smoke-200 bg-smoke-50 p-6 text-sm text-smoke-700">
+      {reason === "not-indexed"
+        ? "This project exists onchain, but its indexed data isn't available yet — it may have just launched. Stats, activity, and most actions will appear once indexing catches up."
+        : "Project stats are temporarily unavailable — the data indexer isn't responding. The project itself is unaffected onchain."}{" "}
+      The verified handle editor remains available under {roleLabel}.
+    </div>
+  );
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
@@ -209,13 +353,13 @@ async function DegradedProjectShell({
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap items-center text-sm text-smoke-700">
-            {project.owner ? (
+            {authority ? (
               <>
                 <span>
-                  <span className="text-smoke-500">Owner:</span>{" "}
+                  <span className="text-smoke-500">{roleLabel}:</span>{" "}
                   <AddressLink
-                    address={project.owner}
-                    chainId={urnChainId}
+                    address={authority}
+                    chainId={route.chainId}
                     className="text-smoke-700"
                   />
                 </span>
@@ -226,18 +370,37 @@ async function DegradedProjectShell({
             ) : null}
             <span className="inline-flex items-center gap-1.5">
               <span className="text-smoke-500">On:</span>
-              <ChainIcon chainId={urnChainId} />
-              <span>{chainName(urnChainId)}</span>
+              <ChainIcon chainId={route.chainId} />
+              <span>{chainName(route.chainId)}</span>
             </span>
           </div>
         </div>
       </header>
-      <div className="mt-8 rounded-xl border border-smoke-200 bg-smoke-50 p-6 text-sm text-smoke-700">
-        {reason === "not-indexed"
-          ? "This project exists onchain, but its indexed data isn't available yet — it may have just launched. Stats, activity, and actions will appear once indexing catches up."
-          : "Project stats are temporarily unavailable — the data indexer isn't responding. The project itself is unaffected onchain."}{" "}
-        Refresh in a few minutes.
-      </div>
+      <ProjectTabs
+        sidebar={null}
+        activity={notice}
+        tabs={[
+          { label: "Overview", content: notice },
+          {
+            label: roleLabel,
+            content: (
+              <ProjectHandleCard
+                deployment={{
+                  chainId: route.chainId,
+                  projectId: route.projectId,
+                  indexedAuthority: authority,
+                }}
+                isRevnet={isRevnet}
+                revnetOperatorCandidates={
+                  isRevnet && route.verifiedAuthority
+                    ? [route.verifiedAuthority]
+                    : []
+                }
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }
@@ -247,23 +410,26 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ urn: string }>;
 }) {
-  const urn = parseUrn((await params).urn);
+  const urn = await resolveProjectRouteCached((await params).urn);
   if (!urn) notFound();
 
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
   if (result.degraded) {
     return (
-      <DegradedProjectShell
-        urnChainId={urn.chainId}
-        project={result.project}
-        reason={result.reason}
-      />
+      <>
+        <ProjectRouteSync route={urn} />
+        <DegradedProjectShell
+          route={urn}
+          project={result.project}
+          reason={result.reason}
+        />
+      </>
     );
   }
   const project = result.project;
 
-  const isRevnet = !!project.isRevnet;
+  const isRevnet = urn.verifiedIsRevnet ?? !!project.isRevnet;
   const [metadata, activityResult, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
     (project.suckerGroupId
@@ -285,9 +451,11 @@ export default async function ProjectPage({
     // as "this revnet has no operator" (null). The UI says so rather than
     // hiding the role.
     isRevnet
-      ? getRevnetOperatorCached(urn.chainId, urn.projectId).catch(
-          () => undefined,
-        )
+      ? urn.verifiedIsRevnet && urn.verifiedAuthority
+        ? Promise.resolve(urn.verifiedAuthority)
+        : getRevnetOperatorCached(urn.chainId, urn.projectId).catch(
+            () => undefined,
+          )
       : Promise.resolve(null),
   ]);
   const activity = activityResult.events;
@@ -328,7 +496,8 @@ export default async function ProjectPage({
     ["Instagram", instagram],
   ];
 
-  const authority = isRevnet ? operator : project.owner;
+  const authority =
+    urn.verifiedAuthority ?? (isRevnet ? operator : project.owner);
   const chainPairs: [number, number][] = chains.map((p) => [
     p.chainId,
     p.projectId,
@@ -343,13 +512,24 @@ export default async function ProjectPage({
           async (p) =>
             [
               p.chainId,
-              await getRevnetOperatorCached(p.chainId, p.projectId).catch(
-                () => undefined,
-              ),
+              p.chainId === urn.chainId &&
+              p.projectId === urn.projectId &&
+              urn.verifiedIsRevnet
+                ? urn.verifiedAuthority
+                : await getRevnetOperatorCached(p.chainId, p.projectId).catch(
+                    () => undefined,
+                  ),
             ] as [number, string | null | undefined],
         ),
       )
-    : chains.map((p) => [p.chainId, p.owner] as [number, string | null]);
+    : chains.map((p) => [
+        p.chainId,
+        p.chainId === urn.chainId &&
+        p.projectId === urn.projectId &&
+        urn.verifiedAuthority
+          ? urn.verifiedAuthority
+          : p.owner,
+      ] as [number, string | null]);
   const authorityDeployments = chains.map((projectOnChain) => ({
     chainId: projectOnChain.chainId as JBChainId,
     projectId: projectOnChain.projectId,
@@ -357,6 +537,18 @@ export default async function ProjectPage({
       ([chainId]) => chainId === projectOnChain.chainId,
     )?.[1] ?? null) as Address | null,
   }));
+  const indexedHandleOperatorCandidates = await getRevnetOperatorCandidatesCached(
+    urn.chainId,
+    project.projectId,
+  ).catch(() => []);
+  const handleOperatorCandidates = Array.from(
+    new Set([
+      ...indexedHandleOperatorCandidates,
+      ...(urn.verifiedIsRevnet && urn.verifiedAuthority
+        ? [urn.verifiedAuthority]
+        : []),
+    ].map(candidate => candidate.toLowerCase())),
+  );
 
   const totalRaisedUsd = chains
     .reduce((sum, row) => sum + BigInt(row.volumeUsd || "0"), 0n)
@@ -365,6 +557,7 @@ export default async function ProjectPage({
 
   return (
     <ShopCartProvider>
+      <ProjectRouteSync route={urn} />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
         {coverImage ? (
           <div className="relative mb-6 h-32 w-full overflow-hidden rounded-xl border border-smoke-200 sm:h-44">
@@ -655,6 +848,7 @@ export default async function ProjectPage({
                   owner={project.owner}
                   operator={operator ?? null}
                   deployments={authorityDeployments}
+                  revnetOperatorCandidates={handleOperatorCandidates as Address[]}
                   profile={{
                     name: metadata?.name ?? name,
                     tagline:

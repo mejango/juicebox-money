@@ -4,6 +4,7 @@
  */
 
 import {
+  RevnetCoreContracts,
   bendystrawCacheTtl,
   bendystrawProjectRefFilter as projectRefAnd,
   bendystrawProjectRefsFilters as projectRefsWheres,
@@ -13,6 +14,7 @@ import {
   requestBendystraw,
   resolveBendystrawNetwork,
   selectBendystrawEndpoint,
+  jbContractAddress,
   type BendystrawCachePolicy,
   type BendystrawFilter,
   type BendystrawNetwork,
@@ -647,27 +649,31 @@ export async function getRecentActivity(
 }
 
 /**
- * A revnet's operator (website/ parity): the permissionHolders row flagged
- * isRevnetOperator, preferring one that still holds permissions.
- *
- * Null means the indexer HAS an answer and it is "no operator". A failure
- * throws — swallowing it to null made an indexer outage indistinguishable
- * from a revnet with nobody in the role, hiding the operator surface and
- * letting authority-gated cards act as if none existed. The sibling fetch on
- * the same page propagates for exactly this reason.
+ * Every indexed revnet-operator candidate, deduplicated and ordered with
+ * nonempty permission rows first. Historical rows can retain the operator
+ * flag after replacement; security-sensitive callers must live-check every
+ * candidate rather than trusting the first indexed row.
  */
-export async function getRevnetOperator(
+export const MAX_INDEXED_REVNET_OPERATOR_CANDIDATES = 50
+
+export async function getRevnetOperatorCandidates(
   chainId: number,
   projectId: number,
-): Promise<string | null> {
+): Promise<string[]> {
   {
+    const account = (
+      jbContractAddress['6'][RevnetCoreContracts.REVOwner] as Partial<
+        Record<number, string>
+      >
+    )[chainId]
+    if (!account) return []
     const page = await getPagedItems<{
       operator: string
       permissions: number[]
     }>(
-      `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+      `query($chainId: Int!, $projectId: Int!, $account: String!, $limit: Int!, $offset: Int!) {
         permissionHolders(
-          where: { chainId: $chainId, projectId: $projectId, version: 6, isRevnetOperator: true }
+          where: { chainId: $chainId, projectId: $projectId, account: $account, version: 6 }
           limit: $limit
           offset: $offset
         ) {
@@ -676,14 +682,40 @@ export async function getRevnetOperator(
         }
       }`,
       'permissionHolders',
-      { chainId, projectId },
-      { pageSize: 200, max: Number.POSITIVE_INFINITY },
+      { chainId, projectId, account },
+      {
+        pageSize: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
+        max: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
+      },
     )
-    const rows = page.items
+    // An incomplete page is not an authoritative candidate set. Let callers
+    // use their bounded JBPermissions-history fallback instead of live-
+    // checking an attacker-sized collection of stale rotations.
+    if (page.totalCount > MAX_INDEXED_REVNET_OPERATOR_CANDIDATES) return []
+    const rows = page.items.slice(0, MAX_INDEXED_REVNET_OPERATOR_CANDIDATES)
     const live = rows.filter(r => r.permissions?.length > 0)
-    const pick = live[0] ?? rows[0]
-    return pick?.operator ?? null
+    const seen = new Set<string>()
+    return [...live, ...rows].flatMap(row => {
+      const operator = row.operator?.trim()
+      if (!operator) return []
+      const key = operator.toLowerCase()
+      if (seen.has(key)) return []
+      seen.add(key)
+      return [operator]
+    })
   }
+}
+
+/**
+ * A revnet's display operator (website parity). Null means the indexer HAS an
+ * answer and it is "no operator"; failures still throw. Trust decisions must
+ * use `getRevnetOperatorCandidates` and verify them live.
+ */
+export async function getRevnetOperator(
+  chainId: number,
+  projectId: number,
+): Promise<string | null> {
+  return (await getRevnetOperatorCandidates(chainId, projectId))[0] ?? null
 }
 
 export type BsParticipant = {

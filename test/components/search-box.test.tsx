@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  assign: vi.fn(),
+  reload: vi.fn(),
+  replaceState: vi.fn(),
   lookupEnsAddress: vi.fn(),
   fetch: vi.fn(),
 }))
@@ -67,6 +70,10 @@ async function settle() {
 beforeEach(() => {
   vi.useFakeTimers()
   vi.stubGlobal('fetch', mocks.fetch)
+  vi.stubGlobal('window', {
+    location: { assign: mocks.assign, pathname: '/', reload: mocks.reload },
+    history: { state: null, replaceState: mocks.replaceState },
+  })
   mocks.fetch.mockResolvedValue({
     ok: true,
     json: async () => ({ projects: [] }),
@@ -169,7 +176,88 @@ describe('SearchBox account results', () => {
     })
     expect(mocks.push).toHaveBeenCalledWith(`/${toUrn(1, 3)}`)
   })
+
+  it('routes an explicit @handle without treating it as account ENS', async () => {
+    const renderer = await render()
+    await type(renderer, '@Design.Juicebox')
+
+    expect(renderedText(renderer.root)).toContain(
+      'Go to project @design.juicebox',
+    )
+    expect(mocks.lookupEnsAddress).not.toHaveBeenCalled()
+    expect(mocks.fetch).not.toHaveBeenCalled()
+
+    await act(async () => {
+      renderer.root.findByType('input').props.onKeyDown({ key: 'Enter' })
+    })
+    expect(mocks.assign).toHaveBeenCalledWith('/@design.juicebox')
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('reloads when navigating to the same mutable alias pathname', async () => {
+    ;(window.location as unknown as { pathname: string }).pathname =
+      '/@design.juicebox'
+    const renderer = await render()
+    await type(renderer, '@design.juicebox')
+
+    await act(async () => {
+      renderer.root.findByType('input').props.onKeyDown({ key: 'Enter' })
+    })
+
+    expect(mocks.replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      '/@design.juicebox',
+    )
+    expect(mocks.reload).toHaveBeenCalledOnce()
+    expect(mocks.assign).not.toHaveBeenCalled()
+  })
+
+  it('ignores an older free-text response after @handle input wins', async () => {
+    let resolveJson!: (value: { projects: ResultFixture[] }) => void
+    const json = new Promise<{ projects: ResultFixture[] }>(resolve => {
+      resolveJson = resolve
+    })
+    mocks.fetch.mockResolvedValue({ ok: true, json: () => json })
+    const renderer = await render()
+    await type(renderer, 'old project')
+    await settle()
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+
+    await type(renderer, '@design.juicebox')
+    await act(async () => {
+      resolveJson({
+        projects: [
+          {
+            projectId: 99,
+            chainId: 1,
+            name: 'Stale result',
+            logoUri: null,
+            projectTagline: null,
+            ticker: null,
+            chainIds: [1],
+          },
+        ],
+      })
+      await Promise.resolve()
+    })
+
+    expect(renderedText(renderer.root)).toContain(
+      'Go to project @design.juicebox',
+    )
+    expect(renderedText(renderer.root)).not.toContain('Stale result')
+  })
 })
+
+type ResultFixture = {
+  projectId: number
+  chainId: number
+  name: string | null
+  logoUri: string | null
+  projectTagline: string | null
+  ticker: string | null
+  chainIds: number[]
+}
 
 /**
  * Search is where a chain gets picked before any money moves, and the testnet

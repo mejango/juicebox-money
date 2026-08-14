@@ -20,6 +20,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
+import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
@@ -247,7 +248,9 @@ export function AuthorityEditsCard({
             actionLabel="Edit reserved splits"
             open={false}
             onToggle={() => {
-              window.location.hash = isRevnet ? 'owners/splits' : 'rulesets'
+              replaceProjectTabHash(
+                isRevnet ? '#owners/splits' : '#rulesets',
+              )
             }}
           >
             <p className="mt-2 text-xs leading-relaxed text-smoke-500">

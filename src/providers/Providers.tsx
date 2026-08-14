@@ -16,6 +16,7 @@ import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { getDwellirRpcUrl } from '@/lib/dwellir'
 import { installQueryPersistence } from '@/lib/query-persist'
 import { ParaAuthContext } from './ParaAuthContext'
+import { ProjectRouteProvider } from './ProjectRouteContext'
 import { lazyParaConnector } from './lazy-para-connector'
 import { verifyMarkedParaSession } from './para-session'
 import {
@@ -143,7 +144,9 @@ export function Providers({ children }: PropsWithChildren) {
         reconnectOnMount={!IS_DETERMINISTIC_BROWSER}
       >
         <ParaAuthContext.Provider value={paraAuth}>
-          <TransactionReviewProvider>{children}</TransactionReviewProvider>
+          <ProjectRouteProvider>
+            <TransactionReviewProvider>{children}</TransactionReviewProvider>
+          </ProjectRouteProvider>
           {/* Para renders its own overlay, so it must stay in the browser's
               top layer: `openSignIn` is reachable from inside app modals
               (AddShopItemsModal, RedeemShopItemsModal), and everything outside

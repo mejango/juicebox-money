@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
 import logoIcon from '@/assets/brand/logo-icon.svg'
+import { projectRouteSegmentFromPathname } from '@/lib/project-handles'
 import { SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
@@ -69,11 +70,11 @@ function Logo({
   )
 }
 
-function DesktopNavigation({ iconOnly, isHomepage }: { iconOnly: boolean; isHomepage: boolean }) {
+function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: boolean }) {
   return (
     <nav
       className={`mx-auto hidden min-h-[84px] w-full grid-cols-[minmax(max-content,1fr)_minmax(10rem,24rem)_minmax(max-content,1fr)] items-center gap-x-[clamp(0.5rem,1.5vw,1.5rem)] px-6 py-2 md:grid ${
-        isHomepage ? 'max-w-[1800px]' : 'max-w-6xl'
+        isWide ? 'max-w-[1800px]' : 'max-w-6xl'
       }`}
     >
       <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-3">
@@ -122,12 +123,13 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
 
 export function SiteNavigation() {
   const pathname = usePathname()
-  const iconOnly = /^\/[^/]+:\d+$/.test(pathname)
-  const isHomepage = pathname === '/'
+  const routeSegment = projectRouteSegmentFromPathname(pathname)
+  const iconOnly = !!routeSegment && /^(?:[^/]+:\d+|@[^/]+)$/.test(routeSegment)
+  const isWide = pathname === '/' || iconOnly
 
   return (
     <>
-      <DesktopNavigation iconOnly={iconOnly} isHomepage={isHomepage} />
+      <DesktopNavigation iconOnly={iconOnly} isWide={isWide} />
       <MobileNavigation iconOnly={iconOnly} />
     </>
   )

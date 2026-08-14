@@ -17,6 +17,7 @@ import {
   relayrErrorIsUncertain,
   relayrPaymentLabel,
   relayrProgress,
+  relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
   saveRelayrPendingSession,
@@ -108,7 +109,14 @@ describe('Relayr pending-session snapshots', () => {
       expectedCount: 2,
       records: [
         {
-          chain: 1,
+          tx_uuid: 'fedcba98-7654-3210-fedc-ba9876543210',
+          request: {
+            chain: 1,
+            target: TARGET,
+            data: '0x1234',
+            value: '5',
+            virtual_nonce: 0,
+          },
           status: {
             state: 'success',
             data: { transaction: { hash: DESTINATION_HASH } },
@@ -126,10 +134,19 @@ describe('Relayr pending-session snapshots', () => {
     expect(saved.records).toEqual([
       {
         chain: 1,
+        tx_uuid: 'fedcba98-7654-3210-fedc-ba9876543210',
+        request: {
+          chain: 1,
+          target: TARGET,
+          data: '0x1234',
+          value: '5',
+          virtual_nonce: 0,
+        },
         status: { state: 'success', data: { hash: DESTINATION_HASH } },
       },
     ])
     expect(relayrDestinationHash(saved.records[0])).toBe(DESTINATION_HASH)
+    expect(relayrRecordChain(saved.records[0])).toBe(1)
   })
 
   it('prefers a direct destination hash and handles absent status data', () => {

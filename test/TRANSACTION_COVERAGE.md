@@ -42,6 +42,8 @@ Legend:
 | Add or revoke permissions | `JBPermissions.setPermissionsFor` | **E** | `contracts/transaction-builders.test.ts` |
 | Change owner/operator powers | controller/directory/terminal setters + `REVOwner.setOperatorOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Configure buyback/router | registry setter/initializer calls | **E** | `contracts/transaction-backlog.test.ts` |
+| Set project handle | ENS resolver `setText` + mainnet `JBProjectHandles.setEnsNamePartsFor` | **E** | `contracts/project-handles.test.ts` |
+| Deploy same Safe on Ethereum | Safe proxy factory `createProxyWithNonce` after exact-address simulation | **P/E** | `data/cross-chain-authority.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Borrow or repay | `REVLoans.borrowFrom` / `repayLoan` | **E** | `contracts/transaction-builders.test.ts` |
 | Auto-issue tokens | revnet auto-issuance call | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
 | Prepare/move tokens cross-chain | terminal + sucker calls | **E** | `contracts/transaction-backlog.test.ts` |
@@ -68,7 +70,9 @@ Legend:
 - Safe signature order and outer `execTransaction` encoding: covered in
   `transactions/safe.test.ts`; account checks, simulation failure, confirmed,
   reverted, and submitted-but-unconfirmed writes are covered in
-  `transactions/safe-orchestration.test.ts`.
+  `transactions/safe-orchestration.test.ts`. Safe-app authority calls wait for
+  the proposal's execution hash before receipt and postcondition checks in
+  `transactions/authority-gas.test.ts`.
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and

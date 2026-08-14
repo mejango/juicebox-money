@@ -4,11 +4,25 @@ import {
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
+  jbPermissionsAbi,
   jbProjectsAbi,
+  revOwnerAbi,
+  RevnetCoreContracts,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { createPublicClient, http, zeroAddress, type Address } from 'viem'
+import {
+  createPublicClient,
+  getAbiItem,
+  http,
+  isAddress,
+  isAddressEqual,
+  zeroAddress,
+  type Address,
+  type PublicClient,
+} from 'viem'
 import { getProject, type BsProject } from '@/lib/bendystraw'
+import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
+import { getDwellirRpcUrl } from '@/lib/dwellir'
 
 /**
  * Server-side resilience layer for the project page. Bendystraw is the
@@ -31,6 +45,27 @@ const V6_ADDRESSES = jbContractAddress['6'] as Record<
   Record<number, Address | undefined>
 >
 
+const JB_PERMISSIONS_DEPLOYMENT_BLOCK: Readonly<Record<number, bigint>> = {
+  1: 25_327_931n,
+  10: 152_994_030n,
+  8453: 47_398_751n,
+  42161: 473_987_853n,
+  11155111: 11_070_525n,
+  11155420: 44_892_020n,
+  84532: 42_909_144n,
+  421614: 277_723_887n,
+}
+const PERMISSION_LOG_CHUNK_BLOCKS = 250_000n
+export const MAX_PERMISSION_HISTORY_LOGS = 256
+export const MAX_PERMISSION_HISTORY_CANDIDATES = 50
+export const MAX_PERMISSION_HISTORY_RPC_CALLS = 256
+const PERMISSION_HISTORY_TIME_BUDGET_MS = 8_000
+export const MAX_LIVE_REVNET_OPERATOR_CANDIDATES = 50
+const operatorPermissionsSetEvent = getAbiItem({
+  abi: jbPermissionsAbi,
+  name: 'OperatorPermissionsSet',
+})
+
 /**
  * The smallest read that proves a project exists on a chain: JBProjects
  * ownerOf, plus a best-effort controllerOf + uriOf for metadata. Returns
@@ -47,7 +82,10 @@ export async function readOnChainProject(
   if (!chain || !projects) return null
   const client = createPublicClient({
     chain,
-    transport: http(undefined, { retryCount: 1, timeout: 4_000 }),
+    transport: http(getDwellirRpcUrl(chainId), {
+      retryCount: 1,
+      timeout: 4_000,
+    }),
   })
   try {
     const owner = (await client.readContract({
@@ -85,6 +123,324 @@ export async function readOnChainProject(
     return { owner, metadataUri, metadataUriResolved }
   } catch {
     // ownerOf reverted (no such project) or the RPC is unreachable.
+    return null
+  }
+}
+
+/**
+ * Uncached, fail-closed authority read for a handle trust decision. Custom
+ * projects use the live JBProjects owner. Revnets use the indexer only to find
+ * a candidate, then require the live REVOwner owner contract to confirm it.
+ */
+export async function readLiveProjectAuthority({
+  chainId,
+  projectId,
+  revnetOperatorCandidate,
+  revnetOperatorCandidates,
+}: {
+  chainId: number
+  projectId: number
+  revnetOperatorCandidate?: string | null
+  revnetOperatorCandidates?: readonly string[]
+}): Promise<Address | null> {
+  return (
+    await readLiveProjectAuthorityContext({
+      chainId,
+      projectId,
+      revnetOperatorCandidate,
+      revnetOperatorCandidates,
+    })
+  )?.authority ?? null
+}
+
+export type LiveProjectAuthorityContext = {
+  authority: Address
+  isRevnet: boolean
+}
+
+/** Live authority plus the NFT-owner-based revnet classification. */
+export async function readLiveProjectAuthorityContext({
+  chainId,
+  projectId,
+  revnetOperatorCandidate,
+  revnetOperatorCandidates,
+}: {
+  chainId: number
+  projectId: number
+  revnetOperatorCandidate?: string | null
+  revnetOperatorCandidates?: readonly string[]
+}): Promise<LiveProjectAuthorityContext | null> {
+  const chain = JB_CHAINS[chainId as JBChainId]?.chain
+  const projects = V6_ADDRESSES[JBCoreContracts.JBProjects]?.[chainId]
+  if (!chain || !projects) return null
+  const client = createPublicClient({
+    chain,
+    transport: http(getDwellirRpcUrl(chainId), {
+      retryCount: 1,
+      timeout: 4_000,
+    }),
+  })
+  const canonicalRevOwner = V6_ADDRESSES[RevnetCoreContracts.REVOwner]?.[
+    chainId
+  ]
+  if (!canonicalRevOwner) return null
+  return liveProjectAuthorityContextFrom({
+    client,
+    projects,
+    canonicalRevOwner,
+    projectId,
+    revnetOperatorCandidate,
+    revnetOperatorCandidates,
+  })
+}
+
+/**
+ * A mainnet handle setter is trusted for an L2 authority only when control of
+ * that address is chain-independent under the narrow supported policy.
+ */
+export async function projectAuthorityMatchesMainnet({
+  chainId,
+  authority,
+}: {
+  chainId: number
+  authority: Address
+}): Promise<boolean> {
+  if (chainId === 1) return true
+  const sourceChain = JB_CHAINS[chainId as JBChainId]?.chain
+  const mainnetChain = JB_CHAINS[1]?.chain
+  if (!sourceChain || !mainnetChain) return false
+  const sourceClient = createPublicClient({
+    chain: sourceChain,
+    transport: http(getDwellirRpcUrl(chainId), {
+      retryCount: 1,
+      timeout: 4_000,
+    }),
+  })
+  const destinationClient = createPublicClient({
+    chain: mainnetChain,
+    transport: http(getDwellirRpcUrl(1), {
+      retryCount: 1,
+      timeout: 4_000,
+    }),
+  })
+  const identities = await readMatchingAuthorityIdentities({
+    sourceClient,
+    destinationClient,
+    authority,
+  })
+  return identities?.matches ?? false
+}
+
+/**
+ * Indexer-independent revnet operator discovery. Only REVOwner can mutate its
+ * own JBPermissions account, so unlike JBProjectHandles caller events this
+ * history cannot be permissionlessly flooded. Scan newest-first and stop once
+ * an event candidate passes the canonical live `isOperatorOf` check.
+ */
+export async function revnetOperatorFromPermissionHistory({
+  chainId,
+  projectId,
+}: {
+  chainId: number
+  projectId: number
+}): Promise<Address | null> {
+  const chain = JB_CHAINS[chainId as JBChainId]?.chain
+  if (!chain) return null
+  const client = createPublicClient({
+    chain,
+    transport: http(getDwellirRpcUrl(chainId), {
+      retryCount: 1,
+      timeout: 4_000,
+    }),
+  })
+  const canonicalRevOwner = V6_ADDRESSES[RevnetCoreContracts.REVOwner]?.[
+    chainId
+  ]
+  const permissions = V6_ADDRESSES[JBCoreContracts.JBPermissions]?.[chainId]
+  if (!canonicalRevOwner || !permissions) return null
+  return revnetOperatorFromPermissionHistoryFrom({
+    client,
+    chainId,
+    projectId,
+    canonicalRevOwner,
+    permissions,
+  })
+}
+
+/** Dependency-injectable permission-history scanner used by route tests. */
+export async function revnetOperatorFromPermissionHistoryFrom({
+  client,
+  chainId,
+  projectId,
+  canonicalRevOwner,
+  permissions,
+}: {
+  client: PublicClient
+  chainId: number
+  projectId: number
+  canonicalRevOwner: Address
+  permissions: Address
+}): Promise<Address | null> {
+  const deploymentBlock = JB_PERMISSIONS_DEPLOYMENT_BLOCK[chainId]
+  if (deploymentBlock === undefined) return null
+  try {
+    const latest = await client.getBlockNumber()
+    if (latest < deploymentBlock) return null
+    const seen = new Set<string>()
+    let toBlock = latest
+    let logReads = 0
+    let logsProcessed = 0
+    let candidatesChecked = 0
+    const startedAt = Date.now()
+    while (toBlock >= deploymentBlock) {
+      if (
+        logReads >= MAX_PERMISSION_HISTORY_RPC_CALLS ||
+        Date.now() - startedAt > PERMISSION_HISTORY_TIME_BUDGET_MS
+      ) {
+        return null
+      }
+      const candidateFrom = toBlock - PERMISSION_LOG_CHUNK_BLOCKS + 1n
+      const fromBlock =
+        candidateFrom > deploymentBlock ? candidateFrom : deploymentBlock
+      logReads += 1
+      const logs = await client.getLogs({
+        address: permissions,
+        event: operatorPermissionsSetEvent,
+        args: {
+          account: canonicalRevOwner,
+          projectId: BigInt(projectId),
+        },
+        fromBlock,
+        toBlock,
+        strict: true,
+      })
+      logsProcessed += logs.length
+      if (logsProcessed > MAX_PERMISSION_HISTORY_LOGS) return null
+      const candidates = [...logs].reverse().flatMap(log => {
+        const operator = log.args.operator
+        if (
+          !operator ||
+          !isAddress(operator) ||
+          isAddressEqual(operator, zeroAddress)
+        ) {
+          return []
+        }
+        const key = operator.toLowerCase()
+        if (seen.has(key)) return []
+        seen.add(key)
+        return [operator]
+      })
+      for (const candidate of candidates) {
+        if (candidatesChecked >= MAX_PERMISSION_HISTORY_CANDIDATES) {
+          return null
+        }
+        candidatesChecked += 1
+        const live = await client.readContract({
+          address: canonicalRevOwner,
+          abi: revOwnerAbi,
+          functionName: 'isOperatorOf',
+          args: [BigInt(projectId), candidate],
+        })
+        // REVOwner maintains one replacement operator. Once the newest-first
+        // history yields the current live address, older rows cannot produce
+        // a second legitimate authority.
+        if (live) return candidate
+      }
+      if (fromBlock === deploymentBlock) break
+      toBlock = fromBlock - 1n
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Dependency-injectable live authority policy used by route tests. */
+export async function liveProjectAuthorityFrom({
+  client,
+  projects,
+  canonicalRevOwner,
+  projectId,
+  revnetOperatorCandidate,
+  revnetOperatorCandidates,
+}: {
+  client: PublicClient
+  projects: Address
+  canonicalRevOwner: Address
+  projectId: number
+  revnetOperatorCandidate?: string | null
+  revnetOperatorCandidates?: readonly string[]
+}): Promise<Address | null> {
+  return (
+    await liveProjectAuthorityContextFrom({
+      client,
+      projects,
+      canonicalRevOwner,
+      projectId,
+      revnetOperatorCandidate,
+      revnetOperatorCandidates,
+    })
+  )?.authority ?? null
+}
+
+export async function liveProjectAuthorityContextFrom({
+  client,
+  projects,
+  canonicalRevOwner,
+  projectId,
+  revnetOperatorCandidate,
+  revnetOperatorCandidates,
+}: {
+  client: PublicClient
+  projects: Address
+  canonicalRevOwner: Address
+  projectId: number
+  revnetOperatorCandidate?: string | null
+  revnetOperatorCandidates?: readonly string[]
+}): Promise<LiveProjectAuthorityContext | null> {
+  try {
+    const owner = (await client.readContract({
+      address: projects,
+      abi: jbProjectsAbi,
+      functionName: 'ownerOf',
+      args: [BigInt(projectId)],
+    })) as Address
+    if (!isAddressEqual(owner, canonicalRevOwner)) {
+      return { authority: owner, isRevnet: false }
+    }
+    const seen = new Set<string>()
+    const candidates: Address[] = []
+    let overflow = false
+    const addCandidate = (candidate: string) => {
+      if (!isAddress(candidate) || isAddressEqual(candidate, zeroAddress)) {
+        return
+      }
+      const key = candidate.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      if (candidates.length >= MAX_LIVE_REVNET_OPERATOR_CANDIDATES) {
+        overflow = true
+        return
+      }
+      candidates.push(candidate as Address)
+    }
+    for (const candidate of revnetOperatorCandidates ?? []) {
+      addCandidate(candidate)
+      if (overflow) return null
+    }
+    if (revnetOperatorCandidate) addCandidate(revnetOperatorCandidate)
+    if (!candidates.length || overflow) return null
+    for (const candidate of candidates) {
+      const live = await client.readContract({
+        address: canonicalRevOwner,
+        abi: revOwnerAbi,
+        functionName: 'isOperatorOf',
+        args: [BigInt(projectId), candidate],
+      })
+      if (live) return { authority: candidate, isRevnet: true }
+    }
+    return null
+  } catch {
     return null
   }
 }

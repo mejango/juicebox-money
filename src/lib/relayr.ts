@@ -11,6 +11,7 @@ import {
   encodeFunctionData,
   formatEther,
   isAddress,
+  isAddressEqual,
   keccak256,
   stringToHex,
   type Abi,
@@ -20,7 +21,6 @@ import {
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithHeadroom } from '@/lib/gas'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -37,6 +37,23 @@ const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
 /** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
 const RELAYR_NOT_FOUND_ATTEMPTS = 3
+
+/**
+ * Relayr's immutable prepaid-native payment endpoint. A quote is untrusted
+ * HTTP input, so accepting an arbitrary target and calldata here would turn
+ * the quote service into a wallet transaction oracle.
+ */
+export const RELAYR_PAYMENT_ADDRESS =
+  '0x1c05f7841379d4393574c0ffa17908ec40ffd97d' as Address
+export const RELAYR_PAYMENT_SELECTOR = '0x103903a7'
+export const RELAYR_PAYMENT_CODE_HASH =
+  '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6' as Hex
+export const RELAYR_NATIVE_TOKEN =
+  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
+const RELAYR_PAYMENT_CHAINS = new Set<number>([1, 10, 8453, 42161])
+const RELAYR_PAYMENT_GAS = 150_000n
+const RELAYR_PAYMENT_CODE_MAX_BYTES = 2_048
+const RELAYR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
 export type RelayrEntry = {
   chain: number
@@ -77,7 +94,16 @@ export type RelayrPayment = {
   calldata: Hex
   target: Address
   token?: Address
-  payment_deadline?: number
+  payment_deadline?: number | string
+}
+
+export type RelayrPaymentDetails = {
+  chainId: JBChainId
+  target: Address
+  amount: bigint
+  calldata: Hex
+  bundleUuid: string
+  deadline: bigint
 }
 
 type RelayrTransactionStatus = {
@@ -90,6 +116,8 @@ type RelayrTransactionStatus = {
 
 export type RelayrTransactionRecord = {
   chain?: number
+  tx_uuid?: string
+  request?: RelayrEntry
   status?: RelayrTransactionStatus
 }
 
@@ -97,6 +125,12 @@ export type RelayrQuote = {
   bundle_uuid: string
   payment_info: RelayrPayment[]
   transactions?: RelayrTransactionRecord[]
+  /** Client-authenticated quote ordering; never accepted from status alone. */
+  expectedTransactions?: {
+    txUuid: string
+    chain: number
+    entry: RelayrEntry
+  }[]
 }
 
 export type RelayrProgressSummary = {
@@ -117,6 +151,18 @@ export type RelayrPendingSession = {
   itemCount: number
   account: string | null
   createdAt: number
+  /** Exact outer calls paid for by a SafeQueue Relayr bundle. */
+  expectedEntries?: RelayrEntry[]
+  /** Safe postconditions which must be proven before that bundle is cleared. */
+  expectedSafeExecutions?: RelayrSafeExecutionProof[]
+}
+
+export type RelayrSafeExecutionProof = {
+  chainId: number
+  safe: Address
+  nonce: number
+  safeTxHash: Hex
+  txUuid: string
 }
 
 export type RelayrExecutionErrorCode =
@@ -191,6 +237,14 @@ export function relayrProgress(
  * lets the resume UI say so instead of offering a retry that cannot succeed.
  */
 const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
+const relayrPendingMemory = new Map<string, RelayrPendingSession>()
+/** Prevent a failed localStorage removal from resurrecting a cleared bundle. */
+const relayrClearedMemory = new Set<string>()
+/** Scopes whose newest write exists only in memory after storage failed. */
+const relayrMemoryAuthoritative = new Set<string>()
+const MAX_RELAYR_SESSION_ENTRIES = 16
+const MAX_RELAYR_SESSION_ENTRY_DATA_BYTES = 16_384
+const MAX_UINT256 = (1n << 256n) - 1n
 
 /**
  * True once a session's signed ForwardRequests can no longer be executed.
@@ -245,8 +299,24 @@ function relayrRecordSnapshot(
   record: RelayrTransactionRecord,
 ): RelayrTransactionRecord {
   const hash = relayrDestinationHash(record)
+  const request = record.request ? relayrEntrySnapshot(record.request) : null
+  const chain = relayrRecordChain(record)
   return {
-    ...(typeof record.chain === 'number' ? { chain: record.chain } : {}),
+    ...(chain !== null ? { chain } : {}),
+    ...(request
+      ? {
+          request: {
+            ...request,
+            ...(Number.isSafeInteger(record.request?.virtual_nonce) &&
+            Number(record.request?.virtual_nonce) >= 0
+              ? { virtual_nonce: Number(record.request?.virtual_nonce) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(typeof record.tx_uuid === 'string' && record.tx_uuid.length <= 128
+      ? { tx_uuid: record.tx_uuid }
+      : {}),
     status: {
       ...(typeof record.status?.state === 'string'
         ? { state: record.status.state }
@@ -256,11 +326,95 @@ function relayrRecordSnapshot(
   }
 }
 
+function relayrEntrySnapshot(entry: RelayrEntry): RelayrEntry | null {
+  if (
+    !entry ||
+    typeof entry !== 'object' ||
+    !Number.isSafeInteger(entry.chain) ||
+    entry.chain < 1 ||
+    !isAddress(entry.target) ||
+    typeof entry.data !== 'string' ||
+    !/^0x(?:[0-9a-fA-F]{2})*$/u.test(entry.data) ||
+    (entry.data.length - 2) / 2 > MAX_RELAYR_SESSION_ENTRY_DATA_BYTES
+  ) {
+    return null
+  }
+  let value: bigint
+  try {
+    value = BigInt(entry.value)
+  } catch {
+    return null
+  }
+  if (value < 0n || value > MAX_UINT256) return null
+  return {
+    chain: entry.chain,
+    target: entry.target,
+    data: entry.data,
+    value: value.toString(),
+    ...(Number.isSafeInteger(entry.virtual_nonce) &&
+    Number(entry.virtual_nonce) >= 0
+      ? { virtual_nonce: Number(entry.virtual_nonce) }
+      : {}),
+  }
+}
+
+function relayrSafeExecutionSnapshot(
+  proof: RelayrSafeExecutionProof,
+): RelayrSafeExecutionProof | null {
+  if (
+    !proof ||
+    typeof proof !== 'object' ||
+    !Number.isSafeInteger(proof.chainId) ||
+    proof.chainId < 1 ||
+    !isAddress(proof.safe) ||
+    !Number.isSafeInteger(proof.nonce) ||
+    proof.nonce < 0 ||
+    typeof proof.safeTxHash !== 'string' ||
+    !/^0x[0-9a-fA-F]{64}$/u.test(proof.safeTxHash) ||
+    typeof proof.txUuid !== 'string' ||
+    !RELAYR_UUID_RE.test(proof.txUuid.toLowerCase())
+  ) {
+    return null
+  }
+  return {
+    chainId: proof.chainId,
+    safe: proof.safe,
+    nonce: proof.nonce,
+    safeTxHash: proof.safeTxHash,
+    txUuid: proof.txUuid.toLowerCase(),
+  }
+}
+
+function exactSnapshots<T>(
+  values: readonly T[] | undefined,
+  snapshot: (value: T) => T | null,
+): T[] | undefined {
+  if (
+    !Array.isArray(values) ||
+    values.length < 1 ||
+    values.length > MAX_RELAYR_SESSION_ENTRIES
+  ) {
+    return undefined
+  }
+  const snapshots = values.map(snapshot)
+  return snapshots.every((value): value is T => value !== null)
+    ? snapshots
+    : undefined
+}
+
 /** Persist only the receipt/status data needed to resume polling a paid bundle. */
 export function saveRelayrPendingSession(
   scope: string,
   session: RelayrPendingSession,
 ): RelayrPendingSession {
+  const expectedEntries = exactSnapshots(
+    session.expectedEntries,
+    relayrEntrySnapshot,
+  )
+  const expectedSafeExecutions = exactSnapshots(
+    session.expectedSafeExecutions,
+    relayrSafeExecutionSnapshot,
+  )
   const safeSession: RelayrPendingSession = {
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
@@ -270,19 +424,33 @@ export function saveRelayrPendingSession(
       chainId => Number.isSafeInteger(chainId) && chainId > 0,
     ),
     expectedCount: session.expectedCount,
-    records: session.records.map(relayrRecordSnapshot),
+    records: (Array.isArray(session.records) ? session.records : [])
+      .filter(
+        (record): record is RelayrTransactionRecord =>
+          !!record && typeof record === 'object',
+      )
+      .map(relayrRecordSnapshot),
     itemCount: session.itemCount,
     account: session.account,
     createdAt: session.createdAt,
+    ...(expectedEntries ? { expectedEntries } : {}),
+    ...(expectedSafeExecutions ? { expectedSafeExecutions } : {}),
   }
-  if (typeof window === 'undefined') return safeSession
+  relayrClearedMemory.delete(scope)
+  relayrPendingMemory.set(scope, safeSession)
+  if (typeof window === 'undefined') {
+    relayrMemoryAuthoritative.add(scope)
+    return safeSession
+  }
   try {
     window.localStorage.setItem(
       `${RELAYR_PENDING_PREFIX}${scope}`,
       JSON.stringify(safeSession),
     )
+    relayrMemoryAuthoritative.delete(scope)
   } catch {
     // Storage may be unavailable; the in-memory session still drives the flow.
+    relayrMemoryAuthoritative.add(scope)
   }
   return safeSession
 }
@@ -290,7 +458,10 @@ export function saveRelayrPendingSession(
 export function loadRelayrPendingSession(
   scope: string,
 ): RelayrPendingSession | null {
-  if (typeof window === 'undefined') return null
+  if (relayrClearedMemory.has(scope)) return null
+  const memory = relayrPendingMemory.get(scope)
+  if (relayrMemoryAuthoritative.has(scope) && memory) return memory
+  if (typeof window === 'undefined') return memory ?? null
   try {
     const raw = window.localStorage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`)
     if (!raw) return null
@@ -307,7 +478,7 @@ export function loadRelayrPendingSession(
       typeof value.createdAt !== 'number' ||
       !Array.isArray(value.records)
     ) {
-      return null
+      return relayrPendingMemory.get(scope) ?? null
     }
     return saveRelayrPendingSession(scope, {
       bundleUuid: value.bundleUuid,
@@ -327,33 +498,39 @@ export function loadRelayrPendingSession(
               chainId > 0,
           )
         : value.records
-            .map(record => record.chain)
+            .map(relayrRecordChain)
             .filter((chainId): chainId is number => typeof chainId === 'number'),
       expectedCount: value.expectedCount,
       records: value.records,
       itemCount: value.itemCount,
       account: typeof value.account === 'string' ? value.account : null,
       createdAt: value.createdAt,
+      expectedEntries: Array.isArray(value.expectedEntries)
+        ? (value.expectedEntries as RelayrEntry[])
+        : undefined,
+      expectedSafeExecutions: Array.isArray(value.expectedSafeExecutions)
+        ? (value.expectedSafeExecutions as RelayrSafeExecutionProof[])
+        : undefined,
     })
   } catch {
-    return null
+    return relayrPendingMemory.get(scope) ?? null
   }
 }
 
 /** Scopes of every persisted pending-bundle session on this device. */
 export function listRelayrPendingScopes(): string[] {
-  if (typeof window === 'undefined') return []
+  if (typeof window === 'undefined') return [...relayrPendingMemory.keys()]
   try {
-    const scopes: string[] = []
+    const scopes = new Set<string>(relayrPendingMemory.keys())
     for (let index = 0; index < window.localStorage.length; index++) {
       const key = window.localStorage.key(index)
       if (key?.startsWith(RELAYR_PENDING_PREFIX)) {
-        scopes.push(key.slice(RELAYR_PENDING_PREFIX.length))
+        scopes.add(key.slice(RELAYR_PENDING_PREFIX.length))
       }
     }
-    return scopes
+    return [...scopes].filter(scope => !relayrClearedMemory.has(scope))
   } catch {
-    return []
+    return [...relayrPendingMemory.keys()]
   }
 }
 
@@ -374,9 +551,13 @@ export async function fetchRelayrBundlesByAccount(
 }
 
 export function clearRelayrPendingSession(scope: string): void {
+  relayrClearedMemory.add(scope)
+  relayrMemoryAuthoritative.delete(scope)
+  relayrPendingMemory.delete(scope)
   if (typeof window === 'undefined') return
   try {
     window.localStorage.removeItem(`${RELAYR_PENDING_PREFIX}${scope}`)
+    relayrClearedMemory.delete(scope)
   } catch {
     // Storage may be unavailable. There is no sensitive payload to clean up.
   }
@@ -573,7 +754,184 @@ export async function relayrPostBundle(
       `Relayr HTTP ${response.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`,
     )
   }
-  return (await response.json()) as RelayrQuote
+  const body = (await response.json()) as Partial<RelayrQuote> & {
+    tx_uuids?: unknown
+    txn_uuids?: unknown
+  }
+  const bundleUuid = String(body.bundle_uuid ?? '').toLowerCase()
+  if (!RELAYR_UUID_RE.test(bundleUuid)) {
+    throw new Error('Relayr returned no valid bundle ID. Nothing was paid.')
+  }
+  const currentIds = Array.isArray(body.tx_uuids) ? body.tx_uuids : null
+  const legacyIds = Array.isArray(body.txn_uuids) ? body.txn_uuids : null
+  if (
+    currentIds &&
+    legacyIds &&
+    JSON.stringify(currentIds) !== JSON.stringify(legacyIds)
+  ) {
+    throw new Error('Relayr returned conflicting transaction IDs. Nothing was paid.')
+  }
+  const rawIds = currentIds ?? legacyIds
+  const txUuids = Array.isArray(rawIds)
+    ? rawIds.map(value => String(value).toLowerCase())
+    : []
+  if (
+    txUuids.length !== ordered.length ||
+    txUuids.some(uuid => !RELAYR_UUID_RE.test(uuid)) ||
+    new Set(txUuids).size !== ordered.length ||
+    !Array.isArray(body.payment_info)
+  ) {
+    throw new Error(
+      'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.',
+    )
+  }
+  return {
+    bundle_uuid: bundleUuid,
+    payment_info: body.payment_info,
+    transactions: Array.isArray(body.transactions) ? body.transactions : [],
+    expectedTransactions: ordered.map((entry, index) => ({
+      txUuid: txUuids[index],
+      chain: entry.chain,
+      entry,
+    })),
+  }
+}
+
+function relayrDeadlineSeconds(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+    return value
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const numeric = Number(value)
+    if (Number.isSafeInteger(numeric) && numeric >= 0) return numeric
+  }
+  const milliseconds = typeof value === 'string' ? Date.parse(value) : Number.NaN
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null
+  return Math.floor(milliseconds / 1_000)
+}
+
+/** Authenticate every field in Relayr's payment quote against its bundle. */
+export function relayrPaymentDetails(
+  payment: RelayrPayment,
+  expectedBundleUuid: string,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): RelayrPaymentDetails {
+  const chainId = Number(payment?.chain) as JBChainId
+  if (
+    !Number.isSafeInteger(chainId) ||
+    !RELAYR_PAYMENT_CHAINS.has(chainId) ||
+    !SUPPORTED_CHAINS.some(chain => chain.id === chainId)
+  ) {
+    throw new Error('Relayr returned an unsupported payment chain.')
+  }
+  if (
+    !payment ||
+    !isAddress(payment.target) ||
+    !isAddressEqual(payment.target, RELAYR_PAYMENT_ADDRESS)
+  ) {
+    throw new Error('Relayr returned an unrecognized payment contract.')
+  }
+  if (
+    !payment.token ||
+    !isAddress(payment.token) ||
+    !isAddressEqual(payment.token, RELAYR_NATIVE_TOKEN)
+  ) {
+    throw new Error('Relayr returned an unsupported payment token.')
+  }
+
+  let amount: bigint
+  try {
+    amount = BigInt(payment.amount)
+  } catch {
+    throw new Error('Relayr returned an invalid payment amount.')
+  }
+  if (amount < 0n) throw new Error('Relayr returned an invalid payment amount.')
+
+  const bundleUuid = String(expectedBundleUuid ?? '').toLowerCase()
+  if (!RELAYR_UUID_RE.test(bundleUuid)) {
+    throw new Error('Relayr returned an invalid bundle ID.')
+  }
+
+  const calldata = String(payment.calldata ?? '').toLowerCase()
+  // selector + ABI word(bytes16, right-padded) + ABI word(uint40)
+  if (!/^0x[0-9a-f]{136}$/.test(calldata)) {
+    throw new Error('Relayr returned invalid payment calldata.')
+  }
+  if (calldata.slice(0, 10) !== RELAYR_PAYMENT_SELECTOR) {
+    throw new Error('Relayr returned an unrecognized payment function.')
+  }
+  const compactUuid = bundleUuid.replaceAll('-', '')
+  if (calldata.slice(10, 74) !== `${compactUuid}${'0'.repeat(32)}`) {
+    throw new Error('Relayr payment calldata does not match this bundle.')
+  }
+
+  let deadline: bigint
+  try {
+    deadline = BigInt(`0x${calldata.slice(74, 138)}`)
+  } catch {
+    throw new Error('Relayr returned invalid payment calldata.')
+  }
+  if (deadline > 0xffffffffffn) {
+    throw new Error('Relayr returned an invalid payment deadline.')
+  }
+  const quotedDeadline = relayrDeadlineSeconds(payment.payment_deadline)
+  if (quotedDeadline === null || BigInt(quotedDeadline) !== deadline) {
+    throw new Error('Relayr payment calldata does not match the quote deadline.')
+  }
+  if (deadline <= BigInt(nowSeconds + 15)) {
+    throw new Error('This Relayr quote expired. Review the action again for a new quote.')
+  }
+
+  return {
+    chainId,
+    target: RELAYR_PAYMENT_ADDRESS,
+    amount,
+    calldata: calldata as Hex,
+    bundleUuid,
+    deadline,
+  }
+}
+
+async function requireRelayrPaymentRuntime(
+  client: ReturnType<typeof publicClient>,
+): Promise<void> {
+  const code = await client.request({
+    method: 'eth_getCode',
+    params: [RELAYR_PAYMENT_ADDRESS, 'latest'],
+  })
+  if (
+    typeof code !== 'string' ||
+    !/^0x(?:[0-9a-fA-F]{2})+$/.test(code) ||
+    (code.length - 2) / 2 > RELAYR_PAYMENT_CODE_MAX_BYTES
+  ) {
+    throw new Error('Could not authenticate the Relayr payment contract.')
+  }
+  if (keccak256(code) !== RELAYR_PAYMENT_CODE_HASH) {
+    throw new Error('Relayr payment contract code is not recognized.')
+  }
+}
+
+async function simulateRelayrPayment(
+  client: ReturnType<typeof publicClient>,
+  account: Address,
+  details: RelayrPaymentDetails,
+): Promise<void> {
+  const result = await client.request({
+    method: 'eth_call',
+    params: [
+      {
+        from: account,
+        to: details.target,
+        value: `0x${details.amount.toString(16)}`,
+        data: details.calldata,
+        gas: `0x${RELAYR_PAYMENT_GAS.toString(16)}`,
+      },
+      'latest',
+    ],
+  })
+  if (result !== '0x') {
+    throw new Error('Relayr payment simulation returned an unexpected result.')
+  }
 }
 
 export function relayrPaymentLabel(payment: RelayrPayment): string {
@@ -585,27 +943,16 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
 export async function relayrPay(
   payment: RelayrPayment,
   expectedAccount: Address,
+  expectedBundleUuid: string,
   onSubmitted?: (hash: Hex) => void,
+  reverify?: () => Promise<void>,
 ): Promise<Hex> {
   assertNoViewAs()
-  const chainId = Number(payment.chain) as JBChainId
-  if (!SUPPORTED_CHAINS.some(chain => chain.id === chainId)) {
-    throw new Error('Relayr returned an unsupported payment chain.')
-  }
-  if (!isAddress(payment.target)) {
-    throw new Error('Relayr returned an invalid payment target.')
-  }
-  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(payment.calldata ?? '')) {
-    throw new Error('Relayr returned invalid payment calldata.')
-  }
-  const value = BigInt(payment.amount)
-  if (value < 0n) throw new Error('Relayr returned an invalid payment amount.')
-  if (
-    payment.payment_deadline &&
-    payment.payment_deadline <= Math.floor(Date.now() / 1000) + 15
-  ) {
-    throw new Error('This Relayr quote expired. Review the action again for a new quote.')
-  }
+  let details = relayrPaymentDetails(payment, expectedBundleUuid)
+  await reverify?.()
+  const chainId = details.chainId
+  const client = publicClient(chainId)
+  await requireRelayrPaymentRuntime(client)
 
   await requireTransactionReview({
     title: 'Review Relayr payment',
@@ -619,49 +966,49 @@ export async function relayrPay(
       {
         chainId,
         from: expectedAccount,
-        to: payment.target,
-        value,
-        data: payment.calldata,
+        to: details.target,
+        value: details.amount,
+        data: details.calldata,
         label: 'Pay for relayed transactions',
-        contractName: 'Relayr payment contract',
+        contractName: 'Relayr prepaid payment',
       },
     ],
   })
 
+  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  await reverify?.()
   const { wallet, account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
-  const client = publicClient(chainId)
-  const gas = gasWithHeadroom(await client.estimateGas({
-    account,
-    to: payment.target,
-    value,
-    data: payment.calldata,
-  }))
+  await requireRelayrPaymentRuntime(client)
+  await simulateRelayrPayment(client, account, details)
   const live = getAccount(wagmiConfig).address
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
-  // Review is open-ended — the quote can expire while it sits there. Re-check
-  // right before the send, not only before the review, so an expired bundle is
-  // never paid for.
-  if (
-    payment.payment_deadline &&
-    payment.payment_deadline <= Math.floor(Date.now() / 1000) + 15
-  ) {
-    throw new Error('This Relayr quote expired. Review the action again for a new quote.')
-  }
+  // Review and wallet preparation are open-ended. Re-authenticate the exact
+  // quote immediately before the fixed-gas write.
+  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  await reverify?.()
   let hash = await wallet.sendTransaction({
     account,
-    to: payment.target,
-    value,
-    data: payment.calldata,
-    gas,
+    to: details.target,
+    value: details.amount,
+    data: details.calldata,
+    gas: RELAYR_PAYMENT_GAS,
   })
-  onSubmitted?.(hash)
-  if (isSafeConnection(wagmiConfig)) {
-    hash = await waitForSafeExecutionHash(chainId, hash)
+  const submittedHash = hash
+  try {
+    onSubmitted?.(submittedHash)
+    if (isSafeConnection(wagmiConfig)) {
+      hash = await waitForSafeExecutionHash(chainId, submittedHash)
+    }
+  } catch {
+    // Once the wallet returns a hash, callback/storage or Safe execution-hash
+    // tracking failures are uncertain submitted outcomes, never permission to
+    // quote and pay this bundle again.
+    throw new RelayrPaymentSubmittedError(submittedHash, chainId)
   }
   let receipt
   try {
@@ -675,10 +1022,14 @@ export async function relayrPay(
 
 export async function relayrPoll(
   uuid: string,
+  expectedCount: number,
   onUpdate?: (records: RelayrTransactionRecord[]) => void,
   intervalMs = 2_500,
   timeoutMs = 5 * 60_000,
 ): Promise<RelayrTransactionRecord[]> {
+  if (!Number.isSafeInteger(expectedCount) || expectedCount < 1) {
+    throw new Error('Relayr polling requires the exact destination count.')
+  }
   const started = Date.now()
   let lastRecords: RelayrTransactionRecord[] = []
   // A bundle Relayr never had 404s forever. Reporting that as the "still
@@ -715,7 +1066,7 @@ export async function relayrPoll(
         lastRecords = records
         onUpdate?.(records)
         if (
-          records.length > 0 &&
+          records.length === expectedCount &&
           records.every(record => relayrStateIsSuccess(record.status?.state))
         ) {
           return records
@@ -753,20 +1104,32 @@ export function relayrDestinationHash(
   return record.status?.data?.hash ?? record.status?.data?.transaction?.hash ?? null
 }
 
+/** Relayr's live status schema nests the destination chain under request. */
+export function relayrRecordChain(
+  record: RelayrTransactionRecord,
+): number | null {
+  const chain = record.request?.chain ?? record.chain
+  return Number.isSafeInteger(chain) && Number(chain) > 0 ? Number(chain) : null
+}
+
 function relayrSessionFinished(
   records: RelayrTransactionRecord[],
   expectedCount: number,
 ): boolean {
-  const progress = relayrProgress(records, expectedCount)
-  return progress.confirmed === progress.total
+  return (
+    records.length === expectedCount &&
+    records.every(record => relayrStateIsSuccess(record.status?.state))
+  )
 }
 
 function relayrSessionFullyFailed(
   records: RelayrTransactionRecord[],
   expectedCount: number,
 ): boolean {
-  const progress = relayrProgress(records, expectedCount)
-  return progress.failed === progress.total && progress.confirmed === 0
+  return (
+    records.length === expectedCount &&
+    records.every(record => relayrStateIsFailed(record.status?.state))
+  )
 }
 
 /** Resume a persisted, already-paid bundle: report progress, poll to done. */
@@ -779,6 +1142,18 @@ async function resumeSavedRelayrSession(
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
+  if (
+    pendingScope.startsWith('safe-queue:') ||
+    saved.expectedEntries ||
+    saved.expectedSafeExecutions
+  ) {
+    // SafeQueue sessions carry an execution hash/nonce proof which the global
+    // account list cannot re-establish without the queue's exact Safe context.
+    // Never let API-only success/failure clear that paid receipt.
+    throw new Error(
+      'Resume this paid Safe bundle from the project Owner/Operator queue so its exact onchain executions can be verified.',
+    )
+  }
   const reportProgress = (records: RelayrTransactionRecord[]) => {
     const progress = relayrProgress(records, saved.expectedCount)
     onProgress?.({
@@ -816,10 +1191,10 @@ async function resumeSavedRelayrSession(
   }
 
   try {
-    const records = await relayrPoll(saved.bundleUuid, next => {
+    const records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
       saveRelayrPendingSession(pendingScope, { ...saved, records: next })
       reportProgress(next)
-    })
+    }, 2_500, 5 * 60_000)
     clearRelayrPendingSession(pendingScope)
     return {
       quote: {
@@ -887,12 +1262,15 @@ export async function runRelayrCalls({
   paymentChainId,
   pendingScope,
   onProgress,
+  reverify,
 }: {
   calls: RelayrCall[]
   account: Address
   paymentChainId?: number
   pendingScope?: string
   onProgress?: (progress: RelayrProgress) => void
+  /** Re-prove every mutable project call around signatures and payment. */
+  reverify?: () => Promise<void>
 }): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -921,7 +1299,9 @@ export async function runRelayrCalls({
       total: calls.length,
       chainId: calls[index].chainId,
     })
+    await reverify?.()
     entries.push(await buildForwardedTx(calls[index], account))
+    await reverify?.()
   }
   onProgress?.({ phase: 'quoting' })
   const quote = await relayrPostBundle(entries)
@@ -933,7 +1313,7 @@ export async function runRelayrCalls({
   const payment = payments.find(option => option.chain === activeChain) ?? payments[0]
   onProgress?.({ phase: 'paying', payment })
   let session: RelayrPendingSession | null = null
-  const paymentHash = await relayrPay(payment, account, hash => {
+  const paymentHash = await relayrPay(payment, account, quote.bundle_uuid, hash => {
     if (pendingScope) {
       session = saveRelayrPendingSession(pendingScope, {
         bundleUuid: quote.bundle_uuid,
@@ -954,7 +1334,7 @@ export async function runRelayrCalls({
       paymentHash: hash,
       bundleUuid: quote.bundle_uuid,
     })
-  })
+  }, reverify)
   if (pendingScope) {
     session = saveRelayrPendingSession(pendingScope, {
       bundleUuid: quote.bundle_uuid,
@@ -977,7 +1357,7 @@ export async function runRelayrCalls({
   })
 
   try {
-    const records = await relayrPoll(quote.bundle_uuid, next => {
+    const records = await relayrPoll(quote.bundle_uuid, calls.length, next => {
       if (pendingScope && session) {
         saveRelayrPendingSession(pendingScope, { ...session, records: next })
       }
@@ -990,7 +1370,7 @@ export async function runRelayrCalls({
         bundleUuid: quote.bundle_uuid,
         paymentHash,
       })
-    })
+    }, 2_500, 5 * 60_000)
     if (pendingScope) clearRelayrPendingSession(pendingScope)
     return { quote, paymentHash, records }
   } catch (error) {

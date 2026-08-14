@@ -1,12 +1,22 @@
 'use client'
 
 import { getAccount, getPublicClient } from '@wagmi/core'
-import type { Abi, Address, Hex, PublicClient } from 'viem'
+import {
+  isAddress,
+  isAddressEqual,
+  zeroAddress,
+  type Abi,
+  type Address,
+  type Hex,
+  type PublicClient,
+} from 'viem'
 import {
   JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbProjectsAbi,
+  revOwnerAbi,
+  RevnetCoreContracts,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
@@ -23,10 +33,33 @@ import {
   type RelayrProgress,
   type RelayrTransactionRecord,
 } from '@/lib/relayr'
-import { fetchSafeInfo, runSafeCalls, type SafeCallResult } from '@/lib/safe'
+import {
+  canonicalSafeTxHash,
+  findPendingSafeCall,
+  runSafeCalls,
+  type SafeCallResult,
+} from '@/lib/safe'
+import {
+  readAuthorityIdentity,
+  readMatchingAuthorityIdentities,
+} from '@/lib/cross-chain-authority'
+import {
+  isSafeConnection,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
+import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 
 export type AuthorityCall = {
   chainId: JBChainId
+  /**
+   * Optional chain on which this authority's account type is authoritative.
+   * Use this when a governance account controls a project on one chain but
+   * the requested call executes elsewhere (for example, JBProjectHandles on
+   * mainnet). A source-chain Safe must never fall through to the EOA path just
+   * because its same-address proxy has not been deployed on the call chain.
+   */
+  detectionChainId?: JBChainId
   authority: Address
   target: Address
   data: Hex
@@ -37,6 +70,8 @@ export type AuthorityCall = {
   functionName?: string
   args?: readonly unknown[]
   contractName?: string
+  /** Re-prove mutable application authority around any open wallet review. */
+  reverifyAuthority?: () => Promise<void>
 }
 
 export type AuthorityProgress = {
@@ -66,8 +101,8 @@ export function clientFor(chainId: JBChainId): PublicClient {
 /**
  * The account authorized to act for a project on one chain: the live
  * JBProjects ownerOf, falling back to the indexed authority when the read
- * fails. Pass `indexedOnly` (revnets) to trust the indexed operator without
- * an owner read — revnet project NFTs are held by REVOwner, not the operator.
+ * fails. Pass `indexedOnly` for revnets: the indexed address is only a
+ * candidate, and the live REVOwner contract must confirm it as operator.
  */
 export async function readAuthorityOf(
   client: PublicClient,
@@ -76,9 +111,68 @@ export async function readAuthorityOf(
     projectId: number
     indexedAuthority: Address | null
   },
-  { indexedOnly = false }: { indexedOnly?: boolean } = {},
+  {
+    indexedOnly = false,
+    indexedCandidates,
+    strict = false,
+    detectRevnet = false,
+  }: {
+    indexedOnly?: boolean
+    indexedCandidates?: readonly Address[]
+    strict?: boolean
+    /** Classify a possible revnet from live JBProjects ownership. */
+    detectRevnet?: boolean
+  } = {},
 ): Promise<Address | null> {
-  if (indexedOnly) return deployment.indexedAuthority
+  if (indexedOnly || detectRevnet) {
+    const seen = new Set<string>()
+    const candidates = [
+      ...(indexedCandidates ?? []),
+      ...(deployment.indexedAuthority ? [deployment.indexedAuthority] : []),
+    ].flatMap(candidate => {
+      if (!isAddress(candidate) || isAddressEqual(candidate, zeroAddress)) {
+        return []
+      }
+      const key = candidate.toLowerCase()
+      if (seen.has(key)) return []
+      seen.add(key)
+      return [candidate]
+    })
+    try {
+      const owner = (await client.readContract({
+        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
+          deployment.chainId
+        ],
+        abi: jbProjectsAbi,
+        functionName: 'ownerOf',
+        args: [BigInt(deployment.projectId)],
+      })) as Address
+      const canonicalRevOwner = jbContractAddress['6'][
+        RevnetCoreContracts.REVOwner
+      ][deployment.chainId] as Address | undefined
+      if (
+        !canonicalRevOwner ||
+        !isAddressEqual(owner, canonicalRevOwner)
+      ) {
+        return owner
+      }
+      if (!candidates.length) return null
+      const live = await Promise.all(
+        candidates.map(candidate =>
+          client.readContract({
+            address: canonicalRevOwner,
+            abi: revOwnerAbi,
+            functionName: 'isOperatorOf',
+            args: [BigInt(deployment.projectId), candidate],
+          }),
+        ),
+      )
+      const verified = candidates.filter((_, index) => live[index])
+      return verified.length === 1 ? verified[0] : null
+    } catch {
+      return null
+    }
+  }
   return (await client
     .readContract({
       address: jbContractAddress['6'][JBCoreContracts.JBProjects][
@@ -88,7 +182,7 @@ export async function readAuthorityOf(
       functionName: 'ownerOf',
       args: [BigInt(deployment.projectId)],
     })
-    .catch(() => deployment.indexedAuthority)) as Address | null
+    .catch(() => (strict ? null : deployment.indexedAuthority))) as Address | null
 }
 
 /**
@@ -181,7 +275,7 @@ export async function runAuthorityCalls({
 
   type ReviewedGroup = {
     calls: AuthorityCall[]
-    mode: 'direct' | 'safe' | 'relayr'
+    mode: 'direct' | 'safe' | 'safe-connector' | 'relayr'
     pendingScope?: string
     recovered?: boolean
   }
@@ -192,20 +286,97 @@ export async function runAuthorityCalls({
   const reviewedGroups: ReviewedGroup[] = []
   for (const group of groups.values()) {
     const authority = group[0].authority
+    await Promise.all(group.map(call => call.reverifyAuthority?.()))
     onProgress?.({
       kind: 'checking',
       message: `Checking authority on ${group.length} chain${
         group.length === 1 ? '' : 's'
       }…`,
     })
-    const safeInfo = await Promise.all(
-      group.map(call => fetchSafeInfo(call.chainId, authority)),
+    const authorityIdentities = await Promise.all(
+      group.map(async call => {
+        const client = getPublicClient(wagmiConfig, {
+          chainId: call.chainId,
+        }) as PublicClient | undefined
+        if (!client) {
+          throw new Error(
+            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+          )
+        }
+        const identity = await readAuthorityIdentity(client, authority)
+        if (!identity) {
+          throw new Error(
+            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+          )
+        }
+        return identity
+      }),
     )
-    const safeCount = safeInfo.filter(Boolean).length
+    const unsupported = group.filter(
+      (_, index) => authorityIdentities[index].kind === 'contract',
+    )
+    if (unsupported.length) {
+      throw new Error(
+        `The project authority is an unsupported contract on ${unsupported
+          .map(call => JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`)
+          .join(', ')}. Only an EOA or a canonical Safe is supported.`,
+      )
+    }
+    for (const call of group) {
+      if (!call.detectionChainId || call.detectionChainId === call.chainId) {
+        continue
+      }
+      const sourceClient = getPublicClient(wagmiConfig, {
+        chainId: call.detectionChainId,
+      }) as PublicClient | undefined
+      const destinationClient = getPublicClient(wagmiConfig, {
+        chainId: call.chainId,
+      }) as PublicClient | undefined
+      if (!sourceClient || !destinationClient) {
+        throw new Error('Could not verify the cross-chain authority policy.')
+      }
+      const identities = await readMatchingAuthorityIdentities({
+        sourceClient,
+        destinationClient,
+        authority,
+      })
+      if (!identities) {
+        throw new Error('Could not verify the cross-chain authority policy.')
+      }
+      if (!identities.matches) {
+        const sourceName =
+          JB_CHAINS[call.detectionChainId]?.name ??
+          `chain ${call.detectionChainId}`
+        const destinationName =
+          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+        if (
+          identities.source.kind === 'safe' &&
+          identities.destination.kind === 'eoa'
+        ) {
+          throw new Error(
+            `This authority is a Safe on ${sourceName}, but the same Safe address is not deployed on ${destinationName}. Use “Deploy same Safe on Ethereum” in the project handle editor before retrying.`,
+          )
+        }
+        if (
+          identities.source.kind === 'safe' &&
+          identities.destination.kind === 'safe'
+        ) {
+          throw new Error(
+            `The ${sourceName} and ${destinationName} Safes do not have the same current owners, threshold, and module-free policy. Align them before publishing this cross-chain handle claim.`,
+          )
+        }
+        throw new Error(
+          `This cross-chain handle claim cannot verify control of ${authority}. Only the same EOA on both chains or matching module-free Safes are supported.`,
+        )
+      }
+    }
+    const safeCount = authorityIdentities.filter(
+      identity => identity.kind === 'safe',
+    ).length
 
     if (safeCount > 0 && safeCount !== group.length) {
       const missing = group
-        .filter((_, index) => !safeInfo[index])
+        .filter((_, index) => authorityIdentities[index].kind !== 'safe')
         .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
       throw new Error(
         `This Safe is not deployed on ${missing.join(', ')}. Deploy the same Safe there from the Account card, or deselect those chains.`,
@@ -213,9 +384,21 @@ export async function runAuthorityCalls({
     }
 
     if (safeCount === group.length) {
+      if (
+        isSafeConnection(wagmiConfig) &&
+        connected.toLowerCase() === authority.toLowerCase()
+      ) {
+        if (group.length !== 1) {
+          throw new Error(
+            'The Safe app connector can submit one reviewed authority call at a time.',
+          )
+        }
+        reviewedGroups.push({ calls: group, mode: 'safe-connector' })
+        continue
+      }
       const unavailable = group.filter((_, index) => {
-        const info = safeInfo[index]
-        return !info?.owners.some(
+        const identity = authorityIdentities[index]
+        return identity.kind !== 'safe' || !identity.owners.some(
           owner => owner.toLowerCase() === connected.toLowerCase(),
         )
       })
@@ -335,29 +518,30 @@ export async function runAuthorityCalls({
       }…`,
     })
     try {
-      await client.call({
-        account: call.authority,
+      await call.reverifyAuthority?.()
+      await simulateStateChangingTransaction(client, {
+        from: call.authority,
         to: call.target,
         data: call.data,
         value: call.value ?? 0n,
+        gas: call.gas,
       })
-      // Measure what the call actually needs and sign THAT, with headroom. The forwarder
-      // caps the inner call at `request.gas` and reverts `execute` when the inner call
-      // fails (OZ ERC2771Forwarder), so a hard-coded cap that turns out too small burns the
-      // bundle AFTER the user has paid Relayr for it. Keep a larger builder
-      // floor when one exists, but never let it suppress a higher live 2x
-      // estimate. A failed estimate leaves the existing fallback untouched.
-      try {
-        const estimate = await client.estimateGas({
-          account: call.authority,
-          to: call.target,
-          data: call.data,
-          value: call.value ?? 0n,
-        })
-        const buffered = gasWithHeadroom(estimate)
-        if (call.gas === undefined || call.gas < buffered) call.gas = buffered
-      } catch {
-        // Estimation is best-effort; the eth_call above is the real gate.
+      // An explicit builder cap is part of the reviewed call and already
+      // succeeded in the raw preflight above. Do not follow it with an
+      // unbounded estimator against a target-controlled contract. Calls
+      // without a reviewed cap are measured with headroom for Relayr.
+      if (call.gas === undefined) {
+        try {
+          const estimate = await client.estimateGas({
+            account: call.authority,
+            to: call.target,
+            data: call.data,
+            value: call.value ?? 0n,
+          })
+          call.gas = gasWithHeadroom(estimate)
+        } catch {
+          // Estimation is best-effort; the raw eth_call above is the real gate.
+        }
       }
     } catch (simulationError) {
       const detail =
@@ -379,6 +563,83 @@ export async function runAuthorityCalls({
   for (const reviewed of reviewedGroups) {
     if (reviewed.recovered) continue
     const group = reviewed.calls
+    if (reviewed.mode === 'safe-connector') {
+      const call = group[0]
+      await call.reverifyAuthority?.()
+      const existing = await findPendingSafeCall(
+        call.chainId,
+        call.authority,
+        call,
+      )
+      if (existing) {
+        safeResults.push({
+          chainId: call.chainId,
+          mode: 'service',
+          status: 'queued',
+          nonce: Number(existing.nonce),
+          safeTxHash: canonicalSafeTxHash(
+            call.chainId,
+            call.authority,
+            existing,
+          ),
+        })
+        onProgress?.({
+          kind: 'safe',
+          message: 'The exact Safe proposal is already pending.',
+        })
+        continue
+      }
+      await requireTransactionReview({
+        title: 'Review Safe transaction',
+        description: `This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`,
+        calls: [
+          {
+            chainId: call.chainId,
+            from: call.authority,
+            to: call.target,
+            data: call.data,
+            value: call.value ?? 0n,
+            label: call.label,
+            abi: call.abi,
+            functionName: call.functionName,
+            args: call.args,
+            contractName: call.contractName,
+          },
+        ],
+      })
+      const { wallet, account } = await connectedWallet(call.chainId, {
+        expected: call.authority,
+        requireUnchanged: true,
+        changedError: 'Safe connection changed. Review this project action again.',
+      })
+      await call.reverifyAuthority?.()
+      onProgress?.({
+        kind: 'safe',
+        message: 'Continue in Safe, then execute the proposal…',
+      })
+      const safeTxHash = await wallet.sendTransaction({
+        account,
+        to: call.target,
+        data: call.data,
+        value: call.value ?? 0n,
+        gas: call.gas,
+      })
+      const executionHash = await waitForSafeExecutionHash(
+        call.chainId,
+        safeTxHash,
+      )
+      const receipt = await waitForTrackedReceipt(
+        clientFor(call.chainId),
+        executionHash,
+      )
+      if (receipt.status !== 'success') {
+        throw new Error(
+          `${call.label ?? 'Project action'} reverted after Safe execution.`,
+        )
+      }
+      directResults.push(executionHash)
+      continue
+    }
     if (reviewed.mode === 'safe') {
       safeResults.push(
         ...(await runSafeCalls({
@@ -394,6 +655,7 @@ export async function runAuthorityCalls({
             functionName: call.functionName,
             args: call.args,
             contractName: call.contractName,
+            reverifyAuthority: call.reverifyAuthority,
           })),
           onProgress: message => onProgress?.({ kind: 'safe', message }),
         })),
@@ -422,6 +684,7 @@ export async function runAuthorityCalls({
 
       for (let index = 0; index < group.length; index++) {
         const call = group[index]
+        await call.reverifyAuthority?.()
         const { wallet, account } = await connectedWallet(call.chainId, {
           expected: call.authority,
           requireUnchanged: true,
@@ -435,12 +698,14 @@ export async function runAuthorityCalls({
             JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
           }…`,
         })
-        await client.call({
-          account,
+        await simulateStateChangingTransaction(client, {
+          from: account,
           to: call.target,
           data: call.data,
           value: call.value ?? 0n,
+          gas: call.gas,
         })
+        await call.reverifyAuthority?.()
         const live = getAccount(wagmiConfig).address
         if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
           throw new Error(
@@ -471,6 +736,24 @@ export async function runAuthorityCalls({
     if (!pendingScope) {
       throw new Error('Relayr authority review is incomplete.')
     }
+    const reverifyRelayrGroup = async () => {
+      for (const call of reviewed.calls) {
+        await call.reverifyAuthority?.()
+        const live = getAccount(wagmiConfig).address
+        if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
+          throw new Error(
+            'Connected account changed. Review this project action again.',
+          )
+        }
+        await simulateStateChangingTransaction(clientFor(call.chainId), {
+          from: call.authority,
+          to: call.target,
+          data: call.data,
+          value: call.value ?? 0n,
+          gas: call.gas,
+        })
+      }
+    }
     // Built AFTER the simulation pass above, so each call carries its
     // measured `gas` into the signed ForwardRequest.
     const relayrResult = await runRelayrCalls({
@@ -478,6 +761,7 @@ export async function runAuthorityCalls({
       account: connected,
       pendingScope,
       onProgress: reportRelayrProgress,
+      reverify: reverifyRelayrGroup,
     })
     relayrResults.push({
       bundleUuid: relayrResult.quote.bundle_uuid,

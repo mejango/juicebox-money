@@ -9,6 +9,7 @@ import {
   relayrSessionExpiresAt,
   relayrDestinationHash,
   relayrProgress,
+  relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
   resumeRelayrSession,
@@ -26,13 +27,26 @@ function legStateOf(record: RelayrTransactionRecord | undefined): LegState {
   return 'pending'
 }
 
+function requiresProjectSafeProof(
+  scope: string,
+  session: RelayrPendingSession,
+): boolean {
+  return (
+    scope.startsWith('safe-queue:') ||
+    !!session.expectedEntries ||
+    !!session.expectedSafeExecutions
+  )
+}
+
 /** Pair each selected chain with its (first unclaimed) bundle record. */
 export function sessionLegs(
   session: RelayrPendingSession,
 ): { chainId: number; record: RelayrTransactionRecord | undefined }[] {
   const unclaimed = [...session.records]
   return session.chainIds.map(chainId => {
-    const index = unclaimed.findIndex(record => record.chain === chainId)
+    const index = unclaimed.findIndex(
+      record => relayrRecordChain(record) === chainId,
+    )
     const record = index === -1 ? undefined : unclaimed.splice(index, 1)[0]
     return { chainId, record }
   })
@@ -96,6 +110,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
     <div className="mb-4 space-y-3">
       {bundles.map(({ scope, session }) => {
         const progress = relayrProgress(session.records, session.expectedCount)
+        const projectSafeProof = requiresProjectSafeProof(scope, session)
         return (
           <div key={scope} className="card border-bluebs-500/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -103,7 +118,9 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 Cross-chain action in flight
                 <span className="ml-2 text-xs font-normal text-smoke-500">
                   {formatDate(Math.floor(session.createdAt / 1000))} —{' '}
-                  {progress.confirmed}/{progress.total} chains done
+                  {projectSafeProof
+                    ? `${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`
+                    : `${progress.confirmed}/${progress.total} chains done`}
                 </span>
               </div>
               {relayrSessionExpired(session) ? (
@@ -114,6 +131,11 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                   Signatures expired{' '}
                   {formatDate(Math.floor(relayrSessionExpiresAt(session) / 1000))} — this
                   bundle can no longer be executed.
+                </span>
+              ) : projectSafeProof ? (
+                <span className="text-xs text-smoke-600">
+                  Verify this paid bundle from the relevant project&apos;s
+                  Owner/Operator tab.
                 </span>
               ) : (
                 <button
@@ -127,7 +149,11 @@ export function AccountPendingRelayr({ address }: { address: string }) {
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {sessionLegs(session).map(({ chainId, record }, index) => {
-                const state = legStateOf(record)
+                const reportedState = legStateOf(record)
+                const state =
+                  projectSafeProof && reportedState === 'confirmed'
+                    ? 'pending'
+                    : reportedState
                 const hash = record ? relayrDestinationHash(record) : null
                 const txUrl = hash ? etherscanTxUrl(chainId, hash) : null
                 const leg = (
@@ -135,7 +161,10 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${LEG_STYLE[state]}`}
                   >
                     <ChainIcon chainId={chainId} size={14} />
-                    {chainName(chainId)} — {state}
+                    {chainName(chainId)} —{' '}
+                    {projectSafeProof && reportedState === 'confirmed'
+                      ? 'Relayr-reported; verify in Owner/Operator'
+                      : state}
                   </span>
                 )
                 return txUrl ? (

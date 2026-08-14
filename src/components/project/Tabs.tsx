@@ -6,6 +6,10 @@ import {
   ProjectOverflowIcon,
   ProjectTabIcon,
 } from '@/components/project/ProjectTabIcon'
+import {
+  projectHandleFromRoute,
+  projectRouteSegmentFromPathname,
+} from '@/lib/project-handles'
 
 export type TabDef = {
   /** Exact label shown on the tab button. */
@@ -41,6 +45,27 @@ export function replaceTabHash(hash: string): void {
 
   // Minimal non-browser test doubles may not model History.prototype.
   history.replaceState(history.state, '', hash)
+}
+
+/**
+ * Handle aliases are mutable ENS records, so a tab change must re-enter the
+ * server route and revalidate the alias before rendering more project data.
+ * Immutable numeric project routes keep the native hash-only fast path.
+ */
+export function replaceProjectTabHash(hash: string): void {
+  replaceTabHash(hash)
+
+  reloadMutableProjectAlias()
+}
+
+/** Re-enter the server route after any hash mutation on a mutable alias URL. */
+export function reloadMutableProjectAlias(): void {
+  const routeSegment = projectRouteSegmentFromPathname(
+    window.location.pathname,
+  )
+  if (routeSegment && projectHandleFromRoute(routeSegment)) {
+    window.location.reload()
+  }
 }
 
 /**
@@ -174,9 +199,14 @@ export function ProjectTabs({
     }
     apply()
     window.addEventListener('hashchange', apply)
+    // Pay/shop and authority-edit shortcuts also mutate `location.hash`
+    // directly. Catch every such project hash transition at the shell so an
+    // alias cannot keep rendering after its ENS mapping has changed.
+    window.addEventListener('hashchange', reloadMutableProjectAlias)
     singleColumnQuery.addEventListener('change', apply)
     return () => {
       window.removeEventListener('hashchange', apply)
+      window.removeEventListener('hashchange', reloadMutableProjectAlias)
       singleColumnQuery.removeEventListener('change', apply)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,7 +223,7 @@ export function ProjectTabs({
     setActiveSlug(nextSlug)
     // Keep the hash shareable without adding history entries per click.
     const child = subtabByParent.current[nextSlug]
-    replaceTabHash(`#${nextSlug}${child ? `/${child}` : ''}`)
+    replaceProjectTabHash(`#${nextSlug}${child ? `/${child}` : ''}`)
   }
 
   const buttonClasses = (selected: boolean) =>
@@ -351,7 +381,7 @@ export function SubTabs({
   const activate = (i: number) => {
     setActive(i)
     if (hashParent) {
-      replaceTabHash(
+      replaceProjectTabHash(
         `#${tabSlug(hashParent)}/${tabSlug(tabs[i].label)}`,
       )
     }

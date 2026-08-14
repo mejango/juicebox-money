@@ -4,6 +4,7 @@ import {
   getPagedItems,
   getParticipants,
   getParticipantsForRefs,
+  getRevnetOperatorCandidates,
   getRevnetPriceHistory,
   getShopPurchases,
   normalizeBendystrawUrl,
@@ -91,6 +92,60 @@ describe('minimal Bendystraw client', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       'https://testnet.bendystraw.xyz/graphql',
     )
+  })
+
+  it('prefers permission-bearing revnet operators and deduplicates stale rows', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        graphqlResponse({
+          data: {
+            permissionHolders: {
+              items: [
+                { operator: '0xStale', permissions: [] },
+                { operator: '0xCurrent', permissions: [1, 2] },
+                { operator: '0xcurrent', permissions: [] },
+              ],
+              totalCount: 3,
+            },
+          },
+        }),
+      ),
+    )
+
+    await expect(getRevnetOperatorCandidates(1, 42)).resolves.toEqual([
+      '0xCurrent',
+      '0xStale',
+    ])
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit]
+    expect(bodyOf(init).variables).toMatchObject({
+      chainId: 1,
+      projectId: 42,
+      account: '0x2ba4705ad0332cdfb299b452068438bcba3faaf3',
+      limit: 50,
+    })
+  })
+
+  it('fails to bounded history recovery instead of paginating unbounded operator rows', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        graphqlResponse({
+          data: {
+            permissionHolders: {
+              items: Array.from({ length: 50 }, (_, index) => ({
+                operator: `0x${(index + 1).toString(16).padStart(40, '0')}`,
+                permissions: [],
+              })),
+              totalCount: 51,
+            },
+          },
+        }),
+      ),
+    )
+
+    await expect(getRevnetOperatorCandidates(1, 42)).resolves.toEqual([])
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('rejects HTTP, GraphQL, and empty-data failures', async () => {

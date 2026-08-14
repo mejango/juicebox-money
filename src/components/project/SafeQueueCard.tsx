@@ -3,6 +3,8 @@
 import { getAccount } from "@wagmi/core";
 import {
   JB_CHAINS,
+  JBCoreContracts,
+  RevnetCoreContracts,
   jbBuybackHookRegistryAbi,
   jbContractAddress,
   jbControllerAbi,
@@ -15,10 +17,18 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  decodeFunctionData,
+  encodeFunctionData,
   getAbiItem,
+  isAddressEqual,
+  keccak256,
+  stringToBytes,
+  stringToHex,
   toFunctionSelector,
+  zeroAddress,
   type Abi,
   type Address,
+  type Hex,
 } from "viem";
 import { ChainIcon } from "@/components/ChainIcon";
 import { SafeQueueSkeleton } from "@/components/LoadingSkeletons";
@@ -34,6 +44,7 @@ import {
   relayrPoll,
   relayrPostBundle,
   relayrProgress,
+  relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
   saveRelayrPendingSession,
@@ -41,9 +52,12 @@ import {
   type RelayrPayment,
   type RelayrPendingSession,
   type RelayrQuote,
+  type RelayrSafeExecutionProof,
+  type RelayrTransactionRecord,
 } from "@/lib/relayr";
 import {
   confirmSafeTx,
+  canonicalSafeTxHash,
   executeSafeTx,
   fetchSafeInfo,
   getSafeNextNonce,
@@ -57,6 +71,7 @@ import {
   safeTxLink,
   safeUsableConfirmationCount,
   type SafeInfo,
+  type SafeExecutionSnapshot,
   type SafeQueuedTx,
   SAFE_EXEC_ABI,
 } from "@/lib/safe";
@@ -64,10 +79,37 @@ import { truncateAddress } from "@/lib/format";
 import { requireTransactionReview } from "@/lib/transaction-review";
 import { wagmiConfig } from "@/providers/Providers";
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { clientFor } from '@/lib/authority'
+import {
+  ENS_REGISTRY_ADDRESS,
+  PROJECT_HANDLES_ADDRESS,
+  PROJECT_HANDLES_CHAIN_ID,
+  PROJECT_HANDLE_RESOLVER_WRITE_GAS,
+  PROJECT_HANDLE_TEXT_KEY,
+  PROJECT_HANDLE_WRITE_GAS,
+  ensRegistryAbi,
+  ensTextResolverAbi,
+  jbProjectHandlesAbi,
+  normalizeProjectHandle,
+  parseProjectHandleRecord,
+  projectHandleRecord,
+  readBoundedProjectHandle,
+  readDirectEnsProjectRecord,
+  readDirectEnsText,
+} from '@/lib/project-handles'
+import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
+import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { readBoundedSafeNonce } from '@/lib/safe-reads'
 
 export type SafeQueueChain = {
   chainId: JBChainId;
   name: string;
+  projectId: number;
+  isRevnet: boolean;
+  /** Exact project deployments visible in this Owner/Operator surface. */
+  handleTuples: readonly { chainId: number; projectId: number }[];
+  /** Synthetic Ethereum row used only for delayed ENS/Handles Safe calls. */
+  handleOnly?: boolean;
 };
 
 type ChainQueue = SafeQueueChain & {
@@ -82,12 +124,699 @@ type ReadyTx = {
   tx: SafeQueuedTx;
 };
 
+type VerifiedReadyTx = ReadyTx & {
+  snapshot: SafeExecutionSnapshot;
+};
+
 type BatchReview = {
   quote: RelayrQuote;
-  rows: ReadyTx[];
+  rows: VerifiedReadyTx[];
   entries: RelayrEntry[];
   payments: RelayrPayment[];
 };
+
+const ENS_SET_TEXT_SELECTOR = encodeFunctionData({
+  abi: ensTextResolverAbi,
+  functionName: "setText",
+  args: [
+    `0x${"00".repeat(32)}`,
+    PROJECT_HANDLE_TEXT_KEY,
+    "1:1",
+  ],
+}).slice(0, 10);
+const SET_PROJECT_HANDLE_SELECTOR = encodeFunctionData({
+  abi: jbProjectHandlesAbi,
+  functionName: "setEnsNamePartsFor",
+  args: [1n, 1n, ["fixture"]],
+}).slice(0, 10);
+const SAFE_EXECUTION_SUCCESS_TOPIC = keccak256(
+  stringToHex("ExecutionSuccess(bytes32,uint256)"),
+);
+
+function hasExactSafeExecutionSuccess(
+  logs: readonly {
+    address: Address;
+    data: Hex;
+    topics: readonly Hex[];
+  }[],
+  safe: Address,
+  safeTxHash: Hex,
+): boolean {
+  const expectedHash = safeTxHash.toLowerCase();
+  return logs.some((log) => {
+    if (
+      !isAddressEqual(log.address, safe) ||
+      log.topics[0]?.toLowerCase() !== SAFE_EXECUTION_SUCCESS_TOPIC.toLowerCase()
+    ) {
+      return false;
+    }
+    // Safe 1.3 emits txHash in data; Safe 1.4 indexes it. Support both
+    // canonical layouts while rejecting any loosely-shaped lookalike log.
+    if (log.topics.length === 2 && log.data.length === 66) {
+      return (
+        log.topics[1]?.toLowerCase() === expectedHash &&
+        log.data === `0x${"00".repeat(32)}`
+      );
+    }
+    return (
+      log.topics.length === 1 &&
+      log.data.length === 130 &&
+      `0x${log.data.slice(2, 66)}`.toLowerCase() === expectedHash &&
+      log.data.slice(66) === "00".repeat(32)
+    );
+  });
+}
+
+/**
+ * Relayr's status API is progress-only. Before a paid Safe batch is forgotten,
+ * independently prove that every returned destination hash is the exact outer
+ * execTransaction we paid for and that the Safe reported its inner call as a
+ * success while consuming the expected nonce.
+ */
+export async function verifyRelayrSafeBatchLanding(
+  safe: Address,
+  records: readonly RelayrTransactionRecord[],
+  entries: readonly RelayrEntry[],
+  proofs: readonly RelayrSafeExecutionProof[],
+): Promise<void> {
+  if (
+    entries.length < 1 ||
+    records.length !== entries.length ||
+    proofs.length !== entries.length
+  ) {
+    throw new Error(
+      "The paid Relayr bundle lacks its exact Safe execution proof. Keep it pending and verify it manually.",
+    );
+  }
+
+  const seenChains = new Set<number>();
+  const seenHashes = new Set<string>();
+  const seenTxUuids = new Set<string>();
+  for (const entry of entries) {
+    if (seenChains.has(entry.chain)) {
+      throw new Error("The paid Relayr Safe bundle contains duplicate chains.");
+    }
+    seenChains.add(entry.chain);
+    if (!isAddressEqual(entry.target, safe)) {
+      throw new Error("The paid Relayr entry targets another Safe.");
+    }
+    const matchingRecords = records.filter(
+      (record) => relayrRecordChain(record) === entry.chain,
+    );
+    const matchingProofs = proofs.filter((proof) => proof.chainId === entry.chain);
+    if (matchingRecords.length !== 1 || matchingProofs.length !== 1) {
+      throw new Error("Relayr did not return one exact result for every Safe chain.");
+    }
+    const record = matchingRecords[0];
+    const proof = matchingProofs[0];
+    const hash = relayrDestinationHash(record);
+    const request = record.request;
+    let expectedValue: bigint | null = null;
+    let requestValue: bigint | null = null;
+    try {
+      expectedValue = BigInt(entry.value);
+      requestValue = request ? BigInt(request.value) : null;
+    } catch {
+      requestValue = null;
+    }
+    const txUuid = String(record.tx_uuid ?? "").toLowerCase();
+    if (
+      !relayrStateIsSuccess(record.status?.state) ||
+      !hash ||
+      !/^0x[0-9a-fA-F]{64}$/u.test(hash) ||
+      seenHashes.has(hash.toLowerCase()) ||
+      !isAddressEqual(proof.safe, safe) ||
+      !Number.isSafeInteger(proof.nonce) ||
+      proof.nonce < 0 ||
+      !/^0x[0-9a-fA-F]{64}$/u.test(proof.safeTxHash) ||
+      typeof proof.txUuid !== "string" ||
+      txUuid !== proof.txUuid.toLowerCase() ||
+      seenTxUuids.has(txUuid) ||
+      !request ||
+      request.chain !== entry.chain ||
+      !isAddressEqual(request.target, entry.target) ||
+      request.data.toLowerCase() !== entry.data.toLowerCase() ||
+      expectedValue === null ||
+      requestValue === null ||
+      requestValue !== expectedValue ||
+      request.virtual_nonce !== (entry.virtual_nonce ?? 0)
+    ) {
+      throw new Error("Relayr returned an invalid Safe execution result.");
+    }
+    seenHashes.add(hash.toLowerCase());
+    seenTxUuids.add(txUuid);
+
+    const client = clientFor(entry.chain as JBChainId);
+    const [transaction, receipt, nonceRaw] = await Promise.all([
+      client.getTransaction({ hash }),
+      client.getTransactionReceipt({ hash }),
+      readBoundedSafeNonce(client, safe),
+    ]);
+    const transactionInput = (transaction as { input?: Hex; data?: Hex }).input ??
+      (transaction as { data?: Hex }).data;
+    if (
+      receipt.status !== "success" ||
+      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
+      !transaction.to ||
+      !isAddressEqual(transaction.to, entry.target) ||
+      transaction.value !== expectedValue ||
+      transactionInput?.toLowerCase() !== entry.data.toLowerCase() ||
+      nonceRaw === null ||
+      nonceRaw <= BigInt(proof.nonce) ||
+      !hasExactSafeExecutionSuccess(
+        receipt.logs as readonly {
+          address: Address;
+          data: Hex;
+          topics: readonly Hex[];
+        }[],
+        safe,
+        proof.safeTxHash,
+      )
+    ) {
+      throw new Error(
+        `Could not prove the exact Safe execution landed successfully on chain ${entry.chain}. Keep the paid bundle pending.`,
+      );
+    }
+    await assertRelayrProjectHandlePostcondition(
+      entry.chain as JBChainId,
+      safe,
+      entry,
+    );
+  }
+}
+
+function exactPlainSafeCall(tx: SafeQueuedTx): void {
+  let value: bigint;
+  let safeTxGas: bigint;
+  let baseGas: bigint;
+  let gasPrice: bigint;
+  try {
+    value = BigInt(tx.value ?? 0);
+    safeTxGas = BigInt(tx.safeTxGas ?? 0);
+    baseGas = BigInt(tx.baseGas ?? 0);
+    gasPrice = BigInt(tx.gasPrice ?? 0);
+  } catch {
+    throw new Error("The queued Safe transaction has invalid payment fields.");
+  }
+  if (
+    Number(tx.operation ?? 0) !== 0 ||
+    value !== 0n ||
+    safeTxGas !== 0n ||
+    baseGas !== 0n ||
+    gasPrice !== 0n ||
+    !isAddressEqual(tx.gasToken, zeroAddress) ||
+    !isAddressEqual(tx.refundReceiver, zeroAddress)
+  ) {
+    throw new Error(
+      "Project handle transactions must be zero-value direct Safe calls without gas reimbursement.",
+    );
+  }
+}
+
+async function assertSafeControlsProjectTuple(
+  chainId: number,
+  projectId: number,
+  safe: Address,
+): Promise<JBChainId> {
+  const projects = (
+    jbContractAddress["6"][JBCoreContracts.JBProjects] as Partial<
+      Record<JBChainId, Address>
+    >
+  )[chainId as JBChainId];
+  const revOwner = (
+    jbContractAddress["6"][RevnetCoreContracts.REVOwner] as Partial<
+      Record<JBChainId, Address>
+    >
+  )[chainId as JBChainId];
+  if (
+    !projects ||
+    !revOwner ||
+    !Number.isSafeInteger(chainId) ||
+    !Number.isSafeInteger(projectId) ||
+    projectId < 1
+  ) {
+    throw new Error("The queued handle claim targets an unsupported project.");
+  }
+
+  const supportedChainId = chainId as JBChainId;
+  const client = clientFor(supportedChainId);
+  const owner = await client.readContract({
+    address: projects,
+    abi: jbProjectsAbi,
+    functionName: "ownerOf",
+    args: [BigInt(projectId)],
+  });
+  if (isAddressEqual(owner, safe)) return supportedChainId;
+  if (!isAddressEqual(owner, revOwner)) {
+    throw new Error(
+      `This Safe is no longer the owner of project ${chainId}:${projectId}.`,
+    );
+  }
+  const isOperator = await client.readContract({
+    address: revOwner,
+    abi: revOwnerAbi,
+    functionName: "isOperatorOf",
+    args: [BigInt(projectId), safe],
+  });
+  if (!isOperator) {
+    throw new Error(
+      `This Safe is no longer the revnet operator for ${chainId}:${projectId}.`,
+    );
+  }
+  return supportedChainId;
+}
+
+/**
+ * Reconstruct the mutable proofs ProjectHandleCard used when it first queued
+ * a Safe transaction. Hosted Safe records persist after resolver delegation,
+ * ENS text, project authority, or cross-chain Safe policy changes.
+ */
+export async function assertQueuedProjectHandleContext(
+  queueChainId: JBChainId,
+  safe: Address,
+  tx: SafeQueuedTx,
+  allowedTuples: readonly { chainId: number; projectId: number }[],
+): Promise<boolean> {
+  const data = tx.data ?? "0x";
+  const handlesTarget = isAddressEqual(tx.to, PROJECT_HANDLES_ADDRESS);
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/u.test(data) || (data.length - 2) / 2 > 4_096) {
+    if (handlesTarget || data.slice(0, 10).toLowerCase() === ENS_SET_TEXT_SELECTOR.toLowerCase()) {
+      throw new Error("The queued project handle calldata is malformed or too large.");
+    }
+    return false;
+  }
+  const selector = data.slice(0, 10).toLowerCase();
+  if (selector === ENS_SET_TEXT_SELECTOR.toLowerCase()) {
+    let decoded: ReturnType<typeof decodeFunctionData>;
+    try {
+      decoded = decodeFunctionData({ abi: ensTextResolverAbi, data });
+    } catch {
+      throw new Error("The queued ENS record update is malformed.");
+    }
+    if (decoded.functionName !== "setText") return false;
+    const [node, key, value] = decoded.args as readonly [Hex, string, string];
+    if (key !== PROJECT_HANDLE_TEXT_KEY) return false;
+    if (queueChainId !== PROJECT_HANDLES_CHAIN_ID) {
+      throw new Error("Queued ENS project records must execute on Ethereum.");
+    }
+    exactPlainSafeCall(tx);
+    const parsedRecord = parseProjectHandleRecord(value);
+    if (!parsedRecord) {
+      throw new Error("The queued ENS Juicebox record is malformed.");
+    }
+    if (
+      !allowedTuples.some(
+        tuple =>
+          tuple.chainId === parsedRecord.chainId &&
+          tuple.projectId === parsedRecord.projectId,
+      )
+    ) {
+      throw new Error("The queued ENS record belongs to another project.");
+    }
+    const targetChainId = await assertSafeControlsProjectTuple(
+      parsedRecord.chainId,
+      parsedRecord.projectId,
+      safe,
+    );
+    const canonicalData = encodeFunctionData({
+      abi: ensTextResolverAbi,
+      functionName: "setText",
+      args: [node, key, value],
+    });
+    if (canonicalData.toLowerCase() !== data.toLowerCase()) {
+      throw new Error("The queued ENS record calldata is not canonical.");
+    }
+    const client = clientFor(PROJECT_HANDLES_CHAIN_ID);
+    if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
+      const identities = await readMatchingAuthorityIdentities({
+        sourceClient: clientFor(targetChainId),
+        destinationClient: client,
+        authority: safe,
+      });
+      if (!identities?.matches) {
+        throw new Error(
+          "The Safe control policy no longer matches between the project chain and Ethereum.",
+        );
+      }
+    }
+    const resolver = await client.readContract({
+      address: ENS_REGISTRY_ADDRESS,
+      abi: ensRegistryAbi,
+      functionName: "resolver",
+      args: [node],
+    });
+    if (
+      isAddressEqual(resolver, zeroAddress) ||
+      !isAddressEqual(resolver, tx.to)
+    ) {
+      throw new Error(
+        "The ENS resolver changed after this Safe transaction was queued.",
+      );
+    }
+    await simulateStateChangingTransaction(client, {
+      from: safe,
+      to: tx.to,
+      data,
+      gas: PROJECT_HANDLE_RESOLVER_WRITE_GAS,
+    });
+    return true;
+  }
+
+  if (!handlesTarget) return false;
+  if (queueChainId !== PROJECT_HANDLES_CHAIN_ID) {
+    throw new Error("Queued JBProjectHandles claims must execute on Ethereum.");
+  }
+  if (selector !== SET_PROJECT_HANDLE_SELECTOR.toLowerCase()) {
+    throw new Error("The queued JBProjectHandles call is not recognized.");
+  }
+  exactPlainSafeCall(tx);
+  let decoded: ReturnType<typeof decodeFunctionData>;
+  try {
+    decoded = decodeFunctionData({ abi: jbProjectHandlesAbi, data });
+  } catch {
+    throw new Error("The queued project handle claim is malformed.");
+  }
+  if (decoded.functionName !== "setEnsNamePartsFor") {
+    throw new Error("The queued JBProjectHandles call is not recognized.");
+  }
+  const [rawChainId, rawProjectId, parts] = decoded.args as readonly [
+    bigint,
+    bigint,
+    readonly string[],
+  ];
+  if (
+    parts.length < 1 ||
+    parts.length > 127 ||
+    parts.some(part => stringToBytes(part).length > 255)
+  ) {
+    throw new Error("The queued project handle labels are too large.");
+  }
+  if (
+    rawChainId > BigInt(Number.MAX_SAFE_INTEGER) ||
+    rawProjectId > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    throw new Error("The queued handle claim targets an unsupported project.");
+  }
+  const chainId = Number(rawChainId);
+  const projectId = Number(rawProjectId);
+  if (
+    !allowedTuples.some(
+      tuple => tuple.chainId === chainId && tuple.projectId === projectId,
+    )
+  ) {
+    throw new Error("The queued handle claim belongs to another project.");
+  }
+  const normalized = normalizeProjectHandle([...parts].reverse().join("."));
+  if (
+    !normalized ||
+    normalized.parts.length !== parts.length ||
+    normalized.parts.some((part, index) => part !== parts[index])
+  ) {
+    throw new Error("The queued project handle labels are not canonical.");
+  }
+  const canonicalData = encodeFunctionData({
+    abi: jbProjectHandlesAbi,
+    functionName: "setEnsNamePartsFor",
+    args: [rawChainId, rawProjectId, parts],
+  });
+  if (canonicalData.toLowerCase() !== data.toLowerCase()) {
+    throw new Error("The queued project handle calldata is not canonical.");
+  }
+
+  const targetChainId = await assertSafeControlsProjectTuple(
+    chainId,
+    projectId,
+    safe,
+  );
+  const mainnetClient = clientFor(PROJECT_HANDLES_CHAIN_ID);
+  if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
+    const identities = await readMatchingAuthorityIdentities({
+      sourceClient: clientFor(targetChainId),
+      destinationClient: mainnetClient,
+      authority: safe,
+    });
+    if (!identities?.matches) {
+      throw new Error(
+        "The Safe control policy no longer matches between the project chain and Ethereum.",
+      );
+    }
+  }
+  const record = await readDirectEnsProjectRecord(
+    mainnetClient,
+    normalized.ensName,
+  );
+  if (record.textRecord !== projectHandleRecord(chainId, projectId)) {
+    throw new Error(
+      "The ENS Juicebox record changed after this handle claim was queued.",
+    );
+  }
+  await simulateStateChangingTransaction(mainnetClient, {
+    from: safe,
+    to: PROJECT_HANDLES_ADDRESS,
+    data,
+    gas: PROJECT_HANDLE_WRITE_GAS,
+  });
+  return true;
+}
+
+async function assertRelayrProjectHandlePostcondition(
+  queueChainId: JBChainId,
+  safe: Address,
+  entry: RelayrEntry,
+): Promise<void> {
+  let outer: ReturnType<typeof decodeFunctionData>;
+  try {
+    outer = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: entry.data });
+  } catch {
+    throw new Error("The persisted Relayr Safe execution is malformed.");
+  }
+  if (outer.functionName !== "execTransaction") {
+    throw new Error("The persisted Relayr Safe execution is not canonical.");
+  }
+  const [
+    target,
+    value,
+    innerData,
+    operation,
+    safeTxGas,
+    baseGas,
+    gasPrice,
+    gasToken,
+    refundReceiver,
+  ] = outer.args as readonly [
+    Address,
+    bigint,
+    Hex,
+    number,
+    bigint,
+    bigint,
+    bigint,
+    Address,
+    Address,
+    Hex,
+  ];
+  const selector = innerData.slice(0, 10).toLowerCase();
+  const handlesTarget = isAddressEqual(target, PROJECT_HANDLES_ADDRESS);
+  if (!handlesTarget && selector !== ENS_SET_TEXT_SELECTOR.toLowerCase()) return;
+  if (
+    queueChainId !== PROJECT_HANDLES_CHAIN_ID ||
+    value !== 0n ||
+    Number(operation) !== 0 ||
+    safeTxGas !== 0n ||
+    baseGas !== 0n ||
+    gasPrice !== 0n ||
+    !isAddressEqual(gasToken, zeroAddress) ||
+    !isAddressEqual(refundReceiver, zeroAddress)
+  ) {
+    throw new Error("The executed project handle call has invalid Safe semantics.");
+  }
+
+  const mainnetClient = clientFor(PROJECT_HANDLES_CHAIN_ID);
+  if (!handlesTarget) {
+    let decoded: ReturnType<typeof decodeFunctionData>;
+    try {
+      decoded = decodeFunctionData({ abi: ensTextResolverAbi, data: innerData });
+    } catch {
+      throw new Error("The executed ENS record update is malformed.");
+    }
+    if (decoded.functionName !== "setText") return;
+    const [node, key, recordValue] = decoded.args as readonly [Hex, string, string];
+    if (key !== PROJECT_HANDLE_TEXT_KEY) return;
+    const parsed = parseProjectHandleRecord(recordValue);
+    if (!parsed) throw new Error("The executed ENS Juicebox record is malformed.");
+    const targetChainId = await assertSafeControlsProjectTuple(
+      parsed.chainId,
+      parsed.projectId,
+      safe,
+    );
+    if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
+      const identities = await readMatchingAuthorityIdentities({
+        sourceClient: clientFor(targetChainId),
+        destinationClient: mainnetClient,
+        authority: safe,
+      });
+      if (!identities?.matches) {
+        throw new Error(
+          "The project and Ethereum Safe policies changed after Relayr execution.",
+        );
+      }
+    }
+    const resolver = await mainnetClient.readContract({
+      address: ENS_REGISTRY_ADDRESS,
+      abi: ensRegistryAbi,
+      functionName: "resolver",
+      args: [node],
+    });
+    const text = isAddressEqual(resolver, target)
+      ? await readDirectEnsText(mainnetClient, resolver, node)
+      : null;
+    if (text !== recordValue) {
+      throw new Error(
+        `The executed ENS resolver does not return ${PROJECT_HANDLE_TEXT_KEY}=${recordValue}. Keep the paid bundle pending.`,
+      );
+    }
+    return;
+  }
+
+  if (selector !== SET_PROJECT_HANDLE_SELECTOR.toLowerCase()) {
+    throw new Error("The executed JBProjectHandles call is not recognized.");
+  }
+  let decoded: ReturnType<typeof decodeFunctionData>;
+  try {
+    decoded = decodeFunctionData({ abi: jbProjectHandlesAbi, data: innerData });
+  } catch {
+    throw new Error("The executed JBProjectHandles call is malformed.");
+  }
+  if (decoded.functionName !== "setEnsNamePartsFor") {
+    throw new Error("The executed JBProjectHandles call is not recognized.");
+  }
+  const [rawChainId, rawProjectId, parts] = decoded.args as readonly [
+    bigint,
+    bigint,
+    readonly string[],
+  ];
+  if (
+    rawChainId > BigInt(Number.MAX_SAFE_INTEGER) ||
+    rawProjectId > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
+    throw new Error("The executed handle claim targets an unsupported project.");
+  }
+  const chainId = Number(rawChainId);
+  const projectId = Number(rawProjectId);
+  const normalized = normalizeProjectHandle([...parts].reverse().join("."));
+  if (
+    !normalized ||
+    normalized.parts.length !== parts.length ||
+    normalized.parts.some((part, index) => part !== parts[index])
+  ) {
+    throw new Error("The executed project handle labels are not canonical.");
+  }
+  const targetChainId = await assertSafeControlsProjectTuple(
+    chainId,
+    projectId,
+    safe,
+  );
+  if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
+    const identities = await readMatchingAuthorityIdentities({
+      sourceClient: clientFor(targetChainId),
+      destinationClient: mainnetClient,
+      authority: safe,
+    });
+    if (!identities?.matches) {
+      throw new Error(
+        "The project and Ethereum Safe policies changed after Relayr execution.",
+      );
+    }
+  }
+  const [record, verifiedHandle] = await Promise.all([
+    readDirectEnsProjectRecord(mainnetClient, normalized.ensName),
+    readBoundedProjectHandle(mainnetClient, {
+      chainId,
+      projectId,
+      setter: safe,
+    }),
+  ]);
+  if (
+    record.textRecord !== projectHandleRecord(chainId, projectId) ||
+    verifiedHandle !== normalized.handle
+  ) {
+    throw new Error(
+      "The executed JBProjectHandles claim is not verified by the live ENS record. Keep the paid bundle pending.",
+    );
+  }
+}
+
+export async function assertSafeProjectAuthority(
+  chain: SafeQueueChain,
+  safe: Address,
+): Promise<void> {
+  const client = clientFor(chain.chainId);
+  const projects = jbContractAddress["6"][JBCoreContracts.JBProjects][
+    chain.chainId
+  ] as Address;
+  const owner = await client.readContract({
+    address: projects,
+    abi: jbProjectsAbi,
+    functionName: "ownerOf",
+    args: [BigInt(chain.projectId)],
+  });
+  if (!chain.isRevnet) {
+    if (!isAddressEqual(owner, safe)) {
+      throw new Error(`This Safe is no longer the project owner on ${chain.name}.`);
+    }
+    return;
+  }
+  const revOwner = jbContractAddress["6"][RevnetCoreContracts.REVOwner][
+    chain.chainId
+  ] as Address;
+  if (!isAddressEqual(owner, revOwner)) {
+    throw new Error(`This project is no longer controlled as a revnet on ${chain.name}.`);
+  }
+  const isOperator = await client.readContract({
+    address: revOwner,
+    abi: revOwnerAbi,
+    functionName: "isOperatorOf",
+    args: [BigInt(chain.projectId), safe],
+  });
+  if (!isOperator) {
+    throw new Error(`This Safe is no longer the revnet operator on ${chain.name}.`);
+  }
+}
+
+async function freshCanonicalQueuedTx(
+  chain: SafeQueueChain,
+  safe: Address,
+  tx: SafeQueuedTx,
+): Promise<SafeQueuedTx> {
+  if (!chain.handleOnly) await assertSafeProjectAuthority(chain, safe);
+  const expectedHash = canonicalSafeTxHash(chain.chainId, safe, tx);
+  const pending = await listPendingSafeTxs(chain.chainId, safe);
+  const fresh = pending.find((candidate) => {
+    try {
+      return (
+        canonicalSafeTxHash(chain.chainId, safe, candidate).toLowerCase() ===
+        expectedHash.toLowerCase()
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (!fresh) {
+    throw new Error(
+      `Safe transaction #${tx.nonce} changed or is no longer pending on ${chain.name}.`,
+    );
+  }
+  const isHandleTransaction = await assertQueuedProjectHandleContext(
+    chain.chainId,
+    safe,
+    fresh,
+    chain.handleTuples,
+  );
+  if (chain.handleOnly && !isHandleTransaction) {
+    throw new Error("This Ethereum queue row only permits project handle calls.");
+  }
+  return fresh;
+}
 
 /**
  * Selectors are derived from the SAME SDK ABIs the send path encodes with,
@@ -208,48 +937,85 @@ export function SafeQueueCard({
     queryKey: [
       "safeQueues",
       safe,
-      chains.map((chain) => chain.chainId).join(","),
+      chains
+        .map(
+          (chain) =>
+            `${chain.chainId}:${chain.projectId}:${chain.isRevnet ? "revnet" : "owner"}:${chain.handleOnly ? "handles" : "project"}:${chain.handleTuples.map(tuple => `${tuple.chainId}:${tuple.projectId}`).join("|")}`,
+        )
+        .join(","),
     ],
     staleTime: 15_000,
-    refetchOnWindowFocus: false,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
     queryFn: async (): Promise<ChainQueue[]> =>
       Promise.all(
         chains.map(async (chain) => {
-          const info = await fetchSafeInfo(chain.chainId, safe);
-          if (!info) {
-            return {
-              ...chain,
-              info: null,
-              currentNonce: null,
-              transactions: [],
-              error: "Safe is not deployed on this chain.",
-            };
-          }
-          if (!hasSafeService(chain.chainId)) {
-            return {
-              ...chain,
-              info,
-              currentNonce: await getSafeNextNonce(chain.chainId, safe),
-              transactions: [],
-              error: null,
-            };
-          }
           try {
+            if (!chain.handleOnly) await assertSafeProjectAuthority(chain, safe);
+            const info = await fetchSafeInfo(chain.chainId, safe);
+            if (!info) {
+              return {
+                ...chain,
+                info: null,
+                currentNonce: null,
+                transactions: [],
+                error: "Safe is not deployed on this chain.",
+              };
+            }
+            if (!hasSafeService(chain.chainId)) {
+              return {
+                ...chain,
+                info,
+                currentNonce: await getSafeNextNonce(chain.chainId, safe),
+                transactions: [],
+                error: null,
+              };
+            }
             const [currentNonce, transactions] = await Promise.all([
               getSafeNextNonce(chain.chainId, safe),
               listPendingSafeTxs(chain.chainId, safe),
             ]);
+            const canonicalTransactions = transactions.filter((transaction) => {
+              try {
+                canonicalSafeTxHash(chain.chainId, safe, transaction);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+            const visibleTransactions: SafeQueuedTx[] = [];
+            for (const transaction of canonicalTransactions) {
+              if (!chain.handleOnly) {
+                visibleTransactions.push(transaction);
+                continue;
+              }
+              try {
+                if (
+                  await assertQueuedProjectHandleContext(
+                    chain.chainId,
+                    safe,
+                    transaction,
+                    chain.handleTuples,
+                  )
+                ) {
+                  visibleTransactions.push(transaction);
+                }
+              } catch {
+                // A stale or malformed handle proposal stays hidden and can
+                // only be managed in the Safe app; it is never actionable here.
+              }
+            }
             return {
               ...chain,
               info,
               currentNonce,
-              transactions,
+              transactions: visibleTransactions,
               error: null,
             };
           } catch (queueError) {
             return {
               ...chain,
-              info,
+              info: null,
               currentNonce: null,
               transactions: [],
               error:
@@ -270,12 +1036,54 @@ export function SafeQueueCard({
       chain.transactions,
       chain.info?.threshold,
     );
-      for (const transaction of plan.batch)
-        rows.push({ chain, tx: transaction });
+      for (const transaction of plan.batch) rows.push({ chain, tx: transaction });
     }
     return rows;
   }, [query.data]);
+  const readyBatchCount = useMemo(() => {
+    const chains = new Set(ready.map((row) => row.chain.chainId));
+    return chains.size === 1 ? ready.length : chains.size;
+  }, [ready]);
   const refetchQueues = query.refetch;
+
+  const verifyReadyTx = async (row: ReadyTx): Promise<VerifiedReadyTx> => {
+    const fresh = await freshCanonicalQueuedTx(row.chain, safe, row.tx);
+    const reverifyAuthority = async () => {
+      await freshCanonicalQueuedTx(row.chain, safe, fresh);
+    };
+    const snapshot = await simulateSafeExecution(
+      row.chain.chainId,
+      safe,
+      fresh,
+      reverifyAuthority,
+    );
+    return { chain: row.chain, tx: snapshot.tx, snapshot };
+  };
+
+  const assertFrozenBatchRow = (
+    frozen: VerifiedReadyTx,
+    current: VerifiedReadyTx,
+    entry: RelayrEntry,
+  ) => {
+    const nextEntry = safeExecRelayrEntry(
+      current.chain.chainId,
+      safe,
+      current.snapshot.tx,
+    );
+    if (
+      frozen.snapshot.safeTxHash.toLowerCase() !==
+        current.snapshot.safeTxHash.toLowerCase() ||
+      frozen.snapshot.policyFingerprint !== current.snapshot.policyFingerprint ||
+      entry.chain !== nextEntry.chain ||
+      entry.target.toLowerCase() !== nextEntry.target.toLowerCase() ||
+      entry.value !== nextEntry.value ||
+      entry.data.toLowerCase() !== nextEntry.data.toLowerCase()
+    ) {
+      throw new Error(
+        `Safe transaction #${frozen.tx.nonce} or its live policy changed. Review the batch again.`,
+      );
+    }
+  };
 
   const recoverPaidBundle = useCallback(
     async (session: RelayrPendingSession) => {
@@ -285,17 +1093,34 @@ export function SafeQueueCard({
         "Checking an already-paid Relayr bundle. This will not re-sign, re-pay, or resubmit transactions.",
       );
       try {
-        await relayrPoll(session.bundleUuid, (records) => {
-          const updated = saveRelayrPendingSession(pendingScope, {
-            ...session,
-            records,
-          });
-          setPendingSession(updated);
-          const progress = relayrProgress(records, session.expectedCount);
-          setNotice(
-            `Checking paid Relayr bundle… ${progress.confirmed}/${progress.total}`,
+        const records = await relayrPoll(
+          session.bundleUuid,
+          session.expectedCount,
+          (nextRecords) => {
+            const updated = saveRelayrPendingSession(pendingScope, {
+              ...session,
+              records: nextRecords,
+            });
+            setPendingSession(updated);
+            const progress = relayrProgress(nextRecords, session.expectedCount);
+            setNotice(
+              `Checking paid Relayr bundle… ${progress.confirmed}/${progress.total}`,
+            );
+          },
+          2_500,
+          5 * 60_000,
+        );
+        if (!session.expectedEntries || !session.expectedSafeExecutions) {
+          throw new Error(
+            "This older paid bundle has no immutable execution proof. Keep it pending and verify each destination transaction manually.",
           );
-        });
+        }
+        await verifyRelayrSafeBatchLanding(
+          safe,
+          records,
+          session.expectedEntries,
+          session.expectedSafeExecutions,
+        );
         clearRelayrPendingSession(pendingScope);
         setPendingSession(null);
         setNotice(
@@ -316,7 +1141,7 @@ export function SafeQueueCard({
         setBusy(null);
       }
     },
-    [pendingScope, refetchQueues],
+    [pendingScope, refetchQueues, safe],
   );
 
   useEffect(() => {
@@ -334,7 +1159,18 @@ export function SafeQueueCard({
     setError(null);
     setNotice(null);
     try {
-      await confirmSafeTx(chain.chainId, safe, tx, address);
+      const fresh = await freshCanonicalQueuedTx(chain, safe, tx);
+      const reverifyAuthority = async () => {
+        await freshCanonicalQueuedTx(chain, safe, fresh);
+      };
+      await confirmSafeTx(
+        chain.chainId,
+        safe,
+        fresh,
+        address,
+        undefined,
+        reverifyAuthority,
+      );
       setNotice(`Signed transaction #${tx.nonce} on ${chain.name}.`);
       await refetchQueues();
     } catch (signError) {
@@ -352,7 +1188,23 @@ export function SafeQueueCard({
     setError(null);
     setNotice(null);
     try {
-      const result = await executeSafeTx(chain.chainId, safe, tx);
+      const fresh = await freshCanonicalQueuedTx(chain, safe, tx);
+      const reverifyAuthority = async () => {
+        await freshCanonicalQueuedTx(chain, safe, fresh);
+      };
+      const result = await executeSafeTx(
+        chain.chainId,
+        safe,
+        fresh,
+        reverifyAuthority,
+      );
+      if (result.status === "confirmed") {
+        await assertRelayrProjectHandlePostcondition(
+          chain.chainId,
+          safe,
+          safeExecRelayrEntry(chain.chainId, safe, fresh),
+        );
+      }
       setNotice(
         result.status === "confirmed"
           ? `Executed transaction #${tx.nonce} on ${chain.name}.`
@@ -371,7 +1223,7 @@ export function SafeQueueCard({
   };
 
   const reviewExecuteAll = async () => {
-    if (!address || ready.length < 2) return;
+    if (!address || readyBatchCount < 2) return;
     // The pending session is keyed by Safe address alone, so a second batch's
     // payment would overwrite the stuck bundle's uuid and payment hash — the
     // only record of money already spent. Resolve it first.
@@ -385,21 +1237,8 @@ export function SafeQueueCard({
     setError(null);
     setNotice(null);
     try {
-      const simulatedChains = new Set<number>();
-      for (let index = 0; index < ready.length; index++) {
-        const row = ready[index];
-        // A later consecutive nonce cannot simulate against today's Safe
-        // nonce until the earlier transaction executes. Verify the front
-        // transaction on each chain; Relayr's virtual nonces preserve the
-        // reviewed order for the remainder.
-        if (simulatedChains.has(row.chain.chainId)) continue;
-        simulatedChains.add(row.chain.chainId);
-        setNotice(
-          `Checking ${index + 1}/${ready.length} on ${row.chain.name}…`,
-        );
-        await simulateSafeExecution(row.chain.chainId, safe, row.tx, address);
-      }
-      if (simulatedChains.size === 1) {
+      const readyChains = new Set(ready.map((row) => row.chain.chainId));
+      if (readyChains.size === 1) {
         const ordered = [...ready].sort(
           (a, b) => Number(a.tx.nonce) - Number(b.tx.nonce),
         );
@@ -409,7 +1248,27 @@ export function SafeQueueCard({
           setNotice(
             `Executing ${index + 1}/${ordered.length} directly on ${row.chain.name}…`,
           );
-          await executeSafeTx(row.chain.chainId, safe, row.tx);
+          const fresh = await freshCanonicalQueuedTx(row.chain, safe, row.tx);
+          const result = await executeSafeTx(
+            row.chain.chainId,
+            safe,
+            fresh,
+            async () => {
+              await freshCanonicalQueuedTx(row.chain, safe, fresh);
+            },
+          );
+          if (result.status !== "confirmed") {
+            setNotice(
+              `Execution ${result.hash} was submitted for transaction #${row.tx.nonce}. Confirmation is still pending, so later nonces were not submitted.`,
+            );
+            await refetchQueues();
+            return;
+          }
+          await assertRelayrProjectHandlePostcondition(
+            row.chain.chainId,
+            safe,
+            safeExecRelayrEntry(row.chain.chainId, safe, fresh),
+          );
         }
         setNotice(
           `Executed ${ordered.length} Safe transactions directly on ${ordered[0].chain.name}.`,
@@ -417,8 +1276,27 @@ export function SafeQueueCard({
         await refetchQueues();
         return;
       }
-      const entries = ready.map((row) =>
-        safeExecRelayrEntry(row.chain.chainId, safe, row.tx),
+
+      const verifiedRows: VerifiedReadyTx[] = [];
+      const relayrRows = ready.filter(
+        (row, index, rows) =>
+          rows.findIndex(
+            (candidate) => candidate.chain.chainId === row.chain.chainId,
+          ) === index,
+      );
+      for (let index = 0; index < relayrRows.length; index++) {
+        const row = relayrRows[index];
+        // A later consecutive nonce cannot simulate against today's Safe
+        // nonce until the earlier transaction executes. Verify the front
+        // transaction on each chain; Relayr's virtual nonces preserve the
+        // reviewed order for the remainder.
+        setNotice(
+          `Checking ${index + 1}/${relayrRows.length} on ${row.chain.name}…`,
+        );
+        verifiedRows.push(await verifyReadyTx(row));
+      }
+      const entries = verifiedRows.map((row) =>
+        safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
       const quote = await relayrPostBundle(entries);
       const payments = [...(quote.payment_info ?? [])].sort((a, b) =>
@@ -432,7 +1310,7 @@ export function SafeQueueCard({
         payments.findIndex((item) => item.chain === activeChain),
       );
       setPaymentIndex(preferred);
-      setBatchReview({ quote, rows: [...ready], entries, payments });
+      setBatchReview({ quote, rows: verifiedRows, entries, payments });
       setNotice(null);
     } catch (batchError) {
       setError(
@@ -457,25 +1335,36 @@ export function SafeQueueCard({
       "Confirm one Relayr payment to execute every reviewed transaction.",
     );
     try {
+      const reverifyBatch = async () => {
+        for (let index = 0; index < batchReview.rows.length; index++) {
+          const row = batchReview.rows[index];
+          const entry = batchReview.entries[index];
+          if (!entry) throw new Error("The reviewed Relayr bundle changed.");
+          const current = await verifyReadyTx(row);
+          assertFrozenBatchRow(row, current, entry);
+        }
+      };
       // The review may be minutes old, and a queued transaction executed or
       // replaced through the Safe app meanwhile consumes its nonce — which
       // would revert EVERY execTransaction in the bundle after Relayr is
       // paid. Re-verify the front transaction on each chain now, immediately
       // before payment; Relayr's virtual nonces preserve the order for the
       // remainder, exactly as at review time.
-      const simulatedChains = new Set<number>();
-      for (const row of batchReview.rows) {
-        if (simulatedChains.has(row.chain.chainId)) continue;
-        simulatedChains.add(row.chain.chainId);
+      for (let index = 0; index < batchReview.rows.length; index++) {
+        const row = batchReview.rows[index];
+        const entry = batchReview.entries[index];
+        if (!entry) throw new Error("The reviewed Relayr bundle changed.");
         setNotice(`Re-checking transaction #${row.tx.nonce} on ${row.chain.name}…`);
-        await simulateSafeExecution(row.chain.chainId, safe, row.tx, address);
+        const current = await verifyReadyTx(row);
+        assertFrozenBatchRow(row, current, entry);
       }
       // A quote about to expire would be rejected at payment time anyway —
       // refresh it here so the flow re-reviews a live payment instead of
       // failing after the confirmations above.
+      const numericPaymentDeadline = Number(payment.payment_deadline);
       const deadlineSoon =
-        payment.payment_deadline !== undefined &&
-        payment.payment_deadline <= Math.floor(Date.now() / 1000) + 60;
+        Number.isSafeInteger(numericPaymentDeadline) &&
+        numericPaymentDeadline <= Math.floor(Date.now() / 1000) + 60;
       if (deadlineSoon) {
         setNotice("The Relayr quote is about to expire — requesting a fresh one…");
         quote = await relayrPostBundle(batchReview.entries);
@@ -512,26 +1401,62 @@ export function SafeQueueCard({
           };
         }),
       });
+      // The review can remain open while project authority, Safe policy,
+      // nonce, confirmations, or the hosted queue changes. Re-fetch and
+      // re-simulate every exact entry immediately before paying Relayr.
+      for (let index = 0; index < batchReview.rows.length; index++) {
+        const row = batchReview.rows[index];
+        const entry = batchReview.entries[index];
+        if (!entry) throw new Error("The reviewed Relayr bundle changed.");
+        const current = await verifyReadyTx(row);
+        assertFrozenBatchRow(row, current, entry);
+      }
       let submittedSession: RelayrPendingSession | null = null;
-      const paymentHash = await relayrPay(payment, address, (hash) => {
-        submittedSession = saveRelayrPendingSession(pendingScope, {
-          bundleUuid: quote.bundle_uuid,
-          paymentHash: hash,
-          paymentChainId: payment.chain,
-          paymentStatus: "submitted",
-          chainIds: batchReview.rows.map((row) => row.chain.chainId),
-          expectedCount: batchReview.rows.length,
-          records: quote.transactions ?? [],
-          itemCount: batchReview.rows.length,
-          account: address,
-          createdAt: Date.now(),
-        });
-        paidSession = submittedSession;
-        setPendingSession(submittedSession);
-        setNotice(
-          `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
-        );
-      });
+      const expectedTransactions = quote.expectedTransactions;
+      if (
+        !expectedTransactions ||
+        expectedTransactions.length !== batchReview.rows.length
+      ) {
+        throw new Error("Relayr did not bind every reviewed Safe transaction.");
+      }
+      const expectedEntries = expectedTransactions.map(
+        (transaction) => transaction.entry,
+      );
+      const expectedSafeExecutions: RelayrSafeExecutionProof[] =
+        batchReview.rows.map((row, index) => ({
+          chainId: row.chain.chainId,
+          safe,
+          nonce: row.snapshot.tx.nonce,
+          safeTxHash: row.snapshot.safeTxHash,
+          txUuid: expectedTransactions[index].txUuid,
+        }));
+      const paymentHash = await relayrPay(
+        payment,
+        address,
+        quote.bundle_uuid,
+        (hash) => {
+          submittedSession = saveRelayrPendingSession(pendingScope, {
+            bundleUuid: quote.bundle_uuid,
+            paymentHash: hash,
+            paymentChainId: payment.chain,
+            paymentStatus: "submitted",
+            chainIds: batchReview.rows.map((row) => row.chain.chainId),
+            expectedCount: batchReview.rows.length,
+            records: quote.transactions ?? [],
+            itemCount: batchReview.rows.length,
+            account: address,
+            createdAt: Date.now(),
+            expectedEntries,
+            expectedSafeExecutions,
+          });
+          paidSession = submittedSession;
+          setPendingSession(submittedSession);
+          setNotice(
+            `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
+          );
+        },
+        reverifyBatch,
+      );
       const initialSession = saveRelayrPendingSession(pendingScope, {
         ...(submittedSession ?? {
           bundleUuid: quote.bundle_uuid,
@@ -543,22 +1468,36 @@ export function SafeQueueCard({
           itemCount: batchReview.rows.length,
           account: address,
           createdAt: Date.now(),
+          expectedEntries,
+          expectedSafeExecutions,
         }),
         paymentStatus: "confirmed",
       });
       paidSession = initialSession;
       setPendingSession(initialSession);
-      await relayrPoll(quote.bundle_uuid, (records) => {
-        const updated = saveRelayrPendingSession(pendingScope, {
-          ...initialSession,
-          records,
-        });
-        setPendingSession(updated);
-        const progress = relayrProgress(records, batchReview.rows.length);
-        setNotice(
-          `Executing through Relayr… ${progress.confirmed}/${progress.total}`,
-        );
-      });
+      const records = await relayrPoll(
+        quote.bundle_uuid,
+        batchReview.rows.length,
+        (nextRecords) => {
+          const updated = saveRelayrPendingSession(pendingScope, {
+            ...initialSession,
+            records: nextRecords,
+          });
+          setPendingSession(updated);
+          const progress = relayrProgress(nextRecords, batchReview.rows.length);
+          setNotice(
+            `Executing through Relayr… ${progress.confirmed}/${progress.total}`,
+          );
+        },
+        2_500,
+        5 * 60_000,
+      );
+      await verifyRelayrSafeBatchLanding(
+        safe,
+        records,
+        initialSession.expectedEntries ?? [],
+        initialSession.expectedSafeExecutions ?? [],
+      );
       clearRelayrPendingSession(pendingScope);
       setPendingSession(null);
       setNotice(`Executed ${batchReview.rows.length} Safe transactions.`);
@@ -596,7 +1535,7 @@ export function SafeQueueCard({
             can inspect, co-sign, and execute them here.
           </p>
         </div>
-        {ready.length >= 2 ? (
+        {readyBatchCount >= 2 ? (
           <button
             type="button"
             onClick={reviewExecuteAll}
@@ -609,7 +1548,7 @@ export function SafeQueueCard({
               ? "Checking…"
               : busy === "execute-all-direct"
                 ? "Executing directly…"
-              : `Review ${ready.length} ready executions`}
+              : `Review ${readyBatchCount} ready executions`}
           </button>
         ) : null}
       </div>
@@ -668,12 +1607,13 @@ export function SafeQueueCard({
                 .filter((row) => row === chainId).length;
               const record =
                 pendingSession.records.filter(
-                  (row) => row.chain === chainId,
+                  (row) => relayrRecordChain(row) === chainId,
                 )[occurrence] ?? pendingSession.records[index];
               const state = record?.status?.state;
               const hash = record ? relayrDestinationHash(record) : null;
-              const label = relayrStateIsSuccess(state)
-                ? "Confirmed"
+              const relayrReported = relayrStateIsSuccess(state);
+              const label = relayrReported
+                ? "Relayr-reported; onchain proof pending"
                 : relayrStateIsFailed(state)
                   ? "Failed"
                   : state || "Pending";
@@ -694,9 +1634,7 @@ export function SafeQueueCard({
                       className={`font-mono underline ${
                         relayrStateIsFailed(state)
                           ? "text-error-600"
-                          : relayrStateIsSuccess(state)
-                            ? "text-mint-700"
-                            : "text-bluebs-600"
+                          : "text-bluebs-600"
                       }`}
                     >
                       {label} · {hash.slice(0, 10)}…
@@ -706,9 +1644,7 @@ export function SafeQueueCard({
                       className={
                         relayrStateIsFailed(state)
                           ? "text-error-600"
-                          : relayrStateIsSuccess(state)
-                            ? "text-mint-700"
-                            : "text-smoke-600"
+                          : "text-smoke-600"
                       }
                     >
                       {label}

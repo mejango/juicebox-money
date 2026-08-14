@@ -1,6 +1,14 @@
 import { JB_CHAINS } from '@bananapus/nana-sdk-core'
 import { createPublicClient, http, isAddress, type Address } from 'viem'
 import { normalize } from 'viem/ens'
+import {
+  PROJECT_HANDLES_CHAIN_ID,
+  normalizeProjectHandle,
+  parseProjectHandleRecord,
+  readDirectEnsProjectRecord,
+  readBoundedProjectHandle,
+  type NormalizedProjectHandle,
+} from '@/lib/project-handles'
 
 /**
  * ENS resolution with a synchronous cache. Inputs are validated/encoded
@@ -10,7 +18,7 @@ import { normalize } from 'viem/ens'
  */
 
 const ensClient = createPublicClient({
-  chain: JB_CHAINS[1].chain,
+  chain: JB_CHAINS[PROJECT_HANDLES_CHAIN_ID].chain,
   // CORS-friendly public RPC (several big providers block browser origins).
   transport: http('https://ethereum-rpc.publicnode.com'),
 })
@@ -19,6 +27,11 @@ const IS_DETERMINISTIC_BROWSER =
 
 const addressCache = new Map<string, Address | null>()
 const nameCache = new Map<string, string | null>()
+
+export type ProjectHandleTarget = NormalizedProjectHandle & {
+  chainId: number
+  projectId: number
+}
 
 export function looksLikeEns(value: string): boolean {
   const v = value.trim()
@@ -64,4 +77,53 @@ export async function lookupEnsName(address: string): Promise<string | null> {
   }
   nameCache.set(key, name)
   return name
+}
+
+/**
+ * Resolve the forward half of a project handle: `/@handle` → the ENS
+ * `juicebox` text record on `handle.eth` → `(chainId, projectId)`.
+ */
+export async function lookupProjectHandleTarget(
+  input: string,
+): Promise<ProjectHandleTarget | null> {
+  const normalized = normalizeProjectHandle(input)
+  if (!normalized || IS_DETERMINISTIC_BROWSER) return null
+
+  let target: ProjectHandleTarget | null = null
+  try {
+    const { textRecord } = await readDirectEnsProjectRecord(
+      ensClient,
+      normalized.ensName,
+    )
+    const parsed = parseProjectHandleRecord(textRecord)
+    if (parsed) target = { ...normalized, ...parsed }
+  } catch {
+    target = null
+  }
+  return target
+}
+
+/**
+ * Resolve the reverse half of a project handle from the canonical mainnet
+ * registry. Callers choose the trusted effective authority (owner/operator).
+ */
+export async function lookupVerifiedProjectHandle({
+  chainId,
+  projectId,
+  setter,
+}: {
+  chainId: number
+  projectId: number
+  setter: Address
+}): Promise<string | null> {
+  if (IS_DETERMINISTIC_BROWSER) return null
+  try {
+    return await readBoundedProjectHandle(ensClient, {
+      chainId,
+      projectId,
+      setter,
+    })
+  } catch {
+    return null
+  }
 }

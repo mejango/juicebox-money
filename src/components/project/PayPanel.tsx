@@ -65,6 +65,7 @@ import { chainName } from "@/lib/urn";
 import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { resolveMarket } from "@/components/project/MarketSection";
+import { replaceProjectTabHash } from "@/components/project/Tabs";
 import {
   buildTransactionReviewPrompt,
   type TransactionReviewRequest,
@@ -1734,7 +1735,7 @@ export function PayPanel({
             <button
               type="button"
               onClick={() => {
-                window.location.hash = "shop";
+                replaceProjectTabHash("#shop");
               }}
               className="text-xs font-medium text-bluebs-600 hover:underline"
             >

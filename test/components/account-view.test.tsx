@@ -61,6 +61,10 @@ vi.mock('@/lib/relayr', () => ({
   relayrDestinationHash: (record: {
     status?: { data?: { hash?: string } }
   }) => record.status?.data?.hash ?? null,
+  relayrRecordChain: (record: {
+    chain?: number
+    request?: { chain?: number }
+  }) => record.request?.chain ?? record.chain ?? null,
   relayrStateIsSuccess: (state?: string) =>
     ['success', 'completed'].includes((state ?? '').trim().toLowerCase()),
   relayrStateIsFailed: (state?: string) =>
@@ -490,6 +494,36 @@ describe('AccountPendingRelayr', () => {
       account: ALICE,
     })
     expect(renderedText(renderer.root)).toContain('Completed on every chain.')
+  })
+
+  it('never labels an API-only SafeQueue success as confirmed', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
+      {
+        scope: `safe-queue:${SAFE.toLowerCase()}`,
+        session: pendingSession({
+          chainIds: [1],
+          expectedCount: 1,
+          itemCount: 1,
+          expectedEntries: [
+            { chain: 1, target: SAFE, data: '0x1234', value: '0' },
+          ],
+        }),
+      },
+    ])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountPendingRelayr, { address: ALICE }),
+      )
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('Relayr-reported; onchain proof pending')
+    expect(text).toContain('verify in Owner/Operator')
+    expect(text).not.toContain('Ethereum — confirmed')
+    expect(buttonWith(renderer, 'Resume')).toBeUndefined()
   })
 
   it('pairs chain legs with bundle records in order', () => {

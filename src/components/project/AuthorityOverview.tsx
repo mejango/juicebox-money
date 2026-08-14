@@ -17,7 +17,10 @@ import {
   AccountGroupsSkeleton,
   ActionRowsSkeleton,
 } from "@/components/LoadingSkeletons";
-import { SafeQueueCard } from "@/components/project/SafeQueueCard";
+import {
+  SafeQueueCard,
+  type SafeQueueChain,
+} from "@/components/project/SafeQueueCard";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
 import { ErrorNote } from "@/components/ui/TxError";
@@ -45,6 +48,7 @@ import {
   fetchSafeInfo,
   type SafeInfo,
 } from "@/lib/safe";
+import { readMatchingAuthorityIdentities } from "@/lib/cross-chain-authority";
 import {
   buildPermissionsAuthorityCall,
   buildProjectOwnershipAuthorityCall,
@@ -338,6 +342,13 @@ export function AuthorityOverview({
                     <DeploySafeButtons
                       safe={group.authority}
                       rows={group.rows}
+                      sourceRows={rows.filter(
+                        (row) =>
+                          !!row.safe &&
+                          row.authority?.toLowerCase() ===
+                            group.authority!.toLowerCase(),
+                      )}
+                      isRevnet={isRevnet}
                       onDone={() => authorityQuery.refetch()}
                     />
                   ) : null}
@@ -372,10 +383,31 @@ export function AuthorityOverview({
         <SafeQueueCard
           key={group.safe}
           safe={group.safe}
-          chains={group.rows.map((row) => ({
-            chainId: row.chainId,
-            name: row.name,
-          }))}
+          chains={[
+            ...group.rows.map((row) => ({
+              chainId: row.chainId,
+              name: row.name,
+              projectId: row.projectId,
+              isRevnet,
+              handleTuples: group.rows.map((source) => ({
+                chainId: source.chainId,
+                projectId: source.projectId,
+              })),
+            })),
+            ...(group.rows.some((row) => row.chainId === 1)
+              ? []
+              : [{
+                  chainId: 1 as JBChainId,
+                  name: JB_CHAINS[1].name,
+                  projectId: group.rows[0].projectId,
+                  isRevnet,
+                  handleOnly: true,
+                  handleTuples: group.rows.map((source) => ({
+                    chainId: source.chainId,
+                    projectId: source.projectId,
+                  })),
+                }]),
+          ] satisfies SafeQueueChain[]}
           authorityLabel={authorityLabel}
         />
       ))}
@@ -394,10 +426,14 @@ export function AuthorityOverview({
 function DeploySafeButtons({
   safe,
   rows,
+  sourceRows,
+  isRevnet,
   onDone,
 }: {
   safe: Address;
   rows: AuthorityRow[];
+  sourceRows: AuthorityRow[];
+  isRevnet: boolean;
   onDone: () => void;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
@@ -407,11 +443,48 @@ function DeploySafeButtons({
     setBusy(row.chainId);
     setMessage("Reading the Safe’s original deployment…");
     try {
-      const creation = await fetchSafeCreation(safe);
+      const source = sourceRows[0];
+      if (!source) {
+        throw new Error("Could not identify a live source-chain Safe.");
+      }
+      const reverifyAuthority = async () => {
+        const current = await readAuthorityOf(
+          clientFor(source.chainId),
+          source,
+          {
+            indexedOnly: isRevnet,
+            indexedCandidates: [safe],
+            strict: true,
+            detectRevnet: isRevnet,
+          },
+        );
+        if (!current || current.toLowerCase() !== safe.toLowerCase()) {
+          throw new Error(
+            `This Safe is no longer the ${isRevnet ? "revnet operator" : "project owner"} on ${source.name}.`,
+          );
+        }
+        for (const candidate of sourceRows.slice(1)) {
+          const identities = await readMatchingAuthorityIdentities({
+            sourceClient: clientFor(source.chainId),
+            destinationClient: clientFor(candidate.chainId),
+            authority: safe,
+          });
+          if (!identities?.matches) {
+            throw new Error(
+              "This Safe has different policies across source chains. Choose and deploy the intended policy in the Safe app instead.",
+            );
+          }
+        }
+      };
+      await reverifyAuthority();
+      const creation = await fetchSafeCreation(safe, source.chainId);
       if (!creation)
         throw new Error("Could not read the Safe’s creation config.");
       setMessage(`Deploying the same Safe address on ${row.name}…`);
-      await deploySafeSameAddress(row.chainId, creation, safe);
+      await deploySafeSameAddress(row.chainId, creation, safe, {
+        sourceChainId: source.chainId,
+        reverifyAuthority,
+      });
       setMessage(`Safe deployed on ${row.name}.`);
       onDone();
     } catch (error) {

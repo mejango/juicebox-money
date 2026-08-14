@@ -23,7 +23,12 @@ import { useWallet } from '@/hooks/useWallet'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
 import { parseUrn } from '@/lib/urn'
+import {
+  projectHandleFromRoute,
+  projectRouteSegmentFromPathname,
+} from '@/lib/project-handles'
 import { useViewAs } from '@/lib/viewAs'
+import { useResolvedProjectRoute } from '@/providers/ProjectRouteContext'
 import {
   getProject,
   getSuckerGroupProjects,
@@ -303,7 +308,15 @@ export function WalletButton() {
   const mobileWallet = useMobileWallet()
   const pathname = usePathname()
   const { chainId: connectedChainId } = useAccount()
-  const routeProject = parseUrn(pathname.split('/')[1] ?? '')
+  const routeSegment = projectRouteSegmentFromPathname(pathname) ?? ''
+  const parsedRouteProject = parseUrn(routeSegment)
+  const routeHandle = projectHandleFromRoute(routeSegment)?.handle ?? null
+  const resolvedRouteProject = useResolvedProjectRoute()
+  const routeProject =
+    parsedRouteProject ??
+    (routeHandle && resolvedRouteProject?.handle === routeHandle
+      ? resolvedRouteProject
+      : null)
   const balanceChainId =
     routeProject?.chainId ?? (connectedChainId as JBChainId | undefined)
 

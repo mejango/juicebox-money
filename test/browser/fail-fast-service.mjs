@@ -11,6 +11,7 @@ import {
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
+  jbPricesAbi,
   jbProjectsAbi,
   jbRouterTerminalRegistryAbi,
   jbTerminalStoreAbi,
@@ -47,6 +48,8 @@ const DIRECTORY = addressOf(JBCoreContracts.JBDirectory)
 const MULTI_TERMINAL = addressOf(JBCoreContracts.JBMultiTerminal)
 const TERMINAL_STORE = addressOf(JBCoreContracts.JBTerminalStore)
 const TOKENS = addressOf(JBCoreContracts.JBTokens)
+const PRICES = addressOf(JBCoreContracts.JBPrices)
+const PROJECTS = addressOf(JBCoreContracts.JBProjects)
 const REV_OWNER = addressOf(RevnetCoreContracts.REVOwner)
 const BUYBACK_REGISTRY = addressOf(
   JBBuybackHookContracts.JBBuybackHookRegistry,
@@ -62,6 +65,8 @@ if (
   !MULTI_TERMINAL ||
   !TERMINAL_STORE ||
   !TOKENS ||
+  !PRICES ||
+  !PROJECTS ||
   !REV_OWNER ||
   !BUYBACK_REGISTRY ||
   !ROUTER_REGISTRY
@@ -94,6 +99,7 @@ const activityEventFields = `
   setUriEvent { uri caller from }
   projectTransferEvent { previousOwner owner from }
   operatorPermissionsSetEvent { account operator isRevnetOperator caller from }
+  rulesetQueuedEvent { cycleNumber caller from }
   addNftTierEvent { tierId price category caller from }
   removeNftTierEvent { tierId caller from }
   swapEvent { direction terminalTokenAmount projectTokenAmount caller from }
@@ -135,12 +141,14 @@ const participants = {
       balance: '250000000000000000000',
       chainId: CHAIN_ID,
       volumeUsd: '750000000000000000000',
+      suckerGroupId: null,
     },
     {
       address: '0x3333333333333333333333333333333333333333',
       balance: '100000000000000000000',
       chainId: CHAIN_ID,
       volumeUsd: '500000000000000000000',
+      suckerGroupId: null,
     },
   ],
   totalCount: 2,
@@ -306,6 +314,34 @@ const contractFixtures = [
     args: [],
     result: 'USDC',
   },
+  ...[
+    [BigInt(ETH_CURRENCY_ID), 2n],
+    [2n, BigInt(ETH_CURRENCY_ID)],
+    [2n, 2n],
+  ].map(([pricingCurrency, unitCurrency]) => ({
+    name: 'JBPrices.pricePerUnitOf',
+    address: PRICES,
+    abi: jbPricesAbi,
+    functionName: 'pricePerUnitOf',
+    args: [1n, pricingCurrency, unitCurrency, 18n],
+    result: 1_000_000_000_000_000_000n,
+  })),
+  {
+    name: 'JBProjects.ownerOf',
+    address: PROJECTS,
+    abi: jbProjectsAbi,
+    functionName: 'ownerOf',
+    args: [1n],
+    result: REV_OWNER,
+  },
+  {
+    name: 'REVOwner.isOperatorOf',
+    address: REV_OWNER,
+    abi: revOwnerAbi,
+    functionName: 'isOperatorOf',
+    args: [1n, OWNER],
+    result: true,
+  },
   {
     name: 'REVOwner.tiered721HookOf',
     address: REV_OWNER,
@@ -418,7 +454,7 @@ const graphqlFixtures = [
         orderDirection: "desc"
         limit: $limit
         offset: $offset
-      ) { items { address balance chainId volumeUsd } totalCount }
+      ) { items { address balance chainId volumeUsd suckerGroupId } totalCount }
     }`,
     variables: {
       where: {
@@ -477,9 +513,9 @@ const graphqlFixtures = [
   },
   {
     name: 'revnetOperator',
-    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+    query: `query($chainId: Int!, $projectId: Int!, $account: String!, $limit: Int!, $offset: Int!) {
       permissionHolders(
-        where: { chainId: $chainId, projectId: $projectId, version: 6, isRevnetOperator: true }
+        where: { chainId: $chainId, projectId: $projectId, account: $account, version: 6 }
         limit: $limit
         offset: $offset
       ) {
@@ -487,8 +523,19 @@ const graphqlFixtures = [
         totalCount
       }
     }`,
-    variables: { chainId: 1, projectId: 1, limit: 200, offset: 0 },
-    data: { permissionHolders: { items: [], totalCount: 0 } },
+    variables: {
+      chainId: 1,
+      projectId: 1,
+      account: REV_OWNER,
+      limit: 50,
+      offset: 0,
+    },
+    data: {
+      permissionHolders: {
+        items: [{ operator: OWNER, permissions: [1] }],
+        totalCount: 1,
+      },
+    },
   },
   {
     name: 'permissionHolders',
@@ -558,24 +605,32 @@ const graphqlFixtures = [
   },
   {
     name: 'recentActivity',
-    query: `query($limit: Int!) {
+    query: `query($limit: Int!, $offset: Int!) {
       activityEvents(
-        where: { version: 6, type_in: [payEvent, cashOutTokensEvent] }
+        where: {
+          version: 6
+          OR: [
+            { payEvent_not: null }
+            { cashOutTokensEvent_not: null }
+            { swapEvent_not: null }
+            { sendPayoutsEvent_not: null }
+            { rulesetQueuedEvent_not: null }
+            { projectCreateEvent_not: null }
+            { addToBalanceEvent_not: null }
+          ]
+        }
         orderBy: "timestamp"
         orderDirection: "desc"
         limit: $limit
+        offset: $offset
       ) {
         items {
-          id chainId projectId timestamp txHash from
+          ${activityEventFields}
           project { name logoUri tokenSymbol decimals }
-          payEvent { amount amountUsd beneficiary newlyIssuedTokenCount }
-          cashOutTokensEvent {
-            cashOutCount reclaimAmount reclaimAmountUsd beneficiary
-          }
         }
       }
     }`,
-    variables: { limit: 12 },
+    variables: { limit: 12, offset: 0 },
     data: {
       activityEvents: {
         items: [
@@ -597,9 +652,32 @@ const graphqlFixtures = [
               amount: '2500000',
               amountUsd: '2500000',
               beneficiary: '0x2222222222222222222222222222222222222222',
+              memo: 'Browser fixture payment',
               newlyIssuedTokenCount: '5000000000000000000',
             },
             cashOutTokensEvent: null,
+            projectCreateEvent: null,
+            addToBalanceEvent: null,
+            mintTokensEvent: null,
+            sendPayoutsEvent: null,
+            sendReservedTokensToSplitsEvent: null,
+            sendPayoutToSplitEvent: null,
+            sendReservedTokensToSplitEvent: null,
+            autoIssueEvent: null,
+            borrowLoanEvent: null,
+            repayLoanEvent: null,
+            liquidateLoanEvent: null,
+            mintNftEvent: null,
+            deployErc20Event: null,
+            setUriEvent: null,
+            projectTransferEvent: null,
+            operatorPermissionsSetEvent: null,
+            rulesetQueuedEvent: null,
+            addNftTierEvent: null,
+            removeNftTierEvent: null,
+            swapEvent: null,
+            buybackPoolEvent: null,
+            bridgeClaimEvent: null,
           },
         ],
       },
