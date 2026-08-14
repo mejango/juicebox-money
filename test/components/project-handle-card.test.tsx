@@ -101,6 +101,66 @@ beforeEach(() => {
 })
 
 describe('ProjectHandleCard', () => {
+  it('shows the current site URL with the normalized current or draft handle', async () => {
+    liveParts = ['current']
+    liveHandle = 'current'
+    vi.stubGlobal('window', {
+      location: { origin: 'https://juicebox.example' },
+    })
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(ProjectHandleCard, {
+            deployment: {
+              chainId: 1,
+              projectId: 42,
+              indexedAuthority: OWNER,
+            },
+            isRevnet: false,
+          }),
+        ),
+      )
+    })
+    await flushQueries()
+
+    const urlCopy = () =>
+      renderer.root
+        .findAllByType('p')
+        .map(textOf)
+        .find(text => text.startsWith('You’ll be able to find your project at'))
+
+    expect(urlCopy()).toBe(
+      'You’ll be able to find your project at https://juicebox.example/@current',
+    )
+    expect(textOf(renderer.root)).not.toContain('Use any .eth name')
+
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Edit handle')!
+        .props.onClick(),
+    )
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: '@Design.Juicebox.eth' } }),
+    )
+
+    expect(urlCopy()).toBe(
+      'You’ll be able to find your project at https://juicebox.example/@design.juicebox',
+    )
+    const cardText = textOf(renderer.root)
+    expect(cardText).not.toContain('URL: /@design.juicebox')
+    expect(cardText).not.toContain('JBProjectHandles performs')
+    expect(cardText).not.toContain('same button resumes')
+  })
+
   it('sets an arbitrary ENS pointer, then publishes the exact viewed tuple', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

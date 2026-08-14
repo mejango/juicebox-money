@@ -51,6 +51,10 @@ type ProjectHandleState = {
 class EnsRecordCompletedExternally extends Error {}
 class HandleClaimCompletedExternally extends Error {}
 
+const DEFAULT_SITE_ORIGIN = (
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
+).replace(/\/+$/u, '')
+
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : 'Something went wrong.'
 }
@@ -195,6 +199,7 @@ export function ProjectHandleCard({
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingSafe, setPendingSafe] = useState<Address | null>(null)
+  const [siteOrigin, setSiteOrigin] = useState(DEFAULT_SITE_ORIGIN)
   const normalized = useMemo(() => normalizeProjectHandle(input), [input])
   const expectedRecord = projectHandleRecord(
     deployment.chainId,
@@ -240,6 +245,10 @@ export function ProjectHandleCard({
     if (!editing) return
     setInput(stateQuery.data?.claimedHandle ?? '')
   }, [editing, stateQuery.data?.claimedHandle])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') setSiteOrigin(window.location.origin)
+  }, [])
 
   const openEditor = () => {
     setError(null)
@@ -660,6 +669,10 @@ export function ProjectHandleCard({
   }
 
   const current = stateQuery.data
+  const displayedHandle = editing
+    ? normalized?.handle
+    : (current?.verifiedHandle ?? current?.claimedHandle)
+  const displayedProjectUrl = `${siteOrigin}/@${displayedHandle ?? '<handle>'}`
   const textMatches = previewQuery.data?.textRecord === expectedRecord
   const setupPhase = normalized
     ? projectHandleSetupPhase({
@@ -696,11 +709,8 @@ export function ProjectHandleCard({
     <section className="card p-5">
       <span className="field-label">Project handle</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Use any <span className="font-medium">.eth</span> name you control as
-        this deployment&apos;s verified <span className="font-medium">@handle</span>.
-        Setup points that name to this exact chain and project, then asks the
-        current {isRevnet ? 'operator' : 'owner'} to publish the matching
-        onchain claim.
+        You&rsquo;ll be able to find your project at{' '}
+        <span className="font-medium">{displayedProjectUrl}</span>
       </p>
 
       {stateQuery.isLoading ? (
@@ -779,9 +789,6 @@ export function ProjectHandleCard({
               ) : normalized ? (
                 <div className="mt-3 space-y-1 text-xs text-smoke-700">
                   <p>
-                    URL: <span className="font-mono">/@{normalized.handle}</span>
-                  </p>
-                  <p>
                     ENS record: <span className="font-mono">{PROJECT_HANDLE_TEXT_KEY}</span>{' '}
                     = <span className="font-mono">{expectedRecord}</span>
                   </p>
@@ -799,15 +806,6 @@ export function ProjectHandleCard({
                       this app will not replace it.
                     </p>
                   ) : null}
-                  <p className="text-smoke-500">
-                    JBProjectHandles performs the final direct static resolver
-                    check when the claim is published.
-                  </p>
-                  <p className="text-smoke-500">
-                    ENS and project control may use different wallets. If a
-                    signer or Safe is still needed, return here and the same
-                    button resumes at the first unverified step.
-                  </p>
                   <p>
                     <a
                       href={`https://app.ens.domains/${encodeURIComponent(normalized.ensName)}`}
