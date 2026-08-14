@@ -148,6 +148,37 @@ beforeEach(() => {
 })
 
 describe('Authority gas estimation reaches the signed Relayr request', () => {
+  it('routes a matching delegated EOA project-handle claim as a direct EOA call', async () => {
+    const delegated = {
+      kind: 'delegated-eoa' as const,
+      delegation: TARGET,
+    }
+    mocks.readAuthorityIdentity.mockResolvedValue(delegated)
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: { kind: 'eoa' },
+      destination: delegated,
+      matches: true,
+    })
+
+    const result = await runAuthorityCalls({
+      calls: [
+        {
+          chainId: 1,
+          detectionChainId: 10,
+          authority: ALICE,
+          target: TARGET,
+          data: '0x1234',
+        },
+      ],
+    })
+
+    expect(result.directResults).toEqual([HASH])
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ account: ALICE, to: TARGET, data: '0x1234' }),
+    )
+    expect(mocks.runSafeCalls).not.toHaveBeenCalled()
+  })
+
   it('never treats a source-chain Safe as an EOA when its destination proxy is missing', async () => {
     mocks.readMatchingAuthorityIdentities.mockResolvedValue({
       source: {
@@ -177,6 +208,40 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.client.request).not.toHaveBeenCalled()
+  })
+
+  it('rejects a source Safe whose mainnet address is a delegated EOA', async () => {
+    mocks.readAuthorityIdentity.mockResolvedValue({
+      kind: 'delegated-eoa',
+      delegation: TARGET,
+    })
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: {
+        kind: 'safe',
+        threshold: 1,
+        owners: [ALICE],
+        hasModules: false,
+      },
+      destination: { kind: 'delegated-eoa', delegation: TARGET },
+      matches: false,
+    })
+
+    await expect(
+      runAuthorityCalls({
+        calls: [
+          {
+            chainId: 1,
+            detectionChainId: 10,
+            authority: SAFE,
+            target: TARGET,
+            data: '0x1234',
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Safe on OP Mainnet.*occupied by an EIP-7702 delegated EOA/i)
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(mocks.runSafeCalls).not.toHaveBeenCalled()
   })
 
   it('detects on the project chain but queues the Safe call on mainnet', async () => {

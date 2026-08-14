@@ -359,6 +359,14 @@ export async function runAuthorityCalls({
         }
         if (
           identities.source.kind === 'safe' &&
+          identities.destination.kind === 'delegated-eoa'
+        ) {
+          throw new Error(
+            `This authority is a Safe on ${sourceName}, but its address on ${destinationName} is occupied by an EIP-7702 delegated EOA. It cannot be used as the same-address Safe.`,
+          )
+        }
+        if (
+          identities.source.kind === 'safe' &&
           identities.destination.kind === 'safe'
         ) {
           throw new Error(

@@ -25,6 +25,7 @@ import {
   readBoundedSafeNonce,
 } from '@/lib/safe-reads'
 import {
+  isEip7702DelegatedEoaRuntime,
   isDeployableSafeAuthority,
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
@@ -1714,7 +1715,10 @@ export async function deploySafeSameAddress(
     if (
       destinationPolicyCodes
         .slice(0, source.owners.length)
-        .some(code => code && code !== '0x')
+        .some(
+          code =>
+            code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code),
+        )
     ) {
       throw new Error(
         'A source Safe owner is a contract on the destination chain, so its control policy cannot be replayed safely.',
@@ -1725,6 +1729,7 @@ export async function deploySafeSameAddress(
       if (
         !destinationFallbackCode ||
         destinationFallbackCode === '0x' ||
+        isEip7702DelegatedEoaRuntime(destinationFallbackCode) ||
         !source.fallbackHandlerCodeHash ||
         keccak256(destinationFallbackCode).toLowerCase() !==
           source.fallbackHandlerCodeHash.toLowerCase()

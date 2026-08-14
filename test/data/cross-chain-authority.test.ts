@@ -30,6 +30,8 @@ const AUTHORITY = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
 const BOB = '0x3333333333333333333333333333333333333333' as Address
 const FALLBACK = '0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4' as Address
+const DELEGATION = getAddress('0x63c0c19a282a1b52b07dd5a65b58948a07dae32b')
+const EIP_7702_CODE = `0xef0100${DELEGATION.slice(2)}` as Hex
 const SINGLETON = '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552' as Address
 const OTHER_SINGLETON =
   '0x41675C099F32341bf84BFc5382aF534df5C7461a' as Address
@@ -120,6 +122,7 @@ type SafeClientOptions = {
   fallbackHandlerCode?: Hex
   proxyCode?: Hex
   contractOwners?: Address[]
+  ownerBytecodes?: Readonly<Record<string, Hex>>
   rejectRead?: boolean
   rejectBytecodeFor?: Address
 }
@@ -140,6 +143,7 @@ function safeClient({
   fallbackHandlerCode = FALLBACK_CODE,
   proxyCode = SAFE_PROXY_RUNTIME,
   contractOwners = [],
+  ownerBytecodes = {},
   rejectRead = false,
   rejectBytecodeFor,
 }: SafeClientOptions = {}): PublicClient {
@@ -162,6 +166,8 @@ function safeClient({
       ) {
         return fallbackHandlerCode
       }
+      const ownerBytecode = ownerBytecodes[address.toLowerCase()]
+      if (ownerBytecode) return ownerBytecode
       if (contractOwnerSet.has(address.toLowerCase())) return '0x6002'
       return undefined
     }),
@@ -337,8 +343,15 @@ describe('cross-chain authority identity', () => {
 
   it('matches only EOAs or plain canonical Safes with identical policy', () => {
     const eoa: AuthorityIdentity = { kind: 'eoa' }
+    const delegatedEoa: AuthorityIdentity = {
+      kind: 'delegated-eoa',
+      delegation: DELEGATION,
+    }
     const safe = safeIdentity()
     expect(authorityIdentitiesMatch(eoa, eoa)).toBe(true)
+    expect(authorityIdentitiesMatch(eoa, delegatedEoa)).toBe(true)
+    expect(authorityIdentitiesMatch(delegatedEoa, eoa)).toBe(true)
+    expect(authorityIdentitiesMatch(delegatedEoa, delegatedEoa)).toBe(true)
     expect(
       authorityIdentitiesMatch(safe, safeIdentity({ owners: [BOB, ALICE] })),
     ).toBe(true)
@@ -355,7 +368,118 @@ describe('cross-chain authority identity', () => {
       authorityIdentitiesMatch(safe, safeIdentity({ guard: ALICE })),
     ).toBe(false)
     expect(authorityIdentitiesMatch(safe, eoa)).toBe(false)
+    expect(authorityIdentitiesMatch(safe, delegatedEoa)).toBe(false)
     expect(authorityIdentitiesMatch({ kind: 'contract' }, eoa)).toBe(false)
+  })
+
+  it('classifies only the exact EIP-7702 delegation runtime as an EOA', async () => {
+    const exactClient = {
+      getBytecode: vi.fn().mockResolvedValue(EIP_7702_CODE),
+    } as unknown as PublicClient
+    await expect(
+      readAuthorityIdentity(exactClient, AUTHORITY),
+    ).resolves.toEqual({
+      kind: 'delegated-eoa',
+      delegation: DELEGATION,
+    })
+
+    for (const code of [
+      '0xef0100',
+      `${EIP_7702_CODE}00`,
+      `0xef0101${EIP_7702_CODE.slice(8)}`,
+      `0x00${EIP_7702_CODE.slice(2)}`,
+      `0xef0100${'11'.repeat(19)}`,
+      `0xef0100${'11'.repeat(21)}`,
+      `0xef0100${'zz'.repeat(20)}`,
+      '0x6000',
+    ]) {
+      const client = {
+        getBytecode: vi.fn().mockResolvedValue(code),
+        getStorageAt: vi.fn(),
+        request: vi.fn(),
+      } as unknown as PublicClient
+      await expect(readAuthorityIdentity(client, AUTHORITY)).resolves.toEqual({
+        kind: 'contract',
+      })
+      expect(client.getStorageAt).not.toHaveBeenCalled()
+      expect(client.request).not.toHaveBeenCalled()
+    }
+  })
+
+  it('accepts exact delegated Safe owners but rejects prefix lookalikes', async () => {
+    const exact = await readAuthorityIdentity(
+      safeClient({
+        ownerBytecodes: { [ALICE.toLowerCase()]: EIP_7702_CODE },
+      }),
+      AUTHORITY,
+    )
+    expect(exact).toMatchObject({ kind: 'safe', ownersAreEoas: true })
+
+    const lookalike = await readAuthorityIdentity(
+      safeClient({
+        ownerBytecodes: {
+          [ALICE.toLowerCase()]: `${EIP_7702_CODE}00` as Hex,
+        },
+      }),
+      AUTHORITY,
+    )
+    expect(lookalike).toMatchObject({ kind: 'safe', ownersAreEoas: false })
+  })
+
+  it('rejects delegated Safe fallback handlers instead of trusting the marker hash', async () => {
+    const source = safeClient({
+      fallbackHandlerCode: EIP_7702_CODE,
+      ownerBytecodes: { [DELEGATION.toLowerCase()]: '0x6000' },
+    })
+    const destination = safeClient({
+      fallbackHandlerCode: EIP_7702_CODE,
+      ownerBytecodes: { [DELEGATION.toLowerCase()]: '0x6001' },
+    })
+
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceClient: source,
+        destinationClient: destination,
+        authority: AUTHORITY,
+      }),
+    ).resolves.toEqual({
+      source: { kind: 'contract' },
+      destination: { kind: 'contract' },
+      matches: false,
+    })
+
+    for (const client of [source, destination]) {
+      expect(client.getBytecode).not.toHaveBeenCalledWith({
+        address: DELEGATION,
+      })
+    }
+  })
+
+  it('keeps a prefix-plus-extra fallback on the ordinary code-hash path', async () => {
+    const sourceCode = `${EIP_7702_CODE}00` as Hex
+    const destinationCode = `${EIP_7702_CODE}01` as Hex
+    const [source, destination] = await Promise.all([
+      readAuthorityIdentity(
+        safeClient({ fallbackHandlerCode: sourceCode }),
+        AUTHORITY,
+      ),
+      readAuthorityIdentity(
+        safeClient({ fallbackHandlerCode: destinationCode }),
+        AUTHORITY,
+      ),
+    ])
+
+    expect(source).toMatchObject({
+      kind: 'safe',
+      fallbackHandlerCodeHash: keccak256(sourceCode),
+    })
+    expect(destination).toMatchObject({
+      kind: 'safe',
+      fallbackHandlerCodeHash: keccak256(destinationCode),
+    })
+    expect(source && destination && authorityIdentitiesMatch(source, destination)).toBe(
+      false,
+    )
   })
 
   it('reads the canonical proxy, implementation, guard, fallback, and owner posture', async () => {
@@ -459,7 +583,7 @@ describe('cross-chain authority identity', () => {
     ).resolves.toBeNull()
   })
 
-  it('accepts the same EOA only when both chains positively report no code', async () => {
+  it('accepts the same plain EOA when both chains positively report no code', async () => {
     const eoaClient = {
       getBytecode: vi.fn().mockResolvedValue(undefined),
     } as unknown as PublicClient
@@ -473,6 +597,41 @@ describe('cross-chain authority identity', () => {
       source: { kind: 'eoa' },
       destination: { kind: 'eoa' },
       matches: true,
+    })
+  })
+
+  it('matches delegated and plain EOAs but never a Safe to an occupied marker', async () => {
+    const emptyClient = {
+      getBytecode: vi.fn().mockResolvedValue('0x'),
+    } as unknown as PublicClient
+    const delegatedClient = {
+      getBytecode: vi.fn().mockResolvedValue(EIP_7702_CODE),
+    } as unknown as PublicClient
+
+    for (const [sourceClient, destinationClient] of [
+      [emptyClient, delegatedClient],
+      [delegatedClient, emptyClient],
+      [delegatedClient, delegatedClient],
+    ] as const) {
+      await expect(
+        readMatchingAuthorityIdentities({
+          sourceClient,
+          destinationClient,
+          authority: AUTHORITY,
+        }),
+      ).resolves.toMatchObject({ matches: true })
+    }
+
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceClient: safeClient(),
+        destinationClient: delegatedClient,
+        authority: AUTHORITY,
+      }),
+    ).resolves.toMatchObject({
+      source: { kind: 'safe' },
+      destination: { kind: 'delegated-eoa', delegation: DELEGATION },
+      matches: false,
     })
   })
 })

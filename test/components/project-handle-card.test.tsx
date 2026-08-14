@@ -73,6 +73,16 @@ async function flushQueries() {
   })
 }
 
+function localStorageStub() {
+  const values = new Map<string, string>()
+  return {
+    values,
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    removeItem: vi.fn((key: string) => values.delete(key)),
+  }
+}
+
 beforeEach(() => {
   liveTextRecord = null
   liveHandle = null
@@ -146,6 +156,9 @@ describe('ProjectHandleCard', () => {
         .find(button => textOf(button) === 'Edit handle')!
         .props.onClick(),
     )
+    expect(renderer.root.findByType('dialog')).toBeDefined()
+    expect(renderer.root.findByProps({ 'data-modal-body': true })).toBeDefined()
+    expect(renderer.root.findByProps({ 'data-modal-footer': true })).toBeDefined()
     act(() =>
       renderer.root
         .findByProps({ placeholder: 'banny.eth' })
@@ -198,6 +211,21 @@ describe('ProjectHandleCard', () => {
       .findAllByType('button')
       .find(button => textOf(button) === 'Set verified handle')
     expect(setup).toBeDefined()
+    const setupProgress = renderer.root.findByProps({
+      'aria-label': 'Project handle setup progress',
+    })
+    const setupSteps = setupProgress.findAllByType('li')
+    expect(setupSteps).toHaveLength(2)
+    expect(textOf(setupSteps[0])).toContain(
+      'Step 1 of 2: Set the ENS juicebox text record to 1:42',
+    )
+    expect(textOf(setupSteps[1])).toContain(
+      'Step 2 of 2: Publish the JBProjectHandles reverse claim on Ethereum',
+    )
+    expect(setupSteps.map(step => step.props['data-state'])).toEqual([
+      'active',
+      'pending',
+    ])
     act(() => setup!.props.onClick())
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 2; attempt += 1) {
       await flushQueries()
@@ -228,11 +256,150 @@ describe('ProjectHandleCard', () => {
         ],
       }),
     )
+  })
+
+  it('shows completed ENS progress before the reverse claim without submitting', async () => {
+    liveTextRecord = '1:42'
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(ProjectHandleCard, {
+            deployment: {
+              chainId: 1,
+              projectId: 42,
+              indexedAuthority: OWNER,
+            },
+            isRevnet: false,
+          }),
+        ),
+      )
+    })
+    await flushQueries()
+
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Set handle')!
+        .props.onClick(),
+    )
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: 'banny.eth' } }),
+    )
+    let stepStates: string[] = []
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await flushQueries()
+      const setupProgress = renderer.root.findByProps({
+        'aria-label': 'Project handle setup progress',
+      })
+      stepStates = setupProgress
+        .findAllByType('li')
+        .map(step => step.props['data-state'])
+      if (stepStates[0] === 'complete') break
+    }
+
+    expect(stepStates).toEqual(['complete', 'active'])
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+  })
+
+  it('locks every modal close path while a setup step is running', async () => {
+    let releaseEns!: () => void
+    mocks.runAuthorityCalls.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          releaseEns = () => {
+            liveTextRecord = '1:42'
+            resolve({ safeResults: [] })
+          }
+        }),
+    )
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(ProjectHandleCard, {
+            deployment: {
+              chainId: 1,
+              projectId: 42,
+              indexedAuthority: OWNER,
+            },
+            isRevnet: false,
+          }),
+        ),
+      )
+    })
+    await flushQueries()
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Set handle')!
+        .props.onClick(),
+    )
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: 'banny.eth' } }),
+    )
+    await flushQueries()
+
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Set verified handle')!
+        .props.onClick(),
+    )
+    for (let attempt = 0; attempt < 20 && !releaseEns; attempt += 1) {
+      await flushQueries()
+    }
+
+    expect(renderer.root.findByProps({ 'aria-label': 'Close' }).props.disabled).toBe(
+      true,
+    )
     expect(
-      renderer.root.findAllByType('button').some(button =>
-        ['1. Set ENS record', '2. Publish handle'].includes(textOf(button)),
-      ),
-    ).toBe(false)
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Cancel')!.props.disabled,
+    ).toBe(true)
+    expect(
+      renderer.root.findByProps({ placeholder: 'banny.eth' }).props.disabled,
+    ).toBe(true)
+    expect(
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button).includes('Step 1 of 2'))!.props.disabled,
+    ).toBe(true)
+    const dialog = renderer.root.findByType('dialog')
+    const preventDefault = vi.fn()
+    act(() => dialog.props.onCancel({ preventDefault }))
+    expect(preventDefault).toHaveBeenCalled()
+    const backdrop = {}
+    act(() =>
+      dialog.props.onMouseDown({ target: backdrop, currentTarget: backdrop }),
+    )
+    expect(renderer.root.findByType('dialog')).toBeDefined()
+
+    act(() => releaseEns())
+    for (
+      let attempt = 0;
+      attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 2;
+      attempt += 1
+    ) {
+      await flushQueries()
+    }
+    await flushQueries()
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
   })
 
   it('accepts an externally completed ENS step without submitting it again', async () => {
@@ -357,6 +524,144 @@ describe('ProjectHandleCard', () => {
     ).toBeDefined()
   })
 
+  it('persists an authority-scoped normalized draft across close and reload', async () => {
+    const storage = localStorageStub()
+    vi.stubGlobal('window', {
+      location: { origin: 'https://juicebox.example' },
+      localStorage: storage,
+    })
+    liveParts = ['old']
+    liveHandle = 'old'
+    mocks.runAuthorityCalls.mockResolvedValueOnce({
+      safeResults: [
+        {
+          chainId: 1,
+          mode: 'service',
+          status: 'queued',
+          nonce: 1,
+          safeTxHash: `0x${'12'.repeat(32)}`,
+        },
+      ],
+    })
+
+    const renderFor = async (projectId: number) => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })
+      let next!: TestRenderer.ReactTestRenderer
+      await act(async () => {
+        next = TestRenderer.create(
+          createElement(
+            QueryClientProvider,
+            { client: queryClient },
+            createElement(ProjectHandleCard, {
+              deployment: {
+                chainId: 1,
+                projectId,
+                indexedAuthority: OWNER,
+              },
+              isRevnet: false,
+            }),
+          ),
+        )
+      })
+      await flushQueries()
+      return next
+    }
+    const open = (renderer: TestRenderer.ReactTestRenderer) =>
+      act(() =>
+        renderer.root
+          .findAllByType('button')
+          .find(button => ['Set handle', 'Edit handle'].includes(textOf(button)))!
+          .props.onClick(),
+      )
+
+    let renderer = await renderFor(42)
+    open(renderer)
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: '@Banny.ETH' } }),
+    )
+    await flushQueries()
+
+    const [draftKey] = [...storage.values.keys()]
+    expect(draftKey).toBe(
+      `jbm-project-handle-draft-v1:1:42:${OWNER.toLowerCase()}`,
+    )
+    expect(storage.values.get(draftKey)).toBe('banny.eth')
+
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Set verified handle')!
+        .props.onClick(),
+    )
+    for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 1; attempt += 1) {
+      await flushQueries()
+    }
+    await flushQueries()
+
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Close')!
+        .props.onClick(),
+    )
+    open(renderer)
+    await flushQueries()
+    expect(
+      renderer.root.findByProps({ placeholder: 'banny.eth' }).props.value,
+    ).toBe('banny.eth')
+
+    // Invalid transient edits never destroy the last resume-safe normalized
+    // value. Closing and reopening restores the exact persisted draft.
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: 'not a valid ENS name' } }),
+    )
+    expect(storage.values.get(draftKey)).toBe('banny.eth')
+    act(() =>
+      renderer.root
+        .findAllByType('button')
+        .find(button => textOf(button) === 'Cancel')!
+        .props.onClick(),
+    )
+    open(renderer)
+    await flushQueries()
+    expect(
+      renderer.root.findByProps({ placeholder: 'banny.eth' }).props.value,
+    ).toBe('banny.eth')
+
+    await act(async () => renderer.unmount())
+    renderer = await renderFor(42)
+    open(renderer)
+    await flushQueries()
+    expect(
+      renderer.root.findByProps({ placeholder: 'banny.eth' }).props.value,
+    ).toBe('banny.eth')
+
+    await act(async () => renderer.unmount())
+    liveParts = null
+    liveHandle = null
+    renderer = await renderFor(43)
+    open(renderer)
+    await flushQueries()
+    expect(
+      renderer.root.findByProps({ placeholder: 'banny.eth' }).props.value,
+    ).toBe('')
+
+    await act(async () => renderer.unmount())
+    liveParts = ['banny']
+    liveHandle = 'banny'
+    liveTextRecord = '1:42'
+    renderer = await renderFor(42)
+    await flushQueries()
+    expect(storage.values.has(draftKey)).toBe(false)
+    await act(async () => renderer.unmount())
+  })
+
   it('accepts an externally completed Handles claim without reproposing it', async () => {
     liveTextRecord = '1:42'
     const queryClient = new QueryClient({
@@ -398,13 +703,15 @@ describe('ProjectHandleCard', () => {
         .findByProps({ placeholder: 'banny.eth' })
         .props.onChange({ target: { value: 'banny.eth' } }),
     )
-    await flushQueries()
-    act(() =>
-      renderer.root
+    let resume: ReactTestInstance | undefined
+    for (let attempt = 0; attempt < 20 && !resume; attempt += 1) {
+      await flushQueries()
+      resume = renderer.root
         .findAllByType('button')
-        .find(button => textOf(button) === 'Resume: publish handle')!
-        .props.onClick(),
-    )
+        .find(button => textOf(button) === 'Resume: publish handle')
+    }
+    expect(resume).toBeDefined()
+    act(() => resume!.props.onClick())
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 1; attempt += 1) {
       await flushQueries()
     }

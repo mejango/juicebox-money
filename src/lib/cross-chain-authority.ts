@@ -87,6 +87,7 @@ type SafeAuthorityIdentity = {
 
 export type AuthorityIdentity =
   | { kind: 'eoa' }
+  | { kind: 'delegated-eoa'; delegation: Address }
   | { kind: 'contract' }
   | SafeAuthorityIdentity
 
@@ -220,6 +221,40 @@ async function bytecodeOf(
 }
 
 /**
+ * EIP-7702 leaves authority with the EOA key while installing the exact
+ * 23-byte delegation designator `0xef0100 || address` as account code. Keep
+ * this exact: a normal contract which merely starts with the prefix is not an
+ * EOA and must continue through the fail-closed contract path.
+ */
+function eip7702Delegation(code: Hex | undefined | null): Address | null {
+  if (!code || !/^0xef0100[0-9a-f]{40}$/iu.test(code)) return null
+  try {
+    return getAddress(`0x${code.slice(8).toLowerCase()}`)
+  } catch {
+    return null
+  }
+}
+
+export function isEip7702DelegatedEoaRuntime(
+  code: Hex | undefined | null,
+): boolean {
+  return eip7702Delegation(code) !== null
+}
+
+function isEoaRuntime(code: Hex | undefined | null): boolean {
+  return !code || code === '0x' || isEip7702DelegatedEoaRuntime(code)
+}
+
+function isEoaAuthority(
+  identity: AuthorityIdentity,
+): identity is Extract<
+  AuthorityIdentity,
+  { kind: 'eoa' | 'delegated-eoa' }
+> {
+  return identity.kind === 'eoa' || identity.kind === 'delegated-eoa'
+}
+
+/**
  * Classify an authority from live bytecode. A contract is recognized as a
  * supported Safe only when it is a canonical SafeProxy pointing at a known
  * official singleton and all policy/storage reads succeed. RPC failures are
@@ -232,6 +267,11 @@ export async function readAuthorityIdentity(
   const code = await bytecodeOf(client, authority)
   if (code === null) return null
   if (!code || code === '0x') return { kind: 'eoa' }
+  const delegation = eip7702Delegation(code)
+  if (delegation) return { kind: 'delegated-eoa', delegation }
+  // A provider should return Hex, but malformed or odd-length bytecode must
+  // still fail closed instead of reaching keccak256 and escaping classification.
+  if (!/^0x(?:[0-9a-f]{2})+$/iu.test(code)) return { kind: 'contract' }
 
   const proxyCodeHash = keccak256(code)
   if (!SUPPORTED_SAFE_PROXY_CODE_HASHES.has(proxyCodeHash.toLowerCase())) {
@@ -334,16 +374,21 @@ export async function readAuthorityIdentity(
   if (bytecodes.some(bytecode => bytecode === null)) return null
 
   const ownerCodes = bytecodes.slice(0, owners.length)
-  const ownersAreEoas = ownerCodes.every(
-    ownerCode => !ownerCode || ownerCode === '0x',
-  )
+  const ownersAreEoas = ownerCodes.every(isEoaRuntime)
   const fallbackHandlerCode = isAddressEqual(fallbackHandler, zeroAddress)
     ? null
     : bytecodes.at(-1)
   if (
     !isAddressEqual(fallbackHandler, zeroAddress) &&
-    (!fallbackHandlerCode || fallbackHandlerCode === '0x')
+    (!fallbackHandlerCode ||
+      fallbackHandlerCode === '0x' ||
+      isEip7702DelegatedEoaRuntime(fallbackHandlerCode))
   ) {
+    // A Safe owner only needs the same EOA key on both chains, so an exact
+    // EIP-7702 designator is safe in the owner list. A fallback handler is
+    // executable policy: calls follow its delegation target, whose runtime
+    // can differ by chain even when the 23-byte marker is identical. Reject
+    // that indirection instead of certifying a marker hash as equal behavior.
     return { kind: 'contract' }
   }
 
@@ -375,8 +420,10 @@ export function authorityIdentitiesMatch(
   source: AuthorityIdentity,
   destination: AuthorityIdentity,
 ): boolean {
-  if (source.kind === 'eoa' || destination.kind === 'eoa') {
-    return source.kind === 'eoa' && destination.kind === 'eoa'
+  const sourceIsEoa = isEoaAuthority(source)
+  const destinationIsEoa = isEoaAuthority(destination)
+  if (sourceIsEoa || destinationIsEoa) {
+    return sourceIsEoa && destinationIsEoa
   }
   if (source.kind !== 'safe' || destination.kind !== 'safe') return false
   if (
