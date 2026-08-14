@@ -35,6 +35,7 @@ import {
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
 import { getProjectPageData } from "@/lib/project-fallback";
+import { projectPreviewSlogan } from "@/lib/project-link-preview";
 import { formatDate, ipfsUrl } from "@/lib/format";
 import { chainName, parseUrn, toUrn } from "@/lib/urn";
 
@@ -126,16 +127,48 @@ export async function generateMetadata({
     projectMetadata?.name?.trim() ||
     project.name ||
     `Project ${project.projectId}`;
-  const tagline =
-    projectMetadata?.projectTagline?.trim() || project.projectTagline;
+  const tagline = projectPreviewSlogan(
+    projectMetadata?.projectTagline,
+    projectMetadata?.description,
+    project.projectTagline,
+  );
+  const siteOrigin =
+    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001";
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  const assetOrigin =
+    railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
+      ? `https://${railwayDomain}`
+      : siteOrigin;
+  const pageUrl = new URL(`/${toUrn(urn.chainId, urn.projectId)}`, siteOrigin).href;
+  const imageUrl = new URL(
+    `/api/project-og/${urn.chainId}/${urn.projectId}`,
+    assetOrigin,
+  ).href;
+  const description =
+    tagline ?? `Support ${name} on Juicebox — transparent, onchain funding.`;
   return {
     title: name,
-    description:
-      tagline ??
-      `Support ${name} on Juicebox — transparent, onchain funding.`,
+    description,
     openGraph: {
       title: `${name} — Juicebox`,
-      description: tagline ?? undefined,
+      description,
+      url: pageUrl,
+      type: "website",
+      images: [
+        {
+          url: imageUrl,
+          width: 1200,
+          height: 630,
+          alt: `${name} project preview`,
+          type: "image/png",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${name} — Juicebox`,
+      description,
+      images: [imageUrl],
     },
   };
 }
