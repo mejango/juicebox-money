@@ -77,7 +77,7 @@ function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: bo
         isWide ? 'max-w-[1800px]' : 'max-w-6xl'
       }`}
     >
-      <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-3">
+      <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-5">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
         <GuideLinks className="translate-y-0.5 md:self-center" />
       </div>
