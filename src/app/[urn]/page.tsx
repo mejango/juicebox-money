@@ -48,7 +48,7 @@ import {
   revnetOperatorFromPermissionHistory,
 } from "@/lib/project-fallback";
 import { projectPreviewSlogan } from "@/lib/project-link-preview";
-import { formatDate, ipfsUrl } from "@/lib/format";
+import { formatDate, ipfsUrl, projectLogoUrl } from "@/lib/format";
 import {
   lookupProjectHandleTarget,
   lookupVerifiedProjectHandle,
@@ -231,6 +231,49 @@ function httpsOnly(url: string | undefined): string | null {
   }
 }
 
+/**
+ * Machine-readable identity for search engines and agents, which otherwise have to
+ * infer a project from rendered markup.
+ */
+function ProjectJsonLd({
+  name,
+  description,
+  logoUri,
+  path,
+  identifier,
+}: {
+  name: string;
+  description: string | null;
+  logoUri: string | null | undefined;
+  path: string;
+  identifier: string;
+}) {
+  const siteOrigin =
+    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001";
+  const logo = projectLogoUrl(logoUri);
+  const data = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name,
+    url: new URL(path, siteOrigin).href,
+    identifier,
+    ...(description ? { description } : {}),
+    ...(logo
+      ? { logo: logo.startsWith("/") ? new URL(logo, siteOrigin).href : logo }
+      : {}),
+  };
+  return (
+    <script
+      type="application/ld+json"
+      // The name and tagline are untrusted project metadata: escaping `<` keeps a
+      // crafted value from closing this script tag.
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(data).replace(/</gu, "\\u003c"),
+      }}
+    />
+  );
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -273,6 +316,8 @@ export async function generateMetadata({
   return {
     title: name,
     description,
+    // The same project answers at /@handle, /<chain>:<id>, and the %40 form. Name one.
+    alternates: { canonical: pagePath },
     openGraph: {
       title: `${name} — Juicebox`,
       description,
@@ -558,6 +603,17 @@ export default async function ProjectPage({
   return (
     <ShopCartProvider>
       <ProjectRouteSync route={urn} />
+      <ProjectJsonLd
+        name={name}
+        description={tagline}
+        logoUri={logoUri}
+        path={
+          urn.handle
+            ? `/@${encodeURIComponent(urn.handle)}`
+            : `/${toUrn(urn.chainId, urn.projectId)}`
+        }
+        identifier={toUrn(urn.chainId, urn.projectId)}
+      />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
         {coverImage ? (
           <div className="relative mb-6 h-32 w-full overflow-hidden rounded-xl border border-smoke-200 sm:h-44">
