@@ -1323,6 +1323,30 @@ export type BsPriceMoment = {
   accountingTokenUsdRate?: string | null
 }
 
+export type BsAddToBalance = {
+  suckerGroupId: string
+  timestamp: number
+  amount: string
+}
+
+/**
+ * Every `addToBalance` across V6, oldest first.
+ *
+ * A project's indexed `volume` counts payments only, so funds added straight to
+ * a terminal — grants, returned payouts, repaid loans — never appear in it even
+ * though they are money that passed through. Without them a treasury can hold
+ * more than it ever reports receiving.
+ */
+export async function getAddToBalanceInflows(): Promise<BsAddToBalance[]> {
+  const page = await getPagedItems<BsAddToBalance>(
+    ADD_TO_BALANCE_QUERY,
+    'addToBalanceEvents',
+    {},
+    { max: 20_000, policy: 'stable' },
+  )
+  return page.items
+}
+
 export async function getSuckerGroupMoments(
   suckerGroupId: string,
 ): Promise<BsPriceMoment[]> {
@@ -1429,6 +1453,19 @@ export async function getPagedItems<T>(
 // Written out in full rather than built by interpolation: every document here is parsed and
 // validated against the live schema by scripts/check-bendystraw-schema.mjs, and a document
 // assembled at runtime cannot be.
+const ADD_TO_BALANCE_QUERY = `query($limit: Int!, $offset: Int!) {
+  addToBalanceEvents(
+    where: { version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { suckerGroupId timestamp amount }
+    totalCount
+  }
+}`
+
 const MOMENTS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
   suckerGroupMoments(
     where: { suckerGroupId: $suckerGroupId, version: 6 }

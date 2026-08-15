@@ -1,8 +1,10 @@
 import { unstable_cache } from 'next/cache'
 import { formatUnits } from 'viem'
 import {
+  getAddToBalanceInflows,
   getSuckerGroupMoments,
   suckerGroupAccountingToken,
+  type BsAddToBalance,
 } from './bendystraw'
 import {
   getHomepageBalanceGroups,
@@ -70,10 +72,21 @@ function feePointsFrom(
 
 const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
-    const [groups, ethPrice] = await Promise.all([
+    const [groups, ethPrice, addToBalances] = await Promise.all([
       getHomepageBalanceGroups(),
       getHomepageEthPrice(),
+      getAddToBalanceInflows().catch(() => [] as BsAddToBalance[]),
     ])
+    // `volume` counts payments only. Funds added straight to a terminal are money
+    // that passed through too, and without them a treasury can report holding more
+    // than it ever received.
+    const addedByGroup = new Map<string, bigint>()
+    for (const event of addToBalances) {
+      addedByGroup.set(
+        event.suckerGroupId,
+        (addedByGroup.get(event.suckerGroupId) ?? 0n) + BigInt(event.amount),
+      )
+    }
     const supported = groups.flatMap(group => {
       const token = suckerGroupAccountingToken(group.projects.items)
       if (!token) return []
@@ -96,7 +109,12 @@ const cachedHomepageReserves = unstable_cache(
     )
     for (const { group, symbol, decimals } of supported) {
       const amount = Number(formatUnits(BigInt(group.balance), decimals))
-      const volume = Number(formatUnits(BigInt(group.volume), decimals))
+      const volume = Number(
+        formatUnits(
+          BigInt(group.volume) + (addedByGroup.get(group.id) ?? 0n),
+          decimals,
+        ),
+      )
       if (symbol === 'ETH') {
         eth += amount
         passedThroughUsd += volume * (ethPrice ?? 0)
@@ -143,16 +161,49 @@ const cachedHomepageReserves = unstable_cache(
       )
       .sort((a, b) => a.timestamp - b.timestamp)
 
+    // The same inflows, replayed in order, so the curve reaches the headline.
+    const decimalsByGroup = new Map(
+      supported.map(item => [item.group.id, item.decimals] as const),
+    )
+    const inflowEvents = addToBalances
+      .filter(event => decimalsByGroup.has(event.suckerGroupId))
+      .map(event => ({
+        groupId: event.suckerGroupId,
+        timestamp: event.timestamp,
+        amount: Number(
+          formatUnits(
+            BigInt(event.amount),
+            decimalsByGroup.get(event.suckerGroupId)!,
+          ),
+        ),
+      }))
+      .sort((a, b) => a.timestamp - b.timestamp)
+    const addedSoFar = new Map<string, number>()
+    let inflowIndex = 0
+
     const rawPoints: ReservePoint[] = []
     const rawVolumePoints: ReservePoint[] = []
     for (const event of events) {
       latest.set(event.groupId, event.amount)
       latestVolume.set(event.groupId, event.volume)
+      while (
+        inflowIndex < inflowEvents.length &&
+        inflowEvents[inflowIndex].timestamp <= event.timestamp
+      ) {
+        const inflow = inflowEvents[inflowIndex]
+        addedSoFar.set(
+          inflow.groupId,
+          (addedSoFar.get(inflow.groupId) ?? 0) + inflow.amount,
+        )
+        inflowIndex += 1
+      }
       let valueUsd = 0
       let volumeUsd = 0
       for (const item of supported) {
         const amount = latest.get(item.group.id) ?? 0
-        const volume = latestVolume.get(item.group.id) ?? 0
+        const volume =
+          (latestVolume.get(item.group.id) ?? 0) +
+          (addedSoFar.get(item.group.id) ?? 0)
         if (item.symbol === 'ETH') {
           valueUsd += amount * (ethPrice ?? 0)
           volumeUsd += volume * (ethPrice ?? 0)
