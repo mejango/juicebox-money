@@ -6,7 +6,7 @@ import { ProjectLogo } from './ProjectLogo'
 
 /**
  * One white card per project across chains and protocol versions. V6 cards
- * link within this site; older-version cards link out to juicebox.money,
+ * link within this site; older-version cards link out to old.juicebox.money,
  * marked with a version chip.
  */
 export function ProjectCard({ card }: { card: TrendingCard }) {

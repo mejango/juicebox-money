@@ -7,8 +7,8 @@ import { toUrn } from './urn'
 
 /**
  * One trending card, regardless of protocol version. V6 projects link within
- * this site; V1–V5 projects link out to the current juicebox.money, which
- * keeps serving prior versions.
+ * this site; V1–V5 projects link out to old.juicebox.money, which keeps
+ * serving prior versions now that this app holds the apex domain.
  */
 export type TrendingCard = {
   key: string
@@ -28,7 +28,7 @@ export type TrendingCard = {
   trendingScore: bigint
 }
 
-const LEGACY_SITE = 'https://juicebox.money'
+const LEGACY_SITE = 'https://old.juicebox.money'
 
 type SuckerGroupTrending = {
   id: string

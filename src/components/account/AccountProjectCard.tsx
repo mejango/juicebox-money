@@ -5,7 +5,7 @@ import type { BsProject } from '@/lib/bendystraw'
 import { truncateAddress } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 
-const LEGACY_SITE = 'https://juicebox.money'
+const LEGACY_SITE = 'https://old.juicebox.money'
 
 /** Stable per-deployment identity for deduping owned-project cards. */
 export function projectKey(
