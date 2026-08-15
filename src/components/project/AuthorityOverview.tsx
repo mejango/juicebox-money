@@ -704,7 +704,7 @@ function PermissionsAcrossChains({
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
           ? "Every power the revnet’s revnet operator role currently holds, including any NFT powers granted at launch."
-          : "Operators authorized to act for the project owner. Each row shows exactly what is granted and on which chains."}
+          : "Operators authorized to act for the project owner — this is where shop managers get their power to add, mint, or reprice items. Each row shows exactly what is granted and on which chains."}
       </p>
 
       {query.isLoading ? (
@@ -946,6 +946,12 @@ function PermissionEditor({
             ariaLabel="Operator address"
           />
         </div>
+        {grant ? (
+          <span className="mt-1.5 block text-xs text-smoke-700">
+            This address is fixed for this grant. To move these powers elsewhere, add the new
+            address as its own operator, then clear every box here to remove this one.
+          </span>
+        ) : null}
       </label>
 
       <ChainPicker
