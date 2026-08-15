@@ -52,12 +52,14 @@ export async function GET(
         }}
       >
         {logoUrl ? (
+          // Satori rejects string width/height ("Invalid value 360…") and then
+          // renders nothing, which left a hole where every project logo belongs.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={logoUrl}
             alt=""
-            width="360"
-            height="360"
+            width={360}
+            height={360}
             style={{ objectFit: 'contain' }}
           />
         ) : (
