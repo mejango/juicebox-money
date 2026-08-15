@@ -9,11 +9,15 @@ import { ScrollToTop } from '@/components/ScrollToTop'
 
 const siteOrigin =
   process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
+// Preview deployments have no canonical domain, so they fall back to the Railway host
+// that actually serves them. Once a custom domain is configured it is the public name and
+// the one every card should advertise.
 const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim()
 const assetOrigin =
-  railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
     ? `https://${railwayDomain}`
-    : siteOrigin
+    : siteOrigin)
 const socialImage = new URL('/assets/juicebox-social.png', assetOrigin).href
 const siteTitle = 'Juicebox - fund your thing'
 const siteDescription =

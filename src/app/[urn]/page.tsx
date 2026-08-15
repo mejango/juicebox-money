@@ -298,11 +298,14 @@ export async function generateMetadata({
   );
   const siteOrigin =
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001";
+  // The custom domain is the public name; the Railway host is only the fallback for a
+  // preview deployment that has no canonical domain of its own.
   const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
   const assetOrigin =
-    railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    (railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
       ? `https://${railwayDomain}`
-      : siteOrigin;
+      : siteOrigin);
   const pagePath = urn.handle
     ? `/@${encodeURIComponent(urn.handle)}`
     : `/${toUrn(urn.chainId, urn.projectId)}`;
