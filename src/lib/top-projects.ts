@@ -1,6 +1,7 @@
 import { unstable_cache } from 'next/cache'
 import { formatUnits } from 'viem'
 import { bendystraw, type BsProject } from './bendystraw'
+import { readEthUsdPrice } from './eth-price'
 import { toUrn } from './urn'
 
 export type TopBalanceProject = {
@@ -24,13 +25,7 @@ type BalanceGroupsPage = {
 }
 
 const cachedEthPrice = unstable_cache(
-  async () => {
-    const response = await fetch('https://juicebox.money/api/juicebox/prices/ethusd')
-    if (!response.ok) throw new Error(`ETH price feed returned ${response.status}`)
-    const value = Number.parseFloat((await response.json()).price)
-    if (!Number.isFinite(value) || value <= 0) throw new Error('ETH price unavailable')
-    return value
-  },
+  async () => readEthUsdPrice(),
   ['juicebox-home-eth-price'],
   { revalidate: 1200 },
 )
