@@ -101,11 +101,24 @@ export function Providers({ children }: PropsWithChildren) {
         },
       },
     })
-    // Synchronous, so the very first paint already has last session's values
-    // for every query tagged in @/lib/query-persist.
-    installQueryPersistence(client)
     return client
   })
+  // Last session's values are, by definition, values the server did not render, and
+  // streamed segments keep hydrating after this effect fires. Seeding the cache before
+  // the document settles re-renders a tree React is still matching against the server's
+  // HTML, which it reports as a hydration failure.
+  useEffect(() => {
+    let teardown: (() => void) | undefined
+    const restore = () => {
+      teardown = installQueryPersistence(queryClient)
+    }
+    if (document.readyState === 'complete') restore()
+    else window.addEventListener('load', restore, { once: true })
+    return () => {
+      window.removeEventListener('load', restore)
+      teardown?.()
+    }
+  }, [queryClient])
   const [paraHostLoaded, setParaHostLoaded] = useState(false)
   const [paraRequestId, setParaRequestId] = useState(0)
   const [paraModalOpen, setParaModalOpen] = useState(false)
