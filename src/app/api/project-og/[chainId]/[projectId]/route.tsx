@@ -25,8 +25,12 @@ export async function GET(
   if (!project) return new Response(null, { status: 404 })
 
   const resolvedLogo = projectLogoUrl(project.logoUri)
+  // Not `request.nextUrl.origin`: behind the platform proxy that is the container's bind
+  // address (https://0.0.0.0:8080/...), which this renderer cannot fetch, and the card
+  // silently loses its logo.
+  const origin = process.env.NEXT_PUBLIC_SITE_URL ?? request.nextUrl.origin
   const logoUrl = resolvedLogo?.startsWith('/')
-    ? new URL(resolvedLogo, request.nextUrl.origin).href
+    ? new URL(resolvedLogo, origin).href
     : resolvedLogo
   const initial = project.name.charAt(0).toUpperCase() || 'J'
 
