@@ -96,9 +96,18 @@ function Driver({
     setSheetOpen(false)
     const resume = resumeAddFunds.current
     resumeAddFunds.current = null
-    // Sign-in was only a means to the on-ramp — pick the interrupted flow back
-    // up now that a session exists.
-    if (resume?.kind === 'addFunds') void startAddFunds(resume).catch(() => {})
+    if (resume?.kind !== 'addFunds') return
+    // Sign-in was only a means to the on-ramp, so pick the interrupted flow
+    // back up — but ONLY once a session actually exists. The sheet reports the
+    // same close whether the visitor signed in or cancelled, and resuming
+    // after a cancel walks straight back into "no session, open the sheet",
+    // which reopens it forever.
+    void getParaClient()
+      .isFullyLoggedIn()
+      .then(loggedIn => {
+        if (loggedIn) return startAddFunds(resume)
+      })
+      .catch(() => {})
   }, [startAddFunds])
 
   // Para owns whether its own modal is showing; the host mirrors that and our

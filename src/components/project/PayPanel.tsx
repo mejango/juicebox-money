@@ -558,6 +558,14 @@ export function PayPanel({
     }
   }, [debouncedAmount, decimals]);
 
+  const payActionLabel = notStarted
+    ? "Soon"
+    : !isConnected
+      ? "Sign in"
+      : mode === "pay"
+        ? "Pay"
+        : "Add";
+
   const insufficientBalance =
     isConnected &&
     walletBalance !== undefined &&
@@ -1989,13 +1997,7 @@ export function PayPanel({
             }
             className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
           >
-            {notStarted
-              ? "Soon"
-              : !isConnected
-                ? "Sign in"
-                : mode === "pay"
-                  ? "Pay"
-                  : "Add"}
+            {payActionLabel}
           </button>
         </div>
         <div className="mt-1.5 flex items-start justify-between gap-3">
@@ -2025,6 +2027,15 @@ export function PayPanel({
               decimals={decimals}
             />
           </div>
+          {/* The pay button lives inside the field's well, so without a
+              matching spacer this column right-aligns to the button's edge
+              instead of the field's. */}
+          <span
+            aria-hidden="true"
+            className="invisible shrink-0 px-5 text-sm font-medium"
+          >
+            {payActionLabel}
+          </span>
         </div>
         {mode === "pay" &&
         amountRaw > 0n &&

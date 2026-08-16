@@ -216,6 +216,25 @@ describe('ParaModalHost', () => {
     expect(host()!.textContent).toContain('No wallet needed')
   })
 
+  it('does not reopen the sheet when sign-in for the on-ramp is cancelled', async () => {
+    // Closing reports the same event whether the visitor signed in or gave up,
+    // so resuming unconditionally walks back into "no session, open the sheet"
+    // and the sheet becomes impossible to dismiss.
+    para.loggedIn = false
+    render(<Host request={ADD_FUNDS} />)
+    await settle()
+    expect(host()!.open).toBe(true)
+
+    const close = [...host()!.querySelectorAll('button')].find(
+      button => button.getAttribute('aria-label') === 'Close',
+    )
+    act(() => close?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await settle()
+
+    expect(host()!.open).toBe(false)
+    expect(para.initiateOnRampTransaction).not.toHaveBeenCalled()
+  })
+
   it('keeps Escape as Para’s own dismissal path', () => {
     para.isOpen = true
     render(<Host />)
