@@ -225,7 +225,11 @@ export function PriceChart({
    *  banner. Notices about missing or stale DATA stay inline — see RevnetPriceCard. */
   note?: string | null
 }) {
-  const [rangeSeconds, setRangeSeconds] = useState(365 * DAY)
+  const [rangeSeconds, setRangeSeconds] = useState(
+    // A quarter is where a project's shape is legible: long enough to show
+    // the trend, short enough that recent movement is not a smudge at the edge.
+    91 * DAY,
+  )
   const [marketPriceView, setMarketPriceView] =
     useState<MarketPriceView>('smooth')
 
