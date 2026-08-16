@@ -47,7 +47,7 @@ import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
-import { GetFunds } from "@/components/GetFunds";
+import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
@@ -137,6 +137,9 @@ type PaySurface = {
   /** Listed terminals this form doesn't recognize — a non-blocking note. */
   unknown: Address[];
 };
+
+/** Sentinel for the token menu's buy entry; never a token index. */
+const BUY_OPTION = "buy";
 
 const ROUTER_PROBE_BENEFICIARY: Address =
   "0x0000000000000000000000000000000000000001";
@@ -566,6 +569,16 @@ export function PayPanel({
       : mode === "pay"
         ? "Pay"
         : "Add";
+
+  // Offered from inside the token menu: buying the token is a way of getting
+  // one, so it belongs where the token is chosen.
+  const onRamp = useOnRamp({
+    symbol,
+    chainId,
+    needed: amountRaw,
+    balance: walletBalance,
+    decimals,
+  });
 
   const insufficientBalance =
     isConnected &&
@@ -1944,13 +1957,17 @@ export function PayPanel({
             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
           <div className="flex shrink-0 flex-col items-end justify-center gap-0.5 pr-3">
-          {contexts.length > 1 ? (
+          {contexts.length > 1 || onRamp.supported ? (
             // Valued by INDEX, not address — a token can appear direct and
             // via-router, so the option must stay in lock-step with the
             // selected context (website/ fund-loss fix).
             <TextSelect
               value={String(tokenIndex)}
               onChange={(value) => {
+                if (value === BUY_OPTION) {
+                  onRamp.buy();
+                  return;
+                }
                 const i = Number(value);
                 setTokenIndex(i);
                 // Remember the explicit pick so a refetch/chain-switch remaps
@@ -1964,12 +1981,22 @@ export function PayPanel({
               className="relative flex shrink-0 items-center gap-1 text-sm font-medium text-smoke-700"
               labelClassName=""
               selectClassName="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-              options={contexts.map((ctx, i) => ({
-                value: String(i),
-                label: ctx.symbol,
-                disabled:
-                  cartCount > 0 && !shopRoutes?.[payTokenKey(ctx)]?.supported,
-              }))}
+              options={[
+                ...contexts.map((ctx, i) => ({
+                  value: String(i),
+                  label: ctx.symbol,
+                  disabled:
+                    cartCount > 0 && !shopRoutes?.[payTokenKey(ctx)]?.supported,
+                })),
+                // Names both rails without promising to pick one: Para's
+                // on-ramp takes no payment method, so the provider's own
+                // window asks. Saying both is still worth it — bank
+                // transfers authorise far more often than cards, and nobody
+                // reaches for one they did not know was offered.
+                ...(onRamp.supported
+                  ? [{ value: BUY_OPTION, label: "Card or Bank" }]
+                  : []),
+              ]}
             />
           ) : (
             <span className="flex shrink-0 items-center text-sm font-medium text-smoke-700">
@@ -1977,14 +2004,6 @@ export function PayPanel({
             </span>
           )}
             {/* Inside the field, under the token it refers to. */}
-            <GetFunds
-              symbol={symbol}
-              chainId={chainId}
-              needed={amountRaw}
-              balance={walletBalance}
-              decimals={decimals}
-              className="text-[11px] leading-none text-smoke-500 underline underline-offset-2 hover:text-smoke-700"
-            />
           </div>
           <button
             onClick={submit}

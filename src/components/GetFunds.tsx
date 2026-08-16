@@ -40,6 +40,56 @@ function wholeUnits(amount: bigint, decimals: number): string {
   return trimmed ? `${whole}.${trimmed}` : whole
 }
 
+/**
+ * The on-ramp, for callers that supply their own affordance.
+ *
+ * `supported` is false when the token or chain has no on-ramp route, so the
+ * caller can leave the option out rather than offer a dead end.
+ *
+ * There is no card-versus-bank switch here on purpose: Para's on-ramp API
+ * takes no payment method (`OnRampMethod` is exported but consumed by
+ * nothing, and the URL builder is private), so the method is chosen inside
+ * the provider's own window. Anything offering to pick it for the visitor
+ * would be promising something we cannot deliver.
+ */
+export function useOnRamp({
+  symbol,
+  chainId,
+  needed,
+  balance,
+  decimals,
+}: {
+  symbol: string
+  chainId: number | undefined
+  needed?: bigint
+  balance?: bigint
+  decimals?: number
+}) {
+  const { requestAddFunds } = useParaAuth()
+  const asset = ASSETS[symbol?.toUpperCase() ?? '']
+  const network = chainId ? NETWORKS[chainId] : undefined
+
+  const missing =
+    needed !== undefined && balance !== undefined && needed > balance
+      ? needed - balance
+      : undefined
+  const shortfall =
+    missing !== undefined && decimals !== undefined
+      ? wholeUnits(missing, decimals) === '0'
+        ? undefined
+        : wholeUnits(missing, decimals)
+      : undefined
+
+  return {
+    supported: !!asset && !!network,
+    shortfall,
+    buy: () => {
+      if (!asset || !network) return
+      requestAddFunds({ asset, network, assetQuantity: shortfall })
+    },
+  }
+}
+
 export function GetFunds({
   symbol,
   chainId,
@@ -51,44 +101,28 @@ export function GetFunds({
 }: {
   symbol: string
   chainId: number | undefined
-  /** What the pending payment costs, if there is one. */
   needed?: bigint
-  /** What the payer holds now. */
   balance?: bigint
   decimals?: number
   /** Lets a containing menu dismiss itself as the on-ramp takes over. */
   onNavigate?: () => void
   className?: string
 }) {
-  const { requestAddFunds } = useParaAuth()
-  const asset = ASSETS[symbol?.toUpperCase() ?? '']
-  const network = chainId ? NETWORKS[chainId] : undefined
-  if (!asset || !network) return null
-
-  // Buy the difference, not the whole payment: the payer's existing balance
-  // already covers part of it, and asking them to work that out at a payment
-  // wall is how a payment gets abandoned.
-  const missing =
-    needed !== undefined && balance !== undefined && needed > balance
-      ? needed - balance
-      : undefined
-  // A shortfall under our display precision has no sensible amount to show —
-  // "Get 0 more ETH" is worse copy than no amount at all.
-  const shortfall =
-    missing !== undefined && decimals !== undefined
-      ? (wholeUnits(missing, decimals) === '0' ? undefined : wholeUnits(missing, decimals))
-      : undefined
+  const { supported, shortfall, buy } = useOnRamp({
+    symbol,
+    chainId,
+    needed,
+    balance,
+    decimals,
+  })
+  if (!supported) return null
 
   return (
     <button
       type="button"
       onClick={() => {
         onNavigate?.()
-        requestAddFunds({
-          asset,
-          network,
-          assetQuantity: shortfall,
-        })
+        buy()
       }}
       className={className}
     >
