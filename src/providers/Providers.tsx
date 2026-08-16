@@ -22,6 +22,7 @@ import {
 } from './ParaAuthContext'
 import { ProjectRouteProvider } from './ProjectRouteContext'
 import { lazyParaConnector } from './lazy-para-connector'
+import { SignInPlaceholder } from './SignInPlaceholder'
 import { externalWalletConnectors } from './wallet-connectors'
 import { verifyMarkedParaSession } from './para-session'
 import {
@@ -68,6 +69,7 @@ const transports = {
 }
 
 const ParaModalHost = lazy(() => import('./ParaModalHost'))
+
 
 /**
  * The app's single wagmi config — the one source of truth for connections,
@@ -187,7 +189,11 @@ export function Providers({ children }: PropsWithChildren) {
               that reason. Any future overlay that renders to the body needs
               the same treatment before it can be opened from a modal. */}
           {paraHostLoaded ? (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                paraRequest.kind === 'auth' ? <SignInPlaceholder /> : null
+              }
+            >
               <ParaModalHost
                 requestId={paraRequestId}
                 request={paraRequest}

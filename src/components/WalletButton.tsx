@@ -20,6 +20,7 @@ import { GetFunds } from '@/components/GetFunds'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
+import { preloadParaHost } from '@/providers/preload-para'
 import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { parseUrn } from '@/lib/urn'
 import {
@@ -382,6 +383,11 @@ export function WalletButton() {
           </button>
           <button
             onClick={openSignIn}
+            // Fetch Para's runtime as the pointer arrives, so the click has
+            // nothing left to wait for.
+            onMouseEnter={preloadParaHost}
+            onFocus={preloadParaHost}
+            onTouchStart={preloadParaHost}
             className="btn-primary min-h-[44px] whitespace-nowrap px-5 text-sm"
           >
             Sign in

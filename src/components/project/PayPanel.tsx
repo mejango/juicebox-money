@@ -66,6 +66,7 @@ import {
 import { chainName } from "@/lib/urn";
 import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
+import { preloadParaHost } from "@/providers/preload-para";
 import { resolveMarket } from "@/components/project/MarketSection";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import {
@@ -1976,6 +1977,11 @@ export function PayPanel({
           )}
           <button
             onClick={submit}
+            // When disconnected this button reads "Sign in", so warm Para's
+            // runtime on approach rather than making the click wait for it.
+            onMouseEnter={isConnected ? undefined : preloadParaHost}
+            onFocus={isConnected ? undefined : preloadParaHost}
+            onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
               busy ||
               permit2WalletKindLoading ||
