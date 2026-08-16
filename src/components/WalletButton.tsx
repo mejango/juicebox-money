@@ -387,14 +387,19 @@ export function WalletButton() {
               >
                 View account
               </Link>
-              {balanceChainId ? (
-                <GetFunds
-                  symbol="ETH"
-                  chainId={balanceChainId}
-                  onNavigate={closeMenu}
-                  className="block w-full px-4 py-3 text-left text-sm font-medium text-ink no-underline hover:bg-smoke-25"
-                />
-              ) : null}
+              {/* Both assets the on-ramp can deliver. Each hides itself where its own
+                  chain-and-asset pair has no route, so neither is a dead end. */}
+              {balanceChainId
+                ? (['ETH', 'USDC'] as const).map(symbol => (
+                    <GetFunds
+                      key={symbol}
+                      symbol={symbol}
+                      chainId={balanceChainId}
+                      onNavigate={closeMenu}
+                      className="block w-full px-4 py-3 text-left text-sm font-medium text-ink no-underline hover:bg-smoke-25"
+                    />
+                  ))
+                : null}
               <div className="mx-4 my-1 border-t border-smoke-200" />
               <button
                 onClick={() => {
