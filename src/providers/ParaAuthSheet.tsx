@@ -138,8 +138,13 @@ export default function ParaAuthSheet({
    * The URL that goes in it does not exist yet — Para answers with it a second
    * or two later — and by then the gesture is gone and `window.open` is a
    * blocked popup. So the window is opened blank and navigated when the URL
-   * lands, which is also why the visitor never has to press a second button to
-   * get there.
+   * lands.
+   *
+   * Only from a click that RELIABLY leads to one. Claiming on "Continue"
+   * covered a case that no longer exists — the code is framed — and cost every
+   * visitor a blank window flashing over the page before it was handed back. A
+   * popup that arrives unclaimed and gets blocked is one "don't see it?" click
+   * away; a blank window is in everyone's face.
    */
   const claimPopup = useCallback(() => {
     if (popupRef.current && !popupRef.current.closed) return
@@ -257,9 +262,6 @@ export default function ParaAuthSheet({
     if (identifier.kind !== 'email' && identifier.kind !== 'phone') return
     setLocalError(null)
     setPendingMethod('local')
-    // Para may answer with a portal URL; the window for it has to be claimed
-    // here, in the click.
-    claimPopup()
     try {
       await authenticateWithEmailOrPhoneAsync({
         auth:
@@ -277,7 +279,7 @@ export default function ParaAuthSheet({
     } finally {
       setPendingMethod(null)
     }
-  }, [authenticateWithEmailOrPhoneAsync, identifier, claimPopup])
+  }, [authenticateWithEmailOrPhoneAsync, identifier])
 
   const submitOAuth = useCallback(
     async (method: TOAuthMethod) => {
