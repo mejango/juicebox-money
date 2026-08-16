@@ -8,7 +8,7 @@ import {
 } from '@getpara/react-sdk-lite'
 import type { StateSnapshot, TOAuthMethod } from '@getpara/web-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BrandMark } from '@/components/BrandMarks'
+import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
 import { ModalCloseButton } from '@/components/ui/ModalShell'
 import { useWallet } from '@/hooks/useWallet'
 import { getParaClient } from './para-config'
@@ -66,13 +66,6 @@ function parseIdentifier(raw: string): Identifier {
     return { kind: 'invalid', hint: 'Add your country code, like +1.' }
   }
   return { kind: 'invalid', hint: 'Enter an email address or phone number.' }
-}
-
-/** The icon does the recognising, so the label only has to disambiguate.
- *  "Coinbase Wallet" and "Brave Wallet" are the same word twice over. */
-function shortWalletName(name: string): string {
-  if (name === 'Injected') return 'Browser'
-  return name.replace(/\s*Wallet$/i, '')
 }
 
 function messageOf(error: unknown): string | null {
@@ -354,7 +347,7 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
       {expanded ? (
         <>
           <p className="mb-2 mt-5 text-xs font-medium text-smoke-700">Socials</p>
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {OAUTH_METHODS.map(({ method, label }) => (
               <button
                 key={method}
@@ -362,12 +355,16 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
                 onClick={() => void submitOAuth(method)}
                 disabled={busy}
                 title={label}
-                className="btn-secondary flex h-16 flex-col items-center justify-center gap-1 px-1 disabled:opacity-60"
+                aria-label={label}
+                aria-busy={pendingMethod === method}
+                className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
               >
-                <BrandMark method={method} className="h-5 w-5 shrink-0" />
-                <span className="w-full truncate text-[10px] leading-none">
-                  {pendingMethod === method ? '…' : label}
-                </span>
+                <BrandMark
+                  method={method}
+                  className={`h-5 w-5 shrink-0 ${
+                    pendingMethod === method ? 'animate-pulse' : ''
+                  }`}
+                />
               </button>
             ))}
           </div>
@@ -397,29 +394,30 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
           {connectors.length > 0 ? (
             <>
               <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">Wallets</p>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {connectors.map(connector => (
                   <button
                     key={connector.id}
                     type="button"
                     title={connector.name}
+                    aria-label={connector.name}
                     onClick={() => {
                       connectWith(connector.id)
                         .then(onClose)
                         .catch(cause => setLocalError(messageOf(cause)))
                     }}
-                    className="btn-secondary flex h-16 flex-col items-center justify-center gap-1 px-1"
+                    className="btn-secondary flex h-10 w-10 items-center justify-center !px-0"
                   >
                     {connector.icon ? (
                       // EIP-6963 hands us the wallet's own mark as a data URI.
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={connector.icon} alt="" className="h-5 w-5 shrink-0" />
                     ) : (
-                      <span className="h-5 w-5 shrink-0 rounded-full bg-smoke-200" />
+                      <WalletFallbackMark
+                        id={connector.id}
+                        className="h-5 w-5 shrink-0"
+                      />
                     )}
-                    <span className="w-full truncate text-[10px] leading-none">
-                      {shortWalletName(connector.name)}
-                    </span>
                   </button>
                 ))}
               </div>
