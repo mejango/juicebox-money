@@ -77,7 +77,7 @@ export const OPERATOR_POWERS = [
   "Point the precommitted split limit at different recipients — never enlarge it",
   "Add, remove, and re-price shop items, mint them for free, and change their discounts",
   "Pick the market pool used for buybacks, and how far back its price is averaged",
-  "Add the terminal that lets payers pay in any token",
+  "Change which of the allowed terminals accepts payments, including the one that lets payers pay in any token",
   "Extend the revnet to new approved chains, and pause a bridge that looks unsafe",
   "Sign messages on behalf of the revnet's token",
   "Hand the operator role to another address",
