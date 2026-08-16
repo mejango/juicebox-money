@@ -36,6 +36,11 @@ export type ParaOnRampNetwork =
 export type ParaAddFundsRequest = {
   asset: ParaOnRampAsset
   network: ParaOnRampNetwork
+  /** How much of `asset` to buy, in whole units. Seeds the provider's amount
+   *  field so a payer who is short does not have to work out the difference.
+   *  Only the headless path can carry it — Para's own add-funds modal takes
+   *  no amount — so the embedded wallet still starts from an empty field. */
+  assetQuantity?: string
 }
 
 export type ParaRequest =

@@ -2017,7 +2017,13 @@ export function PayPanel({
                 Balance: {formatTokenAmount(walletBalance, decimals)}
               </span>
             ) : null}
-            <GetFunds symbol={symbol} chainId={chainId} />
+            <GetFunds
+              symbol={symbol}
+              chainId={chainId}
+              needed={amountRaw}
+              balance={walletBalance}
+              decimals={decimals}
+            />
           </div>
         </div>
         {mode === "pay" &&

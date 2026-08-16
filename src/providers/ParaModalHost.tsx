@@ -70,6 +70,9 @@ function Driver({
           defaultAsset: asset,
           defaultNetwork: network,
           externalWalletAddress: address,
+          ...(target.assetQuantity
+            ? { assetQuantity: target.assetQuantity }
+            : {}),
         },
       })
     },
