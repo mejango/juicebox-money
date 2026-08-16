@@ -2248,25 +2248,27 @@ export function CreateForm() {
                 : "Allow changes"
             }
             blurb={
-              flavor === "revnet"
-                ? "One address gets exactly these powers over the revnet once it's live:"
-                : "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
+              flavor === "revnet" ? (
+                <>
+                  One address gets exactly these powers over the revnet once
+                  it&apos;s live:
+                  {/* The whole list, not a summary of it: every line is a permission the
+                      contracts actually grant, so a reader can check what they are agreeing
+                      to. Spans rather than a `<ul>` — this row is a button, which takes only
+                      phrasing content. */}
+                  {OPERATOR_POWERS.map(power => (
+                    <span key={power} className="mt-1 flex gap-2">
+                      <span aria-hidden="true">&bull;</span>
+                      <span>{power}</span>
+                    </span>
+                  ))}
+                  <span className="mt-2 block">{OPERATOR_LIMITS}</span>
+                </>
+              ) : (
+                "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
+              )
             }
           />
-          {/* The whole list, not a summary of it: every line is a permission the contracts
-              actually grant, so a reader can check what they are agreeing to. */}
-          {flavor === "revnet" ? (
-            <div className="mt-2 pl-9">
-              <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-smoke-700">
-                {OPERATOR_POWERS.map(power => (
-                  <li key={power}>{power}</li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                {OPERATOR_LIMITS}
-              </p>
-            </div>
-          ) : null}
           {authorityEnabled ? (
             <div className="mt-4 pl-1">
               <span className="field-label">

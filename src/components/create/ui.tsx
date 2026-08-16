@@ -1,5 +1,7 @@
 'use client'
 
+import type { ReactNode } from 'react'
+
 /** Shared create-flow UI primitives. */
 
 /** Render " | "-separated text with subtle, spaced pipes. */
@@ -55,7 +57,9 @@ function SelectableRow({
   onActivate: () => void
   disabled: boolean
   title: string
-  blurb: string
+  /** A node, not just a string: some rows carry a list of what they grant. It stays phrasing
+   *  content — this row is a `<button>`, and a `<ul>` inside one is invalid. */
+  blurb: ReactNode
 }) {
   return (
     <button
@@ -133,7 +137,7 @@ export function CheckRow({
   onToggle: () => void
   disabled: boolean
   title: string
-  blurb: string
+  blurb: ReactNode
 }) {
   return (
     <SelectableRow
