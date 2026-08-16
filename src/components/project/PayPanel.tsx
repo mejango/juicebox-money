@@ -30,7 +30,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
-import { ModalCloseButton } from "@/components/ui/ModalShell";
+import { ModalCloseButton, ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   encodeFunctionData,
@@ -47,6 +47,8 @@ import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { useTokenBalances } from "@/hooks/useTokenBalances";
+import { defaultsToDollars, payButtonAction } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
@@ -345,6 +347,11 @@ export function PayPanel({
   // ETH/USDC router option never shadows a USDC/ETH project's real token — the
   // documented fund-loss desync. (website/ chooseRefinedPayToken parity.)
   const [tokenTouched, setTokenTouched] = useState(false);
+  /** "$" is picked in the token menu: the payer has dollars, not the token this
+   *  project takes. Nothing is bought until they press Pay — the amount is
+   *  theirs to type first. */
+  const [payWithDollars, setPayWithDollars] = useState(false);
+  const [buyExplainerOpen, setBuyExplainerOpen] = useState(false);
   // The (address+route) identity of the user's pick, so a background refetch or
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null);
@@ -585,6 +592,35 @@ export function PayPanel({
     walletBalance !== undefined &&
     amountRaw > 0n &&
     amountRaw > walletBalance;
+
+  // Every accepted token, not only the selected one: whether this wallet can pay AT ALL is what
+  // decides the default choice below, and one token's balance cannot answer that.
+  const acceptedTokens = useMemo(
+    () =>
+      contexts.map(ctx => ({
+        address: ctx.token,
+        isNative: ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase(),
+      })),
+    [contexts],
+  );
+  const { balances: acceptedBalances } = useTokenBalances(
+    acceptedTokens,
+    chainId,
+  );
+  const holdsNothing = defaultsToDollars({
+    isConnected,
+    balances: acceptedTokens.map(
+      token => acceptedBalances.get(token.address) ?? 0n,
+    ),
+  });
+
+  // A wallet with nothing in it cannot pay in any of these tokens, so the menu opens on "$"
+  // rather than on a token the payer would have to go and acquire first. Their own choice wins
+  // the moment they make one.
+  useEffect(() => {
+    if (tokenTouched) return;
+    setPayWithDollars(holdsNothing);
+  }, [holdsNothing, tokenTouched]);
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
   const { data: shop } = useQuery({
@@ -1435,10 +1471,16 @@ export function PayPanel({
   };
 
   const submit = () => {
-    if (!isConnected || !address) {
+    const action = payButtonAction({ isConnected, payWithDollars });
+    if (action === "signIn") {
       openSignIn();
       return;
     }
+    if (action === "buyFirst") {
+      setBuyExplainerOpen(true);
+      return;
+    }
+    if (!address) return;
     const creditOnlyCheckout =
       mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
@@ -1962,12 +2004,17 @@ export function PayPanel({
             // via-router, so the option must stay in lock-step with the
             // selected context (website/ fund-loss fix).
             <TextSelect
-              value={String(tokenIndex)}
+              value={payWithDollars ? BUY_OPTION : String(tokenIndex)}
               onChange={(value) => {
+                setTokenTouched(true);
                 if (value === BUY_OPTION) {
-                  onRamp.buy();
+                  // Selecting dollars buys nothing yet. The payer types what
+                  // they want to spend first, and Pay explains the swap they
+                  // are about to make.
+                  setPayWithDollars(true);
                   return;
                 }
+                setPayWithDollars(false);
                 const i = Number(value);
                 setTokenIndex(i);
                 // Remember the explicit pick so a refetch/chain-switch remaps
@@ -1993,9 +2040,10 @@ export function PayPanel({
                 // window asks. Saying both is still worth it — bank
                 // transfers authorise far more often than cards, and nobody
                 // reaches for one they did not know was offered.
-                ...(onRamp.supported
-                  ? [{ value: BUY_OPTION, label: "Card or Bank" }]
-                  : []),
+                // "$" rather than a description of the rails: it is a
+                // currency in a list of currencies, and what it costs to use is
+                // said at Pay, where it matters.
+                ...(onRamp.supported ? [{ value: BUY_OPTION, label: "$" }] : []),
               ]}
             />
           ) : (
@@ -2026,10 +2074,15 @@ export function PayPanel({
                   shopCreditsLoading ||
                   !shopMatchesToken)) ||
               (surface?.pausePay && mode === "pay") ||
+              // Paying in dollars is a purchase, not a send: it needs an
+              // amount and nothing else. The checks below are about a token
+              // this payer does not hold yet.
               (isConnected &&
+                !payWithDollars &&
                 ((amountRaw <= 0n &&
                   !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
-                  (mode === "pay" && !previewReady)))
+                  (mode === "pay" && !previewReady))) ||
+              (isConnected && payWithDollars && amount.trim() === "")
             }
             className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
           >
@@ -2069,7 +2122,40 @@ export function PayPanel({
             {payActionLabel}
           </span>
         </div>
-        {mode === "pay" &&
+        {/* What "$" costs, said where it is spent. A payer who picked dollars is one step from a
+          purchase they did not ask for, so the swap is named before it starts rather than
+          explained by the provider's window appearing. */}
+      {buyExplainerOpen ? (
+        <ModalShell
+          title="First, buy ETH or USDC"
+          maxWidth="max-w-md"
+          onClose={() => setBuyExplainerOpen(false)}
+        >
+          <div className="px-5 py-5">
+            <p className="text-sm leading-relaxed text-smoke-700">
+              Payments to this project take ETH or USDC — that is what settles instantly, runs
+              its automated rules, and sends out its rewards. You&apos;ll use your card or bank
+              to buy some first, then come back here to pay.
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setBuyExplainerOpen(false);
+                  onRamp.buy({
+                    fiatQuantity: amount.trim() || undefined,
+                    display: "embed",
+                  });
+                }}
+                className="btn-primary h-10 px-5 text-sm"
+              >
+                Buy ETH/USDC
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      ) : null}
+      {mode === "pay" &&
         amountRaw > 0n &&
         !previewError &&
         (previewLoading || (bestRoute && bestRoute.beneficiaryTokenCount > 0n)) ? (

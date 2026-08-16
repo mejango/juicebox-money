@@ -83,9 +83,19 @@ export function useOnRamp({
   return {
     supported: !!asset && !!network,
     shortfall,
-    buy: () => {
+    buy: (options?: { fiatQuantity?: string; display?: 'window' | 'embed' }) => {
       if (!asset || !network) return
-      requestAddFunds({ asset, network, assetQuantity: shortfall })
+      requestAddFunds({
+        asset,
+        network,
+        // A dollar figure is what the payer typed; an asset shortfall is what
+        // we worked out. Never both — the provider would have to pick one and
+        // the wrong one is a wrong price.
+        ...(options?.fiatQuantity
+          ? { fiatQuantity: options.fiatQuantity }
+          : { assetQuantity: shortfall }),
+        display: options?.display,
+      })
     },
   }
 }
@@ -97,6 +107,7 @@ export function GetFunds({
   balance,
   decimals,
   onNavigate,
+  label,
   className = 'text-xs text-smoke-700 underline underline-offset-2 hover:text-ink',
 }: {
   symbol: string
@@ -106,6 +117,9 @@ export function GetFunds({
   decimals?: number
   /** Lets a containing menu dismiss itself as the on-ramp takes over. */
   onNavigate?: () => void
+  /** Overrides the derived label. Both assets ride the same networks, so a menu can offer
+   *  them as one entry rather than two rows that always appear together. */
+  label?: string
   className?: string
 }) {
   const { supported, shortfall, buy } = useOnRamp({
@@ -126,7 +140,7 @@ export function GetFunds({
       }}
       className={className}
     >
-      {shortfall ? `Get ${shortfall} more ${symbol}` : `Get ${symbol}`}
+      {label ?? (shortfall ? `Get ${shortfall} more ${symbol}` : `Get ${symbol}`)}
     </button>
   )
 }

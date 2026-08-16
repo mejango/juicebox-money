@@ -71,3 +71,48 @@ export function OnRampHandoff({
     </div>
   )
 }
+
+/**
+ * The provider's own page, inside our dialog.
+ *
+ * For a purchase started mid-payment: sending someone to another window in the
+ * middle of paying loses the thread of what they were doing. Para's portal
+ * talks to its opener over `postMessage`, so it is built to be embedded — but
+ * whether it permits framing is the provider's call, not ours, which is why the
+ * window is still one click away below.
+ */
+export function OnRampFrame({
+  url,
+  onClose,
+}: {
+  url: string
+  onClose: () => void
+}) {
+  return (
+    <div className="w-full">
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="font-agrandir text-xl font-medium text-ink">
+          Buy ETH or USDC
+        </h2>
+        <ModalCloseButton onClick={onClose} aria-label="Close" className="-mr-2 -mt-1" />
+      </div>
+      <p className="mt-1 text-sm text-smoke-700">
+        Your wallet address is already filled in. Come back here when it&apos;s
+        done.
+      </p>
+      <iframe
+        src={url}
+        title="Buy ETH or USDC"
+        className="mt-3 h-[32rem] w-full rounded-lg border border-smoke-200"
+      />
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+      >
+        Open in a separate window instead
+      </a>
+    </div>
+  )
+}
