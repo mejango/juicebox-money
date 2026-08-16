@@ -22,16 +22,41 @@ export function markParaSession(active: boolean) {
   }
 }
 
+/** The two assets Para's on-ramp can deliver that we actually accept. */
+export type ParaOnRampAsset = 'ETHEREUM' | 'USDC'
+
+/** Para names networks itself; only the ones we deploy to are mapped. */
+export type ParaOnRampNetwork =
+  | 'ETHEREUM'
+  | 'BASE'
+  | 'ARBITRUM'
+  | 'OPTIMISM'
+  | 'SEPOLIA'
+
+export type ParaAddFundsRequest = {
+  asset: ParaOnRampAsset
+  network: ParaOnRampNetwork
+}
+
+export type ParaRequest =
+  | { kind: 'auth' }
+  | ({ kind: 'addFunds' } & ParaAddFundsRequest)
+
 export type ParaAuthController = {
   modalOpen: boolean
   sessionVersion: number
   requestSignIn: () => void
+  /** Open the on-ramp. Signs the user into Para first when they have no
+   *  session — the on-ramp is account-scoped even when it delivers to an
+   *  external address. */
+  requestAddFunds: (request: ParaAddFundsRequest) => void
 }
 
 export const ParaAuthContext = createContext<ParaAuthController>({
   modalOpen: false,
   sessionVersion: 0,
   requestSignIn: () => {},
+  requestAddFunds: () => {},
 })
 
 export function useParaAuth() {

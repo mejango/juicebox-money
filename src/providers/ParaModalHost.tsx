@@ -2,55 +2,138 @@
 
 import { PortalContainerProvider } from '@getpara/react-component-library'
 import { ParaProvider, useModal } from '@getpara/react-sdk-lite'
-import { useEffect, useRef, useState } from 'react'
+import {
+  Network,
+  OnRampAsset,
+  OnRampProvider,
+  OnRampPurchaseType,
+} from '@getpara/web-sdk'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { getParaClient, PARA_APP } from './para-config'
+import { useAccount } from 'wagmi'
+import type { ParaRequest } from './ParaAuthContext'
+import { getParaClient, PARA_APP, PARA_ONRAMP_PROVIDER } from './para-config'
+import ParaAuthSheet from './ParaAuthSheet'
 import '@getpara/react-sdk-lite/styles.css'
 
-function ModalDriver({
+function Driver({
   host,
   requestId,
+  request,
   onOpenChange,
   onSettled,
 }: {
   host: HTMLDialogElement
   requestId: number
+  request: ParaRequest
   onOpenChange: (open: boolean) => void
   onSettled: () => void
 }) {
   const { isOpen, openModal } = useModal()
+  const { address, connector } = useAccount()
+  const [sheetOpen, setSheetOpen] = useState(false)
   const handledRequest = useRef(0)
   const wasOpen = useRef(false)
+  // Set when the on-ramp had to sign the user in first, so it can resume once
+  // the sheet closes.
+  const resumeAddFunds = useRef<ParaRequest | null>(null)
+
+  const startAddFunds = useCallback(
+    async (target: Extract<ParaRequest, { kind: 'addFunds' }>) => {
+      const para = getParaClient()
+      // Both on-ramp paths are keyed to a Para user, even the one that
+      // delivers to someone else's wallet. No session means sign in first.
+      if (!(await para.isFullyLoggedIn().catch(() => false))) {
+        resumeAddFunds.current = target
+        setSheetOpen(true)
+        return
+      }
+      // Para's own modal owns the embedded wallet's add-funds screen and gives
+      // the user a provider picker for free. It has no address parameter
+      // though, so an external wallet has to go through the headless call.
+      if (connector?.id === 'para' || !address) {
+        openModal({ step: 'ACCOUNT_ADD_FUNDS_BUY' })
+        return
+      }
+      // Our domain strings and Para's enums share their values, so the enum
+      // objects double as the lookup table.
+      const asset = OnRampAsset[target.asset]
+      const network = Network[target.network]
+      await para.initiateOnRampTransaction({
+        externalWalletAddress: address,
+        shouldOpenPopup: true,
+        params: {
+          type: OnRampPurchaseType.BUY,
+          provider: OnRampProvider[PARA_ONRAMP_PROVIDER],
+          asset,
+          network,
+          defaultAsset: asset,
+          defaultNetwork: network,
+          externalWalletAddress: address,
+        },
+      })
+    },
+    [address, connector, openModal],
+  )
 
   useEffect(() => {
     if (requestId <= handledRequest.current) return
     handledRequest.current = requestId
-    openModal()
-  }, [requestId, openModal])
+    if (request.kind === 'auth') {
+      setSheetOpen(true)
+      return
+    }
+    void startAddFunds(request).catch(() => {
+      // A declined popup or an on-ramp provider the portal has switched off.
+      // Nothing to recover: the affordance is optional either way.
+    })
+  }, [requestId, request, startAddFunds])
 
-  // Para owns whether its modal is showing; the host only mirrors that into
-  // the top layer. `showModal()` throws on a dialog that is already open.
+  const closeSheet = useCallback(() => {
+    setSheetOpen(false)
+    const resume = resumeAddFunds.current
+    resumeAddFunds.current = null
+    // Sign-in was only a means to the on-ramp — pick the interrupted flow back
+    // up now that a session exists.
+    if (resume?.kind === 'addFunds') void startAddFunds(resume).catch(() => {})
+  }, [startAddFunds])
+
+  // Para owns whether its own modal is showing; the host mirrors that and our
+  // sheet into the top layer. `showModal()` throws on an already-open dialog.
+  const open = isOpen || sheetOpen
   useEffect(() => {
-    if (isOpen && !host.open) host.showModal()
-    else if (!isOpen && host.open) host.close()
-  }, [host, isOpen])
+    if (open && !host.open) host.showModal()
+    else if (!open && host.open) host.close()
+  }, [host, open])
 
   useEffect(() => {
-    onOpenChange(isOpen)
-    if (wasOpen.current && !isOpen) onSettled()
-    wasOpen.current = isOpen
-  }, [isOpen, onOpenChange, onSettled])
+    onOpenChange(open)
+    if (wasOpen.current && !open) onSettled()
+    wasOpen.current = open
+  }, [open, onOpenChange, onSettled])
 
-  return null
+  if (!sheetOpen) return null
+  // The host contributes top-layer membership and nothing else — it paints no
+  // backdrop and its `.modal-dialog` styling is `<dialog>`-scoped — so the
+  // sheet brings its own dimmed surface and panel.
+  return (
+    <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
+      <div className="card w-full max-w-sm p-6">
+        <ParaAuthSheet onClose={closeSheet} />
+      </div>
+    </div>
+  )
 }
 
-/** Loaded only after a user requests embedded email/social authentication. */
+/** Loaded only after a user requests embedded sign-in or the on-ramp. */
 export default function ParaModalHost({
   requestId,
+  request,
   onOpenChange,
   onSettled,
 }: {
   requestId: number
+  request: ParaRequest
   onOpenChange: (open: boolean) => void
   onSettled: () => void
 }) {
@@ -85,24 +168,33 @@ export default function ParaModalHost({
 
   return createPortal(
     <PortalContainerProvider container={host}>
+      {/* Authentication is ours (ParaAuthSheet); Para's packaged modal stays
+          mounted only to render the add-funds step, which has no headless
+          equivalent for the embedded wallet. Its theme is therefore only ever
+          seen on that screen. */}
       <ParaProvider
         paraClientConfig={paraClient}
         config={{ appName: PARA_APP.appName }}
         paraModalConfig={{
           authLayout: ['AUTH:FULL'],
           oAuthMethods: ['GOOGLE', 'TWITTER', 'APPLE', 'DISCORD', 'FARCASTER'],
+          // Bone and ink with Bluebs as the accent, in Beatrice — the same
+          // palette the rest of the site draws from.
           theme: {
             mode: 'light',
             backgroundColor: '#FFF7E8',
-            foregroundColor: '#5777EB',
-            borderRadius: 'md',
+            foregroundColor: '#1A1A1A',
+            accentColor: '#5777EB',
+            font: 'Beatrice',
+            borderRadius: 'lg',
           },
         }}
         externalWalletConfig={{ wallets: [] }}
       >
-        <ModalDriver
+        <Driver
           host={host}
           requestId={requestId}
+          request={request}
           onOpenChange={onOpenChange}
           onSettled={onSettled}
         />

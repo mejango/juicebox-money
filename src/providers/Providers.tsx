@@ -15,9 +15,14 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { getDwellirRpcUrl } from '@/lib/dwellir'
 import { installQueryPersistence } from '@/lib/query-persist'
-import { ParaAuthContext } from './ParaAuthContext'
+import {
+  ParaAuthContext,
+  type ParaAddFundsRequest,
+  type ParaRequest,
+} from './ParaAuthContext'
 import { ProjectRouteProvider } from './ProjectRouteContext'
 import { lazyParaConnector } from './lazy-para-connector'
+import { externalWalletConnectors } from './wallet-connectors'
 import { verifyMarkedParaSession } from './para-session'
 import {
   arbitrum,
@@ -66,17 +71,22 @@ const ParaModalHost = lazy(() => import('./ParaModalHost'))
 
 /**
  * The app's single wagmi config — the one source of truth for connections,
- * chain switching, and writes. Para has a stable, publicly configured lazy
- * connector: its SDK is not imported until a marked session is restored or an
- * auth attempt settles. EIP-6963 discovery plus a generic injected fallback
- * cover browser wallets without eager vendor SDKs.
+ * chain switching, and writes. EIP-6963 discovery plus a generic injected
+ * fallback cover browser wallets. Every remaining wallet — Para, WalletConnect,
+ * Coinbase, Safe — sits behind a lazy delegate, so no vendor SDK is downloaded
+ * until that wallet is picked or restored. `reconnect()` probes every connector
+ * on mount, which is exactly what those delegates short-circuit.
  */
 export const wagmiConfig = createConfig({
   chains: SUPPORTED_CHAINS,
   transports,
   connectors: IS_DETERMINISTIC_BROWSER
     ? []
-    : [injected({ shimDisconnect: true }), lazyParaConnector()],
+    : [
+        injected({ shimDisconnect: true }),
+        lazyParaConnector(),
+        ...externalWalletConnectors(),
+      ],
   multiInjectedProviderDiscovery: !IS_DETERMINISTIC_BROWSER,
   ssr: true,
 })
@@ -121,6 +131,7 @@ export function Providers({ children }: PropsWithChildren) {
   }, [queryClient])
   const [paraHostLoaded, setParaHostLoaded] = useState(false)
   const [paraRequestId, setParaRequestId] = useState(0)
+  const [paraRequest, setParaRequest] = useState<ParaRequest>({ kind: 'auth' })
   const [paraModalOpen, setParaModalOpen] = useState(false)
   const [paraSessionVersion, setParaSessionVersion] = useState(0)
 
@@ -135,6 +146,13 @@ export function Providers({ children }: PropsWithChildren) {
   const requestSignIn = useCallback(() => {
     if (IS_DETERMINISTIC_BROWSER) return
     setParaHostLoaded(true)
+    setParaRequest({ kind: 'auth' })
+    setParaRequestId(current => current + 1)
+  }, [])
+  const requestAddFunds = useCallback((request: ParaAddFundsRequest) => {
+    if (IS_DETERMINISTIC_BROWSER) return
+    setParaHostLoaded(true)
+    setParaRequest({ kind: 'addFunds', ...request })
     setParaRequestId(current => current + 1)
   }, [])
   const markParaSettled = useCallback(
@@ -146,8 +164,9 @@ export function Providers({ children }: PropsWithChildren) {
       modalOpen: paraModalOpen,
       sessionVersion: paraSessionVersion,
       requestSignIn,
+      requestAddFunds,
     }),
-    [paraModalOpen, paraSessionVersion, requestSignIn],
+    [paraModalOpen, paraSessionVersion, requestSignIn, requestAddFunds],
   )
 
   return (
@@ -171,6 +190,7 @@ export function Providers({ children }: PropsWithChildren) {
             <Suspense fallback={null}>
               <ParaModalHost
                 requestId={paraRequestId}
+                request={paraRequest}
                 onOpenChange={setParaModalOpen}
                 onSettled={markParaSettled}
               />

@@ -16,6 +16,7 @@ import { erc20Abi, formatUnits, isAddress, type Address } from 'viem'
 import { useAccount, useBalance, useConfig, useReadContract } from 'wagmi'
 import { getBalance, readContract } from 'wagmi/actions'
 import { AddressLabel } from '@/components/ui/AddressLabel'
+import { GetFunds } from '@/components/GetFunds'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
@@ -477,6 +478,14 @@ export function WalletButton() {
               >
                 View account
               </Link>
+              {balanceChainId ? (
+                <GetFunds
+                  symbol="ETH"
+                  chainId={balanceChainId}
+                  onNavigate={closeMenu}
+                  className="block w-full px-4 py-3 text-left text-sm font-medium text-ink no-underline hover:bg-smoke-25"
+                />
+              ) : null}
               <div className="mx-4 my-1 border-t border-smoke-200" />
               <button
                 onClick={() => {

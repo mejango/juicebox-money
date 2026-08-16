@@ -49,7 +49,11 @@ module.exports = phase => ({
     // Para's Wagmi bridge imports the connector barrel for `injected`. Wagmi 3
     // deliberately makes the barrel's vendor SDKs optional, so resolve that
     // import to core's public connector export instead of requiring unused
-    // Coinbase, WalletConnect, Safe, Tempo, and Porto peers.
+    // Tempo, Porto, MetaMask-SDK and Base-Account peers.
+    //
+    // The `$` anchors this to the barrel alone. Our own wallets import the
+    // per-connector subpaths (`wagmi/connectors/coinbaseWallet`, …), which are
+    // unaffected and pull no peer we have not installed.
     config.resolve.alias['wagmi/connectors$'] = '@wagmi/core'
     // Other optional integrations referenced by lazy Para modules are unused.
     config.resolve.alias['@x402/core'] = false

@@ -11,6 +11,25 @@ export const PARA_APP = {
   appUrl: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://juicebox.money',
 }
 
+const ONRAMP_PROVIDERS = ['STRIPE', 'MOONPAY', 'RAMP', 'CDP', 'MERCURYO'] as const
+
+/** The headless on-ramp call refuses to run without an explicit provider, and
+ *  which ones are live is a Para dashboard setting rather than a code one —
+ *  Stripe and MoonPay are key-less toggles, Ramp needs KYB onboarding.
+ *
+ *  Clamped rather than trusted: an unrecognized value makes Para throw deep
+ *  inside the call, which surfaces as a button that silently does nothing. */
+export const PARA_ONRAMP_PROVIDER = ((): (typeof ONRAMP_PROVIDERS)[number] => {
+  const configured = process.env.NEXT_PUBLIC_PARA_ONRAMP_PROVIDER
+  if (!configured) return 'STRIPE'
+  const match = ONRAMP_PROVIDERS.find(provider => provider === configured)
+  if (match) return match
+  console.warn(
+    `Ignoring unknown NEXT_PUBLIC_PARA_ONRAMP_PROVIDER "${configured}" — using STRIPE.`,
+  )
+  return 'STRIPE'
+})()
+
 let client: ParaWeb | undefined
 
 /** Constructing Para starts its worker/session machinery. Keep the singleton

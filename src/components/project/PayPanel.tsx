@@ -46,6 +46,8 @@ import { usePublicClient } from "wagmi";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
+import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { GetFunds } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
@@ -505,6 +507,15 @@ export function PayPanel({
   const isNative =
     context?.token.toLowerCase() === NATIVE_TOKEN.toLowerCase() || !context;
 
+  // What the payer can actually spend. Without this the form happily submits a
+  // payment the wallet then rejects, with no warning anywhere in the UI.
+  const { balance: walletBalance } = useTokenBalance({
+    token: context?.token,
+    chainId,
+    isNative,
+    enabled: isConnected,
+  });
+
   // Keep the index in lock-step with the token list as it (re)resolves. If the
   // user hasn't touched the selector, always default to list[0] (the real
   // accounting token). If they have, re-find their exact pick (address+route);
@@ -546,6 +557,12 @@ export function PayPanel({
       return 0n;
     }
   }, [debouncedAmount, decimals]);
+
+  const insufficientBalance =
+    isConnected &&
+    walletBalance !== undefined &&
+    amountRaw > 0n &&
+    amountRaw > walletBalance;
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
   const { data: shop } = useQuery({
@@ -1981,11 +1998,28 @@ export function PayPanel({
                   : "Add"}
           </button>
         </div>
-        {notStarted ? (
-          <p className="mt-1.5 text-xs text-smoke-700">
-            Starts in {formatStartCountdown(startsAt - now)}.
-          </p>
-        ) : null}
+        <div className="mt-1.5 flex items-start justify-between gap-3">
+          <div>
+            {notStarted ? (
+              <p className="text-xs text-smoke-700">
+                Starts in {formatStartCountdown(startsAt - now)}.
+              </p>
+            ) : null}
+            {insufficientBalance ? (
+              <p className="text-xs text-error-500">
+                You don&apos;t have enough {symbol} on {payChainName(chainId)}.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-0.5">
+            {isConnected && walletBalance !== undefined ? (
+              <span className="text-xs text-smoke-700">
+                Balance: {formatTokenAmount(walletBalance, decimals)}
+              </span>
+            ) : null}
+            <GetFunds symbol={symbol} chainId={chainId} />
+          </div>
+        </div>
         {mode === "pay" &&
         amountRaw > 0n &&
         !previewError &&

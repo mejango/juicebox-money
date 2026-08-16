@@ -22,7 +22,11 @@ const budgets = {
     '/[urn]/page': 570 * KIB,
     '/create/page': 465 * KIB,
   },
-  allScripts: 1510 * KIB,
+  // Counts every emitted chunk, including ones a visitor may never download.
+  // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
+  // of strictly lazy vendor SDK here; the per-route budgets above and the
+  // per-SDK lazy-load assertions below are what actually protect first paint.
+  allScripts: 2400 * KIB,
   largestChunk: 450 * KIB,
   styles: 32 * KIB,
 }
@@ -192,6 +196,40 @@ if (!chunks.length) {
       }
     }
     process.stdout.write('PASS Para wallet runtime is lazy-loaded\n')
+  }
+
+  // Same contract for the other vendor wallet SDKs. wagmi's `reconnect()`
+  // calls `getProvider()` on every configured connector, so any of these can
+  // become an eager download from one missing `shouldRestore` gate — and
+  // WalletConnect's SDK alone is larger than the whole per-route budget.
+  //
+  // Markers must be strings only the vendor bundle can contain — never a
+  // connector id or display name, which our own source carries and which would
+  // flag the module that merely *references* the wallet.
+  const vendorWallets = [
+    ['WalletConnect', ['walletconnect.org', 'wc@2:', '@reown/appkit']],
+    ['Coinbase Wallet', ['CoinbaseWalletSDK', 'keys.coinbase.com', 'walletlink']],
+    ['Safe', ['safe-apps-provider', 'SafeAppProvider']],
+  ]
+  for (const [label, markers] of vendorWallets) {
+    const vendorFiles = new Set(
+      chunks
+        .filter(path => {
+          const source = readFileSync(path, 'utf8')
+          return markers.some(marker => source.includes(marker))
+        })
+        .map(path => relative(distDir, path).split(sep).join('/')),
+    )
+    if (!vendorFiles.size) continue
+    const eager = []
+    for (const route of ['/page', '/[urn]/page', '/create/page']) {
+      eager.push(...(pages[route] ?? []).filter(file => vendorFiles.has(file)))
+    }
+    if (eager.length) {
+      fail(`${label} SDK is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
+    } else {
+      process.stdout.write(`PASS ${label} SDK is lazy-loaded\n`)
+    }
   }
 }
 
