@@ -306,10 +306,16 @@ export function WalletButton() {
         <button
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
-          className="btn-secondary flex min-h-[44px] items-center gap-2 whitespace-nowrap px-4 text-sm"
+          className="btn-secondary flex min-h-[44px] items-center gap-2 whitespace-nowrap px-4 py-1.5 text-sm"
         >
-          <span className="h-2 w-2 rounded-full bg-melon-500" />
-          <AddressLabel address={address} />
+          <span className="h-2 w-2 shrink-0 rounded-full bg-melon-500" />
+          {/* The state is the headline; which account is the detail. */}
+          <span className="flex flex-col items-start leading-tight">
+            <span className="font-medium">Signed in</span>
+            <span className="text-[11px] font-normal text-smoke-600">
+              <AddressLabel address={address} />
+            </span>
+          </span>
         </button>
       ) : (
         // The sheet now carries every way in — email, phone, socials, wallets —

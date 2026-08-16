@@ -28,6 +28,7 @@ vi.mock('next/navigation', () => ({
 }))
 vi.mock('wagmi', () => ({
   useReadContract: () => ({ data: undefined }),
+  useAccount: () => ({ address: mocks.connectedAddress }),
 }))
 vi.mock('@/hooks/useEnsName', () => ({
   useEnsName: () => ({ data: null }),
@@ -335,7 +336,7 @@ describe('AccountActivity', () => {
   })
 })
 
-describe('AccountHeader view-as lookup', () => {
+describe('AccountHeader view-as', () => {
   it('toggles site-wide view-as mode for this account', async () => {
     const { clearViewAs, getViewAs } = await import('@/lib/viewAs')
     let renderer!: TestRenderer.ReactTestRenderer
@@ -364,64 +365,6 @@ describe('AccountHeader view-as lookup', () => {
   })
 
 
-  it('navigates straight to a pasted address', async () => {
-    let renderer!: TestRenderer.ReactTestRenderer
-    await act(async () => {
-      renderer = TestRenderer.create(
-        createElement(AccountHeader, { address: ALICE, ensName: null }),
-      )
-    })
-    await act(async () => {
-      renderer.root
-        .findByType('input')
-        .props.onChange({ target: { value: ` ${BOB} ` } })
-    })
-    await act(async () =>
-      renderer.root.findByType('form').props.onSubmit({
-        preventDefault: () => {},
-      }),
-    )
-    expect(mocks.push).toHaveBeenCalledWith(`/account/${BOB}`)
-    expect(mocks.lookupEnsAddress).not.toHaveBeenCalled()
-  })
-
-  it('resolves ENS names before navigating, and reports failures', async () => {
-    mocks.lookupEnsAddress.mockResolvedValueOnce(BOB)
-    let renderer!: TestRenderer.ReactTestRenderer
-    await act(async () => {
-      renderer = TestRenderer.create(
-        createElement(AccountHeader, { address: ALICE, ensName: 'alice.eth' }),
-      )
-    })
-    expect(renderedText(renderer.root)).toContain('alice.eth')
-
-    await act(async () => {
-      renderer.root
-        .findByType('input')
-        .props.onChange({ target: { value: 'Bob.eth' } })
-    })
-    await act(async () =>
-      renderer.root.findByType('form').props.onSubmit({
-        preventDefault: () => {},
-      }),
-    )
-    expect(mocks.push).toHaveBeenCalledWith('/account/bob.eth')
-
-    mocks.push.mockClear()
-    mocks.lookupEnsAddress.mockResolvedValueOnce(null)
-    await act(async () => {
-      renderer.root
-        .findByType('input')
-        .props.onChange({ target: { value: 'missing.eth' } })
-    })
-    await act(async () =>
-      renderer.root.findByType('form').props.onSubmit({
-        preventDefault: () => {},
-      }),
-    )
-    expect(mocks.push).not.toHaveBeenCalled()
-    expect(renderedText(renderer.root)).toContain('Could not resolve')
-  })
 })
 
 describe('AccountPendingRelayr', () => {

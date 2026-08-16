@@ -41,7 +41,7 @@ export function lazyWalletConnect(): CreateConnectorFn | undefined {
           name: APP.name,
           description: APP.description,
           url: APP.url,
-          icons: [`${APP.url}/icon.png`],
+          icons: [`${APP.url}/assets/juicebox-social.png`],
         },
       })
     },
@@ -59,7 +59,7 @@ export function lazyCoinbaseWallet(): CreateConnectorFn {
       const { coinbaseWallet } = await import('wagmi/connectors/coinbaseWallet')
       return coinbaseWallet({
         appName: APP.name,
-        appLogoUrl: `${APP.url}/icon.png`,
+        appLogoUrl: `${APP.url}/assets/juicebox-social.png`,
       })
     },
   })

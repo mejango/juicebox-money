@@ -2248,7 +2248,7 @@ export function CreateForm() {
             }
             blurb={
               flavor === "revnet"
-                ? "A revnet operator can update its name, logo, and description; redirect only the precommitted split share; manage shop items only where those permissions were enabled; and add matching chains when the original deployer is the operator. It cannot rewrite the revnet’s staged issuance or cash-out rules."
+                ? "A revnet operator can update its name, logo, and description; redirect only the precommitted split limit; manage shop inventory; and extend the revnet to new approved chains. It cannot rewrite staged issuance, cash out rules, or sequencing."
                 : "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
             }
           />

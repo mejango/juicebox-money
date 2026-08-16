@@ -1,3 +1,5 @@
+import { HoverNote } from '@/components/project/HoverNote'
+
 /**
  * A term whose definition appears on hover, marked by a dotted underline.
  *
@@ -22,12 +24,11 @@ export function ConceptTerm({
   className?: string
 }) {
   return (
-    <span
-      title={note}
-      tabIndex={0}
-      className={`cursor-help border-b border-dotted border-smoke-400 transition-colors hover:border-smoke-600 focus:border-smoke-600 focus:outline-none ${className}`}
+    <HoverNote
+      note={note}
+      className={`border-b border-dotted border-smoke-400 transition-colors hover:border-smoke-600 focus:border-smoke-600 focus:outline-none ${className}`}
     >
       {children}
-    </span>
+    </HoverNote>
   )
 }

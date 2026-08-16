@@ -166,14 +166,6 @@ export default async function AccountPage({
         }
       />
 
-      {/* Every account read below goes to the default (mainnet) indexer
-          endpoint — none of these queries carries a chainId to route on. Say
-          so, rather than presenting a partial answer as a complete one. */}
-      <p className="mt-6 text-sm text-smoke-600">
-        Showing mainnet activity, holdings and grants. Testnet deployments
-        aren&apos;t included here.
-      </p>
-
       <div className="mt-6">
         <AccountTabs
           tabs={[
