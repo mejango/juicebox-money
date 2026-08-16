@@ -76,4 +76,8 @@ export const PARA_PORTAL_THEME = {
   accentColor: '#FFBB45',
   mode: 'light' as const,
   borderRadius: 'lg' as const,
+  // A stack rather than a family name: Para hands this straight to CSS, so
+  // anything the visitor's machine already has resolves without the portal
+  // fetching a webfont.
+  font: 'ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace',
 }

@@ -364,15 +364,28 @@ export default function ParaAuthSheet({
     return (
       <div className="w-full">
         <h2 className="font-agrandir text-2xl font-medium text-ink">
-          Enter your code
+          Enter the code
         </h2>
         <p className="mt-1 text-sm text-smoke-700">
           Sent to <span className="font-medium text-ink">{entry.trim()}</span>.
         </p>
-        {/* The frame paints nothing for a beat, and an empty rectangle in the
-            middle of a sign-in reads as broken. The skeleton sits behind it and
-            is covered as it loads. */}
-        <div className="relative mt-4 h-64 w-full">
+        {/* The frame is cropped to the boxes and nothing else. Para's page
+            repeats the heading and the address above them — which the sheet has
+            already said in its own words — and below them puts "Didn't receive
+            a code?", a label that looks like a link and is not one. Resending is
+            offered underneath in our own voice instead.
+
+            The offsets are measured against that page, so they are what to
+            revisit if their layout moves: too tight and a row of boxes loses its
+            focus ring, too loose and their text peeks back in. Neither breaks
+            anything.
+
+            The skeleton behind it covers the beat where the frame paints
+            nothing, which mid sign-in reads as broken. */}
+        <div
+          className="relative mt-4 w-full overflow-hidden"
+          style={{ height: '72px' }}
+        >
           <div
             aria-hidden="true"
             className="absolute inset-0 flex items-center justify-center gap-2"
@@ -387,11 +400,22 @@ export default function ParaAuthSheet({
           <iframe
             src={hostedVerifyUrl}
             title="Verification code"
-            // Tall enough for the code boxes and the resend row beneath them,
-            // without a scrollbar.
-            className="absolute inset-0 h-full w-full border-0"
+            className="absolute left-0 h-72 w-full border-0"
+            style={{ top: '-112px' }}
           />
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setResent(true)
+            void resendVerificationCodeAsync({ type: 'SIGNUP' }).catch(() =>
+              setResent(false),
+            )
+          }}
+          className="mt-3 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+        >
+          {resent ? 'Code resent' : 'Resend code'}
+        </button>
       </div>
     )
   }
