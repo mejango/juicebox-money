@@ -509,9 +509,6 @@ export function WalletButton() {
                 className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
               >
                 Email or social
-                <span className="block text-xs font-normal text-smoke-700">
-                  No wallet needed — we make one for you
-                </span>
               </button>
               <div className="mx-4 my-1 border-t border-smoke-200" />
               {externalConnectors.map(c => (
