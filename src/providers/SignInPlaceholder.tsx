@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { SignInShell } from './SignInShell'
 
 /** Before paint, so the click is acknowledged in the frame it happened in. */
 const useBeforePaint =
@@ -29,36 +30,21 @@ export function SignInPlaceholder() {
     if (!host) return
     host.className = 'ui-modal-host'
     document.body.append(host)
-    host.showModal()
     return () => host.remove()
+  }, [host])
+
+  // Opening is passive so this lands above any modal it was launched from,
+  // which enters the top layer in its own passive effect.
+  useEffect(() => {
+    if (host && !host.open) host.showModal()
   }, [host])
 
   if (!host) return null
 
   return createPortal(
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
-      <div className="card w-full max-w-sm p-6" aria-busy="true">
-        <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
-        <p className="mt-1 text-sm text-smoke-700">You will receive a code.</p>
-        <div className="input-well mt-5 h-[46px] w-full animate-pulse bg-smoke-25" />
-        <div className="mt-3 flex justify-end">
-          <div className="h-10 w-24 animate-pulse rounded-lg bg-smoke-100" />
-        </div>
-        {/* Same blocks, same heights as the real sheet, so swapping one for
-            the other does not resize the panel under the pointer. */}
-        {[7, 4].map((count, row) => (
-          <div key={row}>
-            <div className="mb-2 mt-4 h-3 w-14 animate-pulse rounded bg-smoke-100" />
-            <div className="flex min-h-10 flex-wrap gap-1.5">
-              {Array.from({ length: count }, (_, i) => (
-                <div
-                  key={i}
-                  className="h-10 w-10 animate-pulse rounded-lg bg-smoke-100"
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+      <div className="card w-full max-w-sm p-6">
+        <SignInShell />
       </div>
     </div>,
     host,

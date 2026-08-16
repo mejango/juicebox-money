@@ -15,12 +15,15 @@ const para = vi.hoisted(() => ({
     portalUrl: 'https://portal.example/buy',
   })),
   connectorId: 'injected' as string | undefined,
+  // ParaProvider renders nothing until Para's API answers; mirror that.
+  driverLive: true,
   address: '0xfeedfacefeedfacefeedfacefeedfacefeedface' as string | undefined,
 }))
 
 vi.mock('@getpara/react-sdk-lite/styles.css', () => ({}))
 vi.mock('@getpara/react-sdk-lite', () => ({
-  ParaProvider: ({ children }: { children: ReactNode }) => children,
+  ParaProvider: ({ children }: { children: ReactNode }) =>
+    para.driverLive ? children : null,
   useModal: () => ({ isOpen: para.isOpen, openModal: para.openModal }),
   useAuthenticateWithEmailOrPhone: () => ({
     authenticateWithEmailOrPhoneAsync: vi.fn(),
@@ -85,6 +88,7 @@ beforeEach(() => {
   para.portalContainer = null
   para.loggedIn = true
   para.connectorId = 'injected'
+  para.driverLive = true
   para.address = '0xfeedfacefeedfacefeedfacefeedfacefeedface'
   para.openModal.mockClear()
   para.initiateOnRampTransaction.mockClear()
@@ -158,6 +162,19 @@ describe('ParaModalHost', () => {
     expect(host()!.textContent).toContain('You will receive a code')
     // Our sheet is what puts the host in the top layer for an auth request.
     expect(host()!.open).toBe(true)
+  })
+
+  it('holds the sheet’s silhouette open while Para is still starting up', () => {
+    // ParaProvider renders nothing until Para's API answers, so Driver — and
+    // the sheet with it — does not exist for the first few hundred ms. If the
+    // dialog waited for Driver, the page would reappear between the
+    // placeholder and the sheet, which is exactly what it used to do.
+    para.driverLive = false
+    render(<Host />)
+
+    expect(host()!.open).toBe(true)
+    expect(host()!.textContent).toContain('Sign in')
+    expect(para.openModal).not.toHaveBeenCalled()
   })
 
   it('mirrors Para’s own open state onto showModal()/close()', () => {
