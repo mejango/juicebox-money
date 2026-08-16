@@ -1645,6 +1645,13 @@ export type BsPermissionHolder = {
   permissions: number[]
   /** Bendystraw's marker for the active revnet operator grant. */
   isRevnetOperator: boolean
+  /**
+   * Scoped to JBPermissions.WILDCARD_PROJECT_ID (0) rather than to this
+   * project. Wildcard grants act on every project the granting account owns
+   * and `hasPermission` honors them, so they confer power here while carrying
+   * a different project id — a project-scoped query never returns them.
+   */
+  wildcard?: boolean
 }
 
 /**
@@ -2087,7 +2094,7 @@ export async function getAccountNfts(
 }
 
 export async function getPermissionHoldersAcrossDeployments(
-  deployments: { chainId: number; projectId: number }[],
+  deployments: { chainId: number; projectId: number; authority?: string | null }[],
 ): Promise<BsPermissionHolder[]> {
   const unique = new Map(
     deployments.map(deployment => [
@@ -2096,9 +2103,44 @@ export async function getPermissionHoldersAcrossDeployments(
     ]),
   )
   const rows = await Promise.all(
-    [...unique.values()].map(deployment =>
+    [...unique.values()].flatMap(deployment => [
       getPermissionHolders(deployment.chainId, deployment.projectId),
-    ),
+      // Wildcard grants from this project's own authority. Without a resolved
+      // authority there is no grantor to scope to, so skip rather than pull
+      // every account's wildcards on the chain.
+      deployment.authority
+        ? getWildcardPermissionHolders(deployment.chainId, deployment.authority)
+        : Promise.resolve([]),
+    ]),
   )
   return rows.flat()
+}
+
+/**
+ * Grants an account made on JBPermissions.WILDCARD_PROJECT_ID (0). They apply
+ * to every project that account owns, so an operator holding ROOT this way
+ * controls the project while appearing in no project-scoped query.
+ */
+async function getWildcardPermissionHolders(
+  chainId: number,
+  account: string,
+): Promise<BsPermissionHolder[]> {
+  const page = await getPagedItems<BsPermissionHolder>(
+    `query($chainId: Int!, $account: String!, $limit: Int!, $offset: Int!) {
+        permissionHolders(
+          where: { chainId: $chainId, projectId: 0, account: $account, version: 6 }
+          limit: $limit
+          offset: $offset
+        ) {
+          items { chainId account operator permissions isRevnetOperator }
+          totalCount
+        }
+      }`,
+    'permissionHolders',
+    { chainId, account },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY },
+  ).catch(() => ({ items: [] as BsPermissionHolder[], totalCount: 0 }))
+  return page.items
+    .filter(row => (row.permissions?.length ?? 0) > 0)
+    .map(row => ({ ...row, wildcard: true }))
 }

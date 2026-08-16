@@ -43,8 +43,8 @@ arguments or repository variables.
 | `NEXT_PUBLIC_DWELLIR_API_KEY` | build | Public browser RPC key; apply strict provider quotas |
 | `NEXT_PUBLIC_VERSION` | build | Optional non-Railway override for the commit SHA shown by the app/health endpoint; Railway derives it automatically |
 | `IPFS_PINNING_ENABLED` | runtime | Explicit `false` by default |
-| `IPFS_PINNING_EDGE_PROTECTED` | runtime | Must be `true` when pinning is enabled |
-| `IPFS_PINNING_INGRESS_TOKEN` | runtime | Random 32+ character secret required only when pinning is enabled |
+| `IPFS_PINNING_EDGE_PROTECTED` | runtime | Explicit `true` (edge enforces the quota) or `false` (the app budgets callers itself) |
+| `IPFS_PINNING_INGRESS_TOKEN` | runtime | Random 32+ character secret; required for edge-protected pinning, and must be unset otherwise |
 | `FILEBASE_IPFS_RPC_TOKEN` | runtime | Secret Filebase RPC bearer token; required only for pinning |
 | `PINATA_JWT` | runtime | Secret Pinata JWT; required only for redundant pinning |
 
@@ -85,10 +85,13 @@ escalation, and a host port bound only to loopback.
 
 ## IPFS safety
 
-Secret-backed pin routes are unavailable unless the operator explicitly
-enables them, acknowledges external edge protection, and configures a random
-32+ character ingress token. The browser must never receive that token. Before
-enabling, configure the trusted CDN/ingress to:
+Secret-backed pin routes are unavailable unless the operator explicitly enables
+them and declares which of two boundaries protects them.
+
+**Edge-protected** (`IPFS_PINNING_EDGE_PROTECTED=true`) is the stronger one: a
+CDN/ingress enforces the caller policy and injects a random 32+ character
+ingress token. The browser must never receive that token. Configure the trusted
+CDN/ingress to:
 
 1. strip every client-supplied `x-juicebox-pinning-ingress-token` header;
 2. authenticate or rate-limit the caller with per-IP, per-account, global
@@ -99,11 +102,23 @@ enabling, configure the trusted CDN/ingress to:
 5. alert on rejected requests, provider quota consumption, and 5xx rates; and
 6. rotate the ingress and provider credentials if either boundary may leak.
 
-Every pin route performs a constant-time comparison against the injected
-header before parsing the request body. Application size/type limits and
-upstream timeouts are defense in depth, not a replacement for distributed rate
-limiting. Browser `Origin` headers are not authorization. Keep pinning disabled
-if the ingress cannot provide this boundary. The read-only IPFS proxy decodes
+Every pin route performs a constant-time comparison against the injected header
+before parsing the request body.
+
+**First-party** (`IPFS_PINNING_EDGE_PROTECTED=false`, no ingress token) is for
+the deployment that has no edge: the app is reached directly, so it budgets
+callers itself — the request `Origin` must match `NEXT_PUBLIC_SITE_URL`, then a
+sliding window allows 10 pins per client and 200 per instance every 10 minutes.
+The window is in-process: it resets on redeploy and each instance keeps its own,
+so a horizontally scaled deployment multiplies the site budget by its replica
+count. It is weaker than a WAF and buys one specific thing — a stranger with a
+script cannot drain the provider quota. `IPFS_PINNING_INGRESS_TOKEN` must be
+unset in this mode; setting it is a belief about protection the app does not
+have, and `npm run env:check:all` rejects it.
+
+Application size/type limits and upstream timeouts are defense in depth, not a
+replacement for distributed rate limiting. Browser `Origin` headers are a CSRF
+fence, never authorization. The read-only IPFS proxy decodes
 canonical CID multibase/version/codec/multihash data before accepting a path,
 caps responses, prevents MIME sniffing, and sandboxes or downloads active
 content. Store-item metadata additionally requires CIDv0 because the 721 hook

@@ -59,18 +59,35 @@ describe('deployment configuration', () => {
     )
   })
 
-  it('requires edge protection, a strong ingress token, and credentials', () => {
+  it('requires a declared pinning mode and credentials', () => {
     const errors = deploymentEnvErrors(
       { IPFS_PINNING_ENABLED: 'true' },
       'runtime',
     )
     expect(errors).toEqual(
       expect.arrayContaining([
-        'enabled IPFS pinning requires edge quota protection',
-        'IPFS_PINNING_INGRESS_TOKEN must be at least 32 characters',
+        'IPFS_PINNING_EDGE_PROTECTED must be explicitly true or false',
         'FILEBASE_IPFS_RPC_TOKEN is required',
         'PINATA_JWT is required',
       ]),
+    )
+  })
+
+  it('accepts first-party pinning and refuses a token it would ignore', () => {
+    const firstParty = {
+      IPFS_PINNING_ENABLED: 'true',
+      IPFS_PINNING_EDGE_PROTECTED: 'false',
+      FILEBASE_IPFS_RPC_TOKEN: 'filebase-token',
+      PINATA_JWT: 'pinata-jwt',
+    }
+    expect(deploymentEnvErrors(firstParty, 'runtime')).toEqual([])
+    expect(
+      deploymentEnvErrors(
+        { ...firstParty, IPFS_PINNING_INGRESS_TOKEN: ingressToken },
+        'runtime',
+      ),
+    ).toContain(
+      'IPFS_PINNING_INGRESS_TOKEN is set while IPFS_PINNING_EDGE_PROTECTED is false: the app would ignore the token and budget callers itself',
     )
   })
 
@@ -132,6 +149,17 @@ describe('health endpoint', () => {
     expect(health().status).toBe(200)
 
     vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', 'too-short')
+    expect(health().status).toBe(503)
+  })
+
+  it('is ready for first-party pinning and unready with a stray token', async () => {
+    vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
+    vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'false')
+    vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
+    vi.stubEnv('PINATA_JWT', 'pinata-jwt')
+    expect(health().status).toBe(200)
+
+    vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', ingressToken)
     expect(health().status).toBe(503)
   })
 })

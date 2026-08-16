@@ -11,6 +11,7 @@ import {
   pinToIpfs,
   readLimitedJson,
   requirePinningAccess,
+  resetPinBudgets,
 } from '@/lib/ipfs-server'
 
 const CID = 'QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR'
@@ -52,9 +53,33 @@ function pinRequest(
   })
 }
 
+const SITE_ORIGIN = 'https://juicebox.money'
+
+function enableFirstPartyPinning() {
+  vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
+  vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'false')
+  vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', '')
+  vi.stubEnv('NEXT_PUBLIC_SITE_URL', SITE_ORIGIN)
+  vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
+  vi.stubEnv('PINATA_JWT', 'pinata-jwt')
+}
+
+function firstPartyRequest(client: string, origin: string | null = SITE_ORIGIN) {
+  return new NextRequest('http://localhost/api/ipfs/pin-json', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': client,
+      ...(origin !== null ? { origin } : {}),
+    },
+    body: '{}',
+  })
+}
+
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+  resetPinBudgets()
 })
 
 describe('IPFS pinning boundary', () => {
@@ -407,5 +432,40 @@ describe('same-origin IPFS proxy boundary', () => {
     )
     expect(response.status).toBe(413)
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+})
+
+describe('first-party pinning budgets', () => {
+  it('requires the site origin when no edge protects the route', () => {
+    enableFirstPartyPinning()
+
+    const foreign = requirePinningAccess(
+      firstPartyRequest('1.1.1.1', 'https://evil.example'),
+    )
+    expect(foreign?.status).toBe(403)
+    expect(requirePinningAccess(firstPartyRequest('1.1.1.1', null))?.status).toBe(
+      403,
+    )
+    expect(requirePinningAccess(firstPartyRequest('1.1.1.1'))).toBeNull()
+  })
+
+  it('spends a per-client budget and then a site-wide one', () => {
+    enableFirstPartyPinning()
+
+    for (let i = 0; i < 10; i++) {
+      expect(requirePinningAccess(firstPartyRequest('2.2.2.2'))).toBeNull()
+    }
+    const throttled = requirePinningAccess(firstPartyRequest('2.2.2.2'))
+    expect(throttled?.status).toBe(429)
+
+    // A different caller has its own budget, until the site's 200 are spent.
+    for (let client = 0; client < 19; client++) {
+      for (let i = 0; i < 10; i++) {
+        expect(
+          requirePinningAccess(firstPartyRequest(`10.0.0.${client}`)),
+        ).toBeNull()
+      }
+    }
+    expect(requirePinningAccess(firstPartyRequest('3.3.3.3'))?.status).toBe(429)
   })
 })

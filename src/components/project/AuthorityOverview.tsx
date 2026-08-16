@@ -158,15 +158,34 @@ type OperatorGrant = {
   rows: BsPermissionHolder[];
   union: number[];
   differs: boolean;
+  live: boolean;
+  wildcard: boolean;
 };
 
-function aggregateGrants(
+/** The ids an operator holds on one chain — the honest seed for an edit that writes that chain. */
+export function permissionIdsOnChain(
+  grant: OperatorGrant | null,
+  chainId: number,
+): number[] {
+  const row = grant?.rows.find((item) => item.chainId === chainId);
+  return [...(row?.permissions ?? [])].sort((a, b) => a - b);
+}
+
+export function aggregateGrants(
   holders: BsPermissionHolder[],
   deployments: AuthorityDeployment[],
+  authorityRows: AuthorityRow[],
 ): OperatorGrant[] {
+  // A grant is keyed by (operator, GRANTOR, project) and only confers anything while the grantor is
+  // still that chain's project authority. Grants written by a former owner stay indexed but are dead.
+  const authorityByChain = new Map(
+    authorityRows.map((row) => [row.chainId, row.authority?.toLowerCase()]),
+  );
   const groups = new Map<string, OperatorGrant>();
   for (const holder of holders) {
-    const key = holder.operator.toLowerCase();
+    // Wildcard (projectId 0) grants stay a SEPARATE entry from project-scoped ones: they're distinct
+    // grants with a wider blast radius, and editing one is a different write from editing the other.
+    const key = `${holder.operator.toLowerCase()}|${holder.wildcard ? "w" : "p"}`;
     const current = groups.get(key) ?? {
       operator: holder.operator as Address,
       account: holder.account as Address,
@@ -174,7 +193,11 @@ function aggregateGrants(
       rows: [],
       union: [],
       differs: false,
+      live: false,
+      wildcard: !!holder.wildcard,
     };
+    const authority = authorityByChain.get(holder.chainId as JBChainId);
+    current.live ||= !authority || authority === holder.account.toLowerCase();
     current.rows.push(holder);
     current.isRevnetOperator ||= !!holder.isRevnetOperator;
     current.union = [
@@ -686,39 +709,100 @@ function PermissionsAcrossChains({
   const deploymentKey = deployments
     .map((row) => `${row.chainId}:${row.projectId}`)
     .join(",");
+  // Wildcard grants are scoped to the granting ACCOUNT, so the authority has to be known per chain
+  // before they can be fetched.
+  const withAuthority = useMemo(
+    () =>
+      deployments.map((row) => ({
+        ...row,
+        authority:
+          authorityRows.find((item) => item.chainId === row.chainId)?.authority ??
+          null,
+      })),
+    [authorityRows, deployments],
+  );
+  const authorityKey = withAuthority
+    .map((row) => `${row.chainId}:${row.authority ?? ""}`)
+    .join(",");
   const query = useQuery({
-    queryKey: ["permissionHoldersAcrossDeployments", deploymentKey],
+    queryKey: ["permissionHoldersAcrossDeployments", deploymentKey, authorityKey],
     enabled: deployments.some((row) => row.projectId > 0),
     staleTime: 30_000,
-    queryFn: () => getPermissionHoldersAcrossDeployments(deployments),
+    queryFn: () => getPermissionHoldersAcrossDeployments(withAuthority),
   });
   const grants = useMemo(
-    () => aggregateGrants(query.data ?? [], deployments),
-    [deployments, query.data],
+    () => aggregateGrants(query.data ?? [], deployments, authorityRows),
+    [authorityRows, deployments, query.data],
   );
   const [editing, setEditing] = useState<OperatorGrant | "new" | null>(null);
+  const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
+  // The owner never appears in the indexed grants: JBPermissioned._requirePermissionFrom passes on
+  // `sender == account` before consulting JBPermissions at all, so the most powerful account on the
+  // project holds every power with no grant to index. Listing delegates alone under-reports who can act.
+  const owners = useMemo(() => {
+    const seen = new Map<string, JBChainId[]>();
+    for (const row of authorityRows) {
+      if (!row.authority) continue;
+      const key = row.authority.toLowerCase();
+      seen.set(key, [...(seen.get(key) ?? []), row.chainId]);
+    }
+    return [...seen.entries()].map(([address, chains]) => ({
+      address: address as Address,
+      chains,
+    }));
+  }, [authorityRows]);
 
   return (
     <section className="card p-5">
       <span className="field-label">Permissions</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
-          ? "Every power the revnet’s revnet operator role currently holds, including any NFT powers granted at launch."
-          : "Operators authorized to act for the project owner — this is where shop managers get their power to add, mint, or reprice items. Each row shows exactly what is granted and on which chains."}
+          ? "Every account that can act on this revnet, and what each one can do. The revnet operator’s powers come with the role, including any NFT powers granted at launch."
+          : "Every account that can act on this project, and what each one can do — this is where shop managers get their power to add, mint, or reprice items. Each row shows exactly what is granted and on which chains."}
       </p>
+
+      {owners.length ? (
+        <div className="mt-4 border-b border-smoke-100 pb-4">
+          {owners.map((owner) => (
+            <div key={owner.address} className="flex flex-wrap items-center gap-2">
+              <AddressLink
+                address={owner.address}
+                chainId={owner.chains[0]}
+                className="font-mono text-sm text-ink"
+                title={owner.address}
+              />
+              <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
+                {authorityLabel}
+              </span>
+              <span className="flex items-center gap-1" title="On">
+                {owner.chains.map((chainId) => (
+                  <ChainIcon key={chainId} chainId={chainId} size={16} standalone />
+                ))}
+              </span>
+            </div>
+          ))}
+          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+            Every power. The {authorityLabel.toLowerCase()} acts directly and never
+            needs a grant, so it holds all of the permissions below.
+          </p>
+        </div>
+      ) : null}
 
       {query.isLoading ? (
         <ActionRowsSkeleton rows={4} label="Loading permissions" />
       ) : grants.length === 0 ? (
         <p className="mt-4 text-sm text-smoke-500">
-          {isRevnet
-            ? "No revnet operator permissions found."
-            : "No operators authorized yet."}
+          No other accounts have been granted permissions, according to the
+          indexer. Grants are read from the index, so one made very recently may
+          not appear yet.
         </p>
       ) : (
         <div className="mt-4 divide-y divide-smoke-100">
           {grants.map((grant) => (
-            <div key={grant.operator} className="py-4 first:pt-0 last:pb-0">
+            <div
+              key={`${grant.operator}:${grant.wildcard ? "wildcard" : "project"}`}
+              className="py-4 first:pt-0 last:pb-0"
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <AddressLink
                   address={grant.operator}
@@ -726,6 +810,14 @@ function PermissionsAcrossChains({
                   className="font-mono text-sm text-ink"
                   title={grant.operator}
                 />
+                {grant.wildcard ? (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                    title={`Granted on project 0 — the wildcard scope. This applies to EVERY project ${grant.account} owns, not just this one.`}
+                  >
+                    All projects
+                  </span>
+                ) : null}
                 {grant.isRevnetOperator ? (
                   <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
                     Revnet operator
@@ -734,6 +826,14 @@ function PermissionsAcrossChains({
                 {grant.differs ? (
                   <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                     Differs by chain
+                  </span>
+                ) : null}
+                {!grant.live ? (
+                  <span
+                    className="rounded-full bg-smoke-100 px-2 py-0.5 text-[11px] font-medium text-smoke-700"
+                    title={`Granted by ${grant.account}, who is no longer the project owner — these powers confer nothing. Re-grant them to make them effective.`}
+                  >
+                    Inactive
                   </span>
                 ) : null}
               </div>
@@ -830,16 +930,33 @@ function PermissionEditor({
   onDone: () => void;
 }) {
   const [operatorInput, setOperatorInput] = useState(grant?.operator ?? "");
-  const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(grant?.union ?? []),
+  // The granted set is PER CHAIN. Seeding from the cross-chain union and writing it back to every chain
+  // silently widens the grant wherever it was narrower, so a non-uniform operator starts scoped to one
+  // chain, seeded from what that chain actually holds.
+  const perChain = !!grant?.differs && deployments.length > 1;
+  const seedChainId = deployments[0]?.chainId;
+  const [selected, setSelected] = useState<Set<number>>(() =>
+    perChain
+      ? new Set(permissionIdsOnChain(grant, seedChainId))
+      : new Set(grant?.union ?? []),
   );
-  const [selectedChains, setSelectedChains] = useState<Set<number>>(
-    () =>
-      new Set(
-        grant?.rows.map((row) => row.chainId) ??
-          deployments.map((row) => row.chainId),
-      ),
+  const [selectedChains, setSelectedChains] = useState<Set<number>>(() =>
+    perChain
+      ? new Set([seedChainId])
+      : new Set(
+          grant?.rows.map((row) => row.chainId) ??
+            deployments.map((row) => row.chainId),
+        ),
   );
+  // Re-seed from whatever scope the current chain selection represents: one chain → that chain's real
+  // set; several → the union, now an explicit choice to level them up rather than a silent one.
+  const reseed = (chains: Set<number>) => {
+    if (!perChain) return;
+    const only = chains.size === 1 ? [...chains][0] : null;
+    setSelected(
+      new Set(only == null ? (grant?.union ?? []) : permissionIdsOnChain(grant, only)),
+    );
+  };
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -866,6 +983,8 @@ function PermissionEditor({
         )?.authority;
         if (!authority)
           throw new Error(`Project owner is unknown on chain ${deployment.chainId}.`);
+        // A wildcard grant lives on JBPermissions.WILDCARD_PROJECT_ID, not on this project.
+        const scopeProjectId = grant?.wildcard ? 0n : BigInt(deployment.projectId);
         const bitmap = (await clientFor(deployment.chainId).readContract({
           address:
             jbContractAddress["6"][JBCoreContracts.JBPermissions][
@@ -873,7 +992,7 @@ function PermissionEditor({
             ],
           abi: jbPermissionsAbi,
           functionName: "permissionsOf",
-          args: [operator, authority, BigInt(deployment.projectId)],
+          args: [operator, authority, scopeProjectId],
         })) as bigint;
         const unknownIds = decodePermissionBitmap(bitmap).filter(
           (id) => !isKnownPermissionId(id),
@@ -887,7 +1006,7 @@ function PermissionEditor({
             authority,
             account: authority,
             operator,
-            projectId: BigInt(deployment.projectId),
+            projectId: scopeProjectId,
             permissionIds: finalIds,
             label: grant ? "Edit permissions" : "Add operator",
           }),
@@ -933,6 +1052,14 @@ function PermissionEditor({
         </button>
       </div>
 
+      {grant?.wildcard ? (
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium leading-relaxed text-amber-800">
+          This is a wildcard grant on project 0 — it applies to EVERY project this
+          owner owns, not just this one. Editing it here changes the operator’s
+          powers on all of them.
+        </p>
+      ) : null}
+
       <label className="mt-4 block">
         <span className="field-label">Operator</span>
         <div className="mt-1.5">
@@ -962,7 +1089,10 @@ function PermissionEditor({
           name: JB_CHAINS[deployment.chainId]?.name ?? deployment.chainId,
         }))}
         selected={selectedChains}
-        onChange={setSelectedChains}
+        onChange={(chains) => {
+          setSelectedChains(chains);
+          reseed(chains);
+        }}
         disabled={busy}
         rowClassName={() =>
           "flex cursor-pointer items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm"
@@ -975,6 +1105,16 @@ function PermissionEditor({
           Saving replaces this operator’s known permission set on every selected
           chain. Unrecognized future permission bits are preserved.
         </p>
+        {perChain ? (
+          <p className="mt-1 text-xs leading-relaxed text-amber-700">
+            {selectedChains.size === 1
+              ? `This operator’s powers differ by chain, so this shows what they hold on ${
+                  JB_CHAINS[[...selectedChains][0] as JBChainId]?.name ??
+                  [...selectedChains][0]
+                } only. Select one chain at a time to edit each set on its own.`
+              : "Showing the union across the selected chains. Saving grants this same set on every one of them, including chains where the operator currently holds less."}
+          </p>
+        ) : null}
         <div className="mt-3 max-h-[34rem] space-y-2 overflow-y-auto pr-1">
           {V6_PERMISSIONS.map((permission) => (
             <CheckRow
