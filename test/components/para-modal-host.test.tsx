@@ -11,7 +11,9 @@ const para = vi.hoisted(() => ({
   openModal: vi.fn(),
   portalContainer: null as Element | null,
   loggedIn: true,
-  initiateOnRampTransaction: vi.fn(async () => ({})),
+  initiateOnRampTransaction: vi.fn(async () => ({
+    portalUrl: 'https://portal.example/buy',
+  })),
   connectorId: 'injected' as string | undefined,
   address: '0xfeedfacefeedfacefeedfacefeedfacefeedface' as string | undefined,
 }))
@@ -39,7 +41,7 @@ vi.mock('@getpara/react-sdk-lite', () => ({
 vi.mock('@getpara/web-sdk', () => ({
   Network: { ETHEREUM: 'ETHEREUM', BASE: 'BASE' },
   OnRampAsset: { ETHEREUM: 'ETHEREUM', USDC: 'USDC' },
-  OnRampProvider: { STRIPE: 'STRIPE' },
+  OnRampProvider: { MOONPAY: 'MOONPAY' },
   OnRampPurchaseType: { BUY: 'BUY' },
 }))
 vi.mock('@getpara/react-component-library', () => ({
@@ -70,7 +72,7 @@ vi.mock('@/providers/para-config', () => ({
     onStatePhaseChange: () => () => {},
   }),
   PARA_APP: { appName: 'Juicebox' },
-  PARA_ONRAMP_PROVIDER: 'STRIPE',
+  PARA_ONRAMP_PROVIDER: 'MOONPAY',
 }))
 
 const { default: ParaModalHost } = await import('@/providers/ParaModalHost')
@@ -153,7 +155,7 @@ describe('ParaModalHost', () => {
     render(<Host />)
 
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('No wallet needed')
+    expect(host()!.textContent).toContain('You will receive a code')
     // Our sheet is what puts the host in the top layer for an auth request.
     expect(host()!.open).toBe(true)
   })
@@ -189,10 +191,24 @@ describe('ParaModalHost', () => {
         params: expect.objectContaining({
           asset: 'ETHEREUM',
           network: 'BASE',
-          provider: 'STRIPE',
+          provider: 'MOONPAY',
         }),
       }),
     )
+  })
+
+  it('warns that the purchase may not go through, and offers the window again', async () => {
+    render(<Host request={ADD_FUNDS} />)
+    await settle()
+
+    // A card decline arrives inside the provider's window with no
+    // explanation, so the guidance has to live on our side of the handoff.
+    const text = host()!.textContent ?? ''
+    expect(text).toContain('always go through')
+    expect(text).toContain('bank transfer')
+    // Popup blockers are common enough that the link has to be clickable.
+    const link = host()!.querySelector('a[href="https://portal.example/buy"]')
+    expect(link).not.toBeNull()
   })
 
   it('uses Para’s own add-funds screen for the embedded wallet', async () => {
@@ -213,7 +229,7 @@ describe('ParaModalHost', () => {
 
     expect(para.initiateOnRampTransaction).not.toHaveBeenCalled()
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('No wallet needed')
+    expect(host()!.textContent).toContain('You will receive a code')
   })
 
   it('does not reopen the sheet when sign-in for the on-ramp is cancelled', async () => {

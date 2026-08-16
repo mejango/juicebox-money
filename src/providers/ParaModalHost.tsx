@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom'
 import { useAccount } from 'wagmi'
 import type { ParaRequest } from './ParaAuthContext'
 import { getParaClient, PARA_APP, PARA_ONRAMP_PROVIDER } from './para-config'
+import { OnRampHandoff } from './OnRampHandoff'
 import ParaAuthSheet from './ParaAuthSheet'
 import '@getpara/react-sdk-lite/styles.css'
 
@@ -32,6 +33,9 @@ function Driver({
   const { isOpen, openModal } = useModal()
   const { address, connector } = useAccount()
   const [sheetOpen, setSheetOpen] = useState(false)
+  // Set once the purchase window is handed off, so we can say what to do when
+  // it does not go through — and re-offer the link if the popup was blocked.
+  const [handoffUrl, setHandoffUrl] = useState<string | null>(null)
   const handledRequest = useRef(0)
   const wasOpen = useRef(false)
   // Set when the on-ramp had to sign the user in first, so it can resume once
@@ -59,7 +63,7 @@ function Driver({
       // objects double as the lookup table.
       const asset = OnRampAsset[target.asset]
       const network = Network[target.network]
-      await para.initiateOnRampTransaction({
+      const { portalUrl } = await para.initiateOnRampTransaction({
         externalWalletAddress: address,
         shouldOpenPopup: true,
         params: {
@@ -75,6 +79,7 @@ function Driver({
             : {}),
         },
       })
+      setHandoffUrl(portalUrl)
     },
     [address, connector, openModal],
   )
@@ -112,7 +117,7 @@ function Driver({
 
   // Para owns whether its own modal is showing; the host mirrors that and our
   // sheet into the top layer. `showModal()` throws on an already-open dialog.
-  const open = isOpen || sheetOpen
+  const open = isOpen || sheetOpen || !!handoffUrl
   useEffect(() => {
     if (open && !host.open) host.showModal()
     else if (!open && host.open) host.close()
@@ -123,6 +128,16 @@ function Driver({
     if (wasOpen.current && !open) onSettled()
     wasOpen.current = open
   }, [open, onOpenChange, onSettled])
+
+  if (handoffUrl) {
+    return (
+      <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
+        <div className="card w-full max-w-sm p-6">
+          <OnRampHandoff url={handoffUrl} onClose={() => setHandoffUrl(null)} />
+        </div>
+      </div>
+    )
+  }
 
   if (!sheetOpen) return null
   // The host contributes top-layer membership and nothing else — it paints no

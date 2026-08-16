@@ -17,17 +17,21 @@ const ONRAMP_PROVIDERS = ['STRIPE', 'MOONPAY', 'RAMP', 'CDP', 'MERCURYO'] as con
  *  which ones are live is a Para dashboard setting rather than a code one —
  *  Stripe and MoonPay are key-less toggles, Ramp needs KYB onboarding.
  *
+ *  MoonPay is the default because it is the only one of the two that works
+ *  outside the US and EU. Stripe is cheaper but regionally narrow, and its
+ *  on-ramp is still labelled a public preview.
+ *
  *  Clamped rather than trusted: an unrecognized value makes Para throw deep
  *  inside the call, which surfaces as a button that silently does nothing. */
 export const PARA_ONRAMP_PROVIDER = ((): (typeof ONRAMP_PROVIDERS)[number] => {
   const configured = process.env.NEXT_PUBLIC_PARA_ONRAMP_PROVIDER
-  if (!configured) return 'STRIPE'
+  if (!configured) return 'MOONPAY'
   const match = ONRAMP_PROVIDERS.find(provider => provider === configured)
   if (match) return match
   console.warn(
-    `Ignoring unknown NEXT_PUBLIC_PARA_ONRAMP_PROVIDER "${configured}" — using STRIPE.`,
+    `Ignoring unknown NEXT_PUBLIC_PARA_ONRAMP_PROVIDER "${configured}" — using MOONPAY.`,
   )
-  return 'STRIPE'
+  return 'MOONPAY'
 })()
 
 let client: ParaWeb | undefined
