@@ -26,9 +26,20 @@ function edgeProtected(): boolean {
   return process.env.IPFS_PINNING_EDGE_PROTECTED === 'true'
 }
 
-function configuredOrigin(): string {
-  return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001')
-    .origin
+/**
+ * The origins this deployment answers as. `NEXT_PUBLIC_SITE_URL` is the canonical
+ * one, but the platform also serves the app on its generated domain before a
+ * custom domain is attached, and a pin from there is still first-party.
+ */
+function allowedOrigins(): string[] {
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim()
+  return [
+    process.env.NEXT_PUBLIC_SITE_URL,
+    railwayDomain ? `https://${railwayDomain}` : undefined,
+    process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3001',
+  ]
+    .filter((url): url is string => !!url)
+    .map(url => new URL(url).origin)
 }
 
 function hasValidIngressToken(req: NextRequest): boolean {
@@ -109,7 +120,8 @@ export function requirePinningAccess(req: NextRequest): NextResponse | null {
     return null
   }
 
-  if (req.headers.get('origin') !== configuredOrigin()) {
+  const origin = req.headers.get('origin')
+  if (!origin || !allowedOrigins().includes(origin)) {
     return NextResponse.json(
       { error: 'origin not allowed' },
       { status: 403, headers: { 'cache-control': 'no-store' } },

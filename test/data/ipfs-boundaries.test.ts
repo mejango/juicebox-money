@@ -449,6 +449,17 @@ describe('first-party pinning budgets', () => {
     expect(requirePinningAccess(firstPartyRequest('1.1.1.1'))).toBeNull()
   })
 
+  it('accepts the platform domain before a custom domain is attached', () => {
+    enableFirstPartyPinning()
+    vi.stubEnv('RAILWAY_PUBLIC_DOMAIN', 'juicebox-money.up.railway.app')
+
+    expect(
+      requirePinningAccess(
+        firstPartyRequest('1.1.1.1', 'https://juicebox-money.up.railway.app'),
+      ),
+    ).toBeNull()
+  })
+
   it('spends a per-client budget and then a site-wide one', () => {
     enableFirstPartyPinning()
 
