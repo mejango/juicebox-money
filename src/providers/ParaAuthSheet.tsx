@@ -119,6 +119,7 @@ export default function ParaAuthSheet({
   const [localError, setLocalError] = useState<string | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingUri, setPairingUri] = useState<string | null>(null)
+  const [hostedVerifyUrl, setHostedVerifyUrl] = useState<string | null>(null)
 
   const popupRef = useRef<Window | null>(null)
   const lastUrlRef = useRef<string | null>(null)
@@ -157,18 +158,19 @@ export default function ParaAuthSheet({
 
   // Para hands portal URLs back through the state stream rather than the hook
   // promise, so opening them is our job. Passkey URLs *must* be a popup —
-  // WebAuthn silently fails inside an iframe — and the rest follow suit for
-  // consistency.
+  // WebAuthn silently fails inside an iframe — and password/PIN entry belongs
+  // on Para's own origin for the same reason.
+  //
+  // The verification code is the exception, and deliberately so: entering it is
+  // a plain API call (`verifyNewAccountAsync`), so it stays here, in the sheet
+  // the visitor started in, instead of throwing them onto a Para-branded page
+  // mid-sign-in. The URL is kept only as a way out if that call keeps failing.
   useEffect(() => {
     const unsubscribe = para.onStatePhaseChange((snapshot: StateSnapshot) => {
       setAuthPhase(snapshot.authPhase)
       const info = snapshot.authStateInfo
-      const next =
-        info.verificationUrl ??
-        info.passkeyUrl ??
-        info.passwordUrl ??
-        info.pinUrl ??
-        null
+      if (info.verificationUrl) setHostedVerifyUrl(info.verificationUrl)
+      const next = info.passkeyUrl ?? info.passwordUrl ?? info.pinUrl ?? null
       if (next && next !== lastUrlRef.current) {
         lastUrlRef.current = next
         popupRef.current = window.open(
@@ -181,6 +183,7 @@ export default function ParaAuthSheet({
       // which is what tells wagmi to pick the new Para session up.
       if (snapshot.corePhase === 'authenticated' && !settledRef.current) {
         settledRef.current = true
+        setHostedVerifyUrl(null)
         popupRef.current?.close()
         onClose()
       }
@@ -206,7 +209,10 @@ export default function ParaAuthSheet({
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [busy, onClose])
-  const awaitingCode = authPhase === 'awaiting_account_verification'
+  // Either signal means the same thing: Para is waiting on a code. Taking the URL as one
+  // too keeps the step from disappearing when Para reports it that way instead.
+  const awaitingCode =
+    authPhase === 'awaiting_account_verification' || !!hostedVerifyUrl
 
   const submitIdentifier = useCallback(async () => {
     if (identifier.kind !== 'email' && identifier.kind !== 'phone') return
@@ -317,6 +323,21 @@ export default function ParaAuthSheet({
             {verifying ? 'Verifying…' : 'Verify'}
           </button>
         </div>
+        {verifyError && hostedVerifyUrl ? (
+          <button
+            type="button"
+            onClick={() => {
+              popupRef.current = window.open(
+                hostedVerifyUrl,
+                'ParaAuth',
+                'popup,width=420,height=560',
+              )
+            }}
+            className="mt-3 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+          >
+            Having trouble? Verify in a separate window
+          </button>
+        ) : null}
       </div>
     )
   }
