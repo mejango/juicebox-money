@@ -56,7 +56,7 @@ export function SignInPlaceholder({
             type="text"
             value={entry}
             onChange={event => onEntryChange(event.target.value)}
-            placeholder="you@example.com or +1 555 000 1234"
+            placeholder="you@email.com | +1 222 333 4444"
             aria-label="Email address or phone number"
             autoComplete="email"
             autoFocus
