@@ -384,7 +384,7 @@ export default function ParaAuthSheet({
             nothing, which mid sign-in reads as broken. */}
         <div
           className="relative mt-4 w-full overflow-hidden"
-          style={{ height: '72px' }}
+          style={{ height: '64px' }}
         >
           <div
             aria-hidden="true"
