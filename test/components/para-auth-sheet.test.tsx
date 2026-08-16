@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { createElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const para = vi.hoisted(() => ({
   verifyNewAccountAsync: vi.fn(),
@@ -50,6 +50,11 @@ vi.mock('@/hooks/useMobileWallet', () => ({ useMobileWallet: () => null }))
 const { default: ParaAuthSheet } = await import('@/providers/ParaAuthSheet')
 
 describe('ParaAuthSheet verification', () => {
+  beforeEach(() => {
+    para.authStateInfo = {}
+    para.openedUrls.length = 0
+  })
+
   it('sends basic-login accounts to the portal instead of a code field that cannot work', async () => {
     // A `verificationUrl` means Para owns this account's OTP: `verifyNewAccount`
     // is not a call the app may make, and it never settles — so a code field
@@ -59,7 +64,12 @@ describe('ParaAuthSheet verification', () => {
     }
     const open = vi.spyOn(window, 'open').mockImplementation(url => {
       para.openedUrls.push(String(url))
-      return null
+      // A claimed window with no URL yet; navigating it is what the sheet does next.
+      return {
+        closed: false,
+        focus: () => {},
+        location: { replace: (next: string) => para.openedUrls.push(next) },
+      } as unknown as Window
     })
 
     let renderer!: TestRenderer.ReactTestRenderer
@@ -78,18 +88,10 @@ describe('ParaAuthSheet verification', () => {
         node => node.props['aria-label'] === 'Verification code',
       ),
     ).toHaveLength(0)
-    // Opened from the click, where a popup blocker cannot eat it silently.
-    expect(para.openedUrls).toEqual([])
-
-    const openWindow = renderer.root
-      .findAllByType('button')
-      .find(button =>
-        String(button.children.join('')).includes('Open the secure window'),
-      )!
-    await act(async () => openWindow.props.onClick())
+    // The window Para's URL goes into is claimed inside the click that starts
+    // sign-in, so the sheet needs no second button and no popup blocker can eat
+    // it.
     expect(para.openedUrls).toContain('https://app.getpara.com/v2/login/otp')
-
-    para.authStateInfo = {}
     open.mockRestore()
   })
 
@@ -102,7 +104,12 @@ describe('ParaAuthSheet verification', () => {
     })
     const open = vi.spyOn(window, 'open').mockImplementation(url => {
       para.openedUrls.push(String(url))
-      return null
+      // A claimed window with no URL yet; navigating it is what the sheet does next.
+      return {
+        closed: false,
+        focus: () => {},
+        location: { replace: (next: string) => para.openedUrls.push(next) },
+      } as unknown as Window
     })
 
     let renderer!: TestRenderer.ReactTestRenderer

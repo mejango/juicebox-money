@@ -131,6 +131,29 @@ export default function ParaAuthSheet({
   const [walletSetupUrl, setWalletSetupUrl] = useState<string | null>(null)
 
   const popupRef = useRef<Window | null>(null)
+
+  /**
+   * Claim a popup window NOW, while a click is still on the stack.
+   *
+   * The URL that goes in it does not exist yet — Para answers with it a second
+   * or two later — and by then the gesture is gone and `window.open` is a
+   * blocked popup. So the window is opened blank and navigated when the URL
+   * lands, which is also why the visitor never has to press a second button to
+   * get there.
+   */
+  const claimPopup = useCallback(() => {
+    if (popupRef.current && !popupRef.current.closed) return
+    popupRef.current = window.open('', 'ParaAuth', 'popup,width=420,height=560')
+  }, [])
+
+  const sendPopupTo = useCallback((url: string) => {
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.location.replace(url)
+      popupRef.current.focus()
+      return
+    }
+    popupRef.current = window.open(url, 'ParaAuth', 'popup,width=420,height=560')
+  }, [])
   const lastUrlRef = useRef<string | null>(null)
   const settledRef = useRef(false)
 
@@ -178,16 +201,17 @@ export default function ParaAuthSheet({
     const unsubscribe = para.onStatePhaseChange((snapshot: StateSnapshot) => {
       setAuthPhase(snapshot.authPhase)
       const info = snapshot.authStateInfo
+      const next =
+        info.verificationUrl ??
+        info.passkeyUrl ??
+        info.passwordUrl ??
+        info.pinUrl ??
+        null
       if (info.verificationUrl) setHostedVerifyUrl(info.verificationUrl)
-      const next = info.passkeyUrl ?? info.passwordUrl ?? info.pinUrl ?? null
+      else if (next) setWalletSetupUrl(next)
       if (next && next !== lastUrlRef.current) {
         lastUrlRef.current = next
-        setWalletSetupUrl(next)
-        popupRef.current = window.open(
-          next,
-          'ParaAuth',
-          'popup,width=420,height=560',
-        )
+        sendPopupTo(next)
       }
       // Closing is what settles the flow: the host reports the transition,
       // which is what tells wagmi to pick the new Para session up.
@@ -203,7 +227,7 @@ export default function ParaAuthSheet({
       unsubscribe()
       lastUrlRef.current = null
     }
-  }, [para, onClose])
+  }, [para, onClose, sendPopupTo])
 
   const busy = BUSY_PHASES.has(authPhase) || verifying
 
@@ -229,6 +253,9 @@ export default function ParaAuthSheet({
     if (identifier.kind !== 'email' && identifier.kind !== 'phone') return
     setLocalError(null)
     setPendingMethod('local')
+    // Para may answer with a portal URL; the window for it has to be claimed
+    // here, in the click.
+    claimPopup()
     try {
       await authenticateWithEmailOrPhoneAsync({
         auth:
@@ -246,7 +273,7 @@ export default function ParaAuthSheet({
     } finally {
       setPendingMethod(null)
     }
-  }, [authenticateWithEmailOrPhoneAsync, identifier])
+  }, [authenticateWithEmailOrPhoneAsync, identifier, claimPopup])
 
   const submitOAuth = useCallback(
     async (method: TOAuthMethod) => {
@@ -280,6 +307,9 @@ export default function ParaAuthSheet({
 
   const submitCode = useCallback(async () => {
     setLocalError(null)
+    // Same reason: the key-creation URL comes back from the call below, too
+    // late to open a window without a blocker eating it.
+    claimPopup()
     try {
       // Verifying the code is only half of a signup: it answers with the portal
       // URL for creating the account's key, and NOTHING else advances the flow
@@ -294,11 +324,7 @@ export default function ParaAuthSheet({
       if (!setupUrl) return
       lastUrlRef.current = setupUrl
       setWalletSetupUrl(setupUrl)
-      popupRef.current = window.open(
-        setupUrl,
-        'ParaAuth',
-        'popup,width=420,height=560',
-      )
+      sendPopupTo(setupUrl)
       // Key generation runs on Para's side; this settles when it lands, and the
       // state stream then reports `authenticated` and closes the sheet.
       await para.waitForWalletCreation({
@@ -309,7 +335,7 @@ export default function ParaAuthSheet({
     } catch (error) {
       setLocalError(messageOf(error))
     }
-  }, [verifyNewAccountAsync, code, para])
+  }, [verifyNewAccountAsync, code, para, claimPopup, sendPopupTo])
 
   const error =
     localError ??
@@ -332,24 +358,15 @@ export default function ParaAuthSheet({
         <p className="mt-1 text-sm text-smoke-700">
           We sent a code to{' '}
           <span className="font-medium text-ink">{entry.trim()}</span>. Enter it
-          in the secure window to finish.
+          in the window we opened to finish signing in.
         </p>
         <button
           type="button"
-          onClick={() => {
-            popupRef.current = window.open(
-              hostedVerifyUrl,
-              'ParaAuth',
-              'popup,width=420,height=560',
-            )
-          }}
-          className="btn-primary mt-5 h-11 w-full text-sm"
+          onClick={() => sendPopupTo(hostedVerifyUrl)}
+          className="mt-4 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
         >
-          Open the secure window
+          Don&apos;t see the window?
         </button>
-        <p className="mt-3 text-xs text-smoke-700">
-          It may already be open behind this one.
-        </p>
       </div>
     )
   }
