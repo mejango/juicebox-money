@@ -10,7 +10,9 @@ import type { StateSnapshot, TOAuthMethod } from '@getpara/web-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
 import { ModalCloseButton } from '@/components/ui/ModalShell'
+import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { useWallet } from '@/hooks/useWallet'
+import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
 import { getParaClient } from './para-config'
 
 /** Not exported by the SDK on its own, but reachable through the snapshot. */
@@ -86,6 +88,7 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
   // the one the hooks are driving. `useClient()` returns it too, but optional.
   const para = getParaClient()
   const { connectors, connectWith } = useWallet()
+  const mobileWallet = useMobileWallet()
 
   const { authenticateWithEmailOrPhoneAsync, error: authError } =
     useAuthenticateWithEmailOrPhone()
@@ -179,6 +182,20 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
   }, [para, onClose])
 
   const busy = BUSY_PHASES.has(authPhase) || verifying
+
+  // The host dialog swallows Escape so Para's own modal stays in sync with it.
+  // This sheet has no such contract, and a dialog you can only leave by
+  // hunting for the X is one people get stuck in. Mid-flight is the exception:
+  // unmounting then would strand Para's poll.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busy) return
+      event.preventDefault()
+      onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [busy, onClose])
   const awaitingCode = authPhase === 'awaiting_account_verification'
 
   const submitIdentifier = useCallback(async () => {
@@ -423,19 +440,62 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
               </div>
             </>
           ) : null}
+
+          {/* A phone browser with no injected wallet can still get there, but
+              only by reopening the page inside the wallet's own browser. */}
+          {mobileWallet === 'handoff' && typeof window !== 'undefined' ? (
+            <>
+              <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">
+                Open in a wallet app
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {mobileWalletLinks(window.location.href).map(link => (
+                  <a
+                    key={link.name}
+                    href={link.url}
+                    className="btn-secondary flex h-10 items-center px-3 text-xs no-underline"
+                  >
+                    {link.name}
+                  </a>
+                ))}
+                {typeof navigator.share === 'function' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator
+                        .share({
+                          title: document.title,
+                          url: walletDappUrl(window.location.href),
+                        })
+                        .catch(cause => {
+                          if (cause instanceof Error && cause.name === 'AbortError') return
+                          console.error('Wallet handoff share failed:', cause)
+                        })
+                    }}
+                    className="btn-secondary flex h-10 items-center px-3 text-xs"
+                  >
+                    Other…
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : null}
         </>
       ) : null}
 
       {error ? <p className="mt-3 text-xs text-error-500">{error}</p> : null}
 
-      <button
-        type="button"
-        onClick={() => setExpanded(open => !open)}
-        aria-expanded={expanded}
-        className="mt-5 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
-      >
-        {expanded ? 'Fewer options' : 'Use socials or wallets'}
-      </button>
+      {/* One-way on purpose: once the other options are showing there is
+          nothing to gain from putting them away again. */}
+      {expanded ? null : (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="mt-5 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+        >
+          Use socials or wallets
+        </button>
+      )}
     </div>
   )
 }

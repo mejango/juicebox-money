@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import type { Address } from 'viem'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
 import { IS_DETERMINISTIC_BROWSER } from '@/providers/Providers'
+import { offerableWallets } from '@/lib/wallet-list'
 import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
 
 /**
@@ -53,21 +54,9 @@ export function useWallet() {
   return {
     isConnected,
     address: address as Address | undefined,
-    /** Wallet connectors the user can pick from (excludes the Para bridge).
-     *  Our configured connectors and EIP-6963 browser discovery can both
-     *  surface the same wallet — Coinbase ships an extension AND an SDK — so
-     *  collapse by name, keeping whichever the browser actually announced.
-     *  Only a discovered provider carries an icon, which is the tell. */
-    connectors: connectors
-      .filter(c => c.id !== 'para')
-      .reduce<typeof connectors[number][]>((kept, connector) => {
-        const clash = kept.findIndex(
-          other => other.name.toLowerCase() === connector.name.toLowerCase(),
-        )
-        if (clash === -1) return [...kept, connector]
-        if (!kept[clash].icon && connector.icon) kept[clash] = connector
-        return kept
-      }, []),
+    /** Wallet connectors the user can pick from (excludes the Para bridge,
+     *  the redundant injected fallback, and duplicate names). */
+    connectors: offerableWallets(connectors),
     /** Connect a specific external wallet connector. */
     connectWith: (connectorId: string) => {
       const connector = connectors.find(c => c.id === connectorId)

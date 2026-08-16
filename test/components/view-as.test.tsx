@@ -170,7 +170,7 @@ describe('useViewedAccount', () => {
 })
 
 describe('WalletButton view-as state', () => {
-  it('keeps View as as the final separated Sign in menu action', async () => {
+  it('keeps View as reachable while signed out, beside Sign in', async () => {
     const { window } = fakeWindow()
     vi.stubGlobal('window', window)
     vi.stubGlobal('document', {
@@ -184,16 +184,22 @@ describe('WalletButton view-as state', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(WalletButton))
     })
-    const trigger = renderer.root.find(
+    // Sign in now opens the sheet directly rather than a menu, so View as
+    // sits beside it instead of being the menu's last entry.
+    const viewAsTrigger = renderer.root.find(
       (node: ReactTestInstance) =>
-        node.type === 'button' && node.props['aria-expanded'] === false,
+        node.type === 'button' && node.children[0] === 'View as…',
     )
-    await act(async () => trigger.props.onClick())
+    expect(
+      renderer.root.find(
+        (node: ReactTestInstance) =>
+          node.type === 'button' && node.children[0] === 'Sign in',
+      ),
+    ).toBeTruthy()
 
-    const menuButtons = renderer.root.findAll(
-      (node: ReactTestInstance) => node.type === 'button' && node !== trigger,
-    )
-    expect(menuButtons.at(-1)?.children[0]).toBe('View as…')
+    // And it still opens the impersonation prompt.
+    await act(async () => viewAsTrigger.props.onClick())
+    expect(JSON.stringify(renderer.toJSON())).toContain('View as')
   })
 
   it('replaces the connected identity and returns through its dropdown', async () => {

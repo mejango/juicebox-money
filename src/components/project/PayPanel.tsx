@@ -2000,8 +2000,11 @@ export function PayPanel({
             {payActionLabel}
           </button>
         </div>
-        <div className="mt-1.5 flex items-start justify-between gap-3">
-          <div>
+        {/* No gap: the invisible spacer at the end has to match the pay
+            button's width exactly, or the balance drifts off the token
+            selector it sits under. */}
+        <div className="mt-1.5 flex items-start">
+          <div className="min-w-0 flex-1 pr-3">
             {notStarted ? (
               <p className="text-xs text-smoke-700">
                 Starts in {formatStartCountdown(startsAt - now)}.

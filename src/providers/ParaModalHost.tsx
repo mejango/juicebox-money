@@ -118,6 +118,7 @@ function Driver({
   // Para owns whether its own modal is showing; the host mirrors that and our
   // sheet into the top layer. `showModal()` throws on an already-open dialog.
   const open = isOpen || sheetOpen || !!handoffUrl
+
   useEffect(() => {
     if (open && !host.open) host.showModal()
     else if (!open && host.open) host.close()
