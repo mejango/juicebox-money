@@ -2951,8 +2951,12 @@ export function CreateForm() {
           {storeConfigOpen ? (
             <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4">
               <p className="text-xs leading-relaxed text-smoke-700">
-                The {flavor === "revnet" ? "revnet operator" : "project owner"} can
-                set or change most of these after launch.
+                The collection&apos;s name and symbol can be changed later, by the{" "}
+                {flavor === "revnet" ? "revnet operator" : "project owner"}
+                {flavor === "revnet"
+                  ? " as long as it keeps “Update item metadata”"
+                  : ""}
+                . Everything else here is fixed once this collection is deployed.
               </p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="block">
