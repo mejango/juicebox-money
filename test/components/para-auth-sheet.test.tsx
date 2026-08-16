@@ -40,6 +40,7 @@ vi.mock('@/providers/para-config', () => ({
     waitForWalletCreation: para.waitForWalletCreation,
   }),
   PARA_APP: { appName: 'Juicebox' },
+  PARA_PORTAL_THEME: { backgroundColor: '#FFF7E8' },
 }))
 
 vi.mock('@/hooks/useWallet', () => ({
