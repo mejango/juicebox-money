@@ -1943,6 +1943,7 @@ export function PayPanel({
             aria-label="Amount"
             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
+          <div className="flex shrink-0 flex-col items-end justify-center gap-0.5 pr-3">
           {contexts.length > 1 ? (
             // Valued by INDEX, not address — a token can appear direct and
             // via-router, so the option must stay in lock-step with the
@@ -1960,7 +1961,7 @@ export function PayPanel({
               }}
               disabled={busy}
               ariaLabel="Payment token"
-              className="relative flex min-h-11 shrink-0 items-center gap-1 px-2 text-sm font-medium text-smoke-700"
+              className="relative flex shrink-0 items-center gap-1 text-sm font-medium text-smoke-700"
               labelClassName=""
               selectClassName="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
               options={contexts.map((ctx, i) => ({
@@ -1971,10 +1972,20 @@ export function PayPanel({
               }))}
             />
           ) : (
-            <span className="flex shrink-0 items-center pr-3 text-sm font-medium text-smoke-700">
+            <span className="flex shrink-0 items-center text-sm font-medium text-smoke-700">
               {symbol}
             </span>
           )}
+            {/* Inside the field, under the token it refers to. */}
+            <GetFunds
+              symbol={symbol}
+              chainId={chainId}
+              needed={amountRaw}
+              balance={walletBalance}
+              decimals={decimals}
+              className="text-[11px] leading-none text-smoke-500 underline underline-offset-2 hover:text-smoke-700"
+            />
+          </div>
           <button
             onClick={submit}
             // When disconnected this button reads "Sign in", so warm Para's
@@ -2028,13 +2039,6 @@ export function PayPanel({
                 Balance: {formatTokenAmount(walletBalance, decimals)}
               </span>
             ) : null}
-            <GetFunds
-              symbol={symbol}
-              chainId={chainId}
-              needed={amountRaw}
-              balance={walletBalance}
-              decimals={decimals}
-            />
           </div>
           {/* The pay button lives inside the field's well, so without a
               matching spacer this column right-aligns to the button's edge

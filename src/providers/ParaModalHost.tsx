@@ -206,7 +206,9 @@ export default function ParaModalHost({
   // would watch the page reappear between the placeholder and the sheet.
   const [driverOpen, setDriverOpen] = useState(false)
   const [driverLive, setDriverLive] = useState(false)
-  const showShell = !driverLive && request.kind === 'auth'
+  // `requestId > 0` matters: the host is also mounted ahead of time to warm
+  // Para up, and nothing should be on screen for that.
+  const showShell = !driverLive && request.kind === 'auth' && requestId > 0
   const open = driverOpen || showShell
 
   // Stable identities: Driver keys effects off these, so a closure recreated

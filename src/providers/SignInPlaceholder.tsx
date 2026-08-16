@@ -2,7 +2,6 @@
 
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { SignInShell } from './SignInShell'
 
 /** Before paint, so the click is acknowledged in the frame it happened in. */
 const useBeforePaint =
@@ -50,7 +49,42 @@ export function SignInPlaceholder({
   return createPortal(
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
       <div className="card w-full max-w-sm p-6">
-        <SignInShell entry={entry} onEntryChange={onEntryChange} />
+        <div className="w-full">
+          <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
+          <p className="mt-1 text-sm text-smoke-700">You will receive a code.</p>
+          <input
+            type="text"
+            value={entry}
+            onChange={event => onEntryChange(event.target.value)}
+            placeholder="you@example.com or +1 555 000 1234"
+            aria-label="Email address or phone number"
+            autoComplete="email"
+            autoFocus
+            className="input-well mt-5 w-full px-4 py-3"
+          />
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              disabled
+              aria-busy="true"
+              className="btn-primary h-10 px-5 text-sm disabled:opacity-60"
+            >
+              Continue
+            </button>
+          </div>
+          {/* Labels and reserved rows, but no provider marks: this component
+              is eager, and the marks would ride along on every page load for
+              a panel most visitors never open. The full shell renders them a
+              moment later, from Para's own chunk. */}
+          {['Socials', 'Wallets'].map(label => (
+            <div key={label}>
+              <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">
+                {label}
+              </p>
+              <div className="min-h-10" />
+            </div>
+          ))}
+        </div>
       </div>
     </div>,
     host,
