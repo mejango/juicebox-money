@@ -113,6 +113,7 @@ import {
 } from "@/lib/feed-reachability";
 import { chainName, toUrn } from "@/lib/urn";
 import { requireContractTransactionReview } from "@/lib/transaction-review";
+import { OPERATOR_LIMITS, OPERATOR_POWERS } from "@/lib/protocol-concepts";
 import {
   SPLIT_SALES_TOKEN_CREDIT_DESCRIPTION,
   SPLIT_SALES_TOKEN_CREDIT_TITLE,
@@ -2248,10 +2249,24 @@ export function CreateForm() {
             }
             blurb={
               flavor === "revnet"
-                ? "A revnet operator can update its name, logo, and description; redirect only the precommitted split limit; manage shop inventory; and extend the revnet to new approved chains. It cannot rewrite staged issuance, cash out rules, or sequencing."
+                ? "One address gets exactly these powers over the revnet once it's live:"
                 : "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
             }
           />
+          {/* The whole list, not a summary of it: every line is a permission the contracts
+              actually grant, so a reader can check what they are agreeing to. */}
+          {flavor === "revnet" ? (
+            <div className="mt-2 pl-9">
+              <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-smoke-700">
+                {OPERATOR_POWERS.map(power => (
+                  <li key={power}>{power}</li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                {OPERATOR_LIMITS}
+              </p>
+            </div>
+          ) : null}
           {authorityEnabled ? (
             <div className="mt-4 pl-1">
               <span className="field-label">

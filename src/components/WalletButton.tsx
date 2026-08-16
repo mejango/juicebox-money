@@ -308,11 +308,14 @@ export function WalletButton() {
           aria-expanded={menuOpen}
           className="btn-secondary flex min-h-[44px] items-center gap-2 whitespace-nowrap px-4 py-1.5 text-sm"
         >
-          <span className="h-2 w-2 shrink-0 rounded-full bg-melon-500" />
-          {/* The state is the headline; which account is the detail. */}
+          {/* The state is the headline; which account is the detail. The dot belongs to the
+              headline, so it sits on that line rather than centred against both. */}
           <span className="flex flex-col items-start leading-tight">
-            <span className="font-medium">Signed in</span>
-            <span className="text-[11px] font-normal text-smoke-600">
+            <span className="flex items-center gap-2 font-medium">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-melon-500" />
+              Signed in
+            </span>
+            <span className="pl-4 text-[11px] font-normal text-smoke-600">
               <AddressLabel address={address} />
             </span>
           </span>
