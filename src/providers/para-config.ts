@@ -68,14 +68,16 @@ export function createParaWagmiConnector(
  * bakes this into the URL it generates, so it has to travel with the auth call that asks for
  * one.
  *
- * Values are the site's own tokens: bone ground, ink text, split yellow accent.
+ * Values are the site's own tokens: the sheet's white ground, ink text, split yellow accent.
  */
 /** Nothing is fetched: whichever of these the visitor already has wins. */
 const PARA_PORTAL_MONO =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, "Courier New", monospace'
 
 export const PARA_PORTAL_THEME = {
-  backgroundColor: '#FFF7E8',
+  // The sheet's card is white; bone here left the frame sitting in the panel as a visible
+  // stripe. The ground has to match what surrounds it, not the site's page colour.
+  backgroundColor: '#FFFFFF',
   foregroundColor: '#1A1A1A',
   accentColor: '#FFBB45',
   mode: 'light' as const,
