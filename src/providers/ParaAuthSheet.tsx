@@ -83,7 +83,17 @@ function messageOf(error: unknown): string | null {
  * The hooks poll internally, so this component must stay mounted for the whole
  * flow: closing is blocked while `BUSY_PHASES` is active.
  */
-export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
+export default function ParaAuthSheet({
+  onClose,
+  entry,
+  onEntryChange,
+}: {
+  onClose: () => void
+  /** Held above this component so an address typed while Para was still
+   *  starting up is not thrown away when the shell hands over. */
+  entry: string
+  onEntryChange: (value: string) => void
+}) {
   // The same singleton ParaProvider was handed, so the state stream below is
   // the one the hooks are driving. `useClient()` returns it too, but optional.
   const para = getParaClient()
@@ -98,7 +108,6 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
     useVerifyNewAccount()
   const { resendVerificationCodeAsync } = useResendVerificationCode()
 
-  const [entry, setEntry] = useState('')
   const [code, setCode] = useState('')
   const [authPhase, setAuthPhase] = useState<AuthPhase>('unauthenticated')
   const [pendingMethod, setPendingMethod] = useState<TOAuthMethod | 'local' | null>(
@@ -337,7 +346,7 @@ export default function ParaAuthSheet({ onClose }: { onClose: () => void }) {
         <input
           type="text"
           value={entry}
-          onChange={event => setEntry(event.target.value)}
+          onChange={event => onEntryChange(event.target.value)}
           placeholder="you@example.com or +1 555 000 1234"
           aria-label="Email address or phone number"
           autoComplete="email"

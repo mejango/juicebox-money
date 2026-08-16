@@ -29,6 +29,8 @@ function Driver({
   onOpenChange,
   onSettled,
   onLive,
+  entry,
+  onEntryChange,
 }: {
   requestId: number
   request: ParaRequest
@@ -36,6 +38,8 @@ function Driver({
   onSettled: () => void
   /** Fired once Para is initialised far enough for this to render at all. */
   onLive: () => void
+  entry: string
+  onEntryChange: (value: string) => void
 }) {
   const { isOpen, openModal } = useModal()
   const { address, connector } = useAccount()
@@ -152,7 +156,11 @@ function Driver({
   return (
     <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
       <div className="card w-full max-w-sm p-6">
-        <ParaAuthSheet onClose={closeSheet} />
+        <ParaAuthSheet
+            onClose={closeSheet}
+            entry={entry}
+            onEntryChange={onEntryChange}
+          />
       </div>
     </div>
   )
@@ -164,11 +172,15 @@ export default function ParaModalHost({
   request,
   onOpenChange,
   onSettled,
+  entry,
+  onEntryChange,
 }: {
   requestId: number
   request: ParaRequest
   onOpenChange: (open: boolean) => void
   onSettled: () => void
+  entry: string
+  onEntryChange: (value: string) => void
 }) {
   const paraClient = getParaClient()
 
@@ -242,7 +254,7 @@ export default function ParaModalHost({
       {showShell ? (
         <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
           <div className="card w-full max-w-sm p-6">
-            <SignInShell />
+            <SignInShell entry={entry} onEntryChange={onEntryChange} />
           </div>
         </div>
       ) : null}
@@ -271,6 +283,8 @@ export default function ParaModalHost({
           onOpenChange={reportOpen}
           onSettled={onSettled}
           onLive={markDriverLive}
+          entry={entry}
+          onEntryChange={onEntryChange}
         />
       </ParaProvider>
     </PortalContainerProvider>,

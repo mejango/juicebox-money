@@ -136,6 +136,10 @@ export function Providers({ children }: PropsWithChildren) {
   const [paraRequest, setParaRequest] = useState<ParaRequest>({ kind: 'auth' })
   const [paraModalOpen, setParaModalOpen] = useState(false)
   const [paraSessionVersion, setParaSessionVersion] = useState(0)
+  // Held here so it survives the shell handing over to the real sheet: those
+  // are two components either side of a Suspense boundary, and anything typed
+  // during the wait would otherwise go with the first one.
+  const [signInEntry, setSignInEntry] = useState('')
 
   // Preserve embedded-wallet sessions without penalizing anonymous visitors:
   // only a browser that previously completed Para auth loads its runtime.
@@ -191,7 +195,12 @@ export function Providers({ children }: PropsWithChildren) {
           {paraHostLoaded ? (
             <Suspense
               fallback={
-                paraRequest.kind === 'auth' ? <SignInPlaceholder /> : null
+                paraRequest.kind === 'auth' ? (
+                  <SignInPlaceholder
+                    entry={signInEntry}
+                    onEntryChange={setSignInEntry}
+                  />
+                ) : null
               }
             >
               <ParaModalHost
@@ -199,6 +208,8 @@ export function Providers({ children }: PropsWithChildren) {
                 request={paraRequest}
                 onOpenChange={setParaModalOpen}
                 onSettled={markParaSettled}
+                entry={signInEntry}
+                onEntryChange={setSignInEntry}
               />
             </Suspense>
           ) : null}

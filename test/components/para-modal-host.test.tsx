@@ -64,6 +64,8 @@ vi.mock('wagmi', () => ({
     address: para.address,
     connector: para.connectorId ? { id: para.connectorId } : undefined,
   }),
+  // The shell lists wallets straight from EIP-6963; none of it needs Para.
+  useConnectors: () => [],
 }))
 vi.mock('@/hooks/useWallet', () => ({
   useWallet: () => ({ connectors: [], connectWith: vi.fn() }),
@@ -124,6 +126,8 @@ function Host({
       request={request}
       onOpenChange={() => {}}
       onSettled={() => {}}
+      entry=""
+      onEntryChange={() => {}}
     />
   )
 }
@@ -175,6 +179,43 @@ describe('ParaModalHost', () => {
     expect(host()!.open).toBe(true)
     expect(host()!.textContent).toContain('Sign in')
     expect(para.openModal).not.toHaveBeenCalled()
+  })
+
+  it('shows the real controls, and keeps what was typed, before Para is up', async () => {
+    // None of the sheet's chrome needs Para — the provider marks are inlined
+    // and the wallet marks come from EIP-6963 — so the silhouette is the real
+    // thing, and the swap to the live sheet should change nothing visible.
+    para.driverLive = false
+    const typed: string[] = []
+    act(() =>
+      root.render(
+        <ParaModalHost
+          requestId={1}
+          request={{ kind: 'auth' }}
+          onOpenChange={() => {}}
+          onSettled={() => {}}
+          entry="me@example.com"
+          onEntryChange={value => typed.push(value)}
+        />,
+      ),
+    )
+
+    const field = host()!.querySelector('input')
+    expect(field).not.toBeNull()
+    expect(field!.value).toBe('me@example.com')
+    expect(host()!.textContent).toContain('Socials')
+    expect(host()!.textContent).toContain('Wallets')
+    // Typing during the wait has to reach the state that outlives this.
+    act(() => {
+      // React tracks the value on the node, so it has to be set through the
+      // native setter or the synthetic onChange never fires.
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!.call(field, 'me@example.org')
+      field!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(typed).toContain('me@example.org')
   })
 
   it('mirrors Para’s own open state onto showModal()/close()', () => {

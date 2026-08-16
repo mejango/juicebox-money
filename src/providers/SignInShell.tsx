@@ -1,33 +1,110 @@
+'use client'
+
+import type { TOAuthMethod } from '@getpara/web-sdk'
+import { useConnectors } from 'wagmi'
+import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
+import { offerableWallets } from '@/lib/wallet-list'
+
+/** Kept in step with the sheet's own list. */
+const OAUTH_METHODS: { method: TOAuthMethod; label: string }[] = [
+  { method: 'GOOGLE', label: 'Google' },
+  { method: 'TWITTER', label: 'X' },
+  { method: 'APPLE', label: 'Apple' },
+  { method: 'DISCORD', label: 'Discord' },
+  { method: 'FARCASTER', label: 'Farcaster' },
+  { method: 'TELEGRAM', label: 'Telegram' },
+  { method: 'FACEBOOK', label: 'Facebook' },
+]
+
 /**
- * The sign-in sheet's silhouette: same blocks, same heights, no behaviour.
+ * The sign-in sheet before Para can drive it.
  *
- * Shown while the real sheet cannot render yet — first because Para's chunk
- * is still downloading, then because `ParaProvider` renders nothing at all
- * until Para's API answers. Both waits land on this, so the panel stays put
- * and only its contents resolve.
+ * None of what you see here needs Para: the provider marks are inlined SVG
+ * and the wallet marks come from EIP-6963 through wagmi, which is already
+ * running. So this renders the real thing rather than grey boxes, and the
+ * swap to the live sheet changes nothing visible.
+ *
+ * The field is genuinely editable, and its value lives above the boundary —
+ * so an address typed during the wait is still there when the sheet takes
+ * over, rather than being thrown away with this component.
  */
-export function SignInShell() {
+export function SignInShell({
+  entry,
+  onEntryChange,
+}: {
+  entry: string
+  onEntryChange: (value: string) => void
+}) {
+  const connectors = offerableWallets(useConnectors())
+
   return (
-    <div className="w-full" aria-busy="true">
-      <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
-      <p className="mt-1 text-sm text-smoke-700">You will receive a code.</p>
-      <div className="input-well mt-5 h-[46px] w-full animate-pulse bg-smoke-25" />
-      <div className="mt-3 flex justify-end">
-        <div className="h-10 w-24 animate-pulse rounded-lg bg-smoke-100" />
-      </div>
-      {[7, 4].map((count, row) => (
-        <div key={row}>
-          <div className="mb-2 mt-4 h-3 w-14 animate-pulse rounded bg-smoke-100" />
-          <div className="flex min-h-10 flex-wrap gap-1.5">
-            {Array.from({ length: count }, (_, i) => (
-              <div
-                key={i}
-                className="h-10 w-10 animate-pulse rounded-lg bg-smoke-100"
-              />
-            ))}
-          </div>
+    <div className="w-full">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
+          <p className="mt-1 text-sm text-smoke-700">You will receive a code.</p>
         </div>
-      ))}
+      </div>
+
+      <div className="mt-5">
+        <input
+          type="text"
+          value={entry}
+          onChange={event => onEntryChange(event.target.value)}
+          placeholder="you@example.com or +1 555 000 1234"
+          aria-label="Email address or phone number"
+          autoComplete="email"
+          autoFocus
+          className="input-well w-full px-4 py-3"
+        />
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            disabled
+            aria-busy="true"
+            className="btn-primary h-10 px-5 text-sm disabled:opacity-60"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+
+      <p className="mb-2 mt-5 text-xs font-medium text-smoke-700">Socials</p>
+      <div className="flex flex-wrap gap-1.5">
+        {OAUTH_METHODS.map(({ method, label }) => (
+          <button
+            key={method}
+            type="button"
+            disabled
+            title={label}
+            aria-label={label}
+            className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+          >
+            <BrandMark method={method} className="h-5 w-5 shrink-0" />
+          </button>
+        ))}
+      </div>
+
+      <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">Wallets</p>
+      <div className="flex min-h-10 flex-wrap gap-1.5">
+        {connectors.map(connector => (
+          <button
+            key={connector.id}
+            type="button"
+            disabled
+            title={connector.name}
+            aria-label={connector.name}
+            className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+          >
+            {connector.icon ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={connector.icon} alt="" className="h-5 w-5 shrink-0" />
+            ) : (
+              <WalletFallbackMark id={connector.id} className="h-5 w-5 shrink-0" />
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
