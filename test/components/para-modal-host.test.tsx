@@ -18,6 +18,12 @@ const para = vi.hoisted(() => ({
   // ParaProvider renders nothing until Para's API answers; mirror that.
   driverLive: true,
   address: '0xfeedfacefeedfacefeedfacefeedfacefeedface' as string | undefined,
+  wallets: {
+    embedded: {
+      type: 'EVM',
+      address: '0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef',
+    },
+  } as Record<string, { type: string; address?: string }>,
 }))
 
 vi.mock('@getpara/react-sdk-lite/styles.css', () => ({}))
@@ -75,6 +81,7 @@ vi.mock('@/providers/para-config', () => ({
     isFullyLoggedIn: async () => para.loggedIn,
     initiateOnRampTransaction: para.initiateOnRampTransaction,
     onStatePhaseChange: () => () => {},
+    getWallets: () => para.wallets,
   }),
   PARA_APP: { appName: 'Juicebox' },
   PARA_ONRAMP_PROVIDER: 'MOONPAY',
@@ -238,20 +245,19 @@ describe('ParaModalHost', () => {
     expect(host()!.open).toBe(false)
   })
 
-  it('mirrors Para’s own open state onto showModal()/close()', () => {
-    // An add-funds request with a session already in hand never opens the
-    // sheet, so Para's modal is the only thing driving the host here.
+  it('never lets Para’s own modal drive the host', () => {
+    // Nothing asks for Para's packaged modal any more, so its open state is not
+    // a thing the host reacts to: an add-funds request that already has a
+    // session goes straight to the headless call and opens nothing.
     render(<Host request={ADD_FUNDS} />)
     const dialog = host()!
     expect(dialog.open).toBe(false)
 
     para.isOpen = true
     render(<Host requestId={2} request={ADD_FUNDS} />)
-    expect(dialog.open).toBe(true)
-
-    para.isOpen = false
-    render(<Host requestId={2} request={ADD_FUNDS} />)
     expect(dialog.open).toBe(false)
+    expect(para.openModal).not.toHaveBeenCalled()
+    para.isOpen = false
   })
 
   it('buys to the connected external wallet rather than the embedded one', async () => {
@@ -289,15 +295,21 @@ describe('ParaModalHost', () => {
     expect(link).not.toBeNull()
   })
 
-  it('uses Para’s own add-funds screen for the embedded wallet', async () => {
+  it('keeps the embedded wallet off Para’s own add-funds screen', async () => {
+    // Para's modal would bring its branding and a second provider picker with
+    // it. The headless call takes any destination, and Para knows the embedded
+    // wallet's own address.
     para.connectorId = 'para'
+    para.address = undefined
     render(<Host request={ADD_FUNDS} />)
     await settle()
 
-    expect(para.initiateOnRampTransaction).not.toHaveBeenCalled()
-    expect(para.openModal).toHaveBeenCalledWith({
-      step: 'ACCOUNT_ADD_FUNDS_BUY',
-    })
+    expect(para.openModal).not.toHaveBeenCalled()
+    expect(para.initiateOnRampTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalWalletAddress: para.wallets.embedded.address,
+      }),
+    )
   })
 
   it('signs in first when the on-ramp has no Para session to bill against', async () => {

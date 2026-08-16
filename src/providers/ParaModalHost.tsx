@@ -1,7 +1,7 @@
 'use client'
 
 import { PortalContainerProvider } from '@getpara/react-component-library'
-import { ParaProvider, useModal } from '@getpara/react-sdk-lite'
+import { ParaProvider } from '@getpara/react-sdk-lite'
 import {
   Network,
   OnRampAsset,
@@ -23,7 +23,6 @@ import { getParaClient, PARA_APP, PARA_ONRAMP_PROVIDER } from './para-config'
 import { OnRampHandoff } from './OnRampHandoff'
 import ParaAuthSheet from './ParaAuthSheet'
 import { SignInShell } from './SignInShell'
-import '@getpara/react-sdk-lite/styles.css'
 
 /** Layout effects run before paint, which is the whole point here; on the
  *  server there is no paint and React warns, so fall back there. */
@@ -69,8 +68,7 @@ function Driver({
   entry: string
   onEntryChange: (value: string) => void
 }) {
-  const { isOpen, openModal } = useModal()
-  const { address, connector } = useAccount()
+  const { address } = useAccount()
   const [sheetOpen, setSheetOpen] = useState(false)
   // Set once the purchase window is handed off, so we can say what to do when
   // it does not go through — and re-offer the link if the popup was blocked.
@@ -91,19 +89,22 @@ function Driver({
         setSheetOpen(true)
         return
       }
-      // Para's own modal owns the embedded wallet's add-funds screen and gives
-      // the user a provider picker for free. It has no address parameter
-      // though, so an external wallet has to go through the headless call.
-      if (connector?.id === 'para' || !address) {
-        openModal({ step: 'ACCOUNT_ADD_FUNDS_BUY' })
-        return
-      }
+      // The embedded wallet used to go through Para's own add-funds modal, which brought its
+      // branding and a second provider picker with it. The headless call takes any destination
+      // address, and Para knows the embedded wallet's own — so both wallets take the same path
+      // and no Para-rendered screen appears.
+      const destination =
+        address ??
+        Object.values(para.getWallets()).find(
+          wallet => wallet.type === 'EVM' && wallet.address,
+        )?.address
+      if (!destination) return
       // Our domain strings and Para's enums share their values, so the enum
       // objects double as the lookup table.
       const asset = OnRampAsset[target.asset]
       const network = Network[target.network]
       const { portalUrl } = await para.initiateOnRampTransaction({
-        externalWalletAddress: address,
+        externalWalletAddress: destination,
         shouldOpenPopup: true,
         params: {
           type: OnRampPurchaseType.BUY,
@@ -112,7 +113,7 @@ function Driver({
           network,
           defaultAsset: asset,
           defaultNetwork: network,
-          externalWalletAddress: address,
+          externalWalletAddress: destination,
           ...(target.assetQuantity
             ? { assetQuantity: target.assetQuantity }
             : {}),
@@ -120,7 +121,7 @@ function Driver({
       })
       setHandoffUrl(portalUrl)
     },
-    [address, connector, openModal],
+    [address],
   )
 
   useEffect(() => {
@@ -160,7 +161,7 @@ function Driver({
   // Para owns whether its own modal is showing; the host above owns the
   // dialog, because it has to open it before this component can exist at all
   // — ParaProvider renders nothing until Para's API answers.
-  const open = isOpen || sheetOpen || !!handoffUrl
+  const open = sheetOpen || !!handoffUrl
 
   useEffect(() => onLive(), [onLive])
 

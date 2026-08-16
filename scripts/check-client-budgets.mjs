@@ -28,7 +28,9 @@ const budgets = {
   // per-SDK lazy-load assertions below are what actually protect first paint.
   allScripts: 2400 * KIB,
   largestChunk: 450 * KIB,
-  styles: 32 * KIB,
+  // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
+  // back in unnoticed.
+  styles: 20 * KIB,
 }
 
 function formatKiB(bytes) {
@@ -237,29 +239,16 @@ const styles = filesBelow(join(distDir, 'static', 'css')).filter(path =>
   path.endsWith('.css'),
 )
 const compiledStyles = styles.map(path => readFileSync(path, 'utf8')).join('\n')
+// Nothing of Para's is rendered any more — sign-in, verification and the
+// on-ramp handoff are all ours — so its modal stylesheet (112 KiB raw) has no
+// job here. Its return would mean a Para-branded screen came back with it.
 if (
-  !compiledStyles.includes('--para-color-') ||
-  !compiledStyles.includes('.para\\:')
+  compiledStyles.includes('--para-color-') ||
+  compiledStyles.includes('.para\\:')
 ) {
-  fail('Para wallet modal styles are missing from the production build')
+  fail('Para modal styles are back in the build — is a Para-rendered screen back too?')
 } else {
-  process.stdout.write('PASS Para wallet modal styles are present\n')
-}
-const paraStyleFiles = styles.filter(path =>
-  readFileSync(path, 'utf8').includes('--para-color-'),
-)
-for (const htmlPath of [
-  join(distDir, 'server', 'app', 'index.html'),
-  join(distDir, 'server', 'app', 'create.html'),
-]) {
-  if (!existsSync(htmlPath)) continue
-  const html = readFileSync(htmlPath, 'utf8')
-  if (paraStyleFiles.some(path => html.includes(path.slice(distDir.length + 1)))) {
-    fail(`Para modal CSS is eagerly loaded by ${htmlPath}`)
-  }
-}
-if (paraStyleFiles.length) {
-  process.stdout.write('PASS Para wallet modal styles are lazy-loaded\n')
+  process.stdout.write('PASS no Para modal styles in the build\n')
 }
 const styleSize = styles.reduce((sum, path) => sum + gzipSize(path), 0)
 const styleMarker = styleSize <= budgets.styles ? 'PASS' : 'FAIL'
