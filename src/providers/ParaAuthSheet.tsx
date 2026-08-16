@@ -189,28 +189,32 @@ export default function ParaAuthSheet({
   }, [connectors])
 
   // Para hands portal URLs back through the state stream rather than the hook
-  // promise, so opening them is our job. Passkey URLs *must* be a popup —
-  // WebAuthn silently fails inside an iframe — and password/PIN entry belongs
-  // on Para's own origin for the same reason.
+  // promise, so placing them is our job — and where they go differs by kind.
   //
-  // The verification code is the exception, and deliberately so: entering it is
-  // a plain API call (`verifyNewAccountAsync`), so it stays here, in the sheet
-  // the visitor started in, instead of throwing them onto a Para-branded page
-  // mid-sign-in. The URL is kept only as a way out if that call keeps failing.
+  // The verification code goes in an IFRAME, inside this sheet. Para confirmed
+  // the six-digit page can be framed, and a basic-login account has no WebAuthn
+  // step to break, so there is no reason to throw the visitor onto another
+  // origin to type six digits.
+  //
+  // Passkey, password and PIN still take the window: WebAuthn silently fails
+  // inside an iframe, and credential entry belongs on the origin that owns the
+  // credential.
   useEffect(() => {
     const unsubscribe = para.onStatePhaseChange((snapshot: StateSnapshot) => {
       setAuthPhase(snapshot.authPhase)
       const info = snapshot.authStateInfo
-      const next =
-        info.verificationUrl ??
-        info.passkeyUrl ??
-        info.passwordUrl ??
-        info.pinUrl ??
-        null
-      if (info.verificationUrl) setHostedVerifyUrl(info.verificationUrl)
-      else if (next) setWalletSetupUrl(next)
+      if (info.verificationUrl) {
+        setHostedVerifyUrl(info.verificationUrl)
+        // The window claimed on the click was insurance against a URL that
+        // needed one. This one does not, so give it straight back rather than
+        // leaving a blank popup around.
+        popupRef.current?.close()
+        popupRef.current = null
+      }
+      const next = info.passkeyUrl ?? info.passwordUrl ?? info.pinUrl ?? null
       if (next && next !== lastUrlRef.current) {
         lastUrlRef.current = next
+        setWalletSetupUrl(next)
         sendPopupTo(next)
       }
       // Closing is what settles the flow: the host reports the transition,
@@ -343,29 +347,34 @@ export default function ParaAuthSheet({
     messageOf(authError) ??
     messageOf(oauthError)
 
-  // A `verificationUrl` means Para has this project on basic login, where the
-  // code is entered on its portal and `verifyNewAccount` is not a call the app
-  // may make: it never settles, so a code field here would take a code, accept
-  // a wrong one, and hang. Say what the step is instead, and open the window
-  // from the click rather than behind it, where a popup blocker eats it
-  // silently.
+  // Para has this project on basic login, where the code is entered on its own
+  // page and `verifyNewAccount` is not a call the app may make — it never
+  // settles, so a field of ours here would take a code, accept a wrong one, and
+  // hang. Para confirmed that page can be framed, and a basic-login account has
+  // no WebAuthn step to break, so it is framed here rather than thrown onto
+  // another origin.
   if (hostedVerifyUrl) {
     return (
       <div className="w-full">
         <h2 className="font-agrandir text-2xl font-medium text-ink">
-          Check your email
+          Enter your code
         </h2>
         <p className="mt-1 text-sm text-smoke-700">
-          We sent a code to{' '}
-          <span className="font-medium text-ink">{entry.trim()}</span>. Enter it
-          in the window we opened to finish signing in.
+          Sent to <span className="font-medium text-ink">{entry.trim()}</span>.
         </p>
+        <iframe
+          src={hostedVerifyUrl}
+          title="Verification code"
+          // Tall enough for the code boxes and the resend row beneath them,
+          // without a scrollbar.
+          className="mt-4 h-64 w-full border-0"
+        />
         <button
           type="button"
           onClick={() => sendPopupTo(hostedVerifyUrl)}
-          className="mt-4 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+          className="mt-1 text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
         >
-          Don&apos;t see the window?
+          Open in a separate window instead
         </button>
       </div>
     )

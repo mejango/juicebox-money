@@ -55,7 +55,7 @@ describe('ParaAuthSheet verification', () => {
     para.openedUrls.length = 0
   })
 
-  it('sends basic-login accounts to the portal instead of a code field that cannot work', async () => {
+  it("frames Para's code page in the sheet rather than sending anyone to it", async () => {
     // A `verificationUrl` means Para owns this account's OTP: `verifyNewAccount`
     // is not a call the app may make, and it never settles — so a code field
     // here would accept a wrong code and hang on it forever.
@@ -83,15 +83,19 @@ describe('ParaAuthSheet verification', () => {
       )
     })
 
+    // No field of ours: `verifyNewAccount` is not a call this account allows,
+    // so one would take a code, accept a wrong one, and hang on it.
     expect(
       renderer.root.findAll(
         node => node.props['aria-label'] === 'Verification code',
       ),
     ).toHaveLength(0)
-    // The window Para's URL goes into is claimed inside the click that starts
-    // sign-in, so the sheet needs no second button and no popup blocker can eat
-    // it.
-    expect(para.openedUrls).toContain('https://app.getpara.com/v2/login/otp')
+    // Framed here, not opened elsewhere — the visitor never leaves the page.
+    const frame = renderer.root.findByType('iframe')
+    expect(frame.props.src).toBe('https://app.getpara.com/v2/login/otp')
+    expect(para.openedUrls).not.toContain(
+      'https://app.getpara.com/v2/login/otp',
+    )
     open.mockRestore()
   })
 
