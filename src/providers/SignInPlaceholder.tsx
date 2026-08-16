@@ -39,15 +39,21 @@ export function SignInPlaceholder() {
         <div className="mt-3 flex justify-end">
           <div className="h-10 w-24 animate-pulse rounded-lg bg-smoke-100" />
         </div>
-        <div className="mt-5 h-3 w-16 animate-pulse rounded bg-smoke-100" />
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {Array.from({ length: 7 }, (_, i) => (
-            <div
-              key={i}
-              className="h-10 w-10 animate-pulse rounded-lg bg-smoke-100"
-            />
-          ))}
-        </div>
+        {/* Same blocks, same heights as the real sheet, so swapping one for
+            the other does not resize the panel under the pointer. */}
+        {[7, 4].map((count, row) => (
+          <div key={row}>
+            <div className="mb-2 mt-4 h-3 w-14 animate-pulse rounded bg-smoke-100" />
+            <div className="flex min-h-10 flex-wrap gap-1.5">
+              {Array.from({ length: count }, (_, i) => (
+                <div
+                  key={i}
+                  className="h-10 w-10 animate-pulse rounded-lg bg-smoke-100"
+                />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>,
     host,
