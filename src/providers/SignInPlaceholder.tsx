@@ -1,7 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+
+/** Before paint, so the click is acknowledged in the frame it happened in. */
+const useBeforePaint =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect
 
 /**
  * Painted the instant sign-in is asked for, while Para's runtime downloads.
@@ -17,16 +21,17 @@ import { createPortal } from 'react-dom'
  * topmost one is inert.
  */
 export function SignInPlaceholder() {
-  const [host, setHost] = useState<HTMLDialogElement | null>(null)
+  const [host] = useState<HTMLDialogElement | null>(() =>
+    typeof document === 'undefined' ? null : document.createElement('dialog'),
+  )
 
-  useEffect(() => {
-    const node = document.createElement('dialog')
-    node.className = 'ui-modal-host'
-    document.body.append(node)
-    node.showModal()
-    setHost(node)
-    return () => node.remove()
-  }, [])
+  useBeforePaint(() => {
+    if (!host) return
+    host.className = 'ui-modal-host'
+    document.body.append(host)
+    host.showModal()
+    return () => host.remove()
+  }, [host])
 
   if (!host) return null
 
