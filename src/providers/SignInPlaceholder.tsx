@@ -76,7 +76,7 @@ export function SignInPlaceholder({
               is eager, and the marks would ride along on every page load for
               a panel most visitors never open. The full shell renders them a
               moment later, from Para's own chunk. */}
-          {['Socials', 'Wallets'].map(label => (
+          {['Or, use socials', '... or, a wallet.'].map(label => (
             <div key={label}>
               <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">
                 {label}

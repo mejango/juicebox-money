@@ -203,8 +203,8 @@ describe('ParaModalHost', () => {
     const field = host()!.querySelector('input')
     expect(field).not.toBeNull()
     expect(field!.value).toBe('me@example.com')
-    expect(host()!.textContent).toContain('Socials')
-    expect(host()!.textContent).toContain('Wallets')
+    expect(host()!.textContent).toContain('Or, use socials')
+    expect(host()!.textContent).toContain('or, a wallet')
     // Typing during the wait has to reach the state that outlives this.
     act(() => {
       // React tracks the value on the node, so it has to be set through the
