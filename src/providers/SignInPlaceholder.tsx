@@ -78,7 +78,7 @@ export function SignInPlaceholder({
               moment later, from Para's own chunk. */}
           {['Or, use socials', '... or, a wallet.'].map(label => (
             <div key={label}>
-              <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">
+              <p className="mb-2 mt-4 text-xs text-smoke-500">
                 {label}
               </p>
               <div className="min-h-10" />

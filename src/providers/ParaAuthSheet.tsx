@@ -370,7 +370,7 @@ export default function ParaAuthSheet({
       </form>
 
       <>
-          <p className="mb-2 mt-5 text-xs font-medium text-smoke-700">Or, use socials</p>
+          <p className="mb-2 mt-5 text-xs text-smoke-500">Or, use socials</p>
           <div className="flex flex-wrap gap-1.5">
             {OAUTH_METHODS.map(({ method, label }) => (
               <button
@@ -419,7 +419,7 @@ export default function ParaAuthSheet({
               announce themselves over the first few hundred milliseconds, so
               revealing this section once they arrive would resize a panel the
               visitor is already looking at — and it is centred, so it jumps. */}
-          <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">... or, a wallet.</p>
+          <p className="mb-2 mt-4 text-xs text-smoke-500">... or, a wallet.</p>
           <div className="flex min-h-10 flex-wrap gap-1.5">
                 {connectors.map(connector => (
                   <button
@@ -452,7 +452,7 @@ export default function ParaAuthSheet({
               only by reopening the page inside the wallet's own browser. */}
           {mobileWallet === 'handoff' && typeof window !== 'undefined' ? (
             <>
-              <p className="mb-2 mt-4 text-xs font-medium text-smoke-700">
+              <p className="mb-2 mt-4 text-xs text-smoke-500">
                 Open in a wallet app
               </p>
               <div className="flex flex-wrap gap-1.5">
