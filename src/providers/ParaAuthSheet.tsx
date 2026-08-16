@@ -32,13 +32,19 @@ const OAUTH_METHODS: { method: TOAuthMethod; label: string }[] = [
 ]
 
 /** Phases where Para is mid-flight and unmounting us would strand the poll. */
+/**
+ * Phases that only occur because of something the visitor just did here.
+ *
+ * `awaiting_session_start` and `waiting_for_session` are deliberately absent:
+ * Para sits in them while it polls, including with the code field still
+ * untouched, so counting them as busy disabled the close button and Escape on
+ * a sheet that was doing nothing.
+ */
 const BUSY_PHASES: ReadonlySet<AuthPhase> = new Set<AuthPhase>([
   'authenticating_email_phone',
   'authenticating_oauth',
   'processing_authentication',
-  'awaiting_session_start',
   'verifying_new_account',
-  'waiting_for_session',
 ])
 
 type Identifier =
@@ -201,18 +207,6 @@ export default function ParaAuthSheet({
 
   const busy = BUSY_PHASES.has(authPhase) || verifying
 
-  // Checking a six-digit code is quick; creating the account's key is not. One word for both
-  // reads as a hang, so the label follows the phase Para is actually in.
-  const progressLabel =
-    authPhase === 'verifying_new_account'
-      ? 'Checking your code…'
-      : authPhase === 'awaiting_session_start' ||
-          authPhase === 'waiting_for_session'
-        ? 'Setting up your account…'
-        : authPhase === 'processing_authentication'
-          ? 'Almost there…'
-          : 'Verifying…' 
-
   // The host dialog swallows Escape so Para's own modal stays in sync with it.
   // This sheet has no such contract, and a dialog you can only leave by
   // hunting for the X is one people get stuck in. Mid-flight is the exception:
@@ -330,7 +324,7 @@ export default function ParaAuthSheet({
           Enter your code
         </h2>
         <p className="mt-1 text-sm text-smoke-700">
-          We sent it to <span className="font-medium text-ink">{entry.trim()}</span>.
+          Sent to <span className="font-medium text-ink">{entry.trim()}</span>.
         </p>
         <input
           value={code}
@@ -361,7 +355,10 @@ export default function ParaAuthSheet({
             disabled={verifying || code.trim().length === 0}
             className="btn-primary h-10 px-5 text-sm disabled:opacity-60"
           >
-            {verifying || busy ? progressLabel : 'Verify'}
+            {/* Only this call's own state, never Para's ambient phase: the
+                phase sits in "waiting for session" while the field is still
+                empty, which read as the button already working. */}
+            {verifying ? 'Confirming…' : 'Confirm'}
           </button>
         </div>
         {walletSetupUrl ? (

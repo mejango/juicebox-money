@@ -79,7 +79,7 @@ describe('ParaAuthSheet verification', () => {
 
     const verify = renderer.root
       .findAllByType('button')
-      .find(button => String(button.children.join('')).includes('Verify'))!
+      .find(button => String(button.children.join('')).includes('Confirm'))!
     await act(async () => verify.props.onClick())
 
     expect(para.openedUrls).toContain(
