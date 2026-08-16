@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
 import { ModalCloseButton } from '@/components/ui/ModalShell'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
+import { ViewAsForm } from '@/components/ViewAsForm'
 import { useWallet } from '@/hooks/useWallet'
 import { mobileWalletLinks, walletDappUrl } from '@/lib/walletLinks'
 import { getParaClient } from './para-config'
@@ -114,6 +115,7 @@ export default function ParaAuthSheet({
     null,
   )
   const [resent, setResent] = useState(false)
+  const [viewAsOpen, setViewAsOpen] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingUri, setPairingUri] = useState<string | null>(null)
@@ -490,6 +492,21 @@ export default function ParaAuthSheet({
       </>
 
       {error ? <p className="mt-3 text-xs text-error-500">{error}</p> : null}
+
+      {/* Looking without signing in. Folded away by default: it answers a
+          different question from the ways in above, and only a few people
+          are asking it. */}
+      <div className="mt-6 border-t border-smoke-200 pt-3">
+        <button
+          type="button"
+          onClick={() => setViewAsOpen(open => !open)}
+          aria-expanded={viewAsOpen}
+          className="text-xs text-smoke-500 underline underline-offset-2 hover:text-smoke-700"
+        >
+          View as…
+        </button>
+        {viewAsOpen ? <ViewAsForm onDone={onClose} /> : null}
+      </div>
 
 
     </div>

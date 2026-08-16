@@ -218,6 +218,26 @@ describe('ParaModalHost', () => {
     expect(typed).toContain('me@example.org')
   })
 
+  it('closes on a backdrop click, but not on a drag released outside', () => {
+    render(<Host />)
+    const backdrop = host()!.firstElementChild as HTMLElement
+    const panel = backdrop.firstElementChild as HTMLElement
+
+    // A selection drag that starts on the sheet and ends past its edge must
+    // not be read as "clicked away".
+    act(() => {
+      panel.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host()!.open).toBe(true)
+
+    act(() => {
+      backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(host()!.open).toBe(false)
+  })
+
   it('mirrors Para’s own open state onto showModal()/close()', () => {
     // An add-funds request with a session already in hand never opens the
     // sheet, so Para's modal is the only thing driving the host here.

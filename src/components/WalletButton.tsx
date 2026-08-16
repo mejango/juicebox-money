@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -12,16 +12,16 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, formatUnits, isAddress, type Address } from 'viem'
+import { erc20Abi, formatUnits, type Address } from 'viem'
 import { useAccount, useBalance, useConfig, useReadContract } from 'wagmi'
 import { getBalance, readContract } from 'wagmi/actions'
 import { AddressLabel } from '@/components/ui/AddressLabel'
+import { ViewAsForm } from '@/components/ViewAsForm'
 import { GetFunds } from '@/components/GetFunds'
 import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { preloadParaHost } from '@/providers/preload-para'
-import { looksLikeEns, lookupEnsAddress } from '@/lib/ens'
 import { parseUrn } from '@/lib/urn'
 import {
   projectHandleFromRoute,
@@ -240,63 +240,6 @@ function WalletBalances({
 }
 
 /** Inline "View as…" prompt: an address or ENS name turns on view-as mode. */
-function ViewAsPrompt({ onDone }: { onDone: () => void }) {
-  const { setViewAs } = useViewAs()
-  const [value, setValue] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    const input = value.trim()
-    setError(null)
-    if (isAddress(input)) {
-      setViewAs(input as Address)
-      onDone()
-      return
-    }
-    if (looksLikeEns(input)) {
-      setBusy(true)
-      try {
-        const resolved = await lookupEnsAddress(input)
-        if (resolved) {
-          setViewAs(resolved)
-          onDone()
-          return
-        }
-        setError('Could not resolve that ENS name.')
-      } finally {
-        setBusy(false)
-      }
-      return
-    }
-    setError('Enter an address or ENS name.')
-  }
-
-  return (
-    <form onSubmit={submit} className="px-4 py-3">
-      <label className="block text-xs font-medium text-smoke-700">
-        View the site as
-      </label>
-      <input
-        value={value}
-        onChange={event => setValue(event.target.value)}
-        placeholder="Address or ENS"
-        autoFocus
-        className="mt-1.5 h-9 w-full rounded-lg border border-smoke-200 bg-white px-2.5 text-sm text-ink placeholder:text-smoke-500 focus:border-bluebs-500 focus:outline-none"
-      />
-      {error ? <p className="mt-1.5 text-xs text-crush-600">{error}</p> : null}
-      <button
-        type="submit"
-        disabled={busy}
-        className="btn-secondary mt-2 h-9 w-full text-sm"
-      >
-        {busy ? 'Resolving…' : 'View as'}
-      </button>
-    </form>
-  )
-}
-
 export function WalletButton() {
   const { isConnected, address, openSignIn, disconnect } = useWallet()
   const { viewAs, clearViewAs } = useViewAs()
@@ -373,15 +316,6 @@ export function WalletButton() {
         // so a menu in front of it would only ask which door to use twice.
         <div className="flex items-center gap-3">
           <button
-            onClick={() => {
-              setMenuOpen(true)
-              setViewAsOpen(true)
-            }}
-            className="whitespace-nowrap text-sm text-smoke-700 underline underline-offset-2 hover:text-ink"
-          >
-            View as…
-          </button>
-          <button
             onClick={openSignIn}
             // Fetch Para's runtime as the pointer arrives, so the click has
             // nothing left to wait for.
@@ -398,7 +332,7 @@ export function WalletButton() {
       {menuOpen ? (
         <div className="card absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {viewAsOpen ? (
-            <ViewAsPrompt onDone={closeMenu} />
+            <ViewAsForm onDone={closeMenu} />
           ) : activeViewAs ? (
             <>
               {accountAddress && balanceChainId ? (
@@ -468,7 +402,7 @@ export function WalletButton() {
           ) : (
             // Signing in is the button's own job now; the only thing left that
             // needs a surface here is impersonation.
-            <ViewAsPrompt onDone={closeMenu} />
+            <ViewAsForm onDone={closeMenu} />
           )}
         </div>
       ) : null}
