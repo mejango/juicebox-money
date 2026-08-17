@@ -17,7 +17,7 @@ import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
  *   connector so the embedded wallet behaves like any other connection.
  */
 export function useWallet() {
-  const { address, connector: activeConnector, isConnected } = useAccount()
+  const { address, isConnected } = useAccount()
   const { connectAsync, connectors } = useConnect()
   const { disconnect: wagmiDisconnect } = useDisconnect()
   const { modalOpen, requestSignIn, sessionVersion } = useParaAuth()
@@ -69,12 +69,18 @@ export function useWallet() {
     },
     disconnect: () => {
       wagmiDisconnect()
-      if (!IS_DETERMINISTIC_BROWSER && activeConnector?.id === 'para') {
+      if (IS_DETERMINISTIC_BROWSER) return
+      // Whether a Para session EXISTS, not whether the active connector is named "para". An
+      // email sign-in whose connector reads as anything else left that session alive — and the
+      // bridge effect above, which exists to pick a live session up, then signed the visitor
+      // straight back in.
+      void import('@/providers/para-config').then(async ({ getParaClient }) => {
+        const client = getParaClient()
+        const live = await client.isFullyLoggedIn().catch(() => false)
+        if (!live) return
         markParaSession(false)
-        void import('@/providers/para-config').then(({ getParaClient }) =>
-          getParaClient().logout().catch(() => {}),
-        )
-      }
+        await client.logout().catch(() => {})
+      })
     },
   }
 }
