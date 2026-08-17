@@ -28,3 +28,30 @@ export function toUrn(chainId: number, projectId: number): string {
 export function chainName(chainId: number): string {
   return displayChainName(chainId)
 }
+
+export const LEGACY_SITE = 'https://old.juicebox.money'
+
+/**
+ * Where a project on a prior protocol version lives, now that this app holds the
+ * apex domain and V1–V5 serve from old.juicebox.money.
+ *
+ * That app's route shapes are not uniform, and guessing one uniformly lands on its
+ * 404 rather than the project:
+ *   V4/V5  `/v5/eth:1`  — chain-scoped, and its slugs match ours (eth/op/base/arb)
+ *   V2/V3  `/v2/p/1`    — mainnet-only ids, both versions served under /v2
+ *   V1     `/p/<handle>` — handle-keyed, and no caller here holds the handle
+ *
+ * The indexer this app reads carries versions 4 and up, so the older branches are
+ * a guard against a link that would 404, not a live path.
+ */
+export function legacyProjectHref(
+  chainId: number,
+  projectId: number,
+  version: number,
+): string {
+  if (version >= 4) {
+    return `${LEGACY_SITE}/v${version}/${toUrn(chainId, projectId)}`
+  }
+  if (version >= 2) return `${LEGACY_SITE}/v2/p/${projectId}`
+  return LEGACY_SITE
+}

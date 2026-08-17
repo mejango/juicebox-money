@@ -4,7 +4,7 @@ import {
   resolveProjectDeployments,
   type BsProject,
 } from '@/lib/bendystraw'
-import { chainName, parseUrn, toUrn } from '@/lib/urn'
+import { chainName, legacyProjectHref, parseUrn, toUrn } from '@/lib/urn'
 
 function project(overrides: Partial<BsProject> = {}): BsProject {
   return {
@@ -130,5 +130,23 @@ describe('route identity', () => {
   it('keeps unknown chain display fallbacks explicit', () => {
     expect(toUrn(999, 7)).toBe('999:7')
     expect(chainName(999)).toBe('Chain 999')
+  })
+})
+
+describe('links to prior protocol versions', () => {
+  // Verified against the live V1–V5 app: /v4/eth:1, /v4/op:1, /v4/base:1,
+  // /v4/arb:1, /v5/eth:1 and /v2/p/1 all serve a project page, while
+  // /v2/eth:1, /v3/p/1 and /v4/optimism:1 fall through to its 404.
+  it('uses the chain-scoped shape for V4 and V5', () => {
+    expect(legacyProjectHref(1, 1, 4)).toBe('https://old.juicebox.money/v4/eth:1')
+    expect(legacyProjectHref(8453, 27, 5)).toBe(
+      'https://old.juicebox.money/v5/base:27',
+    )
+  })
+
+  it('uses the mainnet id shape for V2 and V3, and the site root for V1', () => {
+    expect(legacyProjectHref(1, 7, 2)).toBe('https://old.juicebox.money/v2/p/7')
+    expect(legacyProjectHref(1, 7, 3)).toBe('https://old.juicebox.money/v2/p/7')
+    expect(legacyProjectHref(1, 7, 1)).toBe('https://old.juicebox.money')
   })
 })

@@ -3,7 +3,7 @@ import {
   suckerGroupAccountingToken,
   BsProject,
 } from './bendystraw'
-import { toUrn } from './urn'
+import { legacyProjectHref, toUrn } from './urn'
 
 /**
  * One trending card, regardless of protocol version. V6 projects link within
@@ -27,8 +27,6 @@ export type TrendingCard = {
   chainIds: number[]
   trendingScore: bigint
 }
-
-const LEGACY_SITE = 'https://old.juicebox.money'
 
 type SuckerGroupTrending = {
   id: string
@@ -87,7 +85,13 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
       {
         key: `bs-${group.id}`,
         href:
-          group.version === 6 ? `/${urn}` : `${LEGACY_SITE}/v${group.version}/${urn}`,
+          group.version === 6
+            ? `/${urn}`
+            : legacyProjectHref(
+                representative.chainId,
+                representative.projectId,
+                group.version,
+              ),
         external: group.version !== 6,
         version: group.version,
         name: representative.name ?? `Project ${representative.projectId}`,

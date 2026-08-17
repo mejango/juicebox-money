@@ -11,7 +11,7 @@ import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { getAccountActivity, type BsAccountActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { formatDate, timeAgo } from '@/lib/format'
-import { toUrn } from '@/lib/urn'
+import { legacyProjectHref, toUrn } from '@/lib/urn'
 
 const ACCOUNT_ACTIVITY_PAGE = 25
 const ACTIVITY_POLL_MS = 15_000
@@ -122,7 +122,12 @@ export function AccountActivity({
 function Row({ event }: { event: BsAccountActivityEvent }) {
   const name = event.project?.name ?? `Project ${event.projectId}`
   const isV6 = event.version === 6
-  const projectHref = isV6 ? `/${toUrn(event.chainId, event.projectId)}` : null
+  // An account's history spans protocol versions. A V4/V5 row is still a real
+  // project — it lives on the legacy app, so link it there rather than rendering
+  // a dead name.
+  const projectHref = isV6
+    ? `/${toUrn(event.chainId, event.projectId)}`
+    : legacyProjectHref(event.chainId, event.projectId, event.version)
   const projectHint = {
     name,
     logoUri: event.project?.logoUri ?? null,
@@ -156,7 +161,7 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
   return (
     <li className="px-0 py-4">
       <div className="flex items-start gap-3">
-        {projectHref ? (
+        {isV6 ? (
           <ProjectLink
             href={projectHref}
             projectHint={projectHint}
@@ -166,7 +171,9 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
             {logo}
           </ProjectLink>
         ) : (
-          <span className="shrink-0">{logo}</span>
+          <a href={projectHref} aria-label={`Open ${name}`} className="shrink-0">
+            {logo}
+          </a>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
@@ -196,7 +203,7 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
               direction={direction}
             />
           </div>
-          {projectHref ? (
+          {isV6 ? (
             <ProjectLink
               href={projectHref}
               projectHint={projectHint}
@@ -205,9 +212,12 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
               {name}
             </ProjectLink>
           ) : (
-            <span className="mt-1 block min-w-0 truncate text-sm font-medium text-smoke-700">
+            <a
+              href={projectHref}
+              className="mt-1 block min-w-0 truncate text-sm font-medium text-bluebs-600 hover:underline"
+            >
               {name} <span className="text-xs text-smoke-500">V{event.version}</span>
-            </span>
+            </a>
           )}
           <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
             <ActorLink href={actorUrl} actor={actor} /> {action}

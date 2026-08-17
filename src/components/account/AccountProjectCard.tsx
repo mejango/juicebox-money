@@ -3,9 +3,7 @@ import { ProjectLink } from '@/components/ProjectLink'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import type { BsProject } from '@/lib/bendystraw'
 import { truncateAddress } from '@/lib/format'
-import { toUrn } from '@/lib/urn'
-
-const LEGACY_SITE = 'https://old.juicebox.money'
+import { legacyProjectHref, toUrn } from '@/lib/urn'
 
 /** Stable per-deployment identity for deduping owned-project cards. */
 export function projectKey(
@@ -18,10 +16,16 @@ export function projectKey(
 export function accountProjectHref(
   project: Pick<BsProject, 'chainId' | 'projectId' | 'version'>,
 ): { href: string; external: boolean } {
-  const urn = toUrn(project.chainId, project.projectId)
   return project.version === 6
-    ? { href: `/${urn}`, external: false }
-    : { href: `${LEGACY_SITE}/v${project.version}/${urn}`, external: true }
+    ? { href: `/${toUrn(project.chainId, project.projectId)}`, external: false }
+    : {
+        href: legacyProjectHref(
+          project.chainId,
+          project.projectId,
+          project.version,
+        ),
+        external: true,
+      }
 }
 
 export type SafeOwnership = {
