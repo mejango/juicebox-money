@@ -83,7 +83,10 @@ export function useOnRamp({
   return {
     supported: !!asset && !!network,
     shortfall,
-    buy: (options?: { fiatQuantity?: string; display?: 'window' | 'embed' }) => {
+    // No `display` option: Para's on-ramp portal talks to its OPENER, which an
+    // iframe does not have, so an embedded one spins forever. It goes in a
+    // window.
+    buy: (options?: { fiatQuantity?: string }) => {
       if (!asset || !network) return
       requestAddFunds({
         asset,
@@ -94,7 +97,6 @@ export function useOnRamp({
         ...(options?.fiatQuantity
           ? { fiatQuantity: options.fiatQuantity }
           : { assetQuantity: shortfall }),
-        display: options?.display,
       })
     },
   }

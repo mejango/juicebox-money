@@ -45,10 +45,6 @@ export type ParaAddFundsRequest = {
    *  than an amount of the asset. Seeds the provider's fiat field instead of
    *  its asset field. */
   fiatQuantity?: string
-  /** Where the provider's own page goes. "embed" keeps it inside our dialog,
-   *  which is what a payer part-way through a payment expects; "window" hands
-   *  it a popup and is the default everywhere else. */
-  display?: 'window' | 'embed' 
 }
 
 export type ParaRequest =

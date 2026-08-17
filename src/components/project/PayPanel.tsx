@@ -2150,20 +2150,16 @@ export function PayPanel({
         >
           <div className="px-5 py-5">
             <p className="text-sm leading-relaxed text-smoke-700">
-              Payments to this project take {buyableLabel}{" "}
-              in order to settle instantly, stick to automated rules, and send out incentives on
-              schedule. You&apos;ll use your card or bank to buy some first, then come back here
-              to pay.
+              {/* One string, not JSX text around an expression: a line break after `{asset}`
+                  swallows the space that follows it, which is how this shipped as "USDCin". */}
+              {`Payments to this project take ${buyableLabel} in order to settle instantly, stick to automated rules, and send out incentives on schedule. You'll use your card or bank to buy some first, then come back here to pay.`}
             </p>
             <div className="mt-5 flex justify-end">
               <button
                 type="button"
                 onClick={() => {
                   setBuyExplainerOpen(false);
-                  onRamp.buy({
-                    fiatQuantity: amount.trim() || undefined,
-                    display: "embed",
-                  });
+                  onRamp.buy({ fiatQuantity: amount.trim() || undefined });
                 }}
                 className="btn-primary h-10 px-5 text-sm"
               >
