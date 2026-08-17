@@ -2159,10 +2159,18 @@ export function PayPanel({
                 type="button"
                 onClick={() => {
                   setBuyExplainerOpen(false);
-                  onRamp.buy({
-                    fiatQuantity: amount.trim() || undefined,
-                    display: "embed",
-                  });
+                  // A window, not the frame this once used. Para's portal
+                  // frames fine, but the provider it nests inside itself does
+                  // not: buy.moonpay.com answers a framed request with "refused
+                  // to connect", because MoonPay only permits embedding from
+                  // origins registered against the merchant key — and that key
+                  // is Para's.
+                  //
+                  // Everything needed to embed it is still here and tested
+                  // (`display: "embed"`, `recordOnRampPurchase`). Ask Para to
+                  // allowlist this origin on their MoonPay key and this call is
+                  // one argument from being a frame again.
+                  onRamp.buy({ fiatQuantity: amount.trim() || undefined });
                 }}
                 className="btn-primary h-10 px-5 text-sm"
               >
