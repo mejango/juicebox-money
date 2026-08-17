@@ -43,15 +43,26 @@ export function payButtonAction({
 }
 
 /**
- * What to call the assets a payer can buy their way into this project with.
+ * The ONE asset a payer should buy to pay this project.
  *
- * Only the ones it actually accepts: telling someone paying a USDC-only project to buy "ETH or
- * USDC" invites them to buy the half that cannot pay it.
+ * Not a list: "ETH or USDC" asks someone to make a choice the project has already made, and on
+ * a project that takes only one of them it invites buying the half that cannot pay it. The
+ * token they are already looking at wins; otherwise whichever the project accepts.
  */
-export function buyableAssetLabel(acceptedSymbols: string[]): string {
-  const buyable = ['ETH', 'USDC'].filter(asset =>
-    acceptedSymbols.some(symbol => symbol.toUpperCase() === asset),
+export function buyableAsset({
+  accepted,
+  preferred,
+}: {
+  /** Symbols of every token the project accepts. */
+  accepted: string[]
+  /** The token currently selected in the pay panel, if any. */
+  preferred?: string
+}): 'ETH' | 'USDC' {
+  const onRampable = ['ETH', 'USDC'] as const
+  const has = (asset: string) =>
+    accepted.some(symbol => symbol.toUpperCase() === asset)
+  const chosen = onRampable.find(
+    asset => asset === preferred?.toUpperCase() && has(asset),
   )
-  if (buyable.length === 0) return 'ETH or USDC'
-  return buyable.join(' or ')
+  return chosen ?? onRampable.find(has) ?? 'ETH'
 }

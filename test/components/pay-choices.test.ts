@@ -1,5 +1,5 @@
 import {
-  buyableAssetLabel,
+  buyableAsset,
   defaultsToDollars,
   payButtonAction,
 } from '@/lib/pay-choices'
@@ -42,20 +42,30 @@ describe('pay panel currency choice', () => {
   })
 })
 
-describe('what a payer can buy their way in with', () => {
-  it('names only the assets this project accepts', () => {
-    // A USDC-only project told to buy "ETH or USDC" invites the half that
-    // cannot pay it.
-    expect(buyableAssetLabel(['USDC'])).toBe('USDC')
-    expect(buyableAssetLabel(['ETH'])).toBe('ETH')
-    expect(buyableAssetLabel(['ETH', 'USDC'])).toBe('ETH or USDC')
+describe('what a payer should buy to pay this project', () => {
+  it('names the one asset the project accepts', () => {
+    // "ETH or USDC" asks the payer to make a choice the project already made —
+    // and on a USDC-only project it invites buying the half that cannot pay it.
+    expect(buyableAsset({ accepted: ['USDC'] })).toBe('USDC')
+    expect(buyableAsset({ accepted: ['ETH'] })).toBe('ETH')
   })
 
-  it('ignores accepted tokens no on-ramp delivers', () => {
-    expect(buyableAssetLabel(['USDC', 'DAI'])).toBe('USDC')
+  it('follows the token already selected when the project takes both', () => {
+    expect(
+      buyableAsset({ accepted: ['ETH', 'USDC'], preferred: 'USDC' }),
+    ).toBe('USDC')
+    expect(buyableAsset({ accepted: ['ETH', 'USDC'], preferred: 'ETH' })).toBe(
+      'ETH',
+    )
   })
 
-  it('falls back to both rather than naming nothing', () => {
-    expect(buyableAssetLabel(['DAI'])).toBe('ETH or USDC')
+  it('ignores a selection the on-ramp cannot deliver', () => {
+    expect(
+      buyableAsset({ accepted: ['USDC', 'DAI'], preferred: 'DAI' }),
+    ).toBe('USDC')
+  })
+
+  it('falls back to ETH rather than naming nothing', () => {
+    expect(buyableAsset({ accepted: ['DAI'] })).toBe('ETH')
   })
 })

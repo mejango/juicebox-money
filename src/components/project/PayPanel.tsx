@@ -49,7 +49,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
 import {
-  buyableAssetLabel,
+  buyableAsset,
   defaultsToDollars,
   payButtonAction,
 } from "@/lib/pay-choices";
@@ -611,7 +611,10 @@ export function PayPanel({
     acceptedTokens,
     chainId,
   );
-  const buyableLabel = buyableAssetLabel(contexts.map(ctx => ctx.symbol));
+  const buyableLabel = buyableAsset({
+    accepted: contexts.map(ctx => ctx.symbol),
+    preferred: symbol,
+  });
   const holdsNothing = defaultsToDollars({
     isConnected,
     balances: acceptedTokens.map(
@@ -1996,10 +1999,12 @@ export function PayPanel({
           <input
             type="text"
             inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            // Dollars are shown with their sign and stored without it: everything downstream
+            // — the preview, the amount sent to the provider — parses a number.
+            value={payWithDollars && amount ? `$${amount}` : amount}
+            onChange={(e) => setAmount(e.target.value.replace(/^\$/, ""))}
             disabled={busy}
-            placeholder="0.00"
+            placeholder={payWithDollars ? "$0.00" : "0.00"}
             aria-label="Amount"
             className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
           />
@@ -2145,9 +2150,10 @@ export function PayPanel({
         >
           <div className="px-5 py-5">
             <p className="text-sm leading-relaxed text-smoke-700">
-              Payments to this project take {buyableLabel} in order to settle instantly, stick
-              to automated rules, and send out incentives on schedule. You&apos;ll use your card
-              or bank to buy some first, then come back here to pay.
+              Payments to this project take {buyableLabel}{" "}
+              in order to settle instantly, stick to automated rules, and send out incentives on
+              schedule. You&apos;ll use your card or bank to buy some first, then come back here
+              to pay.
             </p>
             <div className="mt-5 flex justify-end">
               <button
