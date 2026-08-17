@@ -91,3 +91,32 @@ export const PARA_PORTAL_THEME = {
     '--para-font-sans': PARA_PORTAL_MONO,
   },
 }
+
+/**
+ * Tell Para about a purchase it did not open a window for.
+ *
+ * `initiateOnRampTransaction` only records the purchase when IT opens the popup. The portal's
+ * first message (`ONRAMPS__INIT`) asks for that record, and without one the reply carries
+ * `undefined` — which is exactly what leaves an embedded on-ramp spinning forever with no
+ * error.
+ *
+ * The field is `protected`, so this reaches past the type to set it and then checks that it
+ * took. A false return means the SDK moved it and the caller should open a window instead —
+ * losing the frame is a worse outcome than losing the purchase.
+ *
+ * `window` is only ever written, never read (SDK 3.11), so the frame has nothing to hand over.
+ */
+export function recordOnRampPurchase(
+  client: unknown,
+  purchase: unknown,
+): boolean {
+  const target = client as {
+    onRampPopup?: { window: Window; onRampPurchase: unknown }
+  }
+  try {
+    target.onRampPopup = { window, onRampPurchase: purchase }
+    return target.onRampPopup?.onRampPurchase === purchase
+  } catch {
+    return false
+  }
+}

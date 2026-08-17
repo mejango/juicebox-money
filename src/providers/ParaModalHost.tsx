@@ -19,8 +19,13 @@ import {
 import { createPortal } from 'react-dom'
 import { useAccount } from 'wagmi'
 import type { ParaRequest } from './ParaAuthContext'
-import { getParaClient, PARA_APP, PARA_ONRAMP_PROVIDER } from './para-config'
-import { OnRampHandoff } from './OnRampHandoff'
+import {
+  getParaClient,
+  PARA_APP,
+  PARA_ONRAMP_PROVIDER,
+  recordOnRampPurchase,
+} from './para-config'
+import { OnRampFrame, OnRampHandoff } from './OnRampHandoff'
 import ParaAuthSheet from './ParaAuthSheet'
 import { SignInShell } from './SignInShell'
 
@@ -75,6 +80,9 @@ function Driver({
   const [handoffUrl, setHandoffUrl] = useState<string | null>(null)
   // What the provider was asked to deliver, so the handoff can name it.
   const [handoffAsset, setHandoffAsset] = useState<string | null>(null)
+  // Whether that purchase is showing in the dialog rather than in a window of
+  // its own.
+  const [embedded, setEmbedded] = useState(false)
   const handledRequest = useRef(0)
   const wasOpen = useRef(false)
   // Set when the on-ramp had to sign the user in first, so it can resume once
@@ -105,9 +113,14 @@ function Driver({
       // objects double as the lookup table.
       const asset = OnRampAsset[target.asset]
       const network = Network[target.network]
-      const { portalUrl } = await para.initiateOnRampTransaction({
-        externalWalletAddress: destination,
-        shouldOpenPopup: true,
+      const embed = target.display === 'embed'
+      const { portalUrl, onRampPurchase } =
+        await para.initiateOnRampTransaction({
+          externalWalletAddress: destination,
+          // Para records the purchase only when IT opens the window; an
+          // embedded one has to be handed that record separately, or the
+          // portal's first message goes unanswered.
+          shouldOpenPopup: !embed,
         params: {
           type: OnRampPurchaseType.BUY,
           provider: OnRampProvider[PARA_ONRAMP_PROVIDER],
@@ -126,6 +139,13 @@ function Driver({
             : {}),
         },
       })
+      // If the SDK has moved the field this reaches for, fall back to the
+      // window rather than showing a frame that can only spin.
+      const framed = embed && recordOnRampPurchase(para, onRampPurchase)
+      if (embed && !framed) {
+        window.open(portalUrl, 'ParaOnRamp', 'popup,width=420,height=640')
+      }
+      setEmbedded(framed)
       setHandoffAsset(target.asset === 'USDC' ? 'USDC' : 'ETH')
       setHandoffUrl(portalUrl)
     },
@@ -185,12 +205,20 @@ function Driver({
         className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6"
         {...handoffBackdrop}
       >
-        <div className="card w-full max-w-sm p-6">
-          <OnRampHandoff
-            url={handoffUrl}
-            asset={handoffAsset ?? undefined}
-            onClose={() => setHandoffUrl(null)}
-          />
+        <div className={`card w-full p-6 ${embedded ? 'max-w-md' : 'max-w-sm'}`}>
+          {embedded ? (
+            <OnRampFrame
+              url={handoffUrl}
+              asset={handoffAsset ?? undefined}
+              onClose={() => setHandoffUrl(null)}
+            />
+          ) : (
+            <OnRampHandoff
+              url={handoffUrl}
+              asset={handoffAsset ?? undefined}
+              onClose={() => setHandoffUrl(null)}
+            />
+          )}
         </div>
       </div>
     )

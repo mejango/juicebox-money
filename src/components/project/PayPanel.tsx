@@ -2159,7 +2159,10 @@ export function PayPanel({
                 type="button"
                 onClick={() => {
                   setBuyExplainerOpen(false);
-                  onRamp.buy({ fiatQuantity: amount.trim() || undefined });
+                  onRamp.buy({
+                    fiatQuantity: amount.trim() || undefined,
+                    display: "embed",
+                  });
                 }}
                 className="btn-primary h-10 px-5 text-sm"
               >

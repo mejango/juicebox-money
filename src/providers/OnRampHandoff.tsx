@@ -74,3 +74,54 @@ export function OnRampHandoff({
     </div>
   )
 }
+
+/**
+ * The provider's own page, inside our dialog.
+ *
+ * For a purchase started mid-payment: sending someone to another window loses
+ * the thread of what they were doing. Para's portal answers over a
+ * `MessagePort` it supplies, so it does not care whether it is a popup or a
+ * frame — what it does care about is that the purchase was recorded, which
+ * `recordOnRampPurchase` does before this renders.
+ */
+export function OnRampFrame({
+  url,
+  asset,
+  onClose,
+}: {
+  url: string
+  asset?: string
+  onClose: () => void
+}) {
+  return (
+    <div className="w-full">
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="font-agrandir text-xl font-medium text-ink">
+          {asset ? `Buy ${asset}` : 'Buy ETH or USDC'}
+        </h2>
+        <ModalCloseButton
+          onClick={onClose}
+          aria-label="Close"
+          className="-mr-2 -mt-1"
+        />
+      </div>
+      <p className="mt-1 text-sm text-smoke-700">
+        Your wallet address is already filled in. Come back here when it&apos;s
+        done.
+      </p>
+      <iframe
+        src={url}
+        title={asset ? `Buy ${asset}` : 'Buy crypto'}
+        className="mt-3 h-[32rem] w-full rounded-lg border border-smoke-200"
+      />
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
+      >
+        Open in a separate window instead
+      </a>
+    </div>
+  )
+}
