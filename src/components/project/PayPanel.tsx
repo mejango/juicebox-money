@@ -2040,10 +2040,14 @@ export function PayPanel({
                 // window asks. Saying both is still worth it — bank
                 // transfers authorise far more often than cards, and nobody
                 // reaches for one they did not know was offered.
-                // "$" rather than a description of the rails: it is a
-                // currency in a list of currencies, and what it costs to use is
-                // said at Pay, where it matters.
-                ...(onRamp.supported ? [{ value: BUY_OPTION, label: "$" }] : []),
+                // Names both rails without promising to pick one: Para's
+                // on-ramp takes no payment method, so the provider's own window
+                // asks. Saying both is still worth it — bank transfers
+                // authorise far more often than cards, and nobody reaches for
+                // one they did not know was offered.
+                ...(onRamp.supported
+                  ? [{ value: BUY_OPTION, label: "Card or bank" }]
+                  : []),
               ]}
             />
           ) : (
@@ -2099,7 +2103,10 @@ export function PayPanel({
                 Starts in {formatStartCountdown(startsAt - now)}.
               </p>
             ) : null}
-            {insufficientBalance ? (
+            {/* Not while paying by card: the shortfall is in a token this
+                payer is not spending, and buying it is the very thing the
+                button now offers. */}
+            {insufficientBalance && !payWithDollars ? (
               <p className="text-xs text-error-500">
                 You don&apos;t have enough {symbol} on {payChainName(chainId)}.
               </p>
