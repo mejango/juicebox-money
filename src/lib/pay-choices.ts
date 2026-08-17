@@ -41,3 +41,17 @@ export function payButtonAction({
   // purchase, rather than starting a payment that cannot settle.
   return payWithDollars ? 'buyFirst' : 'confirm'
 }
+
+/**
+ * What to call the assets a payer can buy their way into this project with.
+ *
+ * Only the ones it actually accepts: telling someone paying a USDC-only project to buy "ETH or
+ * USDC" invites them to buy the half that cannot pay it.
+ */
+export function buyableAssetLabel(acceptedSymbols: string[]): string {
+  const buyable = ['ETH', 'USDC'].filter(asset =>
+    acceptedSymbols.some(symbol => symbol.toUpperCase() === asset),
+  )
+  if (buyable.length === 0) return 'ETH or USDC'
+  return buyable.join(' or ')
+}

@@ -48,7 +48,11 @@ import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
-import { defaultsToDollars, payButtonAction } from "@/lib/pay-choices";
+import {
+  buyableAssetLabel,
+  defaultsToDollars,
+  payButtonAction,
+} from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
@@ -607,6 +611,7 @@ export function PayPanel({
     acceptedTokens,
     chainId,
   );
+  const buyableLabel = buyableAssetLabel(contexts.map(ctx => ctx.symbol));
   const holdsNothing = defaultsToDollars({
     isConnected,
     balances: acceptedTokens.map(
@@ -2134,15 +2139,15 @@ export function PayPanel({
           explained by the provider's window appearing. */}
       {buyExplainerOpen ? (
         <ModalShell
-          title="First, buy ETH or USDC"
+          title={`First, buy ${buyableLabel}`}
           maxWidth="max-w-md"
           onClose={() => setBuyExplainerOpen(false)}
         >
           <div className="px-5 py-5">
             <p className="text-sm leading-relaxed text-smoke-700">
-              Payments to this project take ETH or USDC — that is what settles instantly, runs
-              its automated rules, and sends out its rewards. You&apos;ll use your card or bank
-              to buy some first, then come back here to pay.
+              Payments to this project take {buyableLabel} in order to settle instantly, stick
+              to automated rules, and send out incentives on schedule. You&apos;ll use your card
+              or bank to buy some first, then come back here to pay.
             </p>
             <div className="mt-5 flex justify-end">
               <button
@@ -2156,7 +2161,7 @@ export function PayPanel({
                 }}
                 className="btn-primary h-10 px-5 text-sm"
               >
-                Buy ETH/USDC
+                Buy {buyableLabel}
               </button>
             </div>
           </div>
