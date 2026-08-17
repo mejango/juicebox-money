@@ -2123,7 +2123,9 @@ export function PayPanel({
             ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-0.5">
-            {isConnected && walletBalance !== undefined ? (
+            {/* Not while paying by card: that is a balance in a token this
+                payer is not spending, on a row that is about to buy some. */}
+            {isConnected && walletBalance !== undefined && !payWithDollars ? (
               <span className="text-xs text-smoke-700">
                 Balance: {formatTokenAmount(walletBalance, decimals)}
               </span>
