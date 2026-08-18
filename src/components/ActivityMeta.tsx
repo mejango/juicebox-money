@@ -119,9 +119,9 @@ export function ActivityAmountLine({
   )
 }
 
-/** "From" for outflows, "To" for inflows, "By" for everything else. */
+/** "To" for outflows, "From" for inflows, "By" for everything else. */
 export function actorPrefix(direction: 'in' | 'out' | null | undefined): string {
-  return direction === 'out' ? 'From' : direction === 'in' ? 'To' : 'By'
+  return direction === 'out' ? 'To' : direction === 'in' ? 'From' : 'By'
 }
 
 /** Shared activity direction/value/chain cluster used by both activity feeds. */
