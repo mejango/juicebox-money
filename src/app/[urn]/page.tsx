@@ -5,7 +5,7 @@ import {
 } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { isAddressEqual, type Address } from "viem";
 import { ActivityList } from "@/components/ActivityList";
@@ -58,7 +58,7 @@ import {
   projectHandleFromRoute,
   verifyProjectHandleAuthorityWithFallback,
 } from "@/lib/project-handles";
-import { chainName, parseUrn, toUrn } from "@/lib/urn";
+import { LEGACY_SITE, chainName, parseUrn, toUrn } from "@/lib/urn";
 import { SUPPORTED_CHAINS } from "@/lib/chains";
 
 // getProjectPageData is backed by a POST, which Next's fetch cache doesn't
@@ -279,10 +279,13 @@ export async function generateMetadata({
 }: {
   params: Promise<{ urn: string }>;
 }): Promise<Metadata> {
-  // notFound() here (not just in the page) so the 404 status is set before
-  // streaming starts — metadata is awaited ahead of the response shell.
-  const urn = await resolveProjectRouteCached((await params).urn);
-  if (!urn) notFound();
+  // Resolve here (not just in the page) so the redirect/404 status is set
+  // before streaming starts — metadata is awaited ahead of the response shell.
+  const segment = (await params).urn;
+  const urn = await resolveProjectRouteCached(segment);
+  // Anything that isn't a V6 project route belongs to the V1–V5 app now
+  // serving from old.juicebox.money — hand it the same path.
+  if (!urn) redirect(`${LEGACY_SITE}/${segment}`);
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
   const project = result.project;
@@ -458,8 +461,9 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ urn: string }>;
 }) {
-  const urn = await resolveProjectRouteCached((await params).urn);
-  if (!urn) notFound();
+  const segment = (await params).urn;
+  const urn = await resolveProjectRouteCached(segment);
+  if (!urn) redirect(`${LEGACY_SITE}/${segment}`);
 
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
