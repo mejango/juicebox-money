@@ -848,7 +848,7 @@ export function ActivityList({
     <div>
       {header}
       {visible.length ? (
-        <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[801px]:max-h-[max(780px,82vh)]">
+        <ul className="max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto py-1 min-[801px]:max-h-[max(780px,82vh)]">
           {groupSameTxEvents(visible).map(group => (
             <Row
               key={group[0].id}
@@ -859,7 +859,7 @@ export function ActivityList({
           ))}
         </ul>
       ) : (
-        <div className="card flex min-h-[180px] items-center justify-center p-5 text-sm text-smoke-500">
+        <div className="flex min-h-[180px] items-center justify-center rounded-xl border border-dashed border-smoke-300 p-5 text-sm text-smoke-500">
           {liveEvents.length < liveTotal
             ? 'No activity matches this filter in the rows loaded so far.'
             : 'No activity matches this filter.'}
