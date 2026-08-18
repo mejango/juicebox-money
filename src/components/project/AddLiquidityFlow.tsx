@@ -39,10 +39,13 @@ import {
   POSITION_MANAGER_BY_CHAIN,
   alignDown,
   alignUp,
+  amountsModeNote,
+  fullRangeBounds,
   getAmountsForLiquidity,
   getLiquidityForAmounts,
   lpCounterpart,
   lpDefaultRange,
+  solveRangeFromAmounts,
   sqrtAtTick,
 } from '@/lib/uniswap-v4'
 import { formatPrice } from './chartUtils'
@@ -560,6 +563,43 @@ function AddLiquidityForm({
     seededRef.current = true
   }, [poolP, ceiling, floor])
 
+  // Amounts-first by default: both deposits are typed and the range is solved
+  // around them (floor pinned to the cash-out price, ceiling to the issuance
+  // price when the token side needs the room). Range mode keeps the classic
+  // pick-a-range flow with counterpart autofill.
+  const [mode, setMode] = useState<'amounts' | 'range' | 'full'>('amounts')
+
+  const solved = useMemo(() => {
+    if (mode !== 'amounts' || !(poolP > 0)) return null
+    const t = parseFloat(tokStr)
+    const e = parseFloat(pairStr)
+    return solveRangeFromAmounts({
+      price: poolP,
+      tokenAmount: t > 0 ? t : 0,
+      pairAmount: e > 0 ? e : 0,
+      floorHint: floor,
+      ceilingHint: ceiling,
+    })
+  }, [mode, poolP, tokStr, pairStr, floor, ceiling])
+
+  // Keep the range inputs (and everything downstream: the preview SVG, the
+  // review path, the mint ticks) synced to the solved range.
+  useEffect(() => {
+    if (!solved) return
+    setMinStr(trimNum(solved.minPrice))
+    setMaxStr(trimNum(solved.maxPrice))
+  }, [solved])
+
+  // Full-range mode presets the bounds; the classic counterpart autofill over
+  // that span then couples the amounts at the v2 pool ratio.
+  useEffect(() => {
+    if (mode !== 'full') return
+    const bounds = fullRangeBounds(poolP)
+    if (!bounds) return
+    setMinStr(trimNum(bounds.minPrice))
+    setMaxStr(trimNum(bounds.maxPrice))
+  }, [mode, poolP])
+
   const range = useMemo(() => {
     const pa = parseFloat(minStr)
     const pb = parseFloat(maxStr)
@@ -633,16 +673,29 @@ function AddLiquidityForm({
     invalidatePlan()
   }
 
+  // In amounts mode both fields are free-typed (the range absorbs the ratio);
+  // in range mode the classic counterpart autofill keeps them coupled.
+  const onAmountInput = (side: 'tok' | 'pair', v: string) => {
+    if (mode !== 'amounts') {
+      if (side === 'tok') setTok(v)
+      else setPairAmt(v)
+      return
+    }
+    if (side === 'tok') setTokStr(v)
+    else setPairStr(v)
+    invalidatePlan()
+  }
+
   const tokMax = () => {
     if (!balances) return
-    setTok(formatUnits(balances.tok, 18))
+    onAmountInput('tok', formatUnits(balances.tok, 18))
   }
   const pairMax = () => {
     if (!balances) return
     // Keep ~0.001 native for gas only when the pair IS native.
     const buf = pair.isNative ? 1_000_000_000_000_000n : 0n
     const v = balances.pair > buf ? balances.pair - buf : 0n
-    setPairAmt(formatUnits(v, pairDec))
+    onAmountInput('pair', formatUnits(v, pairDec))
   }
 
   // Re-label the token symbol for a step's ERC-20 token.
@@ -962,57 +1015,97 @@ function AddLiquidityForm({
         .
       </p>
 
-      <LiquidityRangePreview
-        floor={floor}
-        ceiling={ceiling}
-        current={poolP}
-        minimum={range.pa}
-        maximum={range.pb}
-        pairSymbol={pairSym}
-        tokenSymbol={sym}
-      />
+      <div className="mt-3 flex items-center gap-2">
+        {(
+          [
+            ['amounts', 'By amounts'],
+            ['full', 'Full range'],
+            ['range', 'By price range'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              if (mode === id) return
+              setMode(id)
+              invalidatePlan()
+            }}
+            disabled={busy}
+            aria-pressed={mode === id}
+            className={`px-2.5 py-0.5 text-[11px] ${
+              mode === id
+                ? 'inline-flex items-center justify-center rounded-lg border border-bluebs-500 bg-bluebs-25 font-medium text-bluebs-700'
+                : 'btn-secondary'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode !== 'full' ? (
+        <LiquidityRangePreview
+          floor={floor}
+          ceiling={ceiling}
+          current={poolP}
+          minimum={range.pa}
+          maximum={range.pb}
+          pairSymbol={pairSym}
+          tokenSymbol={sym}
+        />
+      ) : null}
 
       {/* Price range */}
-      <div className="mt-3">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="field-label">
-            Price range ({pairSym} per {sym})
-          </span>
-          <span className="text-[11px] text-smoke-500">
-            cash-out floor → issuance ceiling
-          </span>
+      {mode === 'range' ? (
+        <div className="mt-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="field-label">
+              Price range ({pairSym} per {sym})
+            </span>
+            <span className="text-[11px] text-smoke-500">
+              cash-out floor → issuance ceiling
+            </span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="Min"
+              value={minStr}
+              disabled={busy}
+              onChange={e => onRangeChange('min', e.target.value)}
+              className="input-well min-h-[40px] w-full px-3 text-sm"
+              aria-label={`Range minimum in ${pairSym} per ${sym}`}
+            />
+            <span className="shrink-0 text-xs text-smoke-500">to</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              placeholder="Max"
+              value={maxStr}
+              disabled={busy}
+              onChange={e => onRangeChange('max', e.target.value)}
+              className="input-well min-h-[40px] w-full px-3 text-sm"
+              aria-label={`Range maximum in ${pairSym} per ${sym}`}
+            />
+          </div>
         </div>
-        <div className="mt-1.5 flex items-center gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="Min"
-            value={minStr}
-            disabled={busy}
-            onChange={e => onRangeChange('min', e.target.value)}
-            className="input-well min-h-[40px] w-full px-3 text-sm"
-            aria-label={`Range minimum in ${pairSym} per ${sym}`}
-          />
-          <span className="shrink-0 text-xs text-smoke-500">to</span>
-          <input
-            type="number"
-            inputMode="decimal"
-            placeholder="Max"
-            value={maxStr}
-            disabled={busy}
-            onChange={e => onRangeChange('max', e.target.value)}
-            className="input-well min-h-[40px] w-full px-3 text-sm"
-            aria-label={`Range maximum in ${pairSym} per ${sym}`}
-          />
-        </div>
-      </div>
+      ) : mode === 'amounts' && range.pa > 0 && range.pb > 0 ? (
+        <p className="mt-2 text-xs text-smoke-700">
+          Price range:{' '}
+          <span className="font-medium text-ink">
+            {minStr} → {maxStr} {pairSym} per {sym}
+          </span>
+        </p>
+      ) : null}
 
       {/* Deposit amounts */}
       <div className="mt-3 grid grid-cols-2 gap-3">
-        <div className={disabledCol(sides.tok)}>
+        <div className={mode === 'range' ? disabledCol(sides.tok) : ''}>
           <div className="flex items-baseline justify-between">
             <span className="field-label">{sym} to add</span>
-            {sides.tok ? (
+            {mode === 'amounts' || sides.tok ? (
               <button
                 onClick={tokMax}
                 disabled={busy || !balances}
@@ -1028,8 +1121,8 @@ function AddLiquidityForm({
               inputMode="decimal"
               placeholder="0.00"
               value={tokStr}
-              disabled={busy || !sides.tok}
-              onChange={e => setTok(e.target.value)}
+              disabled={busy || (mode === 'range' && !sides.tok)}
+              onChange={e => onAmountInput('tok', e.target.value)}
               className="min-h-[40px] w-full bg-transparent text-sm outline-none placeholder:text-smoke-500 disabled:cursor-not-allowed"
               aria-label={`${sym} amount`}
             />
@@ -1037,10 +1130,10 @@ function AddLiquidityForm({
           </div>
         </div>
 
-        <div className={disabledCol(sides.pair)}>
+        <div className={mode === 'range' ? disabledCol(sides.pair) : ''}>
           <div className="flex items-baseline justify-between">
             <span className="field-label">{pairSym} to add</span>
-            {sides.pair ? (
+            {mode === 'amounts' || sides.pair ? (
               <button
                 onClick={pairMax}
                 disabled={busy || !balances}
@@ -1056,8 +1149,8 @@ function AddLiquidityForm({
               inputMode="decimal"
               placeholder="0.00"
               value={pairStr}
-              disabled={busy || !sides.pair}
-              onChange={e => setPairAmt(e.target.value)}
+              disabled={busy || (mode === 'range' && !sides.pair)}
+              onChange={e => onAmountInput('pair', e.target.value)}
               className="min-h-[40px] w-full bg-transparent text-sm outline-none placeholder:text-smoke-500 disabled:cursor-not-allowed"
               aria-label={`${pairSym} amount`}
             />
@@ -1068,12 +1161,31 @@ function AddLiquidityForm({
         </div>
       </div>
 
-      <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-        Enter either amount; the other follows at the pool price. Near Min uses
-        more {sym}; near Max uses more {pairSym}.
-      </p>
+      {mode === 'amounts' ? (
+        <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
+          {amountsModeNote({
+            tokenAmount: parseFloat(tokStr) > 0 ? parseFloat(tokStr) : 0,
+            pairAmount: parseFloat(pairStr) > 0 ? parseFloat(pairStr) : 0,
+            solved,
+            floorHint: floor,
+            ceilingHint: ceiling,
+            tokenSymbol: sym,
+            pairSymbol: pairSym,
+          })}
+        </p>
+      ) : mode === 'full' ? (
+        <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
+          Your liquidity works at every price, like a classic v2 pool. Enter
+          either amount; the other follows at the pool price.
+        </p>
+      ) : (
+        <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
+          Enter either amount; the other follows at the pool price. Near Min
+          uses more {sym}; near Max uses more {pairSym}.
+        </p>
+      )}
 
-      {!sides.tok || !sides.pair ? (
+      {mode === 'range' && (!sides.tok || !sides.pair) ? (
         <p className="mt-2 text-xs leading-relaxed text-orange-600">
           {sides.pair
             ? `At the current price (top of your range) the position is single-sided ${pairSym} — add ${pairSym} only.`
