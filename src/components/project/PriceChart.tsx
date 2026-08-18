@@ -22,7 +22,6 @@ import {
   netCashOutDisplayValue,
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
-import { Revalidating } from '@/components/ui/Revalidating'
 import {
   smoothPriceSeries,
   visibleSeries,
@@ -157,19 +156,10 @@ function TooltipPriceRow({
 function PriceSummary({
   label,
   color,
-  value,
-  baseSymbol,
-  symbol,
-  pending = false,
   note,
 }: {
   label: string
   color: string
-  value: number | null
-  baseSymbol: string
-  symbol: string
-  /** The value is restored from a previous read and still being confirmed. */
-  pending?: boolean
   /** What this price MEANS. Carried by the whole cell so the entire target reveals it; the (?)
    *  beside the label is the affordance saying so. */
   note?: string
@@ -184,17 +174,6 @@ function PriceSummary({
         />
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : <span>{label}</span>}
       </div>
-      <p className="mt-0.5 truncate text-[11px] text-smoke-700">
-        <Revalidating pending={pending && !!value && value > 0}>
-          {value && value > 0 ? (
-            <>
-              {formatPrice(value)} {baseSymbol}/{symbol}
-            </>
-          ) : (
-            '—'
-          )}
-        </Revalidating>
-      </p>
     </div>
   )
 }
@@ -208,7 +187,6 @@ export function PriceChart({
   floorHistory = [],
   ammHistory = [],
   cashOutTaxHistory = [],
-  referencesPending = false,
   note,
 }: {
   stages: ChartStage[]
@@ -220,6 +198,7 @@ export function PriceChart({
   ammHistory?: PricePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
   /** The live cash-out / AMM reads are still confirming. */
+  /** Accepted for caller compatibility; the value-less legend no longer shows it. */
   referencesPending?: boolean
   /** An always-true caveat about how to READ the chart, shown behind an (!) rather than as a
    *  banner. Notices about missing or stale DATA stay inline — see RevnetPriceCard. */
@@ -240,8 +219,6 @@ export function PriceChart({
     rangeSeconds === 0 ? firstStart : now - rangeSeconds
   const t0 = Math.min(now - 1, Math.max(firstStart, requestedStart))
   const t1 = now
-  const issuanceNowRate = rateAtTime(resolved, now)
-  const issuanceNow = issuanceNowRate > 0 ? 1 / issuanceNowRate : null
   const floor = floorPrice && floorPrice.value > 0 ? floorPrice : null
   const amm = ammPrice && ammPrice.value > 0 ? ammPrice : null
   const floorSeries = visibleSeries(
@@ -308,47 +285,15 @@ export function PriceChart({
       ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
         <>
-          <div className="grid gap-2 sm:grid-cols-3">
-            <PriceSummary
-              label="Issuance price"
-              note={priceConcept("issuance", { tokenSymbol: symbol, baseSymbol })}
-              color={ISSUANCE_COLOR}
-              value={issuanceNow}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-            />
-            <PriceSummary
-              label="Cash out price"
-              note={priceConcept("cashOut", { tokenSymbol: symbol, baseSymbol })}
-              color={CASH_OUT_COLOR}
-              value={floor?.value ?? null}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-              pending={referencesPending}
-            />
-            <PriceSummary
-              label="AMM price"
-              note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
-              color={AMM_COLOR}
-              value={amm?.value ?? null}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-              pending={referencesPending}
-            />
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <span className="text-xs text-smoke-500">Price</span>
-            <div className="flex flex-wrap items-center justify-end gap-1">
-              {note ? <ChartNoteTip note={note} /> : null}
-              {PRICE_RANGES.map(r => (
-                <ChartRangeButton
-                  key={r.label}
-                  label={r.label}
-                  active={rangeSeconds === r.seconds}
-                  onClick={() => setRangeSeconds(r.seconds)}
-                />
-              ))}
-            </div>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {PRICE_RANGES.map(r => (
+              <ChartRangeButton
+                key={r.label}
+                label={r.label}
+                active={rangeSeconds === r.seconds}
+                onClick={() => setRangeSeconds(r.seconds)}
+              />
+            ))}
           </div>
           {exactAmmSeries.length > 1 ? (
             <div className="mt-2 flex justify-end">
@@ -359,6 +304,26 @@ export function PriceChart({
             </div>
           ) : null}
         </>
+      }
+      footer={
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <PriceSummary
+            label="Issuance price"
+            note={priceConcept("issuance", { tokenSymbol: symbol, baseSymbol })}
+            color={ISSUANCE_COLOR}
+          />
+          <PriceSummary
+            label="Cash out price"
+            note={priceConcept("cashOut", { tokenSymbol: symbol, baseSymbol })}
+            color={CASH_OUT_COLOR}
+          />
+          <PriceSummary
+            label="AMM price"
+            note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
+            color={AMM_COLOR}
+          />
+          {note ? <ChartNoteTip note={note} /> : null}
+        </div>
       }
       renderSeries={({ X, Y }) => {
         // Observed histories stop at the live value at Now.

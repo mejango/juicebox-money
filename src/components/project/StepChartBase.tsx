@@ -76,6 +76,7 @@ export function StepChartBase({
   ariaLabel,
   showNowMarker = true,
   header,
+  footer,
   renderSeries,
   renderOverlay,
   renderInspection,
@@ -92,6 +93,8 @@ export function StepChartBase({
   showNowMarker?: boolean
   /** Rendered inside the card above the svg (summary tiles, range pills). */
   header?: ReactNode
+  /** Rendered inside the card below the svg (legend, methodology tips). */
+  footer?: ReactNode
   /** Extra series drawn after the stage boundaries, behind the Now marker. */
   renderSeries?: (geom: ChartGeom) => ReactNode
   /** Extra marks drawn after the inspected point, under the scale labels. */
@@ -321,6 +324,7 @@ export function StepChartBase({
           {renderInspection?.({ timestamp: t, isHovering: hoverT !== null })}
         </>
       ) : null}
+      {footer}
     </div>
   )
 }
