@@ -3,7 +3,11 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useEffect, useState } from 'react'
 import { ActorLink } from '@/components/ActorLink'
-import { activityParts, mergeActivityEvents } from '@/components/ActivityList'
+import {
+  combinedActivityParts,
+  groupSameTxEvents,
+  mergeActivityEvents,
+} from '@/components/ActivityList'
 import { ActivityMeta } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
@@ -97,8 +101,8 @@ export function AccountActivity({
   return (
     <div>
       <ul className="card divide-y divide-smoke-100 px-4 py-1">
-        {events.map(event => (
-          <Row key={event.id} event={event} />
+        {groupSameTxEvents(events).map(group => (
+          <Row key={group[0].id} group={group} />
         ))}
       </ul>
       {events.length < total ? (
@@ -119,7 +123,8 @@ export function AccountActivity({
   )
 }
 
-function Row({ event }: { event: BsAccountActivityEvent }) {
+function Row({ group }: { group: BsAccountActivityEvent[] }) {
+  const event = group[0]
   const name = event.project?.name ?? `Project ${event.projectId}`
   const isV6 = event.version === 6
   // An account's history spans protocol versions. A V4/V5 row is still a real
@@ -139,8 +144,8 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
     event.projectId,
   )
   const tokenUnit = isV6 ? v6TokenUnit : 'tokens'
-  const { actor, action, direction, memo, amountUsd } = activityParts(
-    event,
+  const { actor, actions, direction, memo, amountUsd } = combinedActivityParts(
+    group,
     tokenUnit,
   )
   const explorer = explorerHostname(event.chainId)
@@ -219,14 +224,26 @@ function Row({ event }: { event: BsAccountActivityEvent }) {
               {name} <span className="text-xs text-smoke-500">V{event.version}</span>
             </a>
           )}
+          {/* Same shape as the project feed: actor, memo headline, then the
+              actions as fine-print bullets — a lone action is still a bullet. */}
           <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
-            <ActorLink href={actorUrl} actor={actor} /> {action}
+            <ActorLink href={actorUrl} actor={actor} />
           </p>
           {memo ? (
-            <p className="mt-0.5 break-words text-xs italic text-smoke-500">
+            <p className="mt-0.5 break-words text-[13px] leading-relaxed text-ink">
               “{memo}”
             </p>
           ) : null}
+          <ul className="mt-0.5 space-y-0.5 text-xs text-smoke-500">
+            {actions.map((action, index) => (
+              <li
+                key={index}
+                className="relative break-words pl-3.5 before:absolute before:left-0 before:text-smoke-300 before:content-['•']"
+              >
+                {action}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </li>

@@ -248,7 +248,10 @@ export function groupSameTxEvents<T extends BsActivityEvent>(events: T[]): T[][]
   const groups = new Map<string, T[]>()
   const order: T[][] = []
   for (const event of events) {
-    const key = `${event.chainId}:${event.projectId}:${event.txHash}`
+    // Account-history rows span protocol versions; a V4 row must never fold
+    // into a V6 group even when the tx and project id line up.
+    const version = (event as { version?: number }).version ?? ''
+    const key = `${event.chainId}:${event.projectId}:${version}:${event.txHash}`
     const group = groups.get(key)
     if (group) group.push(event)
     else {
