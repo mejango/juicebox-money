@@ -8,7 +8,7 @@ import {
   groupSameTxEvents,
   mergeActivityEvents,
 } from '@/components/ActivityList'
-import { ActivityAmountLine } from '@/components/ActivityMeta'
+import { ActivityAmountLine, ActivityOnChain } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
@@ -186,33 +186,27 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
             <span className="min-w-0 truncate">
               <ActorLink href={actorUrl} actor={actor} />
             </span>
-            {txLink ? (
-              <a
-                href={txLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={formatDate(event.timestamp)}
-                className="shrink-0 hover:text-ink hover:underline"
-                suppressHydrationWarning
-              >
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-              </a>
-            ) : (
-              <span
-                className="shrink-0"
-                title={formatDate(event.timestamp)}
-                suppressHydrationWarning
-              >
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-              </span>
-            )}
+            <span className="flex shrink-0 items-center gap-1.5">
+              {txLink ? (
+                <a
+                  href={txLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={formatDate(event.timestamp)}
+                  className="hover:text-ink hover:underline"
+                  suppressHydrationWarning
+                >
+                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+                </a>
+              ) : (
+                <span title={formatDate(event.timestamp)} suppressHydrationWarning>
+                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+                </span>
+              )}
+              <ActivityOnChain chainId={event.chainId} txHash={event.txHash} />
+            </span>
           </div>
-          <ActivityAmountLine
-            chainId={event.chainId}
-            txHash={event.txHash}
-            amountUsd={amountUsd}
-            direction={direction}
-          />
+          <ActivityAmountLine amountUsd={amountUsd} direction={direction} />
           {isV6 ? (
             <ProjectLink
               href={projectHref}

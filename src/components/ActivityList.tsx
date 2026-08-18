@@ -19,7 +19,11 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { ActivityAmountLine, type ActivityAmountToken } from './ActivityMeta'
+import {
+  ActivityAmountLine,
+  ActivityOnChain,
+  type ActivityAmountToken,
+} from './ActivityMeta'
 import { ProjectTabIcon } from './project/ProjectTabIcon'
 
 const ACTIVITY_POLL_MS = 15_000
@@ -642,30 +646,27 @@ function Row({
               line ("20 USDC [in] on <chain>"), the memo headline, and the
               actions as fine-print bullets. */}
           <span className="min-w-0 truncate">{actorNode}</span>
-          {link ? (
-            <a
-              href={link}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={formatDate(event.timestamp)}
-              className="shrink-0 hover:text-ink hover:underline"
-              suppressHydrationWarning
-            >
-              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-            </a>
-          ) : (
-            <span
-              className="shrink-0"
-              title={formatDate(event.timestamp)}
-              suppressHydrationWarning
-            >
-              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-            </span>
-          )}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {link ? (
+              <a
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={formatDate(event.timestamp)}
+                className="hover:text-ink hover:underline"
+                suppressHydrationWarning
+              >
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              </a>
+            ) : (
+              <span title={formatDate(event.timestamp)} suppressHydrationWarning>
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              </span>
+            )}
+            <ActivityOnChain chainId={event.chainId} txHash={event.txHash} />
+          </span>
         </div>
         <ActivityAmountLine
-          chainId={event.chainId}
-          txHash={event.txHash}
           amountUsd={amountUsd}
           amountToken={
             accountingToken ? { raw: amountRaw, ...accountingToken } : null

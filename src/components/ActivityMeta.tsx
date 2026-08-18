@@ -54,43 +54,18 @@ export function activityAmountLabel(
     : formatIndexedUsd(amountUsd)
 }
 
-/**
- * The row's flow line, reading left to right: bold amount, in/out tag, then
- * "on <chain>" — the chain icon still links to the transaction.
- */
-export function ActivityAmountLine({
+/** "on <chain>" — sits next to the row's time; the icon links to the tx. */
+export function ActivityOnChain({
   chainId,
   txHash,
-  amountUsd,
-  amountToken,
-  direction,
 }: {
   chainId: number
   txHash: string
-  amountUsd: string | null | undefined
-  amountToken?: ActivityAmountToken | null
-  direction?: 'in' | 'out' | null
 }) {
   const explorer = explorerHostname(chainId)
   const txUrl = explorer ? `https://${explorer}/tx/${txHash}` : null
-  const amount = activityAmountLabel(amountUsd, amountToken)
-
   return (
-    <p className="mt-1 flex items-center gap-1.5 text-sm text-smoke-500">
-      {amount ? (
-        <span className="font-semibold text-ink">{amount}</span>
-      ) : null}
-      {direction === 'in' || direction === 'out' ? (
-        <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
-            direction === 'in'
-              ? 'border-bluebs-500 text-bluebs-600'
-              : 'border-peel-500 text-peel-600'
-          }`}
-        >
-          {direction}
-        </span>
-      ) : null}
+    <>
       <span>on</span>
       {txUrl ? (
         <a
@@ -105,6 +80,39 @@ export function ActivityAmountLine({
       ) : (
         <ChainIcon chainId={chainId} size={18} standalone />
       )}
+    </>
+  )
+}
+
+/** The row's flow line: the in/out tag, then the bold amount. */
+export function ActivityAmountLine({
+  amountUsd,
+  amountToken,
+  direction,
+}: {
+  amountUsd: string | null | undefined
+  amountToken?: ActivityAmountToken | null
+  direction?: 'in' | 'out' | null
+}) {
+  const amount = activityAmountLabel(amountUsd, amountToken)
+  if (!amount && direction !== 'in' && direction !== 'out') return null
+
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-sm text-smoke-500">
+      {direction === 'in' || direction === 'out' ? (
+        <span
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+            direction === 'in'
+              ? 'border-bluebs-500 text-bluebs-600'
+              : 'border-peel-500 text-peel-600'
+          }`}
+        >
+          {direction}
+        </span>
+      ) : null}
+      {amount ? (
+        <span className="font-semibold text-ink">{amount}</span>
+      ) : null}
     </p>
   )
 }
