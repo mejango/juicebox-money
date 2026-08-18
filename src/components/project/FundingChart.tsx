@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { SecuredReserveChart } from '@/components/SecuredReserveChart'
 import { ChartRangeSelect } from '@/components/project/StepChartBase'
 import {
+  getSuckerGroupAddToBalance,
   getSuckerGroupMoments,
+  type BsAddToBalance,
   type BsPriceMoment,
 } from '@/lib/bendystraw'
 import type { ReservePoint } from '@/lib/homepage-reserves'
@@ -48,66 +50,94 @@ function usd(value: number) {
   })
 }
 
-/** A moment's raw amount valued in USD at that moment's own indexed rate. */
-function momentUsd(
-  raw: string,
-  rate: string | null | undefined,
-  decimals: number,
-): number | null {
-  if (!rate) return null
-  try {
-    return (
-      Number(BigInt(raw)) / 10 ** decimals * (Number(BigInt(rate)) / 1e18)
-    )
-  } catch {
-    return null
+/** The newest indexed USD rate — one price for the whole series, like the
+ *  homepage chart, so a cumulative series can never wobble on rate noise. */
+function latestRate(moments: BsPriceMoment[]): bigint | null {
+  let rate: bigint | null = null
+  let at = -1
+  for (const moment of moments) {
+    if (!moment.accountingTokenUsdRate || moment.timestamp < at) continue
+    try {
+      rate = BigInt(moment.accountingTokenUsdRate)
+      at = moment.timestamp
+    } catch {
+      // Skip an unparseable rate.
+    }
   }
+  return rate
 }
 
 /**
- * Even time buckets from the first moment to now, forward-filling quiet
+ * Even time buckets from the first event to now, forward-filling quiet
  * stretches so the bars read as a continuous history like the homepage chart.
+ *
+ * Volume is cumulative INTAKE — indexed payment volume plus funds added
+ * straight to the terminal — so it can only rise. Balance is the actual
+ * terminal balance, so payouts and cash outs pull it down.
  */
 function bucketize(
   moments: BsPriceMoment[],
+  adds: BsAddToBalance[],
   metric: Metric,
   decimals: number,
   rangeSeconds: number,
 ): ReservePoint[] {
-  const valued = moments
-    .map(moment => ({
-      timestamp: moment.timestamp,
-      valueUsd: momentUsd(
-        metric === 'volume' ? moment.volume : moment.balance,
-        moment.accountingTokenUsdRate,
-        decimals,
-      ),
-    }))
-    .filter((point): point is ReservePoint => point.valueUsd !== null)
-    .sort((a, b) => a.timestamp - b.timestamp)
-  if (!valued.length) return []
+  const rate = latestRate(moments)
+  if (rate === null) return []
+  const usdOf = (raw: bigint) =>
+    (Number(raw) / 10 ** decimals) * (Number(rate) / 1e18)
+
+  type RawEvent = { timestamp: number; volume?: bigint; add?: bigint }
+  const events: RawEvent[] = []
+  for (const moment of moments) {
+    try {
+      events.push({
+        timestamp: moment.timestamp,
+        volume: BigInt(metric === 'volume' ? moment.volume : moment.balance),
+      })
+    } catch {
+      // Skip an unparseable row.
+    }
+  }
+  if (metric === 'volume') {
+    for (const add of adds) {
+      try {
+        events.push({ timestamp: add.timestamp, add: BigInt(add.amount) })
+      } catch {
+        // Skip an unparseable row.
+      }
+    }
+  }
+  events.sort((a, b) => a.timestamp - b.timestamp)
+  if (!events.length) return []
 
   const t1 = Math.floor(Date.now() / 1000)
   const t0 = Math.max(
-    valued[0].timestamp,
-    rangeSeconds > 0 ? t1 - rangeSeconds : valued[0].timestamp,
+    events[0].timestamp,
+    rangeSeconds > 0 ? t1 - rangeSeconds : events[0].timestamp,
   )
   const span = Math.max(t1 - t0, 1)
   const points: ReservePoint[] = []
   let index = 0
-  let last = 0
-  // Seed with the value standing when the window opens.
-  while (index < valued.length && valued[index].timestamp <= t0) {
-    last = valued[index].valueUsd
-    index += 1
-  }
-  for (let bar = 0; bar < BARS; bar++) {
-    const end = t0 + (span * (bar + 1)) / BARS
-    while (index < valued.length && valued[index].timestamp <= end) {
-      last = valued[index].valueUsd
+  let lastVolume = 0n
+  let cumulativeAdds = 0n
+  const consume = (limit: number) => {
+    while (index < events.length && events[index].timestamp <= limit) {
+      const event = events[index]
+      if (event.volume !== undefined) lastVolume = event.volume
+      if (event.add !== undefined) cumulativeAdds += event.add
       index += 1
     }
-    points.push({ timestamp: Math.floor(end), valueUsd: last })
+  }
+  // Seed with the state standing when the window opens.
+  consume(t0)
+  for (let bar = 0; bar < BARS; bar++) {
+    const end = t0 + (span * (bar + 1)) / BARS
+    consume(end)
+    points.push({
+      timestamp: Math.floor(end),
+      valueUsd: usdOf(lastVolume + cumulativeAdds),
+    })
   }
   return points
 }
@@ -126,6 +156,7 @@ export function FundingChart({
   accountingToken: { symbol: string; decimals: number } | null
 }) {
   const [moments, setMoments] = useState<BsPriceMoment[] | null>(null)
+  const [adds, setAdds] = useState<BsAddToBalance[]>([])
   const [metric, setMetric] = useState<Metric>('volume')
   // A quarter, like the price chart's default window.
   const [rangeSeconds, setRangeSeconds] = useState(91 * DAY)
@@ -140,6 +171,14 @@ export function FundingChart({
       .catch(() => {
         if (!stopped) setMoments([])
       })
+    getSuckerGroupAddToBalance(suckerGroupId)
+      .then(items => {
+        if (!stopped) setAdds(items)
+      })
+      .catch(() => {
+        // Without the add-to-balance rows the volume series still shows
+        // indexed payment volume; it just understates direct additions.
+      })
     return () => {
       stopped = true
     }
@@ -148,9 +187,9 @@ export function FundingChart({
   const points = useMemo(
     () =>
       moments && accountingToken
-        ? bucketize(moments, metric, accountingToken.decimals, rangeSeconds)
+        ? bucketize(moments, adds, metric, accountingToken.decimals, rangeSeconds)
         : [],
-    [moments, metric, accountingToken, rangeSeconds],
+    [moments, adds, metric, accountingToken, rangeSeconds],
   )
 
   if (!suckerGroupId || !accountingToken) return null

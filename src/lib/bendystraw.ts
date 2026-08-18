@@ -1347,6 +1347,18 @@ export async function getAddToBalanceInflows(): Promise<BsAddToBalance[]> {
   return page.items
 }
 
+export async function getSuckerGroupAddToBalance(
+  suckerGroupId: string,
+): Promise<BsAddToBalance[]> {
+  const page = await getPagedItems<BsAddToBalance>(
+    GROUP_ADD_TO_BALANCE_QUERY,
+    'addToBalanceEvents',
+    { suckerGroupId },
+    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+  )
+  return page.items
+}
+
 export async function getSuckerGroupMoments(
   suckerGroupId: string,
 ): Promise<BsPriceMoment[]> {
@@ -1456,6 +1468,19 @@ export async function getPagedItems<T>(
 const ADD_TO_BALANCE_QUERY = `query($limit: Int!, $offset: Int!) {
   addToBalanceEvents(
     where: { version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { suckerGroupId timestamp amount }
+    totalCount
+  }
+}`
+
+const GROUP_ADD_TO_BALANCE_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  addToBalanceEvents(
+    where: { version: 6, suckerGroupId: $suckerGroupId }
     orderBy: "timestamp"
     orderDirection: "asc"
     limit: $limit
