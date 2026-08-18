@@ -24,8 +24,8 @@ const NOW_COLOR = '#F5A312'
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320
 const VH = 180
-const PL = 12
-const PR = 12
+const PL = 0
+const PR = 0
 const PT = 16
 const PB = 22
 
@@ -180,8 +180,10 @@ export function StepChartBase({
   }
 
   const X = (t: number) => PL + ((VW - PL - PR) * (t - t0)) / (t1 - t0)
+  // 10% headroom keeps the highest series off the plot's top edge.
+  const scaleMax = maxV * 1.1
   const Y = (v: number) =>
-    PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / maxV)))
+    PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / scaleMax)))
 
   const path = points
     // No issuance has an infinite price; pin it to the top of the finite
@@ -233,7 +235,8 @@ export function StepChartBase({
         >
         {/* Axes */}
         <line x1={PL} y1={VH - PB} x2={VW - PR} y2={VH - PB} stroke="#D4D1C7" strokeWidth="1" />
-        <line x1={PL} y1={VH - PB} x2={PL} y2={PT} stroke="#D4D1C7" strokeWidth="1" />
+        {/* Half-unit inset keeps the full stroke visible at the svg's edge. */}
+        <line x1={PL + 0.5} y1={VH - PB} x2={PL + 0.5} y2={PT} stroke="#D4D1C7" strokeWidth="1" />
         {/* Stage boundaries */}
         {resolved.map((s, i) =>
           i > 0 && s.start > t0 && s.start < t1 ? (
@@ -320,7 +323,7 @@ export function StepChartBase({
         />
         {renderOverlay?.(geom)}
         {/* Scale + date labels */}
-        <text x={PL + 3} y={PT + 7} fontSize="7" fill="#9C9580">
+        <text x={PL + 3} y={Y(maxV) + 8} fontSize="7" fill="#9C9580">
           {formatPrice(maxV)} {baseSymbol}
         </text>
         <text x={PL} y={VH - 6} fontSize="7.5" fill="#9C9580">

@@ -62,8 +62,8 @@ describe('price history inspection', () => {
     // dispatches the hover at nothing.
     const chart = container.querySelector('svg[role="img"]')
     expect(chart).not.toBeNull()
-    expect(container.textContent).toContain('1H')
-    expect(container.textContent).toContain('6H')
+    expect(container.textContent).toContain('1 hour')
+    expect(container.textContent).toContain('6 hours')
     expect(container.textContent).toContain('Smooth')
     expect(container.textContent).toContain('Every trade')
     Object.defineProperty(chart, 'getBoundingClientRect', {
