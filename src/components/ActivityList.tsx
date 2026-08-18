@@ -673,11 +673,11 @@ function Row({
           direction={direction}
         />
         {memo ? (
-          <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
+          <p className="mt-2 break-words text-sm leading-relaxed text-ink">
             “{memo}”
           </p>
         ) : null}
-        <ul className="mt-0.5 space-y-0.5 text-xs text-smoke-500">
+        <ul className={`${memo ? 'mt-1' : 'mt-2'} space-y-0.5 text-xs text-smoke-500`}>
           {/* Hand-rolled markers: the dot sits flush left while wrapped
               lines keep hanging-indent alignment with the first line's text. */}
           {actions.map((action, index) => (

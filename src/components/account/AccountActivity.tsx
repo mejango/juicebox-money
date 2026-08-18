@@ -232,11 +232,11 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
           {/* Same shape as the project feed: time | actor above, then the
               memo headline and the actions as fine-print bullets. */}
           {memo ? (
-            <p className="mt-0.5 break-words text-[13px] leading-relaxed text-ink">
+            <p className="mt-2 break-words text-[13px] leading-relaxed text-ink">
               “{memo}”
             </p>
           ) : null}
-          <ul className="mt-0.5 space-y-0.5 text-xs text-smoke-500">
+          <ul className={`${memo ? 'mt-1' : 'mt-2'} space-y-0.5 text-xs text-smoke-500`}>
             {actions.map((action, index) => (
               <li
                 key={index}
