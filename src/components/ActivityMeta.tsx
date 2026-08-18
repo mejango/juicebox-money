@@ -106,7 +106,7 @@ export function ActivityAmountLine({
       ) : null}
       {direction === 'in' || direction === 'out' ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium capitalize leading-none ${
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
             direction === 'in'
               ? 'border-bluebs-500 text-bluebs-600'
               : 'border-peel-500 text-peel-600'
@@ -158,7 +158,7 @@ export function ActivityMeta({
       {amount ? <span>{amount}</span> : null}
       {direction === 'in' || direction === 'out' ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium capitalize leading-none ${
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
             direction === 'in'
               ? 'border-bluebs-500 text-bluebs-600'
               : 'border-peel-500 text-peel-600'
