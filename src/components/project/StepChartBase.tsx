@@ -120,6 +120,7 @@ export function StepChartBase({
   baseSymbol,
   ariaLabel,
   showNowMarker = true,
+  showLadder = true,
   frameless = false,
   header,
   footer,
@@ -137,6 +138,8 @@ export function StepChartBase({
   ariaLabel: string
   /** Whether to draw the Now marker (e.g. only inside a projected window). */
   showNowMarker?: boolean
+  /** Whether to draw the issuance ladder itself (a deselected legend hides it). */
+  showLadder?: boolean
   /** Skip the card chrome when the chart already sits inside a card. */
   frameless?: boolean
   /** Rendered inside the card above the svg (summary tiles, range pills). */
@@ -292,16 +295,18 @@ export function StepChartBase({
           </>
         ) : null}
         {/* The price ladder */}
-        <polyline
-          points={path}
-          fill="none"
-          stroke={ISSUANCE_COLOR}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        {showLadder ? (
+          <polyline
+            points={path}
+            fill="none"
+            stroke={ISSUANCE_COLOR}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : null}
         {/* Crosshair guides while hovering */}
-        {hoverT !== null && price !== null ? (
+        {showLadder && hoverT !== null && price !== null ? (
           <>
             <line
               x1={X(t)}
@@ -324,19 +329,23 @@ export function StepChartBase({
           </>
         ) : null}
         {/* The inspected point */}
-        <circle
-          cx={X(t)}
-          cy={Y(price ?? maxV)}
-          r="3.5"
-          fill={NOW_COLOR}
-          stroke="#1A1A1A"
-          strokeWidth="1"
-        />
+        {showLadder ? (
+          <circle
+            cx={X(t)}
+            cy={Y(price ?? maxV)}
+            r="3.5"
+            fill={NOW_COLOR}
+            stroke="#1A1A1A"
+            strokeWidth="1"
+          />
+        ) : null}
         {renderOverlay?.(geom)}
         {/* Scale + date labels */}
-        <text x={PL + 3} y={Y(maxV) + 8} fontSize="7" fill="#9C9580">
-          {formatPrice(maxV)} {baseSymbol}
-        </text>
+        {showLadder ? (
+          <text x={PL + 3} y={Y(maxV) + 8} fontSize="7" fill="#9C9580">
+            {formatPrice(maxV)} {baseSymbol}
+          </text>
+        ) : null}
         <text x={PL} y={VH - 6} fontSize="7.5" fill="#9C9580">
           {chartDateLabel(t0, span)}
         </text>

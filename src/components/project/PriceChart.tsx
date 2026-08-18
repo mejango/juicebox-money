@@ -157,24 +157,35 @@ function PriceSummary({
   label,
   color,
   note,
+  active,
+  onToggle,
 }: {
   label: string
   color: string
   /** What this price MEANS. Carried by the whole cell so the entire target reveals it; the (?)
    *  beside the label is the affordance saying so. */
   note?: string
+  active: boolean
+  onToggle: () => void
 }) {
   return (
-    <div className="min-w-0 rounded-lg bg-smoke-75 px-3 py-2">
-      <div className="flex items-center gap-2 text-[11px] font-medium text-ink">
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onToggle}
+      className={`min-w-0 rounded-lg bg-smoke-75 px-3 py-2 text-left transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 ${
+        active ? '' : 'opacity-45'
+      }`}
+    >
+      <span className="flex items-center gap-2 text-[11px] font-medium text-ink">
         <span
           aria-hidden="true"
           className="h-2 w-2 shrink-0 rounded-full"
           style={{ backgroundColor: color }}
         />
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : <span>{label}</span>}
-      </div>
-    </div>
+      </span>
+    </button>
   )
 }
 
@@ -211,6 +222,9 @@ export function PriceChart({
   )
   const [marketPriceView, setMarketPriceView] =
     useState<MarketPriceView>('smooth')
+  const [showIssuance, setShowIssuance] = useState(true)
+  const [showCashOut, setShowCashOut] = useState(true)
+  const [showAmm, setShowAmm] = useState(true)
 
   const now = Math.floor(Date.now() / 1000)
   const resolved = useMemo(() => resolveStages(stages), [stages])
@@ -285,7 +299,30 @@ export function PriceChart({
       ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <span className="field-label">Price</span>
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <PriceSummary
+              label="Issuance price"
+              note={priceConcept("issuance", { tokenSymbol: symbol, baseSymbol })}
+              color={ISSUANCE_COLOR}
+              active={showIssuance}
+              onToggle={() => setShowIssuance(current => !current)}
+            />
+            <PriceSummary
+              label="Cash out price"
+              note={priceConcept("cashOut", { tokenSymbol: symbol, baseSymbol })}
+              color={CASH_OUT_COLOR}
+              active={showCashOut}
+              onToggle={() => setShowCashOut(current => !current)}
+            />
+            <PriceSummary
+              label="AMM price"
+              note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
+              color={AMM_COLOR}
+              active={showAmm}
+              onToggle={() => setShowAmm(current => !current)}
+            />
+            {note ? <ChartNoteTip note={note} /> : null}
+          </span>
           <span className="flex flex-wrap items-center gap-4">
             <ChartRangeSelect
               ranges={PRICE_RANGES.map(r => ({ label: r.label, value: r.seconds }))}
@@ -301,26 +338,7 @@ export function PriceChart({
           </span>
         </div>
       }
-      footer={
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <PriceSummary
-            label="Issuance price"
-            note={priceConcept("issuance", { tokenSymbol: symbol, baseSymbol })}
-            color={ISSUANCE_COLOR}
-          />
-          <PriceSummary
-            label="Cash out price"
-            note={priceConcept("cashOut", { tokenSymbol: symbol, baseSymbol })}
-            color={CASH_OUT_COLOR}
-          />
-          <PriceSummary
-            label="AMM price"
-            note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
-            color={AMM_COLOR}
-          />
-          {note ? <ChartNoteTip note={note} /> : null}
-        </div>
-      }
+      showLadder={showIssuance}
       renderSeries={({ X, Y }) => {
         // Observed histories stop at the live value at Now.
         const floorPath = asStepSeries(floorSeries)
@@ -340,7 +358,7 @@ export function PriceChart({
           .join(' ')
         return (
           <>
-            {floorSeries.length > 1 ? (
+            {showCashOut && floorSeries.length > 1 ? (
               <polyline
                 points={floorPath}
                 fill="none"
@@ -350,7 +368,7 @@ export function PriceChart({
                 strokeLinejoin="round"
               />
             ) : null}
-            {ammSeries.length > 1 ? (
+            {showAmm && ammSeries.length > 1 ? (
               <polyline
                 points={ammPath}
                 fill="none"
@@ -360,7 +378,7 @@ export function PriceChart({
                 strokeLinejoin="round"
               />
             ) : null}
-            {visibleMinimumSeries.length > 1 ? (
+            {showCashOut && visibleMinimumSeries.length > 1 ? (
               <polyline
                 points={minimumPath}
                 fill="none"
@@ -378,7 +396,7 @@ export function PriceChart({
       renderOverlay={({ Y, nowX }) => (
         // Exact live observations at Now.
         <>
-          {floor ? (
+          {showCashOut && floor ? (
             <circle
               cx={nowX}
               cy={Y(floor.value)}
@@ -388,7 +406,7 @@ export function PriceChart({
               strokeWidth="1"
             />
           ) : null}
-          {amm ? (
+          {showAmm && amm ? (
             <circle
               cx={nowX}
               cy={Y(amm.value)}
@@ -413,28 +431,34 @@ export function PriceChart({
             <p className="border-b border-grey-700 pb-1.5 font-medium text-white">
               {inspectionDateLabel(timestamp, t1 - t0)}
             </p>
-            <TooltipPriceRow
-              label="Issuance"
-              color={ISSUANCE_COLOR}
-              value={issuance}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-            />
-            <TooltipPriceRow
+            {showIssuance ? (
+              <TooltipPriceRow
+                label="Issuance"
+                color={ISSUANCE_COLOR}
+                value={issuance}
+                baseSymbol={baseSymbol}
+                symbol={symbol}
+              />
+            ) : null}
+            {showAmm ? (
+              <TooltipPriceRow
                 label={marketPriceView === 'smooth' ? 'AMM average' : 'AMM'}
-              color={AMM_COLOR}
-              value={ammPoint?.value ?? null}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-            />
-            <TooltipPriceRow
-              label="Cash out"
-              color={CASH_OUT_COLOR}
-              value={floorPoint?.value ?? null}
-              baseSymbol={baseSymbol}
-              symbol={symbol}
-            />
-            {minimum ? (
+                color={AMM_COLOR}
+                value={ammPoint?.value ?? null}
+                baseSymbol={baseSymbol}
+                symbol={symbol}
+              />
+            ) : null}
+            {showCashOut ? (
+              <TooltipPriceRow
+                label="Cash out"
+                color={CASH_OUT_COLOR}
+                value={floorPoint?.value ?? null}
+                baseSymbol={baseSymbol}
+                symbol={symbol}
+              />
+            ) : null}
+            {showCashOut && minimum ? (
               <TooltipPriceRow
                 label="Min cash out"
                 color={CASH_OUT_COLOR}
