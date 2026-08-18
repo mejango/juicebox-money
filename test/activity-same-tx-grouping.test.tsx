@@ -73,18 +73,19 @@ describe('combinedActivityParts', () => {
     expect(parts.direction).toBe('in')
     expect(parts.memo).toBe('Funding Human Creativity')
     expect(parts.amountRaw).toBe('20000000')
-    // One fragment per event, in reading order — the project feed bullets these.
-    expect(parts.actions).toHaveLength(3)
+    // One fragment per event in reading order, minus the zero-issuance pay's
+    // "paid into the project" — the amount + "in" tag already say that.
+    expect(parts.actions).toHaveLength(2)
     const sentence = renderToStaticMarkup(<>{parts.action}</>)
-    expect(sentence).toContain('paid into the project')
+    expect(sentence).not.toContain('paid into the project')
     expect(sentence).toContain('via the buyback pool')
     // The remint is explained, not shown as a bare mint: 17,043/28,406 ≈ 60%
     // of the swap output kept, so the line names the 40% reserve.
     expect(sentence).toContain('received')
     expect(sentence).toContain('after the 40% reserve')
     expect(sentence).not.toContain('minted')
-    expect(sentence.indexOf('paid into the project')).toBeLessThan(
-      sentence.indexOf('via the buyback pool'),
+    expect(sentence.indexOf('via the buyback pool')).toBeLessThan(
+      sentence.indexOf('after the 40% reserve'),
     )
   })
 

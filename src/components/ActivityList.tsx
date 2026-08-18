@@ -347,7 +347,23 @@ export function combinedActivityParts(
       }
     }
   }
-  const actions = parts.map(part => part.action)
+  // A zero-issuance pay's "paid into the project" adds nothing next to the
+  // row's amount and "in" tag — drop its fragment when other actions exist.
+  // The pay still anchors the row's actor, amount, direction, and memo.
+  const withFragments =
+    ordered.length > 1
+      ? ordered.filter(entry => {
+          if (!entry.payEvent) return true
+          try {
+            return BigInt(entry.payEvent.newlyIssuedTokenCount) > 0n
+          } catch {
+            return true
+          }
+        })
+      : ordered
+  const actions = (withFragments.length ? withFragments : ordered).map(
+    entry => parts[ordered.indexOf(entry)].action,
+  )
   return {
     ...primary,
     action: joinActionNodes(actions),
