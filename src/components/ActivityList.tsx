@@ -666,43 +666,28 @@ function Row({
             direction={direction}
           />
         </div>
-        {actions.length === 1 ? (
-          <>
-            <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-              {actorNode} {actions[0]}
-            </p>
-            {memo ? (
-              <p className="mt-0.5 break-words text-xs italic text-smoke-500">
-                “{memo}”
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-              {actorNode}
-            </p>
-            {/* Grouped rows swap the emphasis: the memo is the headline, the
-                actions are the fine print. */}
-            {memo ? (
-              <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
-                “{memo}”
-              </p>
-            ) : null}
-            <ul className="mt-0.5 space-y-0.5 text-xs text-smoke-500">
-              {/* Hand-rolled markers: the dot sits flush left while wrapped
-                  lines keep hanging-indent alignment with the first line's text. */}
-              {actions.map((action, index) => (
-                <li
-                  key={index}
-                  className="relative break-words pl-3.5 before:absolute before:left-0 before:text-smoke-300 before:content-['•']"
-                >
-                  {action}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+        {/* One shape for every row: actor, memo headline, then the actions
+            as fine-print bullets — a lone action is still a bullet. */}
+        <p className="mt-1 break-words text-sm leading-relaxed text-ink">
+          {actorNode}
+        </p>
+        {memo ? (
+          <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
+            “{memo}”
+          </p>
+        ) : null}
+        <ul className="mt-0.5 space-y-0.5 text-xs text-smoke-500">
+          {/* Hand-rolled markers: the dot sits flush left while wrapped
+              lines keep hanging-indent alignment with the first line's text. */}
+          {actions.map((action, index) => (
+            <li
+              key={index}
+              className="relative break-words pl-3.5 before:absolute before:left-0 before:text-smoke-300 before:content-['•']"
+            >
+              {action}
+            </li>
+          ))}
+        </ul>
       </div>
     </li>
   )
