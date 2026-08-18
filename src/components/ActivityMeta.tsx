@@ -101,6 +101,9 @@ export function ActivityAmountLine({
 
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-sm text-smoke-500">
+      {amount ? (
+        <span className="truncate font-semibold text-ink">{amount}</span>
+      ) : null}
       {direction === 'in' || direction === 'out' ? (
         <span
           className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium capitalize leading-none ${
@@ -111,9 +114,6 @@ export function ActivityAmountLine({
         >
           {direction}
         </span>
-      ) : null}
-      {amount ? (
-        <span className="truncate font-semibold text-ink">{amount}</span>
       ) : null}
     </span>
   )
