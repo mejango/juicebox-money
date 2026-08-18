@@ -1218,7 +1218,7 @@ function LiquidityProviders({
             >
               <p className="font-medium">{truncateAddress(active.address)}</p>
               <p className="mt-0.5 whitespace-nowrap text-white/80">
-                {formatTokenAmount(active.pair, lp.pairDecimals)} {lp.pairSymbol} ·{' '}
+                {formatTokenAmount(active.pair, lp.pairDecimals)} {lp.pairSymbol} |{' '}
                 {shareLabel(active)}
               </p>
             </div>

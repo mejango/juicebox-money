@@ -153,7 +153,7 @@ export async function GET(
           </div>
         </div>
         <div style={{ color: '#77716a', display: 'flex', fontSize: 18, marginTop: 18 }}>
-          Juicebox · fund your thing
+          Juicebox | fund your thing
         </div>
       </div>
     </div>,

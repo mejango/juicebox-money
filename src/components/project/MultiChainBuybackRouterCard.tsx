@@ -223,7 +223,7 @@ async function readChainState(
     )
     pools = windows.filter(row => row.twap > 0)
     poolSummary = pools.length
-      ? pools.map(row => `${row.label} pool · TWAP ${row.twap}s`).join(', ')
+      ? pools.map(row => `${row.label} pool | TWAP ${row.twap}s`).join(', ')
       : 'Not initialized'
   }
 
@@ -680,9 +680,9 @@ function BuybackActionForm({
         lines.push(
           `${row.name}: ${truncateAddress(address)}${
             kind === 'pool'
-              ? ` · fee ${fee} · spacing ${tickSpacing} · TWAP ${twapWindow}s · price ${sqrtPriceX96}`
+              ? ` | fee ${fee} | spacing ${tickSpacing} | TWAP ${twapWindow}s | price ${sqrtPriceX96}`
               : kind === 'twap'
-                ? ` · TWAP ${
+                ? ` | TWAP ${
                     row.pools.find(
                       pool => sameToken(pool.token, address),
                     )?.twap ?? '—'

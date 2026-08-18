@@ -1195,7 +1195,7 @@ function AddLiquidityForm({
 
       {balances ? (
         <p className="mt-1 text-xs text-smoke-500">
-          Your balance: {formatTokenAmount(balances.tok, 18)} {sym} ·{' '}
+          Your balance: {formatTokenAmount(balances.tok, 18)} {sym} |{' '}
           {formatTokenAmount(balances.pair, pairDec)} {pairSym}
         </p>
       ) : null}
@@ -1219,8 +1219,8 @@ function AddLiquidityForm({
             ).
           </p>
           <p className="mt-1 text-smoke-700">
-            Uniswap V4 PositionManager mint · fee tier{' '}
-            {(plan.display.fee / 10000).toFixed(2)}% · ticks{' '}
+            Uniswap V4 PositionManager mint | fee tier{' '}
+            {(plan.display.fee / 10000).toFixed(2)}% | ticks{' '}
             {plan.display.tickLower} to {plan.display.tickUpper}.
           </p>
           {plan.steps.length > 1 ? (

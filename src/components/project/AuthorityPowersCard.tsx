@@ -442,7 +442,7 @@ function PowerActionForm({
           }),
         )
         lines.push(
-          `${row.name}${display.length ? ` · ${display.join(' · ')}` : ''}`,
+          `${row.name}${display.length ? ` | ${display.join(' | ')}` : ''}`,
         )
       }
       setReview({ calls, lines })

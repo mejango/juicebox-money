@@ -6,7 +6,7 @@ export default function NotFound() {
   return (
     <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-20 sm:px-6 sm:py-24 md:grid-cols-[minmax(0,1fr)_320px]">
       <div className="flex flex-col items-start">
-        <span className="chip bg-crush-100 text-crush-700">404 · Not found</span>
+        <span className="chip bg-crush-100 text-crush-700">404 | Not found</span>
         <h1 className="mt-6 font-agrandir-wide text-4xl font-bold sm:text-5xl">
           This juicebox is empty<span className="text-split-500">.</span>
         </h1>

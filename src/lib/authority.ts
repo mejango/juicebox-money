@@ -206,10 +206,10 @@ export function safeOutcomeMessage(
     ? result.safeResults.filter(row => row.status === 'executed').length
     : 0
   if (queued || waiting || submitted) {
-    return `Safe action recorded${queued ? ` · ${queued} queued` : ''}${
-      waiting ? ` · ${waiting} awaiting more approvals` : ''
-    }${submitted ? ` · ${submitted} submitted and awaiting confirmation` : ''}${
-      executed ? ` · ${executed} executed` : ''
+    return `Safe action recorded${queued ? ` | ${queued} queued` : ''}${
+      waiting ? ` | ${waiting} awaiting more approvals` : ''
+    }${submitted ? ` | ${submitted} submitted and awaiting confirmation` : ''}${
+      executed ? ` | ${executed} executed` : ''
     }. ${
       options.instruction ?? 'Complete it in Pending multisig transactions.'
     }`
@@ -452,9 +452,9 @@ export async function runAuthorityCalls({
     } else if (progress.phase === 'paying') {
       message = 'Review and confirm one Relayr payment…'
     } else if (progress.phase === 'payment-submitted') {
-      message = `Relayr payment submitted (${progress.paymentHash.slice(0, 10)}…) · bundle ${progress.bundleUuid}. Do not pay again.`
+      message = `Relayr payment submitted (${progress.paymentHash.slice(0, 10)}…) | bundle ${progress.bundleUuid}. Do not pay again.`
     } else if (progress.phase === 'payment-confirmed') {
-      message = `Relayr payment confirmed · bundle ${progress.bundleUuid}. Waiting for destination chains…`
+      message = `Relayr payment confirmed | bundle ${progress.bundleUuid}. Waiting for destination chains…`
     } else {
       const states = progress.records.map((record, index) => {
         const chainId = record.chain
@@ -465,8 +465,8 @@ export async function runAuthorityCalls({
         const state = record.status?.state || 'Pending'
         return `${chain}: ${state}`
       })
-      message = `Relayr bundle ${progress.bundleUuid} · ${progress.done}/${progress.total} confirmed${
-        states.length ? ` · ${states.join(' · ')}` : ''
+      message = `Relayr bundle ${progress.bundleUuid} | ${progress.done}/${progress.total} confirmed${
+        states.length ? ` | ${states.join(' | ')}` : ''
       }`
     }
     onProgress?.({ kind: 'relayr', message })

@@ -368,12 +368,12 @@ function PerChainTokenState({
         <span className="text-smoke-500">Current:</span>{' '}
         {row.token ? (
           <span className="text-ink" title={row.token}>
-            {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
+            {row.tokenName ?? 'Token'} | {row.tokenSymbol ?? '—'} |{' '}
             <AddressLabel address={row.token} />
           </span>
         ) : (
           <span className="text-smoke-500">
-            Credits only · ERC-20 not deployed
+            Credits only | ERC-20 not deployed
           </span>
         )}{' '}
         <SameOnAllChains count={rows.length} />
@@ -392,11 +392,11 @@ function PerChainTokenState({
             <p className="font-medium text-smoke-700">{row.name}</p>
             {row.token ? (
               <p className="truncate text-smoke-500" title={row.token}>
-                {row.tokenName ?? 'Token'} · {row.tokenSymbol ?? '—'} ·{' '}
+                {row.tokenName ?? 'Token'} | {row.tokenSymbol ?? '—'} |{' '}
                 <AddressLabel address={row.token} />
               </p>
             ) : (
-              <p className="text-smoke-500">Credits only · ERC-20 not deployed</p>
+              <p className="text-smoke-500">Credits only | ERC-20 not deployed</p>
             )}
           </div>
         </div>

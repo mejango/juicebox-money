@@ -1035,7 +1035,7 @@ function CustomerAllCard({
       <span className="field-label">All</span>
       <p className="mt-2 text-sm font-medium text-ink">
         {customers.length.toLocaleString('en-US')}{' '}
-        {customers.length === 1 ? 'customer' : 'customers'} ·{' '}
+        {customers.length === 1 ? 'customer' : 'customers'} |{' '}
         {total.toLocaleString('en-US')} {total === 1 ? 'item' : 'items'} sold
         {data.capped ? ` (showing latest ${data.items.length})` : ''}
       </p>

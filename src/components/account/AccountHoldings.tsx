@@ -286,7 +286,7 @@ export function AccountTokenHoldings({
                 // cross-chain (which needs the ERC-20) was unavailable.
                 <p className="mt-0.5 text-xs text-smoke-500">
                   {group.claimed > 0n
-                    ? `${formatTokenAmount(group.claimed)} claimed · ${formatTokenAmount(group.credits)} credits`
+                    ? `${formatTokenAmount(group.claimed)} claimed | ${formatTokenAmount(group.credits)} credits`
                     : `${formatTokenAmount(group.credits)} credits (unclaimed)`}
                 </p>
               ) : null}

@@ -322,7 +322,7 @@ export function SearchBox({
                     {account.ensName ? (
                       <>
                         <span>{truncateAddress(account.address)}</span>
-                        <span aria-hidden>·</span>
+                        <span aria-hidden>|</span>
                       </>
                     ) : null}
                     <span>View account →</span>

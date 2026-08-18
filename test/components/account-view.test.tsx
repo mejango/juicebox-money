@@ -890,7 +890,7 @@ describe('account holdings grouping', () => {
     })
     const text = renderedText(renderer.root)
     expect(text).toContain('3 REV')
-    expect(text).toContain('2 claimed · 1 credits')
+    expect(text).toContain('2 claimed | 1 credits')
 
     // Credits-only balances say so. A bare headline left a holder unable to tell the balance
     // was unclaimed, and therefore unable to tell why moving it cross-chain (which needs the
@@ -912,7 +912,7 @@ describe('account holdings grouping', () => {
     })
     const creditsText = renderedText(renderer.root)
     expect(creditsText).toContain('1 credits (unclaimed)')
-    expect(creditsText).not.toContain('claimed ·')
+    expect(creditsText).not.toContain('claimed |')
   })
 
   it('surfaces truncation when more balances exist than were fetched', async () => {

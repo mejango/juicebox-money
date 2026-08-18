@@ -2182,7 +2182,7 @@ export function CreateForm() {
               />
               {customMeta ? (
                 <p className="mt-1.5 text-xs text-smoke-700">
-                  ${customMeta.symbol} · {customMeta.decimals} decimals ·
+                  ${customMeta.symbol} | {customMeta.decimals} decimals |
                   verified on {selected.map((id) => chainName(id)).join(", ")}
                 </p>
               ) : customChainError ? (

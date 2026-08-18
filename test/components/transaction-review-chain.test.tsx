@@ -123,7 +123,7 @@ describe('transaction review chain identity', () => {
     })
 
     expect(document.querySelector('dialog')?.textContent).toContain(
-      'Destination · Permit2',
+      'Destination | Permit2',
     )
     expect(document.querySelector('dialog')?.textContent).toContain('USDC |')
     expect(document.querySelector('dialog')?.textContent).toContain(

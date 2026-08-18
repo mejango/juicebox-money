@@ -862,7 +862,7 @@ function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
   const selector = tx.data?.slice(0, 10) ?? "0x";
   const action = SELECTOR_LABELS.get(selector);
   const target = contractName(chainId, tx.to) ?? truncateAddress(tx.to);
-  return action ? `${action} · ${target}` : `${selector} · ${target}`;
+  return action ? `${action} | ${target}` : `${selector} | ${target}`;
 }
 
 function executionPlan(
@@ -1637,7 +1637,7 @@ export function SafeQueueCard({
                           : "text-bluebs-600"
                       }`}
                     >
-                      {label} · {hash.slice(0, 10)}…
+                      {label} | {hash.slice(0, 10)}…
                     </a>
                   ) : (
                     <span
@@ -1837,20 +1837,20 @@ export function SafeQueueCard({
                             <details className="min-w-0 flex-1">
                               <summary className="cursor-pointer list-none">
                                 <p className="text-sm font-medium text-ink">
-                                  #{tx.nonce} ·{" "}
+                                  #{tx.nonce} |{" "}
                                   {transactionLabel(chain.chainId, tx)}
                                 </p>
                                 <p className="mt-1 text-xs text-smoke-500">
                                   {count}/{required} signatures
-                                  {readyToExecute ? " · ready" : ""}
+                                  {readyToExecute ? " | ready" : ""}
                                   {alternative
-                                    ? " · same-nonce alternative"
+                                    ? " | same-nonce alternative"
                                     : ""}
                                   {Number(tx.operation) === 1
-                                    ? " · DELEGATECALL"
+                                    ? " | DELEGATECALL"
                                     : ""}
                                   {BigInt(tx.value ?? 0) > 0n
-                                    ? ` · sends ${tx.value} wei`
+                                    ? ` | sends ${tx.value} wei`
                                     : ""}
                                 </p>
                                 <p className="mt-1 text-xs text-smoke-500">

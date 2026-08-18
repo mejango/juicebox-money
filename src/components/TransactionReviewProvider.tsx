@@ -216,7 +216,7 @@ function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
 }
 
 function nativeValue(value = 0n): string {
-  return `${formatEther(value)} ETH · ${value.toString()} wei`
+  return `${formatEther(value)} ETH | ${value.toString()} wei`
 }
 
 function PrettyCall({
@@ -266,7 +266,7 @@ function PrettyCall({
         ) : null}
         <div>
           <dt className="text-xs font-medium text-smoke-600">
-            Destination{contractName ? ` · ${contractName}` : ''}
+            Destination{contractName ? ` | ${contractName}` : ''}
           </dt>
           <dd className="mt-1 break-all font-mono text-xs text-ink">{call.to}</dd>
         </div>

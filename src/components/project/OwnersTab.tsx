@@ -594,7 +594,7 @@ function YourChainRow({
               {position.token ? (
                 <p className="mt-0.5 text-xs text-smoke-500">
                   {!isRevnet ? (
-                    <>{formatTokenAmount(position.credits)} credits · </>
+                    <>{formatTokenAmount(position.credits)} credits | </>
                   ) : null}
                   {formatTokenAmount(position.erc20Balance)} ERC-20
                 </p>
@@ -1016,7 +1016,7 @@ function OwnersDonut({
             <AddressText address={activeHolder.address} />
           </p>
           <p className="mt-0.5 whitespace-nowrap text-white/80">
-            {formatTokenAmount(activeHolder.balance)} {tokenUnit} ·{' '}
+            {formatTokenAmount(activeHolder.balance)} {tokenUnit} |{' '}
             {holderPercentLabel(activeHolder.balance, total)}
           </p>
         </div>
