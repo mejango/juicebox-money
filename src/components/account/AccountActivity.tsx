@@ -8,7 +8,7 @@ import {
   groupSameTxEvents,
   mergeActivityEvents,
 } from '@/components/ActivityList'
-import { ActivityMeta, activityAmountLabel } from '@/components/ActivityMeta'
+import { ActivityAmountLine } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
@@ -148,7 +148,6 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
     group,
     tokenUnit,
   )
-  const amountLabel = activityAmountLabel(amountUsd)
   const explorer = explorerHostname(event.chainId)
   const actorUrl =
     actor && explorer ? `https://${explorer}/address/${actor}` : null
@@ -183,45 +182,37 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
+            {/* Actor left, time right, then the flow line. */}
+            <span className="min-w-0 truncate">
+              <ActorLink href={actorUrl} actor={actor} />
+            </span>
             {txLink ? (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <a
-                  href={txLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={formatDate(event.timestamp)}
-                  className="hover:text-ink hover:underline"
-                  suppressHydrationWarning
-                >
-                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-                </a>
-                <span aria-hidden className="text-smoke-300">|</span>
-                <ActorLink href={actorUrl} actor={actor} />
-              </span>
+              <a
+                href={txLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={formatDate(event.timestamp)}
+                className="shrink-0 hover:text-ink hover:underline"
+                suppressHydrationWarning
+              >
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              </a>
             ) : (
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span
-                  title={formatDate(event.timestamp)}
-                  suppressHydrationWarning
-                >
-                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-                </span>
-                <span aria-hidden className="text-smoke-300">|</span>
-                <ActorLink href={actorUrl} actor={actor} />
+              <span
+                className="shrink-0"
+                title={formatDate(event.timestamp)}
+                suppressHydrationWarning
+              >
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
               </span>
             )}
-            <ActivityMeta
-              chainId={event.chainId}
-              txHash={event.txHash}
-              amountUsd={amountUsd}
-              direction={direction}
-              showAmount={false}
-            />
           </div>
-          {/* The flow amount stands on its own line, bold, under time | actor. */}
-          {amountLabel ? (
-            <p className="mt-1 text-sm font-semibold text-ink">{amountLabel}</p>
-          ) : null}
+          <ActivityAmountLine
+            chainId={event.chainId}
+            txHash={event.txHash}
+            amountUsd={amountUsd}
+            direction={direction}
+          />
           {isV6 ? (
             <ProjectLink
               href={projectHref}

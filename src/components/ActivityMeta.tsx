@@ -54,6 +54,61 @@ export function activityAmountLabel(
     : formatIndexedUsd(amountUsd)
 }
 
+/**
+ * The row's flow line, reading left to right: bold amount, in/out tag, then
+ * "on <chain>" — the chain icon still links to the transaction.
+ */
+export function ActivityAmountLine({
+  chainId,
+  txHash,
+  amountUsd,
+  amountToken,
+  direction,
+}: {
+  chainId: number
+  txHash: string
+  amountUsd: string | null | undefined
+  amountToken?: ActivityAmountToken | null
+  direction?: 'in' | 'out' | null
+}) {
+  const explorer = explorerHostname(chainId)
+  const txUrl = explorer ? `https://${explorer}/tx/${txHash}` : null
+  const amount = activityAmountLabel(amountUsd, amountToken)
+
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-sm text-smoke-500">
+      {amount ? (
+        <span className="font-semibold text-ink">{amount}</span>
+      ) : null}
+      {direction === 'in' || direction === 'out' ? (
+        <span
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+            direction === 'in'
+              ? 'border-bluebs-500 text-bluebs-600'
+              : 'border-peel-500 text-peel-600'
+          }`}
+        >
+          {direction}
+        </span>
+      ) : null}
+      <span>on</span>
+      {txUrl ? (
+        <a
+          href={txUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`View transaction on ${chainName(chainId)}`}
+          className="inline-flex transition-opacity hover:opacity-70"
+        >
+          <ChainIcon chainId={chainId} size={18} />
+        </a>
+      ) : (
+        <ChainIcon chainId={chainId} size={18} standalone />
+      )}
+    </p>
+  )
+}
+
 /** Shared activity direction/value/chain cluster used by both activity feeds. */
 export function ActivityMeta({
   chainId,

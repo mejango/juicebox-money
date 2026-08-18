@@ -19,11 +19,7 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import {
-  ActivityMeta,
-  activityAmountLabel,
-  type ActivityAmountToken,
-} from './ActivityMeta'
+import { ActivityAmountLine, type ActivityAmountToken } from './ActivityMeta'
 
 const ACTIVITY_POLL_MS = 15_000
 /** Rows per page. The server renders the first one; "Load more" appends the rest. */
@@ -632,10 +628,6 @@ function Row({
   const event = group[0]
   const { actor, actions, direction, memo, amountUsd, amountRaw } =
     combinedActivityParts(group, tokenUnit)
-  const amountLabel = activityAmountLabel(
-    amountUsd,
-    accountingToken ? { raw: amountRaw, ...accountingToken } : null,
-  )
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
@@ -645,40 +637,40 @@ function Row({
     <li className="flex gap-3 py-3.5">
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
-          {/* One shape for every row: time | actor, then the memo headline,
-              then the actions as fine-print bullets. */}
-          <span className="flex min-w-0 items-center gap-1.5">
-            {link ? (
-              <a
-                href={link}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={formatDate(event.timestamp)}
-                className="hover:text-ink hover:underline"
-                suppressHydrationWarning
-              >
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-              </a>
-            ) : (
-              <span title={formatDate(event.timestamp)} suppressHydrationWarning>
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-              </span>
-            )}
-            <span aria-hidden className="text-smoke-300">|</span>
-            {actorNode}
-          </span>
-          <ActivityMeta
-            chainId={event.chainId}
-            txHash={event.txHash}
-            amountUsd={amountUsd}
-            direction={direction}
-            showAmount={false}
-          />
+          {/* One shape for every row: actor left, time right, then the flow
+              line ("20 USDC [in] on <chain>"), the memo headline, and the
+              actions as fine-print bullets. */}
+          <span className="min-w-0 truncate">{actorNode}</span>
+          {link ? (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={formatDate(event.timestamp)}
+              className="shrink-0 hover:text-ink hover:underline"
+              suppressHydrationWarning
+            >
+              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+            </a>
+          ) : (
+            <span
+              className="shrink-0"
+              title={formatDate(event.timestamp)}
+              suppressHydrationWarning
+            >
+              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+            </span>
+          )}
         </div>
-        {/* The flow amount stands on its own line, bold, under time | actor. */}
-        {amountLabel ? (
-          <p className="mt-1 text-sm font-semibold text-ink">{amountLabel}</p>
-        ) : null}
+        <ActivityAmountLine
+          chainId={event.chainId}
+          txHash={event.txHash}
+          amountUsd={amountUsd}
+          amountToken={
+            accountingToken ? { raw: amountRaw, ...accountingToken } : null
+          }
+          direction={direction}
+        />
         {memo ? (
           <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
             “{memo}”
