@@ -73,6 +73,8 @@ describe('combinedActivityParts', () => {
     expect(parts.direction).toBe('in')
     expect(parts.memo).toBe('Funding Human Creativity')
     expect(parts.amountRaw).toBe('20000000')
+    // One fragment per event, in reading order — the project feed bullets these.
+    expect(parts.actions).toHaveLength(3)
     const sentence = renderToStaticMarkup(<>{parts.action}</>)
     expect(sentence).toContain('paid into the project')
     expect(sentence).toContain('via the buyback pool')

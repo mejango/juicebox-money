@@ -295,12 +295,13 @@ function reservePercentLabel(
 
 /**
  * activityParts over a same-tx group: the primary event's parts, with every
- * event's action joined into one sentence.
+ * event's action in `actions` (for bulleted rendering) and joined into one
+ * sentence in `action` (for compact surfaces like the home rail).
  */
 export function combinedActivityParts(
   group: BsActivityEvent[],
   tokenUnit: string,
-): ReturnType<typeof activityParts> {
+): ReturnType<typeof activityParts> & { actions: ReactNode[] } {
   const ordered = [...group].sort((a, b) => groupRank(a) - groupRank(b))
   const parts = ordered.map(event => activityParts(event, tokenUnit))
   const primary = parts[0]
@@ -333,9 +334,11 @@ export function combinedActivityParts(
       }
     }
   }
+  const actions = parts.map(part => part.action)
   return {
     ...primary,
-    action: joinActionNodes(parts.map(part => part.action)),
+    action: joinActionNodes(actions),
+    actions,
     memo: parts.find(part => part.memo)?.memo ?? null,
     amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
     amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
@@ -589,7 +592,7 @@ function Row({
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
   const event = group[0]
-  const { actor, action, direction, memo, amountUsd, amountRaw } =
+  const { actor, actions, direction, memo, amountUsd, amountRaw } =
     combinedActivityParts(group, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
@@ -631,9 +634,24 @@ function Row({
             direction={direction}
           />
         </div>
-        <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-          {actorNode} {action}
-        </p>
+        {actions.length === 1 ? (
+          <p className="mt-1 break-words text-sm leading-relaxed text-ink">
+            {actorNode} {actions[0]}
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 break-words text-sm leading-relaxed text-ink">
+              {actorNode}
+            </p>
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-sm leading-relaxed text-ink marker:text-smoke-400">
+              {actions.map((action, index) => (
+                <li key={index} className="break-words">
+                  {action}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {memo ? (
           <p className="mt-0.5 break-words text-xs italic text-smoke-500">
             “{memo}”
