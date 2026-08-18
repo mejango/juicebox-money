@@ -103,7 +103,7 @@ export function ActivityAmountLine({
     <span className="flex min-w-0 items-center gap-1.5 text-sm text-smoke-500">
       {direction === 'in' || direction === 'out' ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium capitalize leading-none ${
             direction === 'in'
               ? 'border-bluebs-500 text-bluebs-600'
               : 'border-peel-500 text-peel-600'
@@ -119,9 +119,9 @@ export function ActivityAmountLine({
   )
 }
 
-/** "To" for outflows, "From" for inflows, "By" for everything else. */
+/** "to" for outflows, "from" for inflows, "by" for everything else. */
 export function actorPrefix(direction: 'in' | 'out' | null | undefined): string {
-  return direction === 'out' ? 'To' : direction === 'in' ? 'From' : 'By'
+  return direction === 'out' ? 'to' : direction === 'in' ? 'from' : 'by'
 }
 
 /** Shared activity direction/value/chain cluster used by both activity feeds. */
@@ -158,7 +158,7 @@ export function ActivityMeta({
       {amount ? <span>{amount}</span> : null}
       {direction === 'in' || direction === 'out' ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium capitalize leading-none ${
             direction === 'in'
               ? 'border-bluebs-500 text-bluebs-600'
               : 'border-peel-500 text-peel-600'
