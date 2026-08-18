@@ -178,7 +178,7 @@ export function StepChartBase({
     return (
       <div
         className={
-          frameless ? 'mt-3' : 'mt-3 rounded-xl border border-smoke-200 bg-white p-4'
+          frameless ? 'mt-3' : 'mt-3 card p-6'
         }
       >
         <p className="text-xs text-smoke-500">No issuance to chart.</p>
@@ -224,7 +224,7 @@ export function StepChartBase({
   return (
     <div
       className={
-        frameless ? 'mt-3' : 'mt-3 rounded-xl border border-smoke-200 bg-white p-4'
+        frameless ? 'mt-3' : 'mt-3 card p-6'
       }
     >
       {header}
