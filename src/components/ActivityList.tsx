@@ -673,7 +673,7 @@ function Row({
                 “{memo}”
               </p>
             ) : null}
-            <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-xs text-smoke-500 marker:text-smoke-300">
+            <ul className="mt-0.5 list-inside list-disc space-y-0.5 text-xs text-smoke-500 marker:text-smoke-300">
               {actions.map((action, index) => (
                 <li key={index} className="break-words">
                   {action}
