@@ -83,22 +83,28 @@ function bucketize(
   rangeSeconds: number,
 ): ReservePoint[] {
   const rate = latestRate(moments)
-  if (rate === null) return []
-  const usdOf = (raw: bigint) =>
-    (Number(raw) / 10 ** decimals) * (Number(rate) / 1e18)
+  // A raw amount valued at the newest rate — only sound within the group's
+  // CURRENT accounting context; the indexer-valued volumeUsd below is what
+  // keeps the volume series honest across historical context switches.
+  const usdOfRaw = (raw: bigint) =>
+    rate === null ? 0 : (Number(raw) / 10 ** decimals) * (Number(rate) / 1e18)
 
-  type RawEvent = { timestamp: number; volume?: bigint; add?: bigint }
+  type RawEvent = { timestamp: number; base?: number; add?: bigint }
   const events: RawEvent[] = []
   for (const moment of moments) {
     try {
       events.push({
         timestamp: moment.timestamp,
-        volume: BigInt(metric === 'volume' ? moment.volume : moment.balance),
+        base:
+          metric === 'volume'
+            ? Number(BigInt(moment.volumeUsd)) / 1e18
+            : usdOfRaw(BigInt(moment.balance)),
       })
     } catch {
       // Skip an unparseable row.
     }
   }
+  if (metric === 'balance' && rate === null) return []
   if (metric === 'volume') {
     for (const add of adds) {
       try {
@@ -119,12 +125,12 @@ function bucketize(
   const span = Math.max(t1 - t0, 1)
   const points: ReservePoint[] = []
   let index = 0
-  let lastVolume = 0n
+  let lastBase = 0
   let cumulativeAdds = 0n
   const consume = (limit: number) => {
     while (index < events.length && events[index].timestamp <= limit) {
       const event = events[index]
-      if (event.volume !== undefined) lastVolume = event.volume
+      if (event.base !== undefined) lastBase = event.base
       if (event.add !== undefined) cumulativeAdds += event.add
       index += 1
     }
@@ -136,7 +142,7 @@ function bucketize(
     consume(end)
     points.push({
       timestamp: Math.floor(end),
-      valueUsd: usdOf(lastVolume + cumulativeAdds),
+      valueUsd: lastBase + usdOfRaw(cumulativeAdds),
     })
   }
   return points
