@@ -66,6 +66,51 @@ export function ChartRangeButton({
   )
 }
 
+/**
+ * A quiet range picker in the same voice as MarketPriceViewToggle: a naked
+ * select with a chevron, taking one text line instead of a row of pills.
+ */
+export function ChartRangeSelect({
+  ranges,
+  value,
+  onChange,
+}: {
+  ranges: readonly { label: string; seconds: number }[]
+  value: number
+  onChange: (seconds: number) => void
+}) {
+  return (
+    <div className="relative inline-flex shrink-0 items-center text-bluebs-700">
+      <select
+        value={value}
+        onChange={event => onChange(Number(event.target.value))}
+        aria-label="Time range"
+        className="cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline"
+      >
+        {ranges.map(range => (
+          <option key={range.label} value={range.seconds}>
+            {range.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        viewBox="0 0 12 12"
+        aria-hidden="true"
+        className="pointer-events-none absolute right-0 h-3 w-3"
+      >
+        <path
+          d="m2.5 4.25 3.5 3.5 3.5-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  )
+}
+
 export function StepChartBase({
   resolved,
   t0,

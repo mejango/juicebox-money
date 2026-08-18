@@ -13,7 +13,7 @@ import {
   type ChartStage,
 } from './chartUtils'
 import {
-  ChartRangeButton,
+  ChartRangeSelect,
   ISSUANCE_COLOR,
   StepChartBase,
 } from './StepChartBase'
@@ -284,26 +284,19 @@ export function PriceChart({
       baseSymbol={baseSymbol}
       ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
-        <>
-          <div className="flex flex-wrap items-center justify-end gap-1">
-            {PRICE_RANGES.map(r => (
-              <ChartRangeButton
-                key={r.label}
-                label={r.label}
-                active={rangeSeconds === r.seconds}
-                onClick={() => setRangeSeconds(r.seconds)}
-              />
-            ))}
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <ChartRangeSelect
+            ranges={PRICE_RANGES}
+            value={rangeSeconds}
+            onChange={setRangeSeconds}
+          />
           {exactAmmSeries.length > 1 ? (
-            <div className="mt-2 flex justify-end">
-              <MarketPriceViewToggle
-                value={marketPriceView}
-                onChange={setMarketPriceView}
-              />
-            </div>
+            <MarketPriceViewToggle
+              value={marketPriceView}
+              onChange={setMarketPriceView}
+            />
           ) : null}
-        </>
+        </div>
       }
       footer={
         <div className="mt-3 flex flex-wrap items-center gap-2">
