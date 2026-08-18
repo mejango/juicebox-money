@@ -241,7 +241,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
             {actions.map((action, index) => (
               <li
                 key={index}
-                className="relative break-words pl-3.5 before:absolute before:left-0 before:text-smoke-500 before:content-['•']"
+                className="relative break-words pl-3.5 before:absolute before:left-0 before:top-[5px] before:h-1.5 before:w-1.5 before:rounded-full before:bg-smoke-300 before:content-['']"
               >
                 {action}
               </li>

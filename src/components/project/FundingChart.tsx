@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { SecuredReserveChart } from '@/components/SecuredReserveChart'
+import { ChartRangeSelect } from '@/components/project/StepChartBase'
 import {
   getSuckerGroupMoments,
   type BsPriceMoment,
@@ -9,6 +10,17 @@ import {
 import type { ReservePoint } from '@/lib/homepage-reserves'
 
 const BARS = 45
+const DAY = 86_400
+const RANGES = [
+  { label: '1 hour', value: 60 * 60 },
+  { label: '6 hours', value: 6 * 60 * 60 },
+  { label: '1 day', value: DAY },
+  { label: '7 days', value: 7 * DAY },
+  { label: '30 days', value: 30 * DAY },
+  { label: '3 months', value: 91 * DAY },
+  { label: '1 year', value: 365 * DAY },
+  { label: 'All', value: 0 },
+] as const
 
 type Metric = 'volume' | 'balance'
 
@@ -60,6 +72,7 @@ function bucketize(
   moments: BsPriceMoment[],
   metric: Metric,
   decimals: number,
+  rangeSeconds: number,
 ): ReservePoint[] {
   const valued = moments
     .map(moment => ({
@@ -74,12 +87,20 @@ function bucketize(
     .sort((a, b) => a.timestamp - b.timestamp)
   if (!valued.length) return []
 
-  const t0 = valued[0].timestamp
   const t1 = Math.floor(Date.now() / 1000)
+  const t0 = Math.max(
+    valued[0].timestamp,
+    rangeSeconds > 0 ? t1 - rangeSeconds : valued[0].timestamp,
+  )
   const span = Math.max(t1 - t0, 1)
   const points: ReservePoint[] = []
   let index = 0
   let last = 0
+  // Seed with the value standing when the window opens.
+  while (index < valued.length && valued[index].timestamp <= t0) {
+    last = valued[index].valueUsd
+    index += 1
+  }
   for (let bar = 0; bar < BARS; bar++) {
     const end = t0 + (span * (bar + 1)) / BARS
     while (index < valued.length && valued[index].timestamp <= end) {
@@ -106,6 +127,8 @@ export function FundingChart({
 }) {
   const [moments, setMoments] = useState<BsPriceMoment[] | null>(null)
   const [metric, setMetric] = useState<Metric>('volume')
+  // A quarter, like the price chart's default window.
+  const [rangeSeconds, setRangeSeconds] = useState(91 * DAY)
 
   useEffect(() => {
     if (!suckerGroupId) return
@@ -125,9 +148,9 @@ export function FundingChart({
   const points = useMemo(
     () =>
       moments && accountingToken
-        ? bucketize(moments, metric, accountingToken.decimals)
+        ? bucketize(moments, metric, accountingToken.decimals, rangeSeconds)
         : [],
-    [moments, metric, accountingToken],
+    [moments, metric, accountingToken, rangeSeconds],
   )
 
   if (!suckerGroupId || !accountingToken) return null
@@ -138,7 +161,8 @@ export function FundingChart({
 
   return (
     <div className="card p-6">
-      <div className="flex flex-col items-start gap-1">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col items-start gap-1">
         <span className="inline-flex font-agrandir text-2xl font-medium leading-none tabular-nums">
           {totalUsd !== null ? usd(totalUsd) : '—'}
         </span>
@@ -165,6 +189,12 @@ export function FundingChart({
             </svg>
           </span>
         </span>
+        </div>
+        <ChartRangeSelect
+          ranges={RANGES}
+          value={rangeSeconds}
+          onChange={setRangeSeconds}
+        />
       </div>
       <div className="mt-3">
         <SecuredReserveChart points={points} ariaLabel={selected.chartLabel} />

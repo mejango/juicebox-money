@@ -16,18 +16,6 @@ function usd(value: number) {
   })
 }
 
-function compactUsd(value: number) {
-  // Node and browser ICU disagree on compact-formatting zero ("$0.0" vs "$0"),
-  // which breaks hydration of the axis labels.
-  if (value === 0) return '$0'
-  return value.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  })
-}
-
 function date(timestamp: number, short = false) {
   return new Date(timestamp * 1000).toLocaleDateString('en-US', {
     month: 'short',
@@ -100,11 +88,7 @@ export function SecuredReserveChart({
           </>
         ) : null}
       </div>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
-        <div className="flex h-24 flex-col justify-between font-agrandir text-[10px] tabular-nums text-smoke-500 sm:h-28">
-          <span>{compactUsd(chart.maxValue)}</span>
-          <span>{compactUsd(chart.minValue)}</span>
-        </div>
+      <div className="grid grid-cols-[minmax(0,1fr)]">
         <div className="min-w-0">
           <div className="relative">
             <svg
