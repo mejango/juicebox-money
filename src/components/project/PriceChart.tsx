@@ -288,6 +288,19 @@ export function PriceChart({
   )
   const visibleMinimumSeries = showMinimum ? minimumSeries : []
 
+  // With the issuance ladder hidden, the scale re-anchors to the tallest
+  // VISIBLE series so the remaining lines use the plot's height.
+  const visibleSeriesMax = Math.max(
+    0,
+    ...(showCashOut ? floorSeries.map(point => point.value) : []),
+    ...(showCashOut ? visibleMinimumSeries.map(point => point.value) : []),
+    ...(showAmm ? ammSeries.map(point => point.value) : []),
+    ...(showCashOut && floor ? [floor.value] : []),
+    ...(showAmm && amm ? [amm.value] : []),
+  )
+  const visibleScaleMax =
+    !showIssuance && visibleSeriesMax > 0 ? visibleSeriesMax : undefined
+
   return (
     <StepChartBase
       resolved={resolved}
@@ -339,6 +352,7 @@ export function PriceChart({
         </div>
       }
       showLadder={showIssuance}
+      scaleMax={visibleScaleMax}
       renderSeries={({ X, Y }) => {
         // Observed histories stop at the live value at Now.
         const floorPath = asStepSeries(floorSeries)

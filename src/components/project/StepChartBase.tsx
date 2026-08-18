@@ -122,6 +122,7 @@ export function StepChartBase({
   showNowMarker = true,
   showLadder = true,
   showScaleLabel = true,
+  scaleMax,
   frameless = false,
   header,
   footer,
@@ -144,6 +145,9 @@ export function StepChartBase({
   /** The top-of-scale price label — legible under a flat top line (PriceChart),
    *  confusing floating beside a rising ladder (IssuanceLadder). */
   showScaleLabel?: boolean
+  /** Override the vertical scale's anchor (e.g. the max VISIBLE series when
+   *  the issuance ladder is toggled off). Headroom is applied on top. */
+  scaleMax?: number
   /** Skip the card chrome when the chart already sits inside a card. */
   frameless?: boolean
   /** Rendered inside the card above the svg (summary tiles, range pills). */
@@ -195,9 +199,9 @@ export function StepChartBase({
 
   const X = (t: number) => PL + ((VW - PL - PR) * (t - t0)) / (t1 - t0)
   // 10% headroom keeps the highest series off the plot's top edge.
-  const scaleMax = maxV * 1.1
+  const scaleTop = (scaleMax ?? maxV) * 1.1
   const Y = (v: number) =>
-    PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / scaleMax)))
+    PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / scaleTop)))
 
   const path = points
     // No issuance has an infinite price; pin it to the top of the finite
