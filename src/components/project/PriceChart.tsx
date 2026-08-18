@@ -57,13 +57,13 @@ const AMM_COLOR = '#BD4513'
 const DAY = 86_400
 
 const PRICE_RANGES = [
-  { label: '1H', seconds: 60 * 60 },
-  { label: '6H', seconds: 6 * 60 * 60 },
-  { label: '1D', seconds: DAY },
-  { label: '7D', seconds: 7 * DAY },
-  { label: '30D', seconds: 30 * DAY },
-  { label: '3M', seconds: 91 * DAY },
-  { label: '1Y', seconds: 365 * DAY },
+  { label: '1 hour', seconds: 60 * 60 },
+  { label: '6 hours', seconds: 6 * 60 * 60 },
+  { label: '1 day', seconds: DAY },
+  { label: '7 days', seconds: 7 * DAY },
+  { label: '30 days', seconds: 30 * DAY },
+  { label: '3 months', seconds: 91 * DAY },
+  { label: '1 year', seconds: 365 * DAY },
   { label: 'All', seconds: 0 },
 ] as const
 
