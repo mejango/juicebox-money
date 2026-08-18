@@ -17,7 +17,6 @@ import {
   formatDate,
   timeAgo,
 } from '@/lib/format'
-import { identityGradient } from '@/lib/identityGradient'
 import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
 import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
@@ -636,11 +635,6 @@ function Row({
 
   return (
     <li className="flex gap-3 py-3.5">
-      <span
-        aria-hidden="true"
-        className="mt-0.5 h-6 w-6 shrink-0 rounded-full"
-        style={{ background: identityGradient(actor || event.txHash) }}
-      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
           {link ? (
