@@ -19,7 +19,11 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { ActivityMeta, type ActivityAmountToken } from './ActivityMeta'
+import {
+  ActivityMeta,
+  activityAmountLabel,
+  type ActivityAmountToken,
+} from './ActivityMeta'
 
 const ACTIVITY_POLL_MS = 15_000
 /** Rows per page. The server renders the first one; "Load more" appends the rest. */
@@ -628,6 +632,10 @@ function Row({
   const event = group[0]
   const { actor, actions, direction, memo, amountUsd, amountRaw } =
     combinedActivityParts(group, tokenUnit)
+  const amountLabel = activityAmountLabel(
+    amountUsd,
+    accountingToken ? { raw: amountRaw, ...accountingToken } : null,
+  )
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
@@ -663,12 +671,14 @@ function Row({
             chainId={event.chainId}
             txHash={event.txHash}
             amountUsd={amountUsd}
-            amountToken={
-              accountingToken ? { raw: amountRaw, ...accountingToken } : null
-            }
             direction={direction}
+            showAmount={false}
           />
         </div>
+        {/* The flow amount stands on its own line, bold, under time | actor. */}
+        {amountLabel ? (
+          <p className="mt-1 text-sm font-semibold text-ink">{amountLabel}</p>
+        ) : null}
         {memo ? (
           <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
             “{memo}”

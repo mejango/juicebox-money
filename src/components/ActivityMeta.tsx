@@ -44,6 +44,16 @@ function formatIndexedToken(token: ActivityAmountToken): string | null {
   }
 }
 
+/** The formatted flow amount for a row, or null when zero or absent. */
+export function activityAmountLabel(
+  amountUsd: string | null | undefined,
+  amountToken?: ActivityAmountToken | null,
+): string | null {
+  return amountToken
+    ? formatIndexedToken(amountToken)
+    : formatIndexedUsd(amountUsd)
+}
+
 /** Shared activity direction/value/chain cluster used by both activity feeds. */
 export function ActivityMeta({
   chainId,
@@ -51,6 +61,7 @@ export function ActivityMeta({
   amountUsd,
   amountToken,
   direction,
+  showAmount = true,
 }: {
   chainId: number
   txHash: string
@@ -61,14 +72,16 @@ export function ActivityMeta({
    */
   amountToken?: ActivityAmountToken | null
   direction?: 'in' | 'out' | null
+  /** false = the row renders the amount itself (as its own line). */
+  showAmount?: boolean
 }) {
   const explorer = explorerHostname(chainId)
   const txUrl = explorer
     ? `https://${explorer}/tx/${txHash}`
     : null
-  const amount = amountToken
-    ? formatIndexedToken(amountToken)
-    : formatIndexedUsd(amountUsd)
+  const amount = showAmount
+    ? activityAmountLabel(amountUsd, amountToken)
+    : null
 
   return (
     <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-smoke-500">

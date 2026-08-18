@@ -8,7 +8,7 @@ import {
   groupSameTxEvents,
   mergeActivityEvents,
 } from '@/components/ActivityList'
-import { ActivityMeta } from '@/components/ActivityMeta'
+import { ActivityMeta, activityAmountLabel } from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
@@ -148,6 +148,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
     group,
     tokenUnit,
   )
+  const amountLabel = activityAmountLabel(amountUsd)
   const explorer = explorerHostname(event.chainId)
   const actorUrl =
     actor && explorer ? `https://${explorer}/address/${actor}` : null
@@ -214,8 +215,13 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
               txHash={event.txHash}
               amountUsd={amountUsd}
               direction={direction}
+              showAmount={false}
             />
           </div>
+          {/* The flow amount stands on its own line, bold, under time | actor. */}
+          {amountLabel ? (
+            <p className="mt-1 text-sm font-semibold text-ink">{amountLabel}</p>
+          ) : null}
           {isV6 ? (
             <ProjectLink
               href={projectHref}
