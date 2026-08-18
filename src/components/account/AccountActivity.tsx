@@ -183,22 +183,30 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
             {txLink ? (
-              <a
-                href={txLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={formatDate(event.timestamp)}
-                className="hover:text-ink hover:underline"
-                suppressHydrationWarning
-              >
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-              </a>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <a
+                  href={txLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={formatDate(event.timestamp)}
+                  className="hover:text-ink hover:underline"
+                  suppressHydrationWarning
+                >
+                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+                </a>
+                <span aria-hidden>|</span>
+                <ActorLink href={actorUrl} actor={actor} />
+              </span>
             ) : (
-              <span
-                title={formatDate(event.timestamp)}
-                suppressHydrationWarning
-              >
-                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span
+                  title={formatDate(event.timestamp)}
+                  suppressHydrationWarning
+                >
+                  {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+                </span>
+                <span aria-hidden>|</span>
+                <ActorLink href={actorUrl} actor={actor} />
               </span>
             )}
             <ActivityMeta
@@ -224,11 +232,8 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
               {name} <span className="text-xs text-smoke-500">V{event.version}</span>
             </a>
           )}
-          {/* Same shape as the project feed: actor, memo headline, then the
-              actions as fine-print bullets — a lone action is still a bullet. */}
-          <p className="mt-1 break-words text-[13px] leading-relaxed text-ink">
-            <ActorLink href={actorUrl} actor={actor} />
-          </p>
+          {/* Same shape as the project feed: time | actor above, then the
+              memo headline and the actions as fine-print bullets. */}
           {memo ? (
             <p className="mt-0.5 break-words text-[13px] leading-relaxed text-ink">
               “{memo}”

@@ -637,22 +637,28 @@ function Row({
     <li className="flex gap-3 py-3.5">
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
-          {link ? (
-            <a
-              href={link}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={formatDate(event.timestamp)}
-              className="hover:text-ink hover:underline"
-              suppressHydrationWarning
-            >
-              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-            </a>
-          ) : (
-            <span title={formatDate(event.timestamp)} suppressHydrationWarning>
-              {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
-            </span>
-          )}
+          {/* One shape for every row: time | actor, then the memo headline,
+              then the actions as fine-print bullets. */}
+          <span className="flex min-w-0 items-center gap-1.5">
+            {link ? (
+              <a
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={formatDate(event.timestamp)}
+                className="hover:text-ink hover:underline"
+                suppressHydrationWarning
+              >
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              </a>
+            ) : (
+              <span title={formatDate(event.timestamp)} suppressHydrationWarning>
+                {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
+              </span>
+            )}
+            <span aria-hidden>|</span>
+            {actorNode}
+          </span>
           <ActivityMeta
             chainId={event.chainId}
             txHash={event.txHash}
@@ -663,11 +669,6 @@ function Row({
             direction={direction}
           />
         </div>
-        {/* One shape for every row: actor, memo headline, then the actions
-            as fine-print bullets — a lone action is still a bullet. */}
-        <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-          {actorNode}
-        </p>
         {memo ? (
           <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
             “{memo}”
