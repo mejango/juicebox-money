@@ -69,8 +69,9 @@ function AuthorityRows({
   if (uniform) {
     return (
       <div className="flex items-center justify-between gap-3 pt-1">
-        <dt className="text-smoke-700">{label}</dt>
-        <dd>
+        <dt className="shrink-0 text-smoke-700">{label}</dt>
+        {/* A long ENS name truncates rather than overflowing the card. */}
+        <dd className="min-w-0 truncate">
           <AuthorityLink chainId={known[0][0]} address={known[0][1]} />
         </dd>
       </div>
@@ -83,11 +84,13 @@ function AuthorityRows({
       <dd className="mt-1 space-y-1">
         {known.map(([id, a]) => (
           <div key={id} className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-1.5 text-xs text-smoke-500">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-smoke-500">
               <ChainIcon chainId={id} size={14} />
               {chainName(id)}
             </span>
-            <AuthorityLink chainId={id} address={a} />
+            <span className="min-w-0 truncate">
+              <AuthorityLink chainId={id} address={a} />
+            </span>
           </div>
         ))}
       </dd>
