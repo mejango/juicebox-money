@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { JBChainId } from "@bananapus/nana-sdk-core";
 import { ChainIcon } from "@/components/ChainIcon";
 import { RichContent } from "@/components/RichContent";
+import { FundingChart } from "@/components/project/FundingChart";
 import { RevnetPriceCard } from "@/components/project/RevnetPriceCard";
 import { TokenPanel } from "@/components/project/TokenPanel";
 import { AddressLink } from "@/components/ui/AddressLink";
@@ -113,6 +114,7 @@ export function OverviewTab({
   authorities,
   chains,
   suckerGroupId,
+  accountingToken = null,
 }: {
   chainId: JBChainId;
   projectId: number;
@@ -128,6 +130,8 @@ export function OverviewTab({
   /** Per-chain deployments: [chainId, projectId]. */
   chains: [number, number][];
   suckerGroupId: string | null;
+  /** The group's single accounting-token shape; null when chains disagree. */
+  accountingToken?: { symbol: string; decimals: number } | null;
 }) {
   const links = socialLinks.filter(([, href]) => href);
   return (
@@ -139,7 +143,12 @@ export function OverviewTab({
           chains={chains}
           suckerGroupId={suckerGroupId}
         />
-      ) : null}
+      ) : (
+        <FundingChart
+          suckerGroupId={suckerGroupId}
+          accountingToken={accountingToken}
+        />
+      )}
       {description || links.length > 0 ? (
         <section>
           <h2 className="mb-3 font-agrandir text-xl font-medium">About</h2>
