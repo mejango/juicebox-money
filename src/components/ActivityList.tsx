@@ -346,7 +346,7 @@ export function combinedActivityParts(
         action: (
           <>
             received{' '}
-            <span className="font-medium text-bluebs-600">
+            <span className="font-medium">
               {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
             </span>{' '}
             after the {reservePercent}% reserve
@@ -488,7 +488,7 @@ export function activityParts(
       // acquisitions always read "bought <amount> <token> <source>".
       <>
         bought{' '}
-        <span className="font-medium text-bluebs-600">
+        <span className="font-medium">
           {tokenCount} {tokenUnit}
         </span>{' '}
         from issuance
@@ -499,14 +499,14 @@ export function activityParts(
   ) : cashOut ? (
     <>
       cashed out{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>
     </>
   ) : mint ? (
     <>
       minted{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>
     </>
@@ -526,14 +526,14 @@ export function activityParts(
   ) : event.sendReservedTokensToSplitsEvent ? (
     <>
       distributed reserved{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>
     </>
   ) : event.autoIssueEvent ? (
     <>
       auto-issued{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>
     </>
@@ -572,7 +572,7 @@ export function activityParts(
   ) : swap ? (
     <>
       {swapIsSell ? 'sold' : 'bought'}{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>{' '}
       via the buyback pool
@@ -582,7 +582,7 @@ export function activityParts(
   ) : event.bridgeClaimEvent ? (
     <>
       claimed{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>{' '}
       from {chainName(event.bridgeClaimEvent.peerChainId)}
@@ -592,7 +592,7 @@ export function activityParts(
   ) : event.sendReservedTokensToSplitEvent ? (
     <>
       received{' '}
-      <span className="font-medium text-bluebs-600">
+      <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>{' '}
       from a reserved split
