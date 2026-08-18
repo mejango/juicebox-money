@@ -20,6 +20,7 @@ import {
 import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
 import { ActivityAmountLine, type ActivityAmountToken } from './ActivityMeta'
+import { ProjectTabIcon } from './project/ProjectTabIcon'
 
 const ACTIVITY_POLL_MS = 15_000
 /** Rows per page. The server renders the first one; "Load more" appends the rest. */
@@ -797,7 +798,10 @@ export function ActivityList({
   const tokenUnit = useProjectTokenUnit(chainId, projectId)
   const header = (
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h2 className="font-agrandir text-xl font-medium">
+      {/* Same voice as the project tabs — the icon and type the Activity tab
+          uses when the feed collapses into the tab bar. */}
+      <h2 className="flex items-center gap-2 font-agrandir text-sm font-medium text-ink">
+        <ProjectTabIcon label="Activity" />
         Latest
       </h2>
       <ActivityTypeFilter
