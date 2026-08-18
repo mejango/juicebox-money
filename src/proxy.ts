@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { LEGACY_SITE, parseUrn } from '@/lib/urn'
+import { legacyHref, parseUrn } from '@/lib/urn'
 
 /**
  * First path segments this app serves. Anything else is a legacy V1–V5 URL
@@ -36,7 +36,7 @@ export function proxy(request: NextRequest) {
   if (rest.length === 0 && (decoded.startsWith('@') || parseUrn(decoded))) {
     return
   }
-  return NextResponse.redirect(`${LEGACY_SITE}${pathname}${search}`, 307)
+  return NextResponse.redirect(legacyHref(pathname, search), 307)
 }
 
 export const config = {

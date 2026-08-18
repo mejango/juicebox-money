@@ -32,6 +32,26 @@ export function chainName(chainId: number): string {
 export const LEGACY_SITE = 'https://old.juicebox.money'
 
 /**
+ * Rebuild a request path on the legacy site with each segment decoded once and
+ * re-normalized. The legacy app matches literal characters — its `/@handle`
+ * route 404s when handed `/%40handle` — while `encodeURI` keeps the result a
+ * valid Location header (spaces, non-ASCII) without touching `@` or `:`.
+ */
+export function legacyHref(pathname: string, search = ''): string {
+  const path = pathname
+    .split('/')
+    .map(segment => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+    .join('/')
+  return `${LEGACY_SITE}${encodeURI(path)}${search}`
+}
+
+/**
  * Where a project on a prior protocol version lives, now that this app holds the
  * apex domain and V1–V5 serve from old.juicebox.money.
  *

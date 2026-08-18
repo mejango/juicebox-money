@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { LEGACY_SITE } from "@/lib/urn";
+import { legacyHref } from "@/lib/urn";
 
 /**
  * No V6 route runs more than one path segment deep, so any deeper path is a
@@ -21,6 +21,6 @@ export default async function LegacyPath({
   }
   const search = query.toString();
   redirect(
-    `${LEGACY_SITE}/${[urn, ...rest].join("/")}${search ? `?${search}` : ""}`,
+    legacyHref(`/${[urn, ...rest].join("/")}`, search ? `?${search}` : ""),
   );
 }

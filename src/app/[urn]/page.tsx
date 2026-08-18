@@ -58,7 +58,7 @@ import {
   projectHandleFromRoute,
   verifyProjectHandleAuthorityWithFallback,
 } from "@/lib/project-handles";
-import { LEGACY_SITE, chainName, parseUrn, toUrn } from "@/lib/urn";
+import { chainName, legacyHref, parseUrn, toUrn } from "@/lib/urn";
 import { SUPPORTED_CHAINS } from "@/lib/chains";
 
 // getProjectPageData is backed by a POST, which Next's fetch cache doesn't
@@ -285,7 +285,7 @@ export async function generateMetadata({
   const urn = await resolveProjectRouteCached(segment);
   // Anything that isn't a V6 project route belongs to the V1–V5 app now
   // serving from old.juicebox.money — hand it the same path.
-  if (!urn) redirect(`${LEGACY_SITE}/${segment}`);
+  if (!urn) redirect(legacyHref(`/${segment}`));
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
   const project = result.project;
@@ -463,7 +463,7 @@ export default async function ProjectPage({
 }) {
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
-  if (!urn) redirect(`${LEGACY_SITE}/${segment}`);
+  if (!urn) redirect(legacyHref(`/${segment}`));
 
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
