@@ -656,7 +656,7 @@ function Row({
                 {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
               </span>
             )}
-            <span aria-hidden>|</span>
+            <span aria-hidden className="text-smoke-300">|</span>
             {actorNode}
           </span>
           <ActivityMeta

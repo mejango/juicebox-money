@@ -194,7 +194,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
                 >
                   {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
                 </a>
-                <span aria-hidden>|</span>
+                <span aria-hidden className="text-smoke-300">|</span>
                 <ActorLink href={actorUrl} actor={actor} />
               </span>
             ) : (
@@ -205,7 +205,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
                 >
                   {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
                 </span>
-                <span aria-hidden>|</span>
+                <span aria-hidden className="text-smoke-300">|</span>
                 <ActorLink href={actorUrl} actor={actor} />
               </span>
             )}
