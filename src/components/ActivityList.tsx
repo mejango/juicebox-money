@@ -22,6 +22,7 @@ import { ActorLink } from './ActorLink'
 import {
   ActivityAmountLine,
   ActivityOnChain,
+  actorPrefix,
   type ActivityAmountToken,
 } from './ActivityMeta'
 import { ProjectTabIcon } from './project/ProjectTabIcon'
@@ -642,10 +643,16 @@ function Row({
     <li className="flex gap-3 py-3.5">
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
-          {/* One shape for every row: actor left, time right, then the flow
-              line ("20 USDC [in] on <chain>"), the memo headline, and the
-              actions as fine-print bullets. */}
-          <span className="min-w-0 truncate">{actorNode}</span>
+          {/* One shape for every row: the flow cluster left with "time on
+              <chain>" right, the prefixed actor below, then the memo headline
+              and the actions as fine-print bullets. */}
+          <ActivityAmountLine
+            amountUsd={amountUsd}
+            amountToken={
+              accountingToken ? { raw: amountRaw, ...accountingToken } : null
+            }
+            direction={direction}
+          />
           <span className="flex shrink-0 items-center gap-1.5">
             {link ? (
               <a
@@ -666,19 +673,15 @@ function Row({
             <ActivityOnChain chainId={event.chainId} txHash={event.txHash} />
           </span>
         </div>
-        <ActivityAmountLine
-          amountUsd={amountUsd}
-          amountToken={
-            accountingToken ? { raw: amountRaw, ...accountingToken } : null
-          }
-          direction={direction}
-        />
+        <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-smoke-500">
+          {actorPrefix(direction)} <span className="min-w-0 truncate">{actorNode}</span>
+        </p>
         {memo ? (
-          <p className="mt-2 break-words text-sm leading-relaxed text-ink">
+          <p className="mt-3 break-words text-sm leading-relaxed text-ink">
             “{memo}”
           </p>
         ) : null}
-        <ul className={`${memo ? 'mt-1' : 'mt-2'} space-y-0.5 text-xs text-smoke-500`}>
+        <ul className={`${memo ? 'mt-1' : 'mt-3'} space-y-0.5 text-xs text-smoke-500`}>
           {/* Hand-rolled markers: the dot sits flush left while wrapped
               lines keep hanging-indent alignment with the first line's text. */}
           {actions.map((action, index) => (

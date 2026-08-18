@@ -8,7 +8,11 @@ import {
   groupSameTxEvents,
   mergeActivityEvents,
 } from '@/components/ActivityList'
-import { ActivityAmountLine, ActivityOnChain } from '@/components/ActivityMeta'
+import {
+  ActivityAmountLine,
+  ActivityOnChain,
+  actorPrefix,
+} from '@/components/ActivityMeta'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
@@ -182,10 +186,8 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
-            {/* Actor left, time right, then the flow line. */}
-            <span className="min-w-0 truncate">
-              <ActorLink href={actorUrl} actor={actor} />
-            </span>
+            {/* Flow cluster left, "time on <chain>" right, prefixed actor below. */}
+            <ActivityAmountLine amountUsd={amountUsd} direction={direction} />
             <span className="flex shrink-0 items-center gap-1.5">
               {txLink ? (
                 <a
@@ -206,7 +208,12 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
               <ActivityOnChain chainId={event.chainId} txHash={event.txHash} />
             </span>
           </div>
-          <ActivityAmountLine amountUsd={amountUsd} direction={direction} />
+          <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-smoke-500">
+            {actorPrefix(direction)}{' '}
+            <span className="min-w-0 truncate">
+              <ActorLink href={actorUrl} actor={actor} />
+            </span>
+          </p>
           {isV6 ? (
             <ProjectLink
               href={projectHref}
@@ -226,11 +233,11 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
           {/* Same shape as the project feed: time | actor above, then the
               memo headline and the actions as fine-print bullets. */}
           {memo ? (
-            <p className="mt-2 break-words text-[13px] leading-relaxed text-ink">
+            <p className="mt-3 break-words text-[13px] leading-relaxed text-ink">
               “{memo}”
             </p>
           ) : null}
-          <ul className={`${memo ? 'mt-1' : 'mt-2'} space-y-0.5 text-xs text-smoke-500`}>
+          <ul className={`${memo ? 'mt-1' : 'mt-3'} space-y-0.5 text-xs text-smoke-500`}>
             {actions.map((action, index) => (
               <li
                 key={index}

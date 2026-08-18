@@ -84,7 +84,10 @@ export function ActivityOnChain({
   )
 }
 
-/** The row's flow line: the in/out tag, then the bold amount. */
+/**
+ * The row's flow cluster: the in/out tag, then the bold amount. Renders an
+ * (empty) span even without a flow so flex layouts keep their two sides.
+ */
 export function ActivityAmountLine({
   amountUsd,
   amountToken,
@@ -95,10 +98,9 @@ export function ActivityAmountLine({
   direction?: 'in' | 'out' | null
 }) {
   const amount = activityAmountLabel(amountUsd, amountToken)
-  if (!amount && direction !== 'in' && direction !== 'out') return null
 
   return (
-    <p className="mt-1 flex items-center gap-1.5 text-sm text-smoke-500">
+    <span className="flex min-w-0 items-center gap-1.5 text-sm text-smoke-500">
       {direction === 'in' || direction === 'out' ? (
         <span
           className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
@@ -111,10 +113,15 @@ export function ActivityAmountLine({
         </span>
       ) : null}
       {amount ? (
-        <span className="font-semibold text-ink">{amount}</span>
+        <span className="truncate font-semibold text-ink">{amount}</span>
       ) : null}
-    </p>
+    </span>
   )
+}
+
+/** "From" for outflows, "To" for inflows, "By" for everything else. */
+export function actorPrefix(direction: 'in' | 'out' | null | undefined): string {
+  return direction === 'out' ? 'From' : direction === 'in' ? 'To' : 'By'
 }
 
 /** Shared activity direction/value/chain cluster used by both activity feeds. */
