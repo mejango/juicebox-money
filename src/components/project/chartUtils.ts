@@ -20,9 +20,9 @@ export type ResolvedStage = ResolvedRulesetIssuanceStage;
 const YEAR = 365 * 86400;
 
 export const CHART_RANGES: { label: string; years: number }[] = [
-  { label: "1Y", years: 1 },
-  { label: "5Y", years: 5 },
-  { label: "10Y", years: 10 },
+  { label: "1 year", years: 1 },
+  { label: "5 years", years: 5 },
+  { label: "10 years", years: 10 },
   { label: "All", years: 0 },
 ];
 

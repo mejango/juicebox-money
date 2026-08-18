@@ -75,9 +75,9 @@ export function ChartRangeSelect({
   value,
   onChange,
 }: {
-  ranges: readonly { label: string; seconds: number }[]
+  ranges: readonly { label: string; value: number }[]
   value: number
-  onChange: (seconds: number) => void
+  onChange: (value: number) => void
 }) {
   return (
     <div className="relative inline-flex shrink-0 items-center text-bluebs-700">
@@ -88,7 +88,7 @@ export function ChartRangeSelect({
         className="cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline"
       >
         {ranges.map(range => (
-          <option key={range.label} value={range.seconds}>
+          <option key={range.label} value={range.value}>
             {range.label}
           </option>
         ))}
@@ -120,6 +120,7 @@ export function StepChartBase({
   baseSymbol,
   ariaLabel,
   showNowMarker = true,
+  frameless = false,
   header,
   footer,
   renderSeries,
@@ -136,6 +137,8 @@ export function StepChartBase({
   ariaLabel: string
   /** Whether to draw the Now marker (e.g. only inside a projected window). */
   showNowMarker?: boolean
+  /** Skip the card chrome when the chart already sits inside a card. */
+  frameless?: boolean
   /** Rendered inside the card above the svg (summary tiles, range pills). */
   header?: ReactNode
   /** Rendered inside the card below the svg (legend, methodology tips). */
@@ -173,7 +176,11 @@ export function StepChartBase({
 
   if (resolved.length === 0 || maxV <= 0) {
     return (
-      <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
+      <div
+        className={
+          frameless ? 'mt-3' : 'mt-3 rounded-xl border border-smoke-200 bg-white p-4'
+        }
+      >
         <p className="text-xs text-smoke-500">No issuance to chart.</p>
       </div>
     )
@@ -215,7 +222,11 @@ export function StepChartBase({
   }
 
   return (
-    <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
+    <div
+      className={
+        frameless ? 'mt-3' : 'mt-3 rounded-xl border border-smoke-200 bg-white p-4'
+      }
+    >
       {header}
       <div className="relative">
         <svg

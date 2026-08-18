@@ -7,7 +7,7 @@ import {
   timeBounds,
   type ChartStage,
 } from './chartUtils'
-import { ChartRangeButton, StepChartBase } from './StepChartBase'
+import { ChartRangeSelect, StepChartBase } from './StepChartBase'
 
 /**
  * Projected issuance price (base units per token) as a rising ladder. The
@@ -41,21 +41,14 @@ export function IssuanceLadder({
       baseSymbol={baseSymbol}
       ariaLabel={`Projected ${symbol} issuance price in ${baseSymbol} over time`}
       showNowMarker={now < t1}
+      frameless
       header={
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-smoke-500">
-            Projected issuance price
-          </span>
-          <div className="flex gap-1">
-            {CHART_RANGES.map(r => (
-              <ChartRangeButton
-                key={r.label}
-                label={r.label}
-                active={years === r.years}
-                onClick={() => setYears(r.years)}
-              />
-            ))}
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          <ChartRangeSelect
+            ranges={CHART_RANGES.map(r => ({ label: r.label, value: r.years }))}
+            value={years}
+            onChange={setYears}
+          />
         </div>
       }
     />

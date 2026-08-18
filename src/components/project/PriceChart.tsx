@@ -284,18 +284,21 @@ export function PriceChart({
       baseSymbol={baseSymbol}
       ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
-        <div className="flex flex-wrap items-center justify-end gap-4">
-          <ChartRangeSelect
-            ranges={PRICE_RANGES}
-            value={rangeSeconds}
-            onChange={setRangeSeconds}
-          />
-          {exactAmmSeries.length > 1 ? (
-            <MarketPriceViewToggle
-              value={marketPriceView}
-              onChange={setMarketPriceView}
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <span className="field-label">Price</span>
+          <span className="flex flex-wrap items-center gap-4">
+            <ChartRangeSelect
+              ranges={PRICE_RANGES.map(r => ({ label: r.label, value: r.seconds }))}
+              value={rangeSeconds}
+              onChange={setRangeSeconds}
             />
-          ) : null}
+            {exactAmmSeries.length > 1 ? (
+              <MarketPriceViewToggle
+                value={marketPriceView}
+                onChange={setMarketPriceView}
+              />
+            ) : null}
+          </span>
         </div>
       }
       footer={
