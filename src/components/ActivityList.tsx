@@ -635,15 +635,29 @@ function Row({
           />
         </div>
         {actions.length === 1 ? (
-          <p className="mt-1 break-words text-sm leading-relaxed text-ink">
-            {actorNode} {actions[0]}
-          </p>
+          <>
+            <p className="mt-1 break-words text-sm leading-relaxed text-ink">
+              {actorNode} {actions[0]}
+            </p>
+            {memo ? (
+              <p className="mt-0.5 break-words text-xs italic text-smoke-500">
+                “{memo}”
+              </p>
+            ) : null}
+          </>
         ) : (
           <>
             <p className="mt-1 break-words text-sm leading-relaxed text-ink">
               {actorNode}
             </p>
-            <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-sm leading-relaxed text-ink marker:text-smoke-400">
+            {/* Grouped rows swap the emphasis: the memo is the headline, the
+                actions are the fine print. */}
+            {memo ? (
+              <p className="mt-0.5 break-words text-sm leading-relaxed text-ink">
+                “{memo}”
+              </p>
+            ) : null}
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-xs text-smoke-500 marker:text-smoke-300">
               {actions.map((action, index) => (
                 <li key={index} className="break-words">
                   {action}
@@ -652,11 +666,6 @@ function Row({
             </ul>
           </>
         )}
-        {memo ? (
-          <p className="mt-0.5 break-words text-xs italic text-smoke-500">
-            “{memo}”
-          </p>
-        ) : null}
       </div>
     </li>
   )
