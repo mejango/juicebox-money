@@ -9,7 +9,7 @@ import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { activityParts } from './ActivityList'
+import { combinedActivityParts, groupSameTxEvents } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
@@ -106,8 +106,8 @@ export function FreshActivity({
         </li>
       ) : (
         <>
-          {events.map((event, index) => (
-            <Row key={event.id} event={event} eagerLogo={index < 4} />
+          {groupSameTxEvents(events).map((group, index) => (
+            <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
           {(hasMore || loading) && (
             <li
@@ -127,12 +127,13 @@ export function FreshActivity({
 }
 
 function Row({
-  event,
+  group,
   eagerLogo,
 }: {
-  event: BsFreshActivityEvent
+  group: BsFreshActivityEvent[]
   eagerLogo: boolean
 }) {
+  const event = group[0]
   const name = event.project?.name ?? `Project ${event.projectId}`
   const href = `/${toUrn(event.chainId, event.projectId)}`
   const projectHint = {
@@ -147,7 +148,7 @@ function Row({
     event.projectId,
   )
 
-  const parts = activityParts(event, tokenUnit)
+  const parts = combinedActivityParts(group, tokenUnit)
   const rawAmountFallback =
     !hasPositiveIndexedAmount(parts.amountUsd) &&
     event.project?.tokenSymbol &&

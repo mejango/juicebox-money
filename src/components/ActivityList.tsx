@@ -215,6 +215,134 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
   )
 }
 
+/**
+ * Reading order for a same-tx group's action fragments — the primary event
+ * (first present) also supplies the row's actor, amount, direction, and memo.
+ * A buyback pay reads "paid into the project, bought … via the buyback pool,
+ * and minted …" instead of three separate rows.
+ */
+const GROUP_ORDER: ActivityCategory[] = [
+  'projectCreate',
+  'pay',
+  'addToBalance',
+  'nftMint',
+  'cashOut',
+  'buybackSwap',
+  'tokenMint',
+  'autoIssue',
+  'bridgeClaim',
+]
+
+function groupRank(event: BsActivityEvent): number {
+  const category = activityCategory(event)
+  const rank = category ? GROUP_ORDER.indexOf(category) : -1
+  return rank === -1 ? GROUP_ORDER.length : rank
+}
+
+/**
+ * Collapse events that belong to one transaction (on one chain, for one
+ * project) into a single feed line item. Order is preserved: a group sits
+ * where its newest member sat.
+ */
+export function groupSameTxEvents<T extends BsActivityEvent>(events: T[]): T[][] {
+  const groups = new Map<string, T[]>()
+  const order: T[][] = []
+  for (const event of events) {
+    const key = `${event.chainId}:${event.projectId}:${event.txHash}`
+    const group = groups.get(key)
+    if (group) group.push(event)
+    else {
+      const fresh = [event]
+      groups.set(key, fresh)
+      order.push(fresh)
+    }
+  }
+  return order
+}
+
+function joinActionNodes(actions: ReactNode[]): ReactNode {
+  if (actions.length === 1) return actions[0]
+  return actions.map((action, index) => (
+    <span key={index}>
+      {index === 0 ? null : index === actions.length - 1 ? (
+        actions.length === 2 ? ' and ' : ', and '
+      ) : (
+        ', '
+      )}
+      {action}
+    </span>
+  ))
+}
+
+/**
+ * "40" or "12.5" when the mint count reads as the reserved-rate remint of the
+ * swap output (0 < mint < swap); null when the pair doesn't fit that shape.
+ */
+function reservePercentLabel(
+  swapRaw: string,
+  mintRaw: string,
+): string | null {
+  try {
+    const swap = BigInt(swapRaw)
+    const mint = BigInt(mintRaw)
+    if (swap <= 0n || mint <= 0n || mint >= swap) return null
+    const tenths = Number(((swap - mint) * 1000n) / swap)
+    return tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * activityParts over a same-tx group: the primary event's parts, with every
+ * event's action joined into one sentence.
+ */
+export function combinedActivityParts(
+  group: BsActivityEvent[],
+  tokenUnit: string,
+): ReturnType<typeof activityParts> {
+  const ordered = [...group].sort((a, b) => groupRank(a) - groupRank(b))
+  const parts = ordered.map(event => activityParts(event, tokenUnit))
+  const primary = parts[0]
+
+  // A buyback pay pairs the pool swap (gross output) with the reserved-rate
+  // remint (the payer's net). Say what the mint IS instead of a bare "minted X".
+  const swapEvent = ordered.find(
+    entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell',
+  )?.swapEvent
+  const mints = ordered.filter(entry => entry.mintTokensEvent)
+  if (swapEvent && mints.length === 1) {
+    const mintIndex = ordered.indexOf(mints[0])
+    const mint = mints[0].mintTokensEvent!
+    const reservePercent = reservePercentLabel(
+      swapEvent.projectTokenAmount,
+      mint.beneficiaryTokenCount,
+    )
+    if (reservePercent) {
+      parts[mintIndex] = {
+        ...parts[mintIndex],
+        action: (
+          <>
+            received{' '}
+            <span className="font-medium text-bluebs-600">
+              {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
+            </span>{' '}
+            after the {reservePercent}% reserve
+          </>
+        ),
+      }
+    }
+  }
+  return {
+    ...primary,
+    action: joinActionNodes(parts.map(part => part.action)),
+    memo: parts.find(part => part.memo)?.memo ?? null,
+    amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
+    amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
+    direction: parts.find(part => part.direction != null)?.direction ?? null,
+  }
+}
+
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${txHash}` : null
@@ -452,16 +580,17 @@ export function activityParts(
 }
 
 function Row({
-  event,
+  group,
   tokenUnit,
   accountingToken,
 }: {
-  event: BsActivityEvent
+  group: BsActivityEvent[]
   tokenUnit: string
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
+  const event = group[0]
   const { actor, action, direction, memo, amountUsd, amountRaw } =
-    activityParts(event, tokenUnit)
+    combinedActivityParts(group, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
@@ -663,10 +792,10 @@ export function ActivityList({
       {header}
       {visible.length ? (
         <ul className="card max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto px-4 py-1 min-[801px]:max-h-[max(780px,82vh)]">
-          {visible.map(event => (
+          {groupSameTxEvents(visible).map(group => (
             <Row
-              key={event.id}
-              event={event}
+              key={group[0].id}
+              group={group}
               tokenUnit={tokenUnit}
               accountingToken={accountingToken}
             />
