@@ -85,7 +85,7 @@ export function ChartRangeSelect({
         value={value}
         onChange={event => onChange(Number(event.target.value))}
         aria-label="Time range"
-        className="cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline"
+        className="cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current [field-sizing:content] hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline"
       >
         {ranges.map(range => (
           <option key={range.label} value={range.value}>
@@ -121,6 +121,7 @@ export function StepChartBase({
   ariaLabel,
   showNowMarker = true,
   showLadder = true,
+  showScaleLabel = true,
   frameless = false,
   header,
   footer,
@@ -140,6 +141,9 @@ export function StepChartBase({
   showNowMarker?: boolean
   /** Whether to draw the issuance ladder itself (a deselected legend hides it). */
   showLadder?: boolean
+  /** The top-of-scale price label — legible under a flat top line (PriceChart),
+   *  confusing floating beside a rising ladder (IssuanceLadder). */
+  showScaleLabel?: boolean
   /** Skip the card chrome when the chart already sits inside a card. */
   frameless?: boolean
   /** Rendered inside the card above the svg (summary tiles, range pills). */
@@ -341,7 +345,7 @@ export function StepChartBase({
         ) : null}
         {renderOverlay?.(geom)}
         {/* Scale + date labels */}
-        {showLadder ? (
+        {showLadder && showScaleLabel ? (
           <text x={PL + 3} y={Y(maxV) + 8} fontSize="7" fill="#9C9580">
             {formatPrice(maxV)} {baseSymbol}
           </text>

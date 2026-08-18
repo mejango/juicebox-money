@@ -41,6 +41,7 @@ export function IssuanceLadder({
       baseSymbol={baseSymbol}
       ariaLabel={`Projected ${symbol} issuance price in ${baseSymbol} over time`}
       showNowMarker={now < t1}
+      showScaleLabel={false}
       frameless
       header={
         <div className="flex items-center justify-end gap-2">
