@@ -373,9 +373,8 @@ export function SearchBox({
                       {r.name ?? `Project ${r.projectId}`}
                     </span>
                     <span className="flex items-center gap-1 text-xs text-smoke-700">
-                      {r.ticker ? <span>${r.ticker}</span> : null}
-                      {r.ticker && r.chainIds.length > 0 ? (
-                        <span aria-hidden>·</span>
+                      {r.ticker ? (
+                        <span>{r.ticker.replace(/^\$+/, '')}</span>
                       ) : null}
                       {r.chainIds.map((id, i) => (
                         <span key={id} className="flex items-center gap-1">
