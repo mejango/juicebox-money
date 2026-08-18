@@ -302,7 +302,20 @@ export function combinedActivityParts(
   group: BsActivityEvent[],
   tokenUnit: string,
 ): ReturnType<typeof activityParts> & { actions: ReactNode[] } {
-  const ordered = [...group].sort((a, b) => groupRank(a) - groupRank(b))
+  const sorted = [...group].sort((a, b) => groupRank(a) - groupRank(b))
+  // An issuance-route pay already reports its tokens ("got X") — the tx's
+  // mintTokensEvent is that same issuance's mint record, not a second grant.
+  // Only a zero-issuance pay (the buyback shape) keeps its mint: the remint.
+  const payIssuedTokens = sorted.some(entry => {
+    try {
+      return BigInt(entry.payEvent?.newlyIssuedTokenCount ?? '0') > 0n
+    } catch {
+      return false
+    }
+  })
+  const ordered = payIssuedTokens
+    ? sorted.filter(entry => !entry.mintTokensEvent)
+    : sorted
   const parts = ordered.map(event => activityParts(event, tokenUnit))
   const primary = parts[0]
 
@@ -447,11 +460,14 @@ export function activityParts(
 
   const action = pay ? (
     issuedTokens ? (
+      // Same shape as the buyback fragment ("bought X via the buyback pool"):
+      // acquisitions always read "bought <amount> <token> <source>".
       <>
-        got{' '}
+        bought{' '}
         <span className="font-medium text-bluebs-600">
           {tokenCount} {tokenUnit}
-        </span>
+        </span>{' '}
+        from issuance
       </>
     ) : (
       <>paid into the project</>

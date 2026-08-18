@@ -270,7 +270,7 @@ describe('AccountActivity', () => {
 
     const text = renderedText(renderer.root)
     expect(text).toContain('Juicebox')
-    expect(text).toContain('got')
+    expect(text).toContain('bought')
     expect(text).toContain('created the project')
     expect(text).toContain('thanks')
     // Non-V6 rows are labeled but not linked into this V6-only site.

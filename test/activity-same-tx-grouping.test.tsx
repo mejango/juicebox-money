@@ -88,6 +88,25 @@ describe('combinedActivityParts', () => {
     )
   })
 
+  it('drops the mint record when the pay itself issued the tokens', () => {
+    // An issuance-route pay: its mintTokensEvent is the same issuance
+    // double-reported, so only the pay fragment renders — worded like the
+    // buyback fragment: "bought <amount> <token> <source>".
+    const issuancePay = event({
+      id: 'a',
+      payEvent: {
+        ...pay.payEvent!,
+        newlyIssuedTokenCount: '207700000000000000000000',
+      },
+    })
+    const parts = combinedActivityParts([issuancePay, mint], 'ART')
+    expect(parts.actions).toHaveLength(1)
+    const sentence = renderToStaticMarkup(<>{parts.actions[0]}</>)
+    expect(sentence).toContain('bought')
+    expect(sentence).toContain('from issuance')
+    expect(sentence).not.toContain('minted')
+  })
+
   it('leaves a lone event untouched', () => {
     const parts = combinedActivityParts([pay], 'ART')
     expect(renderToStaticMarkup(<>{parts.action}</>)).toBe(
