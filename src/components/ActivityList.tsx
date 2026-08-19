@@ -21,6 +21,7 @@ import { chainName } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
 import {
   ActivityAmountLine,
+  activityAmountLabel,
   ActivityOnChain,
   actorPrefix,
   type ActivityAmountToken,
@@ -267,6 +268,90 @@ export function groupSameTxEvents<T extends BsActivityEvent>(events: T[]): T[][]
     }
   }
   return order
+}
+
+/**
+ * What each event's bullet actually says, per type — the fields the renderer
+ * interpolates and nothing chain-local (pool ids, callers, tx hashes differ
+ * per chain for the same relayed action and must not block a merge).
+ */
+function eventDisplaySignature(event: BsActivityEvent): string {
+  if (event.payEvent)
+    return `pay:${event.payEvent.amount}:${event.payEvent.beneficiary}:${event.payEvent.memo ?? ''}`
+  if (event.cashOutTokensEvent)
+    return `cashOut:${event.cashOutTokensEvent.cashOutCount}:${event.cashOutTokensEvent.beneficiary}`
+  if (event.projectCreateEvent) return 'create'
+  if (event.addToBalanceEvent)
+    return `addToBalance:${event.addToBalanceEvent.amount}:${event.addToBalanceEvent.memo ?? ''}`
+  if (event.mintTokensEvent)
+    return `mint:${event.mintTokensEvent.beneficiaryTokenCount}:${event.mintTokensEvent.beneficiary}`
+  if (event.sendPayoutsEvent) return `payouts:${event.sendPayoutsEvent.amountPaidOut}`
+  if (event.sendReservedTokensToSplitsEvent)
+    return `reserved:${event.sendReservedTokensToSplitsEvent.tokenCount}`
+  if (event.autoIssueEvent)
+    return `autoIssue:${event.autoIssueEvent.count}:${event.autoIssueEvent.beneficiary}`
+  if (event.borrowLoanEvent)
+    return `borrow:${event.borrowLoanEvent.collateral}:${event.borrowLoanEvent.borrowAmount}`
+  if (event.repayLoanEvent) return `repay:${event.repayLoanEvent.repayBorrowAmount}`
+  if (event.liquidateLoanEvent) return `liquidate:${event.liquidateLoanEvent.collateral}`
+  if (event.mintNftEvent) return `mintNft:${event.mintNftEvent.tierId}`
+  if (event.deployErc20Event) return `erc20:${event.deployErc20Event.symbol}`
+  if (event.setUriEvent) return 'setUri'
+  if (event.projectTransferEvent) return `transfer:${event.projectTransferEvent.owner}`
+  if (event.operatorPermissionsSetEvent)
+    return `permissions:${event.operatorPermissionsSetEvent.operator}:${event.operatorPermissionsSetEvent.isRevnetOperator}`
+  if (event.rulesetQueuedEvent) return 'rulesetQueued'
+  if (event.addNftTierEvent) return `addTier:${event.addNftTierEvent.tierId}`
+  if (event.removeNftTierEvent) return `removeTier:${event.removeNftTierEvent.tierId}`
+  if (event.swapEvent)
+    return `swap:${event.swapEvent.direction}:${event.swapEvent.projectTokenAmount}`
+  if (event.buybackPoolEvent) return 'buybackPool'
+  if (event.bridgeClaimEvent)
+    return `bridgeClaim:${event.bridgeClaimEvent.peerChainId}:${event.bridgeClaimEvent.projectTokenCount}`
+  return 'other'
+}
+
+/** How far apart two chains' halves of one relayed action can land. */
+const CROSS_CHAIN_MERGE_WINDOW = 6 * 3600
+
+export type CrossChainGroup<T extends BsActivityEvent> = {
+  group: T[]
+  /** Every chain this action ran on; the first is the group's home chain. */
+  chains: { chainId: number; txHash: string }[]
+}
+
+/**
+ * Folds same-tx groups that say the same thing by the same actor on OTHER
+ * chains into one item — a relayed deploy or setup runs once per chain and
+ * should read as one action, the way it was authored.
+ */
+export function mergeCrossChainGroups<T extends BsActivityEvent>(
+  groups: T[][],
+): CrossChainGroup<T>[] {
+  const merged: (CrossChainGroup<T> & { signature: string })[] = []
+  for (const group of groups) {
+    const signature = `${group[0].from}|${group
+      .map(eventDisplaySignature)
+      .sort()
+      .join('||')}`
+    const host = merged.find(
+      entry =>
+        entry.signature === signature &&
+        Math.abs(entry.group[0].timestamp - group[0].timestamp) <=
+          CROSS_CHAIN_MERGE_WINDOW &&
+        !entry.chains.some(chain => chain.chainId === group[0].chainId),
+    )
+    if (host) {
+      host.chains.push({ chainId: group[0].chainId, txHash: group[0].txHash })
+    } else {
+      merged.push({
+        group,
+        chains: [{ chainId: group[0].chainId, txHash: group[0].txHash }],
+        signature,
+      })
+    }
+  }
+  return merged.map(({ group, chains }) => ({ group, chains }))
 }
 
 function joinActionNodes(actions: ReactNode[]): ReactNode {
@@ -625,10 +710,13 @@ export function activityParts(
 
 function Row({
   group,
+  chains,
   tokenUnit,
   accountingToken,
 }: {
   group: BsActivityEvent[]
+  /** Every chain this action ran on; defaults to the group's own chain. */
+  chains?: { chainId: number; txHash: string }[]
   tokenUnit: string
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
@@ -639,6 +727,14 @@ function Row({
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
   const actorNode = <ActorLink href={actorLink} actor={actor} />
+  const amountToken = accountingToken ? { raw: amountRaw, ...accountingToken } : null
+  // No amount and no flow tag = nothing for the title slot; the actor takes
+  // its place (bare, no "to/from/by") instead of leaving a blank line.
+  const hasTitle =
+    activityAmountLabel(amountUsd, amountToken) !== null ||
+    direction === 'in' ||
+    direction === 'out'
+  const alsoOn = (chains ?? []).filter(chain => chain.chainId !== event.chainId)
 
   return (
     <li className="flex gap-3 py-3.5">
@@ -647,13 +743,15 @@ function Row({
           {/* One shape for every row: the flow cluster left with "time on
               <chain>" right, the prefixed actor below, then the memo headline
               and the actions as fine-print bullets. */}
-          <ActivityAmountLine
-            amountUsd={amountUsd}
-            amountToken={
-              accountingToken ? { raw: amountRaw, ...accountingToken } : null
-            }
-            direction={direction}
-          />
+          {hasTitle ? (
+            <ActivityAmountLine
+              amountUsd={amountUsd}
+              amountToken={amountToken}
+              direction={direction}
+            />
+          ) : (
+            <span className="min-w-0 truncate">{actorNode}</span>
+          )}
           <span className="flex shrink-0 items-center gap-1.5">
             {link ? (
               <a
@@ -671,12 +769,18 @@ function Row({
                 {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
               </span>
             )}
-            <ActivityOnChain chainId={event.chainId} txHash={event.txHash} />
+            <ActivityOnChain
+              chainId={event.chainId}
+              txHash={event.txHash}
+              also={alsoOn}
+            />
           </span>
         </div>
-        <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-smoke-500">
-          {actorPrefix(direction)} <span className="min-w-0 truncate">{actorNode}</span>
-        </p>
+        {hasTitle ? (
+          <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-smoke-500">
+            {actorPrefix(direction)} <span className="min-w-0 truncate">{actorNode}</span>
+          </p>
+        ) : null}
         {memo ? (
           <p className="mt-3 break-words text-sm leading-relaxed text-ink">
             “{memo}”
@@ -850,10 +954,11 @@ export function ActivityList({
       {header}
       {visible.length ? (
         <ul className="max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto py-1 min-[801px]:max-h-[max(780px,82vh)]">
-          {groupSameTxEvents(visible).map(group => (
+          {mergeCrossChainGroups(groupSameTxEvents(visible)).map(({ group, chains }) => (
             <Row
               key={group[0].id}
               group={group}
+              chains={chains}
               tokenUnit={tokenUnit}
               accountingToken={accountingToken}
             />

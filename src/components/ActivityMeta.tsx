@@ -58,28 +58,35 @@ export function activityAmountLabel(
 export function ActivityOnChain({
   chainId,
   txHash,
+  also = [],
 }: {
   chainId: number
   txHash: string
+  /** Further chains carrying this same action; each icon links its own tx. */
+  also?: { chainId: number; txHash: string }[]
 }) {
-  const explorer = explorerHostname(chainId)
-  const txUrl = explorer ? `https://${explorer}/tx/${txHash}` : null
+  const entries = [{ chainId, txHash }, ...also]
   return (
     <>
       <span>on</span>
-      {txUrl ? (
-        <a
-          href={txUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`View transaction on ${chainName(chainId)}`}
-          className="inline-flex transition-opacity hover:opacity-70"
-        >
-          <ChainIcon chainId={chainId} size={18} />
-        </a>
-      ) : (
-        <ChainIcon chainId={chainId} size={18} standalone />
-      )}
+      {entries.map(entry => {
+        const explorer = explorerHostname(entry.chainId)
+        const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
+        return txUrl ? (
+          <a
+            key={entry.chainId}
+            href={txUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`View transaction on ${chainName(entry.chainId)}`}
+            className="inline-flex transition-opacity hover:opacity-70"
+          >
+            <ChainIcon chainId={entry.chainId} size={18} />
+          </a>
+        ) : (
+          <ChainIcon key={entry.chainId} chainId={entry.chainId} size={18} standalone />
+        )
+      })}
     </>
   )
 }
