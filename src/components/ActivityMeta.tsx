@@ -66,10 +66,9 @@ export function ActivityOnChain({
   also?: { chainId: number; txHash: string }[]
 }) {
   const entries = [{ chainId, txHash }, ...also]
-  // Several chains read as one action: smaller icons overlapped like an
-  // avatar stack, each still its own tx link.
+  // Several chains read as one action: full-size icons overlapped like an
+  // avatar stack — leftmost on top — each still its own tx link.
   const stacked = entries.length > 1
-  const size = stacked ? 14 : 18
   return (
     <>
       <span>on</span>
@@ -77,7 +76,8 @@ export function ActivityOnChain({
         {entries.map((entry, index) => {
           const explorer = explorerHostname(entry.chainId)
           const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
-          const overlap = stacked && index > 0 ? '-ml-1' : ''
+          const overlap = stacked && index > 0 ? '-ml-1.5' : ''
+          const depth = stacked ? { zIndex: entries.length - index } : undefined
           return txUrl ? (
             <a
               key={entry.chainId}
@@ -85,13 +85,18 @@ export function ActivityOnChain({
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`View transaction on ${chainName(entry.chainId)}`}
-              className={`inline-flex rounded-full transition-opacity hover:relative hover:z-10 hover:opacity-70 ${overlap}`}
+              className={`relative inline-flex rounded-full transition-opacity hover:z-10 hover:opacity-70 ${overlap}`}
+              style={depth}
             >
-              <ChainIcon chainId={entry.chainId} size={size} />
+              <ChainIcon chainId={entry.chainId} size={18} />
             </a>
           ) : (
-            <span key={entry.chainId} className={`inline-flex ${overlap}`}>
-              <ChainIcon chainId={entry.chainId} size={size} standalone />
+            <span
+              key={entry.chainId}
+              className={`relative inline-flex ${overlap}`}
+              style={depth}
+            >
+              <ChainIcon chainId={entry.chainId} size={18} standalone />
             </span>
           )
         })}
