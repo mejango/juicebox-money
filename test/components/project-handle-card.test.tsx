@@ -111,7 +111,7 @@ beforeEach(() => {
 })
 
 describe('ProjectHandleCard', () => {
-  it('shows the current site URL with the normalized current or draft handle', async () => {
+  it('shows the canonical site URL with the normalized current or draft handle', async () => {
     liveParts = ['current']
     liveHandle = 'current'
     vi.stubGlobal('window', {
@@ -146,7 +146,7 @@ describe('ProjectHandleCard', () => {
         .find(text => text.startsWith('You’ll be able to find your project at'))
 
     expect(urlCopy()).toBe(
-      'You’ll be able to find your project at https://juicebox.example/@current',
+      'You’ll be able to find your project at http://localhost:3001/@current',
     )
     expect(textOf(renderer.root)).not.toContain('Use any .eth name')
 
@@ -166,7 +166,7 @@ describe('ProjectHandleCard', () => {
     )
 
     expect(urlCopy()).toBe(
-      'You’ll be able to find your project at https://juicebox.example/@design.juicebox',
+      'You’ll be able to find your project at http://localhost:3001/@design.juicebox',
     )
     const cardText = textOf(renderer.root)
     expect(cardText).not.toContain('URL: /@design.juicebox')

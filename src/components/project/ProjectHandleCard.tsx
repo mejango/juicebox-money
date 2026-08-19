@@ -335,7 +335,7 @@ export function ProjectHandleCard({
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingSafe, setPendingSafe] = useState<Address | null>(null)
-  const [siteOrigin, setSiteOrigin] = useState(DEFAULT_SITE_ORIGIN)
+  const siteOrigin = DEFAULT_SITE_ORIGIN
   const normalized = useMemo(() => normalizeProjectHandle(input), [input])
   const draftKey = useMemo(() => {
     const authority = stateQuery.data?.authority
@@ -442,10 +442,6 @@ export function ProjectHandleCard({
     safeDeploymentQuery.data?.matches,
     stateQuery.data?.verifiedHandle,
   ])
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') setSiteOrigin(window.location.origin)
-  }, [])
 
   const openEditor = () => {
     setError(null)
