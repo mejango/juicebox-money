@@ -66,27 +66,36 @@ export function ActivityOnChain({
   also?: { chainId: number; txHash: string }[]
 }) {
   const entries = [{ chainId, txHash }, ...also]
+  // Several chains read as one action: smaller icons overlapped like an
+  // avatar stack, each still its own tx link.
+  const stacked = entries.length > 1
+  const size = stacked ? 14 : 18
   return (
     <>
       <span>on</span>
-      {entries.map(entry => {
-        const explorer = explorerHostname(entry.chainId)
-        const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
-        return txUrl ? (
-          <a
-            key={entry.chainId}
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`View transaction on ${chainName(entry.chainId)}`}
-            className="inline-flex transition-opacity hover:opacity-70"
-          >
-            <ChainIcon chainId={entry.chainId} size={18} />
-          </a>
-        ) : (
-          <ChainIcon key={entry.chainId} chainId={entry.chainId} size={18} standalone />
-        )
-      })}
+      <span className="inline-flex items-center">
+        {entries.map((entry, index) => {
+          const explorer = explorerHostname(entry.chainId)
+          const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
+          const overlap = stacked && index > 0 ? '-ml-1' : ''
+          return txUrl ? (
+            <a
+              key={entry.chainId}
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`View transaction on ${chainName(entry.chainId)}`}
+              className={`inline-flex rounded-full transition-opacity hover:relative hover:z-10 hover:opacity-70 ${overlap}`}
+            >
+              <ChainIcon chainId={entry.chainId} size={size} />
+            </a>
+          ) : (
+            <span key={entry.chainId} className={`inline-flex ${overlap}`}>
+              <ChainIcon chainId={entry.chainId} size={size} standalone />
+            </span>
+          )
+        })}
+      </span>
     </>
   )
 }
