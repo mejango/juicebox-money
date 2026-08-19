@@ -375,6 +375,7 @@ export function CreateForm() {
     "eth" | "usd" | "token" | null
   >(null);
   const [storeConfigOpen, setStoreConfigOpen] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
   const [storeConfig, setStoreConfig] = useState({
     collectionName: "",
     collectionSymbol: "",
@@ -2221,18 +2222,29 @@ export function CreateForm() {
           ) : null}
           {flavor === "revnet" ? null : (
             <div className="mt-6 border-t border-smoke-200 pt-5">
-              <span className="field-label">Payment routing</span>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Choose what payers can send. This does not change the
-                accounting tokens held in your project&apos;s balance.
-              </p>
-              <CheckRow
-                checked={allowAnyToken}
-                onToggle={() => !busy && setAllowAnyToken((on) => !on)}
-                disabled={busy}
-                title="Accept any token"
-                blurb="Adds the router terminal, which swaps whatever a payer sends into your accounting token(s). Without it, payers can only pay in the tokens above."
-              />
+              <button
+                type="button"
+                onClick={() => setRoutingOpen((o) => !o)}
+                aria-expanded={routingOpen}
+                className="text-sm font-medium text-bluebs-600 hover:text-bluebs-700"
+              >
+                Payment routing {routingOpen ? "▾" : "▸"}
+              </button>
+              {routingOpen ? (
+                <div className="mt-2">
+                  <p className="text-xs leading-relaxed text-smoke-700">
+                    Choose what payers can send. This does not change the
+                    accounting tokens held in your project&apos;s balance.
+                  </p>
+                  <CheckRow
+                    checked={allowAnyToken}
+                    onToggle={() => !busy && setAllowAnyToken((on) => !on)}
+                    disabled={busy}
+                    title="Accept any token"
+                    blurb="Adds the router terminal, which swaps whatever a payer sends into your accounting token(s). Without it, payers can only pay in the tokens above."
+                  />
+                </div>
+              ) : null}
             </div>
           )}
         </div>

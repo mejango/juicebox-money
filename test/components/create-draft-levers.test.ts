@@ -39,8 +39,11 @@ describe('create flow draft levers', () => {
 
   it('presents any-token routing separately from accounting-token choices', () => {
     expect(source.indexOf('field-label">Accounting')).toBeLessThan(
-      source.indexOf('field-label">Payment routing'),
+      source.indexOf('Payment routing {routingOpen ?'),
     )
+    // The section is a collapsed disclosure; the reveal must not hide the
+    // lever itself when open.
+    expect(source.indexOf('Payment routing {routingOpen ?')).toBeGreaterThan(-1)
     expect(source).toMatch(
       /This does not change the\s+accounting tokens held in your project&apos;s balance\./,
     )
