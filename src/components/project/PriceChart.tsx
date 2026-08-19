@@ -53,7 +53,9 @@ export type CashOutTaxPoint = {
 }
 
 const CASH_OUT_COLOR = '#C85F9A'
-const AMM_COLOR = '#BD4513'
+// Melon green: far from the cash-out pink so the two market lines can't be
+// confused where they run close together.
+const AMM_COLOR = '#4FA270'
 const DAY = 86_400
 
 const PRICE_RANGES = [

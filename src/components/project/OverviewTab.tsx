@@ -136,19 +136,6 @@ export function OverviewTab({
   const links = socialLinks.filter(([, href]) => href);
   return (
     <div className="space-y-5">
-      {isRevnet ? (
-        <RevnetPriceCard
-          chainId={chainId}
-          projectId={projectId}
-          chains={chains}
-          suckerGroupId={suckerGroupId}
-        />
-      ) : (
-        <FundingChart
-          suckerGroupId={suckerGroupId}
-          accountingToken={accountingToken}
-        />
-      )}
       {description || links.length > 0 ? (
         <section>
           <h2 className="mb-3 font-agrandir text-xl font-medium">About</h2>
@@ -177,6 +164,20 @@ export function OverviewTab({
           ) : null}
         </section>
       ) : null}
+
+      {isRevnet ? (
+        <RevnetPriceCard
+          chainId={chainId}
+          projectId={projectId}
+          chains={chains}
+          suckerGroupId={suckerGroupId}
+        />
+      ) : (
+        <FundingChart
+          suckerGroupId={suckerGroupId}
+          accountingToken={accountingToken}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <TokenPanel

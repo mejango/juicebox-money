@@ -26,7 +26,7 @@ import { ChartRangeButton } from './StepChartBase'
 
 const DAY = 86_400
 const PRICE_REFRESH_MS = 15_000
-const LINE = '#BD4513'
+const LINE = '#4FA270'
 
 const RANGES = [
   { label: '1D', seconds: DAY },
