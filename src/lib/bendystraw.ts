@@ -510,6 +510,7 @@ export async function getProjectActivity(
             { addToBalanceEvent_not: null }
             { setUriEvent_not: null }
             { projectTransferEvent_not: null }
+            { rulesetQueuedEvent_not: null }
             { addNftTierEvent_not: null }
             { removeNftTierEvent_not: null }
             { swapEvent_not: null }
@@ -568,6 +569,7 @@ export async function getProjectActivityByProject(
             { addToBalanceEvent_not: null }
             { setUriEvent_not: null }
             { projectTransferEvent_not: null }
+            { rulesetQueuedEvent_not: null }
             { addNftTierEvent_not: null }
             { removeNftTierEvent_not: null }
             { swapEvent_not: null }

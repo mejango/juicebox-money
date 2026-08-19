@@ -391,7 +391,7 @@ async function DegradedProjectShell({
         <ProjectLogoWithFallback
           name={name}
           logoUri={metadata?.logoUri ?? null}
-          size={112}
+          size={144}
           className="rounded-xl"
         />
         <div className="min-w-0">

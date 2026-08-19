@@ -211,6 +211,7 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
       event.mintNftEvent ||
       event.setUriEvent ||
       event.projectTransferEvent ||
+      event.rulesetQueuedEvent ||
       event.addNftTierEvent ||
       event.removeNftTierEvent ||
       event.swapEvent ||
