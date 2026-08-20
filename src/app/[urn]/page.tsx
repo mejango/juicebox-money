@@ -4,6 +4,7 @@ import {
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
+import { unstable_cache } from "next/cache";
 import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
@@ -66,6 +67,58 @@ import { SUPPORTED_CHAINS } from "@/lib/chains";
 const getPageDataCached = cache(getProjectPageData);
 const getRevnetOperatorCached = cache(getRevnetOperator);
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
+const getSuckerGroupProjectsCached = cache(getSuckerGroupProjects);
+
+/**
+ * The verified handle names the PROJECT, so it is the canonical URL for every
+ * route that reaches it — each chain's URN and the handle itself. The registry
+ * keys handles by (chainId, projectId), so every deployment in the group is
+ * checked; the authority (owner, or operator for revnets) is the only trusted
+ * setter. Cached across requests: one registry read outage or slow read must
+ * not tax every page render.
+ */
+const lookupCanonicalHandleCached = cache(
+  unstable_cache(
+    async (chainId: number, projectId: number): Promise<string | null> => {
+      const result = await getPageDataCached(chainId, projectId);
+      if (!result || result.degraded) return null;
+      const project = result.project;
+      const authority = project.isRevnet
+        ? await getRevnetOperatorCached(chainId, projectId).catch(() => null)
+        : (project.owner as Address | null);
+      if (!authority) return null;
+      const deployments: [number, number][] = [[chainId, projectId]];
+      if (project.suckerGroupId) {
+        const siblings = await getSuckerGroupProjectsCached(
+          project.suckerGroupId,
+          chainId,
+        ).catch(() => [] as BsProject[]);
+        for (const sibling of siblings) {
+          if (
+            !deployments.some(
+              ([chain, id]) =>
+                chain === sibling.chainId && id === sibling.projectId,
+            )
+          ) {
+            deployments.push([sibling.chainId, sibling.projectId]);
+          }
+        }
+      }
+      const handles = await Promise.all(
+        deployments.map(([chain, id]) =>
+          lookupVerifiedProjectHandle({
+            chainId: chain,
+            projectId: id,
+            setter: authority as Address,
+          }),
+        ),
+      );
+      return handles.find(handle => handle) ?? null;
+    },
+    ["project-canonical-handle"],
+    { revalidate: 900 },
+  ),
+);
 
 type ResolvedProjectRoute = {
   chainId: JBChainId;
@@ -309,8 +362,15 @@ export async function generateMetadata({
     (railwayDomain && /^[a-z0-9.-]+$/iu.test(railwayDomain)
       ? `https://${railwayDomain}`
       : siteOrigin);
-  const pagePath = urn.handle
-    ? `/@${encodeURIComponent(urn.handle)}`
+  // The handle is always canonical when present, no matter which of the
+  // project's URLs — /@handle or any chain's URN — served this render.
+  const canonicalHandle =
+    urn.handle ??
+    (await lookupCanonicalHandleCached(urn.chainId, urn.projectId).catch(
+      () => null,
+    ));
+  const pagePath = canonicalHandle
+    ? `/@${encodeURIComponent(canonicalHandle)}`
     : `/${toUrn(urn.chainId, urn.projectId)}`;
   const pageUrl = new URL(pagePath, siteOrigin).href;
   const imageUrl = new URL(
