@@ -351,9 +351,8 @@ function HeroColumn() {
           </span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-smoke-700 xl:mt-2">
-          <span className="whitespace-nowrap">Raise money from anyone,</span>{' '}
-          <span className="whitespace-nowrap">anywhere, transparently</span>{' '}
-          <span className="whitespace-nowrap">on your terms.</span>
+          <span className="whitespace-nowrap">Raise money from anyone, anywhere,</span>{' '}
+          <span className="whitespace-nowrap">transparently on your terms.</span>
         </p>
         <Link
           href="/create"
