@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   const invalidTagline = takeString(metadata, 'projectTagline', projectTagline, 200)
   if (invalidTagline) return invalidTagline
-  const invalidDescription = takeString(metadata, 'description', description, 5000)
+  const invalidDescription = takeString(metadata, 'description', description, 10000)
   if (invalidDescription) return invalidDescription
   for (const [key, value] of [
     ['logoUri', logoUri],

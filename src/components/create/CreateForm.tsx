@@ -134,6 +134,9 @@ type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
 
 const MAX_LOGO_BYTES = 1024 * 1024;
 
+/** Markdown image links are long, so the description gets a roomy cap. */
+const MAX_DESCRIPTION_LENGTH = 10_000;
+
 /**
  * Logo/cover file-input handler: revoke the old preview, validate, and swap
  * in the new file. `label` names the image kind in the too-big error.
@@ -271,6 +274,10 @@ export function CreateForm() {
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
   const [description, setDescription] = useState("");
+  const [descriptionImageError, setDescriptionImageError] = useState<
+    string | null
+  >(null);
+  const [descriptionUploading, setDescriptionUploading] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoError, setLogoError] = useState<string | null>(null);
@@ -1114,6 +1121,45 @@ export function CreateForm() {
       throw new Error(json.error ?? "Image upload failed — try again.");
     }
     return `ipfs://${json.cid}`;
+  };
+
+  /** Pin images dropped or pasted into the description, then insert markdown
+   *  image links at the cursor. */
+  const addDescriptionImages = async (
+    files: File[],
+    target: HTMLTextAreaElement,
+  ): Promise<void> => {
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    if (images.length === 0) return;
+    setDescriptionImageError(null);
+    if (images.some((file) => file.size > MAX_LOGO_BYTES)) {
+      setDescriptionImageError("Images must be under 1MB.");
+      return;
+    }
+    const start = target.selectionStart ?? description.length;
+    const end = target.selectionEnd ?? start;
+    setDescriptionUploading(true);
+    try {
+      const links = await Promise.all(
+        images.map(async (file) => {
+          const label = file.name.replace(/[[\]()\n]/g, "") || "image";
+          return `![${label}](${await pinFile(file)})`;
+        }),
+      );
+      const insert = links.join("\n");
+      setDescription((prev) =>
+        `${prev.slice(0, start)}${insert}${prev.slice(end)}`.slice(
+          0,
+          MAX_DESCRIPTION_LENGTH,
+        ),
+      );
+    } catch (err) {
+      setDescriptionImageError(
+        err instanceof Error ? err.message : "Image upload failed — try again.",
+      );
+    } finally {
+      setDescriptionUploading(false);
+    }
   };
 
   /** Pin logo, project metadata, and store items. Returns everything the
@@ -2445,12 +2491,41 @@ export function CreateForm() {
               <span className="field-label">Description</span>
               <textarea
                 value={description}
-                onChange={(e) => setDescription(e.target.value.slice(0, 5000))}
+                onChange={(e) =>
+                  setDescription(
+                    e.target.value.slice(0, MAX_DESCRIPTION_LENGTH),
+                  )
+                }
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData?.files ?? []);
+                  if (files.some((file) => file.type.startsWith("image/"))) {
+                    e.preventDefault();
+                    void addDescriptionImages(files, e.currentTarget);
+                  }
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const files = Array.from(e.dataTransfer?.files ?? []);
+                  if (files.some((file) => file.type.startsWith("image/"))) {
+                    e.preventDefault();
+                    void addDescriptionImages(files, e.currentTarget);
+                  }
+                }}
                 disabled={busy}
                 rows={4}
                 placeholder="Tell supporters what you're building and why it matters (optional)"
                 className="input-well mt-1.5 resize-y px-4 py-3 text-sm leading-relaxed disabled:opacity-60"
               />
+              <span className="mt-1 block text-xs text-smoke-700">
+                {descriptionUploading
+                  ? "Uploading image…"
+                  : "Markdown supported. Drop or paste images to embed them."}
+              </span>
+              {descriptionImageError ? (
+                <span className="mt-1 block text-xs text-red-600">
+                  {descriptionImageError}
+                </span>
+              ) : null}
             </label>
 
             <div className="mt-4">

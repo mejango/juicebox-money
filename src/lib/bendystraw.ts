@@ -1322,6 +1322,9 @@ export type BsPriceMoment = {
   /** Cumulative payment volume valued in USD at each payment's own time —
    *  correct even across accounting-context switches. 18-dec fixed point. */
   volumeUsd: string
+  /** Flow-accrued USD balance: every inflow adds and every outflow subtracts
+   *  its own at-the-block USD value — context-switch safe. 18-dec. */
+  balanceUsd: string
   tokenSupply: string
   /** 18-dec USD per one whole accounting token, as of THIS moment's block.
    *  Null for a moment the indexer could not value. */
@@ -1332,6 +1335,8 @@ export type BsAddToBalance = {
   suckerGroupId: string
   timestamp: number
   amount: string
+  /** The addition valued in USD at its own block. 18-dec fixed point. */
+  amountUsd: string
 }
 
 /**
@@ -1478,7 +1483,7 @@ const ADD_TO_BALANCE_QUERY = `query($limit: Int!, $offset: Int!) {
     limit: $limit
     offset: $offset
   ) {
-    items { suckerGroupId timestamp amount }
+    items { suckerGroupId timestamp amount amountUsd }
     totalCount
   }
 }`
@@ -1491,7 +1496,7 @@ const GROUP_ADD_TO_BALANCE_QUERY = `query($suckerGroupId: String!, $limit: Int!,
     limit: $limit
     offset: $offset
   ) {
-    items { suckerGroupId timestamp amount }
+    items { suckerGroupId timestamp amount amountUsd }
     totalCount
   }
 }`
@@ -1504,7 +1509,7 @@ const MOMENTS_QUERY = `query($suckerGroupId: String!, $limit: Int!, $offset: Int
     limit: $limit
     offset: $offset
   ) {
-    items { timestamp balance volume volumeUsd tokenSupply accountingTokenUsdRate }
+    items { timestamp balance volume volumeUsd balanceUsd tokenSupply accountingTokenUsdRate }
     totalCount
   }
 }`

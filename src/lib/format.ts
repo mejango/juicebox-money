@@ -90,7 +90,7 @@ export function ipfsUrl(uri: string | null | undefined): string | null {
   return `https://gateway.pinata.cloud/ipfs/${uri.replace('ipfs://', '')}`
 }
 
-function appIpfsUrl(uri: string): string | null {
+export function appIpfsUrl(uri: string): string | null {
   const suffix = uri.replace(/^ipfs:\/\//i, '')
   const segments = suffix.split('/')
   if (

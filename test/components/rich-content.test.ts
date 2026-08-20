@@ -61,6 +61,29 @@ describe('sanitizeRichContent', () => {
     })
   })
 
+  it('renders markdown, including images from https and ipfs sources only', () => {
+    const clean = sanitizeRichContent(
+      '# Purpose\n\nHello **world**.\n\n' +
+        '![Roadmap](ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi)\n\n' +
+        '![Remote](https://example.com/a.png)\n\n' +
+        '![Inline](data:image/png;base64,AAAA)\n\n' +
+        '![Insecure](http://example.com/a.png)',
+    )
+    const root = document.createElement('div')
+    root.innerHTML = clean
+
+    expect(root.querySelector('h1')?.textContent).toBe('Purpose')
+    expect(root.querySelector('strong')?.textContent).toBe('world')
+    const images = [...root.querySelectorAll('img')]
+    expect(images.map(image => image.getAttribute('src'))).toEqual([
+      '/api/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'https://example.com/a.png',
+    ])
+    expect(images.every(image => image.getAttribute('loading') === 'lazy')).toBe(
+      true,
+    )
+  })
+
   it('caps attacker-controlled input before parsing', () => {
     const clean = sanitizeRichContent(`<p>${'a'.repeat(60_000)}</p>`)
     expect(clean.length).toBeLessThan(51_000)

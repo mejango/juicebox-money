@@ -876,7 +876,6 @@ export default async function ProjectPage({
                   authorities={authorities}
                   chains={chainPairs}
                   suckerGroupId={project.suckerGroupId}
-                  accountingToken={accountingToken}
                 />
               ),
             },

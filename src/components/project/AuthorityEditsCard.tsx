@@ -716,7 +716,7 @@ export function MetadataEditor({
           <textarea
             value={description}
             onChange={event => {
-              setDescription(event.target.value.slice(0, 5000))
+              setDescription(event.target.value.slice(0, 10000))
               invalidate()
             }}
             disabled={busy}

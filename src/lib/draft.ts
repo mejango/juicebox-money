@@ -275,7 +275,7 @@ export function parseDraft(text: string): CreateDraft {
     name: str(d.name, 100),
     ticker: str(d.ticker, 11).toUpperCase().replace(/[^A-Z0-9]/g, ''),
     tagline: str(d.tagline, 100),
-    description: str(d.description, 5000),
+    description: str(d.description, 10000),
     payNotice: str(d.payNotice, 1000),
     tags: (Array.isArray(d.tags) ? d.tags : [])
       .filter((t): t is string => typeof t === 'string')

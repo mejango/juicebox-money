@@ -1,7 +1,10 @@
 'use client'
 
 import createDOMPurify from 'dompurify'
+import { marked } from 'marked'
 import { useEffect, useState } from 'react'
+
+import { appIpfsUrl } from '@/lib/format'
 
 const ALLOWED_TAGS = [
   'a',
@@ -15,6 +18,7 @@ const ALLOWED_TAGS = [
   'h3',
   'h4',
   'i',
+  'img',
   'li',
   'ol',
   'p',
@@ -36,26 +40,48 @@ function safeExternalHref(value: string): boolean {
   }
 }
 
+/**
+ * Image sources are restricted to absolute https: URLs and ipfs: URIs; the
+ * latter resolve through the same app gateway project logos use. Everything
+ * else (data:, http:, relative paths) is rejected.
+ */
+function resolveImageSrc(value: string): string | null {
+  if (/^ipfs:\/\//i.test(value)) return appIpfsUrl(value)
+  try {
+    return new URL(value).protocol === 'https:' ? value : null
+  } catch {
+    return null
+  }
+}
+
 function unwrap(element: Element) {
   element.replaceWith(...element.childNodes)
 }
 
 /**
- * Sanitize author-controlled project metadata in a real browser DOM.
+ * Render author-controlled project metadata as markdown, then sanitize it in
+ * a real browser DOM. Legacy descriptions stored as HTML still work: marked
+ * passes raw HTML blocks through, and the sanitizer gates every tag either
+ * way.
  *
  * The policy is shared with the other V6 webclients. The allowlist
- * deliberately excludes images, embedded content, styles,
+ * deliberately excludes embedded content, styles,
  * forms, SVG/MathML, IDs, and all data/ARIA/event attributes. Links must be
  * absolute HTTP(S) or mailto URLs; safe links always open outside the app
- * without receiving an opener or referrer.
+ * without receiving an opener or referrer. Images are allowed, but only from
+ * https: or ipfs: sources (see resolveImageSrc).
  */
 export function sanitizeRichContent(value: string): string {
   if (typeof window === 'undefined') return ''
+  const html = marked.parse(value.slice(0, MAX_CONTENT_LENGTH), {
+    async: false,
+    breaks: true,
+  })
   const purifier = createDOMPurify(window)
-  const fragment = purifier.sanitize(value.slice(0, MAX_CONTENT_LENGTH), {
+  const fragment = purifier.sanitize(html, {
     ALLOWED_TAGS,
-    ALLOWED_ATTR: ['href', 'title'],
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
+    ALLOWED_ATTR: ['alt', 'href', 'src', 'title'],
+    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|ipfs:)/i,
     ALLOW_ARIA_ATTR: false,
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: [
@@ -64,7 +90,6 @@ export function sanitizeRichContent(value: string): string {
       'embed',
       'form',
       'iframe',
-      'img',
       'input',
       'math',
       'object',
@@ -90,9 +115,21 @@ export function sanitizeRichContent(value: string): string {
     link.setAttribute('rel', 'noopener noreferrer')
   }
 
+  for (const image of fragment.querySelectorAll('img')) {
+    const src = image.getAttribute('src')?.trim()
+    const resolved = src ? resolveImageSrc(src) : null
+    if (!resolved) {
+      image.remove()
+      continue
+    }
+    image.setAttribute('src', resolved)
+    image.setAttribute('loading', 'lazy')
+  }
+
   const container = document.createElement('div')
   container.append(fragment)
-  return container.innerHTML
+  // marked terminates blocks with newlines; drop the insignificant tail.
+  return container.innerHTML.trimEnd()
 }
 
 /**

@@ -50,65 +50,41 @@ function usd(value: number) {
   })
 }
 
-/** The newest indexed USD rate — one price for the whole series, like the
- *  homepage chart, so a cumulative series can never wobble on rate noise. */
-function latestRate(moments: BsPriceMoment[]): bigint | null {
-  let rate: bigint | null = null
-  let at = -1
-  for (const moment of moments) {
-    if (!moment.accountingTokenUsdRate || moment.timestamp < at) continue
-    try {
-      rate = BigInt(moment.accountingTokenUsdRate)
-      at = moment.timestamp
-    } catch {
-      // Skip an unparseable rate.
-    }
-  }
-  return rate
-}
-
 /**
  * Even time buckets from the first event to now, forward-filling quiet
  * stretches so the bars read as a continuous history like the homepage chart.
  *
  * Volume is cumulative INTAKE — indexed payment volume plus funds added
  * straight to the terminal — so it can only rise. Balance is the actual
- * terminal balance, so payouts and cash outs pull it down.
+ * terminal balance, so payouts and cash outs pull it down. Both series are
+ * the indexer's per-event-time USD accruals (volumeUsd, balanceUsd,
+ * amountUsd), so they stay honest across accounting-context switches.
  */
 function bucketize(
   moments: BsPriceMoment[],
   adds: BsAddToBalance[],
   metric: Metric,
-  decimals: number,
   rangeSeconds: number,
 ): ReservePoint[] {
-  const rate = latestRate(moments)
-  // A raw amount valued at the newest rate — only sound within the group's
-  // CURRENT accounting context; the indexer-valued volumeUsd below is what
-  // keeps the volume series honest across historical context switches.
-  const usdOfRaw = (raw: bigint) =>
-    rate === null ? 0 : (Number(raw) / 10 ** decimals) * (Number(rate) / 1e18)
-
-  type RawEvent = { timestamp: number; base?: number; add?: bigint }
-  const events: RawEvent[] = []
+  type UsdEvent = { timestamp: number; base?: number; add?: number }
+  const events: UsdEvent[] = []
   for (const moment of moments) {
     try {
       events.push({
         timestamp: moment.timestamp,
         base:
-          metric === 'volume'
-            ? Number(BigInt(moment.volumeUsd)) / 1e18
-            : usdOfRaw(BigInt(moment.balance)),
+          Number(
+            BigInt(metric === 'volume' ? moment.volumeUsd : moment.balanceUsd),
+          ) / 1e18,
       })
     } catch {
       // Skip an unparseable row.
     }
   }
-  if (metric === 'balance' && rate === null) return []
   if (metric === 'volume') {
     for (const add of adds) {
       try {
-        events.push({ timestamp: add.timestamp, add: BigInt(add.amount) })
+        events.push({ timestamp: add.timestamp, add: Number(BigInt(add.amountUsd)) / 1e18 })
       } catch {
         // Skip an unparseable row.
       }
@@ -126,7 +102,7 @@ function bucketize(
   const points: ReservePoint[] = []
   let index = 0
   let lastBase = 0
-  let cumulativeAdds = 0n
+  let cumulativeAdds = 0
   const consume = (limit: number) => {
     while (index < events.length && events[index].timestamp <= limit) {
       const event = events[index]
@@ -142,7 +118,7 @@ function bucketize(
     consume(end)
     points.push({
       timestamp: Math.floor(end),
-      valueUsd: lastBase + usdOfRaw(cumulativeAdds),
+      valueUsd: lastBase + cumulativeAdds,
     })
   }
   return points
@@ -154,12 +130,8 @@ function bucketize(
  */
 export function FundingChart({
   suckerGroupId,
-  accountingToken,
 }: {
   suckerGroupId: string | null
-  /** The group's single accounting-token shape; null (mixed contexts) hides
-   *  the chart rather than mis-scaling raw amounts. */
-  accountingToken: { symbol: string; decimals: number } | null
 }) {
   const [moments, setMoments] = useState<BsPriceMoment[] | null>(null)
   const [adds, setAdds] = useState<BsAddToBalance[]>([])
@@ -191,14 +163,11 @@ export function FundingChart({
   }, [suckerGroupId])
 
   const points = useMemo(
-    () =>
-      moments && accountingToken
-        ? bucketize(moments, adds, metric, accountingToken.decimals, rangeSeconds)
-        : [],
-    [moments, adds, metric, accountingToken, rangeSeconds],
+    () => (moments ? bucketize(moments, adds, metric, rangeSeconds) : []),
+    [moments, adds, metric, rangeSeconds],
   )
 
-  if (!suckerGroupId || !accountingToken) return null
+  if (!suckerGroupId) return null
   if (moments !== null && points.length === 0) return null
 
   const selected = METRICS.find(item => item.value === metric)!
