@@ -98,6 +98,21 @@ module.exports = phase => ({
     ],
   },
   async headers() {
-    return [{ source: '/(.*)', headers: securityHeaders }]
+    return [
+      { source: '/(.*)', headers: securityHeaders },
+      // Next serves public/ files with max-age=0, and link-preview proxies
+      // (Discord's included) won't hold onto uncacheable media — the embed
+      // keeps its blurhash placeholder and never shows the image. These are
+      // stable brand assets; a day of cache is safe and correct.
+      {
+        source: '/assets/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=86400, stale-while-revalidate=604800',
+          },
+        ],
+      },
+    ]
   },
 })
