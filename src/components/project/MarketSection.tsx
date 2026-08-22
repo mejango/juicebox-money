@@ -1488,6 +1488,18 @@ function DepthChart({
   const side =
     shown && shown.mid < amm ? ' | buy-side' : shown ? ' | sell-side' : ''
 
+  // ponytail: markers arrive in ascending price, so one left-to-right pass that
+  // nudges each label clear of the previous one keeps "price" from printing
+  // over "ceiling" when the pool sits at the issuance price.
+  const labelHalf = (label: string) => Math.max(12, (label.length * 5) / 2)
+  let labelRight = -Infinity
+  const labelX = markers.map(m => {
+    const half = labelHalf(m.label)
+    const x = Math.max(half + 1, Math.min(DVW - half - 1, Math.max(m.x, labelRight + half + 4)))
+    labelRight = x + half
+    return x
+  })
+
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const vx = ((e.clientX - rect.left) / rect.width) * DVW
@@ -1525,7 +1537,7 @@ function DepthChart({
           )
         })}
         {/* Markers: floor / price / ceiling. */}
-        {markers.map(m => (
+        {markers.map((m, i) => (
           <g key={m.label}>
             <line
               x1={m.x.toFixed(1)}
@@ -1537,7 +1549,7 @@ function DepthChart({
               strokeDasharray="3 2"
             />
             <text
-              x={Math.max(14, Math.min(DVW - 14, m.x)).toFixed(1)}
+              x={labelX[i].toFixed(1)}
               y={plotTop - 6}
               fontSize="8"
               fill="#575344"
