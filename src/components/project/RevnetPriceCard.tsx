@@ -533,13 +533,13 @@ export function RevnetPriceCard({
         note={chartNote}
       />
       {references?.rateUnavailable ? (
-        <p className="mt-2 text-xs text-grey-500">
+        <p className="mt-2 text-xs text-grey-600">
           No price feed converts this revnet&apos;s treasury token into {baseSymbol}, so only
           the issuance ceiling is shown.
         </p>
       ) : null}
       {references?.scaleUnknown ? (
-        <p className="mt-2 text-xs text-grey-500">
+        <p className="mt-2 text-xs text-grey-600">
           The live cash-out and market prices couldn&apos;t be read just now, so
           there is no way to tell what unit they are in — only the issuance
           ceiling is shown.

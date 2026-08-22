@@ -21,8 +21,8 @@ const budgets = {
     // still catch broader regressions.
     '/page': 418 * KIB,
     '/[urn]/page': 570 * KIB,
-    // Direct Juicebox Center pinning adds ~2 KiB to create over main's
-    // measured ~470 KiB route. Leave only a small allowance for build variance.
+    // The production create graph measures ~470 KiB. Leave only a small
+    // allowance for build variance.
     '/create/page': 476 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.

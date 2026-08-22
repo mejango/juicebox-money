@@ -85,7 +85,7 @@ export async function bendystraw<T>(
     })
   }
   const cacheOptions = IS_DETERMINISTIC_BROWSER
-    ? { cache: 'no-store' as const }
+    ? { next: { revalidate: 1 } }
     : {
         next: {
           revalidate: bendystrawCacheTtl(opts.policy ?? 'stable') / 1_000,

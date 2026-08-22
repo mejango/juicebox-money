@@ -17,7 +17,7 @@ export function SiteFooter() {
             className="h-8 w-auto brightness-0 invert"
           />
 
-          <div className="mt-5 text-sm leading-relaxed text-slate-300">
+          <div className="mt-5 text-sm leading-relaxed text-slate-200">
             <p>Made with love.</p>
             <p className="mt-3">
               Review the{' '}
@@ -40,7 +40,7 @@ export function SiteFooter() {
               </a>
               .
             </p>
-            <AuditPromptLink className="mt-1 text-slate-300 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
+            <AuditPromptLink className="mt-1 text-slate-200 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
             <p className="mt-1">
               Defenders who manage to steal funds and return them are encouraged to keep 10% as a
               reward, paid by all projects together.
@@ -51,7 +51,7 @@ export function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-700 pt-5 text-xs text-slate-400">
+        <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-700 pt-5 text-xs text-slate-200">
           <span>© {new Date().getFullYear()} Juicebox. All rights reserved.</span>
           {version ? <span>Version #{version.slice(0, 7)}</span> : null}
         </div>
