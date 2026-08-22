@@ -56,29 +56,6 @@ updates:
           - typescript
           - typescript-eslint
         update-types: [minor, patch]
-      routine:
-        applies-to: version-updates
-        patterns: ['*']
-        exclude-patterns:
-          - '@axe-core/playwright'
-          - '@base-org/account'
-          - '@coinbase/wallet-sdk'
-          - '@getpara/*'
-          - '@playwright/test'
-          - '@safe-global/*'
-          - '@typescript/*'
-          - '@typescript-eslint/*'
-          - '@wagmi/*'
-          - '@walletconnect/*'
-          - eslint-config-next
-          - next
-          - playwright
-          - playwright-core
-          - typescript
-          - typescript-eslint
-          - viem
-          - wagmi
-        update-types: [minor, patch]
       security:
         applies-to: security-updates
         patterns: ['*']
