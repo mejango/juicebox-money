@@ -27,13 +27,15 @@ export function SignInPlaceholder({
   entry: string
   onEntryChange: (value: string) => void
 }) {
-  const [host] = useState<HTMLDialogElement | null>(() =>
-    typeof document === 'undefined' ? null : document.createElement('dialog'),
-  )
+  const [host] = useState<HTMLDialogElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const dialog = document.createElement('dialog')
+    dialog.className = 'ui-modal-host'
+    return dialog
+  })
 
   useBeforePaint(() => {
     if (!host) return
-    host.className = 'ui-modal-host'
     document.body.append(host)
     return () => host.remove()
   }, [host])

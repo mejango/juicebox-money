@@ -220,20 +220,24 @@ async function exerciseProjectSurfaces(
   const tabScroll = page.locator('[data-project-tab-scroll]')
   await expect(tabScroll).toHaveCSS('touch-action', 'pan-x')
   await expect(tabScroll).toHaveCSS('overflow-y', 'hidden')
-  const overviewBox = await projectTabs
-    .getByRole('tab', { name: 'Overview', exact: true })
-    .boundingBox()
-  const overflowBox = await page
-    .getByRole('button', { name: /^More project sections/ })
-    .boundingBox()
-  expect(overviewBox).not.toBeNull()
-  expect(overflowBox).not.toBeNull()
-  expect(
-    Math.abs(
-      overviewBox!.y + overviewBox!.height / 2 -
-        (overflowBox!.y + overflowBox!.height / 2),
-    ),
-  ).toBeLessThanOrEqual(1)
+  const overviewTab = projectTabs.getByRole('tab', {
+    name: 'Overview',
+    exact: true,
+  })
+  const overflowButton = page.getByRole('button', {
+    name: /^More project sections/,
+  })
+  await expect.poll(async () => {
+    const [overviewBox, overflowBox] = await Promise.all([
+      overviewTab.boundingBox(),
+      overflowButton.boundingBox(),
+    ])
+    if (!overviewBox || !overflowBox) return Number.POSITIVE_INFINITY
+    return Math.abs(
+      overviewBox.y + overviewBox.height / 2 -
+        (overflowBox.y + overflowBox.height / 2),
+    )
+  }).toBeLessThanOrEqual(1)
 
   const payCard = page.locator('#project-pay-card')
   await expect(payCard.getByLabel('Amount')).toBeVisible()
@@ -249,7 +253,8 @@ async function exerciseProjectSurfaces(
   }
   // USDC only appears after the ABI-correct accounting-context and ERC-20
   // reads resolve; the unhydrated fallback says ETH.
-  await expect(payCard.getByText('USDC', { exact: true })).toBeVisible()
+  await expect(payCard.getByLabel('Payment token')).toHaveValue('0')
+  await expect(payCard.getByLabel('Payment token')).toContainText('USDC')
   await expect(
     payCard.getByText("Couldn't verify this project's accepted tokens"),
   ).toHaveCount(0)
@@ -328,7 +333,7 @@ async function exerciseProjectSurfaces(
     await expectVisibleFocus(page, activity, `${viewport.label} project Activity`)
   } else {
     await expect(
-      page.getByRole('heading', { level: 2, name: 'Activity' }),
+      page.getByRole('heading', { level: 2, name: 'Latest' }),
     ).toBeVisible()
   }
   await expectSurface(page, `${viewport.label} project Activity`)
@@ -476,37 +481,34 @@ for (const viewport of viewports) {
         } else if ('create' in route) {
           await exerciseCreateWizard(page, viewport.label)
         } else {
-          const fixtureHeading = page.getByRole('heading', {
-            level: 3,
-            name: 'Browser Fixture Project',
+          const fixtureProject = page.getByRole('link', {
+            name: 'Open Browser Fixture Project',
+            exact: true,
           })
-          // The production route uses stale-while-revalidate. A build made
-          // before the fixture starts can serve one empty cached response;
-          // reload until the local revalidation has populated it.
-          await expect(async () => {
-            if (!(await fixtureHeading.isVisible())) {
-              await page.reload({ waitUntil: 'domcontentloaded' })
-            }
-            await expect(fixtureHeading).toBeVisible()
-          }).toPass({ timeout: 15_000, intervals: [250, 500, 1_000] })
-          await expect(
-            fixtureHeading,
-          ).toBeVisible()
-          await expect(
-            page.getByRole('link', {
-              name: 'Open Browser Fixture Project',
-              exact: true,
-            }),
-          ).toBeVisible()
-          if (viewport.width < 1024) {
+          // The responsive discovery layout starts on Latest (phones) or Top
+          // (tablet/desktop). Select Trending when it is not concurrently
+          // visible at the xl layout before asserting its fixture card.
+          if (viewport.width < 1280) {
+            const label = viewport.width < 640
+              ? 'Project feeds'
+              : 'Project rankings'
+            const trendingTab = page
+              .getByRole('tablist', { name: label })
+              .getByRole('tab', { name: 'Trending', exact: true })
+            // The production page can become actionable while React is still
+            // hydrating. Retry the user interaction until its selected state
+            // confirms that the client handler received it.
+            await expect(async () => {
+              await trendingTab.click()
+              await expect(trendingTab).toHaveAttribute('aria-selected', 'true')
+            }).toPass()
+          }
+          await expect(fixtureProject).toBeVisible()
+          if (viewport.width < 640) {
             await page
-              .getByRole('radio', { name: 'Fresh activity', exact: true })
-              .evaluate(element => {
-                const input = element as HTMLInputElement
-                input.checked = true
-                input.dispatchEvent(new Event('input', { bubbles: true }))
-                input.dispatchEvent(new Event('change', { bubbles: true }))
-              })
+              .getByRole('tablist', { name: 'Project feeds' })
+              .getByRole('tab', { name: 'Latest', exact: true })
+              .click()
           }
           await expect(
             page.getByText('5 token credits', { exact: false }),

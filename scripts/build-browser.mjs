@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 
 function onceExit(child) {
@@ -107,12 +108,20 @@ try {
     )
   }
 
+  // Next's persistent data cache can otherwise satisfy fixture reads from an
+  // earlier build, making both the output and the fixture audit depend on local
+  // history. A browser-invariant build must start from a clean dist directory.
+  rmSync('.next', { force: true, recursive: true })
   const build = spawn(
     process.execPath,
     ['scripts/with-browser-env.mjs', 'npm', 'run', 'build'],
     {
       stdio: 'inherit',
-      env: buildEnv,
+      // Seed the statically generated homepage from the audited local fixture.
+      // Server runtime reads remain pointed at the stable Playwright fixture
+      // through NEXT_PUBLIC_BENDYSTRAW_URL after this build-only variable is
+      // absent again.
+      env: { ...buildEnv, BROWSER_BUILD_FIXTURE_ORIGIN: origin },
     },
   )
   const result = await onceExit(build)
@@ -130,6 +139,8 @@ try {
   }
   const status = await response.json()
   const missing = missingReads(status.graphql ?? {}, [
+    'homepageAddToBalanceInflows',
+    'homepageBalanceGroups',
     'trending',
     'recentActivity',
   ])

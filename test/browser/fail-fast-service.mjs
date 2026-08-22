@@ -6,6 +6,7 @@ import {
   JBRouterTerminalContracts,
   RevnetCoreContracts,
   USDC_ADDRESSES,
+  USD_CURRENCY_ID,
   jbBuybackHookRegistryAbi,
   jbContractAddress,
   jbControllerAbi,
@@ -38,6 +39,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
 }
 
 const CHAIN_ID = 1
+const SUPPORTED_CHAIN_IDS = [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614]
 const PROJECT_ID = 1
 const USDC = USDC_ADDRESSES[CHAIN_ID]
 const OWNER = '0x1111111111111111111111111111111111111111'
@@ -50,6 +52,7 @@ const TERMINAL_STORE = addressOf(JBCoreContracts.JBTerminalStore)
 const TOKENS = addressOf(JBCoreContracts.JBTokens)
 const PRICES = addressOf(JBCoreContracts.JBPrices)
 const PROJECTS = addressOf(JBCoreContracts.JBProjects)
+const PROJECT_HANDLES = '0x726f4a3dfd2fb8297f8ab98d215b42a92d8eefe8'
 const REV_OWNER = addressOf(RevnetCoreContracts.REVOwner)
 const BUYBACK_REGISTRY = addressOf(
   JBBuybackHookContracts.JBBuybackHookRegistry,
@@ -57,6 +60,30 @@ const BUYBACK_REGISTRY = addressOf(
 const ROUTER_REGISTRY = addressOf(
   JBRouterTerminalContracts.JBRouterTerminalRegistry,
 )
+const projectHandlesAbi = [
+  {
+    type: 'function',
+    name: 'ensNamePartsOf',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'chainId', type: 'uint256' },
+      { name: 'projectId', type: 'uint256' },
+      { name: 'setter', type: 'address' },
+    ],
+    outputs: [{ name: '', type: 'string[]' }],
+  },
+  {
+    type: 'function',
+    name: 'handleOf',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'chainId', type: 'uint256' },
+      { name: 'projectId', type: 'uint256' },
+      { name: 'setter', type: 'address' },
+    ],
+    outputs: [{ name: 'handle', type: 'string' }],
+  },
+]
 
 if (
   !USDC ||
@@ -314,18 +341,24 @@ const contractFixtures = [
     args: [],
     result: 'USDC',
   },
-  ...[
-    [BigInt(ETH_CURRENCY_ID), 2n],
-    [2n, BigInt(ETH_CURRENCY_ID)],
-    [2n, 2n],
-  ].map(([pricingCurrency, unitCurrency]) => ({
-    name: 'JBPrices.pricePerUnitOf',
-    address: PRICES,
-    abi: jbPricesAbi,
-    functionName: 'pricePerUnitOf',
-    args: [1n, pricingCurrency, unitCurrency, 18n],
-    result: 1_000_000_000_000_000_000n,
-  })),
+  ...[0n, 1n].flatMap(projectId =>
+    [
+      [BigInt(ETH_CURRENCY_ID), 2n],
+      [2n, BigInt(ETH_CURRENCY_ID)],
+      [BigInt(USD_CURRENCY_ID(6)), 1n],
+      [61_166n, 1n],
+      [1n, 2n],
+      [2n, 2n],
+    ].map(([pricingCurrency, unitCurrency]) => ({
+      name: 'JBPrices.pricePerUnitOf',
+      address: PRICES,
+      abi: jbPricesAbi,
+      functionName: 'pricePerUnitOf',
+      args: [projectId, pricingCurrency, unitCurrency, 18n],
+      result: 1_000_000_000_000_000_000n,
+      chainIds: SUPPORTED_CHAIN_IDS,
+    })),
+  ),
   {
     name: 'JBProjects.ownerOf',
     address: PROJECTS,
@@ -341,6 +374,22 @@ const contractFixtures = [
     functionName: 'isOperatorOf',
     args: [1n, OWNER],
     result: true,
+  },
+  {
+    name: 'JBProjectHandles.ensNamePartsOf',
+    address: PROJECT_HANDLES,
+    abi: projectHandlesAbi,
+    functionName: 'ensNamePartsOf',
+    args: [1n, 1n, OWNER],
+    result: [],
+  },
+  {
+    name: 'JBProjectHandles.handleOf',
+    address: PROJECT_HANDLES,
+    abi: projectHandlesAbi,
+    functionName: 'handleOf',
+    args: [1n, 1n, OWNER],
+    result: '',
   },
   {
     name: 'REVOwner.tiered721HookOf',
@@ -492,6 +541,7 @@ const graphqlFixtures = [
             { addToBalanceEvent_not: null }
             { setUriEvent_not: null }
             { projectTransferEvent_not: null }
+            { rulesetQueuedEvent_not: null }
             { addNftTierEvent_not: null }
             { removeNftTierEvent_not: null }
             { swapEvent_not: null }
@@ -553,6 +603,100 @@ const graphqlFixtures = [
     data: { permissionHolders: { items: [], totalCount: 0 } },
   },
   {
+    name: 'wildcardPermissionHolders',
+    query: `query($chainId: Int!, $account: String!, $limit: Int!, $offset: Int!) {
+      permissionHolders(
+        where: { chainId: $chainId, projectId: 0, account: $account, version: 6 }
+        limit: $limit
+        offset: $offset
+      ) {
+        items { chainId account operator permissions isRevnetOperator }
+        totalCount
+      }
+    }`,
+    variables: [OWNER, REV_OWNER].map(account => ({
+      chainId: 1,
+      account,
+      limit: 200,
+      offset: 0,
+    })),
+    data: { permissionHolders: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'projectPayers',
+    query: `query ProjectPayers(
+      $where: projectPayerFilter!
+      $limit: Int!
+      $offset: Int!
+    ) {
+      projectPayers(
+        where: $where
+        orderBy: "totalFacilitatedUsd"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        totalCount
+        items {
+          chainId projectId version address defaultAddToBalance defaultBeneficiary
+          owner paymentsCount addToBalanceCount totalFacilitated
+          totalFacilitatedUsd lastUsedAt createdAt
+        }
+      }
+    }`,
+    variables: {
+      where: {
+        OR: [{ AND: [{ chainId: 1 }, { projectId: 1 }, { version: 6 }] }],
+      },
+      limit: 250,
+      offset: 0,
+    },
+    data: { projectPayers: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageBalanceGroups',
+    query: `query($limit: Int!, $offset: Int!) {
+      suckerGroups(
+        where: { version: 6 }
+        orderBy: "balance"
+        orderDirection: "desc"
+        limit: $limit
+        offset: $offset
+      ) {
+        totalCount
+        items {
+          id balance volume
+          projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
+            items {
+              projectId chainId version name logoUri projectTagline volume volumeUsd balance
+              paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
+              decimals currency isRevnet owner metadataUri
+            }
+          }
+        }
+      }
+    }`,
+    variables: { limit: 250, offset: 0 },
+    data: { suckerGroups: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageAddToBalanceInflows',
+    query: `query($limit: Int!, $offset: Int!) {
+      addToBalanceEvents(
+        where: { version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { suckerGroupId timestamp amount amountUsd }
+        totalCount
+      }
+    }`,
+    variables: { limit: 1000, offset: 0 },
+    data: { addToBalanceEvents: { items: [], totalCount: 0 } },
+  },
+  {
     name: 'trending',
     query: `query($limit: Int!) {
       suckerGroups(
@@ -572,7 +716,7 @@ const graphqlFixtures = [
         }
       }
     }`,
-    variables: { limit: 12 },
+    variables: [{ limit: 8 }, { limit: 12 }],
     data: {
       suckerGroups: {
         items: [
@@ -630,7 +774,10 @@ const graphqlFixtures = [
         }
       }
     }`,
-    variables: { limit: 12, offset: 0 },
+    variables: [
+      { limit: 9, offset: 0 },
+      { limit: 12, offset: 0 },
+    ],
     data: {
       activityEvents: {
         items: [
@@ -760,22 +907,34 @@ function contractReadResult(chainId, to, data) {
   const candidates = contractFixtures.filter(
     fixture => fixture.address === to && fixture.chainIds.includes(chainId),
   )
+  let unmatchedArguments = null
   for (const fixture of candidates) {
     try {
       const decoded = decodeFunctionData({ abi: fixture.abi, data })
       if (decoded.functionName !== fixture.functionName) continue
       if (!exactValue(decoded.args ?? [], fixture.args)) {
-        recordUnknown(
-          'contract-arguments',
-          `${fixture.name} received unsupported arguments`,
-        )
-        return null
+        unmatchedArguments ??= {
+          name: fixture.name,
+          actual: decoded.args ?? [],
+        }
+        continue
       }
       increment(state.contracts, fixture.name)
       return fixture.encodedResult
     } catch {
       // The address can expose more functions than this focused fixture.
     }
+  }
+  if (unmatchedArguments) {
+    const actual = JSON.stringify(
+      unmatchedArguments.actual,
+      (_, value) => typeof value === 'bigint' ? value.toString() : value,
+    )
+    recordUnknown(
+      'contract-arguments',
+      `${unmatchedArguments.name} received unsupported arguments ${actual}`,
+    )
+    return null
   }
   recordUnknown('contract-read', `${to}:${data.slice(0, 10)}`)
   return null
@@ -809,6 +968,20 @@ function handleRpcCall(payload, chainId) {
     return rpcResult(id, '0x123456')
   }
 
+  if (method === 'eth_getCode') {
+    if (
+      !Array.isArray(params) ||
+      params.length !== 2 ||
+      params[1] !== 'latest' ||
+      typeof params[0] !== 'string' ||
+      !/^0x[0-9a-f]{40}$/i.test(params[0])
+    ) {
+      recordUnknown('rpc-parameters', 'eth_getCode requires an address at latest')
+      return rpcError(id, 'Invalid deterministic eth_getCode parameters', -32_602)
+    }
+    return rpcResult(id, '0x')
+  }
+
   if (method !== 'eth_call') {
     recordUnknown('rpc-method', String(method))
     return rpcError(id, `Deterministic fixture does not implement ${String(method)}`)
@@ -818,13 +991,17 @@ function handleRpcCall(payload, chainId) {
     !Array.isArray(params) ||
     params.length !== 2 ||
     params[1] !== 'latest' ||
-    !exactKeys(params[0], ['to', 'data']) ||
+    !Object.keys(params[0]).every(key => ['to', 'data', 'gas'].includes(key)) ||
     typeof params[0].to !== 'string' ||
     !/^0x[0-9a-f]{40}$/i.test(params[0].to) ||
     typeof params[0].data !== 'string' ||
-    !/^0x[0-9a-f]*$/i.test(params[0].data)
+    !/^0x[0-9a-f]*$/i.test(params[0].data) ||
+    (params[0].gas !== undefined && !/^0x[0-9a-f]+$/i.test(params[0].gas))
   ) {
-    recordUnknown('rpc-parameters', 'eth_call requires {to,data} at latest')
+    recordUnknown(
+      'rpc-parameters',
+      `eth_call requires {to,data} at latest; received ${JSON.stringify(params)}`,
+    )
     return rpcError(id, 'Invalid deterministic eth_call parameters', -32_602)
   }
 
@@ -933,7 +1110,10 @@ async function handleGraphql(request, response) {
   const fixture = graphqlFixtures.find(
     candidate =>
       candidate.canonical === canonical &&
-      exactValue(payload.variables, candidate.variables),
+      (Array.isArray(candidate.variables)
+        ? candidate.variables
+        : [candidate.variables]
+      ).some(variables => exactValue(payload.variables, variables)),
   )
   if (!fixture) {
     const knownDocument = graphqlFixtures.find(

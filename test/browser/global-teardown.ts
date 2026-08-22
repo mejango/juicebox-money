@@ -47,6 +47,8 @@ export default async function globalTeardown() {
     'JBTerminalStore.currentSurplusOf',
     'USDC.symbol',
     'REVOwner.tiered721HookOf',
+    'JBProjectHandles.ensNamePartsOf',
+    'JBProjectHandles.handleOf',
     'JBBuybackHookRegistry.defaultHook',
     'JBBuybackHookRegistry.hookOf',
     'JBRouterTerminalRegistry.defaultTerminal',

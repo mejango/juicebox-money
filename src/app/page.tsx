@@ -277,6 +277,7 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
             href={card.href}
             projectHint={{ name: card.name, logoUri: card.logoUri, tagline: card.tagline }}
             className="group flex h-28 items-center gap-3 px-4 py-3"
+            aria-label={`Open ${card.name}`}
           >
             <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
               {index + 1}

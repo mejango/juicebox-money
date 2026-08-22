@@ -1492,13 +1492,23 @@ function DepthChart({
   // nudges each label clear of the previous one keeps "price" from printing
   // over "ceiling" when the pool sits at the issuance price.
   const labelHalf = (label: string) => Math.max(12, (label.length * 5) / 2)
-  let labelRight = -Infinity
-  const labelX = markers.map(m => {
-    const half = labelHalf(m.label)
-    const x = Math.max(half + 1, Math.min(DVW - half - 1, Math.max(m.x, labelRight + half + 4)))
-    labelRight = x + half
-    return x
-  })
+  const labelX = markers.reduce<{ positions: number[]; right: number }>(
+    (layout, marker) => {
+      const half = labelHalf(marker.label)
+      const x = Math.max(
+        half + 1,
+        Math.min(
+          DVW - half - 1,
+          Math.max(marker.x, layout.right + half + 4),
+        ),
+      )
+      return {
+        positions: [...layout.positions, x],
+        right: x + half,
+      }
+    },
+    { positions: [], right: -Infinity },
+  ).positions
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()

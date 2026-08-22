@@ -62,6 +62,9 @@ import {
 import { chainName, legacyHref, parseUrn, toUrn } from "@/lib/urn";
 import { SUPPORTED_CHAINS } from "@/lib/chains";
 
+const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
+
 // getProjectPageData is backed by a POST, which Next's fetch cache doesn't
 // dedupe — memoize per request so generateMetadata + page share one call.
 const getPageDataCached = cache(getProjectPageData);
@@ -366,9 +369,11 @@ export async function generateMetadata({
   // project's URLs — /@handle or any chain's URN — served this render.
   const canonicalHandle =
     urn.handle ??
-    (await lookupCanonicalHandleCached(urn.chainId, urn.projectId).catch(
-      () => null,
-    ));
+    (IS_DETERMINISTIC_BROWSER
+      ? null
+      : await lookupCanonicalHandleCached(urn.chainId, urn.projectId).catch(
+          () => null,
+        ));
   const pagePath = canonicalHandle
     ? `/@${encodeURIComponent(canonicalHandle)}`
     : `/${toUrn(urn.chainId, urn.projectId)}`;

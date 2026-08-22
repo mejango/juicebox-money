@@ -150,6 +150,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
           </span>
           <span
             className="inline-flex items-center gap-1"
+            role="img"
             aria-label="Ethereum, Arbitrum, Base, and Optimism"
           >
             {[1, 42161, 8453, 10].map(chainId => (
