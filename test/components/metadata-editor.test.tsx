@@ -4,13 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The Advanced custom-properties box is the only control that can DELETE a
 // projectUri field the app doesn't know about, so these tests pin the exact
-// object handed to /api/ipfs/pin-json for every edit shape.
+// object handed to Juicebox Center for every edit shape.
 const mocks = vi.hoisted(() => ({
   metadata: undefined as Record<string, unknown> | undefined,
   loading: false,
   errored: false,
   runAuthorityCalls: vi.fn(),
   fetchProjectMetadataJson: vi.fn(),
+  pinJson: vi.fn(),
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -45,6 +46,14 @@ vi.mock('@/lib/project-metadata', async importOriginal => {
     await importOriginal<typeof import('@/lib/project-metadata')>()
   return { ...original, fetchProjectMetadataJson: mocks.fetchProjectMetadataJson }
 })
+vi.mock('@/lib/jbcenter-ipfs', () => ({
+  JBCENTER_MAX_IMAGE_BYTES: 25 * 1024 * 1024,
+  jbCenterIpfs: {
+    pinJson: mocks.pinJson,
+    pinImage: vi.fn(),
+    pinMedia: vi.fn(),
+  },
+}))
 
 import { MetadataEditor } from '@/components/project/AuthorityEditsCard'
 
@@ -133,11 +142,9 @@ async function saveAndReadPin(renderer: TestRenderer.ReactTestRenderer) {
   await act(async () =>
     buttonWith(renderer, 'Save project metadata').props.onClick(),
   )
-  const pinCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
-    call => String(call[0]).includes('pin-json'),
-  )
-  expect(pinCall, 'expected a pin-json request').toBeTruthy()
-  return JSON.parse(String(pinCall![1].body)) as Record<string, unknown>
+  const pinCall = mocks.pinJson.mock.calls.at(-1)
+  expect(pinCall, 'expected a Juicebox Center pin').toBeTruthy()
+  return pinCall![0] as Record<string, unknown>
 }
 
 beforeEach(() => {
@@ -146,13 +153,13 @@ beforeEach(() => {
   mocks.errored = false
   mocks.runAuthorityCalls.mockResolvedValue({ results: [] })
   mocks.fetchProjectMetadataJson.mockResolvedValue(CURRENT)
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ cid: 'QmPinned' }),
-    })),
-  )
+  mocks.pinJson.mockReset()
+  mocks.pinJson.mockResolvedValue({
+    cid: 'QmPinned',
+    uri: 'ipfs://QmPinned',
+    gatewayUrl: '/ipfs/QmPinned',
+    status: 'queued',
+  })
 })
 
 describe('metadata editor custom properties', () => {
@@ -210,7 +217,7 @@ describe('metadata editor custom properties', () => {
     expect(renderedText(renderer.root)).toMatch(/valid JSON/i)
     expect(buttonWith(renderer, 'Save project metadata')).toBeUndefined()
     expect(
-      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls,
+      mocks.pinJson.mock.calls,
     ).toHaveLength(0)
   })
 

@@ -26,7 +26,6 @@ env:
   NEXT_PUBLIC_PARA_ENV: ${{ vars.NEXT_PUBLIC_PARA_ENV }}
   NEXT_PUBLIC_DWELLIR_API_KEY: ${{ vars.NEXT_PUBLIC_DWELLIR_API_KEY }}
   NEXT_PUBLIC_VERSION: ${{ github.sha }}
-  IPFS_PINNING_ENABLED: 'false'
 
 jobs:
   verify-build-and-smoke:
@@ -95,7 +94,6 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges \
             --publish 127.0.0.1:3000:3000 \
-            --env IPFS_PINNING_ENABLED=false \
             juicebox-money:release-candidate
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:3000/api/healthz >/dev/null; then

@@ -122,7 +122,6 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges \
             --publish 127.0.0.1:3000:3000 \
-            --env IPFS_PINNING_ENABLED=false \
             juicebox-money:ci
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:3000/api/healthz >/dev/null; then

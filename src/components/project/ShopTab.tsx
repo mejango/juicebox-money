@@ -59,6 +59,7 @@ import type {
   BsShopRows,
 } from '@/lib/bendystraw'
 import {
+  appIpfsUrl,
   formatTokenAmount,
   timeAgo,
 } from '@/lib/format'
@@ -2032,7 +2033,7 @@ async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   if (resolved && Object.keys(resolved).length > 0) return pick(resolved)
 
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
-  const url = cid ? `/api/ipfs/${cid}` : null
+  const url = cid ? appIpfsUrl(`ipfs://${cid}`) : null
   if (!url) return {}
   try {
     const controller = new AbortController()

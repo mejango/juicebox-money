@@ -76,7 +76,7 @@ describe('sanitizeRichContent', () => {
     expect(root.querySelector('strong')?.textContent).toBe('world')
     const images = [...root.querySelectorAll('img')]
     expect(images.map(image => image.getAttribute('src'))).toEqual([
-      '/api/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+      'https://juicebox.center/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
       'https://example.com/a.png',
     ])
     expect(images.every(image => image.getAttribute('loading') === 'lazy')).toBe(

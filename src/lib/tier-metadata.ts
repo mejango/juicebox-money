@@ -9,8 +9,7 @@ import {
   tierMediaAssetUrl as sdkTierMediaAssetUrl,
   tierMediaImageUrl as sdkTierMediaImageUrl,
 } from '@bananapus/nana-sdk-core/v6'
-
-const APP_IPFS_GATEWAY = '/api/ipfs/'
+import { JBCENTER_IPFS_GATEWAY } from '@/lib/jbcenter-ipfs'
 
 export {
   TIER_UNLIMITED_SUPPLY,
@@ -19,9 +18,9 @@ export {
 }
 
 export function tierMediaAssetUrl(value: unknown): string | undefined {
-  return sdkTierMediaAssetUrl(value, APP_IPFS_GATEWAY)
+  return sdkTierMediaAssetUrl(value, JBCENTER_IPFS_GATEWAY)
 }
 
 export function tierMediaImageUrl(image: unknown): string | undefined {
-  return sdkTierMediaImageUrl(image, APP_IPFS_GATEWAY)
+  return sdkTierMediaImageUrl(image, JBCENTER_IPFS_GATEWAY)
 }

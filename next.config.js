@@ -92,9 +92,7 @@ module.exports = phase => ({
     // served immutable independently of this TTL.
     minimumCacheTTL: 60 * 60 * 24 * 365,
     remotePatterns: [
-      { protocol: 'https', hostname: 'ipfs.io' },
-      { protocol: 'https', hostname: 'gateway.pinata.cloud' },
-      { protocol: 'https', hostname: 'dweb.link' },
+      { protocol: 'https', hostname: 'juicebox.center', pathname: '/ipfs/**' },
     ],
   },
   async headers() {

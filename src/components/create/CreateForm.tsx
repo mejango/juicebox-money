@@ -126,13 +126,17 @@ import {
   type ChainEnvironment,
 } from "@/lib/chains";
 import { StoreEditor, itemOk, type DraftItem } from "./StoreEditor";
+import {
+  JBCENTER_MAX_IMAGE_BYTES,
+  jbCenterIpfs,
+} from "@/lib/jbcenter-ipfs";
 
 const PERMANENTLY_DISABLED_AUTHORITY =
   "0xdead000000000000000000000000000000000000";
 
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
 
-const MAX_LOGO_BYTES = 1024 * 1024;
+const MAX_LOGO_BYTES = JBCENTER_MAX_IMAGE_BYTES;
 
 /** Markdown image links are long, so the description gets a roomy cap. */
 const MAX_DESCRIPTION_LENGTH = 10_000;
@@ -162,7 +166,7 @@ const makeImageHandler =
       return;
     }
     if (file.size > MAX_LOGO_BYTES) {
-      setError(`${label} must be under 1MB.`);
+      setError(`${label} must be under 25 MB.`);
       return;
     }
     setFile(file);
@@ -1110,17 +1114,7 @@ export function CreateForm() {
   };
 
   const pinFile = async (file: File): Promise<string> => {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/ipfs/pin-file", {
-      method: "POST",
-      body: form,
-    });
-    const json = (await res.json()) as { cid?: string; error?: string };
-    if (!res.ok || !json.cid) {
-      throw new Error(json.error ?? "Image upload failed — try again.");
-    }
-    return `ipfs://${json.cid}`;
+    return (await jbCenterIpfs.pinImage(file)).uri;
   };
 
   /** Pin images dropped or pasted into the description, then insert markdown
@@ -1133,7 +1127,7 @@ export function CreateForm() {
     if (images.length === 0) return;
     setDescriptionImageError(null);
     if (images.some((file) => file.size > MAX_LOGO_BYTES)) {
-      setDescriptionImageError("Images must be under 1MB.");
+      setDescriptionImageError("Images must be under 25 MB.");
       return;
     }
     const start = target.selectionStart ?? description.length;
@@ -1169,32 +1163,22 @@ export function CreateForm() {
   > => {
     const logoUri = logoFile ? await pinFile(logoFile) : undefined;
     const coverImageUri = coverFile ? await pinFile(coverFile) : undefined;
-    const res = await fetch("/api/ipfs/pin-json", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name.trim(),
-        projectTagline: tagline.trim() || undefined,
-        description: description.trim() || undefined,
-        logoUri,
-        coverImageUri,
-        payDisclosure: payNotice.trim() || undefined,
-        tags: tags.length > 0 ? tags : undefined,
-        infoUri: links.infoUri.trim() || undefined,
-        twitter: links.twitter.trim().replace(/^@/, "") || undefined,
-        discord: links.discord.trim() || undefined,
-        telegram: links.telegram.trim() || undefined,
-        whatsapp: links.whatsapp.trim() || undefined,
-        instagram: links.instagram.trim().replace(/^@/, "") || undefined,
-      }),
+    const projectPin = await jbCenterIpfs.pinJson({
+      name: name.trim(),
+      projectTagline: tagline.trim() || undefined,
+      description: description.trim() || undefined,
+      logoUri,
+      coverImageUri,
+      payDisclosure: payNotice.trim() || undefined,
+      tags: tags.length > 0 ? tags : undefined,
+      infoUri: links.infoUri.trim() || undefined,
+      twitter: links.twitter.trim().replace(/^@/, "") || undefined,
+      discord: links.discord.trim() || undefined,
+      telegram: links.telegram.trim() || undefined,
+      whatsapp: links.whatsapp.trim() || undefined,
+      instagram: links.instagram.trim().replace(/^@/, "") || undefined,
     });
-    const json = (await res.json()) as { cid?: string; error?: string };
-    if (!res.ok || !json.cid) {
-      throw new Error(
-        json.error ?? "Saving project details failed — try again.",
-      );
-    }
-    const projectUri = `ipfs://${json.cid}`;
+    const projectUri = projectPin.uri;
 
     const pinned: StoreItem[] = [];
     for (const item of items.filter(itemOk)) {
@@ -1203,48 +1187,20 @@ export function CreateForm() {
       let imageUri: string | undefined;
       let animationUri: string | undefined;
       if (item.mediaFile) {
-        const form = new FormData();
-        form.append("file", item.mediaFile);
-        const mediaRes = await fetch("/api/ipfs/pin-media", {
-          method: "POST",
-          body: form,
-        });
-        const mediaJson = (await mediaRes.json()) as {
-          cid?: string;
-          error?: string;
-        };
-        if (!mediaRes.ok || !mediaJson.cid) {
-          throw new Error(
-            mediaJson.error ?? "Media upload failed — try again.",
-          );
-        }
-        const uri = `ipfs://${mediaJson.cid}`;
+        const uri = (await jbCenterIpfs.pinMedia(item.mediaFile)).uri;
         if (item.mediaFile.type.startsWith("image/")) imageUri = uri;
         else animationUri = uri;
       }
-      const itemRes = await fetch("/api/ipfs/pin-item", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: item.name.trim(),
-          description: item.description.trim() || undefined,
-          image: imageUri,
-          animation_url: animationUri,
-          mediaType: item.mediaFile?.type || undefined,
-          categoryName:
-            storeCategories.find((c) => c.id === item.category)?.name ||
-            undefined,
-        }),
+      const itemPin = await jbCenterIpfs.pinJson({
+        name: item.name.trim(),
+        description: item.description.trim() || undefined,
+        image: imageUri,
+        animation_url: animationUri,
+        mediaType: item.mediaFile?.type || undefined,
+        categoryName:
+          storeCategories.find((c) => c.id === item.category)?.name ||
+          undefined,
       });
-      const itemJson = (await itemRes.json()) as {
-        cid?: string;
-        error?: string;
-      };
-      if (!itemRes.ok || !itemJson.cid) {
-        throw new Error(
-          itemJson.error ?? `Saving "${item.name.trim()}" failed — try again.`,
-        );
-      }
       // parseUnits rounds sub-precision input to 0 — refuse accidental
       // free items (e.g. a 0.0000001 USD price against 6 decimals).
       const price = parseUnits(item.price, storePriceDecimals);
@@ -1287,7 +1243,7 @@ export function CreateForm() {
       pinned.push({
         price,
         supply: item.supply.trim() === "" ? null : Number(item.supply),
-        encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
+        encodedIpfsUri: cidV0ToBytes32(itemPin.cid),
         splitPercent,
         splits,
         discountPercent: Math.round(

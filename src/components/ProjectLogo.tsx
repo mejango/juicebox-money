@@ -58,7 +58,8 @@ export function ProjectLogo({
           height={size}
           className="absolute inset-0 size-full object-cover"
           unoptimized={
-            visibleSrc.startsWith('data:') || visibleSrc.startsWith('/api/ipfs/')
+            visibleSrc.startsWith('data:') ||
+            visibleSrc.startsWith('https://juicebox.center/ipfs/')
           }
           loading={eager ? 'eager' : 'lazy'}
           fetchPriority={eager ? 'high' : 'auto'}
