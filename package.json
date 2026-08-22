@@ -34,7 +34,7 @@
     "check:deploy": "npm run check && npm run env:check:all"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-core": "^2.0.0",
+    "@bananapus/nana-sdk-core": "^2.1.0",
     "@base-org/account": "2.5.10",
     "@coinbase/wallet-sdk": "4.3.7",
     "@getpara/react-component-library": "3.11.0",
@@ -48,7 +48,6 @@
     "@walletconnect/ethereum-provider": "2.23.10",
     "dompurify": "3.4.14",
     "marked": "18.0.10",
-    "multiformats": "14.0.5",
     "next": "16.2.11",
     "qrcode": "1.5.4",
     "react": "19.2.8",

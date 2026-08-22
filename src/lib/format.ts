@@ -87,7 +87,7 @@ export function truncateAddress(address: string): string {
 
 export function ipfsUrl(uri: string | null | undefined): string | null {
   if (!uri) return null
-  return `https://gateway.pinata.cloud/ipfs/${uri.replace('ipfs://', '')}`
+  return appIpfsUrl(uri)
 }
 
 export function appIpfsUrl(uri: string): string | null {
@@ -106,7 +106,9 @@ export function appIpfsUrl(uri: string): string | null {
   ) {
     return null
   }
-  return `/api/ipfs/${segments.map(encodeURIComponent).join('/')}`
+  return `https://juicebox.center/ipfs/${segments
+    .map(encodeURIComponent)
+    .join('/')}`
 }
 
 const MAX_INLINE_LOGO_LENGTH = 1_000_000

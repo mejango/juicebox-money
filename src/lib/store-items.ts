@@ -13,6 +13,7 @@ import {
   type StoreItem,
   splitShares,
 } from '@/lib/launch'
+import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
 
 export type PinnedStoreItemDraft = {
   draft: DraftItem
@@ -38,55 +39,26 @@ export async function pinStoreItemDrafts(
 
     if (item.mediaFile) {
       onStatus(`${label}pinning media…`)
-      const form = new FormData()
-      form.append('file', item.mediaFile)
-      const mediaRes = await fetch('/api/ipfs/pin-media', {
-        method: 'POST',
-        body: form,
-      })
-      const mediaJson = (await mediaRes.json()) as {
-        cid?: string
-        error?: string
-      }
-      if (!mediaRes.ok || !mediaJson.cid) {
-        throw new Error(
-          mediaJson.error ?? `${label}media upload failed — try again.`,
-        )
-      }
-      const uri = `ipfs://${mediaJson.cid}`
+      const uri = (await jbCenterIpfs.pinMedia(item.mediaFile)).uri
       if (item.mediaFile.type.startsWith('image/')) image = uri
       else animationUrl = uri
     }
 
     onStatus(`${label}pinning metadata…`)
-    const itemRes = await fetch('/api/ipfs/pin-item', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: item.name.trim(),
-        description: item.description.trim() || undefined,
-        image,
-        animation_url: animationUrl,
-        mediaType: item.mediaFile?.type || undefined,
-        categoryName:
-          categories.find(category => category.id === item.category)?.name ||
-          undefined,
-      }),
+    const itemPin = await jbCenterIpfs.pinJson({
+      name: item.name.trim(),
+      description: item.description.trim() || undefined,
+      image,
+      animation_url: animationUrl,
+      mediaType: item.mediaFile?.type || undefined,
+      categoryName:
+        categories.find(category => category.id === item.category)?.name ||
+        undefined,
     })
-    const itemJson = (await itemRes.json()) as {
-      cid?: string
-      error?: string
-    }
-    if (!itemRes.ok || !itemJson.cid) {
-      throw new Error(
-        itemJson.error ??
-          `${label}saving “${item.name.trim()}” failed — try again.`,
-      )
-    }
 
     pinned.push({
       draft: item,
-      encodedIpfsUri: cidV0ToBytes32(itemJson.cid),
+      encodedIpfsUri: cidV0ToBytes32(itemPin.cid),
     })
   }
 

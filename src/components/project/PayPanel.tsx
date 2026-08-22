@@ -57,7 +57,7 @@ import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
-import { formatTokenAmount } from "@/lib/format";
+import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
 import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,
@@ -180,7 +180,7 @@ async function resolvePayTierMetadata(tier: {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8_000);
-    const response = await fetch(`/api/ipfs/${cid}`, {
+    const response = await fetch(appIpfsUrl(`ipfs://${cid}`)!, {
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));
     if (!response.ok) return null;

@@ -1,482 +1,62 @@
-import { NextRequest } from 'next/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { GET as proxyIpfs } from '@/app/api/ipfs/[...path]/route'
-import { POST as pinLogo } from '@/app/api/ipfs/pin-file/route'
-import { POST as pinItem } from '@/app/api/ipfs/pin-item/route'
-import { POST as pinMetadata } from '@/app/api/ipfs/pin-json/route'
-import { POST as pinMedia } from '@/app/api/ipfs/pin-media/route'
-import {
-  makePinFileHandler,
-  PINNING_INGRESS_HEADER,
-  pinToIpfs,
-  readLimitedJson,
-  requirePinningAccess,
-  resetPinBudgets,
-} from '@/lib/ipfs-server'
+import { describe, expect, it, vi } from 'vitest'
+import { createJBCenterIpfsClient } from '@/lib/jbcenter-ipfs'
 
 const CID = 'QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR'
-const CID_V1 = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
-const CID_SHAPED_GARBAGE = 'bafybeigdyrztabcdefghijklmnop'
-const INGRESS_TOKEN = 'ingress-token-with-at-least-32-characters'
-
-function enablePinning() {
-  vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
-  vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'true')
-  vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', INGRESS_TOKEN)
-  vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
-  vi.stubEnv('PINATA_JWT', 'pinata-jwt')
+const PIN = {
+  cid: CID,
+  status: 'queued',
+  uri: `ipfs://${CID}`,
+  gatewayUrl: `/ipfs/${CID}`,
 }
 
-function redundantPinFetch(cid = CID) {
-  return vi.fn((input: string | URL | Request, _init?: RequestInit) => {
-    const url = String(input)
-    return Promise.resolve(
-      url.startsWith('https://rpc.filebase.io/')
-        ? Response.json({ Hash: cid })
-        : Response.json({ data: { cid, status: 'prechecking' } }),
-    )
-  })
+function successfulFetch() {
+  return vi.fn<typeof fetch>().mockResolvedValue(Response.json(PIN))
 }
 
-function pinRequest(
-  path: string,
-  body: string,
-  token: string | null = INGRESS_TOKEN,
-) {
-  return new NextRequest(`http://localhost/api/ipfs/${path}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token !== null ? { [PINNING_INGRESS_HEADER]: token } : {}),
-    },
-    body,
-  })
-}
+describe('Juicebox Center browser IPFS client', () => {
+  it('pins JSON directly through the typed SDK without an API key', async () => {
+    const fetchMock = successfulFetch()
+    const ipfs = createJBCenterIpfsClient({ fetch: fetchMock })
 
-const SITE_ORIGIN = 'https://juicebox.money'
+    await expect(
+      ipfs.pinJson({ name: 'Project', optional: undefined }),
+    ).resolves.toEqual(PIN)
 
-function enableFirstPartyPinning() {
-  vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
-  vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'false')
-  vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', '')
-  vi.stubEnv('NEXT_PUBLIC_SITE_URL', SITE_ORIGIN)
-  vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
-  vi.stubEnv('PINATA_JWT', 'pinata-jwt')
-}
-
-function firstPartyRequest(client: string, origin: string | null = SITE_ORIGIN) {
-  return new NextRequest('http://localhost/api/ipfs/pin-json', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-forwarded-for': client,
-      ...(origin !== null ? { origin } : {}),
-    },
-    body: '{}',
-  })
-}
-
-afterEach(() => {
-  vi.unstubAllEnvs()
-  vi.unstubAllGlobals()
-  resetPinBudgets()
-})
-
-describe('IPFS pinning boundary', () => {
-  it('fails closed before parsing a request body', async () => {
-    const response = await pinMetadata(
-      new NextRequest('http://localhost/api/ipfs/pin-json', {
-        method: 'POST',
-        body: '{not json',
-      }),
-    )
-
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toEqual({
-      error: 'IPFS pinning is unavailable',
-    })
-    expect(response.headers.get('cache-control')).toBe('no-store')
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(String(url)).toBe('https://juicebox.center/v1/pins/json')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'Project' })
+    expect(new Headers(init?.headers).has('authorization')).toBe(false)
   })
 
-  it('rejects missing and wrong ingress tokens and accepts the exact token', async () => {
-    enablePinning()
+  it.each([
+    ['pinImage', 'v1/pins/file', 'image/png'],
+    ['pinMedia', 'v1/pins/media', 'video/mp4'],
+  ] as const)('uses Center %s for multipart uploads', async (method, path, type) => {
+    const fetchMock = successfulFetch()
+    const ipfs = createJBCenterIpfsClient({ fetch: fetchMock })
+    const file = new File(['content'], `asset.${type.split('/')[1]}`, { type })
 
-    const missing = requirePinningAccess(pinRequest('pin-json', '{}', null))
-    expect(missing?.status).toBe(401)
-    await expect(missing?.json()).resolves.toEqual({
-      error: 'IPFS pinning ingress is not authorized',
-    })
-    expect(missing?.headers.get('cache-control')).toBe('no-store')
+    await expect(ipfs[method](file)).resolves.toEqual(PIN)
 
-    const wrong = requirePinningAccess(
-      pinRequest('pin-json', '{}', 'x'.repeat(INGRESS_TOKEN.length)),
-    )
-    expect(wrong?.status).toBe(401)
-    expect(requirePinningAccess(pinRequest('pin-json', '{}'))).toBeNull()
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(String(url)).toBe(`https://juicebox.center/${path}`)
+    expect(init?.body).toBeInstanceOf(FormData)
+    expect((init?.body as FormData).get('file')).toBeInstanceOf(File)
+    expect(new Headers(init?.headers).has('authorization')).toBe(false)
   })
 
-  it('applies the ingress guard before parsing on every pin route', async () => {
-    enablePinning()
-    const requests = [
-      pinMetadata(pinRequest('pin-json', '{}', null)),
-      pinItem(pinRequest('pin-item', '{}', null)),
-      pinLogo(
-        new NextRequest('http://localhost/api/ipfs/pin-file', {
-          method: 'POST',
-        }),
-      ),
-      pinMedia(
-        new NextRequest('http://localhost/api/ipfs/pin-media', {
-          method: 'POST',
-        }),
-      ),
-    ]
-
-    for (const response of await Promise.all(requests)) {
-      expect(response.status).toBe(401)
-    }
-  })
-
-  it('caps JSON bodies even without trusting application fields', async () => {
-    const response = await readLimitedJson(
-      new NextRequest('http://localhost/api/ipfs/pin-json', {
-        method: 'POST',
-        headers: { 'content-length': '9000' },
-        body: '{}',
-      }),
-      8 * 1024,
-    )
-    expect('response' in response && response.response.status).toBe(413)
-  })
-
-  it('rejects unbounded multipart parsing when Content-Length is absent', async () => {
-    enablePinning()
-    const handler = makePinFileHandler({
-      maxBytes: 1024,
-      typeAllowed: () => true,
-      typeError: 'bad type',
-      filename: 'test',
-      label: 'test',
-    })
-    const response = await handler(
-      new NextRequest('http://localhost/api/ipfs/pin-file', {
-        method: 'POST',
-        headers: { [PINNING_INGRESS_HEADER]: INGRESS_TOKEN },
-      }),
-    )
-    expect(response.status).toBe(411)
-  })
-
-  it('rejects a malformed CID returned by the pinning provider', async () => {
-    enablePinning()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(Response.json({ Hash: 'not-a-cid' })),
-    )
-    await expect(pinToIpfs('{}')).rejects.toThrow(/invalid CID/i)
-  })
-
-  it('rejects a lexically plausible CID with truncated multihash data', async () => {
-    enablePinning()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(Response.json({ Hash: CID_SHAPED_GARBAGE })),
-    )
-    await expect(pinToIpfs('{}')).rejects.toThrow(/invalid CID/i)
-  })
-
-  it('requires real CIDv0 or CIDv1 values in pinned metadata URIs', async () => {
-    enablePinning()
-    const fetchMock = redundantPinFetch()
-    vi.stubGlobal('fetch', fetchMock)
-
-    const invalidProject = await pinMetadata(
-      pinRequest(
-        'pin-json',
-        JSON.stringify({ name: 'Project', logoUri: 'ipfs://not-a-real-cid' }),
+  it('surfaces bounded Center errors without exposing implementation secrets', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json(
+        { error: { code: 'origin_forbidden', message: 'origin not allowed' } },
+        { status: 403 },
       ),
     )
-    const invalidItem = await pinItem(
-      pinRequest(
-        'pin-item',
-        JSON.stringify({ name: 'Item', image: 'ipfs://abc123' }),
-      ),
+    const ipfs = createJBCenterIpfsClient({ fetch: fetchMock })
+
+    await expect(ipfs.pinJson({ name: 'Project' })).rejects.toThrow(
+      'Saving metadata failed: origin not allowed',
     )
-    expect(invalidProject.status).toBe(400)
-    expect(invalidItem.status).toBe(400)
-    expect(fetchMock).not.toHaveBeenCalled()
-
-    const validV0 = await pinMetadata(
-      pinRequest(
-        'pin-json',
-        JSON.stringify({ name: 'Project', logoUri: `ipfs://${CID}` }),
-      ),
-    )
-    const validV1 = await pinItem(
-      pinRequest(
-        'pin-item',
-        JSON.stringify({ name: 'Item', image: `ipfs://${CID_V1}` }),
-      ),
-    )
-    expect(validV0.status).toBe(200)
-    expect(validV1.status).toBe(200)
-    expect(fetchMock).toHaveBeenCalledTimes(4)
-  })
-
-  it('round-trips tags and unknown projectUri fields through pin-json', async () => {
-    enablePinning()
-    const fetchMock = redundantPinFetch()
-    vi.stubGlobal('fetch', fetchMock)
-
-    const response = await pinMetadata(
-      pinRequest(
-        'pin-json',
-        JSON.stringify({
-          name: 'League',
-          tags: ['games', 'league'],
-          leagueID: 42,
-          extensions: { scoreboard: { live: true } },
-        }),
-      ),
-    )
-    expect(response.status).toBe(200)
-
-    const form = fetchMock.mock.calls[0]![1]!.body as FormData
-    const pinned = JSON.parse(await (form.get('file') as Blob).text())
-    expect(pinned).toEqual({
-      name: 'League',
-      tags: ['games', 'league'],
-      leagueID: 42,
-      extensions: { scoreboard: { live: true } },
-    })
-  })
-
-  it('leaves headroom for a realistic Advanced custom-properties object', async () => {
-    enablePinning()
-    const fetchMock = redundantPinFetch()
-    vi.stubGlobal('fetch', fetchMock)
-
-    // ~4 KB of custom properties: far more than any hand-authored set, and
-    // well inside the 16 KB body cap the pin route enforces.
-    const roster = Array.from({ length: 60 }, (_, index) => ({
-      id: index,
-      handle: `player-${index}`,
-      joinedAt: '2026-07-28T00:00:00.000Z',
-    }))
-    const body = JSON.stringify({ name: 'League', leagueID: 42, roster })
-    expect(body.length).toBeGreaterThan(4000)
-    expect(body.length).toBeLessThan(16 * 1024)
-
-    const response = await pinMetadata(pinRequest('pin-json', body))
-    expect(response.status).toBe(200)
-    const form = fetchMock.mock.calls[0]![1]!.body as FormData
-    const pinned = JSON.parse(await (form.get('file') as Blob).text())
-    expect(pinned.roster).toEqual(roster)
-  })
-
-  it('requires CIDv0 for item metadata encoded into the 721 hook', async () => {
-    enablePinning()
-    vi.stubGlobal(
-      'fetch',
-      redundantPinFetch(CID_V1),
-    )
-
-    const response = await pinItem(
-      pinRequest('pin-item', JSON.stringify({ name: 'Item' })),
-    )
-    expect(response.status).toBe(502)
-  })
-})
-
-describe('same-origin IPFS proxy boundary', () => {
-  it('rejects invalid and traversal paths without reaching the gateway', async () => {
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    const response = await proxyIpfs(
-      new NextRequest('http://localhost/api/ipfs/bad'),
-      { params: Promise.resolve({ path: [CID, '..'] }) },
-    )
-    expect(response.status).toBe(400)
-    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('forces active HTML to download under a sandboxed policy', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('<script>alert(1)</script>', {
-          headers: {
-            'content-type': 'text/html; charset=utf-8',
-            'content-length': '25',
-          },
-        }),
-      ),
-    )
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-    expect(response.status).toBe(200)
-    expect(response.headers.get('content-type')).toBe('application/octet-stream')
-    expect(response.headers.get('content-disposition')).toContain('attachment')
-    expect(response.headers.get('content-security-policy')).toContain('sandbox')
-    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(response.headers.get('cache-control')).toContain('max-age=31536000')
-    expect(response.headers.get('cache-control')).toContain('immutable')
-    expect(response.headers.get('etag')).toBe(`"ipfs:${CID}"`)
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining(CID),
-      expect.objectContaining({ cache: 'no-store' }),
-    )
-  })
-
-  it('revalidates immutable assets from the ETag without fetching a gateway', async () => {
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`, {
-        headers: { 'if-none-match': `"ipfs:${CID}"` },
-      }),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-
-    expect(response.status).toBe(304)
-    expect(response.headers.get('cache-control')).toContain('immutable')
-    expect(response.headers.get('etag')).toBe(`"ipfs:${CID}"`)
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('falls back from Pinata to an independent read gateway', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 502 }))
-      .mockResolvedValueOnce(
-        new Response('asset', {
-          headers: { 'content-type': 'text/plain' },
-        }),
-      )
-    vi.stubGlobal('fetch', fetchMock)
-
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-
-    expect(response.status).toBe(200)
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      `https://gateway.pinata.cloud/ipfs/${CID}`,
-      expect.objectContaining({ cache: 'no-store' }),
-    )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      `https://dweb.link/ipfs/${CID}`,
-      expect.objectContaining({ cache: 'no-store' }),
-    )
-  })
-
-  it('never serves executable JavaScript under the application origin', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('globalThis.compromised = true', {
-          headers: { 'content-type': 'application/javascript' },
-        }),
-      ),
-    )
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-    expect(response.headers.get('content-type')).toBe('application/octet-stream')
-    expect(response.headers.get('content-disposition')).toContain('attachment')
-  })
-
-  it('preserves SVG image rendering but still sandboxes direct navigation', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', {
-          headers: { 'content-type': 'image/svg+xml' },
-        }),
-      ),
-    )
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-    expect(response.headers.get('content-type')).toBe('image/svg+xml')
-    expect(response.headers.get('content-disposition')).toBeNull()
-    expect(response.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; sandbox",
-    )
-  })
-
-  it('rejects an oversized upstream response before proxying its body', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('x', {
-          headers: {
-            'content-type': 'image/png',
-            'content-length': String(25 * 1024 * 1024 + 1),
-          },
-        }),
-      ),
-    )
-    const response = await proxyIpfs(
-      new NextRequest(`http://localhost/api/ipfs/${CID}`),
-      { params: Promise.resolve({ path: [CID] }) },
-    )
-    expect(response.status).toBe(413)
-    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
-  })
-})
-
-describe('first-party pinning budgets', () => {
-  it('requires the site origin when no edge protects the route', () => {
-    enableFirstPartyPinning()
-
-    const foreign = requirePinningAccess(
-      firstPartyRequest('1.1.1.1', 'https://evil.example'),
-    )
-    expect(foreign?.status).toBe(403)
-    expect(requirePinningAccess(firstPartyRequest('1.1.1.1', null))?.status).toBe(
-      403,
-    )
-    expect(requirePinningAccess(firstPartyRequest('1.1.1.1'))).toBeNull()
-  })
-
-  it('accepts the platform domain before a custom domain is attached', () => {
-    enableFirstPartyPinning()
-    vi.stubEnv('RAILWAY_PUBLIC_DOMAIN', 'juicebox-money.up.railway.app')
-
-    expect(
-      requirePinningAccess(
-        firstPartyRequest('1.1.1.1', 'https://juicebox-money.up.railway.app'),
-      ),
-    ).toBeNull()
-  })
-
-  it('spends a per-client budget and then a site-wide one', () => {
-    enableFirstPartyPinning()
-
-    for (let i = 0; i < 10; i++) {
-      expect(requirePinningAccess(firstPartyRequest('2.2.2.2'))).toBeNull()
-    }
-    const throttled = requirePinningAccess(firstPartyRequest('2.2.2.2'))
-    expect(throttled?.status).toBe(429)
-
-    // A different caller has its own budget, until the site's 200 are spent.
-    for (let client = 0; client < 19; client++) {
-      for (let i = 0; i < 10; i++) {
-        expect(
-          requirePinningAccess(firstPartyRequest(`10.0.0.${client}`)),
-        ).toBeNull()
-      }
-    }
-    expect(requirePinningAccess(firstPartyRequest('3.3.3.3'))?.status).toBe(429)
   })
 })

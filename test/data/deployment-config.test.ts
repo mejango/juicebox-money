@@ -14,16 +14,13 @@ const buildEnv = {
   NEXT_PUBLIC_DWELLIR_API_KEY: 'public-dwellir-key',
   NEXT_PUBLIC_VERSION: 'abcdef1234567890',
 }
-const ingressToken = 'ingress-token-with-at-least-32-characters'
 
 afterEach(() => vi.unstubAllEnvs())
 
 describe('deployment configuration', () => {
-  it('accepts a dual-environment build and disabled runtime pinning', () => {
+  it('accepts the complete browser build and needs no IPFS runtime secrets', () => {
     expect(() => assertDeploymentEnv(buildEnv, 'build')).not.toThrow()
-    expect(() =>
-      assertDeploymentEnv({ IPFS_PINNING_ENABLED: 'false' }, 'runtime'),
-    ).not.toThrow()
+    expect(() => assertDeploymentEnv({}, 'runtime')).not.toThrow()
   })
 
   it('rejects test fixtures and an invalid Para environment', () => {
@@ -59,55 +56,6 @@ describe('deployment configuration', () => {
     )
   })
 
-  it('requires a declared pinning mode and credentials', () => {
-    const errors = deploymentEnvErrors(
-      { IPFS_PINNING_ENABLED: 'true' },
-      'runtime',
-    )
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        'IPFS_PINNING_EDGE_PROTECTED must be explicitly true or false',
-        'FILEBASE_IPFS_RPC_TOKEN is required',
-        'PINATA_JWT is required',
-      ]),
-    )
-  })
-
-  it('accepts first-party pinning and refuses a token it would ignore', () => {
-    const firstParty = {
-      IPFS_PINNING_ENABLED: 'true',
-      IPFS_PINNING_EDGE_PROTECTED: 'false',
-      FILEBASE_IPFS_RPC_TOKEN: 'filebase-token',
-      PINATA_JWT: 'pinata-jwt',
-    }
-    expect(deploymentEnvErrors(firstParty, 'runtime')).toEqual([])
-    expect(
-      deploymentEnvErrors(
-        { ...firstParty, IPFS_PINNING_INGRESS_TOKEN: ingressToken },
-        'runtime',
-      ),
-    ).toContain(
-      'IPFS_PINNING_INGRESS_TOKEN is set while IPFS_PINNING_EDGE_PROTECTED is false: the app would ignore the token and budget callers itself',
-    )
-  })
-
-  it('accepts a complete enabled pinning boundary and rejects short tokens', () => {
-    const runtimeEnv = {
-      IPFS_PINNING_ENABLED: 'true',
-      IPFS_PINNING_EDGE_PROTECTED: 'true',
-      IPFS_PINNING_INGRESS_TOKEN: ingressToken,
-      FILEBASE_IPFS_RPC_TOKEN: 'filebase-token',
-      PINATA_JWT: 'pinata-jwt',
-    }
-    expect(deploymentEnvErrors(runtimeEnv, 'runtime')).toEqual([])
-    expect(
-      deploymentEnvErrors(
-        { ...runtimeEnv, IPFS_PINNING_INGRESS_TOKEN: 'too-short' },
-        'runtime',
-      ),
-    ).toContain('IPFS_PINNING_INGRESS_TOKEN must be at least 32 characters')
-  })
-
   it('does not put environment values into validation errors', () => {
     const secret = 'do-not-echo-this-value'
     const errors = deploymentEnvErrors(
@@ -119,8 +67,7 @@ describe('deployment configuration', () => {
 })
 
 describe('health endpoint', () => {
-  it('is ready when pinning is explicitly disabled', async () => {
-    vi.stubEnv('IPFS_PINNING_ENABLED', 'false')
+  it('does not depend on webclient-owned IPFS credentials', async () => {
     vi.stubEnv('NEXT_PUBLIC_VERSION', 'test-sha')
     const response = health()
     expect(response.status).toBe(200)
@@ -129,37 +76,5 @@ describe('health endpoint', () => {
       status: 'ok',
       version: 'test-sha',
     })
-  })
-
-  it('fails readiness for partial pinning configuration', async () => {
-    vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
-    const response = health()
-    expect(response.status).toBe(503)
-    await expect(response.json()).resolves.toMatchObject({
-      status: 'misconfigured',
-    })
-  })
-
-  it('is ready only when enabled pinning includes the ingress secret', async () => {
-    vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
-    vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'true')
-    vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', ingressToken)
-    vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
-    vi.stubEnv('PINATA_JWT', 'pinata-jwt')
-    expect(health().status).toBe(200)
-
-    vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', 'too-short')
-    expect(health().status).toBe(503)
-  })
-
-  it('is ready for first-party pinning and unready with a stray token', async () => {
-    vi.stubEnv('IPFS_PINNING_ENABLED', 'true')
-    vi.stubEnv('IPFS_PINNING_EDGE_PROTECTED', 'false')
-    vi.stubEnv('FILEBASE_IPFS_RPC_TOKEN', 'filebase-token')
-    vi.stubEnv('PINATA_JWT', 'pinata-jwt')
-    expect(health().status).toBe(200)
-
-    vi.stubEnv('IPFS_PINNING_INGRESS_TOKEN', ingressToken)
-    expect(health().status).toBe(503)
   })
 })

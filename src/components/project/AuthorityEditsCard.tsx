@@ -44,8 +44,12 @@ import {
   buildTokenMetadataAuthorityCall,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
+import {
+  JBCENTER_MAX_IMAGE_BYTES,
+  jbCenterIpfs,
+} from '@/lib/jbcenter-ipfs'
 
-const MAX_LOGO_BYTES = 1024 * 1024
+const MAX_LOGO_BYTES = JBCENTER_MAX_IMAGE_BYTES
 
 export type AuthorityEditProfile = {
   name: string
@@ -521,7 +525,7 @@ export function MetadataEditor({
       return
     }
     if (file.size > MAX_LOGO_BYTES) {
-      setError('Logos must be under 1 MB.')
+      setError('Logos must be under 25 MB.')
       return
     }
     setLogoFile(file)
@@ -554,17 +558,7 @@ export function MetadataEditor({
     let logoUri = initial.logoUri ?? undefined
     if (logoFile) {
       setStatus('Uploading the logo…')
-      const form = new FormData()
-      form.append('file', logoFile)
-      const response = await fetch('/api/ipfs/pin-file', {
-        method: 'POST',
-        body: form,
-      })
-      const body = (await response.json()) as { cid?: string; error?: string }
-      if (!response.ok || !body.cid) {
-        throw new Error(body.error ?? 'Logo upload failed.')
-      }
-      logoUri = `ipfs://${body.cid}`
+      logoUri = (await jbCenterIpfs.pinImage(logoFile)).uri
     }
 
     // Merge over the CURRENT pinned JSON so fields this form doesn't edit —
@@ -577,37 +571,29 @@ export function MetadataEditor({
       : {}
 
     setStatus('Pinning the project profile…')
-    const response = await fetch('/api/ipfs/pin-json', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(
-        mergeProjectMetadata(
-          existing,
-          {
-            name: name.trim(),
-            projectTagline: tagline.trim(),
-            description: description.trim(),
-            infoUri: infoUri.trim(),
-            twitter: twitter.trim(),
-            discord: discord.trim(),
-            telegram: telegram.trim(),
-            whatsapp: whatsapp.trim(),
-            instagram: instagram.trim(),
-            payDisclosure: payNotice.trim(),
-            // Only ever set or keep a logo — there's no removal control here.
-            ...(logoUri ? { logoUri } : {}),
-          },
-          // An untouched box leaves the existing custom properties alone; an
-          // edited one replaces them, so a removed key is removed on-chain.
-          customTouched ? custom.properties : undefined,
-        ),
+    const pin = await jbCenterIpfs.pinJson(
+      mergeProjectMetadata(
+        existing,
+        {
+          name: name.trim(),
+          projectTagline: tagline.trim(),
+          description: description.trim(),
+          infoUri: infoUri.trim(),
+          twitter: twitter.trim(),
+          discord: discord.trim(),
+          telegram: telegram.trim(),
+          whatsapp: whatsapp.trim(),
+          instagram: instagram.trim(),
+          payDisclosure: payNotice.trim(),
+          // Only ever set or keep a logo — there's no removal control here.
+          ...(logoUri ? { logoUri } : {}),
+        },
+        // An untouched box leaves the existing custom properties alone; an
+        // edited one replaces them, so a removed key is removed on-chain.
+        customTouched ? custom.properties : undefined,
       ),
-    })
-    const body = (await response.json()) as { cid?: string; error?: string }
-    if (!response.ok || !body.cid) {
-      throw new Error(body.error ?? 'Could not pin the project profile.')
-    }
-    return `ipfs://${body.cid}`
+    )
+    return pin.uri
   }
 
   const submit = async () => {

@@ -11,6 +11,7 @@ import {
 import { AddButton, CheckRow } from "./ui";
 import { ChainIcon } from "@/components/ChainIcon";
 import { chainName } from "@/lib/urn";
+import { JBCENTER_MAX_MEDIA_BYTES } from "@/lib/jbcenter-ipfs";
 
 /**
  * Store items editor for the create flow. Purely controlled — drafts live in
@@ -134,7 +135,7 @@ export function itemOk(item: DraftItem): boolean {
   );
 }
 
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_BYTES = JBCENTER_MAX_MEDIA_BYTES;
 
 function mediaAllowed(file: File): boolean {
   const type = file.type;

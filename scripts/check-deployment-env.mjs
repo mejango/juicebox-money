@@ -1,7 +1,6 @@
 import { pathToFileURL } from 'node:url'
 
 const BUILD_PHASES = new Set(['build', 'all'])
-const RUNTIME_PHASES = new Set(['runtime', 'all'])
 const PARA_ENVIRONMENTS = new Set(['DEV', 'SANDBOX', 'BETA', 'PROD'])
 
 function required(errors, env, name, minLength = 1) {
@@ -21,7 +20,7 @@ function httpsUrl(errors, env, name, optional = false) {
 }
 
 export function deploymentEnvErrors(env, phase = 'all') {
-  if (!BUILD_PHASES.has(phase) && !RUNTIME_PHASES.has(phase)) {
+  if (!BUILD_PHASES.has(phase) && phase !== 'runtime') {
     return [`unknown validation phase: ${phase}`]
   }
 
@@ -50,39 +49,6 @@ export function deploymentEnvErrors(env, phase = 'all') {
     }
     if (env.NEXT_PUBLIC_BROWSER_FIXTURE_ORIGIN) {
       errors.push('browser fixture origin cannot be deployed')
-    }
-  }
-
-  if (RUNTIME_PHASES.has(phase)) {
-    if (!['true', 'false'].includes(env.IPFS_PINNING_ENABLED ?? '')) {
-      errors.push('IPFS_PINNING_ENABLED must be explicitly true or false')
-    }
-    if (env.IPFS_PINNING_ENABLED === 'true') {
-      // Two supported deployments, and the difference has to be declared: an edge
-      // enforces the quota policy and injects the shared token, or the app is
-      // reached directly and budgets callers itself. A token in the second mode is
-      // a belief about protection the app does not have.
-      if (!['true', 'false'].includes(env.IPFS_PINNING_EDGE_PROTECTED ?? '')) {
-        errors.push(
-          'IPFS_PINNING_EDGE_PROTECTED must be explicitly true or false',
-        )
-      }
-      if (
-        env.IPFS_PINNING_EDGE_PROTECTED === 'true' &&
-        (env.IPFS_PINNING_INGRESS_TOKEN ?? '').trim().length < 32
-      ) {
-        errors.push('IPFS_PINNING_INGRESS_TOKEN must be at least 32 characters')
-      }
-      if (
-        env.IPFS_PINNING_EDGE_PROTECTED === 'false' &&
-        env.IPFS_PINNING_INGRESS_TOKEN
-      ) {
-        errors.push(
-          'IPFS_PINNING_INGRESS_TOKEN is set while IPFS_PINNING_EDGE_PROTECTED is false: the app would ignore the token and budget callers itself',
-        )
-      }
-      required(errors, env, 'FILEBASE_IPFS_RPC_TOKEN', 8)
-      required(errors, env, 'PINATA_JWT', 8)
     }
   }
 
