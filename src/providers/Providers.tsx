@@ -10,10 +10,10 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { createConfig, http, injected, WagmiProvider } from 'wagmi'
+import { createConfig, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
-import { getDwellirRpcUrl } from '@/lib/dwellir'
+import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { installQueryPersistence } from '@/lib/query-persist'
 import {
   ParaAuthContext,
@@ -38,34 +38,17 @@ import {
 
 export const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
-const BROWSER_FIXTURE_ORIGIN =
-  process.env.NEXT_PUBLIC_BROWSER_FIXTURE_ORIGIN ?? 'http://127.0.0.1:4399'
-
 export { SUPPORTED_CHAINS } from '@/lib/chains'
 
-const rpcTransport = (chainId: number, fixtureNetwork: string) => {
-  if (IS_DETERMINISTIC_BROWSER) {
-    return http(`${BROWSER_FIXTURE_ORIGIN}/rpc/${fixtureNetwork}`)
-  }
-  const url = getDwellirRpcUrl(chainId)
-  return url ? http(url) : http()
-}
-
 const transports = {
-  [mainnet.id]: rpcTransport(mainnet.id, 'mainnet'),
-  [optimism.id]: rpcTransport(optimism.id, 'optimism-mainnet'),
-  [base.id]: rpcTransport(base.id, 'base-mainnet'),
-  [arbitrum.id]: rpcTransport(arbitrum.id, 'arbitrum-mainnet'),
-  [sepolia.id]: rpcTransport(sepolia.id, 'sepolia'),
-  [optimismSepolia.id]: rpcTransport(
-    optimismSepolia.id,
-    'optimism-sepolia',
-  ),
-  [baseSepolia.id]: rpcTransport(baseSepolia.id, 'base-sepolia'),
-  [arbitrumSepolia.id]: rpcTransport(
-    arbitrumSepolia.id,
-    'arbitrum-sepolia',
-  ),
+  [mainnet.id]: jbCenterRpcTransport(mainnet.id),
+  [optimism.id]: jbCenterRpcTransport(optimism.id),
+  [base.id]: jbCenterRpcTransport(base.id),
+  [arbitrum.id]: jbCenterRpcTransport(arbitrum.id),
+  [sepolia.id]: jbCenterRpcTransport(sepolia.id),
+  [optimismSepolia.id]: jbCenterRpcTransport(optimismSepolia.id),
+  [baseSepolia.id]: jbCenterRpcTransport(baseSepolia.id),
+  [arbitrumSepolia.id]: jbCenterRpcTransport(arbitrumSepolia.id),
 }
 
 const ParaModalHost = lazy(() => import('./ParaModalHost'))

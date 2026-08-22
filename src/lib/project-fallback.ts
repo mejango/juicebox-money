@@ -13,7 +13,6 @@ import {
 import {
   createPublicClient,
   getAbiItem,
-  http,
   isAddress,
   isAddressEqual,
   zeroAddress,
@@ -22,7 +21,7 @@ import {
 } from 'viem'
 import { getProject, type BsProject } from '@/lib/bendystraw'
 import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
-import { getDwellirRpcUrl } from '@/lib/dwellir'
+import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 
 /**
  * Server-side resilience layer for the project page. Bendystraw is the
@@ -55,7 +54,7 @@ const JB_PERMISSIONS_DEPLOYMENT_BLOCK: Readonly<Record<number, bigint>> = {
   84532: 42_909_144n,
   421614: 277_723_887n,
 }
-const PERMISSION_LOG_CHUNK_BLOCKS = 250_000n
+const PERMISSION_LOG_CHUNK_BLOCKS = 50_000n
 export const MAX_PERMISSION_HISTORY_LOGS = 256
 export const MAX_PERMISSION_HISTORY_CANDIDATES = 50
 export const MAX_PERMISSION_HISTORY_RPC_CALLS = 256
@@ -82,10 +81,7 @@ export async function readOnChainProject(
   if (!chain || !projects) return null
   const client = createPublicClient({
     chain,
-    transport: http(getDwellirRpcUrl(chainId), {
-      retryCount: 1,
-      timeout: 4_000,
-    }),
+    transport: jbCenterRpcTransport(chainId, 4_000),
   })
   try {
     const owner = (await client.readContract({
@@ -175,10 +171,7 @@ export async function readLiveProjectAuthorityContext({
   if (!chain || !projects) return null
   const client = createPublicClient({
     chain,
-    transport: http(getDwellirRpcUrl(chainId), {
-      retryCount: 1,
-      timeout: 4_000,
-    }),
+    transport: jbCenterRpcTransport(chainId, 4_000),
   })
   const canonicalRevOwner = V6_ADDRESSES[RevnetCoreContracts.REVOwner]?.[
     chainId
@@ -211,17 +204,11 @@ export async function projectAuthorityMatchesMainnet({
   if (!sourceChain || !mainnetChain) return false
   const sourceClient = createPublicClient({
     chain: sourceChain,
-    transport: http(getDwellirRpcUrl(chainId), {
-      retryCount: 1,
-      timeout: 4_000,
-    }),
+    transport: jbCenterRpcTransport(chainId, 4_000),
   })
   const destinationClient = createPublicClient({
     chain: mainnetChain,
-    transport: http(getDwellirRpcUrl(1), {
-      retryCount: 1,
-      timeout: 4_000,
-    }),
+    transport: jbCenterRpcTransport(1, 4_000),
   })
   const identities = await readMatchingAuthorityIdentities({
     sourceClient,
@@ -248,10 +235,7 @@ export async function revnetOperatorFromPermissionHistory({
   if (!chain) return null
   const client = createPublicClient({
     chain,
-    transport: http(getDwellirRpcUrl(chainId), {
-      retryCount: 1,
-      timeout: 4_000,
-    }),
+    transport: jbCenterRpcTransport(chainId, 4_000),
   })
   const canonicalRevOwner = V6_ADDRESSES[RevnetCoreContracts.REVOwner]?.[
     chainId

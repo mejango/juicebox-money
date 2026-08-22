@@ -369,7 +369,7 @@ describe('live handle authorities', () => {
       expect.objectContaining({
         address: PERMISSIONS,
         args: { account: REV_OWNER, projectId: 42n },
-        fromBlock: 25_450_001n,
+        fromBlock: 25_650_001n,
         toBlock: 25_700_000n,
         strict: true,
       }),

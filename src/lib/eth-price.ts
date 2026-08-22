@@ -6,8 +6,8 @@ import {
   USD_CURRENCY_ID,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { createPublicClient, http } from 'viem'
-import { getDwellirRpcUrl } from './dwellir'
+import { createPublicClient } from 'viem'
+import { jbCenterRpcTransport } from './jbcenter-rpc'
 
 /** Currency id 1 is the native token; `JBPrices` keys its feeds by these ids. */
 const NATIVE_CURRENCY_ID = 1
@@ -38,10 +38,7 @@ export async function readEthUsdPrice(): Promise<number> {
     try {
       const client = createPublicClient({
         chain,
-        transport: http(getDwellirRpcUrl(chainId), {
-          retryCount: 1,
-          timeout: 6_000,
-        }),
+        transport: jbCenterRpcTransport(chainId, 6_000),
       })
       const price = (await client.readContract({
         address: prices,
