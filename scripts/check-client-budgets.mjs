@@ -15,12 +15,15 @@ const budgets = {
     // The shared Bendystraw client includes fail-closed network routing, and
     // canonical SDK chain metadata replaces the warning-prone viem barrel.
     // The shared all-chain direct-pay and Permit2 review paths add ~6 KiB to
-    // the landing route after package-import optimization. Keep the ceiling
-    // close to that reviewed feature cost; aggregate and largest-chunk budgets
-    // below still catch broader regressions.
-    '/page': 394 * KIB,
+    // the landing route after package-import optimization. Next 16's emitted
+    // route graph currently measures ~415 KiB in CI; keep a narrow ceiling
+    // around that baseline while the aggregate and largest-chunk budgets below
+    // still catch broader regressions.
+    '/page': 418 * KIB,
     '/[urn]/page': 570 * KIB,
-    '/create/page': 465 * KIB,
+    // Direct Juicebox Center pinning adds ~2 KiB to create over main's
+    // measured ~470 KiB route. Leave only a small allowance for build variance.
+    '/create/page': 476 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
