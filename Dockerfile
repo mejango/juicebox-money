@@ -1,4 +1,4 @@
-FROM node:26.5.0-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS base
+FROM node:26.7.0-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341 AS base
 
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NODE_OPTIONS=--no-experimental-webstorage

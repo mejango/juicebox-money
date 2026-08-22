@@ -29,7 +29,7 @@ npm run check:deploy
 ```
 
 Use the Node version pinned in `.nvmrc`; local, CI, and the production image run
-on Node 26.5 with npm 12.0.1.
+on Node 26.7 with npm 12.0.1.
 TypeScript 7 supplies the `tsc` binary through the `@typescript/native` npm
 alias. The `typescript` package name intentionally points at Microsoft's
 TypeScript 6 compatibility package so Next and typescript-eslint can keep using

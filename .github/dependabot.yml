@@ -7,7 +7,7 @@ updates:
       day: monday
       time: '09:00'
       timezone: America/Sao_Paulo
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 6
     cooldown:
       default-days: 7
       semver-minor-days: 14
@@ -21,9 +21,63 @@ updates:
     ignore:
       - dependency-name: cbw-sdk
     groups:
+      framework:
+        applies-to: version-updates
+        patterns: [next, eslint-config-next]
+        update-types: [minor, patch]
+      authentication:
+        applies-to: version-updates
+        patterns: ['@getpara/*']
+        update-types: [minor, patch]
+      wallets:
+        applies-to: version-updates
+        patterns:
+          - '@base-org/account'
+          - '@coinbase/wallet-sdk'
+          - '@safe-global/*'
+          - '@wagmi/*'
+          - '@walletconnect/*'
+          - viem
+          - wagmi
+        update-types: [minor, patch]
+      browser-tests:
+        applies-to: version-updates
+        patterns:
+          - '@axe-core/playwright'
+          - '@playwright/test'
+          - playwright
+          - playwright-core
+        update-types: [minor, patch]
+      typescript:
+        applies-to: version-updates
+        patterns:
+          - '@typescript/*'
+          - '@typescript-eslint/*'
+          - typescript
+          - typescript-eslint
+        update-types: [minor, patch]
       routine:
         applies-to: version-updates
         patterns: ['*']
+        exclude-patterns:
+          - '@axe-core/playwright'
+          - '@base-org/account'
+          - '@coinbase/wallet-sdk'
+          - '@getpara/*'
+          - '@playwright/test'
+          - '@safe-global/*'
+          - '@typescript/*'
+          - '@typescript-eslint/*'
+          - '@wagmi/*'
+          - '@walletconnect/*'
+          - eslint-config-next
+          - next
+          - playwright
+          - playwright-core
+          - typescript
+          - typescript-eslint
+          - viem
+          - wagmi
         update-types: [minor, patch]
       security:
         applies-to: security-updates
