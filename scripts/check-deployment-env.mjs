@@ -30,12 +30,6 @@ export function deploymentEnvErrors(env, phase = 'all') {
     httpsUrl(errors, env, 'NEXT_PUBLIC_BENDYSTRAW_URL')
     httpsUrl(errors, env, 'NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL')
     required(errors, env, 'NEXT_PUBLIC_PARA_API_KEY', 8)
-    const dwellirKey = env.NEXT_PUBLIC_DWELLIR_API_KEY?.trim() ?? ''
-    if (!/^[A-Za-z\d_-]{8,128}$/u.test(dwellirKey)) {
-      errors.push(
-        'NEXT_PUBLIC_DWELLIR_API_KEY must be an 8-128 character URL-safe API key',
-      )
-    }
     required(errors, env, 'NEXT_PUBLIC_VERSION', 7)
     if (env.NEXT_PUBLIC_VERSION === 'unknown') {
       errors.push('NEXT_PUBLIC_VERSION must identify the built revision')

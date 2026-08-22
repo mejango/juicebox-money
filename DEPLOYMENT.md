@@ -40,7 +40,6 @@ arguments or repository variables.
 | `NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL` | build | Absolute HTTPS testnet base URL; `/graphql` is appended automatically |
 | `NEXT_PUBLIC_PARA_API_KEY` | build | Public Para application key |
 | `NEXT_PUBLIC_PARA_ENV` | build | Para application environment; normally `PROD` |
-| `NEXT_PUBLIC_DWELLIR_API_KEY` | build | Public browser RPC key; apply strict provider quotas |
 | `NEXT_PUBLIC_VERSION` | build | Optional non-Railway override for the commit SHA shown by the app/health endpoint; Railway derives it automatically |
 
 Copy `.env.example` for local names, but inject real values through the
@@ -57,7 +56,6 @@ docker build -t juicebox-money:local \
   --build-arg NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.xyz \
   --build-arg NEXT_PUBLIC_PARA_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_PARA_ENV=PROD \
-  --build-arg NEXT_PUBLIC_DWELLIR_API_KEY=PUBLIC_KEY \
   --build-arg NEXT_PUBLIC_VERSION=$(git rev-parse HEAD) .
 
 docker run --rm \
@@ -77,14 +75,15 @@ the same least-privilege shape: a read-only root filesystem, a writable Next
 cache tmpfs owned by Node's UID/GID 1000, no Linux capabilities, no privilege
 escalation, and a host port bound only to loopback.
 
-## IPFS safety
+## Juicebox Center safety
 
-Juicebox Money is a credential-free Juicebox Center browser client. It imports
+Juicebox Money is a credential-free Juicebox Center client. It imports
 `@bananapus/nana-sdk-core/jbcenter`, calls `pinJson`, `pinImage`, and `pinMedia`
 directly from the browser, and reads immutable content through
-`https://juicebox.center/ipfs/:cid`. The browser supplies the production
-`Origin`; Center owns origin policy, quotas, upload limits, provider credentials,
-and redundant pinning.
+`https://juicebox.center/ipfs/:cid`. Read-only RPC also uses the SDK's
+EIP-1193 provider. Browsers supply the production `Origin`; server-rendered
+reads set that same fixed origin. Center owns origin policy, quotas, upload and
+RPC limits, provider credentials, and redundant pinning.
 
 Do not add a Center API key to `NEXT_PUBLIC_*`, reintroduce provider secrets, or
 proxy these requests through a webclient API route. Server-side clients may use
