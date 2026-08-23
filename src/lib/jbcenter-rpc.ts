@@ -19,6 +19,8 @@ const serverFetch: typeof fetch = (input, init) => {
   return fetch(input, { ...init, headers })
 }
 
+const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
+
 export function jbCenterRpcTransport(
   chainId: number,
   timeoutMs = 15_000,
@@ -32,7 +34,7 @@ export function jbCenterRpcTransport(
   }
   return custom(
     createJBCenterRpcProvider(chainId, {
-      fetch: typeof window === 'undefined' ? serverFetch : undefined,
+      fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
       timeoutMs,
     }),
     { retryCount: 1 },
