@@ -25,4 +25,32 @@ describe('Juicebox Center RPC transport', () => {
       'https://juicebox.money',
     )
   })
+
+  it('calls browser fetch with the Window receiver', async () => {
+    const browserWindow = {
+      fetch: vi.fn(function (this: unknown) {
+        if (this !== browserWindow) throw new TypeError('Illegal invocation')
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' }),
+            { headers: { 'content-type': 'application/json' } },
+          ),
+        )
+      }),
+    }
+    vi.stubGlobal('window', browserWindow)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(function () {
+        throw new TypeError('Illegal invocation')
+      }),
+    )
+    const client = createPublicClient({
+      chain: mainnet,
+      transport: jbCenterRpcTransport(mainnet.id),
+    })
+
+    await expect(client.getChainId()).resolves.toBe(mainnet.id)
+    expect(browserWindow.fetch).toHaveBeenCalledOnce()
+  })
 })
