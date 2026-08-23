@@ -1,7 +1,7 @@
 import { createJBCenterRpcProvider } from '@bananapus/nana-sdk-core/jbcenter'
 import { custom, http, type Transport } from 'viem'
+import { jbCenterBaseUrl } from '@/lib/jbcenter-config'
 
-const APP_ORIGIN = 'https://juicebox.money'
 const FIXTURE_NETWORKS: Record<number, string> = {
   1: 'mainnet',
   10: 'optimism-mainnet',
@@ -15,7 +15,10 @@ const FIXTURE_NETWORKS: Record<number, string> = {
 
 const serverFetch: typeof fetch = (input, init) => {
   const headers = new Headers(init?.headers)
-  headers.set('Origin', APP_ORIGIN)
+  headers.set(
+    'Origin',
+    process.env.NEXT_PUBLIC_SITE_URL ?? 'https://juicebox.money',
+  )
   return fetch(input, { ...init, headers })
 }
 
@@ -34,6 +37,7 @@ export function jbCenterRpcTransport(
   }
   return custom(
     createJBCenterRpcProvider(chainId, {
+      baseUrl: jbCenterBaseUrl(),
       fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
       timeoutMs,
     }),
