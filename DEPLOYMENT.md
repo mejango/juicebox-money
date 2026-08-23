@@ -15,17 +15,18 @@ Use the repository `railway.json` for both Railway services:
 
 | Git branch | Railway environment | Public origin |
 | --- | --- | --- |
-| `staging` | staging | `https://staging.juicebox.money` |
+| `dev` | dev | `https://dev.juicebox.money` |
 | `main` | production | `https://juicebox.money` |
 
-Connect staging to `staging` and production to `main`, enable automatic deploys
+Connect dev to `dev` and production to `main`, enable automatic deploys
 only after CI succeeds, and disable overlap so an older build cannot replace a
 newer commit. Set `NEXT_PUBLIC_SITE_URL` to the matching origin. Do not
 configure `NEXT_PUBLIC_VERSION` in Railway: the Dockerfile consumes Railway's
 automatically injected `RAILWAY_GIT_COMMIT_SHA` and exposes it to the
 application as `NEXT_PUBLIC_VERSION`. Keep all other public build values and
-every runtime secret environment-scoped. Promote by merging `staging` into
-`main`, never by pointing production at `staging`.
+every runtime secret environment-scoped. The dev environment is for active feature integration;
+a production-candidate staging environment may be added separately later. Promote reviewed work by
+merging `dev` into `main`, never by pointing production at `dev`.
 
 ## Configuration contract
 

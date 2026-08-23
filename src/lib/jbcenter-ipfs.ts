@@ -7,6 +7,7 @@ import {
   type JBCenterJsonObject,
   type JBCenterPin,
 } from '@bananapus/nana-sdk-core/jbcenter'
+import { jbCenterBaseUrl } from '@/lib/jbcenter-config'
 
 export const JBCENTER_IPFS_GATEWAY = `${JBCENTER_DEFAULT_URL}/ipfs/`
 export const JBCENTER_MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -30,7 +31,10 @@ export type JBCenterIpfsClient = {
 export function createJBCenterIpfsClient(
   options: BrowserClientOptions = {},
 ): JBCenterIpfsClient {
-  const center = createJBCenterClient(options)
+  const center = createJBCenterClient({
+    baseUrl: jbCenterBaseUrl(),
+    ...options,
+  })
 
   const friendly = async <T>(label: string, request: Promise<T>): Promise<T> => {
     try {
