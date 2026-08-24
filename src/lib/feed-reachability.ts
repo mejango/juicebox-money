@@ -1,6 +1,14 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import {
+  JBCenterRequestError,
+  JBCenterTimeoutError,
+} from '@bananapus/nana-sdk-core/jbcenter'
 import { probeFeedReachability as sdkProbeFeedReachability } from '@bananapus/nana-sdk-core/v6'
-import { type PublicClient } from 'viem'
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  type PublicClient,
+} from 'viem'
 import {
   requiredFeedPairs,
   type AccountingConfig,
@@ -22,7 +30,27 @@ export type MissingFeed = { chainId: number; aLabel: string; bLabel: string }
 export type FeedReachability =
   | { status: 'ok' }
   | { status: 'missing'; missing: MissingFeed[] }
-  | { status: 'unavailable' }
+  | { status: 'unavailable'; reason: string }
+
+/**
+ * One line naming why a chain read could not complete — the SDK probe folds
+ * every non-revert failure into `unavailable`, and "check your connection"
+ * has already sent one user hunting for Base RPC workarounds when the real
+ * cause was their browser never reaching juicebox.center.
+ */
+function unavailableReason(error: unknown, chainId: number): string {
+  const where = `${chainName(chainId)} reads via juicebox.center`
+  // viem nests the transport error several `cause` levels deep.
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (cause instanceof JBCenterTimeoutError) return `${where} timed out.`
+    if (cause instanceof JBCenterRequestError) {
+      if (cause.status === 429)
+        return `${where} are rate-limited — wait a minute and retry.`
+      return `${where} failed with HTTP ${cause.status}.`
+    }
+  }
+  return `${where} were blocked before reaching the server — an ad blocker, browser shield, VPN, or DNS filter is the usual cause.`
+}
 
 /**
  * Probe on-chain that every JBPrices pair a launch plan needs
@@ -56,25 +84,45 @@ export async function probeFeedReachability(args: {
     .filter(({ pairs }) => pairs.length > 0)
   if (perChain.length === 0) return { status: 'ok' }
 
-  let unverified = false
+  let unverified: string | null = null
   const missing: MissingFeed[] = []
   const results = await Promise.all(
     perChain.map(async ({ chainId, pairs }) => {
       const client = args.getClient(chainId)
-      if (!client) return { chainId, pairs, verdict: null }
-      return {
-        chainId,
-        pairs,
-        verdict: await sdkProbeFeedReachability(client as PublicClient, {
-          chainId: chainId as JBChainId,
+      if (!client)
+        return {
+          chainId,
           pairs,
-        }),
+          verdict: null,
+          reason: `No RPC client for ${chainName(chainId)}.`,
+        }
+      // The SDK reports `unavailable` without the error; keep the first
+      // non-revert failure so the block copy can name it.
+      let reason: string | null = null
+      const observed = {
+        readContract: async (request: unknown) => {
+          try {
+            return await client.readContract(request as never)
+          } catch (error) {
+            const reverted =
+              error instanceof BaseError &&
+              error.walk(c => c instanceof ContractFunctionRevertedError) !==
+                null
+            if (!reverted) reason ??= unavailableReason(error, chainId)
+            throw error
+          }
+        },
       }
+      const verdict = await sdkProbeFeedReachability(
+        observed as unknown as PublicClient,
+        { chainId: chainId as JBChainId, pairs },
+      )
+      return { chainId, pairs, verdict, reason }
     }),
   )
-  for (const { chainId, pairs, verdict } of results) {
+  for (const { chainId, pairs, verdict, reason } of results) {
     if (!verdict || verdict.status === 'unavailable') {
-      unverified = true
+      unverified ??= reason ?? `${chainName(chainId)} could not be read.`
       continue
     }
     if (verdict.status === 'ok') continue
@@ -92,7 +140,7 @@ export async function probeFeedReachability(args: {
     }
   }
   if (missing.length > 0) return { status: 'missing', missing }
-  if (unverified) return { status: 'unavailable' }
+  if (unverified) return { status: 'unavailable', reason: unverified }
   return { status: 'ok' }
 }
 
@@ -109,7 +157,7 @@ export function feedReachabilityBlock(
 ): string | null {
   if (!result || result.status === 'ok') return null
   if (result.status === 'unavailable') {
-    return "Couldn't verify price feeds right now — check your connection and retry."
+    return `Couldn't verify price feeds right now — ${result.reason} Retry once it's reachable.`
   }
   // The same token pair can be missing through several currency pairs
   // (context↔base and context↔context); collapse to one line per token

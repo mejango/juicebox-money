@@ -6,6 +6,10 @@
 // selected chain and fails CLOSED: a proven-missing feed blocks with the pair
 // named, and an RPC failure blocks with distinct retry copy — never a silent
 // pass.
+import {
+  JBCenterRequestError,
+  JBCenterTimeoutError,
+} from '@bananapus/nana-sdk-core/jbcenter'
 import { ContractFunctionRevertedError } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -122,7 +126,38 @@ describe('probeFeedReachability', () => {
 
     expect(result.status).toBe('unavailable')
     expect(feedReachabilityBlock(result, false)).toBe(
-      "Couldn't verify price feeds right now — check your connection and retry.",
+      "Couldn't verify price feeds right now — Ethereum reads via juicebox.center were blocked before reaching the server — an ad blocker, browser shield, VPN, or DNS filter is the usual cause. Retry once it's reachable.",
+    )
+  })
+
+  it('names a rate limit or timeout from juicebox.center', async () => {
+    const probe = (error: Error) =>
+      probeFeedReachability({
+        accounting: ETH_USDC,
+        issuanceBase: null,
+        chains: [8453],
+        getClient: () =>
+          clientOf(
+            vi.fn(async () => {
+              throw error
+            }),
+          ),
+      })
+    expect(
+      feedReachabilityBlock(
+        await probe(new JBCenterRequestError('rate limited', 429)),
+        false,
+      ),
+    ).toContain('Base reads via juicebox.center are rate-limited')
+    expect(
+      feedReachabilityBlock(await probe(new JBCenterTimeoutError(15_000)), false),
+    ).toContain('Base reads via juicebox.center timed out')
+    // viem wraps transport failures in ContractFunctionExecutionError → cause chain.
+    const nested = new Error('outer', {
+      cause: new Error('inner', { cause: new JBCenterRequestError('x', 502) }),
+    })
+    expect(feedReachabilityBlock(await probe(nested), false)).toContain(
+      'failed with HTTP 502',
     )
   })
 
