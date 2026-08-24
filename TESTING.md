@@ -9,6 +9,7 @@ transaction simulation.
 ## Local commands
 
 ```sh
+cp .env.example .env.local
 npm ci
 npm run dev # http://localhost:3001
 npm run deps:check
@@ -27,6 +28,10 @@ npm run budget
 npm run test:browser
 npm run check:deploy
 ```
+
+The checked-in local defaults use real Bendystraw mainnet and testnet data, Para beta, and
+`https://dev.juicebox.center` for RPC reads and IPFS writes. No provider credential or Center API
+key is required.
 
 Use the Node version pinned in `.nvmrc`; local, CI, and the production image run
 on Node 26.7 with npm 12.0.1.

@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mainnet } from 'viem/chains'
 import { createPublicClient } from 'viem'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
+import {
+  jbCenterAppOrigin,
+  jbCenterBaseUrl,
+} from '@/lib/jbcenter-config'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -9,6 +13,15 @@ afterEach(() => {
 })
 
 describe('Juicebox Center RPC transport', () => {
+  it('does not treat other localhost ports as trusted dev clients', () => {
+    expect(jbCenterBaseUrl('http://localhost:3000')).toBe(
+      'https://juicebox.center',
+    )
+    expect(jbCenterAppOrigin('http://localhost:3000')).toBe(
+      'https://juicebox.money',
+    )
+  })
+
   it('routes server reads through Center with the trusted app origin', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' }), {
@@ -57,8 +70,11 @@ describe('Juicebox Center RPC transport', () => {
     expect(browserWindow.fetch).toHaveBeenCalledOnce()
   })
 
-  it('uses the configured dev Center and app origin', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://dev.juicebox.money')
+  it.each([
+    'https://dev.juicebox.money',
+    'http://localhost:3001',
+  ])('uses the configured dev Center and app origin for %s', async (siteUrl) => {
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', siteUrl)
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' }), {
         headers: { 'content-type': 'application/json' },
@@ -73,8 +89,6 @@ describe('Juicebox Center RPC transport', () => {
     await expect(client.getChainId()).resolves.toBe(mainnet.id)
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('https://dev.juicebox.center/v1/rpc/1')
-    expect(new Headers(init.headers).get('origin')).toBe(
-      'https://dev.juicebox.money',
-    )
+    expect(new Headers(init.headers).get('origin')).toBe(siteUrl)
   })
 })
