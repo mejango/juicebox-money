@@ -357,7 +357,7 @@ function ReviewModal({
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-smoke-200 bg-white px-4 py-4 sm:px-6">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
+            <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
               Client safety check
             </p>
             <h2
@@ -376,10 +376,10 @@ function ReviewModal({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-          <div className="rounded-xl border border-smoke-200 bg-white px-4 py-3">
+          <div className="rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3">
             <p
               id={descriptionId}
-              className="whitespace-pre-line text-sm leading-relaxed text-ink"
+              className="whitespace-pre-line text-sm leading-relaxed text-bluebs-800"
             >
               {request.description ?? defaultDescription}
             </p>
