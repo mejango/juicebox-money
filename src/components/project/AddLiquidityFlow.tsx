@@ -1053,6 +1053,11 @@ function AddLiquidityForm({
           maximum={range.pb}
           pairSymbol={pairSym}
           tokenSymbol={sym}
+          onRangeChange={
+            mode === 'range' && !busy
+              ? (edge, value) => onRangeChange(edge, trimNum(value))
+              : undefined
+          }
         />
       ) : null}
 
@@ -1218,6 +1223,15 @@ function AddLiquidityForm({
               : ''}
             ).
           </p>
+          {balances &&
+          (plan.display.maxTok > balances.tok ||
+            plan.display.maxPair > balances.pair) ? (
+            <p className="mt-1 font-medium">
+              Heads up: your balance does not cover that headroom, so this mint
+              reverts if the price moves against it. Lower the amount to be
+              safe.
+            </p>
+          ) : null}
           <p className="mt-1 text-smoke-700">
             Uniswap V4 PositionManager mint | fee tier{' '}
             {(plan.display.fee / 10000).toFixed(2)}% | ticks{' '}
