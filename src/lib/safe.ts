@@ -30,7 +30,10 @@ import {
   isDeployableSafeAuthority,
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
+  initializerUsesSafeToL2Setup,
   safeCreationMatchesAuthorityIdentity,
+  SAFE_TO_L2_SETUP_ADDRESS,
+  SAFE_TO_L2_SETUP_CODE_HASH,
 } from '@/lib/cross-chain-authority'
 import {
   simulateStateChangingTransaction,
@@ -1755,12 +1758,14 @@ export async function deploySafeSameAddress(
     singletonCode,
     sourceFactoryCode,
     sourceSingletonCode,
+    setupLibraryCode,
   ] = await Promise.all([
     client.getBytecode({ address: expectedSafe }),
     client.getBytecode({ address: creation.factory }),
     client.getBytecode({ address: creation.singleton }),
     sourceClient.getBytecode({ address: creation.factory }),
     sourceClient.getBytecode({ address: creation.singleton }),
+    client.getBytecode({ address: SAFE_TO_L2_SETUP_ADDRESS }),
   ])
   if (existingCode && existingCode !== '0x') {
     throw new Error(
@@ -1781,6 +1786,17 @@ export async function deploySafeSameAddress(
   ) {
     throw new Error(
       'The recognized Safe factory or singleton bytecode does not match across source and destination chains.',
+    )
+  }
+  // The initializer delegatecalls SafeToL2Setup on the destination chain, so
+  // that library's runtime must be the canonical one there too.
+  if (
+    initializerUsesSafeToL2Setup(creation.initializer) &&
+    (!setupLibraryCode ||
+      keccak256(setupLibraryCode) !== SAFE_TO_L2_SETUP_CODE_HASH)
+  ) {
+    throw new Error(
+      'The canonical SafeToL2Setup library is missing or altered on the destination chain.',
     )
   }
   const args = [

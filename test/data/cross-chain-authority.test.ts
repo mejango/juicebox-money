@@ -18,6 +18,10 @@ import {
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
   safeCreationMatchesAuthorityIdentity,
+  safeSingletonsAreEquivalent,
+  SAFE_CANONICAL_PAYMENT_RECEIVER,
+  SAFE_L1_L2_SINGLETON_PAIRS,
+  SAFE_TO_L2_SETUP_ADDRESS,
   type AuthorityIdentity,
 } from '@/lib/cross-chain-authority'
 import {
@@ -633,5 +637,133 @@ describe('cross-chain authority identity', () => {
       destination: { kind: 'delegated-eoa', delegation: DELEGATION },
       matches: false,
     })
+  })
+})
+
+describe('canonical SafeToL2Setup deployments', () => {
+  const L1_SINGLETON = SAFE_L1_L2_SINGLETON_PAIRS[0][0]
+  const L2_SINGLETON = SAFE_L1_L2_SINGLETON_PAIRS[0][1]
+  const L1_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as Address
+  const L1_CODE = '0x60106000' as Hex
+  const L2_CODE = '0x60116000' as Hex
+
+  const safeToL2SetupAbi = [
+    {
+      type: 'function',
+      name: 'setupToL2',
+      stateMutability: 'nonpayable',
+      inputs: [{ name: 'l2Singleton', type: 'address' }],
+      outputs: [],
+    },
+  ] as const
+
+  function setupToL2(l2Singleton: Address = L2_SINGLETON): Hex {
+    return encodeFunctionData({
+      abi: safeToL2SetupAbi,
+      functionName: 'setupToL2',
+      args: [l2Singleton],
+    })
+  }
+
+  function l2Creation({
+    to = SAFE_TO_L2_SETUP_ADDRESS,
+    data = setupToL2(),
+    paymentReceiver = SAFE_CANONICAL_PAYMENT_RECEIVER,
+    payment = 0n,
+  }: {
+    to?: Address
+    data?: Hex
+    paymentReceiver?: Address
+    payment?: bigint
+  } = {}) {
+    return {
+      factory: L1_FACTORY,
+      singleton: L1_SINGLETON,
+      saltNonce: 0n,
+      initializer: encodeFunctionData({
+        abi: safeSetupAbi,
+        functionName: 'setup',
+        args: [
+          [ALICE, BOB],
+          2n,
+          to,
+          data,
+          FALLBACK,
+          zeroAddress,
+          payment,
+          paymentReceiver,
+        ],
+      }),
+    }
+  }
+
+  // The source Safe lives on an L2, where SafeToL2Setup already repointed slot
+  // zero at SafeL2 while the creation record still names the Ethereum singleton.
+  const l2Safe = safeIdentity({
+    singleton: L2_SINGLETON,
+    singletonCodeHash: keccak256(L2_CODE),
+    version: '1.4.1',
+  })
+  const ethereumSafe = safeIdentity({
+    singleton: L1_SINGLETON,
+    singletonCodeHash: keccak256(L1_CODE),
+    version: '1.4.1',
+  })
+
+  it('accepts the initializer the Safe interface deploys on an L2', () => {
+    expect(safeCreationMatchesAuthorityIdentity(l2Creation(), l2Safe)).toBe(true)
+  })
+
+  it('matches a Safe deployed the canonical way on both chains', () => {
+    expect(authorityIdentitiesMatch(l2Safe, ethereumSafe)).toBe(true)
+    expect(safeSingletonsAreEquivalent(L1_SINGLETON, L2_SINGLETON)).toBe(true)
+    expect(safeSingletonsAreEquivalent(L1_SINGLETON, SINGLETON)).toBe(false)
+  })
+
+  it('still requires identical runtime when the singleton address is shared', () => {
+    expect(
+      authorityIdentitiesMatch(ethereumSafe, {
+        ...ethereumSafe,
+        singletonCodeHash: keccak256(L2_CODE),
+      }),
+    ).toBe(false)
+  })
+
+  it('does not let a paired singleton excuse divergent control', () => {
+    expect(
+      authorityIdentitiesMatch(l2Safe, { ...ethereumSafe, threshold: 1 }),
+    ).toBe(false)
+  })
+
+  it('rejects a foreign delegatecall target or tampered calldata', () => {
+    expect(
+      safeCreationMatchesAuthorityIdentity(
+        l2Creation({ to: ALICE, data: setupToL2() }),
+        l2Safe,
+      ),
+    ).toBe(false)
+    for (const data of [setupToL2(ALICE), '0x' as Hex, `${setupToL2()}00` as Hex]) {
+      expect(
+        safeCreationMatchesAuthorityIdentity(l2Creation({ data }), l2Safe),
+      ).toBe(false)
+    }
+  })
+
+  it('still rejects a setup payment', () => {
+    expect(
+      safeCreationMatchesAuthorityIdentity(l2Creation({ payment: 1n }), l2Safe),
+    ).toBe(false)
+    expect(
+      safeCreationMatchesAuthorityIdentity(
+        l2Creation({ paymentReceiver: ALICE }),
+        l2Safe,
+      ),
+    ).toBe(false)
+  })
+
+  it('rejects a singleton outside the creation release', () => {
+    expect(safeCreationMatchesAuthorityIdentity(l2Creation(), safeIdentity())).toBe(
+      false,
+    )
   })
 })
