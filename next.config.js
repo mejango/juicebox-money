@@ -2,7 +2,10 @@
 const { PHASE_DEVELOPMENT_SERVER } = require('next/constants')
 
 const securityHeaders = [
-  { key: 'X-Frame-Options', value: 'DENY' },
+  {
+    key: 'Content-Security-Policy',
+    value: 'frame-ancestors https://app.safe.global https://app.5afe.dev',
+  },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   {
@@ -98,6 +101,10 @@ module.exports = phase => ({
   async headers() {
     return [
       { source: '/(.*)', headers: securityHeaders },
+      {
+        source: '/manifest.json',
+        headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }],
+      },
       // Next serves public/ files with max-age=0, and link-preview proxies
       // (Discord's included) won't hold onto uncacheable media — the embed
       // keeps its blurhash placeholder and never shows the image. These are

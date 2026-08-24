@@ -88,7 +88,7 @@ export function lazySafe(): CreateConnectorFn {
     },
     load: async () => {
       const { safe } = await import('wagmi/connectors/safe')
-      return safe({ allowedDomains: [/app\.safe\.global$/] })
+      return safe({ allowedDomains: [/app\.safe\.global$/, /app\.5afe\.dev$/] })
     },
   })
 }

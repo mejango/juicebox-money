@@ -1,0 +1,7 @@
+{
+  "name": "Juicebox",
+  "short_name": "Juicebox",
+  "description": "Fund your thing. Programmable money for projects.",
+  "iconPath": "/assets/juicebox-safe-icon.svg",
+  "safe_apps_permissions": []
+}
