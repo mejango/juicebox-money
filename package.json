@@ -34,7 +34,7 @@
     "check:deploy": "npm run check && npm run env:check:all"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-core": "^2.2.0",
+    "@bananapus/nana-sdk-core": "^2.3.2",
     "@base-org/account": "2.5.10",
     "@coinbase/wallet-sdk": "4.3.7",
     "@getpara/react-component-library": "3.11.0",

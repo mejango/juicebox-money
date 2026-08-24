@@ -9,13 +9,30 @@ const PIN = {
   gatewayUrl: `/ipfs/${CID}`,
 }
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
 
 function successfulFetch() {
   return vi.fn<typeof fetch>().mockResolvedValue(Response.json(PIN))
 }
 
 describe('Juicebox Center browser IPFS client', () => {
+  it('calls the default browser fetch with the Window-compatible receiver', async () => {
+    const fetchMock = vi.fn(function (this: unknown) {
+      if (this !== globalThis) {
+        return Promise.reject(new TypeError('Illegal invocation'))
+      }
+      return Promise.resolve(Response.json(PIN))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const ipfs = createJBCenterIpfsClient()
+
+    await expect(ipfs.pinJson({ name: 'Project' })).resolves.toEqual(PIN)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('pins JSON directly through the typed SDK without an API key', async () => {
     const fetchMock = successfulFetch()
     const ipfs = createJBCenterIpfsClient({ fetch: fetchMock })
