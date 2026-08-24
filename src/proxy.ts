@@ -19,6 +19,9 @@ const APP_ROUTES = new Set([
   'create',
   'learn',
   'modal-proof',
+  ...(process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
+    ? ['ipfs-proof']
+    : []),
 ])
 
 export function proxy(request: NextRequest) {
