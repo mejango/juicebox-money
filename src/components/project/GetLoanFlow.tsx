@@ -30,6 +30,7 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { TxError } from '@/components/ui/TxError'
+import { TxSteps } from '@/components/ui/TxSteps'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
@@ -55,6 +56,8 @@ type ReviewedBorrow = {
   quote: bigint
   ctxToken: Address
   account: Address
+  /** Read while reviewing so the wallet-prompt queue is exact before signing. */
+  needsPermission: boolean
 }
 
 /**
@@ -283,12 +286,20 @@ export function GetLoanFlow({
           'Loans are locked until this revnet’s cash-out delay passes.',
         )
       }
+      const hasBurnPermission = await hasPermissions(publicClient, {
+        chainId,
+        operator: revLoansAddress(chainId),
+        account: address,
+        projectId: BigInt(projectId),
+        permissionIds: [BURN_TOKENS],
+      })
       setReview({
         collateral,
         prepaid,
         quote: fresh.borrowableNow,
         ctxToken: ctx.token,
         account: address,
+        needsPermission: !hasBurnPermission,
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -485,9 +496,33 @@ export function GetLoanFlow({
               </p>
               <p className="mt-1 text-smoke-700">
                 Your {collateralSymbol} is held as collateral and returned when
-                you repay. Unrepaid loans are liquidated after 10 years. A
-                first-time loan needs a one-off approval first.
+                you repay. Unrepaid loans are liquidated after 10 years.
               </p>
+              <TxSteps
+                steps={[
+                  ...(review.needsPermission
+                    ? [
+                        {
+                          key: 'permission',
+                          title: `Let REVLoans burn your ${collateralSymbol}`,
+                          detail:
+                            'A one-off permission so the loan can hold your tokens as collateral.',
+                        },
+                      ]
+                    : []),
+                  { key: 'borrow', title: 'Open the loan' },
+                ]}
+                activeIndex={
+                  borrowTx.busy
+                    ? review.needsPermission
+                      ? 1
+                      : 0
+                    : permTx.busy
+                      ? 0
+                      : -1
+                }
+                className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
+              />
             </div>
           ) : null}
 
@@ -500,9 +535,9 @@ export function GetLoanFlow({
               {quoting
                 ? 'Checking the live quote…'
                 : permTx.phase === 'simulating' || permTx.phase === 'signing'
-                  ? 'Step 1 of 2 — approve in your wallet…'
+                  ? 'Approve in your wallet…'
                   : permTx.phase === 'pending'
-                    ? 'Step 1 of 2 — approving…'
+                    ? 'Approving…'
                     : txPhaseLabel(borrowTx.phase, {
                         idle: !isConnected
                           ? 'Sign in to continue'

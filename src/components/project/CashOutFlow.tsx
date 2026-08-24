@@ -34,6 +34,7 @@ import { useReadContract, usePublicClient } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { TxError } from '@/components/ui/TxError'
+import { TxSteps } from '@/components/ui/TxSteps'
 import {
   cashOutExecutionErrorMessage,
   cashOutPoolBufferBps,
@@ -325,6 +326,28 @@ export function CashOutPanel({
     }
   }, [approveTx.phase, refetchTokenAllowance, refetchPermit2Allowance])
 
+  // A cleared approval stops being "needed", so the queue is built from the
+  // approvals this sale ever required — otherwise a finished step disappears
+  // instead of ticking over to done.
+  const [requiredApprovals, setRequiredApprovals] = useState<
+    ('token' | 'router')[]
+  >([])
+  useEffect(() => {
+    setRequiredApprovals(current => {
+      const next: ('token' | 'router')[] = directSellWins
+        ? [
+            ...(needsTokenApproval || current.includes('token')
+              ? (['token'] as const)
+              : []),
+            ...(needsRouterApproval || current.includes('router')
+              ? (['router'] as const)
+              : []),
+          ]
+        : []
+      return next.join() === current.join() ? current : next
+    })
+  }, [directSellWins, needsTokenApproval, needsRouterApproval])
+
   // Only trust bendystraw's symbol when it describes the same token as the
   // on-chain accounting context (projects can register several contexts).
   const receiveSymbol = context
@@ -354,6 +377,37 @@ export function CashOutPanel({
   }, [success, refetchBalance])
 
   const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null
+
+  // Each approval is its own wallet prompt and its own click, so the whole
+  // queue is named before the first one.
+  const cashOutSteps = [
+    ...requiredApprovals.map(kind =>
+      kind === 'token'
+        ? {
+            key: 'token',
+            title: `Approve ${holdingsSymbol} for the swap router`,
+            detail: 'Permit2 cannot move your tokens without this allowance.',
+          }
+        : {
+            key: 'router',
+            title: 'Authorize the swap router',
+            detail: 'A capped allowance that expires in 30 days.',
+          },
+    ),
+    {
+      key: 'cashout',
+      title: directSellWins
+        ? `Sell ${holdingsSymbol} on the pool`
+        : `Cash out ${holdingsSymbol}`,
+    },
+  ]
+  const cashOutActiveIndex = success
+    ? cashOutSteps.length
+    : needsTokenApproval
+      ? requiredApprovals.indexOf('token')
+      : needsRouterApproval
+        ? requiredApprovals.indexOf('router')
+        : requiredApprovals.length
 
   const setMax = () => {
     if (balance === undefined || balance <= 0n) return
@@ -676,6 +730,14 @@ export function CashOutPanel({
           and price impact. Your {slippageBps / 100}% setting additionally
           covers movement before the transaction lands.
         </p>
+      ) : null}
+
+      {cashOutSteps.length > 1 ? (
+        <TxSteps
+          steps={cashOutSteps}
+          activeIndex={cashOutActiveIndex}
+          className="mt-4 rounded-xl border border-smoke-200 bg-white p-3"
+        />
       ) : null}
 
       <div className="mt-5 flex justify-end">

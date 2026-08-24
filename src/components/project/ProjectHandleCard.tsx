@@ -1,5 +1,6 @@
 'use client'
 
+import { TxSteps } from '@/components/ui/TxSteps'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
@@ -162,48 +163,13 @@ function ProjectHandleSetupProgress({
   ]
 
   return (
-    <div
-      aria-label="Project handle setup progress"
+    <TxSteps
+      steps={steps.map(({ id, label }) => ({ key: id, title: label }))}
+      activeIndex={activeStep ?? -1}
+      ariaLabel="Project handle setup progress"
+      intro="Two independently authorized onchain steps publish this handle. A verified step is skipped when you resume."
       className="mt-4 rounded-xl border border-smoke-200 bg-white p-3"
-    >
-      <p className="text-xs leading-relaxed text-smoke-600">
-        Two independently authorized onchain steps publish this handle. A
-        verified step is skipped when you resume.
-      </p>
-      <ol className="mt-3 space-y-2">
-        {steps.map(({ id, label }, index) => {
-          const complete = activeStep !== null && index < activeStep
-          const active = activeStep === index
-          return (
-            <li
-              key={id}
-              data-state={complete ? 'complete' : active ? 'active' : 'pending'}
-              aria-current={active ? 'step' : undefined}
-              className="flex items-center gap-2 text-sm"
-            >
-              <span
-                aria-hidden="true"
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                  complete
-                    ? 'border-melon-400 bg-melon-400 text-ink'
-                    : active
-                      ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700'
-                      : 'border-smoke-300 text-smoke-500'
-                }`}
-              >
-                {complete ? '✓' : index + 1}
-              </span>
-              <span
-                className={active ? 'font-medium text-ink' : 'text-smoke-600'}
-              >
-                <span className="sr-only">Step {index + 1} of 2: </span>
-                {label}
-              </span>
-            </li>
-          )
-        })}
-      </ol>
-    </div>
+    />
   )
 }
 

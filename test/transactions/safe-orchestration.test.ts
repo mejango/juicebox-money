@@ -31,8 +31,10 @@ const mocks = vi.hoisted(() => ({
   isEip7702DelegatedEoaRuntime: vi.fn(),
   isDeployableSafeAuthority: vi.fn(),
   safeCreationMatchesAuthorityIdentity: vi.fn(),
+  initializerUsesSafeToL2Setup: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
 }))
+
 
 vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -56,6 +58,10 @@ vi.mock('@/lib/cross-chain-authority', () => ({
   isEip7702DelegatedEoaRuntime: mocks.isEip7702DelegatedEoaRuntime,
   isDeployableSafeAuthority: mocks.isDeployableSafeAuthority,
   safeCreationMatchesAuthorityIdentity: mocks.safeCreationMatchesAuthorityIdentity,
+  initializerUsesSafeToL2Setup: mocks.initializerUsesSafeToL2Setup,
+  SAFE_TO_L2_SETUP_ADDRESS: '0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54',
+  SAFE_TO_L2_SETUP_CODE_HASH:
+    '0x2f25df28caf984366ee584e13241707e85dcd5a6ea0c14267928dafc1fd6274b',
 }))
 vi.mock('@/lib/transaction-simulation', () => ({
   TRANSACTION_SIMULATION_GAS: 10_000_000n,

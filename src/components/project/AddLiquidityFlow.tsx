@@ -1,5 +1,6 @@
 'use client'
 
+import { TxSteps } from '@/components/ui/TxSteps'
 import {
   JB_CHAINS,
   type JBChainId,
@@ -8,7 +9,7 @@ import {
   getTokenAddress,
   UNISWAP_PERMIT2_ADDRESS,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   encodeAbiParameters,
@@ -617,6 +618,7 @@ function AddLiquidityForm({
   const [running, setRunning] = useState(false)
   const [stepIdx, setStepIdx] = useState(0)
   const [done, setDone] = useState(false)
+  const queryClient = useQueryClient()
   const [mintHash, setMintHash] = useState<`0x${string}` | null>(null)
 
   const planRef = useRef<Plan | null>(null)
@@ -907,6 +909,10 @@ function AddLiquidityForm({
         runningRef.current = false
         setRunning(false)
         setDone(true)
+        // The positions list is a sibling query: without this it keeps
+        // claiming the wallet owns nothing right after a successful mint.
+        void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
+        void queryClient.invalidateQueries({ queryKey: ['market'] })
       } else {
         const next = stepIdxRef.current + 1
         stepIdxRef.current = next
@@ -918,7 +924,7 @@ function AddLiquidityForm({
       runningRef.current = false
       setRunning(false)
     }
-  }, [tx.phase, tx.hash, tx, sendStep])
+  }, [tx.phase, tx.hash, tx, sendStep, queryClient])
 
   const startRun = () => {
     if (!plan || runningRef.current) return
@@ -993,6 +999,15 @@ function AddLiquidityForm({
       </div>
     )
   }
+
+  const runningDetail =
+    tx.phase === 'simulating'
+      ? 'Checking…'
+      : tx.phase === 'signing'
+        ? 'Confirm in your wallet…'
+        : tx.phase === 'pending'
+          ? 'Sending…'
+          : undefined
 
   const disabledCol = (active: boolean) => (active ? '' : 'opacity-45')
 
@@ -1237,29 +1252,21 @@ function AddLiquidityForm({
             {(plan.display.fee / 10000).toFixed(2)}% | ticks{' '}
             {plan.display.tickLower} to {plan.display.tickUpper}.
           </p>
-          {plan.steps.length > 1 ? (
-            <p className="mt-1 text-smoke-700">
-              {plan.steps.length} transactions: {plan.steps.length - 1} approval
-              {plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is
-              reviewed and simulated before you sign.
-            </p>
-          ) : null}
+          <TxSteps
+            steps={plan.steps.map((step, index) => ({
+              key: `${step.kind}:${index}`,
+              title: step.label,
+              detail: running && index === stepIdx ? runningDetail : undefined,
+            }))}
+            activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+            intro={
+              plan.steps.length > 1
+                ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
+                : 'One transaction: the mint. It is reviewed and simulated before you sign.'
+            }
+            className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
+          />
         </div>
-      ) : null}
-
-      {/* Step progress while running */}
-      {running && plan ? (
-        <p className="mt-3 text-xs text-smoke-700">
-          Step {stepIdx + 1} of {plan.steps.length}:{' '}
-          {plan.steps[stepIdx]?.label}
-          {tx.phase === 'simulating'
-            ? ' — checking…'
-            : tx.phase === 'signing'
-              ? ' — confirm in your wallet…'
-              : tx.phase === 'pending'
-                ? ' — sending…'
-                : ''}
-        </p>
       ) : null}
 
       <div className="mt-3 flex flex-wrap justify-end gap-3">

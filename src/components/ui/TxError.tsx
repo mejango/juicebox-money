@@ -11,7 +11,9 @@ export function TxError({
   className?: string
 }) {
   if (!error) return null
-  return <p className={className}>{error}</p>
+  // Wallet errors carry unbroken hex; `wrap-anywhere` (unlike `break-words`)
+  // also shrinks the min-content width, so one can't widen its container.
+  return <p className={`wrap-anywhere ${className}`}>{error}</p>
 }
 
 /** The authority cards' compact variant (smaller text, tighter margin). */
