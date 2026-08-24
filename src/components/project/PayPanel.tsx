@@ -1,5 +1,6 @@
 "use client";
 
+import { TxSteps } from "@/components/ui/TxSteps"
 import {
   bytes32ToCidV0,
   JBCoreContracts,
@@ -2570,32 +2571,23 @@ function PaymentSequenceDialog({
             ) : null}
           </div>
 
-          <div className="rounded-xl border border-smoke-200 bg-white p-3">
-            <p className="text-xs leading-relaxed text-smoke-600">
-              Your wallet will ask for {actions.length} action{actions.length === 1 ? "" : "s"}. This
-              dialog stays open and advances through each one.
-            </p>
-            <ol className="mt-3 space-y-2">
-              {actions.map((action, index) => (
-                <li key={`${action.kind}:${action.label}`} className="flex items-center gap-2 text-sm">
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                      complete || completedKinds.includes(action.kind)
-                        ? "border-melon-400 bg-melon-400 text-ink"
-                        : index === activeActionIndex
-                          ? "border-bluebs-500 bg-bluebs-25 text-bluebs-700"
-                          : "border-smoke-300 text-smoke-500"
-                    }`}
-                  >
-                    {complete || completedKinds.includes(action.kind) ? "✓" : index + 1}
-                  </span>
-                  <span className={index === activeActionIndex && !complete ? "font-medium text-ink" : "text-smoke-600"}>
-                    {action.label}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
+          <TxSteps
+            steps={actions.map(action => ({
+              key: `${action.kind}:${action.label}`,
+              title: action.label,
+            }))}
+            activeIndex={
+              complete
+                ? actions.length
+                : Math.max(
+                    activeActionIndex,
+                    actions.filter(action => completedKinds.includes(action.kind))
+                      .length,
+                  )
+            }
+            intro={`Your wallet will ask for ${actions.length} action${actions.length === 1 ? '' : 's'}. This dialog stays open and advances through each one.`}
+            className="rounded-xl border border-smoke-200 bg-white p-3"
+          />
 
           <p className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm leading-relaxed text-error-800">
             This is the exact wallet action that will be sent to your wallet. Review it before

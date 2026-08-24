@@ -36,6 +36,7 @@ import {
   type Infra,
 } from '@/components/project/SettlementSection'
 import { TxError } from '@/components/ui/TxError'
+import { TxSteps } from '@/components/ui/TxSteps'
 import { txPhaseLabel, useSafeTx, type TxPhase } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
@@ -591,6 +592,38 @@ function MoveFlow({
         </div>
       ) : null}
 
+      {step > 0 && step < 4 ? (
+        <TxSteps
+          steps={[
+            ...(needsApproval
+              ? [
+                  {
+                    key: 'approve',
+                    title: 'Approve the bridge',
+                    detail: 'Lets the bridge move your ERC-20 for this transfer.',
+                  },
+                ]
+              : []),
+            {
+              key: 'prepare',
+              title: 'Prepare the move',
+              detail: "Queues your move into the bridge's outbox.",
+            },
+            {
+              key: 'send',
+              title: `Send to ${chainName(to)}`,
+              detail: `Ships the queued outbox to ${chainName(to)}.`,
+            },
+          ]}
+          activeIndex={needsApproval ? step - 1 : step - 2}
+          intro={
+            needsApproval
+              ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
+              : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
+          }
+        />
+      ) : null}
+
       {/* Step buttons */}
       {step === 0 ? (
         <div className="flex justify-end">
@@ -606,7 +639,7 @@ function MoveFlow({
 
       {step === 1 ? (
         <StepButton
-          label="Step 1 of 3 — Approve the bridge"
+          label="Approve the bridge"
           phase={tx.phase}
           busy={busy}
           onClick={sendApprove}
@@ -617,7 +650,7 @@ function MoveFlow({
 
       {step === 2 ? (
         <StepButton
-          label={`Step ${needsApproval ? '2 of 3' : '1 of 2'} — Prepare the move`}
+          label="Prepare the move"
           phase={tx.phase}
           busy={busy}
           onClick={sendPrepare}
@@ -628,7 +661,7 @@ function MoveFlow({
 
       {step === 3 ? (
         <StepButton
-          label={`Step ${needsApproval ? '3 of 3' : '2 of 2'} — Send to ${chainName(to)}`}
+          label={`Send to ${chainName(to)}`}
           phase={checking ? 'simulating' : tx.phase}
           busy={busy}
           onClick={sendToRemote}

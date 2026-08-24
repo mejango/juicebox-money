@@ -22,6 +22,7 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { TxError } from '@/components/ui/TxError'
+import { TxSteps } from '@/components/ui/TxSteps'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
   etherscanTxUrl,
@@ -358,6 +359,9 @@ function RepayFlow({
   const [pendingRepay, setPendingRepay] = useState<ReturnType<
     typeof buildRepayLoanTx
   > | null>(null)
+  // Set the moment the source allowance is read, so the second prompt is named
+  // before the first one opens.
+  const [needsApproval, setNeedsApproval] = useState(false)
 
   const loans = revLoansAddress(chainId)
   const meta = tokenMeta(contexts, loan.token, chainId, symbols)
@@ -428,6 +432,7 @@ function RepayFlow({
       })
 
       if (isNative) {
+        setNeedsApproval(false)
         await repayTx.send(request)
         return
       }
@@ -441,10 +446,12 @@ function RepayFlow({
         args: [holder, loans],
       })) as bigint
       if (allowance >= maxRepay) {
+        setNeedsApproval(false)
         await repayTx.send(request)
         return
       }
       setPendingRepay(request)
+      setNeedsApproval(true)
       await approveTx.send(
         buildErc20ApproveRequest({
           chainId,
@@ -498,6 +505,20 @@ function RepayFlow({
         Repays the principal plus the current fee in {meta.symbol} and returns
         your {formatTokenAmount(loan.collateral)} {collateralSymbol} collateral.
       </p>
+      {needsApproval ? (
+        <TxSteps
+          steps={[
+            {
+              key: 'approve',
+              title: `Approve ${meta.symbol} for REVLoans`,
+              detail: 'Covers the principal plus the current fee.',
+            },
+            { key: 'repay', title: 'Repay and reclaim your collateral' },
+          ]}
+          activeIndex={pendingRepay ? 0 : 1}
+          className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
+        />
+      ) : null}
       <button
         onClick={handleRepay}
         disabled={busy}
