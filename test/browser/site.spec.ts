@@ -66,7 +66,10 @@ async function blockExternalTraffic(context: BrowserContext) {
 }
 
 function securityHeaders(headers: Record<string, string>) {
-  expect(headers['x-frame-options']).toBe('DENY')
+  expect(headers['content-security-policy']).toContain(
+    'frame-ancestors https://app.safe.global https://app.5afe.dev',
+  )
+  expect(headers['x-frame-options']).toBeUndefined()
   expect(headers['x-content-type-options']).toBe('nosniff')
   expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
   expect(headers['permissions-policy']).toContain('camera=()')
