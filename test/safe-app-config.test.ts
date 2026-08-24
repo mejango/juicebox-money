@@ -40,8 +40,17 @@ describe('Safe App hosting', () => {
     ) as { name: string; iconPath: string; safe_apps_permissions: unknown[] }
     expect(manifest.name).toBe('Juicebox')
     expect(manifest.safe_apps_permissions).toEqual([])
-    expect(() =>
-      readFileSync(`${publicDirectory}${manifest.iconPath}`),
-    ).not.toThrow()
+    const safeIcon = readFileSync(
+      `${publicDirectory}${manifest.iconPath}`,
+      'utf8',
+    )
+    const brandIcon = readFileSync(
+      fileURLToPath(new URL('../src/assets/brand/logo-icon.svg', import.meta.url)),
+      'utf8',
+    )
+    const canonicalPath = brandIcon.match(/<path d="([^"]+)"/u)?.[1]
+    expect(canonicalPath).toBeTruthy()
+    expect(safeIcon).toContain(`d="${canonicalPath}"`)
+    expect(safeIcon).toContain('viewBox="0 0 128 128"')
   })
 })
