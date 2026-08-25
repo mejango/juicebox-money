@@ -26,7 +26,7 @@ import {
   type JBRulesetConfig,
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   formatUnits,
   parseEther,
@@ -35,6 +35,7 @@ import {
   type PublicClient,
 } from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
+import { ModalShell } from "@/components/ui/ModalShell";
 import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
@@ -223,6 +224,7 @@ export function QueueRulesetFlow({
   projectId: number;
   isRevnet: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const { address } = useViewedAccount();
 
@@ -422,43 +424,53 @@ export function QueueRulesetFlow({
 
   if (isRevnet || !canEdit || controller === undefined) return null;
 
+  let body: ReactNode;
   if (!knownController) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Edit rules</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          This project queues rules through a wrapper jbm doesn&apos;t drive
-          yet, so rules can&apos;t be edited here. Use the tool that deployed
-          it.
-        </p>
-      </div>
+    body = (
+      <p className="text-sm leading-relaxed text-smoke-700">
+        This project queues rules through a wrapper jbm doesn&apos;t drive
+        yet, so rules can&apos;t be edited here. Use the tool that deployed
+        it.
+      </p>
     );
-  }
-
-  if (isLoading) {
-    return <FormCardSkeleton label="Loading ruleset editor" />;
-  }
-
-  if (isError || !data) {
-    return (
-      <div className="card p-5">
-        <span className="field-label">Edit rules</span>
-        <p className="mt-2 text-sm text-smoke-700">
-          Couldn&apos;t load this project&apos;s current rules right now.
-        </p>
-      </div>
+  } else if (isLoading) {
+    body = <FormCardSkeleton label="Loading ruleset editor" />;
+  } else if (isError || !data) {
+    body = (
+      <p className="text-sm text-smoke-700">
+        Couldn&apos;t load this project&apos;s current rules right now.
+      </p>
+    );
+  } else {
+    body = (
+      <RulesetEditor
+        chainId={chainId}
+        projectId={projectId}
+        controller={controller as Address}
+        authority={authority}
+        data={data}
+        publicClient={publicClient!}
+      />
     );
   }
 
   return (
-    <RulesetEditor
-      chainId={chainId}
-      projectId={projectId}
-      controller={controller as Address}
-      authority={authority}
-      data={data}
-      publicClient={publicClient!}
-    />
+    <>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="btn-secondary min-h-[36px] px-4 text-sm"
+        >
+          Edit rules
+        </button>
+      </div>
+      {open ? (
+        <ModalShell title="Edit rules" onClose={() => setOpen(false)}>
+          {body}
+        </ModalShell>
+      ) : null}
+    </>
   );
 }
 
@@ -509,9 +521,8 @@ function RulesetEditor(props: {
   const source = props.data.sources[action];
   if (!source) {
     return (
-      <div className="card p-5">
-        <span className="field-label">Edit rules</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+      <div>
+        <p className="text-sm leading-relaxed text-smoke-700">
           The queued ruleset&apos;s approval hook does not currently permit a
           safe replacement or a following configuration. Try again after its
           approval status changes.
@@ -838,7 +849,7 @@ function RulesetEditorForm({
 
   if (success) {
     return (
-      <div className="card p-5">
+      <div>
         <p className="text-sm font-medium text-ink">
           {status ?? queueSuccessCopy(action, mustStartAtOrAfter)}
         </p>
@@ -859,9 +870,8 @@ function RulesetEditorForm({
   }
 
   return (
-    <div className="card p-5">
-      <span className="field-label">Edit rules</span>
-      <p className="mt-1 text-xs text-smoke-700">
+    <div>
+      <p className="text-xs text-smoke-700">
         Anything you don&apos;t touch — including payout recipients and the
         rule-change deadline — carries forward from the ruleset named below.
       </p>
