@@ -43,6 +43,7 @@ import {
   type RedeemableShopTarget,
 } from '@/components/project/RedeemShopItemsModal'
 import { MintShopItemModal } from '@/components/project/MintShopItemModal'
+import { ReplaceTierMediaModal } from '@/components/project/ReplaceTierMediaModal'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
 import {
@@ -214,6 +215,7 @@ export function ShopTab({
   const [addItemsOpen, setAddItemsOpen] = useState(false)
   const [detailTierId, setDetailTierId] = useState<number | null>(null)
   const [mintTierId, setMintTierId] = useState<number | null>(null)
+  const [replaceTierId, setReplaceTierId] = useState<number | null>(null)
 
   const {
     data: shop,
@@ -538,7 +540,23 @@ export function ShopTab({
                 }
               : undefined
           }
+          onReplaceMedia={() => {
+            setDetailTierId(null)
+            setReplaceTierId(detailTier.id)
+          }}
           onClose={() => setDetailTierId(null)}
+        />
+      ) : null}
+
+      {replaceTierId != null && shop ? (
+        <ReplaceTierMediaModal
+          chainId={chainId}
+          projectId={projectId}
+          hook={shop.hook}
+          tierId={replaceTierId}
+          current={mediaById?.[replaceTierId]}
+          isRevnet={isRevnet}
+          onClose={() => setReplaceTierId(null)}
         />
       ) : null}
 
@@ -1537,6 +1555,7 @@ function TierDetailModal({
   pricing,
   transfersPaused,
   onMint,
+  onReplaceMedia,
   onClose,
 }: {
   isRevnet: boolean
@@ -1548,6 +1567,7 @@ function TierDetailModal({
   pricing: Shop['pricing']
   transfersPaused: boolean | null
   onMint?: () => void
+  onReplaceMedia?: () => void
   onClose: () => void
 }) {
   const {
@@ -1724,6 +1744,15 @@ function TierDetailModal({
                 className="mt-3 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
               >
                 Mint to a beneficiary without payment →
+              </button>
+            ) : null}
+            {onReplaceMedia ? (
+              <button
+                type="button"
+                onClick={onReplaceMedia}
+                className="mt-2 block text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+              >
+                Replace media →
               </button>
             ) : null}
 
