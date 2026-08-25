@@ -336,7 +336,7 @@ export function ShopTab({
   } = useQuery({
     queryKey: ['shop721WriteTargets', chains, isRevnet],
     meta: PERSIST,
-    enabled: addItemsOpen && !!shop,
+    enabled: (addItemsOpen || replaceTierId != null) && !!shop,
     staleTime: 30_000,
     retry: false,
     queryFn: async (): Promise<ShopWriteTarget[]> =>
@@ -551,10 +551,10 @@ export function ShopTab({
       {replaceTierId != null && shop ? (
         <ReplaceTierMediaModal
           chainId={chainId}
-          projectId={projectId}
           hook={shop.hook}
           tierId={replaceTierId}
           current={mediaById?.[replaceTierId]}
+          targets={writeTargets ?? null}
           isRevnet={isRevnet}
           onClose={() => setReplaceTierId(null)}
         />
