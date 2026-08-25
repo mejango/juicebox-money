@@ -154,7 +154,7 @@ export function TokenPanel({
       ) : (
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
           No ERC-20 yet — supporters hold token credits that can claim the
-          ERC-20 once it&apos;s deployed.
+          ERC-20 if it&apos;s deployed.
         </p>
       )}
     </div>
