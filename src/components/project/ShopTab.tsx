@@ -393,23 +393,11 @@ export function ShopTab({
   )
 
   // Shop managers are granted in the Owner tab's Permissions card, which nobody finds from here.
-  const managersLink = isRevnet ? null : (
-    <a
-      href="#owner"
-      title="Who else can add, mint, or reprice items — grant or revoke it in the Owner tab’s Permissions card"
-      className="text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
-    >
-      Managers
-    </a>
-  )
 
   const inventory = (
     <div className="space-y-5">
-      {shop.tiers.length > 0 || managersLink ? (
-        <div className="flex justify-end gap-4">
-          {managersLink}
-          {shop.tiers.length > 0 ? addItemsButton : null}
-        </div>
+      {shop.tiers.length > 0 ? (
+        <div className="flex justify-end">{addItemsButton}</div>
       ) : null}
 
       {!!address && (credits ?? 0n) > 0n ? (
