@@ -341,6 +341,8 @@ async function readChainFunds(
   }
 }
 
+const UNLIMITED_FLOOR = 2n ** 200n
+
 function remainingLabel(
   lines: LimitLine[],
   ctx: JBAccountingContext,
@@ -351,6 +353,8 @@ function remainingLabel(
   if (!configured.length) return 'None'
   return configured
     .map(line => {
+      const label = currencyLabel(line.currency, ctx, tokenSymbol)
+      if (line.amount >= UNLIMITED_FLOOR) return `Unlimited ${label}`
       const remaining =
         balance !== undefined && line.currency === ctx.currency
           ? bigintMin(line.remaining, balance)
@@ -358,7 +362,7 @@ function remainingLabel(
       return `${formatTokenAmount(
         remaining,
         currencyDecimals(line.currency, ctx),
-      )} ${currencyLabel(line.currency, ctx, tokenSymbol)}`
+      )} ${label}`
     })
     .join(' + ')
 }
