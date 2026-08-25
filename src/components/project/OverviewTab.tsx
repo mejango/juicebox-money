@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { JBChainId } from "@bananapus/nana-sdk-core";
 import { ChainIcon } from "@/components/ChainIcon";
+import { Expandable } from "@/components/Expandable";
 import { RichContent } from "@/components/RichContent";
 import { CopyProjectAuditPrompt } from "@/components/project/CopyProjectAuditPrompt";
 import { FundingChart } from "@/components/project/FundingChart";
@@ -141,11 +142,13 @@ export function OverviewTab({
             <CopyProjectAuditPrompt urn={toUrn(chainId, projectId)} />
           </div>
           {description ? (
-            <RichContent
-              html={description}
-              fallback={descriptionFallback}
-              className="card p-5 text-sm leading-relaxed text-ink/90 [&>*+*]:mt-3 [&_a]:break-words [&_a]:font-medium [&_a]:text-bluebs-600 [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-2 [&_blockquote]:border-smoke-300 [&_blockquote]:pl-3 [&_img]:rounded-lg [&_li+li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5"
-            />
+            <Expandable className="card p-5">
+              <RichContent
+                html={description}
+                fallback={descriptionFallback}
+                className="text-sm leading-relaxed text-ink/90 [&>*+*]:mt-3 [&_a]:break-words [&_a]:font-medium [&_a]:text-bluebs-600 [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-2 [&_blockquote]:border-smoke-300 [&_blockquote]:pl-3 [&_img]:rounded-lg [&_li+li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5"
+              />
+            </Expandable>
           ) : null}
           {links.length > 0 ? (
             <div className="mt-4 flex flex-wrap gap-2">
