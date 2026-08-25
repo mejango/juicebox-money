@@ -970,13 +970,12 @@ export function RulesetsTab({
           {status}
           <Pip />
           {timing}
-          {r.id > 0 ? (
-            <Fragment>
-              <Pip />
-              <span className="text-xs text-smoke-400">ID {r.id}</span>
-            </Fragment>
-          ) : null}
         </p>
+        {r.id > 0 ? (
+          <p className="mt-1 text-center text-[11px] text-smoke-400">
+            ID {r.id}
+          </p>
+        ) : null}
 
         {isCurrent && projectChains.length > 1 ? (
           <RulesetChainStatus
