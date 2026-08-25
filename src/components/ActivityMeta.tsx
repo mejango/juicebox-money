@@ -113,10 +113,13 @@ export function ActivityAmountLine({
   amountUsd,
   amountToken,
   direction,
+  kind,
 }: {
   amountUsd: string | null | undefined
   amountToken?: ActivityAmountToken | null
   direction?: 'in' | 'out' | null
+  /** What happened, for rows that move no value — shown instead of in/out. */
+  kind?: string | null
 }) {
   const amount = activityAmountLabel(amountUsd, amountToken)
 
@@ -124,8 +127,12 @@ export function ActivityAmountLine({
     <span className="flex min-w-0 items-center gap-1.5 text-sm text-smoke-500">
       {amount ? (
         <span className="truncate font-semibold text-ink">{amount}</span>
+      ) : kind ? (
+        <span className="inline-flex h-5 items-center border border-smoke-300 px-1.5 text-[10px] font-medium leading-none text-smoke-600">
+          {kind}
+        </span>
       ) : null}
-      {direction === 'in' || direction === 'out' ? (
+      {amount && (direction === 'in' || direction === 'out') ? (
         <span
           className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
             direction === 'in'
@@ -170,6 +177,7 @@ export function ActivityMeta({
   const txUrl = explorer
     ? `https://${explorer}/tx/${txHash}`
     : null
+  const hasAmount = activityAmountLabel(amountUsd, amountToken) !== null
   const amount = showAmount
     ? activityAmountLabel(amountUsd, amountToken)
     : null
@@ -177,7 +185,7 @@ export function ActivityMeta({
   return (
     <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-smoke-500">
       {amount ? <span>{amount}</span> : null}
-      {direction === 'in' || direction === 'out' ? (
+      {hasAmount && (direction === 'in' || direction === 'out') ? (
         <span
           className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
             direction === 'in'

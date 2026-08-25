@@ -148,7 +148,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
     event.projectId,
   )
   const tokenUnit = isV6 ? v6TokenUnit : 'tokens'
-  const { actor, actions, direction, memo, amountUsd } = combinedActivityParts(
+  const { actor, actions, direction, kind, memo, amountUsd } = combinedActivityParts(
     group,
     tokenUnit,
   )
@@ -187,7 +187,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
             {/* Flow cluster left, "time on <chain>" right, prefixed actor below. */}
-            <ActivityAmountLine amountUsd={amountUsd} direction={direction} />
+            <ActivityAmountLine amountUsd={amountUsd} direction={direction} kind={kind} />
             <span className="flex shrink-0 items-center gap-1.5">
               {txLink ? (
                 <a
