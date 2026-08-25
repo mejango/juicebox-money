@@ -542,39 +542,24 @@ export function formatLimits(
     .join(" + ");
 }
 
-function Row({
+function StackedRule({
   label,
   value,
+  hint,
   note,
 }: {
   label: string;
   value: ReactNode;
+  hint?: ReactNode;
   /** What the label MEANS. The payout-limit / surplus-allowance pair is the one people
    *  conflate, and both control real money leaving the treasury. */
   note?: string;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
-      <dt className="shrink-0 text-smoke-700">
+    <div className="min-w-0">
+      <dt className="text-xs text-smoke-500">
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : label}
       </dt>
-      <dd className="text-right font-medium text-ink">{value}</dd>
-    </div>
-  );
-}
-
-function StackedRule({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: ReactNode;
-  hint?: ReactNode;
-}) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-smoke-500">{label}</dt>
       <dd className="mt-1 text-left font-medium leading-snug text-ink">
         {value}
       </dd>
@@ -926,7 +911,7 @@ export function RulesetsTab({
         : "Cycle ended"
       : r.duration > 0
         ? `Duration: ${formatDuration(r.duration)}`
-        : "No duration";
+        : "Good until changed";
 
   // What changes when the queued ruleset takes effect (start always differs,
   // so it's skipped).
@@ -1065,10 +1050,10 @@ export function RulesetsTab({
               </dl>
               {contexts && contexts.length > 0 ? (
                 <div className="mt-5 border-t border-smoke-200 pt-5">
-                  <span className="field-label">Recipients</span>
+                  <span className="text-xs text-smoke-500">Recipients</span>
                   {selected.data.metadata.reservedPercent === 0 ? (
-                    <p className="mt-2 text-sm text-smoke-500">
-                      Nothing is reserved, so no one receives reserved tokens.
+                    <p className="mt-1 text-sm font-medium leading-snug text-ink">
+                      None
                     </p>
                   ) : fundsAccess ? (
                     <SplitsList
@@ -1118,8 +1103,8 @@ export function RulesetsTab({
                     <span className="field-label">
                       {ctx.symbol} funds access
                     </span>
-                    <dl className="mt-2 space-y-1.5 text-sm">
-                      <Row
+                    <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2">
+                      <StackedRule
                         label="Payout limit per cycle"
                         note={PROTOCOL_CONCEPTS.payoutLimit}
                         value={
@@ -1130,7 +1115,7 @@ export function RulesetsTab({
                               : "…"
                         }
                       />
-                      <Row
+                      <StackedRule
                         label="Surplus allowance"
                         note={PROTOCOL_CONCEPTS.surplusAllowance}
                         value={
