@@ -564,7 +564,7 @@ function StackedRule({
         {value}
       </dd>
       {hint ? (
-        <p className="mt-1 text-xs leading-snug text-smoke-500">{hint}</p>
+        <p className="mt-1 text-xs italic leading-snug text-smoke-400">{hint}</p>
       ) : null}
     </div>
   );
