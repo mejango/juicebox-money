@@ -1088,7 +1088,7 @@ export function RulesetsTab({
         {contexts && contexts.length > 0 ? (
           <section className="mt-7 border-t border-smoke-200 pt-6">
             <span className="field-label">Funds access</span>
-            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="mt-3 flex flex-wrap gap-4">
               {contexts.map((ctx) => {
                 const fa = fundsAccess?.perToken.find(
                   (t) => t.ctx.token === ctx.token,
@@ -1098,12 +1098,12 @@ export function RulesetsTab({
                 return (
                   <div
                     key={ctx.token}
-                    className="rounded-xl border border-smoke-200 bg-smoke-25 p-5"
+                    className="min-w-fit flex-1 basis-[calc(50%-0.5rem)] rounded-xl border border-smoke-200 bg-smoke-25 p-5"
                   >
                     <span className="field-label">
                       {ctx.symbol} funds access
                     </span>
-                    <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 text-sm sm:grid-cols-2">
+                    <dl className="mt-3 grid grid-cols-1 gap-x-7 gap-y-4 whitespace-nowrap text-sm sm:grid-cols-2">
                       <StackedRule
                         label="Payout limit per cycle"
                         note={PROTOCOL_CONCEPTS.payoutLimit}
