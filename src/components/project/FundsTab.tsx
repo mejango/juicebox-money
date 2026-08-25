@@ -624,8 +624,9 @@ export function FundsTab({
       {home ? (
         <div className="mt-6 grid gap-6 border-t border-smoke-200 pt-6 lg:grid-cols-2">
           <section className="min-w-0 lg:border-r lg:border-smoke-200 lg:pr-6">
-            <p className="text-sm text-smoke-700">
-              Current payout limit remaining on {chainName(chainId)}:
+            <p className="flex items-center gap-1.5 text-sm text-smoke-700">
+              <ChainIcon chainId={chainId} size={16} />
+              Current payout limit remaining
             </p>
             <p className="mt-1 text-lg font-medium text-ink">
               {remainingLabel(
@@ -684,8 +685,9 @@ export function FundsTab({
           </section>
 
           <section className="min-w-0">
-            <p className="text-sm text-smoke-700">
-              Current surplus allowance remaining on {chainName(chainId)}:
+            <p className="flex items-center gap-1.5 text-sm text-smoke-700">
+              <ChainIcon chainId={chainId} size={16} />
+              Current surplus allowance remaining
             </p>
             <p className="mt-1 text-lg font-medium text-ink">
               {remainingLabel(
