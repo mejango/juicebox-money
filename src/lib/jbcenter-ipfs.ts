@@ -10,6 +10,9 @@ import {
 import { jbCenterBaseUrl } from '@/lib/jbcenter-config'
 
 export const JBCENTER_IPFS_GATEWAY = `${JBCENTER_DEFAULT_URL}/ipfs/`
+/** CIDv0 of a zero-byte file — what a pin returns when the browser handed us an
+ *  empty File (undownloaded cloud files, cross-site drags) or the body was lost. */
+const EMPTY_FILE_CID = 'QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH'
 export const JBCENTER_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 export const JBCENTER_MAX_MEDIA_BYTES = 500 * 1024 * 1024
 
@@ -50,6 +53,21 @@ export function createJBCenterIpfsClient(
     }
   }
 
+  const nonEmpty = async (file: File, request: Promise<JBCenterPin>) => {
+    if (file.size === 0) {
+      throw new Error(
+        `"${file.name || 'file'}" is empty (0 bytes). If it lives in iCloud or another cloud drive, open it on this device first, then choose it again.`,
+      )
+    }
+    const pin = await request
+    if (pin.cid === EMPTY_FILE_CID) {
+      throw new Error(
+        `"${file.name || 'file'}" uploaded as empty. Choose the file again and retry.`,
+      )
+    }
+    return pin
+  }
+
   return {
     pinJson(value) {
       // Values assembled from optional form fields contain `undefined`, which
@@ -72,15 +90,21 @@ export function createJBCenterIpfsClient(
       )
     },
     pinImage(file) {
-      return friendly(
-        'Image upload failed',
-        center.pinImage(file, { filename: file.name || 'image' }),
+      return nonEmpty(
+        file,
+        friendly(
+          'Image upload failed',
+          center.pinImage(file, { filename: file.name || 'image' }),
+        ),
       )
     },
     pinMedia(file) {
-      return friendly(
-        'Media upload failed',
-        center.pinMedia(file, { filename: file.name || 'media' }),
+      return nonEmpty(
+        file,
+        friendly(
+          'Media upload failed',
+          center.pinMedia(file, { filename: file.name || 'media' }),
+        ),
       )
     },
   }
