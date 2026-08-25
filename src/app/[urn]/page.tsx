@@ -770,14 +770,14 @@ export default async function ProjectPage({
                   <span aria-hidden className="mx-2.5 text-smoke-300">
                     |
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex items-baseline gap-1.5">
                     <span className="text-smoke-500">On:</span>
                     {chains.map((p) => (
                       <ProjectLink
                         key={p.chainId}
                         href={`/${toUrn(p.chainId, p.projectId)}`}
                         projectHint={{ name, logoUri, tagline }}
-                        className="transition-opacity hover:opacity-70"
+                        className="inline-block translate-y-[3px] transition-opacity hover:opacity-70"
                       >
                         <ChainIcon chainId={p.chainId} standalone />
                       </ProjectLink>
@@ -823,14 +823,14 @@ export default async function ProjectPage({
                 <span aria-hidden className="mx-2.5 text-smoke-300">
                   |
                 </span>
-                <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex items-baseline gap-1.5">
                   <span className="text-smoke-500">On:</span>
                   {chains.map((p) => (
                     <ProjectLink
                       key={p.chainId}
                       href={`/${toUrn(p.chainId, p.projectId)}`}
                       projectHint={{ name, logoUri, tagline }}
-                      className="transition-opacity hover:opacity-70"
+                      className="inline-block translate-y-[3px] transition-opacity hover:opacity-70"
                     >
                       <ChainIcon chainId={p.chainId} standalone />
                     </ProjectLink>
