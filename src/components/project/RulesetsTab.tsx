@@ -1066,7 +1066,11 @@ export function RulesetsTab({
               {contexts && contexts.length > 0 ? (
                 <div className="mt-5 border-t border-smoke-200 pt-5">
                   <span className="field-label">Recipients</span>
-                  {fundsAccess ? (
+                  {selected.data.metadata.reservedPercent === 0 ? (
+                    <p className="mt-2 text-sm text-smoke-500">
+                      Nothing is reserved, so no one receives reserved tokens.
+                    </p>
+                  ) : fundsAccess ? (
                     <SplitsList
                       splits={fundsAccess.reservedSplits}
                       chainId={chainId}
