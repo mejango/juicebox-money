@@ -51,7 +51,6 @@ import {
   buildSendPayoutsRequest,
   buildUseAllowanceRequest,
 } from '@/lib/transaction-builders'
-import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 
 /** A payout limit or surplus allowance entry with its live usage. */
@@ -580,11 +579,12 @@ export function FundsTab({
                   key={`${result.chainId}:${result.projectId}`}
                   className="border-b border-smoke-100 last:border-0"
                 >
-                  <td className="py-2 pr-4">
-                    <span className="inline-flex items-center gap-2">
-                      <ChainIcon chainId={result.chainId} size={18} />
-                      {chainName(result.chainId)}
-                    </span>
+                  <td className="w-px py-2 pr-4">
+                    <ChainIcon
+                      chainId={result.chainId}
+                      size={18}
+                      standalone
+                    />
                   </td>
                   <td className="py-2 text-right">
                     {snapshot
