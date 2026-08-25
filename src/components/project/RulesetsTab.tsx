@@ -964,7 +964,7 @@ export function RulesetsTab({
           {r.id > 0 ? (
             <Fragment>
               <Pip />
-              ID {r.id}
+              <span className="text-xs text-smoke-400">ID {r.id}</span>
             </Fragment>
           ) : null}
         </p>
