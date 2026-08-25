@@ -22,7 +22,7 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { getPublicClient } from "@wagmi/core";
 import { useQuery } from "@tanstack/react-query";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { erc20Abi, zeroAddress, type PublicClient } from "viem";
 import { SplitRecipient } from "@/components/project/SplitRecipient";
 import { usePublicClient } from "wagmi";
