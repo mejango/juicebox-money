@@ -456,15 +456,13 @@ export function QueueRulesetFlow({
 
   return (
     <>
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="btn-secondary min-h-[36px] px-4 text-sm"
-        >
-          Edit rules
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="absolute right-5 top-5 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+      >
+        Edit rules
+      </button>
       {open ? (
         <ModalShell title="Edit rules" onClose={() => setOpen(false)}>
           {body}
