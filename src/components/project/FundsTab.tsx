@@ -561,7 +561,7 @@ export function FundsTab({
       </p>
 
       <div className="mt-5 overflow-x-auto">
-        <table className="w-full min-w-[42rem] text-sm">
+        <table className="w-full whitespace-nowrap text-sm">
           <thead>
             <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
               <th className="pb-2 font-normal">Chain</th>
