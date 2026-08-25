@@ -462,11 +462,6 @@ function ruleRows(
     },
     {
       section: "Other rules",
-      label: "Payments",
-      value: m.pausePay ? "Paused" : "Open",
-    },
-    {
-      section: "Other rules",
       label: "Payout authority",
       value: m.ownerMustSendPayouts ? "Project owner only" : "Anyone",
     },
@@ -958,6 +953,20 @@ export function RulesetsTab({
           />
         </div>
         <p className="mt-2 text-center text-sm text-smoke-700">
+          <span
+            className={`inline-flex items-center gap-1.5 font-medium ${
+              selected.data.metadata.pausePay ? "text-red-700" : "text-green-700"
+            }`}
+          >
+            <span
+              aria-hidden
+              className={`h-2 w-2 rounded-full ${
+                selected.data.metadata.pausePay ? "bg-red-500" : "bg-green-500"
+              }`}
+            />
+            {selected.data.metadata.pausePay ? "Payments paused" : "Payments open"}
+          </span>
+          <Pip />
           {status}
           <Pip />
           {timing}
