@@ -22,6 +22,7 @@ import {
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
+import { hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -327,6 +328,30 @@ export function ShopTab({
       ? null
       : shop?.tiers.find(tier => tier.id === mintTierId) ?? null
 
+  // Whether the viewer may edit item metadata here: the hook owner, or an
+  // address holding SET_721_METADATA for the project.
+  const { data: canEditMetadata = false } = useQuery({
+    queryKey: ['shop721CanEditMetadata', chainId, shop?.hook, address],
+    enabled: !!publicClient && !!shop && !!address,
+    staleTime: 60_000,
+    queryFn: async () => {
+      if (!publicClient || !shop || !address) return false
+      const owner = await publicClient.readContract({
+        address: shop.hook,
+        abi: jb721TiersHookAbi,
+        functionName: 'owner',
+      })
+      if (owner.toLowerCase() === address.toLowerCase()) return true
+      return hasPermissions(publicClient, {
+        chainId,
+        operator: address,
+        account: owner,
+        projectId: BigInt(projectId),
+        permissionIds: [JBPermissionIdsV6.SET_721_METADATA],
+      })
+    },
+  })
+
   // Resolve each linked collection only when the operator opens the editor.
   // Per-chain failures stay local so one flaky RPC does not hide the chains
   // that are ready to receive items.
@@ -528,10 +553,14 @@ export function ShopTab({
                 }
               : undefined
           }
-          onReplaceMedia={() => {
-            setDetailTierId(null)
-            setReplaceTierId(detailTier.id)
-          }}
+          onReplaceMedia={
+            canEditMetadata
+              ? () => {
+                  setDetailTierId(null)
+                  setReplaceTierId(detailTier.id)
+                }
+              : undefined
+          }
           onClose={() => setDetailTierId(null)}
         />
       ) : null}
@@ -1734,15 +1763,6 @@ function TierDetailModal({
                 Mint to a beneficiary without payment →
               </button>
             ) : null}
-            {onReplaceMedia ? (
-              <button
-                type="button"
-                onClick={onReplaceMedia}
-                className="mt-2 block text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
-              >
-                Replace media →
-              </button>
-            ) : null}
 
             <div className="mt-6 border-t border-smoke-200 pt-4">
               <p className="field-label">Supply by chain</p>
@@ -1824,6 +1844,16 @@ function TierDetailModal({
                   ))}
                 </div>
               </div>
+            ) : null}
+
+            {onReplaceMedia ? (
+              <button
+                type="button"
+                onClick={onReplaceMedia}
+                className="mt-5 text-xs font-medium text-smoke-600 underline decoration-smoke-300 underline-offset-4 hover:text-ink"
+              >
+                Replace media
+              </button>
             ) : null}
           </div>
         </div>
