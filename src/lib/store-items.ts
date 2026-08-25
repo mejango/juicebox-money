@@ -13,7 +13,7 @@ import {
   type StoreItem,
   splitShares,
 } from '@/lib/launch'
-import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
+import { JBCENTER_MAX_IMAGE_BYTES, jbCenterIpfs } from '@/lib/jbcenter-ipfs'
 
 export type PinnedStoreItemDraft = {
   draft: DraftItem
@@ -39,8 +39,13 @@ export async function pinStoreItemDrafts(
 
     if (item.mediaFile) {
       onStatus(`${label}pinning media…`)
-      const uri = (await jbCenterIpfs.pinMedia(item.mediaFile)).uri
-      if (item.mediaFile.type.startsWith('image/')) image = uri
+      const isImage = item.mediaFile.type.startsWith('image/')
+      const uri = (
+        isImage && item.mediaFile.size <= JBCENTER_MAX_IMAGE_BYTES
+          ? await jbCenterIpfs.pinImage(item.mediaFile)
+          : await jbCenterIpfs.pinMedia(item.mediaFile)
+      ).uri
+      if (isImage) image = uri
       else animationUrl = uri
     }
 
