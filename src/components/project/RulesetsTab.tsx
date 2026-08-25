@@ -926,12 +926,12 @@ export function RulesetsTab({
       {/* Constant, and not dead: this tab is only mounted for non-revnets (revnets get Terms
           instead), and the flag is the flow's own assertion that it must never offer to queue
           a ruleset for a revnet, whose stages are immutable. */}
-      <QueueRulesetFlow
-        chainId={chainId}
-        projectId={projectId}
-        isRevnet={false}
-      />
-      <div className="card p-6">
+      <div className="card relative p-6">
+        <QueueRulesetFlow
+          chainId={chainId}
+          projectId={projectId}
+          isRevnet={false}
+        />
         <div className="flex items-center justify-center gap-4">
           <ArrowButton
             direction="prev"
