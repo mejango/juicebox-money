@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { JBChainId } from "@bananapus/nana-sdk-core";
 import { ChainIcon } from "@/components/ChainIcon";
 import { RichContent } from "@/components/RichContent";
+import { CopyProjectAuditPrompt } from "@/components/project/CopyProjectAuditPrompt";
 import { FundingChart } from "@/components/project/FundingChart";
 import { RevnetPriceCard } from "@/components/project/RevnetPriceCard";
 import { TokenPanel } from "@/components/project/TokenPanel";
@@ -135,7 +136,10 @@ export function OverviewTab({
     <div className="space-y-5">
       {description || links.length > 0 ? (
         <section>
-          <h2 className="mb-3 font-agrandir text-xl font-medium">About</h2>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="font-agrandir text-xl font-medium">About</h2>
+            <CopyProjectAuditPrompt urn={toUrn(chainId, projectId)} />
+          </div>
           {description ? (
             <RichContent
               html={description}
