@@ -932,6 +932,11 @@ export function RulesetsTab({
           projectId={projectId}
           isRevnet={false}
         />
+        {r.id > 0 ? (
+          <p className="mb-1 text-center text-[11px] text-smoke-400">
+            ID {r.id}
+          </p>
+        ) : null}
         <div className="flex items-center justify-center gap-4">
           <ArrowButton
             direction="prev"
@@ -939,9 +944,6 @@ export function RulesetsTab({
             onClick={() => setSelectedIdx(idx - 1)}
           />
           <div className="text-center">
-            {r.id > 0 ? (
-              <p className="text-[11px] text-smoke-400">ID {r.id}</p>
-            ) : null}
             <h2 className="font-agrandir text-xl font-medium">
               Cycle #{r.cycleNumber}
               <span className="ml-2 text-sm font-normal text-smoke-500">

@@ -916,7 +916,7 @@ function RulesetEditorForm({
             value={state.duration}
             disabled={busy}
             onChange={(e) => set("duration", Number(e.target.value))}
-            className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+            className="input-well select-caret mt-1.5 min-h-[40px] w-full max-w-xs px-3 pr-9 text-sm"
           >
             {DURATION_PRESETS.some(
               (p) => p.seconds === state.duration,
@@ -1097,13 +1097,14 @@ function RulesetEditorForm({
         </p>
       ) : null}
 
+      <div className="mt-4 flex justify-end">
       <button
         onClick={review ? () => void handleConfirm() : handleReview}
         disabled={
           busy ||
           (isConnected && (!weightValid || !limitsValid || !startValid || !!limitBlock))
         }
-        className="btn-primary mt-4 min-h-[44px] w-full text-sm"
+        className="btn-primary min-h-[44px] px-5 text-sm"
       >
         {busy
           ? "Queueing…"
@@ -1113,6 +1114,7 @@ function RulesetEditorForm({
               ? "Confirm and queue"
               : "Review changes"}
       </button>
+      </div>
 
       {busy && status ? (
         <p className="mt-2 text-center text-xs text-smoke-700">{status}</p>
@@ -1489,7 +1491,7 @@ function LimitRow({
           onChange={(e) =>
             onChange({ mode: e.target.value as LimitDraft["mode"] })
           }
-          className="input-well min-h-[36px] px-2.5 text-xs"
+          className="input-well select-caret min-h-[36px] max-w-xs px-2.5 pr-9 text-xs"
         >
           <option value="none">No payouts</option>
           <option value="limited">Limited</option>
