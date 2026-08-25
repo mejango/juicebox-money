@@ -466,6 +466,7 @@ export function combinedActivityParts(
     amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
     amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
     direction: parts.find(part => part.direction != null)?.direction ?? null,
+    kind: parts.find(part => part.kind)?.kind ?? null,
   }
 }
 
@@ -484,6 +485,42 @@ function addressUrl(chainId: number, address: string): string | null {
  * the flow direction, and any memo — shared by the project feed and the
  * account view.
  */
+/** Event field → short label, first match wins. Only shown when a row has no value to lead with. */
+const ACTIVITY_KINDS: [string, string][] = [
+  ['payEvent', 'Payment'],
+  ['addToBalanceEvent', 'Deposit'],
+  ['cashOutTokensEvent', 'Cash out'],
+  ['sendPayoutsEvent', 'Payout'],
+  ['sendPayoutToSplitEvent', 'Payout'],
+  ['useAllowanceEvent', 'Surplus used'],
+  ['mintTokensEvent', 'Minted'],
+  ['burnEvent', 'Burned'],
+  ['mintNftEvent', 'Item minted'],
+  ['swapEvent', 'Swap'],
+  ['borrowLoanEvent', 'Loan'],
+  ['repayLoanEvent', 'Loan repaid'],
+  ['liquidateLoanEvent', 'Loan liquidated'],
+  ['bridgeClaimEvent', 'Bridged in'],
+  ['bridgeToRemoteEvent', 'Bridged out'],
+  ['bridgeToOutboxEvent', 'Bridged out'],
+  ['sendReservedTokensToSplitsEvent', 'Reserved tokens'],
+  ['sendReservedTokensToSplitEvent', 'Reserved tokens'],
+  ['rulesetQueuedEvent', 'Rules queued'],
+  ['projectCreateEvent', 'Created'],
+  ['projectTransferEvent', 'Ownership'],
+  ['setUriEvent', 'Details updated'],
+  ['addNftTierEvent', 'Item added'],
+  ['removeNftTierEvent', 'Item removed'],
+  ['operatorPermissionsSetEvent', 'Permissions'],
+  ['buybackPoolEvent', 'Buyback pool'],
+  ['autoIssueEvent', 'Auto issuance'],
+]
+
+function activityKind(event: BsActivityEvent): string | null {
+  const fields = event as unknown as Record<string, unknown>
+  return ACTIVITY_KINDS.find(([field]) => fields[field])?.[1] ?? null
+}
+
 export function activityParts(
   event: BsActivityEvent,
   tokenUnit: string,
@@ -491,6 +528,7 @@ export function activityParts(
   actor: string
   action: ReactNode
   direction: 'in' | 'out' | null
+  kind: string | null
   memo: string | null
   amountUsd: string | null | undefined
   amountRaw: string | null | undefined
@@ -692,6 +730,7 @@ export function activityParts(
     actor,
     action,
     direction,
+    kind: activityKind(event),
     memo,
     amountUsd:
       pay?.amountUsd ??
@@ -721,7 +760,7 @@ function Row({
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
   const event = group[0]
-  const { actor, actions, direction, memo, amountUsd, amountRaw } =
+  const { actor, actions, direction, kind, memo, amountUsd, amountRaw } =
     combinedActivityParts(group, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
@@ -731,9 +770,7 @@ function Row({
   // No amount and no flow tag = nothing for the title slot; the actor takes
   // its place (bare, no "to/from/by") instead of leaving a blank line.
   const hasTitle =
-    activityAmountLabel(amountUsd, amountToken) !== null ||
-    direction === 'in' ||
-    direction === 'out'
+    activityAmountLabel(amountUsd, amountToken) !== null || kind !== null
   const alsoOn = (chains ?? []).filter(chain => chain.chainId !== event.chainId)
 
   return (
@@ -748,6 +785,7 @@ function Row({
               amountUsd={amountUsd}
               amountToken={amountToken}
               direction={direction}
+              kind={kind}
             />
           ) : (
             <span className="min-w-0 truncate">{actorNode}</span>
