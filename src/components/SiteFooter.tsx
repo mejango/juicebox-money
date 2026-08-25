@@ -17,9 +17,9 @@ export function SiteFooter() {
             className="h-8 w-auto brightness-0 invert"
           />
 
-          <div className="mt-5 text-sm leading-relaxed text-slate-200">
+          <div className="mt-5 space-y-3 text-sm leading-relaxed text-slate-200">
             <p>Made with love.</p>
-            <p className="mt-3">
+            <p>
               Review the{' '}
               <a
                 href="https://github.com/Bananapus/version-6"
@@ -40,12 +40,12 @@ export function SiteFooter() {
               </a>
               .
             </p>
-            <AuditPromptLink className="mt-1 text-slate-200 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
-            <p className="mt-1">
+            <AuditPromptLink className="text-slate-200 [&_button]:min-h-0 [&_button]:text-slate-100 [&_button]:decoration-slate-500 [&_button]:hover:text-bluebs-400" />
+            <p>
               Defenders who manage to steal funds and return them are encouraged to keep 10% as a
               reward, paid by all projects together.
             </p>
-            <p className="mt-1">
+            <p>
               Terms of Service: Risks are borne entirely by the users of the open source code.
             </p>
           </div>
