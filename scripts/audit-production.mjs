@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 const require = createRequire(import.meta.url);
 const ELLIPTIC_ADVISORY =
   "https://github.com/advisories/GHSA-848j-6mx2-7j84";
-const PARA_VERSION = "3.11.0";
 const PARA_PACKAGES = [
   "@getpara/react-component-library",
   "@getpara/react-sdk-lite",
@@ -14,21 +13,24 @@ const PARA_PACKAGES = [
   "@getpara/web-sdk",
 ];
 
+// Para is not pinned to a version; it is pinned to a shape. Every Para package
+// must move together, and the elliptic usage below must stay exactly the one
+// audited under GHSA-848j-6mx2-7j84 (compressing a public key, never signing).
+// A bump that keeps both passes; one that changes either fails closed.
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
-for (const dependency of PARA_PACKAGES) {
-  if (packageJson.dependencies?.[dependency] !== PARA_VERSION) {
-    throw new Error(`${dependency} must remain pinned to ${PARA_VERSION}.`);
-  }
+const paraVersions = new Set(PARA_PACKAGES.map((dependency) => packageJson.dependencies?.[dependency]));
+if (paraVersions.size !== 1 || paraVersions.has(undefined)) {
+  throw new Error(`Para packages must share one exact version; found ${[...paraVersions].join(", ")}.`);
+}
+const [paraVersion] = paraVersions;
+if (!/^\d+\.\d+\.\d+$/.test(paraVersion)) {
+  throw new Error(`Para packages must be pinned to an exact version, not ${paraVersion}.`);
 }
 
 const paraCoreRoot = resolve(dirname(require.resolve("@getpara/core-sdk")), "../..");
-const paraCore = JSON.parse(
-  readFileSync(resolve(paraCoreRoot, "package.json"), "utf8"),
-);
-if (paraCore.version !== PARA_VERSION) {
-  throw new Error(
-    `@getpara/core-sdk must resolve to ${PARA_VERSION}; found ${paraCore.version}.`,
-  );
+const paraCore = JSON.parse(readFileSync(resolve(paraCoreRoot, "package.json"), "utf8"));
+if (paraCore.version !== paraVersion) {
+  throw new Error(`@getpara/core-sdk must resolve to ${paraVersion}; found ${paraCore.version}.`);
 }
 
 const formattingPath = resolve(paraCoreRoot, "dist/esm/utils/formatting.js");
