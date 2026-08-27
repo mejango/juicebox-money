@@ -52,8 +52,8 @@
     "qrcode": "1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "2.55.8",
-    "wagmi": "3.7.4"
+    "viem": "2.55.19",
+    "wagmi": "3.7.6"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
