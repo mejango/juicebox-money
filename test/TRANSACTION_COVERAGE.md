@@ -18,6 +18,7 @@ Legend:
 | Deploy a revnet | `REVDeployer.deployFor` | **E** | `contracts/launch.test.ts` |
 | Add shop tiers | `JB721TiersHook.adjustTiers` | **E** | `contracts/transaction-builders.test.ts` |
 | Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts` |
+| Replace shop item media | `JB721TiersHook.setMetadata` | **E** | `contracts/transaction-builders.test.ts` |
 | Deploy a project payer address | `JBProjectPayerDeployer.deployProjectPayer` | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
 | Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |

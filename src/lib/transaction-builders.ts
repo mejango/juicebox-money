@@ -209,6 +209,36 @@ export function buildMint721TierRequest({
   }
 }
 
+/**
+ * Replace one tier's media. Empty strings and the hook's own address are the
+ * contract's "leave unchanged" sentinels for everything but the tier URI.
+ */
+export function buildSet721TierMediaRequest({
+  chainId,
+  hook,
+  tierId,
+  encodedIpfsUri,
+}: {
+  chainId: JBChainId
+  hook: Address
+  tierId: number
+  encodedIpfsUri: Hex
+}) {
+  if (!Number.isSafeInteger(tierId) || tierId < 1 || tierId > 65_535) {
+    throw new Error('The item tier ID must fit uint16 and be greater than zero.')
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(encodedIpfsUri)) {
+    throw new Error('The pinned media must be a bytes32-encoded IPFS CID.')
+  }
+  return {
+    chainId,
+    address: hook,
+    abi: jb721TiersHookAbi,
+    functionName: 'setMetadata' as const,
+    args: ['', '', '', '', hook, BigInt(tierId), encodedIpfsUri] as const,
+  }
+}
+
 export function buildSendPayoutsRequest({
   chainId,
   terminal,
