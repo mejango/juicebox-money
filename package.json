@@ -96,7 +96,7 @@
   },
   "allowScripts": {
     "@reown/appkit": false,
-    "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "fsevents": false,
     "unrs-resolver@1.12.2": true
   }

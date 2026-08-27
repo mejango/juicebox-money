@@ -20,6 +20,9 @@ updates:
     # This is an npm alias supplied by @wagmi/connectors, not a registry name.
     ignore:
       - dependency-name: cbw-sdk
+      # Pinned on purpose: scripts/audit-production.mjs audits this exact
+      # version's elliptic usage. Bump PARA_VERSION there when upgrading.
+      - dependency-name: '@getpara/*'
     groups:
       framework:
         applies-to: version-updates
