@@ -16,14 +16,14 @@ const budgets = {
     // canonical SDK chain metadata replaces the warning-prone viem barrel.
     // The shared all-chain direct-pay and Permit2 review paths add ~6 KiB to
     // the landing route after package-import optimization. Next 16's emitted
-    // route graph measures ~422 KiB in CI on Next 16.3; keep a narrow ceiling
+    // route graph measures ~426 KiB in CI on Next 16.3 + wagmi 3.7.6; keep a narrow ceiling
     // around that baseline while the aggregate and largest-chunk budgets below
     // still catch broader regressions.
-    '/page': 425 * KIB,
+    '/page': 428 * KIB,
     '/[urn]/page': 570 * KIB,
-    // The production create graph measures ~479 KiB. Leave only a small
+    // The production create graph measures ~483 KiB. Leave only a small
     // allowance for build variance.
-    '/create/page': 482 * KIB,
+    '/create/page': 485 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
