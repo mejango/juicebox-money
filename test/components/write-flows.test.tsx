@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   publicClient: { readContract: vi.fn() },
   refetchBalance: vi.fn(),
   balance: 5n * 10n ** 18n as bigint | undefined,
+  directSell: false,
   txPhase: 'idle',
   txBusy: false,
   txHash: null as string | null,
@@ -85,6 +86,32 @@ vi.mock('@tanstack/react-query', () => ({
           isFetching: false,
           isError: false,
         }
+      case 'cashOutMarket':
+        return {
+          data: mocks.directSell
+            ? {
+                status: 'pool',
+                poolId: '0x' + 'ab'.repeat(32),
+                key: {
+                  currency0: '0x3333333333333333333333333333333333333333',
+                  currency1: '0x4444444444444444444444444444444444444444',
+                  fee: 10_000,
+                  tickSpacing: 200,
+                  hooks: '0x6666666666666666666666666666666666666666',
+                },
+                sqrtP: 1n << 96n,
+              }
+            : { status: 'none' },
+        }
+      case 'claimedCashOutBalance':
+        return { data: mocks.directSell ? 5n * 10n ** 18n : 0n }
+      case 'directCashOutSell':
+        // Well above the treasury's 9,750 so the pool wins even after slippage.
+        return { data: mocks.directSell ? 30_000n : undefined, isFetching: false }
+      case 'cashOutTokenAllowance':
+        return { data: 0n, refetch: vi.fn() }
+      case 'cashOutPermit2Allowance':
+        return { data: [0n, 0n, 0n], refetch: vi.fn() }
       default:
         return { data: undefined, isFetching: false, isError: false }
     }
@@ -198,6 +225,7 @@ beforeEach(() => {
   mocks.clientAvailable = true
   mocks.connected = true
   mocks.balance = 5n * 10n ** 18n
+  mocks.directSell = false
   mocks.txPhase = 'idle'
   mocks.txBusy = false
   mocks.txHash = null
@@ -553,6 +581,48 @@ describe('cash-out write flow', () => {
         '0x',
       ],
     })
+  })
+
+  it('names the whole approval queue when the pool out-quotes the treasury', async () => {
+    vi.useFakeTimers()
+    mocks.directSell = true
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(CashOutPanel, {
+          chainId: 1,
+          projectId: 42,
+          projectName: 'Safe Project',
+          accountingToken: '0x4444444444444444444444444444444444444444',
+          accountingTokenSymbol: 'USDC',
+        }),
+      )
+    })
+    const amount = renderer.root
+      .findAllByType('input')
+      .find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => {
+      amount.props.onChange({ target: { value: '2' } })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    // Both allowances are empty, so the queue is approve → authorize → sell,
+    // and the first step is the one awaiting a click.
+    const steps = renderer.root.findAllByType('li').map(step => renderedText(step))
+    expect(steps).toEqual([
+      expect.stringContaining('Approve JBT for the swap router'),
+      expect.stringContaining('Authorize the swap router'),
+      expect.stringContaining('Sell JBT on the pool'),
+    ])
+    const current = renderer.root
+      .findAllByType('li')
+      .filter(step => step.props['aria-current'] === 'step')
+    expect(current).toHaveLength(1)
+    expect(renderedText(current[0])).toContain('Approve JBT for the swap router')
+    expect(buttonWith(renderer, 'Approve tokens for best execution')).toBeDefined()
+    expect(mocks.send).not.toHaveBeenCalled()
   })
 
   it('uses the full balance, changes slippage, and rejects malformed amounts', async () => {

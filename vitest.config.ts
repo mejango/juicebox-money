@@ -46,13 +46,10 @@ export default defineConfig({
           lines: 35,
         },
         'src/components/project/CashOutFlow.tsx': {
-          statements: 65,
-          // The direct-sell approval queue (TxSteps) only branches under a live
-          // pool quote, which the jsdom flow does not drive; ratchet back up
-          // once that route has a unit fixture.
-          branches: 62,
-          functions: 55,
-          lines: 68,
+          statements: 70,
+          branches: 72,
+          functions: 60,
+          lines: 70,
         },
         'src/components/project/ExtrasTab.tsx': {
           statements: 65,
