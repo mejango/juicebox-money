@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { pageMetadata } from '@/lib/page-metadata'
 import Link from 'next/link'
 import { AuditPromptActions } from '@/components/AuditPromptActions'
 
@@ -6,14 +7,7 @@ const title = 'Audit Juicebox'
 const description =
   'Inspect the Juicebox V6 protocol and Juicebox Money webclient.'
 
-export const metadata: Metadata = {
-  title,
-  description,
-  // Without its own card this page inherited the site-wide one, so every link to it
-  // unfurled as the generic homepage.
-  openGraph: { title: `${title} — Juicebox`, description },
-  twitter: { title: `${title} — Juicebox`, description },
-}
+export const metadata: Metadata = pageMetadata({ title, description })
 
 const CODE_LINKS = [
   { label: 'Complete Juicebox V6 source index', href: 'https://github.com/Bananapus/version-6' },

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { pageMetadata } from '@/lib/page-metadata'
 import { CopyBuildPrompt } from '@/components/CopyBuildPrompt'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
@@ -6,14 +7,7 @@ const title = 'Build'
 const description =
   'Build products and platforms on Juicebox with contract references, transaction patterns, hooks, permissions, and implementation guidance.'
 
-export const metadata: Metadata = {
-  title,
-  description,
-  // Without its own card this page inherited the site-wide one, so every link to it
-  // unfurled as the generic homepage.
-  openGraph: { title: `${title} — Juicebox`, description },
-  twitter: { title: `${title} — Juicebox`, description },
-}
+export const metadata: Metadata = pageMetadata({ title, description })
 
 export default function BuildPage() {
   return (
