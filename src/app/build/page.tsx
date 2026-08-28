@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { AgentSkillsNote } from '@/components/AgentSkillsNote'
 import { CopyBuildPrompt } from '@/components/CopyBuildPrompt'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
@@ -25,7 +24,6 @@ export default function BuildPage() {
           safe first version.
         </p>
         <CopyBuildPrompt className="mt-6 text-sm text-smoke-700" />
-        <AgentSkillsNote className="mt-2 text-sm text-smoke-700" />
       </div>
       <ProtocolGuide guide="build" />
     </div>
