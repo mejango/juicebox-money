@@ -7,7 +7,7 @@ const SKILLS_URL = 'https://github.com/mejango/juicebox-skills'
 export function AgentSkillsNote({ className = '' }: { className?: string }) {
   return (
     <p className={className}>
-      Working with an AI agent? Install the{' '}
+      Working with an AI agent? Give it the{' '}
       <a
         href={SKILLS_URL}
         target="_blank"
@@ -15,9 +15,8 @@ export function AgentSkillsNote({ className = '' }: { className?: string }) {
         className="font-agrandir font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
       >
         Juicebox V6 skills
-      </a>{' '}
-      (a Claude Code plugin: <code className="text-xs">/plugin marketplace add mejango/juicebox-skills</code>) so
-      it works from the deployed addresses, ABIs, and fee math rather than from memory.
+      </a>
+      , a Claude Code plugin that carries the deployed addresses, ABIs, and fee math.
     </p>
   )
 }
