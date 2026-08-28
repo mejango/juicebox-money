@@ -493,7 +493,8 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
-    '<a class="guide-toc-link" href="#build-clients">20. Build From This Client</a>';
+    '<a class="guide-toc-link" href="#build-bendystraw">20. Indexed Data</a>' +
+    '<a class="guide-toc-link" href="#build-clients">21. Build From This Client</a>';
   wrap.appendChild(toc);
 
   // --- Life of a Project ---
@@ -956,7 +957,45 @@ export function renderBuildTab() {
   ownHeader.textContent = 'BUILD YOUR OWN';
   wrap.appendChild(ownHeader);
 
-  wrap.appendChild(guideSection('build-clients', '20. BUILD FROM THIS CLIENT', [
+  wrap.appendChild(guideSection('build-bendystraw', '20. INDEXED DATA (BENDYSTRAW)', [
+    'Bendystraw is the Juicebox indexer: a Ponder service that watches every V6 contract on every supported chain and serves the results over GraphQL. It is how this site lists projects, draws activity feeds and price charts, ranks trending projects, and reads LP positions — none of which are practical to assemble from RPC calls at page-load speed.',
+    'Use it for anything a person reads. Use the chain for anything a wallet signs: re-read balances, rulesets, allowances, and quotes onchain right before building a transaction. The index can lag the chain by a few blocks, and a lagging index looks like empty data, not an error.'
+  ], [
+    fnRefTable('ENDPOINTS', [
+      ['https://bendystraw.up.railway.app/graphql', 'Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed'],
+      ['https://testnet.bendystraw.xyz/graphql', 'Testnets: Sepolia and the L2 Sepolias'],
+      ['…/schema', 'A playground with the schema explorer; POST an introspection query to the graphql URL for codegen (same schema on both databases)'],
+    ]),
+    codeBlock(
+      'A first query',
+      'POST https://bendystraw.up.railway.app/graphql\n' +
+      '{\n' +
+      '  projects(where: { chainId: 8453, version: 6 }, orderBy: "balance", orderDirection: "desc", limit: 10) {\n' +
+      '    items { projectId chainId name balance suckerGroupId }\n' +
+      '    totalCount\n' +
+      '  }\n' +
+      '}'
+    ),
+    fnRefTable('WHAT TO ASK IT FOR', [
+      ['projects / project(chainId, projectId)', 'Name, metadata URI, balance, token, owner, and the sucker group that links its chains'],
+      ['payEvents, cashOutTokensEvents, activityEvents', 'The feed behind any project page; filter by projectId or suckerGroupId'],
+      ['participants', 'Token holders and their balances, per project or per sucker group'],
+      ['buybackPools, swapEvents, buybackPoolPositions', 'The AMM: pool identity, every trade’s post-trade price, and every LP range'],
+      ['loans, borrowLoanEvents', 'Revnet loans and their collateral'],
+      ['nftTiers, mintNftEvents', '721 shop tiers and purchases'],
+      ['suckerTransactions', 'Cross-chain moves and where each one is in its lifecycle'],
+    ]),
+    stepList([
+      'Every V6 row is versioned: filter with version: 6, and key a project by chainId + projectId, never projectId alone — the same number exists on every chain.',
+      'Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.',
+      'Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.',
+      'suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.',
+      'The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.',
+    ]),
+    infoBox('Building with an agent? The /jb-bendystraw skill in the Juicebox V6 skills library carries the schema, the query patterns above, and the gotchas — hand it over before asking for a feed, chart, or holder table. Source: github.com/peripheralist/bendystraw.')
+  ]));
+
+  wrap.appendChild(guideSection('build-clients', '21. BUILD FROM THIS CLIENT', [
     'Juicebox Money is a production V6 client you can study, fork, or use as a reference for your own product. Its Next.js interface combines server-assisted indexing and IPFS services with wallet flows that build and verify Juicebox transactions from the current V6 contracts.',
     'Treat each working flow as an implementation example, not a black box. The project, account, shop, and create surfaces show how product interactions map to indexed reads, fresh onchain checks, transaction builders, ABI round trips, and clear signing previews. Give the relevant source and tests to your coding agent when you want to reuse one of those patterns.'
   ], [
