@@ -159,11 +159,14 @@ function PriceSummary({
   label,
   color,
   note,
+  detail,
   active,
   onToggle,
 }: {
   label: string
   color: string
+  /** Small second line under the label, e.g. the pooled liquidity behind an AMM price. */
+  detail?: string
   /** What this price MEANS. Carried by the whole cell so the entire target reveals it; the (?)
    *  beside the label is the affordance saying so. */
   note?: string
@@ -187,6 +190,9 @@ function PriceSummary({
         />
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : <span>{label}</span>}
       </span>
+      {detail ? (
+        <span className="mt-0.5 block text-[10px] font-normal text-grey-500">{detail}</span>
+      ) : null}
     </button>
   )
 }
@@ -197,6 +203,7 @@ export function PriceChart({
   baseSymbol,
   floorPrice,
   ammPrice,
+  ammLiquidity,
   floorHistory = [],
   ammHistory = [],
   cashOutTaxHistory = [],
@@ -207,6 +214,8 @@ export function PriceChart({
   baseSymbol: string
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
+  /** What the pool holds right now, e.g. "1.2M REV + 3.4 ETH". Context for how much the AMM price can bear. */
+  ammLiquidity?: string | null
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
@@ -332,6 +341,7 @@ export function PriceChart({
             <PriceSummary
               label="AMM price"
               note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
+              detail={amm && ammLiquidity ? `on ${ammLiquidity} liq` : undefined}
               color={AMM_COLOR}
               active={showAmm}
               onToggle={() => setShowAmm(current => !current)}

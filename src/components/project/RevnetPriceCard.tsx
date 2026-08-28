@@ -37,7 +37,11 @@ import {
   toBaseAxis,
 } from '@/lib/base-currency-axis'
 import type { ChartStage } from '@/components/project/chartUtils'
-import { resolveMarket } from '@/components/project/MarketSection'
+import {
+  readLpPositions,
+  resolveMarket,
+  type MarketResult,
+} from '@/components/project/MarketSection'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
@@ -50,6 +54,7 @@ import {
 import { ammSeriesFrom, usdRateOf, type PricePoint } from '@/lib/price-series'
 import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
 import { cachedQuery, immutableQuery } from '@/lib/query-persist'
+import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 
 const PRICE_REFRESH_MS = 15_000
@@ -353,10 +358,41 @@ export function RevnetPriceCard({
         poolId: market?.status === 'pool' ? market.poolId : null,
         pairDecimals:
           market?.status === 'pool' ? market.pair.decimals : null,
+        pool: market?.status === 'pool' ? market : null,
       }
     },
     }),
   )
+
+  // Same key as MarketSection's query so the two share one read of the pool.
+  const pool = references?.pool ?? null
+  const { data: lp } = useQuery(
+    cachedQuery({
+      queryKey: [
+        'marketLp',
+        chainId,
+        projectId,
+        pool?.poolId ?? null,
+        pool ? (pool.sqrtP >> 32n).toString() : null,
+      ],
+      enabled: !!publicClient && !!pool,
+      staleTime: 60_000,
+      retry: 0,
+      queryFn: () =>
+        readLpPositions(
+          publicClient!,
+          chainId,
+          pool as Extract<MarketResult, { status: 'pool' }>,
+        ),
+    }),
+  )
+  const ammLiquidity =
+    lp?.status === 'positions' && (lp.totalTok > 0n || lp.totalPair > 0n)
+      ? `${formatCompactTokenAmount(lp.totalTok)} ${data?.projectSymbol || 'tokens'} + ${formatTokenAmount(
+          lp.totalPair,
+          lp.pairDecimals,
+        )} ${lp.pairSymbol}`
+      : null
 
   const { data: history } = useQuery(
     cachedQuery({
@@ -530,6 +566,7 @@ export function RevnetPriceCard({
         ammPrice={
           references?.amm ? { value: references.amm, label: 'AMM price' } : null
         }
+        ammLiquidity={ammLiquidity}
         note={chartNote}
       />
       {references?.rateUnavailable ? (
