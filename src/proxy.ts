@@ -24,10 +24,25 @@ const APP_ROUTES = new Set([
     : []),
 ])
 
+/**
+ * Files this app serves whose names contain a dot. The matcher used to skip every
+ * dotted path so these would resolve, which also let `/anything.txt` fall through to
+ * the [urn] route — that streams a shell, so the redirect arrived mid-response and the
+ * status stayed 200. An unbounded supply of soft 404s; these are the real ones.
+ */
+const STATIC_ROUTES = new Set([
+  'assets',
+  'fonts',
+  'llms.txt',
+  'manifest.json',
+  'robots.txt',
+  'sitemap.xml',
+])
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
   const [first, ...rest] = pathname.split('/').filter(Boolean)
-  if (!first || APP_ROUTES.has(first)) return
+  if (!first || APP_ROUTES.has(first) || STATIC_ROUTES.has(first)) return
   let decoded = first
   try {
     decoded = decodeURIComponent(first)
@@ -43,7 +58,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Skip Next internals and dot-containing paths (static assets, favicon,
-  // llms.txt/robots.txt/sitemap.xml).
-  matcher: ['/((?!_next/|.*\\..*).*)'],
+  // Skip Next internals only. Dotted paths are handled in `proxy` via STATIC_ROUTES so
+  // that an unknown one still gets a real redirect status instead of a 200 shell.
+  matcher: ['/((?!_next/).*)'],
 }

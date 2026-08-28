@@ -2,9 +2,17 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { AuditPromptActions } from '@/components/AuditPromptActions'
 
+const title = 'Audit Juicebox'
+const description =
+  'Inspect the Juicebox V6 protocol and Juicebox Money webclient.'
+
 export const metadata: Metadata = {
-  title: 'Audit Juicebox',
-  description: 'Inspect the Juicebox V6 protocol and Juicebox Money webclient.',
+  title,
+  description,
+  // Without its own card this page inherited the site-wide one, so every link to it
+  // unfurled as the generic homepage.
+  openGraph: { title: `${title} — Juicebox`, description },
+  twitter: { title: `${title} — Juicebox`, description },
 }
 
 const CODE_LINKS = [

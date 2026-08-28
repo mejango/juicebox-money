@@ -1,10 +1,17 @@
 import type { Metadata } from 'next'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
+const title = 'Learn'
+const description =
+  'Learn how Juicebox projects, revnets, rulesets, tokens, payouts, cash outs, hooks, and omnichain deployments work.'
+
 export const metadata: Metadata = {
-  title: 'Learn',
-  description:
-    'Learn how Juicebox projects, revnets, rulesets, tokens, payouts, cash outs, hooks, and omnichain deployments work.',
+  title,
+  description,
+  // Without its own card this page inherited the site-wide one, so every link to it
+  // unfurled as the generic homepage.
+  openGraph: { title: `${title} — Juicebox`, description },
+  twitter: { title: `${title} — Juicebox`, description },
 }
 
 export default function LearnPage() {

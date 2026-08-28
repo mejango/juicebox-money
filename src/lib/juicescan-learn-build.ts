@@ -1,20 +1,15 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars, no-var */
-// @ts-nocheck -- adapted DOM renderer; Juicescan remains the protocol-content source of truth.
+/* eslint-disable @typescript-eslint/ban-ts-comment, no-var */
+// @ts-nocheck -- adapted HTML-string renderer; Juicescan remains the protocol-content source of truth.
 // Mirrored from webclients/juicescan/src/learn-build.js. Client-specific guidance may diverge.
 // src/learn-build.js
 // Learn & Build tab content — engaging walkthrough of the Juicebox protocol
 
-export function renderLearnTab() {
-  var container = document.getElementById('tab-learn');
-  container.innerHTML = '';
-
-  var wrap = document.createElement('div');
-  wrap.className = 'guide-wrap';
+export function learnGuideHtml() {
+  var wrap = '<div class="guide-wrap">';
 
   // --- Table of Contents ---
-  var toc = document.createElement('nav');
-  toc.className = 'guide-toc';
-  toc.innerHTML =
+  // Literal, already-escaped markup: emitted verbatim, never re-escaped.
+  var toc =
     '<div class="guide-toc-title">TABLE OF CONTENTS</div>' +
     '<div class="guide-toc-group-label">The Basics</div>' +
     '<a class="guide-toc-link" href="#learn-what">1. What is Juicebox?</a>' +
@@ -41,24 +36,21 @@ export function renderLearnTab() {
     '<a class="guide-toc-link" href="#learn-distributor">19. Distributor</a>' +
     '<a class="guide-toc-link" href="#learn-handles">20. Project Handles</a>' +
     '<a class="guide-toc-link" href="#learn-payer">21. Payer Address</a>';
-  wrap.appendChild(toc);
+  wrap += '<nav class="guide-toc">' + toc + '</nav>';
 
   // ============================================
   // THE BASICS — normie-friendly, no jargon
   // ============================================
 
-  var basicsHeader = document.createElement('div');
-  basicsHeader.className = 'guide-part-header';
-  basicsHeader.textContent = 'THE BASICS';
-  wrap.appendChild(basicsHeader);
+  wrap += partHeader('THE BASICS');
 
-  wrap.appendChild(guideSection('learn-what', '1. WHAT IS JUICEBOX?', [
+  wrap += guideSection('learn-what', '1. WHAT IS JUICEBOX?', [
     'Juicebox is a programmable money engine for the open web. Anyone can create a project, accept payments, and distribute funds according to rules they define — all without middlemen.',
     'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money beyond what it needs for payouts, token holders can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
     'Projects can accept any currency, operate across multiple blockchains, and customize every aspect of how money flows in and out. Tokens can be programmed to serve any purpose — governance votes, membership access, revenue shares, or just a way to track participation.'
-  ], []));
+  ], []);
 
-  wrap.appendChild(guideSection('learn-how', '2. HOW IT WORKS', [
+  wrap += guideSection('learn-how', '2. HOW IT WORKS', [
     'There are really only two core actions: pay and cash out. Everything else is configuration around those two things.'
   ], [
     diagram('THE BASIC LOOP', [
@@ -77,9 +69,9 @@ export function renderLearnTab() {
     textBlock('The project owner configures rules that determine how much to pay out, how many tokens to issue per payment, and what the cash out terms look like. These rules can evolve over time through "rulesets" — scheduled configurations that automatically take effect.'),
     textBlock('Each step is infinitely customizable via pay hooks, cash out hooks, and split hooks — contracts that run custom logic whenever payments come in, tokens are redeemed, or funds are distributed.'),
     textBlock('A 2.5% fee is charged on payouts and certain cash outs. This fuels the protocol’s own revenue network, which fee payers automatically participate in — it runs on Juicebox itself.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-projects', '3. PROJECTS', [
+  wrap += guideSection('learn-projects', '3. PROJECTS', [
     'A Juicebox project is like a bank account with programmable rules. Each project is represented by an NFT — whoever holds the NFT controls the project.',
     'Projects can accept any token (ETH, stablecoins, etc.) and can operate on multiple chains simultaneously. The project owner sets the rules, but the protocol enforces them automatically — no trust required.',
     'Anyone can create a project. There are no gatekeepers and no approval processes.'
@@ -95,9 +87,9 @@ export function renderLearnTab() {
       '  │  rules set by owner, enforced by protocol      │',
       '  └───────────────────────────────────────────────┘',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-revnets', '4. REVNETS', [
+  wrap += guideSection('learn-revnets', '4. REVNETS', [
     'A revnet (revenue network) is a special kind of project where the rules are permanently locked at launch. Nobody — not even the creator — can change them.',
     'This makes revnets ideal for protocols, tokens, and any situation where trust needs to be minimized. The token price, issuance schedule, and cash out terms are all predetermined and immutable.',
     'Revnets progress through "stages" — think of them as chapters in a financial lifecycle. Early stages might issue lots of tokens to attract participation, later stages tighten supply to create scarcity.'
@@ -110,18 +102,15 @@ export function renderLearnTab() {
       '  good for: DAOs, collectives      good for: protocols, tokens',
     ]),
     textBlock('Under the hood, revnets are just Juicebox projects owned by a special contract that refuses to change anything. All the same pay and cash out mechanics apply.')
-  ]));
+  ]);
 
   // ============================================
   // GOING DEEPER — concepts with some jargon
   // ============================================
 
-  var deeperHeader = document.createElement('div');
-  deeperHeader.className = 'guide-part-header';
-  deeperHeader.textContent = 'GOING DEEPER';
-  wrap.appendChild(deeperHeader);
+  wrap += partHeader('GOING DEEPER');
 
-  wrap.appendChild(guideSection('learn-rulesets', '5. RULESETS', [
+  wrap += guideSection('learn-rulesets', '5. RULESETS', [
     'Rulesets are the heartbeat of a project. Each ruleset defines how things work for a period of time: how many tokens per payment, how much can be paid out, and what the cash out terms are.',
     'When a ruleset’s duration expires, it automatically cycles — same rules, but with an optional decay applied to the token issuance rate. This means early supporters naturally get more tokens per payment than later ones.',
     'The project owner can queue a new ruleset to take effect at the next cycle boundary. If an approval hook is configured, changes must be approved before activating.'
@@ -142,9 +131,9 @@ export function renderLearnTab() {
       '       │                                   ▲',
       '       └── if no approval hook ────────────┘',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-tokens', '6. TOKENS', [
+  wrap += guideSection('learn-tokens', '6. TOKENS', [
     'When someone pays a project, they receive project tokens. Tokens record participation, define each holder’s share of the surplus that can be cashed out, and can be used by extensions or outside apps as the project’s own asset. The exchange rate is set by the ruleset weight — for example, 1,000 tokens per ETH.',
     'A portion of tokens can be reserved for the project team. If reservedPercent is 20%, then for every payment, 80% of tokens go to the payer and 20% are set aside for the team’s configured splits.',
     'Tokens start as internal "credits" — lightweight balances tracked by the protocol. The project can deploy a full ERC-20 token at any time, and token holders can convert their credits into real tokens.'
@@ -162,9 +151,9 @@ export function renderLearnTab() {
       '  800 tokens          200 tokens',
       '  (to payer)          (to team splits)',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-splits', '7. SPLITS & PAYOUTS', [
+  wrap += guideSection('learn-splits', '7. SPLITS & PAYOUTS', [
     'Splits control where money and reserved tokens go. Each split directs a percentage to a wallet, another project, or a custom contract.',
     'Payout limits cap how much the project can distribute per cycle. Everything beyond the payout limit is "surplus" — and that’s what token holders can cash out against.',
     'Splits can be locked until a specific date. Once locked, they can’t be reduced or removed — only added to. This protects team members and partners from having their share cut.'
@@ -178,9 +167,9 @@ export function renderLearnTab() {
       '  payout limit             surplus',
       '  (distributed to splits)  (available for cash outs)',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-fees', '8. FEES', [
+  wrap += guideSection('learn-fees', '8. FEES', [
     'The protocol charges a 2.5% fee on payouts and surplus withdrawals. Cash outs also pay it: with a tax rate above 0% the fee applies to the whole reclaimed amount, and with a 0% tax rate it still applies to min(reclaimed, feeFreeSurplusOf) — the portion of surplus that arrived fee-free from a payout or allowance withdrawal, which stops a round trip from escaping the fee. That portion is often zero, but never assume it is.',
     'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if a project adds funds back, the held fees are returned. After 28 days, the held fees can be forwarded to the Juicebox protocol’s own project — processed via processHeldFeesOf(), or by a later ruleset/operation (it isn’t automatic at the 28-day mark). If holdFees is off, fees are processed immediately.',
     'Some addresses can be designated as fee-exempt — they pay zero fees on all transactions.'
@@ -193,18 +182,15 @@ export function renderLearnTab() {
       '  if holdFees is on:  fee held 28 days, refundable',
       '  if holdFees is off: fee processed immediately',
     ])
-  ]));
+  ]);
 
   // ============================================
   // UNDER THE HOOD — technical details
   // ============================================
 
-  var hoodHeader = document.createElement('div');
-  hoodHeader.className = 'guide-part-header';
-  hoodHeader.textContent = 'UNDER THE HOOD';
-  wrap.appendChild(hoodHeader);
+  wrap += partHeader('UNDER THE HOOD');
 
-  wrap.appendChild(guideSection('learn-architecture', '9. ARCHITECTURE', [
+  wrap += guideSection('learn-architecture', '9. ARCHITECTURE', [
     'Everything you’ve read about so far — projects, rulesets, tokens, splits, fees — each lives in its own smart contract. These contracts are organized in layers.',
     'Surface contracts are what users interact with: the controller orchestrates project operations, and the terminal handles money in and out. Core contracts store the underlying data: who owns what, what the rules are, where funds go. Omnichain contracts move tokens and funds across blockchains.'
   ], [
@@ -236,9 +222,9 @@ export function renderLearnTab() {
       ['JBFundAccessLimits', 'Enforces payout limits and surplus allowances.'],
       ['JBFeelessAddresses', 'Registry of addresses exempt from protocol fees.'],
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-hooks', '10. HOOKS & EXTENSIONS', [
+  wrap += guideSection('learn-hooks', '10. HOOKS & EXTENSIONS', [
     'A "hook" is a custom contract that plugs into the protocol at a specific moment — like a callback. When a payment comes in, when tokens are cashed out, or when a ruleset changes, the protocol can call your hook to run custom logic.',
     'Projects can add features like NFT rewards, automatic market buybacks, content publishing, and approval gates without modifying the core protocol. Hooks are optional and composable.'
   ], [
@@ -255,9 +241,9 @@ export function renderLearnTab() {
       ['Swap terminal', 'Routes an incoming token to the project through the best available path — V4/V5 framing called this "the project’s preferred token", but V6’s JBRouterTerminal has no fixed preferred token (see §18).'],
       ['Project handles', 'Gives projects human-readable names via ENS (Ethereum Name Service).'],
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-omnichain', '11. OMNICHAIN', [
+  wrap += guideSection('learn-omnichain', '11. OMNICHAIN', [
     'A single project can operate across multiple blockchains — Ethereum, Optimism, Arbitrum, and more. The same project tokens work everywhere, and funds move proportionally between chains.',
     'This works through "suckers" — bridge contracts that connect a project’s funds across chains. When tokens are bridged from one chain to another, the sucker moves a proportional share of the funds to match. Each chain pair has its own sucker using the native bridge (Optimism bridge, Arbitrum bridge, or Chainlink CCIP).',
     'Once tokens have been bridged through a sucker, the token mapping between chains becomes permanent — it can’t be changed, only disabled. This protects token holders from having their cross-chain tokens invalidated.',
@@ -269,25 +255,22 @@ export function renderLearnTab() {
       '       └── tokens bridged ──────────────────┘',
       '           funds move proportionally',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-prices', '12. PRICE FEEDS', [
+  wrap += guideSection('learn-prices', '12. PRICE FEEDS', [
     'JBPrices normalizes price feeds between currencies, enabling projects to account in USD while managing ETH.',
     'Price feeds are immutable once set — a feed cannot be replaced, only added. Inverse prices are auto-calculated (ETH→USD gives you USD→ETH for free).',
     'Projects can set project-specific feeds that override protocol defaults. JBPrices tries each configured feed in order (project-specific, then the protocol default, in both directions) and only reverts when none returns a usable price — so a single feed reverting doesn’t block the operation. When it can’t resolve any price, the dependent operation reverts: a safe failure mode (no fund loss, just temporary unavailability).',
     'On L2s (Optimism, Arbitrum, Base) the protocol uses a sequencer-aware feed that withholds prices while the chain’s sequencer is down or inside its grace period after a restart — preventing operations from acting on a stale price during an outage.'
-  ], []));
+  ], []);
 
   // ============================================
   // THE ECOSYSTEM — ecosystem tools & patterns
   // ============================================
 
-  var ecoHeader = document.createElement('div');
-  ecoHeader.className = 'guide-part-header';
-  ecoHeader.textContent = 'THE ECOSYSTEM';
-  wrap.appendChild(ecoHeader);
+  wrap += partHeader('THE ECOSYSTEM');
 
-  wrap.appendChild(guideSection('learn-permissions', '13. PERMISSIONS', [
+  wrap += guideSection('learn-permissions', '13. PERMISSIONS', [
     'The project owner doesn’t have to do everything themselves. They can grant specific abilities to other addresses — like "you can trigger payouts" or "you can queue new rulesets" — without giving away full control.',
     'Each ability has a number (a "permission ID"). Granting permission #5 (SEND_PAYOUTS) to an address lets it distribute funds, but nothing else. There’s also a special "ROOT" permission (#1) that grants everything — use with care.',
     'Permissions are per-project. Granting someone access to project #5 doesn’t give them any access to project #6. Granting with project ID 0 is the wildcard: it applies to every project the GRANTING account controls on that chain — not to every project the operator touches.'
@@ -302,9 +285,9 @@ export function renderLearnTab() {
       ['SET_TERMINALS', 'Can replace the project’s terminal list (ADD_TERMINALS only appends).'],
     ]),
     infoBox('Permissions are separate from ownership. Transferring the project NFT transfers control, but granted permissions remain until explicitly revoked.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-nfts', '14. NFT REWARDS', [
+  wrap += guideSection('learn-nfts', '14. NFT REWARDS', [
     'Projects can reward contributors with NFTs organized into tiers. Each tier has a price threshold, a limited supply, and a category. When someone pays enough, they receive an NFT from the matching tier — like membership cards at different levels.',
     'Tiers are grouped by category, and categories must be defined in ascending order. Each tier can also have governance weight (voting power per NFT) and reserved NFTs that the project owner can mint without requiring payment.',
     'The NFT artwork and metadata can live on IPFS (a decentralized file system) or onchain. This system is powered by a pay hook called JB721TiersHook that automatically mints NFTs when payments come in.'
@@ -318,9 +301,9 @@ export function renderLearnTab() {
       ['metadata', 'A link to the NFT’s artwork and description (usually an IPFS content hash).'],
     ]),
     infoBox('NFT tiers are set up at project launch and can be adjusted later. The project owner can add new tiers, remove existing ones (unless locked), and mint reserved NFTs.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-croptop', '15. CROPTOP', [
+  wrap += guideSection('learn-croptop', '15. CROPTOP', [
     'Croptop turns any Juicebox project into a content platform. Anyone can publish content (images, text, links) to a project’s NFT collection — the content becomes a mintable NFT that supporters can collect.',
     'The project owner sets rules for what can be posted: minimum price, supply limits, and optionally an allowlist of who can post. Within those rules, posting is open to everyone. Each post creates a new NFT tier, and supporters mint copies by paying into the project.',
     'A 5% fee goes to the Croptop protocol on each post. The rest flows to the project’s funds. If the same content is posted twice, the existing NFT tier is reused instead of creating a duplicate.'
@@ -335,9 +318,9 @@ export function renderLearnTab() {
       '         └─▶ poster receives the first NFT',
     ]),
     textBlock('Croptop works alongside all other Juicebox features. A revnet with Croptop becomes a self-sustaining content platform where creators publish, supporters collect, and funds flow to the project automatically.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-buyback', '16. BUYBACK HOOK', [
+  wrap += guideSection('learn-buyback', '16. BUYBACK HOOK', [
     'When someone pays a project, the protocol normally mints new tokens. But what if buying tokens on the open market would give the payer more tokens for their money? The buyback hook automatically checks and picks the better deal.',
     'Here’s how it works: when a payment comes in, the hook compares two prices — the project’s minting rate versus the current market price on a Uniswap V4 trading pool. If the market offers more tokens, the hook swaps instead of minting. If minting is the better deal, it mints normally. The payer always gets the best rate without having to think about it.',
     'The same logic works in reverse for cash outs. If selling tokens on the market returns more than the bonding curve reclaim, the hook routes the cash out through the pool instead.'
@@ -353,9 +336,9 @@ export function renderLearnTab() {
       '        └─▶ normal mint (no swap needed)',
     ]),
     textBlock('Slippage protection (how much the price can move during the swap) is calculated automatically — it’s not something the payer needs to set. Advanced users can also provide their own price quote in the payment metadata to bypass the automatic check.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-loans', '17. LOANS', [
+  wrap += guideSection('learn-loans', '17. LOANS', [
     'Revnet token holders who need cash don’t have to sell. They can take out a loan against their tokens instead — keeping their position while accessing liquidity.',
     'When you borrow, your collateral tokens are burned (removed from supply) and you receive funds from the project. The loan itself is represented as an NFT, so it can be transferred or sold. When you repay, your tokens are re-minted and returned to you.',
     'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn’t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same funds.'
@@ -375,9 +358,9 @@ export function renderLearnTab() {
       '     └─▶ remaining token holders benefit from reduced supply',
     ]),
     textBlock('At high cash out tax rates, loan fees can be cheaper than the tax you’d lose by cashing out — making loans a more capital-efficient way to access liquidity while keeping your position.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-migration', '18. MIGRATION', [
+  wrap += guideSection('learn-migration', '18. MIGRATION', [
     'As the protocol evolves, projects can upgrade to newer versions of its core contracts — without losing their funds, tokens, or history. Think of it like moving to a new office: same business, better infrastructure.',
     'There are two kinds of migration. A controller migration moves the project’s management logic (how rulesets work, how tokens are minted) to a new controller. A terminal migration moves funds and accounting to a new terminal. Both follow a safe handoff process where the old contract and the new contract each run checks to ensure nothing is lost.',
     'Only the project owner (or someone they’ve granted permission to) can trigger a migration, and the destination contract must be registered in the project’s directory first.'
@@ -390,9 +373,9 @@ export function renderLearnTab() {
       '  5. new contract runs an "after migration" check',
     ]),
     textBlock('Because of this two-step verification, migrations are safe by design — both sides have to agree the handoff was successful.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-distributor', '19. DISTRIBUTOR', [
+  wrap += guideSection('learn-distributor', '19. DISTRIBUTOR', [
     'The distributor is an optional add-on a project can deploy (it isn’t part of the core protocol deployment). It’s a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and participants collect their fair share over time.',
     'Distribution happens in rounds. At the start of each round, a snapshot captures how much each participant holds. Their share of the round’s rewards is proportional to their holdings at that moment. Rewards don’t unlock all at once — they vest gradually over a set number of rounds, encouraging long-term participation.',
     'There are two flavors: one for regular token holders (based on voting power), and one for NFT owners (based on their NFT tiers). Both work the same way — fund it, start a round, and let participants collect as their rewards vest.'
@@ -412,9 +395,9 @@ export function renderLearnTab() {
       '  collect unlocked rewards as rounds pass',
     ]),
     textBlock('If an NFT is burned while rewards are still vesting, the unvested portion is returned to the pool for future rounds — it doesn’t disappear.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-handles', '20. PROJECT HANDLES', [
+  wrap += guideSection('learn-handles', '20. PROJECT HANDLES', [
     'Instead of referring to projects by number ("project #47"), you can give yours a human-readable name like "myproject.eth" using ENS — the Ethereum Name Service, which works like a phonebook for blockchain addresses.',
     'To set up a handle, you need two things: an ENS name you own, and a text record on that name pointing to your project. This two-way link proves that the name owner actually wants the association — anyone can propose a name for a project, but it only counts if the ENS name confirms it.',
     'Multiple people can propose different names for the same project. Frontends (apps and websites) decide which proposer to trust. This open design means no single gatekeeper controls naming.'
@@ -427,9 +410,9 @@ export function renderLearnTab() {
       '  5. your project now shows as "myproject.eth"',
     ]),
     textBlock('Subdomains work too, stored innermost-last: "sub.myproject.eth" is stored as ["myproject", "sub"] — the contract joins the parts in reverse and appends .eth, then verifies the result against the ENS registry.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('learn-payer', '21. PAYER ADDRESS', [
+  wrap += guideSection('learn-payer', '21. PAYER ADDRESS', [
     'A payer address is a dedicated native-token (ETH) deposit address for your project. Native ETH sent directly to it is automatically forwarded into your project — no extra steps for the sender. ERC-20 tokens sent directly to the address do not trigger a payment.',
     'You can configure it in two modes. In the default mode, payments mint project tokens for the sender (just like paying the project directly). In "add to balance" mode, funds go straight into the project’s balance without minting tokens — useful for revenue deposits, donations, or any scenario where token issuance isn’t desired.',
     'The payer address automatically finds the right terminal to route funds to. If your project migrates to a new terminal later, the payer address follows it automatically — no reconfiguration needed.'
@@ -447,23 +430,18 @@ export function renderLearnTab() {
       '        └─▶ adds funds to balance → no tokens minted',
     ]),
     textBlock('This is especially useful for integrations. Any contract, wallet, or payment flow that can send ETH to an address can now fund your project — they don’t need to know anything about Juicebox.')
-  ]));
+  ]);
 
-  container.appendChild(wrap);
-  initSmoothScroll(container);
+  wrap += '</div>';
+  return wrap;
 }
 
-export function renderBuildTab() {
-  var container = document.getElementById('tab-build');
-  container.innerHTML = '';
-
-  var wrap = document.createElement('div');
-  wrap.className = 'guide-wrap';
+export function buildGuideHtml() {
+  var wrap = '<div class="guide-wrap">';
 
   // --- Table of Contents ---
-  var toc = document.createElement('nav');
-  toc.className = 'guide-toc';
-  toc.innerHTML =
+  // Literal, already-escaped markup: emitted verbatim, never re-escaped.
+  var toc =
     '<div class="guide-toc-title">TABLE OF CONTENTS</div>' +
     '<div class="guide-toc-group-label">Life of a Project</div>' +
     '<a class="guide-toc-link" href="#build-launch">1. Launch</a>' +
@@ -489,16 +467,13 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
     '<a class="guide-toc-link" href="#build-clients">20. Build From This Client</a>';
-  wrap.appendChild(toc);
+  wrap += '<nav class="guide-toc">' + toc + '</nav>';
 
   // --- Life of a Project ---
 
-  var projectHeader = document.createElement('div');
-  projectHeader.className = 'guide-part-header';
-  projectHeader.textContent = 'LIFE OF A PROJECT';
-  wrap.appendChild(projectHeader);
+  wrap += partHeader('LIFE OF A PROJECT');
 
-  wrap.appendChild(guideSection('build-launch', '1. LAUNCH', [
+  wrap += guideSection('build-launch', '1. LAUNCH', [
     'Everything starts with JBController.launchProjectFor(). This single call:',
   ], [
     stepList([
@@ -518,9 +493,9 @@ export function renderBuildTab() {
       ')'
     ),
     infoBox('For omnichain projects, use JBOmnichainDeployer.launchProjectFor() instead — it deploys suckers across multiple chains simultaneously.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-configure', '2. CONFIGURE', [
+  wrap += guideSection('build-configure', '2. CONFIGURE', [
     'After launch, inspect and understand your project’s configuration:'
   ], [
     fnRefTable('READING PROJECT STATE', [
@@ -538,9 +513,9 @@ export function renderBuildTab() {
       ['JBFundAccessLimits.surplusAllowanceOf(...)', 'How much surplus the owner can withdraw'],
     ]),
     infoBox('Empty fundAccessLimitGroups = zero payouts (NOT unlimited). Use uint224.max for unlimited payouts.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-fund', '3. GET FUNDED', [
+  wrap += guideSection('build-fund', '3. GET FUNDED', [
     'Once launched, anyone can contribute to the project through its configured terminals.'
   ], [
     codeBlock(
@@ -562,9 +537,9 @@ export function renderBuildTab() {
       ['JBTerminalStore.currentTotalSurplusOf(...)', 'Surplus aggregated across ALL terminals'],
     ]),
     infoBox('Anyone can also inject capital without receiving tokens via addToBalanceOf(). This is useful for grants, donations, or returning funds.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-tokens-mgmt', '4. MANAGE TOKENS', [
+  wrap += guideSection('build-tokens-mgmt', '4. MANAGE TOKENS', [
     'Tokens start as internal credits. Deploy an ERC-20 whenever you’re ready.'
   ], [
     fnRefTable('TOKEN OPERATIONS', [
@@ -578,9 +553,9 @@ export function renderBuildTab() {
       ['JBController.mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent)', 'Owner mints tokens on-demand (if ruleset allows)'],
       ['JBController.burnTokensOf(holder, projectId, tokenCount, memo)', 'Holder burns their own tokens'],
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-distribute', '5. DISTRIBUTE', [
+  wrap += guideSection('build-distribute', '5. DISTRIBUTE', [
     'Projects distribute funds through payouts and reserved tokens. By default anyone can trigger distribution, but the ownerMustSendPayouts ruleset flag can restrict it to the project owner.'
   ], [
     codeBlock(
@@ -607,9 +582,9 @@ export function renderBuildTab() {
       ['JBController.pendingReservedTokenBalanceOf(projectId)', 'Undistributed reserved tokens'],
     ]),
     infoBox('sendPayoutsOf() is permissionless by default — anyone can trigger distributions. To restrict it to the project owner, enable the ownerMustSendPayouts flag in the ruleset metadata.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-cashout', '6. CASH OUT', [
+  wrap += guideSection('build-cashout', '6. CASH OUT', [
     'Token holders can cash out (redeem) their tokens for a proportional share of the project’s surplus. Surplus = terminal balance minus the remaining (unused) payout limit for the cycle.',
     'The cash out tax rate controls how much value stays in the project vs. goes to the redeemer. A rate of 0% = full proportional redemption. Higher rates incentivize holding but reduce access to capital.'
   ], [
@@ -634,9 +609,9 @@ export function renderBuildTab() {
       '  taxRate = 100%  → value stays in project (early holders protected)',
     ]),
     infoBox('Cash outs with tax rate > 0% pay the 2.5% protocol fee on the whole reclaimed amount. At tax rate 0% the fee still applies, on min(reclaimed, feeFreeSurplusOf) — often zero, but not always.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-evolve', '7. EVOLVE', [
+  wrap += guideSection('build-evolve', '7. EVOLVE', [
     'Projects evolve by queuing new rulesets. Changes take effect at the next cycle boundary (or immediately if the current ruleset has no duration).'
   ], [
     codeBlock(
@@ -653,16 +628,13 @@ export function renderBuildTab() {
       ['JBController.latestQueuedRulesetOf(projectId)', 'Pending ruleset awaiting activation'],
       ['JBController.allRulesetsOf(projectId, startingId, size)', 'Complete ruleset history'],
     ])
-  ]));
+  ]);
 
   // --- Life of a Revnet ---
 
-  var revnetHeader = document.createElement('div');
-  revnetHeader.className = 'guide-part-header';
-  revnetHeader.textContent = 'LIFE OF A REVNET';
-  wrap.appendChild(revnetHeader);
+  wrap += partHeader('LIFE OF A REVNET');
 
-  wrap.appendChild(guideSection('build-revnet-what', '8. WHAT’S A REVNET?', [
+  wrap += guideSection('build-revnet-what', '8. WHAT’S A REVNET?', [
     'A revnet is a Juicebox project owned by a special contract (REVOwner) that enforces a fixed set of rules. No one — not even the deployer — can change the rules after launch.',
     'This creates a revenue-backed token with programmatic capital formation and zero payout mismanagement risk. The token is automatically deployed as an ERC-20 at launch.',
     'Revnets replace "rulesets" with "stages" — same underlying mechanism, but the terminology emphasizes the predetermined progression.'
@@ -682,9 +654,9 @@ export function renderBuildTab() {
       '  • trustless, programmatic',
       '  • good for: protocols, tokens',
     ])
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-revnet-deploy', '9. DEPLOY A REVNET', [
+  wrap += guideSection('build-revnet-deploy', '9. DEPLOY A REVNET', [
     'Deploy with REVDeployer.deployFor():'
   ], [
     codeBlock(
@@ -699,9 +671,9 @@ export function renderBuildTab() {
       ')'
     ),
     textBlock('After deployment, interactions are identical to regular projects — pay(), cashOutTokensOf(), and all read functions work the same way. The difference is governance: no one can change the rules.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-revnet-stages', '10. STAGES', [
+  wrap += guideSection('build-revnet-stages', '10. STAGES', [
     'Stages are pre-programmed rulesets. A revnet might start with high token issuance (bootstrapping), then reduce over time (scarcity), and eventually reach a steady state.',
     'Each stage can configure: token weight, weight decay, reserved splits, cash out tax rate, and more. Once deployed, stages progress automatically at their configured boundaries.'
   ], [
@@ -710,9 +682,9 @@ export function renderBuildTab() {
       ['JBController.upcomingRulesetOf(projectId)', 'Next stage (empty if current has no duration)'],
       ['JBController.allRulesetsOf(projectId, startingId, size)', 'Complete stage history'],
     ]),
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-revnet-fees', '11. REVNET FEES', [
+  wrap += guideSection('build-revnet-fees', '11. REVNET FEES', [
     'Cash outs from revnets with a cash out tax rate > 0% incur two fees:',
   ], [
     stepList([
@@ -720,16 +692,13 @@ export function renderBuildTab() {
       '2.5% revnet fee — taken from the token count by REVOwner, sent to the revnet fee project',
     ]),
     textBlock('The protocol fee is on the value reclaimed (ETH/tokens out). The revnet fee is on the token count burned (project tokens). These are different bases.')
-  ]));
+  ]);
 
   // --- Ecosystem Tools ---
 
-  var ecoHeader = document.createElement('div');
-  ecoHeader.className = 'guide-part-header';
-  ecoHeader.textContent = 'ECOSYSTEM TOOLS';
-  wrap.appendChild(ecoHeader);
+  wrap += partHeader('ECOSYSTEM TOOLS');
 
-  wrap.appendChild(guideSection('build-permissions', '12. PERMISSIONS', [
+  wrap += guideSection('build-permissions', '12. PERMISSIONS', [
     'Grant fine-grained access to other addresses with JBPermissions. Each permission is a bit in a 256-bit field.'
   ], [
     codeBlock(
@@ -787,9 +756,9 @@ export function renderBuildTab() {
       ['39 - REPAY_LOAN', 'Repay a loan on a holder’s behalf.'],
     ]),
     infoBox('Permissions are per-operator, per-project. Granting QUEUE_RULESETS to address X for project 5 doesn’t give X any access to project 6.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-nfts', '13. NFT TIERS', [
+  wrap += guideSection('build-nfts', '13. NFT TIERS', [
     'Deploy tiered NFTs as pay hooks using JB721TiersHook. Contributors receive NFTs based on payment amount and tier configuration.'
   ], [
     codeBlock(
@@ -820,9 +789,9 @@ export function renderBuildTab() {
       ['JB721TiersHook.cashOutWeightOf(tokenIds[])', 'Cash out weight of specific NFTs (divide by totalCashOutWeight() for the surplus fraction)'],
     ]),
     infoBox('Tiers are sorted by CATEGORY, not price. The contract reverts with InvalidCategorySortOrder if submitted out of order.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-hooks', '14. CUSTOM HOOKS', [
+  wrap += guideSection('build-hooks', '14. CUSTOM HOOKS', [
     'Build custom logic that executes at key moments in the payment lifecycle. Hooks are the primary extension mechanism.'
   ], [
     propertyTable('HOOK INTERFACES', [
@@ -844,9 +813,9 @@ export function renderBuildTab() {
       '//   beneficiary, hookMetadata, payerMetadata'
     ),
     infoBox('Data hooks run BEFORE state changes and can override values. Pay and cash out hooks run AFTER and are for side effects only.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-distributor', '15. DISTRIBUTOR', [
+  wrap += guideSection('build-distributor', '15. DISTRIBUTOR', [
     'JBDistributor is an optional, project-deployed add-on (not part of the core protocol deployment). It distributes ERC-20 rewards to stakers in time-based rounds with linear vesting. Two implementations exist: JBTokenDistributor (for IJBActiveVotes token holders, e.g. a Juicebox JBERC20) and JB721Distributor (for NFT holders).',
     'The distributor is funded via split hooks or direct deposits. Each round, a snapshot captures the distributable balance. Stakers claim their pro-rata share, which vests linearly over a configured number of rounds.'
   ], [
@@ -865,9 +834,9 @@ export function renderBuildTab() {
       ['roundSnapshotBlock(round)', 'The block number used for stake weight lookups'],
     ]),
     infoBox('A holder’s stake comes from IVotes.getPastVotes() (token distributors) or tier voting units (721 distributors). The TOTAL-stake denominator uses IJBActiveVotes.getPastTotalActiveVotes — which excludes undelegated balances (e.g. AMM-held tokens), so holders must delegate (even to themselves) to count. Rewards are proportional to active stake at the snapshot block.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-handles', '16. PROJECT HANDLES', [
+  wrap += guideSection('build-handles', '16. PROJECT HANDLES', [
     'JBProjectHandles maps ENS names to Juicebox project IDs using bidirectional verification. Anyone can propose a handle, but only verified ones (where the ENS text record matches) are returned by handleOf().',
     'All functions take a chainId parameter — handles are chain-aware. Storage is keyed by the setter address, so multiple addresses can propose different handles for the same project.'
   ], [
@@ -878,9 +847,9 @@ export function renderBuildTab() {
       ['TEXT_KEY', 'The ENS text record key: "juicebox". Expected value: "{chainId}:{projectId}".'],
     ]),
     textBlock('Name parts are in reverse order with .eth appended automatically — `_formatHandle` walks the array from the LAST element to the first (JBProjectHandles.sol:224-227), so the innermost label goes last. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["myproject", "sub"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-payer', '17. PAYER ADDRESS', [
+  wrap += guideSection('build-payer', '17. PAYER ADDRESS', [
     'A JBProjectPayer address is deployed as a minimal proxy (clone). The constructor takes only a JBDirectory address. After deployment, defaults are set via initialize() or setDefaultValues().',
     'The receive path accepts the native token (ETH) only. When defaultAddToBalance is false, incoming native ETH triggers pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. The beneficiary defaults to msg.sender if not configured. ERC-20 payments must call pay() or addToBalanceOf() after approval; direct ERC-20 transfers do not trigger either path.'
   ], [
@@ -899,9 +868,9 @@ export function renderBuildTab() {
       '//   → calls pay() or addToBalanceOf() with defaults'
     ),
     infoBox('Terminal lookup happens at payment time via JBDirectory, so the payer address automatically follows terminal migrations without reconfiguration.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-swap-terminal', '18. ROUTER TERMINAL', [
+  wrap += guideSection('build-swap-terminal', '18. ROUTER TERMINAL', [
     'JBRouterTerminal is a universal payment terminal: it accepts any token and automatically converts it into whatever token the destination project accepts, then forwards the result to that project’s primary terminal. It’s a pass-through — it never holds a balance.',
     'There is no fixed output token. For each payment, a JBPayRouteResolver evaluates every token the destination project accepts and picks the route that yields the most project tokens for the payer — choosing among direct forwarding, a Uniswap V3 or V4 swap, a recursive cash out of JB tokens, or a combination. Pools and routes are discovered automatically, not configured per project.'
   ], [
@@ -912,9 +881,9 @@ export function renderBuildTab() {
       ['bestPoolLiquidityOf(tokenA, tokenB)', 'Report the deepest-liquidity Uniswap pool the router would use for a pair.'],
     ]),
     textBlock('The router terminal implements IJBTerminal and is registered alongside JBMultiTerminal in JBDirectory. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
-  ]));
+  ]);
 
-  wrap.appendChild(guideSection('build-buyback', '19. BUYBACK HOOK', [
+  wrap += guideSection('build-buyback', '19. BUYBACK HOOK', [
     'JBBuybackHook compares the mint price against a Uniswap V4 pool price and routes payments (and cash outs) to whichever gives better value. Slippage tolerance is computed automatically via a sigmoid function — not configurable.',
   ], [
     codeBlock(
@@ -943,15 +912,12 @@ export function renderBuildTab() {
       '        └─▶ normal mint flow (weight × amount)',
     ]),
     infoBox('The hook also handles cash outs: if the pool offers more than the bonding curve reclaim (after fees), it routes the sell through the pool instead. Payers can bypass the TWAP by providing their own quote in payment metadata.')
-  ]));
+  ]);
 
   // --- Build Your Own ---
-  var ownHeader = document.createElement('div');
-  ownHeader.className = 'guide-part-header';
-  ownHeader.textContent = 'BUILD YOUR OWN';
-  wrap.appendChild(ownHeader);
+  wrap += partHeader('BUILD YOUR OWN');
 
-  wrap.appendChild(guideSection('build-clients', '20. BUILD FROM THIS CLIENT', [
+  wrap += guideSection('build-clients', '20. BUILD FROM THIS CLIENT', [
     'Juicebox Money is a production V6 client you can study, fork, or use as a reference for your own product. Its Next.js interface combines server-assisted indexing and IPFS services with wallet flows that build and verify Juicebox transactions from the current V6 contracts.',
     'Treat each working flow as an implementation example, not a black box. The project, account, shop, and create surfaces show how product interactions map to indexed reads, fresh onchain checks, transaction builders, ABI round trips, and clear signing previews. Give the relevant source and tests to your coding agent when you want to reuse one of those patterns.'
   ], [
@@ -962,51 +928,35 @@ export function renderBuildTab() {
       'Reuse the pure transaction-builder and ABI round-trip pattern, then add product-specific invariants and browser tests before asking a wallet to sign.'
     ]),
     (function () {
-      var box = document.createElement('p'); box.className = 'guide-text';
-      box.appendChild(document.createTextNode('Reference: '));
-      var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
-      box.appendChild(lk('https://github.com/mejango/juicebox-money', 'Juicebox Money’s repo (source + tests)'));
-      box.appendChild(document.createTextNode(' and '));
-      box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
-      box.appendChild(document.createTextNode('.'));
-      return box;
+      var lk = function (href, text) { return '<a href="' + escAttr(href) + '" target="_blank" rel="noopener">' + esc(text) + '</a>'; };
+      return '<p class="guide-text">' + esc('Reference: ') +
+        lk('https://github.com/mejango/juicebox-money', 'Juicebox Money’s repo (source + tests)') +
+        esc(' and ') +
+        lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)') +
+        esc('.') + '</p>';
     })(),
-    (function () {
-      var p = document.createElement('p'); p.className = 'guide-text';
-      p.textContent = 'Use the app as a product reference and the repository as the implementation reference. Server routes improve indexing, search, media, and transaction preparation; signing remains explicit, and each wallet-bound action is decoded and checked against the V6 ABI before submission.';
-      return p;
-    })()
-  ]));
+    textBlock('Use the app as a product reference and the repository as the implementation reference. Server routes improve indexing, search, media, and transaction preparation; signing remains explicit, and each wallet-bound action is decoded and checked against the V6 ABI before submission.')
+  ]);
 
-  container.appendChild(wrap);
-  initSmoothScroll(container);
+  wrap += '</div>';
+  return wrap;
 }
 
 // Wants version — the "Why?" page as the answer to "what do project owners
 // actually want?". Opens with a single setup paragraph, then a list of
 // "They want…" beats culminating in the closer: earn money on their terms.
-export function renderWhyTab() {
-  var container = document.getElementById('tab-why');
-  if (!container) return;
-  container.innerHTML = '';
+export function whyGuideHtml() {
+  var wrap = '<div class="guide-wrap why-wrap why-wants">';
 
-  var wrap = document.createElement('div');
-  wrap.className = 'guide-wrap why-wrap why-wants';
+  var hero = '<div class="why-hero">';
 
-  var hero = document.createElement('div');
-  hero.className = 'why-hero';
+  hero += '<div class="why-kicker">' + esc('WHY JUICEBOX?') + '</div>';
 
-  var kicker = document.createElement('div');
-  kicker.className = 'why-kicker';
-  kicker.textContent = 'WHY JUICEBOX?';
-  hero.appendChild(kicker);
+  hero += '<div class="why-title">' + esc('What open source businesses, campaigns, and indie projects actually want:') + '</div>';
 
-  var title = document.createElement('div');
-  title.className = 'why-title';
-  title.textContent = 'What open source businesses, campaigns, and indie projects actually want:';
-  hero.appendChild(title);
+  hero += '</div>';
 
-  wrap.appendChild(hero);
+  wrap += hero;
 
   var wants = [
     'They want to receive payments wherever and however people want to pay them, and issue their unified, programmable, tokenized assets wherever their users want them, in real time, without managerial overhead.',
@@ -1023,198 +973,131 @@ export function renderWhyTab() {
     'They want the freedom to earn their money, on their terms.'
   ];
 
-  var list = document.createElement('div');
-  list.className = 'why-wants-list';
+  var list = '<div class="why-wants-list">';
   for (var i = 0; i < wants.length; i++) {
-    var w = document.createElement('p');
-    w.className = 'why-want';
-    w.textContent = wants[i];
-    list.appendChild(w);
+    list += '<p class="why-want">' + esc(wants[i]) + '</p>';
   }
-  wrap.appendChild(list);
+  list += '</div>';
+  wrap += list;
 
-  container.appendChild(wrap);
+  wrap += '</div>';
+  return wrap;
 }
 
 // --- Helper builders ---
+// Every builder below returns an HTML string so the guides can be rendered on
+// the server. `esc` reproduces exactly what assigning to `.textContent` and
+// reading `.innerHTML` back produces, so the emitted DOM is unchanged.
+
+// Text-node escaping: `&`, `<` and `>` only — the same set the HTML serializer
+// escapes inside a text node. Quotes are left alone, exactly as textContent does.
+function esc(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// Attribute values additionally escape the `"` that delimits them.
+function escAttr(value) {
+  return esc(value).replace(/"/g, '&quot;');
+}
+
+function partHeader(label) {
+  return '<div class="guide-part-header">' + esc(label) + '</div>';
+}
 
 // A small link icon next to a section header that copies a deep link to that section (paste to an LLM).
-function sectionLinkButton(id) {
-  var btn = document.createElement('button');
-  btn.className = 'guide-copy-link';
-  btn.type = 'button';
-  btn.title = 'Copy a link to this section';
-  btn.setAttribute('aria-label', 'Copy link to this section');
-  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-  btn.addEventListener('click', function (e) {
-    e.preventDefault(); e.stopPropagation();
-    var url = location.origin + location.pathname + location.search + '#' + id;
-    var ok = function () { btn.classList.add('guide-copy-link--ok'); btn.title = 'Copied'; setTimeout(function () { btn.classList.remove('guide-copy-link--ok'); btn.title = 'Copy a link to this section'; }, 1300); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, ok);
-    else { try { var ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
-  });
-  return btn;
+// The click handling lives in the GuideInteractions client island; the inline
+// SVG below is literal, already-escaped markup and is emitted verbatim.
+function sectionLinkButton() {
+  return '<button class="guide-copy-link" type="button" title="Copy a link to this section" aria-label="Copy link to this section">' +
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>' +
+    '</button>';
 }
 
 function guideSection(id, title, paragraphs, extras) {
-  var section = document.createElement('div');
-  section.className = 'guide-section';
-  section.id = id;
+  var section = '<div class="guide-section" id="' + escAttr(id) + '">';
 
-  var h = document.createElement('h2');
-  h.className = 'guide-section-title';
-  var titleSpan = document.createElement('span');
-  titleSpan.textContent = title;
-  h.appendChild(titleSpan);
   // Copy a deep link to this section — paste it to an LLM ("recreate this feature against the V6 contracts")
-  // or share it. The link routes back to this tab + scrolls here (see applyHash in app.js).
-  h.appendChild(sectionLinkButton(id));
-  section.appendChild(h);
+  // or share it. The link routes back to this tab + scrolls here.
+  section += '<h2 class="guide-section-title"><span>' + esc(title) + '</span>' + sectionLinkButton() + '</h2>';
 
   for (var i = 0; i < paragraphs.length; i++) {
-    var p = document.createElement('p');
-    p.className = 'guide-text';
-    p.textContent = paragraphs[i];
-    section.appendChild(p);
+    section += '<p class="guide-text">' + esc(paragraphs[i]) + '</p>';
   }
 
   if (extras) {
     for (var j = 0; j < extras.length; j++) {
-      section.appendChild(extras[j]);
+      section += extras[j];
     }
   }
 
-  return section;
+  return section + '</div>';
 }
 
 function diagram(label, lines) {
-  var el = document.createElement('div');
-  el.className = 'guide-diagram';
   // Diagrams scroll horizontally on narrow screens. Make that viewport
   // keyboard-reachable instead of trapping the content behind touch input.
-  el.tabIndex = 0;
-  var title = document.createElement('div');
-  title.className = 'guide-diagram-title';
-  title.textContent = label;
-  el.appendChild(title);
-  var pre = document.createElement('pre');
-  pre.className = 'guide-diagram-pre';
-  pre.textContent = lines.join('\n');
-  el.appendChild(pre);
-  return el;
+  return '<div class="guide-diagram" tabindex="0">' +
+    '<div class="guide-diagram-title">' + esc(label) + '</div>' +
+    '<pre class="guide-diagram-pre">' + esc(lines.join('\n')) + '</pre>' +
+    '</div>';
 }
 
 function propertyTable(label, rows) {
-  var el = document.createElement('div');
-  el.className = 'guide-prop-table';
+  var el = '<div class="guide-prop-table">';
   if (label) {
-    var title = document.createElement('div');
-    title.className = 'guide-prop-title';
-    title.textContent = label;
-    el.appendChild(title);
+    el += '<div class="guide-prop-title">' + esc(label) + '</div>';
   }
   for (var i = 0; i < rows.length; i++) {
-    var row = document.createElement('div');
-    row.className = 'guide-prop-row';
-    var name = document.createElement('code');
-    name.className = 'guide-prop-name';
-    name.textContent = rows[i][0];
-    var desc = document.createElement('span');
-    desc.className = 'guide-prop-desc';
-    desc.textContent = rows[i][1];
-    row.appendChild(name);
-    row.appendChild(desc);
-    el.appendChild(row);
+    el += '<div class="guide-prop-row">' +
+      '<code class="guide-prop-name">' + esc(rows[i][0]) + '</code>' +
+      '<span class="guide-prop-desc">' + esc(rows[i][1]) + '</span>' +
+      '</div>';
   }
-  return el;
+  return el + '</div>';
 }
 
 function fnRefTable(label, rows) {
-  var el = document.createElement('div');
-  el.className = 'guide-fn-table';
+  var el = '<div class="guide-fn-table">';
   if (label) {
-    var title = document.createElement('div');
-    title.className = 'guide-fn-title';
-    title.textContent = label;
-    el.appendChild(title);
+    el += '<div class="guide-fn-title">' + esc(label) + '</div>';
   }
   for (var i = 0; i < rows.length; i++) {
-    var row = document.createElement('div');
-    row.className = 'guide-fn-row';
-    var fn = document.createElement('code');
-    fn.className = 'guide-fn-name';
-    fn.textContent = rows[i][0];
-    var desc = document.createElement('span');
-    desc.className = 'guide-fn-desc';
-    desc.textContent = rows[i][1];
-    row.appendChild(fn);
-    row.appendChild(desc);
-    el.appendChild(row);
+    el += '<div class="guide-fn-row">' +
+      '<code class="guide-fn-name">' + esc(rows[i][0]) + '</code>' +
+      '<span class="guide-fn-desc">' + esc(rows[i][1]) + '</span>' +
+      '</div>';
   }
-  return el;
+  return el + '</div>';
 }
 
 function codeBlock(label, code) {
-  var el = document.createElement('div');
-  el.className = 'guide-code';
   // Long examples scroll horizontally at phone widths; expose that scroll
   // region to keyboard and assistive-technology users as well.
-  el.tabIndex = 0;
+  var el = '<div class="guide-code" tabindex="0">';
   if (label) {
-    var title = document.createElement('div');
-    title.className = 'guide-code-title';
-    title.textContent = label;
-    el.appendChild(title);
+    el += '<div class="guide-code-title">' + esc(label) + '</div>';
   }
-  var pre = document.createElement('pre');
-  pre.className = 'guide-code-pre';
-  pre.textContent = code;
-  el.appendChild(pre);
-  return el;
+  return el + '<pre class="guide-code-pre">' + esc(code) + '</pre></div>';
 }
 
 function infoBox(text) {
-  var el = document.createElement('div');
-  el.className = 'guide-info';
-  el.textContent = text;
-  return el;
+  return '<div class="guide-info">' + esc(text) + '</div>';
 }
 
 function textBlock(text) {
-  var p = document.createElement('p');
-  p.className = 'guide-text';
-  p.textContent = text;
-  return p;
+  return '<p class="guide-text">' + esc(text) + '</p>';
 }
 
 function stepList(items) {
-  var el = document.createElement('div');
-  el.className = 'guide-steps';
+  var el = '<div class="guide-steps">';
   for (var i = 0; i < items.length; i++) {
-    var step = document.createElement('div');
-    step.className = 'guide-step';
-    var num = document.createElement('span');
-    num.className = 'guide-step-num';
-    num.textContent = (i + 1);
-    var text = document.createElement('span');
-    text.className = 'guide-step-text';
-    text.textContent = items[i];
-    step.appendChild(num);
-    step.appendChild(text);
-    el.appendChild(step);
+    el += '<div class="guide-step">' +
+      '<span class="guide-step-num">' + esc(i + 1) + '</span>' +
+      '<span class="guide-step-text">' + esc(items[i]) + '</span>' +
+      '</div>';
   }
-  return el;
-}
-
-function initSmoothScroll(container) {
-  container.querySelectorAll('.guide-toc-link').forEach(function(link) {
-    link.addEventListener('click', function(e) {
-      e.preventDefault();
-      var targetId = link.getAttribute('href').slice(1);
-      var target = document.getElementById(targetId);
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    });
-  });
+  return el + '</div>';
 }

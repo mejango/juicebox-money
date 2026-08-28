@@ -130,3 +130,11 @@ export const getProjectLinkPreview = cache(
     }
   },
 )
+
+/** Cache key for the share card: changes exactly when the numbers on it do. */
+export function previewVersion(
+  preview: Pick<ProjectLinkPreview, 'balance' | 'paymentsCount'> | null,
+): string {
+  if (!preview) return '0'
+  return `${preview.paymentsCount}-${preview.balance.replace(/\D/gu, '')}`
+}
