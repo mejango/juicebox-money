@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars, no-var */
 // @ts-nocheck -- adapted DOM renderer; Juicescan remains the protocol-content source of truth.
 // Mirrored from webclients/juicescan/src/learn-build.js. Client-specific guidance may diverge.
+// The Learn tab renders from here. The BUILD tab does not: juicebox.money serves it from
+// src/lib/build-guide.ts, which carries these sections verbatim plus the audience tracks.
 // src/learn-build.js
 // Learn & Build tab content — engaging walkthrough of the Juicebox protocol
 
