@@ -1,6 +1,47 @@
-import { createJBCenterRpcProvider } from '@bananapus/nana-sdk-core/jbcenter'
+import {
+  createJBCenterRpcProvider,
+  type JBCenterRpcProvider,
+} from '@bananapus/nana-sdk-core/jbcenter'
 import { custom, http, type Transport } from 'viem'
 import { jbCenterAppOrigin, jbCenterBaseUrl } from '@/lib/jbcenter-config'
+
+/** JB Center load balances reads across RPC nodes that import blocks at
+ * slightly different times. A read pinned to a block one node has already
+ * imported can land on a sibling that has not, and the sibling answers
+ * JSON-RPC -32001 — which viem renders as "Requested resource not found."
+ * Waiting out the lag is the only correct answer: falling back to `latest`
+ * would read state older than the approval the pinned block exists to
+ * observe. Base mines every two seconds, so this schedule covers a few
+ * blocks of drift. */
+const BLOCK_LAG_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 2_000]
+
+function isBehindHead(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { code?: unknown }).code === -32001
+  )
+}
+
+/** Retries reads that a lagging node cannot answer yet. Every method JB Center
+ * allows is a read, so a retry can only repeat work, never repeat an effect. */
+export function retryWhileBehindHead(
+  provider: JBCenterRpcProvider,
+  delaysMs: readonly number[] = BLOCK_LAG_RETRY_DELAYS_MS,
+): JBCenterRpcProvider {
+  return {
+    async request(request) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await provider.request(request)
+        } catch (error) {
+          if (attempt >= delaysMs.length || !isBehindHead(error)) throw error
+          await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]))
+        }
+      }
+    },
+  }
+}
 
 const FIXTURE_NETWORKS: Record<number, string> = {
   1: 'mainnet',
@@ -33,11 +74,13 @@ export function jbCenterRpcTransport(
     return network ? http(`${origin}/rpc/${network}`) : http()
   }
   return custom(
-    createJBCenterRpcProvider(chainId, {
-      baseUrl: jbCenterBaseUrl(),
-      fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
-      timeoutMs,
-    }),
+    retryWhileBehindHead(
+      createJBCenterRpcProvider(chainId, {
+        baseUrl: jbCenterBaseUrl(),
+        fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
+        timeoutMs,
+      }),
+    ),
     { retryCount: 1 },
   )
 }
