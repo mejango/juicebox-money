@@ -26,7 +26,7 @@ const METRICS: { value: Metric; label: string; chartLabel: string }[] = [
     value: 'secured',
     label: 'Secured by Juicebox',
     chartLabel:
-      'Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect values.',
+      'Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect total and per-chain values.',
   },
   {
     value: 'passedThrough',
