@@ -770,7 +770,7 @@ export default async function ProjectPage({
                   <span aria-hidden className="mx-2.5 text-smoke-300">
                     |
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex items-baseline gap-1.5">
                     <span className="text-smoke-500">On:</span>
                     {chains.map((p) => (
                       <ProjectLink
@@ -823,7 +823,7 @@ export default async function ProjectPage({
                 <span aria-hidden className="mx-2.5 text-smoke-300">
                   |
                 </span>
-                <span className="inline-flex items-center gap-1.5">
+                <span className="inline-flex items-baseline gap-1.5">
                   <span className="text-smoke-500">On:</span>
                   {chains.map((p) => (
                     <ProjectLink
