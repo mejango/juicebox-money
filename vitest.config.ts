@@ -46,10 +46,10 @@ export default defineConfig({
           lines: 35,
         },
         'src/components/project/CashOutFlow.tsx': {
-          statements: 65,
-          branches: 65,
-          functions: 55,
-          lines: 68,
+          statements: 70,
+          branches: 72,
+          functions: 60,
+          lines: 70,
         },
         'src/components/project/ExtrasTab.tsx': {
           statements: 65,

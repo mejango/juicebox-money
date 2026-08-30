@@ -17,6 +17,7 @@ import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { buildSet721TierMediaRequest } from '@/lib/transaction-builders'
 import { shortError } from '@/lib/errors'
 import { gasWithHeadroom } from '@/lib/gas'
 import {
@@ -232,15 +233,12 @@ export function ReplaceTierMediaModal({
         const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient
         updateStatus(target.chainId, { phase: 'signing', error: undefined })
         try {
-          const request = {
+          const request = buildSet721TierMediaRequest({
             chainId: targetChain,
-            address: targetHook,
-            abi: jb721TiersHookAbi,
-            functionName: 'setMetadata' as const,
-            // Empty strings and the hook's own address are the contract's
-            // "leave unchanged" sentinels for everything but the tier URI.
-            args: ['', '', '', '', targetHook, BigInt(tierId), encoded] as const,
-          }
+            hook: targetHook,
+            tierId,
+            encodedIpfsUri: encoded,
+          })
           let submitted = await submitReviewedContractWrite({
             request,
             expectedAccount: address,

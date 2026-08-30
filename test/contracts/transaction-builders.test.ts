@@ -27,6 +27,7 @@ import {
   buildAddToBalanceRequest,
   buildAdjustTiersRequest,
   buildMint721TierRequest,
+  buildSet721TierMediaRequest,
   buildErc20ApproveRequest,
   buildPermissionsAuthorityCall,
   buildQueueRulesetsAuthorityCall,
@@ -234,6 +235,44 @@ describe("local transaction builders", () => {
       functionName: "adjustTiers",
       args: [tiers, [3n, 9n]],
     });
+  });
+
+  it("replaces one tier's media through setMetadata's leave-unchanged sentinels", () => {
+    const request = buildSet721TierMediaRequest({
+      chainId: CHAIN_ID,
+      hook: HOOK,
+      tierId: 7,
+      encodedIpfsUri: "0xabababababababababababababababababababababababababababababababab",
+    });
+    const data = encode(request);
+
+    expect(request).toMatchObject({
+      chainId: CHAIN_ID,
+      address: HOOK,
+      functionName: "setMetadata",
+      args: ["", "", "", "", HOOK, 7n, "0xabababababababababababababababababababababababababababababababab"],
+    });
+    expect(request).not.toHaveProperty("value");
+    expect(decodeFunctionData({ abi: request.abi, data })).toEqual({
+      functionName: "setMetadata",
+      args: ["", "", "", "", HOOK, 7n, "0xabababababababababababababababababababababababababababababababab"],
+    });
+    expect(() =>
+      buildSet721TierMediaRequest({
+        chainId: CHAIN_ID,
+        hook: HOOK,
+        tierId: 0,
+        encodedIpfsUri: "0xabababababababababababababababababababababababababababababababab",
+      }),
+    ).toThrow(/uint16/);
+    expect(() =>
+      buildSet721TierMediaRequest({
+        chainId: CHAIN_ID,
+        hook: HOOK,
+        tierId: 7,
+        encodedIpfsUri: "0x1234",
+      }),
+    ).toThrow(/bytes32/);
   });
 
   it("pins an owner tier mint to its reviewed quantity and beneficiary", () => {

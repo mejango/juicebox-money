@@ -787,7 +787,7 @@ export default async function ProjectPage({
                         key={p.chainId}
                         href={`/${toUrn(p.chainId, p.projectId)}`}
                         projectHint={{ name, logoUri, tagline }}
-                        className="inline-block translate-y-[3px] transition-opacity hover:opacity-70"
+                        className="inline-block translate-y-[1px] transition-opacity hover:opacity-70"
                       >
                         <ChainIcon chainId={p.chainId} standalone />
                       </ProjectLink>
@@ -840,7 +840,7 @@ export default async function ProjectPage({
                       key={p.chainId}
                       href={`/${toUrn(p.chainId, p.projectId)}`}
                       projectHint={{ name, logoUri, tagline }}
-                      className="inline-block translate-y-[3px] transition-opacity hover:opacity-70"
+                      className="inline-block translate-y-[1px] transition-opacity hover:opacity-70"
                     >
                       <ChainIcon chainId={p.chainId} standalone />
                     </ProjectLink>

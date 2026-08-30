@@ -6,9 +6,9 @@ type Feed = 'activity' | 'trending' | 'top'
 type RankingFeed = Exclude<Feed, 'activity'>
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
-  { id: 'activity', label: 'Latest' },
   { id: 'top', label: 'Top' },
   { id: 'trending', label: 'Trending' },
+  { id: 'activity', label: 'Latest' },
 ]
 
 const RANKING_FEEDS = FEEDS.filter(
@@ -74,7 +74,7 @@ export function HomepageDiscoveryLayout({
   trending: ReactNode
   top: ReactNode
 }) {
-  const [activeFeed, setActiveFeed] = useState<Feed>('activity')
+  const [activeFeed, setActiveFeed] = useState<Feed>('top')
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
@@ -102,12 +102,12 @@ export function HomepageDiscoveryLayout({
         aria-labelledby="home-all-activity-tab"
         className={`${
           activeFeed === 'activity' ? 'block' : 'hidden'
-        } order-4 min-w-0 sm:col-start-1 sm:row-start-3 sm:block md:row-start-2 xl:col-start-1`}
+        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:col-start-3 xl:row-span-2 xl:row-start-1`}
       >
         {activity}
       </div>
 
-      <div className="order-5 min-w-0 sm:col-start-2 sm:row-start-3 md:row-start-2 xl:contents">
+      <div className="order-4 min-w-0 sm:col-start-1 sm:row-start-3 md:row-start-2 xl:contents">
         <FeedTabs
           feeds={RANKING_FEEDS}
           active={rankingFeed}
@@ -123,7 +123,7 @@ export function HomepageDiscoveryLayout({
           aria-labelledby="home-all-top-tab home-ranking-top-tab"
           className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
             rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
-          } min-w-0 xl:col-start-2 xl:row-start-2 xl:block`}
+          } min-w-0 xl:col-start-1 xl:row-start-2 xl:block`}
         >
           {top}
         </div>
@@ -134,7 +134,7 @@ export function HomepageDiscoveryLayout({
           aria-labelledby="home-all-trending-tab home-ranking-trending-tab"
           className={`${activeFeed === 'trending' ? 'block' : 'hidden'} ${
             rankingFeed === 'trending' ? 'sm:block' : 'sm:hidden'
-          } min-w-0 xl:col-start-3 xl:row-span-2 xl:row-start-1 xl:block`}
+          } min-w-0 xl:col-start-2 xl:row-start-2 xl:block`}
         >
           {trending}
         </div>

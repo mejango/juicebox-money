@@ -1,6 +1,7 @@
 import {
   JB_CHAINS,
   NATIVE_TOKEN,
+  USDC_ADDRESSES,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
@@ -26,6 +27,15 @@ export async function tokenSymbol(
       'ETH'
     )
   }
+  // Known USDC needs no read. When the `symbol()` call fails (a blocked RPC), the truncated
+  // address below never matches "USDC", and the pay panel then tells a USDC project's payer to
+  // buy ETH.
+  if (
+    Object.values(USDC_ADDRESSES).some(
+      usdc => usdc?.toLowerCase() === token.toLowerCase(),
+    )
+  )
+    return 'USDC'
   return client
     .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })
     .then(s => s as string)

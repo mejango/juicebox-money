@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { pageMetadata } from '@/lib/page-metadata'
+import { AgentSkillsNote } from '@/components/AgentSkillsNote'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
 const title = 'Learn'
@@ -22,6 +23,7 @@ export default function LearnPage() {
           Understand how payments, balances, tokens, payouts, cash outs, rulesets, hooks, and
           multichain projects fit together before you participate or launch.
         </p>
+        <AgentSkillsNote className="mt-6 text-sm text-smoke-700" />
       </div>
       <ProtocolGuide guide="learn" />
     </div>

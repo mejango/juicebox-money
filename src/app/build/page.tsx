@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import { pageMetadata } from '@/lib/page-metadata'
 import { CopyBuildPrompt } from '@/components/CopyBuildPrompt'
-import { ProtocolGuide } from '@/components/ProtocolGuide'
+import { GuideSections } from '@/components/GuideSections'
+import { BUILD_SECTIONS } from '@/lib/build-guide'
 
 const title = 'Build'
 const description =
@@ -20,13 +21,13 @@ export default function BuildPage() {
           Build on Juicebox<span className="text-split-500">.</span>
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
-          Start with the experience you want to create. Use this guide to choose the right
-          Juicebox building blocks, map each user action to V6 reads and transactions, and ship a
-          safe first version.
+          Launch and run a project from this site, connect an app to Juicebox with the SDK and the
+          indexer, or extend the protocol with your own contracts. Each section is tagged with who
+          it is for, and every section links to the source it came from.
         </p>
         <CopyBuildPrompt className="mt-6 text-sm text-smoke-700" />
       </div>
-      <ProtocolGuide guide="build" />
+      <GuideSections sections={BUILD_SECTIONS} ariaLabel="Build with Juicebox" />
     </div>
   )
 }

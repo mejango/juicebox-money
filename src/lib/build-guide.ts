@@ -1,0 +1,724 @@
+import type { GuideSection } from '@/components/GuideSections'
+import { LEGACY_BUILD_SECTIONS } from '@/lib/build-guide-legacy'
+
+const REPO = 'https://github.com/mejango/juicebox-money/blob/main'
+const CORE = 'https://github.com/Bananapus/nana-core-v6/blob/main/src'
+const SKILLS = 'https://github.com/mejango/juicebox-skills/tree/main/plugins/juicebox-v6/skills'
+
+const legacy = (id: string, overrides: Partial<GuideSection>): GuideSection => {
+  const section = LEGACY_BUILD_SECTIONS.find(candidate => candidate.id === id)
+  if (!section) throw new Error(`Unknown legacy build section: ${id}`)
+  return { ...section, ...overrides }
+}
+
+/**
+ * The Build guide, in order. New sections carry the audience tracks; the sections that came from
+ * the juicescan renderer keep their verbatim content and are re-homed into the right part.
+ */
+export const BUILD_SECTIONS: readonly GuideSection[] = [
+  // ------------------------------------------------------------------ Start here
+  {
+    id: 'start-pick-the-model',
+    part: 'Start here',
+    title: 'Pick the model, and who this guide is for',
+    paragraphs: [
+      'Juicebox gives you a project: a balance with programmable rules, a token, and a set of contracts that enforce the rules without anyone in the middle. A project has an owner who can change those rules at the next cycle. A revnet is a project whose owner is a contract that never will.',
+      'This guide is written for three kinds of builder, and every section is tagged with who it is for. Project builders launch and run a project from this site without writing code. App builders connect a product to Juicebox with the SDK and the indexer. Contract builders extend the protocol with hooks and their own contracts. The parts overlap; read the tags and skip what is not yours.',
+    ],
+    blocks: [
+      {
+        type: 'compare',
+        label: 'Pick the model',
+        columns: ['You need to', 'Use'],
+        rows: [
+          ['Pay a team a budget each cycle, from revenue or donations', 'Project (payout limits)'],
+          ['Keep the option to change rules, add tokens, or migrate later', 'Project (rulesets, superpowers)'],
+          ['Sell NFTs or memberships and treat the sales as revenue', 'Either, with a shop'],
+          ['Back a token with revenue and promise nobody can change the terms', 'Revnet (stages)'],
+          ['Let holders exit against the balance, or borrow against it', 'Revnet (cash outs, loans)'],
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: '/learn', label: 'Learn how Juicebox works' },
+          { href: 'https://revnet.money/build', label: 'Building specifically with revnets' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'start-operation-map',
+    part: 'Start here',
+    title: 'Every operation, in one table',
+    paragraphs: [
+      'Each thing a person can do to a project maps to one contract call. This site exposes each as a button; the SDK ships a builder for each; the sections below show how to quote, bound, and sign it.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'User action → contract call',
+        rows: [
+          ['Launch a project', 'JBController.launchProjectFor, or the 721 / omnichain deployers — buildLaunchProjectTx / buildOmnichainLaunchProjectTx'],
+          ['Launch a revnet', 'REVDeployer.deployFor — buildDeployRevnetTx'],
+          ['Pay', 'JBMultiTerminal.pay — buildPayTx'],
+          ['Buy a shop item', 'JBMultiTerminal.pay with 721 metadata — build721PayMetadata'],
+          ['Add funds, no tokens', 'JBMultiTerminal.addToBalanceOf'],
+          ['Cash out', 'JBMultiTerminal.cashOutTokensOf — prepareHookAwareCashOut'],
+          ['Send payouts', 'JBMultiTerminal.sendPayoutsOf'],
+          ['Withdraw surplus allowance', 'JBMultiTerminal.useAllowanceOf'],
+          ['Send reserved tokens to splits', 'JBController.sendReservedTokensToSplitsOf'],
+          ['Queue a ruleset', 'JBController.queueRulesetsOf — buildQueueRulesetsTx'],
+          ['Edit splits', 'JBController.setSplitGroupsOf — buildSetSplitGroupsTx'],
+          ['Deploy the ERC-20', 'JBController.deployERC20For — buildDeployErc20Tx'],
+          ['Claim credits as ERC-20', 'JBController.claimTokensFor — buildClaimTokensTx'],
+          ['Mint', 'JBController.mintTokensOf — buildMintTokensTx'],
+          ['Grant an operator', 'JBPermissions.setPermissionsFor — buildSetPermissionsTx'],
+          ['Manage the shop', 'JB721TiersHook.adjustTiers / mintFor'],
+          ['Move tokens to another chain', 'sucker.prepare → toRemote → claim'],
+          ['Set the buyback pool', 'JBBuybackHookRegistry.initializePoolFor / setHookFor'],
+          ['Deploy a payer address', 'JBProjectPayerDeployer — buildDeployProjectPayerTx'],
+        ],
+      },
+      {
+        type: 'text',
+        text: 'Amounts are bigint in the token’s own decimals until the display boundary. A project’s identity is chain ID plus project ID; a sucker group links the chains but never makes their addresses, balances, or ruleset IDs interchangeable.',
+      },
+    ],
+  },
+  {
+    id: 'start-the-contracts',
+    part: 'Start here',
+    title: 'The contracts, and where their addresses live',
+    paragraphs: [
+      'Every contract has a single address per chain, and there is one source of truth for those addresses: deploy-all-v6 publishes one artifact per contract per chain (address, ABI, source name). The SDK’s jbContractAddress map and the skills library’s chain-config.json are generated from it.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Who does what',
+        rows: [
+          ['JBProjects', 'The project NFT; whoever holds it owns the project. Charges the creation fee'],
+          ['JBController', 'Rulesets, token issuance, reserved splits, metadata URI'],
+          ['JBMultiTerminal', 'Takes payments, holds balances, sends payouts and allowances, executes cash outs, charges fees'],
+          ['JBRulesets, JBSplits, JBFundAccessLimits, JBTokens, JBTerminalStore', 'The storage each of the above reads and writes'],
+          ['JBDirectory', 'Which controller and terminals a project uses'],
+          ['JBPermissions', 'Operator grants, by permission ID'],
+          ['JBPrices', 'Currency conversion for issuance and payout limits'],
+          ['JB721TiersHook + deployer', 'The shop, and a launcher that sets it up as the data hook'],
+          ['JBBuybackHookRegistry + JBBuybackHook', 'Routes a payment to a Uniswap V4 pool when that beats issuing'],
+          ['JBSucker + JBSuckerRegistry, JBOmnichainDeployer', 'Multichain projects and the launcher that links them'],
+          ['JBRouterTerminalRegistry', 'Accepts tokens a project does not hold and swaps them in'],
+          ['REVDeployer, REVOwner, REVLoans', 'Revnets'],
+        ],
+      },
+      {
+        type: 'points',
+        items: [
+          { key: 'Chains', text: 'Ethereum, Optimism, Base, Arbitrum, plus Sepolia and the three L2 Sepolias. The SDK’s SUPPORTED_CHAINS and JB_CHAINS carry the list.' },
+          { key: 'Source', text: 'the repos ending in -v6 are current. Older Juicebox versions are not interchangeable with them, and this site redirects unknown routes to the legacy app for those.' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: 'https://github.com/Bananapus/deploy-all-v6', label: 'deploy-all-v6 (addresses)' },
+          { href: 'https://github.com/Bananapus/nana-core-v6', label: 'nana-core-v6' },
+          { href: 'https://github.com/Bananapus/version-6', label: 'Every V6 repo' },
+        ],
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------ Project builders
+  {
+    id: 'founders-launch-from-the-wizard',
+    part: 'Project builders',
+    audience: ['founders'],
+    title: 'Launch from the wizard',
+    paragraphs: [
+      'The create page walks through five steps: Flavor, Look and feel, Rules (Stages for a revnet), Shop, Launch. The simple flavor skips Rules and launches with sensible defaults. Everything you set in Rules can be changed later by queuing a new ruleset; everything in a revnet’s Stages cannot.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'The steps',
+        rows: [
+          ['Flavor', 'Simple, project, or revnet. Production or testnet. Which chains, whether to link them (suckers, over CCIP, the native bridge, or both). Accounting tokens: ETH, USDC, or a custom ERC-20 at the same address on every chain; “Accept any token” adds the router terminal. Owner: your connected wallet, another address, or per-chain addresses; turning “Allow changes” off hands ownership to a dead address'],
+          ['Look and feel', 'Name (100), ticker, tagline, description in markdown (10,000), logo and cover (25 MB), links, tags, a payment notice. Pinned to IPFS as one metadata file when you launch'],
+          ['Rules', 'The first ruleset, described in the next section, plus what happens afterwards (wait, terminate, cycle, or a custom follow-up) and the rule-change notice (an approval hook of 3 hours to 7 days, or none)'],
+          ['Shop', 'Optional items priced in the token, ETH, or USD, each with supply (per chain if you like), media, category, sale splits, discount, reserve inventory, voting, and flags. A shop contract deploys even with zero items'],
+          ['Launch', 'One transaction per chain, signed in sequence: simulate, review the decoded call, sign, wait. A Safe connected through the Safe App proposes instead of sending'],
+        ],
+      },
+      {
+        type: 'info',
+        text: 'Drafts autosave in your browser, and the whole form imports and exports as a .jb file. Any live project’s Extras tab exports one reconstructed from the chain, which is how you diff what you launched against what you meant to.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: '/create', label: 'Open the wizard' },
+          { href: `${REPO}/src/lib/launch.ts`, label: 'How the form becomes a launch call' },
+          { href: `${REPO}/src/lib/draft.ts`, label: 'Draft format' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'founders-rules-field-by-field',
+    part: 'Project builders',
+    audience: ['founders'],
+    title: 'The rules, field by field',
+    paragraphs: [
+      'A ruleset is one cycle of terms. These are the fields the wizard exposes, what they mean, and the units the contracts hold them in.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Rules step',
+        rows: [
+          ['Duration', 'How long the cycle lasts before the next queued ruleset can take over: presets from 1 day to a year, Flexible (0, replaced whenever you queue), or Forever. A cycle with a duration repeats itself until replaced'],
+          ['Issuance', 'Tokens issued per unit of the base currency paid, priced in ETH or USD. Default 10,000. Leave blank on a later ruleset to inherit the previous one’s decayed rate'],
+          ['Issuance cut', 'A percentage the rate drops by each cycle (a revnet says “cut X% every N days” instead)'],
+          ['Reserved split', 'The share of every issuance that goes to your reserved recipients instead of the payer. Set by adding recipients; the percent is their total'],
+          ['Cash outs', 'Off, or on with a tax: 0, 10, 30, 50%, or any value below 100. Off is written as a 100% tax. A revnet cannot switch them off'],
+          ['Payouts', 'None; flexible (the owner may withdraw up to a limit); or routed to recipients as percentages or fixed amounts, per accounting token. Limits are per cycle and per chain'],
+          ['Surplus allowance', 'Whether the owner may also withdraw from the surplus above the payout limit: unlimited or capped'],
+          ['Hold fees', 'Keep the protocol fee in the project for 28 days instead of paying it at once; adding funds back with the flag set returns it'],
+          ['Accept payments', 'Off pauses paying'],
+          ['Owner can mint any time', 'The allowOwnerMinting flag'],
+          ['Superpowers', 'Whether this ruleset lets the owner set terminals, set the controller, migrate terminals, set a custom token, add accounting contexts, or add price feeds. Off by default; a project that never turns them on cannot do those things'],
+          ['Afterwards, notice', 'What follows this ruleset, and how much notice a rule change needs: an approval hook of 3 hours, 1 day, 3 days, or 7 days, or none'],
+        ],
+      },
+      {
+        type: 'info',
+        text: 'The shop is always the project’s data hook, so you do not set one by hand. The cash out tax is the only number here that shapes a curve; the Learn guide has the formula and a worked example.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/components/create/StageRulesEditor.tsx`, label: 'Rules editor' },
+          { href: '/learn#learn-rulesets', label: 'Rulesets, in the Learn guide' },
+          { href: `${SKILLS}/jb-ruleset/SKILL.md`, label: 'jb-ruleset skill' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'founders-what-deploy-does',
+    part: 'Project builders',
+    audience: ['founders', 'frontend'],
+    title: 'What happens when you launch',
+    blocks: [
+      {
+        type: 'points',
+        items: [
+          { key: 'Which contract', text: 'a revnet goes through REVDeployer.deployFor; a linked multichain project through JBOmnichainDeployer.launchProjectFor, which also deploys the chain’s suckers; anything else through JB721TiersHookProjectDeployer.launchProjectFor, which sets up the shop as the data hook. This site never calls JBController.launchProjectFor directly.' },
+          { key: 'Creation fee', text: 'read from JBProjects.creationFee() right before each send and passed as the transaction value. It is paid as a payment into the Juicebox fee project, so you receive its tokens.' },
+          { key: 'One transaction per chain', text: 'signed in sequence, with a shared salt kept in your session so a linked project gets matching sucker addresses. The same wallet must sign on every chain.' },
+          { key: 'Afterwards', text: 'each chain has its own project ID; the page lives at /<chain>:<id>. The Rulesets (or Terms) tab shows the terms as the contracts hold them.' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/lib/launch.ts`, label: 'buildLaunchRequest' },
+          { href: `${SKILLS}/jb-project/SKILL.md`, label: 'jb-project skill' },
+          { href: `${SKILLS}/jb-omnichain-ui/SKILL.md`, label: 'jb-omnichain-ui skill' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'founders-running-a-project',
+    part: 'Project builders',
+    audience: ['founders'],
+    title: 'Running it: the owner’s tabs',
+    paragraphs: [
+      'Everything an owner or operator can do lives on the project page. Each tab is one contract surface.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Project page',
+        rows: [
+          ['Rulesets', 'See the current and queued cycles. Queue a new ruleset to replace the current one, follow it, or start right away; the approval hook decides when it may take effect'],
+          ['Funds', 'Send payouts to the configured splits, withdraw surplus allowance, add to balance'],
+          ['Owners', 'Holders and balances; send reserved tokens to their splits; auto issuance for revnets'],
+          ['Shop', 'Add items, mint reserved copies, replace media, redeem items'],
+          ['Admin', 'Operators and permissions, transfer ownership, the ENS handle, metadata and links, deploy the ERC-20, token metadata, the ruleset-gated powers (mint, set terminals, and the rest), the buyback router and pool'],
+          ['Extras', 'Export a .jb of the live terms; deploy a payer address; liquidity positions'],
+        ],
+      },
+      {
+        type: 'info',
+        text: 'A queued ruleset takes effect at the next cycle boundary of a timed ruleset, or as soon as the notice period passes for a flexible one. A change that would start before the notice period has run fails its approval and is skipped.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/components/project/QueueRulesetFlow.tsx`, label: 'Queue ruleset flow' },
+          { href: `${REPO}/src/lib/permissions.ts`, label: 'Permission catalogue' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'founders-fees',
+    part: 'Project builders',
+    audience: ['founders'],
+    title: 'The fees',
+    paragraphs: [
+      'The protocol charges 2.5% on money leaving a project as payouts, allowance withdrawals, and cash outs. Every fee is a payment into the Juicebox fee project, so the payer receives its tokens.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Fees to expect',
+        rows: [
+          ['Launch', 'JBProjects.creationFee(), at most 0.001 ETH, per chain'],
+          ['Payments in', 'None'],
+          ['Payouts', '2.5% on each payout, except to another Juicebox project through the same terminal and to feeless addresses'],
+          ['Surplus allowance', '2.5%, skipped if the owner or beneficiary is feeless'],
+          ['Cash outs, tax above 0%', '2.5% on the value returned'],
+          ['Cash outs, 0% tax', '2.5% only on the fee-free surplus portion, which is often zero'],
+          ['Held fees', 'With holdFees on, payout and allowance fees wait 28 days and can be returned by adding funds back; cash out fees are never held'],
+          ['Revnets', 'Add a 2.5% revnet fee on the tokens burned by a taxed cash out, and loan fees'],
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${CORE}/JBMultiTerminal.sol`, label: 'JBMultiTerminal.sol' },
+          { href: `${SKILLS}/jb-protocol-fees/SKILL.md`, label: 'jb-protocol-fees skill' },
+        ],
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------ App builders
+  {
+    id: 'apps-set-up-the-sdk',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Set up the SDK',
+    paragraphs: [
+      '@bananapus/nana-sdk-core carries the ABIs, the addresses, the reads, and a pure builder for every write. Do not hand-maintain selectors or addresses in product code. The root entry exports every ABI, jbContractAddress, the chain list, the bendystraw helpers, and project-metadata reads; the /v6 entry exports the reads and builders.',
+      'Builders are pure: validated input in, a { chainId, address, abi, functionName, args, value } request out. Keep reads on a public client for the target chain and writes on a wallet client connected to that same chain.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: '/v6 exports, grouped',
+        rows: [
+          ['Reads', 'getAccountingContexts, resolvePaymentTerminal, getCurrentRuleset, getUpcomingRuleset, getAllRulesets, previewPay, chooseBestPayRoute, getCashOutQuote, getHookAwareCashOutQuote, getV6SuckerPairs, getSuckerMovements, getTokenAddress, getCreditBalance, getProjectCreationFee, getProject721Shop, hasPermissions, getBorrowableAmount'],
+          ['Builders', 'buildLaunchProjectTx, buildOmnichainLaunchProjectTx, buildDeployRevnetTx, buildPayTx, buildCashOutTx, buildQueueRulesetsTx, buildOmnichainQueueRulesetsTx, buildSetSplitGroupsTx, buildSetPermissionsTx, buildDeployErc20Tx, buildClaimTokensTx, buildTransferCreditsTx, buildMintTokensTx, buildBurnTokensTx, buildDeployProjectPayerTx, buildBridgePrepareTx, buildToRemoteTx, buildBridgeClaimTx, buildSyncAccountingDataTx, buildDirectPaySwapTx, buildPermit2ApproveTx, buildBorrowTx, buildRepayLoanTx'],
+          ['Config builders', 'buildRulesetConfiguration, buildRulesetMetadata, buildAccountingContext, buildTerminalConfigurations, buildSplit, fillSplitPercents, buildTierMetadata, build721RulesetMetadata, build721PayMetadata, buildRevnetStageConfig'],
+          ['Constants', 'slippageFloor, RULESET_WEIGHT_INHERIT, STANDARD_FEE, MAX_FEE, MAX_RESERVED_PERCENT, MAX_CASH_OUT_TAX_RATE, SPLITS_TOTAL_PERCENT, RESERVED_TOKEN_SPLIT_GROUP_ID, payoutSplitGroupId, NATIVE_TOKEN, USDC_ADDRESSES, PERMIT2_ADDRESS, the uniswapV4* math family'],
+          ['Sub-entries', '/v6/loans, /v6/cash-out, /v6/permit2, /v6/direct-pay, /v6/uniswap-v4, /chains, /jbcenter'],
+        ],
+      },
+      {
+        type: 'code',
+        label: 'Imports and address lookup',
+        code: [
+          'import {',
+          '  buildPayTx, buildQueueRulesetsTx, buildRulesetConfiguration, buildRulesetMetadata,',
+          '  buildSetSplitGroupsTx, getCurrentRuleset, previewPay, slippageFloor,',
+          '} from "@bananapus/nana-sdk-core/v6";',
+          '',
+          'import {',
+          '  getJBContractAddress, JBCoreContracts, jbMultiTerminalAbi, type JBChainId,',
+          '} from "@bananapus/nana-sdk-core";',
+          '',
+          'const terminal = getJBContractAddress(JBCoreContracts.JBMultiTerminal, 6, chainId);',
+        ].join('\n'),
+      },
+      {
+        type: 'links',
+        items: [
+          { href: 'https://www.npmjs.com/package/@bananapus/nana-sdk-core', label: 'V6 SDK package' },
+          { href: 'https://github.com/Bananapus/juice-sdk-v4', label: 'SDK source' },
+          { href: `${SKILLS}/jb-sdk/SKILL.md`, label: 'jb-sdk skill' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'apps-read-a-project',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Read a project',
+    paragraphs: [
+      'Use the index (next section) to find and display projects. Use the chain for anything a signature depends on, and read it again right before signing.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'What to read, and where',
+        rows: [
+          ['Controller, terminals', 'JBDirectory.controllerOf / terminalsOf / primaryTerminalOf'],
+          ['Current, next, queued rulesets', 'JBController.currentRulesetOf / upcomingRulesetOf / latestQueuedRulesetOf / allRulesetsOf'],
+          ['Accepted tokens', 'JBMultiTerminal.accountingContextsOf'],
+          ['Balance and surplus', 'JBTerminalStore.balanceOf / currentSurplusOf / usedPayoutLimitOf / usedSurplusAllowanceOf'],
+          ['Limits', 'JBFundAccessLimits.payoutLimitOf / surplusAllowanceOf'],
+          ['Supply and balances', 'JBTokens.totalSupplyOf / totalBalanceOf / creditBalanceOf / tokenOf'],
+          ['Splits', 'JBSplits.splitsOf(projectId, rulesetId, groupId)'],
+          ['Pending reserved tokens', 'JBController.pendingReservedTokenBalanceOf'],
+          ['Cash out quote', 'JBMultiTerminal.previewCashOutFrom'],
+          ['Permissions', 'JBPermissions.hasPermission / hasPermissions'],
+          ['Chains', 'JBSuckerRegistry.suckerPairsOf'],
+        ],
+      },
+      {
+        type: 'info',
+        text: 'Show cached names, logos, and facts while the chain refreshes. Treat state you could not read as unknown, never as zero, empty, or permitted.',
+      },
+    ],
+  },
+  legacy('build-bendystraw', {
+    id: 'apps-indexed-data',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Indexed data: Bendystraw',
+  }),
+  {
+    id: 'apps-wallets-safe-relayr',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Wallets, Safes, Relayr, and Permit2',
+    paragraphs: [
+      'Four kinds of signing show up in a Juicebox app: a plain wallet write, a Safe proposal, a Relayr bundle for many chains at once, and a Permit2 signature for pool swaps. This site routes every owner action through one dispatcher that picks the path from who is connected.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Signing paths in this site',
+        rows: [
+          ['Wallet write', 'submitReviewedContractWrite: review the decoded call → switch chain → simulate as the connected account → sign → wait for the receipt'],
+          ['Authority calls', 'runAuthorityCalls decides: an EOA signs directly; an ERC-2771-capable account signs forward requests that Relayr executes as one prepaid bundle across chains; a Safe gets proposals queued in its transaction service'],
+          ['Safe', 'Propose, confirm, execute; a same-address Safe can be deployed on a new chain; L1 and L2 singletons are allowlisted separately, so a Safe’s authority is checked per chain'],
+          ['Permit2', 'Only for direct Uniswap V4 swaps; pay uses a plain approve for the exact amount'],
+        ],
+      },
+      {
+        type: 'text',
+        text: 'RPC goes through Juicebox Center, an origin-allowlisted provider with no client-side key. Wallets connect through injected and EIP-6963 wallets, WalletConnect, Coinbase, the Safe App connector when framed, and an embedded Para wallet that also provides the card on-ramp.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/lib/authority.ts`, label: 'runAuthorityCalls' },
+          { href: `${REPO}/src/lib/relayr.ts`, label: 'Relayr' },
+          { href: `${REPO}/src/lib/safe.ts`, label: 'Safe' },
+          { href: `${SKILLS}/jb-safe-and-relayr-execution/SKILL.md`, label: 'jb-safe-and-relayr-execution skill' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'apps-metadata-and-ipfs',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Metadata and IPFS',
+    blocks: [
+      {
+        type: 'points',
+        items: [
+          { key: 'Shape', text: 'JBProjectMetadata: name, description, projectTagline, logoUri, coverImageUri, infoUri, payButton, payDisclosure, tags, twitter, telegram, discord, archived.' },
+          { key: 'Read', text: 'getProjectMetadata(publicClient, { jbControllerAddress, projectId }) resolves the project’s uri and fetches it; ipfsUri and cidFromIpfsUri handle the encoding.' },
+          { key: 'Pin', text: 'this site pins JSON, images (25 MB), and media (500 MB) straight from the browser to Juicebox Center, which is origin-allowlisted and guards against empty files. The gateway is juicebox.center/ipfs/.' },
+          { key: 'Write', text: 'the owner updates the pointer with JBController.setUriOf (SET_PROJECT_URI).' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/lib/jbcenter-ipfs.ts`, label: 'Juicebox Center IPFS client' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'apps-transaction-boundary',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'One transaction boundary',
+    paragraphs: [
+      'The request you quote, simulate, decode, show, and submit must be the same object, not five reconstructions of it. Right before signing, refresh the reads that set bounds and permissions, rebuild, simulate with the real account, then decode the calldata and present it. After submission, keep wallet rejection, Safe proposal, inclusion, revert, and confirmed success as separate states.',
+      'This site enforces it mechanically: the review step re-encodes the request after the user has seen it and aborts on any drift; simulation is a raw eth_call with a gas cap; a script fails the build if any write bypasses the three reviewed entry points, with the count of write sites pinned in a fixture.',
+    ],
+    blocks: [
+      {
+        type: 'diagram',
+        label: 'Build → simulate → decode → review → write → confirm',
+        lines: [
+          '  fresh reads',
+          '    → pure builder',
+          '      → simulateContract with the real account',
+          '        → encode and decode the calldata, show it to the user',
+          '          → writeContract',
+          '            → waitForTransactionReceipt',
+          '              → success only on receipt.status === "success"',
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${REPO}/src/lib/transaction-review.ts`, label: 'Review' },
+          { href: `${REPO}/src/lib/transaction-builders.ts`, label: 'Every write builder' },
+          { href: `${REPO}/scripts/check-transaction-inventory.mjs`, label: 'Write-site inventory check' },
+          { href: `${SKILLS}/jb-tx-safety/SKILL.md`, label: 'jb-tx-safety skill' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'apps-run-this-site',
+    part: 'App builders',
+    audience: ['frontend'],
+    title: 'Run this site locally',
+    blocks: [
+      {
+        type: 'table',
+        label: 'Commands',
+        rows: [
+          ['npm run dev', 'Next.js on port 3001'],
+          ['npm run check', 'The release-equivalent gate: types, lint, schema check, unit tests, build, browser tests'],
+          ['npm test / npm run test:browser', 'Vitest, then Playwright against the built app with a fixture server'],
+          ['npm run schema:check', 'Regenerates and verifies the Bendystraw operation registry'],
+        ],
+      },
+      {
+        type: 'points',
+        items: [
+          { key: 'Env', text: 'NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_BENDYSTRAW_URL, NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL, NEXT_PUBLIC_PARA_API_KEY, NEXT_PUBLIC_PARA_ENV, NEXT_PUBLIC_VERSION; WalletConnect and the on-ramp provider are optional. No RPC or IPFS keys live in the client.' },
+          { key: 'Tests', text: 'PR tests use fixtures; nothing in them reaches a wallet, an RPC, the index, or Relayr.' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: 'https://github.com/mejango/juicebox-money', label: 'Repository' },
+          { href: 'https://github.com/mejango/juicebox-money/blob/main/TESTING.md', label: 'TESTING.md' },
+        ],
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------ Life of a project (contract calls)
+  legacy('build-launch', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-configure', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-fund', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-tokens-mgmt', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-distribute', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-cashout', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+  legacy('build-evolve', { part: 'Life of a project', audience: ['frontend', 'contracts'] }),
+
+  // ------------------------------------------------------------------ Life of a revnet
+  legacy('build-revnet-what', { part: 'Life of a revnet' }),
+  legacy('build-revnet-deploy', { part: 'Life of a revnet', audience: ['frontend', 'contracts'] }),
+  legacy('build-revnet-stages', { part: 'Life of a revnet', audience: ['frontend', 'contracts'] }),
+  legacy('build-revnet-fees', { part: 'Life of a revnet' }),
+  {
+    id: 'revnet-go-deeper',
+    part: 'Life of a revnet',
+    title: 'Go deeper on revnets',
+    paragraphs: [
+      'revnet.money carries the full revnet build guide: the wizard field by field, .jb drafts and agent launches, what deploy does, the operator’s nine permissions, loans from a contract, the extension points REVOwner allows and forbids, and the sharp edges. Everything there is checked against revnet-core-v6.',
+    ],
+    blocks: [
+      {
+        type: 'links',
+        items: [
+          { href: 'https://revnet.money/build', label: 'revnet.money/build' },
+          { href: 'https://revnet.money/learn', label: 'revnet.money/learn' },
+        ],
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------ Contract builders
+  {
+    id: 'contracts-install-and-launch',
+    part: 'Contract builders',
+    audience: ['contracts'],
+    title: 'Install the code and launch from Solidity',
+    paragraphs: [
+      'The V6 repos ship as npm packages and import by package path; remappings.txt in every repo only maps forge-std, and node_modules resolves the rest. Solidity 0.8.28.',
+    ],
+    blocks: [
+      {
+        type: 'table',
+        label: 'Packages',
+        rows: [
+          ['@bananapus/core-v6', 'Terminals, controller, tokens, splits, permissions, prices, the hook interfaces'],
+          ['@bananapus/721-hook-v6', 'Shop tiers and the 721 project deployer'],
+          ['@bananapus/omnichain-deployers-v6', 'Launch plus suckers in one call'],
+          ['@bananapus/buyback-hook-v6, @bananapus/suckers-v6, @bananapus/router-terminal-v6', 'Pool routing, cross-chain, token routing'],
+          ['@bananapus/project-payer-v6, @bananapus/project-handles-v6, @bananapus/distributor-v6', 'Payer addresses, ENS handles, distributor'],
+          ['@bananapus/permission-ids-v6', 'The permission ID constants'],
+          ['@rev-net/core-v6', 'Revnets'],
+        ],
+      },
+      {
+        type: 'table',
+        label: 'launchProjectFor, field by field',
+        rows: [
+          ['JBController.launchProjectFor', '(address owner, string projectUri, JBRulesetConfig[] rulesetConfigurations, JBTerminalConfig[] terminalConfigurations, string memo) payable → projectId. msg.value must equal JBProjects.creationFee() exactly'],
+          ['JBRulesetConfig', 'mustStartAtOrAfter (uint48; 0 = now), duration (uint32 seconds; 0 = until replaced), weight (uint112, 18-dec tokens per base-currency unit; 1 = inherit the decayed weight, 0 = no issuance), weightCutPercent (uint32, of 1e9), approvalHook, metadata, splitGroups[], fundAccessLimitGroups[]'],
+          ['JBRulesetMetadata', 'reservedPercent (uint16, of 10,000), cashOutTaxRate (uint16, of 10,000; 10,000 = cash outs off), baseCurrency (uint32: 1 = ETH, 2 = USD, or uint32(uint160(token))), pausePay, pauseCreditTransfers, allowOwnerMinting, allowSetCustomToken, allowTerminalMigration, allowSetTerminals, allowSetController, allowAddAccountingContext, allowAddPriceFeed, ownerMustSendPayouts, holdFees, scopeCashOutsToLocalBalances, useDataHookForPay, useDataHookForCashOut, dataHook, metadata (uint16, 14 usable bits)'],
+          ['JBFundAccessLimitGroup', 'terminal, token, payoutLimits[] and surplusAllowances[] as { amount (uint224, in the token’s decimals), currency (uint32) }, sorted by strictly increasing currency. Empty = no payouts; type(uint224).max = unlimited. Per chain, never aggregate'],
+          ['JBTerminalConfig', 'terminal, accountingContextsToAccept[] of { token, decimals (uint8), currency (uint32) }. NATIVE_TOKEN is 0x…EEEe with currency 61166'],
+          ['JBSplitGroup / JBSplit', 'groupId (1 = reserved tokens; uint256(uint160(token)) = payouts in that token), splits[] of { percent (uint32, of 1e9), projectId (uint64), beneficiary, preferAddToBalance, lockedUntil (uint48), hook }. Routing: hook, else projectId, else beneficiary'],
+          ['JBOmnichainDeployer.launchProjectFor', '(owner, projectUri, JBOmnichain721Config, rulesetConfigurations, terminalConfigurations, memo, JBSuckerDeploymentConfig) payable → (projectId, hook, suckers[]). Also deploys this chain’s suckers; the sucker salt is keccak256(sender, salt), so the same sender must launch on every chain'],
+          ['JB721TiersHookProjectDeployer.launchProjectFor', '(owner, JBDeploy721TiersHookConfig, JBLaunchProjectConfig, controller, salt) payable → (projectId, hook). Sets the hook as the data hook'],
+        ],
+      },
+      {
+        type: 'info',
+        text: 'queueRulesetsOf timing: with a timed base ruleset the new one snaps to the next cycle boundary; with a flexible base it starts at mustStartAtOrAfter, clamped to at least the queue time plus the approval hook’s DURATION. A JBDeadline hook fails any ruleset queued with less notice than its duration, and currentRulesetOf only honours Approved or hook-less rulesets.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${CORE}/JBController.sol`, label: 'JBController.sol' },
+          { href: `${CORE}/structs/JBRulesetMetadata.sol`, label: 'JBRulesetMetadata.sol' },
+          { href: `${CORE}/JBRulesets.sol`, label: 'JBRulesets.sol' },
+          { href: `${SKILLS}/jb-fund-access-limits/SKILL.md`, label: 'jb-fund-access-limits skill' },
+        ],
+      },
+    ],
+  },
+  legacy('build-hooks', {
+    part: 'Contract builders',
+    audience: ['contracts'],
+    title: 'Custom hooks',
+  }),
+  {
+    id: 'contracts-hook-mechanics',
+    part: 'Contract builders',
+    audience: ['contracts'],
+    title: 'Hook mechanics: funds, metadata, minting, reentrancy',
+    blocks: [
+      {
+        type: 'points',
+        items: [
+          { key: 'Installing a data hook', text: 'set metadata.dataHook and useDataHookForPay / useDataHookForCashOut on the ruleset. beforePayRecordedWith returns the weight to use and pay hook specifications; beforeCashOutRecordedWith returns the tax rate, count, supply, surplus, and cash out hook specifications.' },
+          { key: 'Funds', text: 'native value arrives at a pay or cash out hook as msg.value; ERC-20 arrives as an allowance you must transferFrom during the call, revoked afterwards. A hook that is not feeless receives the amount net of the 2.5% fee. A specification with noop = true is informational and never called.' },
+          { key: 'Two metadatas', text: 'hookMetadata is authored by the data hook and is yours to trust; payerMetadata / cashOutMetadata is whatever the caller sent and must be treated as hostile.' },
+          { key: 'Metadata format', text: 'JBMetadataResolver: a reserved first word, then a table of 4-byte ids with word offsets, then 32-byte-aligned blobs. createMetadata(ids, datas), addToMetadata, getDataFor(id, metadata). Ids are getId(purpose, target) = bytes4(bytes20(target) ^ bytes20(keccak256(purpose))).' },
+          { key: 'Minting from a hook', text: 'JBController.mintTokensOf lets the terminal, the ruleset’s data hook, or any address the data hook’s hasMintPermissionFor approves mint without a grant; everyone else needs MINT_TOKENS (10) and allowOwnerMinting.' },
+          { key: 'Split hooks', text: 'a split whose hook field is set receives its share through processSplitWith. On the reserved-token path the controller approves an ERC-20 for the amount and burns whatever the hook leaves unspent; on payouts the terminal checks ERC-165 first.' },
+          { key: 'Reentrancy', text: 'pay and cashOutTokensOf have no guard and call hooks after state is recorded; add nonReentrant. Use override(ERC165, IERC165) for supportsInterface.' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${CORE}/interfaces/IJBRulesetDataHook.sol`, label: 'IJBRulesetDataHook.sol' },
+          { href: `${CORE}/libraries/JBMetadataResolver.sol`, label: 'JBMetadataResolver.sol' },
+          { href: `${SKILLS}/jb-pay-hook/SKILL.md`, label: 'jb-pay-hook skill' },
+          { href: `${SKILLS}/jb-cash-out-hook/SKILL.md`, label: 'jb-cash-out-hook skill' },
+          { href: `${SKILLS}/jb-split-hook/SKILL.md`, label: 'jb-split-hook skill' },
+        ],
+      },
+    ],
+  },
+  legacy('build-permissions', { part: 'Contract builders', audience: ['contracts', 'frontend'] }),
+  {
+    id: 'contracts-test',
+    part: 'Contract builders',
+    audience: ['contracts'],
+    title: 'Test against the real thing',
+    blocks: [
+      {
+        type: 'table',
+        label: 'Foundry',
+        rows: [
+          ['TestBaseWorkflow', '@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol: deploys the full protocol locally with a mock USDC and two terminals, plus Permit2. Extend it for unit tests of hooks and integrations'],
+          ['Fork tests', 'Pin a block, fork through foundry.toml rpc_endpoints, and run against the deploy-all-v6 addresses before shipping'],
+          ['Sizes', 'forge build --sizes early; several V6 contracts sit near EIP-170 and were split or trimmed to fit. Plan for library extraction if you are close'],
+          ['Bytecode parity', 'verify a deployment against the deploy-all-v6 artifacts rather than trusting a source match; linked libraries change the hash'],
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: 'https://github.com/Bananapus/nana-core-v6/tree/main/test/helpers', label: 'TestBaseWorkflow' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'contracts-sharp-edges',
+    part: 'Contract builders',
+    audience: ['contracts', 'frontend'],
+    title: 'Sharp edges',
+    blocks: [
+      {
+        type: 'points',
+        items: [
+          { key: 'Who is the payer', text: 'context.payer is the terminal’s msg.sender. Through a router, project payer, or wrapper it is that contract, unless the contract exposes originalPayer() (IJBPayerTracker), which the router registry probes. Expose it, or beneficiaries and refunds land on your intermediary.' },
+          { key: 'Router terminal cold start', text: 'the router registry reverts accountingContextForTokenOf for projects below its threshold; it is not universally accepting. Probe with previewPayFor before assuming a route.' },
+          { key: 'Buyback metadata is three words', text: 'the pay metadata under getId("pay") for the buyback hook decodes as (amountToSwapWith, minimumSwapAmountOut, skipSplits). Always encode all three.' },
+          { key: 'Payouts to a project without a terminal', text: 'a payout split to a project that has no terminal for the token is caught, the balance is restored, and no fee is taken, but the payout limit is still consumed.' },
+          { key: 'Permissions die with the NFT', text: 'every check asks whether the current owner granted the permission; grants by a previous owner stop authorizing anything when the project NFT moves.' },
+          { key: 'Held fees', text: 'a failed processHeldFeesOf forgives the fee. Cash out fees are never held.' },
+          { key: 'Sucker salt', text: 'the omnichain deployer derives sucker addresses from the sender and the salt, so a different wallet on another chain produces a project that cannot be linked.' },
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: `${SKILLS}/jb-terminal-selection/SKILL.md`, label: 'jb-terminal-selection skill' },
+          { href: `${SKILLS}/jb-buyback-hook/SKILL.md`, label: 'jb-buyback-hook skill' },
+          { href: `${SKILLS}/jb-suckers/SKILL.md`, label: 'jb-suckers skill' },
+        ],
+      },
+    ],
+  },
+
+  // ------------------------------------------------------------------ Ecosystem tools
+  legacy('build-nfts', { part: 'Ecosystem tools', audience: ['founders', 'frontend', 'contracts'] }),
+  legacy('build-buyback', { part: 'Ecosystem tools', audience: ['frontend', 'contracts'] }),
+  legacy('build-swap-terminal', { part: 'Ecosystem tools', audience: ['frontend', 'contracts'] }),
+  legacy('build-payer', { part: 'Ecosystem tools', audience: ['founders', 'contracts'] }),
+  legacy('build-handles', { part: 'Ecosystem tools', audience: ['founders', 'frontend'] }),
+  legacy('build-distributor', { part: 'Ecosystem tools', audience: ['contracts'] }),
+
+  // ------------------------------------------------------------------ Ship it safely
+  {
+    id: 'ship-test-what-can-surprise-you',
+    part: 'Ship it safely',
+    title: 'Test what can surprise you',
+    blocks: [
+      {
+        type: 'points',
+        items: [
+          { key: 'Launch', text: 'the encoded configuration round-trips through the ABI; the creation fee is read at send time; the same sender and salt yield the same sucker addresses on a second chain.' },
+          { key: 'Payments', text: 'the chosen route’s executable minimum is no worse than the alternatives shown; an empty pool falls back to issuance; a router route is probed, not assumed.' },
+          { key: 'Cash outs', text: 'the terminal or hook enforces the same minimum the confirmation shows, including at 0% fee-free surplus.' },
+          { key: 'Payouts', text: 'limits are per chain and per cycle; a recipient project without a terminal consumes the limit without paying; fees are held or not as the ruleset says.' },
+          { key: 'Rulesets', text: 'a queue with too little notice fails its approval hook; an inherited weight is decayed, not copied.' },
+          { key: 'Permissions', text: 'the narrowest ID is granted, scoped to the project; a Safe proposal is not success.' },
+          { key: 'Hooks', text: 'reentrancy from a hostile hook or token, an under-pulling split hook, hostile payer metadata.' },
+        ],
+      },
+      {
+        type: 'text',
+        text: 'Fork-test against the current deployments. Then publish the addresses, source, transaction map, and a human-readable ruleset schedule so users can check your product against the contracts themselves. The audit page has prompts for a whole-system review and for a single transaction.',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: '/audit', label: 'Audit prompts and source index' },
+          { href: 'https://github.com/mejango/juicebox-money', label: 'Reference web client' },
+        ],
+      },
+    ],
+  },
+  legacy('build-clients', { part: 'Ship it safely' }),
+]

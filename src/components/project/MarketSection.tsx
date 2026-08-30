@@ -710,7 +710,7 @@ async function readPositionDetails(
  * reads each, then maps liquidity to exact pair/project-token amounts. Null
  * position manager (e.g. OP Sepolia) -> unavailable; incomplete reads throw.
  */
-async function readLpPositions(
+export async function readLpPositions(
   client: PublicClient,
   chainId: JBChainId,
   pool: Extract<MarketResult, { status: 'pool' }>,

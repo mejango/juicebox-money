@@ -197,6 +197,7 @@ export function PriceChart({
   baseSymbol,
   floorPrice,
   ammPrice,
+  ammLiquidity,
   floorHistory = [],
   ammHistory = [],
   cashOutTaxHistory = [],
@@ -207,6 +208,8 @@ export function PriceChart({
   baseSymbol: string
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
+  /** What the pool holds right now, e.g. "1.2M REV + 3.4 ETH". Context for how much the AMM price can bear. */
+  ammLiquidity?: string | null
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
@@ -331,7 +334,10 @@ export function PriceChart({
             />
             <PriceSummary
               label="AMM price"
-              note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
+              note={
+                priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
+                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '')
+              }
               color={AMM_COLOR}
               active={showAmm}
               onToggle={() => setShowAmm(current => !current)}
@@ -473,6 +479,11 @@ export function PriceChart({
                 baseSymbol={baseSymbol}
                 symbol={symbol}
               />
+            ) : null}
+            {showAmm && amm && ammLiquidity ? (
+              <p className="whitespace-nowrap text-grey-300">
+                Pool holds {ammLiquidity}
+              </p>
             ) : null}
             {showCashOut && minimum ? (
               <TooltipPriceRow

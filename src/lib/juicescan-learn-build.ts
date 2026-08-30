@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment, no-var */
 // @ts-nocheck -- adapted HTML-string renderer; Juicescan remains the protocol-content source of truth.
 // Mirrored from webclients/juicescan/src/learn-build.js. Client-specific guidance may diverge.
+// The Learn tab renders from here. The BUILD tab does not: juicebox.money serves it from
+// src/lib/build-guide.ts, which carries these sections verbatim plus the audience tracks.
 // src/learn-build.js
 // Learn & Build tab content — engaging walkthrough of the Juicebox protocol
 
@@ -90,7 +92,7 @@ export function learnGuideHtml() {
   ]);
 
   wrap += guideSection('learn-revnets', '4. REVNETS', [
-    'A revnet (revenue network) is a special kind of project where the rules are permanently locked at launch. Nobody — not even the creator — can change them.',
+    'A revnet (revenue network) is a special kind of project where the economics are permanently locked at launch. Nobody — not even the creator — can change issuance, cuts, cash out taxes, or stage timing.',
     'This makes revnets ideal for protocols, tokens, and any situation where trust needs to be minimized. The token price, issuance schedule, and cash out terms are all predetermined and immutable.',
     'Revnets progress through "stages" — think of them as chapters in a financial lifecycle. Early stages might issue lots of tokens to attract participation, later stages tighten supply to create scarcity.'
   ], [
@@ -101,7 +103,7 @@ export function learnGuideHtml() {
       '  flexible governance              zero trust required',
       '  good for: DAOs, collectives      good for: protocols, tokens',
     ]),
-    textBlock('Under the hood, revnets are just Juicebox projects owned by a special contract that refuses to change anything. All the same pay and cash out mechanics apply.')
+    textBlock('Under the hood, revnets are just Juicebox projects owned by a contract (REVOwner) that refuses to change the economics. An operator keeps a short list of non-economic powers: metadata, split recipients, buyback pool, sucker safety. All the same pay and cash out mechanics apply.')
   ]);
 
   // ============================================
@@ -156,7 +158,7 @@ export function learnGuideHtml() {
   wrap += guideSection('learn-splits', '7. SPLITS & PAYOUTS', [
     'Splits control where money and reserved tokens go. Each split directs a percentage to a wallet, another project, or a custom contract.',
     'Payout limits cap how much the project can distribute per cycle. Everything beyond the payout limit is "surplus" — and that’s what token holders can cash out against.',
-    'Splits can be locked until a specific date. Once locked, they can’t be reduced or removed — only added to. This protects team members and partners from having their share cut.'
+    'Splits can be locked until a specific date. Once locked, they can’t be changed or removed until the lock expires — only the lock can be extended, and other splits can be added alongside. This protects team members and partners from having their share cut.'
   ], [
     diagram('FUND FLOW', [
       '  project balance',
@@ -171,7 +173,7 @@ export function learnGuideHtml() {
 
   wrap += guideSection('learn-fees', '8. FEES', [
     'The protocol charges a 2.5% fee on payouts and surplus withdrawals. Cash outs also pay it: with a tax rate above 0% the fee applies to the whole reclaimed amount, and with a 0% tax rate it still applies to min(reclaimed, feeFreeSurplusOf) — the portion of surplus that arrived fee-free from a payout or allowance withdrawal, which stops a round trip from escaping the fee. That portion is often zero, but never assume it is.',
-    'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if a project adds funds back, the held fees are returned. After 28 days, the held fees can be forwarded to the Juicebox protocol’s own project — processed via processHeldFeesOf(), or by a later ruleset/operation (it isn’t automatic at the 28-day mark). If holdFees is off, fees are processed immediately.',
+    'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if funds are added back through addToBalanceOf with shouldReturnHeldFees set, the matching held fees are returned. After 28 days, the held fees can be forwarded to the Juicebox protocol’s own project — processed via processHeldFeesOf(), or by a later ruleset/operation (it isn’t automatic at the 28-day mark). If holdFees is off, fees are processed immediately.',
     'Some addresses can be designated as fee-exempt — they pay zero fees on all transactions.'
   ], [
     diagram('FEE EXAMPLE', [
@@ -284,12 +286,12 @@ export function learnGuideHtml() {
       ['SEND_PAYOUTS', 'Can trigger payout distributions.'],
       ['SET_TERMINALS', 'Can replace the project’s terminal list (ADD_TERMINALS only appends).'],
     ]),
-    infoBox('Permissions are separate from ownership. Transferring the project NFT transfers control, but granted permissions remain until explicitly revoked.')
+    infoBox('Permissions are granted by a specific account, and every check asks whether the CURRENT owner granted them. If the project NFT moves to a new owner, operators the old owner granted lose their power over the project; the old grants only linger under the old owner’s account.')
   ]);
 
   wrap += guideSection('learn-nfts', '14. NFT REWARDS', [
     'Projects can reward contributors with NFTs organized into tiers. Each tier has a price threshold, a limited supply, and a category. When someone pays enough, they receive an NFT from the matching tier — like membership cards at different levels.',
-    'Tiers are grouped by category, and categories must be defined in ascending order. Each tier can also have governance weight (voting power per NFT) and reserved NFTs that the project owner can mint without requiring payment.',
+    'Tiers are grouped by category, and categories must be defined in ascending order. Each tier can also have governance weight (voting power per NFT), reserved NFTs that accrue to a reserve beneficiary as others are minted, and, if the tier allows it, owner minting without payment.',
     'The NFT artwork and metadata can live on IPFS (a decentralized file system) or onchain. This system is powered by a pay hook called JB721TiersHook that automatically mints NFTs when payments come in.'
   ], [
     propertyTable('WHAT EACH TIER DEFINES', [
@@ -341,7 +343,7 @@ export function learnGuideHtml() {
   wrap += guideSection('learn-loans', '17. LOANS', [
     'Revnet token holders who need cash don’t have to sell. They can take out a loan against their tokens instead — keeping their position while accessing liquidity.',
     'When you borrow, your collateral tokens are burned (removed from supply) and you receive funds from the project. The loan itself is represented as an NFT, so it can be transferred or sold. When you repay, your tokens are re-minted and returned to you.',
-    'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn’t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same funds.'
+    'Loans cost three fees up front: 2.5% to the revnet, 1% to the REV revnet, and a prepaid fee the borrower picks (up to 50%) that buys a period of extra-cost-free repayment, on top of the 2.5% protocol fee. If a loan isn’t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same funds.'
   ], [
     diagram('LOAN LIFECYCLE', [
       '  borrow',
@@ -363,22 +365,27 @@ export function learnGuideHtml() {
   wrap += guideSection('learn-migration', '18. MIGRATION', [
     'As the protocol evolves, projects can upgrade to newer versions of its core contracts — without losing their funds, tokens, or history. Think of it like moving to a new office: same business, better infrastructure.',
     'There are two kinds of migration. A controller migration moves the project’s management logic (how rulesets work, how tokens are minted) to a new controller. A terminal migration moves funds and accounting to a new terminal. Both follow a safe handoff process where the old contract and the new contract each run checks to ensure nothing is lost.',
-    'Only the project owner (or someone they’ve granted permission to) can trigger a migration, and the destination contract must be registered in the project’s directory first.'
+    'Only the project owner (or someone they’ve granted permission to) can trigger a migration. Switching controllers is done through JBDirectory.setControllerOf, which registers the new controller as part of the same call.'
   ], [
     diagram('MIGRATION FLOW', [
-      '  1. register the new contract in the directory',
-      '  2. call migrate',
-      '  3. old contract runs a "before migration" check',
-      '  4. state and funds are transferred',
-      '  5. new contract runs an "after migration" check',
+      '  CONTROLLER',
+      '  1. JBDirectory.setControllerOf(newController)',
+      '  2. new controller runs its "before receive" check',
+      '  3. old controller hands its state over (migrate)',
+      '  4. new controller runs its "after receive" check',
+      '',
+      '  TERMINAL',
+      '  1. JBMultiTerminal.migrateBalanceOf(to)',
+      '  2. balance moves to a terminal that accepts the same token',
+      '     (2.5% fee unless the new terminal is feeless)',
     ]),
-    textBlock('Because of this two-step verification, migrations are safe by design — both sides have to agree the handoff was successful.')
+    textBlock('The new controller checks the handoff on both sides, so a controller migration only completes if the receiver accepts it. Terminal migration is a plain balance move.')
   ]);
 
   wrap += guideSection('learn-distributor', '19. DISTRIBUTOR', [
     'The distributor is an optional add-on a project can deploy (it isn’t part of the core protocol deployment). It’s a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and participants collect their fair share over time.',
     'Distribution happens in rounds. At the start of each round, a snapshot captures how much each participant holds. Their share of the round’s rewards is proportional to their holdings at that moment. Rewards don’t unlock all at once — they vest gradually over a set number of rounds, encouraging long-term participation.',
-    'There are two flavors: one for regular token holders (based on voting power), and one for NFT owners (based on their NFT tiers). Both work the same way — fund it, start a round, and let participants collect as their rewards vest.'
+    'There are two flavors: one for regular token holders (based on voting power), and one for NFT owners (based on their NFT tiers). Both work the same way — fund it, and each fixed-length round takes a snapshot; participants collect as their rewards vest over the following rounds.'
   ], [
     diagram('HOW DISTRIBUTION WORKS', [
       '  funds deposited into the distributor',
@@ -394,7 +401,7 @@ export function learnGuideHtml() {
       '     ▼',
       '  collect unlocked rewards as rounds pass',
     ]),
-    textBlock('If an NFT is burned while rewards are still vesting, the unvested portion is returned to the pool for future rounds — it doesn’t disappear.')
+    textBlock('If an NFT is burned while rewards are still vesting, anyone can release the forfeited portion back into the current round — it doesn’t disappear. Unclaimed rounds do expire.')
   ]);
 
   wrap += guideSection('learn-handles', '20. PROJECT HANDLES', [
@@ -466,7 +473,8 @@ export function buildGuideHtml() {
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
-    '<a class="guide-toc-link" href="#build-clients">20. Build From This Client</a>';
+    '<a class="guide-toc-link" href="#build-bendystraw">20. Indexed Data</a>' +
+    '<a class="guide-toc-link" href="#build-clients">21. Build From This Client</a>';
   wrap += '<nav class="guide-toc">' + toc + '</nav>';
 
   // --- Life of a Project ---
@@ -492,7 +500,7 @@ export function buildGuideHtml() {
       '  memo                      // transaction description\n' +
       ')'
     ),
-    infoBox('For omnichain projects, use JBOmnichainDeployer.launchProjectFor() instead — it deploys suckers across multiple chains simultaneously.')
+    infoBox('For omnichain projects, use JBOmnichainDeployer.launchProjectFor() instead — it launches the project and its local suckers in one transaction. Run it on each chain the project should live on.')
   ]);
 
   wrap += guideSection('build-configure', '2. CONFIGURE', [
@@ -568,7 +576,7 @@ export function buildGuideHtml() {
       '  minTokensPaidOut     // slippage protection\n' +
       ')\n' +
       '// Distributes to splits, leftover to project owner\n' +
-      '// 2.5% protocol fee on each distribution'
+      '// 2.5% protocol fee on payouts, except to other Juicebox projects and feeless addresses'
     ),
     codeBlock(
       'JBController.sendReservedTokensToSplitsOf',
@@ -625,7 +633,7 @@ export function buildGuideHtml() {
       '// the changes before they can activate.'
     ),
     fnRefTable('INSPECTING QUEUED CHANGES', [
-      ['JBController.latestQueuedRulesetOf(projectId)', 'Pending ruleset awaiting activation'],
+      ['JBController.latestQueuedRulesetOf(projectId)', 'Latest ruleset in the queue and its approval status (may already be the active one)'],
       ['JBController.allRulesetsOf(projectId, startingId, size)', 'Complete ruleset history'],
     ])
   ]);
@@ -679,7 +687,7 @@ export function buildGuideHtml() {
   ], [
     fnRefTable('READING STAGE STATE', [
       ['JBController.currentRulesetOf(projectId)', 'Active stage parameters'],
-      ['JBController.upcomingRulesetOf(projectId)', 'Next stage (empty if current has no duration)'],
+      ['JBController.upcomingRulesetOf(projectId)', 'Next stage (empty if none is queued)'],
       ['JBController.allRulesetsOf(projectId, startingId, size)', 'Complete stage history'],
     ]),
   ]);
@@ -759,7 +767,7 @@ export function buildGuideHtml() {
   ]);
 
   wrap += guideSection('build-nfts', '13. NFT TIERS', [
-    'Deploy tiered NFTs as pay hooks using JB721TiersHook. Contributors receive NFTs based on payment amount and tier configuration.'
+    'Deploy tiered NFTs as pay hooks using JB721TiersHook. Payers pick tiers in the pay metadata and receive the NFTs their payment covers.'
   ], [
     codeBlock(
       'JB721TiersHookProjectDeployer.launchProjectFor',
@@ -773,7 +781,7 @@ export function buildGuideHtml() {
       '// Always use this deployer, even with empty tiers'
     ),
     propertyTable('TIER CONFIGURATION', [
-      ['price', 'Minimum contribution to receive this tier.'],
+      ['price', 'What one NFT of this tier costs.'],
       ['initialSupply', 'Max NFTs available. Must be at least 1; capped at 999,999,999. 0 is rejected.'],
       ['category', 'Grouping ID. Tiers MUST be sorted by category (ascending).'],
       ['reserveFrequency', 'Mint 1 reserved NFT every N minted.'],
@@ -846,7 +854,7 @@ export function buildGuideHtml() {
       ['handleOf(chainId, projectId, setter)', 'Returns the verified handle string, or empty if ENS text record doesn’t match.'],
       ['TEXT_KEY', 'The ENS text record key: "juicebox". Expected value: "{chainId}:{projectId}".'],
     ]),
-    textBlock('Name parts are in reverse order with .eth appended automatically — `_formatHandle` walks the array from the LAST element to the first (JBProjectHandles.sol:224-227), so the innermost label goes last. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["myproject", "sub"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
+    textBlock('Name parts are in reverse order. handleOf returns the dot-joined labels without a .eth suffix; the suffix is only added when computing the namehash for verification. `_formatHandle` (JBProjectHandles.sol:220-232) walks the array from the LAST element to the first, so the innermost label goes last. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["myproject", "sub"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
   ]);
 
   wrap += guideSection('build-payer', '17. PAYER ADDRESS', [
@@ -880,11 +888,11 @@ export function buildGuideHtml() {
       ['previewPayFor(...)', 'Preview the chosen route and expected output for a payment without executing it.'],
       ['bestPoolLiquidityOf(tokenA, tokenB)', 'Report the deepest-liquidity Uniswap pool the router would use for a pair.'],
     ]),
-    textBlock('The router terminal implements IJBTerminal and is registered alongside JBMultiTerminal in JBDirectory. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
+    textBlock('The router is reached through JBRouterTerminalRegistry, which is what a project adds to JBDirectory alongside JBMultiTerminal; the registry resolves to JBRouterTerminal. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
   ]);
 
   wrap += guideSection('build-buyback', '19. BUYBACK HOOK', [
-    'JBBuybackHook compares the mint price against a Uniswap V4 pool price and routes payments (and cash outs) to whichever gives better value. Slippage tolerance is computed automatically via a sigmoid function — not configurable.',
+    'JBBuybackHook compares the mint price against a Uniswap V4 pool price and routes payments (and cash outs) to whichever gives better value. Slippage tolerance defaults to a TWAP-based sigmoid; a payer can override it with a quote and minimum in the pay metadata.',
   ], [
     codeBlock(
       'JBBuybackHook configuration',
@@ -917,13 +925,51 @@ export function buildGuideHtml() {
   // --- Build Your Own ---
   wrap += partHeader('BUILD YOUR OWN');
 
-  wrap += guideSection('build-clients', '20. BUILD FROM THIS CLIENT', [
+  wrap += guideSection('build-bendystraw', '20. INDEXED DATA (BENDYSTRAW)', [
+    'Bendystraw is the Juicebox indexer: a Ponder service that watches every V6 contract on every supported chain and serves the results over GraphQL. It is how this site lists projects, draws activity feeds and price charts, ranks trending projects, and reads LP positions — none of which are practical to assemble from RPC calls at page-load speed.',
+    'Use it for anything a person reads. Use the chain for anything a wallet signs: re-read balances, rulesets, allowances, and quotes onchain right before building a transaction. The index can lag the chain by a few blocks, and a lagging index looks like empty data, not an error.'
+  ], [
+    fnRefTable('ENDPOINTS', [
+      ['https://bendystraw.up.railway.app/graphql', 'Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed'],
+      ['https://testnet.bendystraw.xyz/graphql', 'Testnets: Sepolia and the L2 Sepolias'],
+      ['…/schema', 'A playground with the schema explorer; POST an introspection query to the graphql URL for codegen (same schema on both databases)'],
+    ]),
+    codeBlock(
+      'A first query',
+      'POST https://bendystraw.up.railway.app/graphql\n' +
+      '{\n' +
+      '  projects(where: { chainId: 8453, version: 6 }, orderBy: "balance", orderDirection: "desc", limit: 10) {\n' +
+      '    items { projectId chainId name balance suckerGroupId }\n' +
+      '    totalCount\n' +
+      '  }\n' +
+      '}'
+    ),
+    fnRefTable('WHAT TO ASK IT FOR', [
+      ['projects / project(chainId, projectId)', 'Name, metadata URI, balance, token, owner, and the sucker group that links its chains'],
+      ['payEvents, cashOutTokensEvents, activityEvents', 'The feed behind any project page; filter by projectId or suckerGroupId'],
+      ['participants', 'Token holders and their balances, per project or per sucker group'],
+      ['buybackPools, swapEvents, buybackPoolPositions', 'The AMM: pool identity, every trade’s post-trade price, and every LP range'],
+      ['loans, borrowLoanEvents', 'Revnet loans and their collateral'],
+      ['nftTiers, mintNftEvents', '721 shop tiers and purchases'],
+      ['suckerTransactions', 'Cross-chain moves and where each one is in its lifecycle'],
+    ]),
+    stepList([
+      'Every V6 row is versioned: filter with version: 6, and key a project by chainId + projectId, never projectId alone — the same number exists on every chain.',
+      'Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.',
+      'Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.',
+      'suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.',
+      'The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.',
+    ]),
+    infoBox('Building with an agent? The /jb-bendystraw skill in the Juicebox V6 skills library carries the schema, the query patterns above, and the gotchas — hand it over before asking for a feed, chart, or holder table. Source: github.com/peripheralist/bendystraw.')
+  ]);
+
+  wrap += guideSection('build-clients', '21. BUILD FROM THIS CLIENT', [
     'Juicebox Money is a production V6 client you can study, fork, or use as a reference for your own product. Its Next.js interface combines server-assisted indexing and IPFS services with wallet flows that build and verify Juicebox transactions from the current V6 contracts.',
     'Treat each working flow as an implementation example, not a black box. The project, account, shop, and create surfaces show how product interactions map to indexed reads, fresh onchain checks, transaction builders, ABI round trips, and clear signing previews. Give the relevant source and tests to your coding agent when you want to reuse one of those patterns.'
   ], [
     stepList([
       'Start from the product flow closest to yours — such as Pay, Cash Out, project creation, ruleset editing, or the Shop — and identify its component, supporting reads, and transaction builder.',
-      'Give your coding agent that source, its tests, this guide’s deep link, and the current V6 contract repository below.',
+      'Give your coding agent that source, its tests, this guide’s deep link, the current V6 contract repository below, and the Juicebox V6 skills library (github.com/mejango/juicebox-skills) — a Claude Code plugin whose skills carry the addresses, ABIs, fee math, and transaction-safety rules so the agent does not reconstruct them from memory.',
       'Keep indexed data for fast discovery and display, but re-read signing-critical state onchain immediately before building and submitting a transaction.',
       'Reuse the pure transaction-builder and ABI round-trip pattern, then add product-specific invariants and browser tests before asking a wallet to sign.'
     ]),
