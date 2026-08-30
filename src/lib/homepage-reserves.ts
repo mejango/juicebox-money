@@ -2,6 +2,7 @@ import { unstable_cache } from 'next/cache'
 import { formatUnits } from 'viem'
 import {
   getAddToBalanceInflows,
+  getProjectMoments,
   getSuckerGroupMoments,
   suckerGroupAccountingToken,
   type BsAddToBalance,
@@ -11,7 +12,14 @@ import {
   getHomepageEthPrice,
 } from './top-projects'
 
-export type ReservePoint = { timestamp: number; valueUsd: number }
+export type ReservePoint = {
+  timestamp: number
+  valueUsd: number
+  /** The point's value split by chain. Absent where no per-chain history is
+   *  available — the volume and fee series, or a project whose moments the
+   *  indexer didn't return. */
+  chains?: Array<{ chainId: number; valueUsd: number }>
+}
 export type ChainReserveBreakdown = {
   chainId: number
   eth: number
@@ -141,6 +149,29 @@ const cachedHomepageReserves = unstable_cache(
         moments: await getSuckerGroupMoments(item.group.id).catch(() => []),
       })),
     )
+    const historicalProjects = supported.flatMap(({ group, symbol, decimals }) =>
+      group.projects.items.map(project => ({
+        key: `${project.chainId}:${project.version}:${project.projectId}`,
+        chainId: project.chainId,
+        projectId: project.projectId,
+        version: project.version,
+        symbol,
+        decimals,
+        currentAmount: Number(formatUnits(BigInt(project.balance), decimals)),
+      })),
+    )
+    const projectHistories = await Promise.all(
+      historicalProjects.map(async project => ({
+        ...project,
+        moments: await getProjectMoments(project).catch(() => []),
+      })),
+    )
+    // A project with no moments would silently read as zero for all of history,
+    // so only break out per-chain values when every project either reported
+    // moments or holds nothing.
+    const chainHistoryIsComplete = projectHistories.every(
+      project => project.moments.length > 0 || project.currentAmount === 0,
+    )
     const feeGroupIds = new Set(
       groups
         .filter(group => group.projects.items.some(project => project.projectId === 1))
@@ -160,6 +191,37 @@ const cachedHomepageReserves = unstable_cache(
         })),
       )
       .sort((a, b) => a.timestamp - b.timestamp)
+
+    // Each project's own balance history, plus a final point at the last
+    // aggregate moment so the breakdown lands on today's balances.
+    const latestAggregateTimestamp = events.at(-1)?.timestamp
+    const projectEvents = projectHistories
+      .flatMap(project => [
+        ...project.moments.map(moment => ({
+          key: project.key,
+          chainId: project.chainId,
+          symbol: project.symbol,
+          timestamp: moment.timestamp,
+          amount: Number(formatUnits(BigInt(moment.balance), project.decimals)),
+        })),
+        ...(latestAggregateTimestamp == null
+          ? []
+          : [
+              {
+                key: project.key,
+                chainId: project.chainId,
+                symbol: project.symbol,
+                timestamp: latestAggregateTimestamp,
+                amount: project.currentAmount,
+              },
+            ]),
+      ])
+      .sort((a, b) => a.timestamp - b.timestamp)
+    const latestProjects = new Map<
+      string,
+      { chainId: number; symbol: string; amount: number }
+    >()
+    let projectEventIndex = 0
 
     // The same inflows, replayed in order, so the curve reaches the headline.
     const decimalsByGroup = new Map(
@@ -197,6 +259,18 @@ const cachedHomepageReserves = unstable_cache(
         )
         inflowIndex += 1
       }
+      while (
+        projectEventIndex < projectEvents.length &&
+        projectEvents[projectEventIndex].timestamp <= event.timestamp
+      ) {
+        const projectEvent = projectEvents[projectEventIndex]
+        latestProjects.set(projectEvent.key, {
+          chainId: projectEvent.chainId,
+          symbol: projectEvent.symbol,
+          amount: projectEvent.amount,
+        })
+        projectEventIndex += 1
+      }
       let valueUsd = 0
       let volumeUsd = 0
       for (const item of supported) {
@@ -212,7 +286,19 @@ const cachedHomepageReserves = unstable_cache(
           volumeUsd += volume
         }
       }
-      rawPoints.push({ timestamp: event.timestamp, valueUsd })
+      const chains = chainHistoryIsComplete
+        ? RESERVE_CHAIN_IDS.map(chainId => ({
+            chainId,
+            valueUsd: [...latestProjects.values()].reduce((sum, project) => {
+              if (project.chainId !== chainId) return sum
+              if (project.symbol === 'ETH')
+                return sum + project.amount * (ethPrice ?? 0)
+              if (project.symbol === 'USDC') return sum + project.amount
+              return sum
+            }, 0),
+          }))
+        : undefined
+      rawPoints.push({ timestamp: event.timestamp, valueUsd, chains })
       rawVolumePoints.push({ timestamp: event.timestamp, valueUsd: volumeUsd })
     }
 

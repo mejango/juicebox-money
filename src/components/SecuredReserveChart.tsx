@@ -2,6 +2,8 @@
 
 import { useMemo, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import type { ReservePoint } from '@/lib/homepage-reserves'
+import { chainName } from '@/lib/urn'
+import { ChainIcon } from './ChainIcon'
 
 const HEIGHT = 72
 const TOP = 4
@@ -26,7 +28,7 @@ function date(timestamp: number, short = false) {
 
 export function SecuredReserveChart({
   points,
-  ariaLabel = 'Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect values.',
+  ariaLabel = 'Cumulative secured reserve value over time, shown as bars. Focus and use arrow keys to inspect total and per-chain values.',
 }: {
   points: ReservePoint[]
   ariaLabel?: string
@@ -80,11 +82,24 @@ export function SecuredReserveChart({
 
   return (
     <div>
-      <div className="mb-1 flex min-h-5 items-center justify-end gap-4 font-agrandir text-[11px] text-smoke-600">
+      <div className="mb-1 flex min-h-10 flex-col items-end justify-end gap-1 font-agrandir text-[11px] text-smoke-600">
         {hovered ? (
           <>
-            <span>Date: <span className="tabular-nums text-ink">{date(hovered.timestamp)}</span></span>
-            <span>Value: <span className="tabular-nums text-ink">{usd(hovered.valueUsd)}</span></span>
+            <span className="flex flex-wrap justify-end gap-x-4">
+              <span>Date: <span className="tabular-nums text-ink">{date(hovered.timestamp)}</span></span>
+              <span>Value: <span className="tabular-nums text-ink">{usd(hovered.valueUsd)}</span></span>
+            </span>
+            {hovered.chains?.length ? (
+              <span className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+                {hovered.chains.map(chain => (
+                  <span key={chain.chainId} className="inline-flex items-center gap-1 tabular-nums">
+                    <ChainIcon chainId={chain.chainId} size={11} />
+                    <span className="sr-only">{chainName(chain.chainId)}: </span>
+                    <span className="text-smoke-700">{usd(chain.valueUsd)}</span>
+                  </span>
+                ))}
+              </span>
+            ) : null}
           </>
         ) : null}
       </div>

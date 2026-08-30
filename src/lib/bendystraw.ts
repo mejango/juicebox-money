@@ -1381,6 +1381,23 @@ export async function getSuckerGroupMoments(
   return page.items
 }
 
+export type BsProjectMoment = { timestamp: number; balance: string }
+
+/** One project's balance over time — the per-chain slice of a group's moments. */
+export async function getProjectMoments(project: {
+  projectId: number
+  chainId: number
+  version: number
+}): Promise<BsProjectMoment[]> {
+  const page = await getPagedItems<BsProjectMoment>(
+    PROJECT_MOMENTS_QUERY,
+    'projectMoments',
+    project,
+    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+  )
+  return page.items
+}
+
 type BsSwapEvent = {
   timestamp: number
   direction: string
@@ -1497,6 +1514,19 @@ const GROUP_ADD_TO_BALANCE_QUERY = `query($suckerGroupId: String!, $limit: Int!,
     offset: $offset
   ) {
     items { suckerGroupId timestamp amount amountUsd }
+    totalCount
+  }
+}`
+
+const PROJECT_MOMENTS_QUERY = `query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {
+  projectMoments(
+    where: { projectId: $projectId, chainId: $chainId, version: $version }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp balance }
     totalCount
   }
 }`
