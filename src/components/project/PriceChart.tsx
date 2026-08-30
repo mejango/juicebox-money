@@ -159,14 +159,11 @@ function PriceSummary({
   label,
   color,
   note,
-  detail,
   active,
   onToggle,
 }: {
   label: string
   color: string
-  /** Small second line under the label, e.g. the pooled liquidity behind an AMM price. */
-  detail?: string
   /** What this price MEANS. Carried by the whole cell so the entire target reveals it; the (?)
    *  beside the label is the affordance saying so. */
   note?: string
@@ -190,9 +187,6 @@ function PriceSummary({
         />
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : <span>{label}</span>}
       </span>
-      {detail ? (
-        <span className="mt-0.5 block text-[10px] font-normal text-grey-500">{detail}</span>
-      ) : null}
     </button>
   )
 }
@@ -340,8 +334,10 @@ export function PriceChart({
             />
             <PriceSummary
               label="AMM price"
-              note={priceConcept("pool", { tokenSymbol: symbol, baseSymbol })}
-              detail={amm && ammLiquidity ? `on ${ammLiquidity} liq` : undefined}
+              note={
+                priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
+                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '')
+              }
               color={AMM_COLOR}
               active={showAmm}
               onToggle={() => setShowAmm(current => !current)}
@@ -483,6 +479,11 @@ export function PriceChart({
                 baseSymbol={baseSymbol}
                 symbol={symbol}
               />
+            ) : null}
+            {showAmm && amm && ammLiquidity ? (
+              <p className="whitespace-nowrap text-grey-300">
+                Pool holds {ammLiquidity}
+              </p>
             ) : null}
             {showCashOut && minimum ? (
               <TooltipPriceRow
