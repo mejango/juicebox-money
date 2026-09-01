@@ -103,7 +103,7 @@ const permit2Abi = [
 type PoolContext = Extract<MarketResult, { status: 'pool' }>
 
 /** The result of building the mint — the exact bytes and amounts that get sent. */
-type Mint = {
+export type Mint = {
   unlockData: `0x${string}`
   /** msg.value: the native pair max (SWEEP refunds the excess), else 0. */
   value: bigint
@@ -124,7 +124,7 @@ type Mint = {
  * (MINT_POSITION 0x02, CLOSE_CURRENCY 0x12 for each currency, SWEEP 0x14 for the
  * native refund). Pure: no wallet, no I/O.
  */
-function buildMint({
+export function buildMint({
   pool,
   pairAmount,
   tokenAmount,

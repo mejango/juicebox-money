@@ -20,6 +20,7 @@ import {
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
 import {
+  decodeAbiParameters,
   encodeAbiParameters,
   encodeFunctionData,
   erc20Abi,
@@ -688,6 +689,57 @@ export function buildRemoveLiquidityUnlockData({
   return encodeAbiParameters(
     [{ type: 'bytes' }, { type: 'bytes[]' }],
     [`0x${ACTION_BURN_POSITION}${ACTION_TAKE_PAIR}`, [burnParams, takeParams]],
+  )
+}
+
+const ACTION_MINT_POSITION = '02'
+const ACTION_CLOSE_CURRENCY = '12'
+
+/**
+ * One-transaction band move: BURN_POSITION(old) + MINT_POSITION(new) +
+ * CLOSE_CURRENCY(c0) + CLOSE_CURRENCY(c1). The burn's credit funds the mint
+ * inside the same unlock — no Permit2, no msg.value — and the closes return
+ * unclaimed fees plus whatever the new band doesn't consume to the caller.
+ * `mintUnlockData` is a standard add-liquidity unlock whose MINT parameters
+ * are lifted out verbatim; its own closes/sweep are dropped because the
+ * composed closes settle everything at the end.
+ */
+export function buildMoveLiquidityUnlockData({
+  tokenId,
+  currency0,
+  currency1,
+  amount0Min,
+  amount1Min,
+  mintUnlockData,
+}: {
+  tokenId: bigint
+  currency0: Address
+  currency1: Address
+  amount0Min: bigint
+  amount1Min: bigint
+  mintUnlockData: Hex
+}): Hex {
+  const burnParams = encodeAbiParameters(
+    [
+      { type: 'uint256' },
+      { type: 'uint128' },
+      { type: 'uint128' },
+      { type: 'bytes' },
+    ],
+    [tokenId, amount0Min, amount1Min, '0x'],
+  )
+  const [, mintParts] = decodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    mintUnlockData,
+  )
+  const close0 = encodeAbiParameters([{ type: 'address' }], [currency0])
+  const close1 = encodeAbiParameters([{ type: 'address' }], [currency1])
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [
+      `0x${ACTION_BURN_POSITION}${ACTION_MINT_POSITION}${ACTION_CLOSE_CURRENCY}${ACTION_CLOSE_CURRENCY}`,
+      [burnParams, mintParts[0], close0, close1],
+    ],
   )
 }
 
