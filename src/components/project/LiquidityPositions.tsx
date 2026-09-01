@@ -593,11 +593,11 @@ function ChainLpRows({
                     Move position #{position.tokenId.toString()} to a new price band
                   </p>
                   <p className="mt-1 text-xs text-smoke-500">
-                    Burns it and re-mints what it holds into the new band, all in one
-                    transaction. Unclaimed fees and anything the new band doesn&apos;t
-                    use return to your wallet; at least 95% of the current holdings is
-                    enforced on the burn, and if any leg falls short the whole move
-                    reverts.
+                    The position is burned and everything it holds is re-minted into the
+                    new band, all in one transaction. Unclaimed fees and anything the new
+                    band doesn&apos;t use return to your wallet. If prices shift too much
+                    before it lands, the whole move cancels itself and the position stays
+                    untouched.
                   </p>
                   <LiquidityRangePreview
                     floor={floor ?? null}

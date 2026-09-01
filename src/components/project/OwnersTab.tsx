@@ -50,7 +50,7 @@ import {
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { AddressText } from '@/components/ui/AddressLabel'
+import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { donutSlicePath } from '@/lib/donut'
 import {
@@ -710,7 +710,12 @@ function YourLpCell({
       {open ? (
         <ModalShell
           title="Your liquidity"
-          subtitle="Positions owned by this wallet in the project's market pools, across its chains."
+          subtitle={
+            <>
+              Positions owned by <AddressLabel address={holder} /> in the project&apos;s market
+              pools, across its chains.
+            </>
+          }
           onClose={() => setOpen(false)}
           maxWidth="max-w-4xl"
         >
