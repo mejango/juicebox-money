@@ -9,14 +9,31 @@ import {
 } from 'react'
 import {
   decodeAbiParameters,
+  decodeFunctionData,
+  encodeAbiParameters,
+  encodeFunctionData,
+  erc20Abi,
   formatEther,
   toFunctionSelector,
   zeroAddress,
+  type Abi,
   type AbiFunction,
   type AbiParameter,
   type Address,
   type Hex,
 } from 'viem'
+import { safeSetupAbi, safeToL2SetupAbi } from '@/lib/cross-chain-authority'
+import {
+  jbControllerAbi,
+  jbDirectoryAbi,
+  jbMultiTerminalAbi,
+  jbPermissionsAbi,
+  jbProjectsAbi,
+  jbSplitsAbi,
+  jbTokensAbi,
+  SPLITS_TOTAL_PERCENT,
+} from '@bananapus/nana-sdk-core'
+import { JBPermissionCatalogV6 } from '@bananapus/nana-sdk-core/v6'
 import { useAccount } from 'wagmi'
 import {
   USDC_ADDRESSES,
@@ -757,6 +774,523 @@ function UrPlanView({ steps, deadline }: { steps: UrStep[]; deadline?: unknown }
   )
 }
 
+// ── Precise decoders for the remaining opaque arguments ──────────────────────
+// Every decoder is strict: it re-encodes what it decoded and compares bytes
+// (or validates the full structure) before claiming an interpretation, and
+// returns null on ANY mismatch so the raw argument view shows instead — a
+// pretty rendering must never paper over bytes it can't fully account for.
+
+export type PrettyStep = { title: string; rows: [string, string][] };
+
+const bigintJson = (value: unknown) =>
+  JSON.stringify(value, (_, item) => (typeof item === "bigint" ? item.toString() : item));
+
+/** Strict decode + byte-exact re-encode round trip, else null. */
+function roundTripDecode<T extends readonly unknown[]>(
+  types: Parameters<typeof decodeAbiParameters>[0],
+  payload: Hex,
+): T | null {
+  try {
+    const decoded = decodeAbiParameters(types, payload);
+    const reencoded = encodeAbiParameters(types, decoded);
+    if (reencoded.toLowerCase() !== payload.toLowerCase()) return null;
+    return decoded as unknown as T;
+  } catch {
+    return null;
+  }
+}
+
+// ── 1. JB hook metadata (JBMetadataResolver envelope) ────────────────────────
+
+/**
+ * Parse the JBMetadataResolver layout exactly as `getDataFor` reads it: a
+ * 32-byte reserved word, a word-padded table of `(bytes4 id, uint8 wordOffset)`
+ * entries, then word-aligned payload segments. Offsets must be strictly
+ * increasing and the segments must tile the remainder of the bytes.
+ */
+function parseHookMetadataEnvelope(
+  value: unknown,
+): { reserved: Hex; entries: { id: Hex; payload: Hex }[] } | null {
+  if (typeof value !== "string" || !/^0x([0-9a-fA-F]{2})+$/.test(value)) return null;
+  const body = value.slice(2).toLowerCase();
+  if (body.length % 64 !== 0) return null;
+  const totalWords = body.length / 64;
+  if (totalWords < 3) return null; // reserved word + table word + ≥1 payload word
+  const firstOffset = parseInt(body.slice(64 + 8, 64 + 10), 16);
+  const tableWords = firstOffset - 1;
+  if (tableWords < 1 || firstOffset >= totalWords) return null;
+  const tableArea = body.slice(64, 64 + tableWords * 64);
+  const entries: { id: Hex; offset: number }[] = [];
+  let cursor = 0;
+  while (cursor + 10 <= tableArea.length) {
+    const chunk = tableArea.slice(cursor, cursor + 10);
+    if (/^0+$/.test(chunk)) break;
+    const id = chunk.slice(0, 8);
+    const offset = parseInt(chunk.slice(8, 10), 16);
+    if (/^0+$/.test(id)) return null; // a zero id with a nonzero offset is malformed
+    entries.push({ id: `0x${id}`, offset });
+    cursor += 10;
+  }
+  if (!entries.length) return null;
+  // The rest of the table must be pure zero padding.
+  if (!/^0*$/.test(tableArea.slice(cursor))) return null;
+  // The declared entry count must be what sized the table.
+  if (Math.ceil((entries.length * 5) / 32) !== tableWords) return null;
+  // Offsets must ascend and the payloads must tile the remaining bytes exactly.
+  for (let i = 0; i < entries.length; i++) {
+    if (entries[i].offset >= totalWords) return null;
+    if (i > 0 && entries[i].offset <= entries[i - 1].offset) return null;
+  }
+  if (entries[0].offset !== firstOffset) return null;
+  const segments = entries.map((entry, i) => {
+    const start = entry.offset * 64;
+    const end = i + 1 < entries.length ? entries[i + 1].offset * 64 : body.length;
+    return { id: entry.id, payload: `0x${body.slice(start, end)}` as Hex };
+  });
+  return { reserved: `0x${body.slice(0, 64)}`, entries: segments };
+}
+
+/** Aggregate repeated tier ids into "2× #4" form, preserving first-seen order. */
+function tierIdCounts(tierIds: readonly number[]): string {
+  const counts = new Map<number, number>();
+  for (const id of tierIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([id, count]) => (count > 1 ? `${count}× #${id}` : `#${id}`))
+    .join(", ");
+}
+
+/**
+ * Decode a `pay`/`addToBalanceOf`/`cashOutTokensOf` `metadata` argument into
+ * its hook entries, with typed interpretations for the payload shapes this
+ * ecosystem's builders produce (721 mints/redeems, buyback routing).
+ */
+export function describeJBHookMetadata(
+  context: "pay" | "cashOut",
+  value: unknown,
+): PrettyStep[] | null {
+  const envelope = parseHookMetadataEnvelope(value);
+  if (!envelope) return null;
+  const steps: PrettyStep[] = [];
+  if (!/^0x0+$/.test(envelope.reserved)) {
+    steps.push({
+      title: "Protocol-reserved word (nonzero)",
+      rows: [["Value", envelope.reserved]],
+    });
+  }
+  for (const entry of envelope.entries) {
+    const payloadWords = (entry.payload.length - 2) / 64;
+    const base: [string, string][] = [["Hook lookup id", entry.id]];
+    // Collect EVERY known shape that byte-exactly round-trips. Exactly one
+    // match is an interpretation; several (degenerate payloads like empty
+    // arrays) are reported as ambiguous rather than picking one.
+    const readings: PrettyStep[] = [];
+    if (context === "pay") {
+      const mint = roundTripDecode<readonly [boolean, readonly number[]]>(
+        [{ type: "bool" }, { type: "uint16[]" }],
+        entry.payload,
+      );
+      if (mint) {
+        readings.push({
+          title: "721 shop mint instructions",
+          rows: [
+            ...base,
+            ["Tier IDs to mint", mint[1].length ? tierIdCounts(mint[1]) : "none (credits only)"],
+            [
+              "Allow overspending",
+              mint[0] ? "yes — excess becomes pay credits" : "no — any excess reverts",
+            ],
+          ],
+        });
+      }
+      if (payloadWords === 3) {
+        const buyback = roundTripDecode<readonly [bigint, bigint, boolean]>(
+          [{ type: "uint256" }, { type: "uint256" }, { type: "bool" }],
+          entry.payload,
+        );
+        if (buyback) {
+          readings.push({
+            title: "Buyback hook swap instructions",
+            rows: [
+              ...base,
+              ["Amount to swap", buyback[0].toString()],
+              ["Minimum swap output", `${buyback[1]} — reverts below this`],
+              ["Skip splits on swapped tokens", buyback[2] ? "yes" : "no"],
+            ],
+          });
+        }
+      }
+    } else {
+      if (payloadWords === 2) {
+        const buyback = roundTripDecode<readonly [bigint, boolean]>(
+          [{ type: "uint256" }, { type: "bool" }],
+          entry.payload,
+        );
+        if (buyback) {
+          readings.push({
+            title: "Buyback hook cash-out routing",
+            rows: [
+              ...base,
+              ["Minimum swap output", buyback[0].toString()],
+              [
+                "Force the direct terminal path",
+                buyback[1] ? "yes — never route through the pool" : "no",
+              ],
+            ],
+          });
+        }
+      }
+      const redeem = roundTripDecode<readonly [readonly bigint[]]>(
+        [{ type: "uint256[]" }],
+        entry.payload,
+      );
+      if (redeem) {
+        readings.push({
+          title: "721 shop items to redeem",
+          rows: [
+            ...base,
+            ["Token IDs", redeem[0].length ? redeem[0].map((id) => `#${id}`).join(", ") : "none"],
+          ],
+        });
+      }
+    }
+    if (readings.length === 1) {
+      steps.push(readings[0]);
+    } else if (readings.length > 1) {
+      steps.push({
+        title: "Payload matches multiple known shapes — verify against the raw bytes",
+        rows: [
+          ...base,
+          ...readings.map(
+            (reading, i) =>
+              [
+                `Reading ${i + 1}`,
+                `${reading.title}: ${reading.rows
+                  .slice(base.length)
+                  .map(([label, val]) => `${label.toLowerCase()}: ${val}`)
+                  .join("; ")}`,
+              ] as [string, string],
+          ),
+        ],
+      });
+    } else {
+      steps.push({
+        title: `Unrecognized hook payload (${payloadWords} word${payloadWords === 1 ? "" : "s"})`,
+        rows: [...base, ["Payload", entry.payload]],
+      });
+    }
+  }
+  return steps;
+}
+
+// ── 2. Sucker bridge claim ───────────────────────────────────────────────────
+
+/** A bytes32 that is a left-padded address renders as the address. */
+function paddedAddress(value: string): string {
+  if (/^0x000000000000000000000000[0-9a-fA-F]{40}$/.test(value)) {
+    return `0x${value.slice(26)}`;
+  }
+  return value;
+}
+
+export function describeSuckerClaim(chainId: number, value: unknown): PrettyStep[] | null {
+  const claim = value as {
+    token?: unknown;
+    leaf?: {
+      index?: unknown;
+      beneficiary?: unknown;
+      projectTokenCount?: unknown;
+      terminalTokenAmount?: unknown;
+      metadata?: unknown;
+    };
+    proof?: unknown;
+  } | null;
+  if (
+    !claim ||
+    typeof claim.token !== "string" ||
+    !claim.leaf ||
+    typeof claim.leaf.beneficiary !== "string" ||
+    typeof claim.leaf.index !== "bigint" ||
+    typeof claim.leaf.projectTokenCount !== "bigint" ||
+    typeof claim.leaf.terminalTokenAmount !== "bigint" ||
+    !Array.isArray(claim.proof) ||
+    claim.proof.length !== 32 ||
+    !claim.proof.every((hash) => typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash))
+  ) {
+    return null;
+  }
+  const rows: [string, string][] = [
+    ["Terminal token", v4AddressLabel(chainId, claim.token)],
+    ["Leaf index", claim.leaf.index.toString()],
+    ["Beneficiary", paddedAddress(claim.leaf.beneficiary)],
+    ["Project tokens", claim.leaf.projectTokenCount.toString()],
+    ["Terminal token amount", claim.leaf.terminalTokenAmount.toString()],
+  ];
+  if (typeof claim.leaf.metadata === "string" && !/^0x0+$/.test(claim.leaf.metadata)) {
+    rows.push(["Leaf metadata", claim.leaf.metadata]);
+  }
+  rows.push(["Merkle proof", "32 hashes — exact bytes in the raw payload below"]);
+  return [{ title: "Claim a bridged balance from the sucker's inbox tree", rows }];
+}
+
+// ── 3. Safe execTransaction inner call ───────────────────────────────────────
+
+const SAFE_INNER_ABIS: { name: string; abi: Abi }[] = [
+  { name: "JBController", abi: jbControllerAbi as Abi },
+  { name: "JBMultiTerminal", abi: jbMultiTerminalAbi as Abi },
+  { name: "JBDirectory", abi: jbDirectoryAbi as Abi },
+  { name: "JBTokens", abi: jbTokensAbi as Abi },
+  { name: "JBPermissions", abi: jbPermissionsAbi as Abi },
+  { name: "JBSplits", abi: jbSplitsAbi as Abi },
+  { name: "JBProjects", abi: jbProjectsAbi as Abi },
+  { name: "ERC-20", abi: erc20Abi as Abi },
+];
+
+export function describeSafeInnerCall(value: unknown): PrettyStep[] | null {
+  if (typeof value !== "string" || !value.startsWith("0x") || value.length < 10) return null;
+  for (const candidate of SAFE_INNER_ABIS) {
+    try {
+      const decoded = decodeFunctionData({ abi: candidate.abi, data: value as Hex });
+      const item = candidate.abi.find(
+        (entry) => entry.type === "function" && entry.name === decoded.functionName,
+      ) as AbiFunction | undefined;
+      const rows: [string, string][] = (decoded.args ?? []).map((argument, index) => [
+        item?.inputs[index]?.name || `argument ${index + 1}`,
+        bigintJson(argument),
+      ]);
+      return [
+        {
+          title: `Queued call — ${candidate.name}.${decoded.functionName}(…)`,
+          rows: rows.length ? rows : [["Arguments", "none"]],
+        },
+      ];
+    } catch {
+      // try the next candidate ABI
+    }
+  }
+  return null;
+}
+
+// ── 4. Safe proxy initializer ────────────────────────────────────────────────
+
+export function describeSafeInitializer(chainId: number, value: unknown): PrettyStep[] | null {
+  if (typeof value !== "string" || !value.startsWith("0x")) return null;
+  let decoded: { functionName: string; args: readonly unknown[] };
+  try {
+    decoded = decodeFunctionData({ abi: safeSetupAbi, data: value as Hex }) as typeof decoded;
+  } catch {
+    return null;
+  }
+  if (decoded.functionName !== "setup" || !decoded.args) return null;
+  // Reject noncanonical encodings so the summary can never disagree with the bytes.
+  const canonical = encodeFunctionData({
+    abi: safeSetupAbi,
+    functionName: "setup",
+    args: decoded.args as never,
+  });
+  if (canonical.toLowerCase() !== value.toLowerCase()) return null;
+  const [owners, threshold, to, data, fallbackHandler, paymentToken, payment, paymentReceiver] =
+    decoded.args as [
+      readonly string[],
+      bigint,
+      string,
+      string,
+      string,
+      string,
+      bigint,
+      string,
+    ];
+  const rows: [string, string][] = [
+    ["Owners", owners.join(", ") || "none"],
+    ["Threshold", `${threshold} of ${owners.length}`],
+    ["Fallback handler", v4AddressLabel(chainId, fallbackHandler)],
+  ];
+  if (to.toLowerCase() === zeroAddress && data === "0x") {
+    rows.push(["Setup hook", "none"]);
+  } else {
+    let hook = `DELEGATECALL to ${to} — data in the raw payload below`;
+    try {
+      const inner = decodeFunctionData({ abi: safeToL2SetupAbi, data: data as Hex });
+      if (inner.functionName === "setupToL2" && inner.args) {
+        const canonicalInner = encodeFunctionData({
+          abi: safeToL2SetupAbi,
+          functionName: "setupToL2",
+          args: inner.args as never,
+        });
+        if (canonicalInner.toLowerCase() === data.toLowerCase()) {
+          hook = `SafeToL2Setup.setupToL2(${String(inner.args[0])}) via ${to}`;
+        }
+      }
+    } catch {
+      // keep the generic delegatecall warning
+    }
+    rows.push(["Setup hook", hook]);
+  }
+  if (payment !== 0n || paymentToken.toLowerCase() !== zeroAddress) {
+    rows.push([
+      "Deployment payment",
+      `${payment} of ${v4AddressLabel(chainId, paymentToken)} to ${paymentReceiver} — unusual, verify`,
+    ]);
+  }
+  return [{ title: "Safe setup", rows }];
+}
+
+// ── 5. Permission grants ─────────────────────────────────────────────────────
+
+const PERMISSION_NAME_BY_ID = new Map<number, string>(
+  JBPermissionCatalogV6.map(({ key, id }) => [id, key]),
+);
+
+export function describePermissionsData(chainId: number, value: unknown): PrettyStep[] | null {
+  const data = value as { operator?: unknown; projectId?: unknown; permissionIds?: unknown } | null;
+  if (
+    !data ||
+    typeof data.operator !== "string" ||
+    (typeof data.projectId !== "bigint" && typeof data.projectId !== "number") ||
+    !Array.isArray(data.permissionIds) ||
+    !data.permissionIds.every((id) => typeof id === "number" && Number.isInteger(id))
+  ) {
+    return null;
+  }
+  const projectId = BigInt(data.projectId);
+  const names = (data.permissionIds as number[]).map((id) => {
+    const name = PERMISSION_NAME_BY_ID.get(id);
+    return name ? `${name} (${id})` : `UNKNOWN PERMISSION (${id})`;
+  });
+  const rows: [string, string][] = [
+    ["Operator", v4AddressLabel(chainId, data.operator)],
+    [
+      "Scope",
+      projectId === 0n
+        ? "project 0 — EVERY project this account ever owns"
+        : `project #${projectId}`,
+    ],
+    [
+      "Permissions",
+      names.length ? names.join(", ") : "none — revokes everything previously granted",
+    ],
+  ];
+  if ((data.permissionIds as number[]).includes(1)) {
+    rows.push(["Warning", "ROOT grants every permission across all Juicebox contracts"]);
+  }
+  return [{ title: "Set operator permissions", rows }];
+}
+
+// ── 6. Split groups ──────────────────────────────────────────────────────────
+
+function splitPercent(percent: number): string {
+  const share = (percent * 100) / Number(SPLITS_TOTAL_PERCENT);
+  return `${Number(share.toFixed(4))}%`;
+}
+
+export function describeSplitGroups(chainId: number, value: unknown): PrettyStep[] | null {
+  if (!Array.isArray(value)) return null;
+  const steps: PrettyStep[] = [];
+  for (const group of value as {
+    groupId?: unknown;
+    splits?: {
+      percent?: unknown;
+      projectId?: unknown;
+      beneficiary?: unknown;
+      preferAddToBalance?: unknown;
+      lockedUntil?: unknown;
+      hook?: unknown;
+    }[];
+  }[]) {
+    if (typeof group?.groupId !== "bigint" || !Array.isArray(group.splits)) return null;
+    const groupLabel =
+      group.groupId === 1n
+        ? "Reserved tokens"
+        : group.groupId < 1n << 160n
+          ? `Payouts of ${v4AddressLabel(chainId, `0x${group.groupId.toString(16).padStart(40, "0")}`)}`
+          : `Group ${group.groupId}`;
+    const rows: [string, string][] = [];
+    let total = 0;
+    for (const [index, split] of group.splits.entries()) {
+      if (
+        typeof split?.percent !== "number" ||
+        typeof split.beneficiary !== "string" ||
+        typeof split.projectId !== "bigint"
+      ) {
+        return null;
+      }
+      total += split.percent;
+      const parts = [
+        split.projectId !== 0n
+          ? `project #${split.projectId} (beneficiary ${split.beneficiary})`
+          : v4AddressLabel(chainId, split.beneficiary),
+      ];
+      if (typeof split.hook === "string" && split.hook.toLowerCase() !== zeroAddress) {
+        parts.push(`via hook ${split.hook}`);
+      }
+      if (split.preferAddToBalance === true) parts.push("prefers add-to-balance");
+      if (typeof split.lockedUntil === "number" && split.lockedUntil > 0) {
+        parts.push(`locked until ${new Date(split.lockedUntil * 1000).toLocaleString()}`);
+      }
+      rows.push([`Split ${index + 1} — ${splitPercent(split.percent)}`, parts.join(" | ")]);
+    }
+    rows.push([
+      "Total",
+      `${splitPercent(total)}${total === Number(SPLITS_TOTAL_PERCENT) ? "" : " — the remainder follows the ruleset's default"}`,
+    ]);
+    steps.push({ title: groupLabel, rows: rows.length > 1 ? rows : [["Splits", "none"]] });
+  }
+  return steps.length ? steps : null;
+}
+
+/** Route an argument to its precise decoded view, or null for the raw default. */
+function specialArgumentView(
+  call: TransactionReviewCall,
+  fn: AbiFunction,
+  inputName: string,
+  argumentIndex: number,
+): React.ReactNode | null {
+  const value = call.args?.[argumentIndex]
+  if (fn.name === 'modifyLiquidities' && inputName === 'unlockData') {
+    const steps = describeV4UnlockData(value)
+    if (steps) return <V4PlanView steps={steps} chainId={call.chainId} />
+  }
+  if ((fn.name === 'pay' || fn.name === 'addToBalanceOf') && inputName === 'metadata') {
+    const steps = describeJBHookMetadata('pay', value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'cashOutTokensOf' && inputName === 'metadata') {
+    const steps = describeJBHookMetadata('cashOut', value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'claim') {
+    const steps = describeSuckerClaim(call.chainId, value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'execTransaction' && inputName === 'data') {
+    const steps = describeSafeInnerCall(value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'execTransaction' && inputName === 'operation') {
+    return (
+      <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-smoke-700">
+        {value === 1 || value === 1n
+          ? "1 — DELEGATECALL: runs foreign code with the Safe's own storage and funds"
+          : value === 0 || value === 0n
+            ? '0 — CALL'
+            : String(value)}
+      </pre>
+    )
+  }
+  if (fn.name === 'createProxyWithNonce' && inputName === 'initializer') {
+    const steps = describeSafeInitializer(call.chainId, value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'setPermissionsFor' && inputName === 'permissionsData') {
+    const steps = describePermissionsData(call.chainId, value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  if (fn.name === 'setSplitGroupsOf' && inputName === 'splitGroups') {
+    const steps = describeSplitGroups(call.chainId, value)
+    if (steps) return <UrPlanView steps={steps} />
+  }
+  return null
+}
+
 function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
   if (!call.abi || !call.functionName) return null
   const selector = call.data.slice(0, 10)
@@ -849,11 +1383,13 @@ function PrettyCall({
           ) : fn.inputs.length ? (
             <div className="mt-3 space-y-2">
               {fn.inputs.map((parameter, argumentIndex) => {
-                const decodedPlan =
-                  fn.name === 'modifyLiquidities' && parameter.name === 'unlockData'
-                    ? describeV4UnlockData(args[argumentIndex])
-                    : null
-                if (decodedPlan) {
+                const special = specialArgumentView(
+                  call,
+                  fn,
+                  parameter.name ?? '',
+                  argumentIndex,
+                )
+                if (special) {
                   return (
                     <div
                       key={`${parameter.name || 'argument'}-${argumentIndex}`}
@@ -862,10 +1398,10 @@ function PrettyCall({
                       <p className="text-xs font-medium text-smoke-700">
                         {parameter.name}{' '}
                         <span className="font-mono font-normal text-smoke-500">
-                          {parameter.type} · decoded plan
+                          {parameter.type} · decoded
                         </span>
                       </p>
-                      <V4PlanView steps={decodedPlan} chainId={call.chainId} />
+                      {special}
                     </div>
                   )
                 }

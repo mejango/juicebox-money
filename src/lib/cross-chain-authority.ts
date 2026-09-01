@@ -72,7 +72,7 @@ export const SAFE_L1_L2_SINGLETON_PAIRS = [
   ],
 ] as const satisfies readonly (readonly [Address, Address])[]
 
-const safeToL2SetupAbi = [
+export const safeToL2SetupAbi = [
   {
     type: 'function',
     name: 'setupToL2',
@@ -134,7 +134,7 @@ export function initializerUsesSafeToL2Setup(initializer: Hex): boolean {
   }
 }
 
-const safeSetupAbi = [
+export const safeSetupAbi = [
   {
     type: 'function',
     name: 'setup',
