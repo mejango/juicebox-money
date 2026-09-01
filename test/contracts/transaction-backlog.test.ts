@@ -511,8 +511,10 @@ describe('remaining local transaction builders', () => {
       liquidity: 777n,
       maximumIn: { currency0: 11n, currency1: 22n },
     })
-    expect(steps[2]).toMatchObject({ action: 'CLOSE_CURRENCY' })
-    expect(String((steps[2] as { currency: string }).currency)).toContain('native ETH')
+    expect(steps[2]).toMatchObject({
+      action: 'CLOSE_CURRENCY',
+      currency: '0x0000000000000000000000000000000000000000',
+    })
     // Unknown actions must fall back to the raw view, never a partial story.
     expect(describeV4UnlockData('0xdead')).toBeNull()
   })

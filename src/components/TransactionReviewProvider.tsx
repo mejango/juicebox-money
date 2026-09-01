@@ -181,19 +181,39 @@ function ArgumentValue({
   )
 }
 
-/** Zero address is how V4 spells native ETH inside a pool key. */
-function v4Currency(address: string): string {
-  return address.toLowerCase() === zeroAddress ? `native ETH (${zeroAddress})` : address
-}
+export type V4PlanStep =
+  | {
+      action: 'DECREASE_LIQUIDITY'
+      position: string
+      liquidity: bigint
+      minimumOut: { currency0: bigint; currency1: bigint }
+    }
+  | {
+      action: 'MINT_POSITION'
+      owner: string
+      pool: { currency0: string; currency1: string; fee: number; tickSpacing: number; hook: string }
+      ticks: { lower: number; upper: number }
+      liquidity: bigint
+      maximumIn: { currency0: bigint; currency1: bigint }
+    }
+  | {
+      action: 'BURN_POSITION'
+      position: string
+      minimumOut: { currency0: bigint; currency1: bigint }
+    }
+  | { action: 'TAKE_PAIR'; currency0: string; currency1: string; recipient: string }
+  | { action: 'CLOSE_CURRENCY'; currency: string }
+  | { action: 'SWEEP'; currency: string; recipient: string }
 
 /**
- * Decode a Uniswap V4 PositionManager `unlockData` plan into readable steps.
+ * Decode a Uniswap V4 PositionManager `unlockData` plan into typed steps.
  * Covers only the actions this app builds (mint/burn/decrease/take/close/
  * sweep); anything unrecognized falls back to the raw argument view — a
  * pretty rendering must never paper over bytes it can't fully account for.
- * Amounts are raw token units on purpose: this dialog shows the exact payload.
+ * Amounts stay in raw token units on purpose: this dialog shows the exact
+ * payload. Addresses stay raw here; the renderer resolves known names.
  */
-export function describeV4UnlockData(value: unknown): unknown[] | null {
+export function describeV4UnlockData(value: unknown): V4PlanStep[] | null {
   if (typeof value !== 'string' || !value.startsWith('0x')) return null
   try {
     const [actions, params] = decodeAbiParameters(
@@ -202,7 +222,7 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
     )
     const codes = actions.slice(2).match(/.{2}/g) ?? []
     if (!codes.length || codes.length !== params.length) return null
-    const steps: unknown[] = []
+    const steps: V4PlanStep[] = []
     for (const [index, byte] of codes.entries()) {
       const data = params[index]
       switch (parseInt(byte, 16)) {
@@ -217,22 +237,12 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
             ],
             data,
           )
-          steps.push(
-            liquidity === 0n
-              ? {
-                  action: 'DECREASE_LIQUIDITY',
-                  position: `#${tokenId}`,
-                  liquidity,
-                  note: 'zero-liquidity decrease: collects accrued fees, position untouched',
-                }
-              : {
-                  action: 'DECREASE_LIQUIDITY',
-                  position: `#${tokenId}`,
-                  liquidity,
-                  minimumOut: { currency0: amount0Min, currency1: amount1Min },
-                  note: 'reverts below the minimums',
-                },
-          )
+          steps.push({
+            action: 'DECREASE_LIQUIDITY',
+            position: `#${tokenId}`,
+            liquidity,
+            minimumOut: { currency0: amount0Min, currency1: amount1Min },
+          })
           break
         }
         case 0x02: {
@@ -263,8 +273,8 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
             action: 'MINT_POSITION',
             owner,
             pool: {
-              currency0: v4Currency(key[0]),
-              currency1: v4Currency(key[1]),
+              currency0: key[0],
+              currency1: key[1],
               fee: key[2],
               tickSpacing: key[3],
               hook: key[4],
@@ -284,7 +294,6 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
             action: 'BURN_POSITION',
             position: `#${tokenId}`,
             minimumOut: { currency0: amount0Min, currency1: amount1Min },
-            note: 'reverts unless the burn frees at least the minimums',
           })
           break
         }
@@ -293,22 +302,12 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
             [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
             data,
           )
-          steps.push({
-            action: 'TAKE_PAIR',
-            currency0: v4Currency(currency0),
-            currency1: v4Currency(currency1),
-            recipient,
-            note: 'sends everything freed to the recipient',
-          })
+          steps.push({ action: 'TAKE_PAIR', currency0, currency1, recipient })
           break
         }
         case 0x12: {
           const [currency] = decodeAbiParameters([{ type: 'address' }], data)
-          steps.push({
-            action: 'CLOSE_CURRENCY',
-            currency: v4Currency(currency),
-            note: 'settles the net balance; leftovers return to the caller',
-          })
+          steps.push({ action: 'CLOSE_CURRENCY', currency })
           break
         }
         case 0x14: {
@@ -316,12 +315,7 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
             [{ type: 'address' }, { type: 'address' }],
             data,
           )
-          steps.push({
-            action: 'SWEEP',
-            currency: v4Currency(currency),
-            recipient,
-            note: 'refunds unused balance',
-          })
+          steps.push({ action: 'SWEEP', currency, recipient })
           break
         }
         default:
@@ -332,6 +326,121 @@ export function describeV4UnlockData(value: unknown): unknown[] | null {
   } catch {
     return null
   }
+}
+
+/** The pay-confirm row grammar: `Label: value`, addresses resolved to known names. */
+function V4PlanRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-1">
+      <dt className="shrink-0 text-smoke-500">{label}:</dt>
+      <dd className="min-w-0 break-all font-mono text-smoke-700">{children}</dd>
+    </div>
+  )
+}
+
+function v4AddressLabel(chainId: number, address: string): string {
+  if (address.toLowerCase() === zeroAddress) return `native ETH | ${address}`
+  const label = knownAddressName(chainId, address)
+  return label ? `${label} | ${address}` : address
+}
+
+function v4Amounts(pair: { currency0: bigint; currency1: bigint }): string {
+  return `${pair.currency0} (currency0) + ${pair.currency1} (currency1)`
+}
+
+/** A decoded unlockData plan in the same row grammar the pay confirm uses. */
+function V4PlanView({ steps, chainId }: { steps: V4PlanStep[]; chainId: number }) {
+  return (
+    <div className="mt-1 space-y-3 text-xs">
+      {steps.map((step, index) => {
+        const title = (text: string) => (
+          <p className="font-medium text-ink">
+            {index + 1}. {text}
+          </p>
+        )
+        switch (step.action) {
+          case 'BURN_POSITION':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title(`Burn position ${step.position}`)}
+                <V4PlanRow label="Minimum out">
+                  {v4Amounts(step.minimumOut)} — reverts below this
+                </V4PlanRow>
+              </dl>
+            )
+          case 'DECREASE_LIQUIDITY':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title(
+                  step.liquidity === 0n
+                    ? `Collect fees on position ${step.position} (liquidity untouched)`
+                    : `Decrease position ${step.position}`,
+                )}
+                {step.liquidity !== 0n ? (
+                  <>
+                    <V4PlanRow label="Liquidity">{String(step.liquidity)}</V4PlanRow>
+                    <V4PlanRow label="Minimum out">
+                      {v4Amounts(step.minimumOut)} — reverts below this
+                    </V4PlanRow>
+                  </>
+                ) : null}
+              </dl>
+            )
+          case 'MINT_POSITION':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title('Mint a new position')}
+                <V4PlanRow label="Owner">{v4AddressLabel(chainId, step.owner)}</V4PlanRow>
+                <V4PlanRow label="Currency0">
+                  {v4AddressLabel(chainId, step.pool.currency0)}
+                </V4PlanRow>
+                <V4PlanRow label="Currency1">
+                  {v4AddressLabel(chainId, step.pool.currency1)}
+                </V4PlanRow>
+                <V4PlanRow label="Fee">
+                  {step.pool.fee} ({step.pool.fee / 10_000}%) | tick spacing {step.pool.tickSpacing}
+                </V4PlanRow>
+                <V4PlanRow label="Hook">{v4AddressLabel(chainId, step.pool.hook)}</V4PlanRow>
+                <V4PlanRow label="Ticks">
+                  {step.ticks.lower} → {step.ticks.upper}
+                </V4PlanRow>
+                <V4PlanRow label="Liquidity">{String(step.liquidity)}</V4PlanRow>
+                <V4PlanRow label="Maximum in">{v4Amounts(step.maximumIn)}</V4PlanRow>
+              </dl>
+            )
+          case 'TAKE_PAIR':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title('Take both currencies')}
+                <V4PlanRow label="Currency0">
+                  {v4AddressLabel(chainId, step.currency0)}
+                </V4PlanRow>
+                <V4PlanRow label="Currency1">
+                  {v4AddressLabel(chainId, step.currency1)}
+                </V4PlanRow>
+                <V4PlanRow label="Recipient">{v4AddressLabel(chainId, step.recipient)}</V4PlanRow>
+              </dl>
+            )
+          case 'CLOSE_CURRENCY':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title('Close currency — settle the net; leftovers return to the caller')}
+                <V4PlanRow label="Currency">{v4AddressLabel(chainId, step.currency)}</V4PlanRow>
+              </dl>
+            )
+          case 'SWEEP':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title('Sweep — refund unused balance')}
+                <V4PlanRow label="Currency">{v4AddressLabel(chainId, step.currency)}</V4PlanRow>
+                <V4PlanRow label="Recipient">{v4AddressLabel(chainId, step.recipient)}</V4PlanRow>
+              </dl>
+            )
+        }
+      })}
+      <p className="text-smoke-500">The exact bytes are in the raw payload below.</p>
+    </div>
+  )
 }
 
 function ArgumentRow({
@@ -460,13 +569,7 @@ function PrettyCall({
                           {parameter.type} · decoded plan
                         </span>
                       </p>
-                      <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-smoke-700">
-                        {JSON.stringify(
-                          decodedPlan,
-                          (_, item) => (typeof item === 'bigint' ? item.toString() : item),
-                          2,
-                        )}
-                      </pre>
+                      <V4PlanView steps={decodedPlan} chainId={call.chainId} />
                     </div>
                   )
                 }
