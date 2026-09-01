@@ -200,6 +200,12 @@ function ArgumentValue({
 
 export type V4PlanStep =
   | {
+      action: 'INCREASE_LIQUIDITY'
+      position: string
+      liquidity: bigint
+      maximumIn: { currency0: bigint; currency1: bigint }
+    }
+  | {
       action: 'DECREASE_LIQUIDITY'
       position: string
       liquidity: bigint
@@ -224,8 +230,8 @@ export type V4PlanStep =
 
 /**
  * Decode a Uniswap V4 PositionManager `unlockData` plan into typed steps.
- * Covers only the actions this app builds (mint/burn/decrease/take/close/
- * sweep); anything unrecognized falls back to the raw argument view — a
+ * Covers only the actions this app builds (increase/decrease/mint/burn/take/
+ * close/sweep); anything unrecognized falls back to the raw argument view — a
  * pretty rendering must never paper over bytes it can't fully account for.
  * Amounts stay in raw token units on purpose: this dialog shows the exact
  * payload. Addresses stay raw here; the renderer resolves known names.
@@ -243,11 +249,31 @@ export function describeV4UnlockData(value: unknown): V4PlanStep[] | null {
     for (const [index, byte] of codes.entries()) {
       const data = params[index]
       switch (parseInt(byte, 16)) {
+        case 0x00: {
+          const [tokenId, liquidity, amount0Max, amount1Max] = decodeAbiParameters(
+            [
+              { type: 'uint256' },
+              { type: 'uint256' },
+              { type: 'uint128' },
+              { type: 'uint128' },
+              { type: 'bytes' },
+            ],
+            data,
+          )
+          steps.push({
+            action: 'INCREASE_LIQUIDITY',
+            position: `#${tokenId}`,
+            liquidity,
+            maximumIn: { currency0: amount0Max, currency1: amount1Max },
+          })
+          break
+        }
         case 0x01: {
+          // The liquidity word is a uint256 in the PositionManager's decoder.
           const [tokenId, liquidity, amount0Min, amount1Min] = decodeAbiParameters(
             [
               { type: 'uint256' },
-              { type: 'uint128' },
+              { type: 'uint256' },
               { type: 'uint128' },
               { type: 'uint128' },
               { type: 'bytes' },
@@ -376,6 +402,16 @@ function V4PlanView({ steps, chainId }: { steps: V4PlanStep[]; chainId: number }
           </p>
         )
         switch (step.action) {
+          case 'INCREASE_LIQUIDITY':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title(`Increase position ${step.position}`)}
+                <V4PlanRow label="Liquidity added">{String(step.liquidity)}</V4PlanRow>
+                <V4PlanRow label="Maximum in">
+                  {v4Amounts(step.maximumIn)} — reverts above this
+                </V4PlanRow>
+              </dl>
+            )
           case 'BURN_POSITION':
             return (
               <dl key={index} className="space-y-0.5">

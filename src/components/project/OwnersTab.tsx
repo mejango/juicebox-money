@@ -272,7 +272,7 @@ function YouCard({
           : action === 'move'
             ? 'Move between chains'
             : action === 'liquidity'
-              ? 'Add market liquidity'
+              ? 'Add liquidity'
               : null
 
   return (
@@ -337,7 +337,7 @@ function YouCard({
             {actionBtn('cashOut', 'Cash out')}
             {isRevnet ? actionBtn('loan', 'Get a loan') : null}
             {multiChain ? actionBtn('move', 'Move between chains') : null}
-            {actionBtn('liquidity', 'Add market liquidity')}
+            {actionBtn('liquidity', 'Add liquidity')}
             {actionBtn('burn', 'Burn')}
           </div>
 

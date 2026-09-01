@@ -20,7 +20,6 @@ import { POSITION_MANAGER_BY_CHAIN } from '@/lib/uniswap-v4'
 import { swapDeadline } from '@/lib/safe-connector'
 import {
   buildModifyLiquiditiesRequest,
-  buildMoveLiquidityUnlockData,
   buildRemoveLiquidityUnlockData,
   retainedFloor,
 } from '@/lib/transaction-builders'
@@ -30,8 +29,7 @@ import {
   type MarketResult,
   type UserLpPosition,
 } from './MarketSection'
-import { buildMint } from './AddLiquidityFlow'
-import { LiquidityRangePreview } from './LiquidityRangePreview'
+import { EditPositionPanel } from './EditPositionPanel'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { PERSIST } from '@/lib/query-persist'
 
@@ -163,20 +161,6 @@ function unlockDataOf(data: Hex): Hex {
   return call.args[0] as Hex
 }
 
-/** A position's band on the pair-per-token axis, min < max regardless of
- *  which currency the pool sorts first. */
-function bandPrices(pool: Pool, tickLower: number, tickUpper: number) {
-  const display = (tick: number) => {
-    const raw = Math.pow(1.0001, tick)
-    return pool.pairIsC0
-      ? Math.pow(10, 18 - pool.pair.decimals) / raw
-      : raw * Math.pow(10, 18 - pool.pair.decimals)
-  }
-  const a = display(tickLower)
-  const b = display(tickUpper)
-  return { min: Math.min(a, b), max: Math.max(a, b) }
-}
-
 /**
  * The connected wallet's own LP positions across every project chain, in one
  * table (the hierarchy juicescan and revnet.money share): Chain | Position |
@@ -199,7 +183,7 @@ export function LiquidityPositions({
   // Per-chain scan outcomes reported up by the row groups, so the aggregate
   // empty state is knowable without lifting each chain's queries out of them.
   const [scan, setScan] = useState<Record<number, number | 'loading' | 'error'>>({})
-  // The move editor portals here, BELOW the scroll wrapper — as a table row it
+  // The edit panel portals here, BELOW the scroll wrapper — as a table row it
   // would inherit the table's full scrollable width and blow the modal out.
   const [panelHost, setPanelHost] = useState<HTMLDivElement | null>(null)
   const onStatus = useCallback(
@@ -253,7 +237,7 @@ export function LiquidityPositions({
       {isViewAs ? (
         <p className="mt-2 text-xs text-smoke-500">
           You&apos;re viewing another account — connect as its owner to claim,
-          move, or remove.
+          edit, or remove.
         </p>
       ) : null}
     </div>
@@ -262,8 +246,8 @@ export function LiquidityPositions({
 
 /**
  * One chain's row group in the spanning positions table: the wallet's
- * positions in that chain's pool, each with claim/move/remove. The move
- * editor renders as a full-width row anchored under its position.
+ * positions in that chain's pool, each with claim/edit/remove. The edit
+ * panel renders below the table, anchored to its position.
  */
 function ChainLpRows({
   chainId,
@@ -278,7 +262,7 @@ function ChainLpRows({
   sym: string
   onChanged?: () => void
   onStatus: (chainId: number, status: number | 'loading' | 'error') => void
-  /** Where the move editor renders, below the table's scroll wrapper. */
+  /** Where the edit panel renders, below the table's scroll wrapper. */
   panelHost: HTMLDivElement | null
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
@@ -286,13 +270,8 @@ function ChainLpRows({
   const tx = useSafeTx(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
-  // The band-move editor: which position is being re-banded and its editable
-  // range (pair-per-token), seeded from the position's current ticks.
-  const [moving, setMoving] = useState<{
-    tokenId: bigint
-    minText: string
-    maxText: string
-  } | null>(null)
+  // The position whose holdings/band are being edited in the panel below.
+  const [editing, setEditing] = useState<UserLpPosition | null>(null)
   const summary = useUserLpSummary(chainId, projectId, address)
   const { pool, positionManager } = summary
   const { data: floor } = useCashOutFloor(chainId, projectId, !!pool)
@@ -385,69 +364,6 @@ function ChainLpRows({
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Could not remove this position.',
-      )
-    } finally {
-      setReviewing(null)
-    }
-  }
-
-  // One-transaction band move: re-read the pool and position (same staleness
-  // rules as `remove` — the reviewed floors and mint sizing must come from
-  // live amounts), size the mint inside the burn's proceeds with 1% drift
-  // headroom so the credit always covers it, and send the composed unlock.
-  const move = async () => {
-    if (!moving || !connectedAddress || !client || !pool || !positionManager) return
-    setError(null)
-    setReviewing(moving.tokenId)
-    try {
-      const pa = Number(moving.minText)
-      const pb = Number(moving.maxText)
-      if (!(pa > 0) || !(pb > pa)) throw new Error('Set a valid positive price range.')
-      const freshMarket = await resolveMarket(
-        client,
-        chainId,
-        projectId,
-        JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
-      )
-      if (freshMarket.status !== 'pool' || freshMarket.poolId !== pool.poolId) {
-        throw new Error('The pool changed while this list was open. Reopen it and try again.')
-      }
-      const fresh = (
-        await readUserLpPositions(client, chainId, freshMarket, connectedAddress)
-      ).find(p => p.tokenId === moving.tokenId)
-      if (!fresh) throw new Error('This position is no longer owned by your wallet.')
-      const shave = (amount: bigint) => amount - amount / 100n
-      const mint = buildMint({
-        pool: freshMarket,
-        pairAmount: shave(fresh.pairAmount),
-        tokenAmount: shave(fresh.tokenAmount),
-        pa,
-        pb,
-        account: connectedAddress,
-      })
-      const pairMin = retainedFloor(fresh.pairAmount)
-      const tokenMin = retainedFloor(fresh.tokenAmount)
-      tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: buildMoveLiquidityUnlockData({
-            tokenId: fresh.tokenId,
-            currency0: pool.key.currency0,
-            currency1: pool.key.currency1,
-            amount0Min: pool.pairIsC0 ? pairMin : tokenMin,
-            amount1Min: pool.pairIsC0 ? tokenMin : pairMin,
-            mintUnlockData: mint.unlockData,
-          }),
-          deadline: swapDeadline(tx.isSafe),
-          value: 0n,
-        }),
-      )
-      setMoving(null)
-      refresh()
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : 'Could not move this position.',
       )
     } finally {
       setReviewing(null)
@@ -566,28 +482,20 @@ function ChainLpRows({
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
                   disabled={
-                    tx.busy || reviewing !== null || moving !== null || isViewAs
+                    tx.busy || reviewing !== null || editing !== null || isViewAs
                   }
                   onClick={() => {
-                    const band = bandPrices(
-                      pool,
-                      position.tickLower,
-                      position.tickUpper,
-                    )
-                    setMoving({
-                      tokenId: position.tokenId,
-                      minText: String(Number(band.min.toPrecision(6))),
-                      maxText: String(Number(band.max.toPrecision(6))),
-                    })
+                    setError(null)
+                    setEditing(position)
                   }}
                 >
-                  Move
+                  Edit
                 </button>
                 <button
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
                   disabled={
-                    tx.busy || reviewing !== null || moving !== null || isViewAs
+                    tx.busy || reviewing !== null || editing !== null || isViewAs
                   }
                   onClick={() => void remove(position)}
                 >
@@ -598,94 +506,22 @@ function ChainLpRows({
           </tr>
         )
       })}
-      {/* The editor lives OUTSIDE the scroll wrapper — as a table row it would
+      {/* The panel lives OUTSIDE the scroll wrapper — as a table row it would
           inherit the table's full scrollable width and blow the modal out. */}
-      {panelHost && moving && pool
+      {panelHost && editing && pool
         ? ReactDOM.createPortal(
-            <div className="mt-3 border border-smoke-200 p-3">
-              <p className="text-xs font-medium text-ink">
-                Move position #{moving.tokenId.toString()} on {chainName(chainId)} to a new
-                price band
-              </p>
-              <p className="mt-1 text-xs text-smoke-500">
-                The position is burned and everything it holds is re-minted into the new
-                band, all in one transaction. Unclaimed fees and anything the new band
-                doesn&apos;t use return to your wallet. If prices shift too much before it
-                lands, the whole move cancels itself and the position stays untouched.
-              </p>
-              <LiquidityRangePreview
-                floor={floor ?? null}
-                ceiling={pool.issuance ?? null}
-                current={pool.price}
-                minimum={Number(moving.minText) || 0}
-                maximum={Number(moving.maxText) || 0}
-                pairSymbol={pool.pair.symbol}
-                tokenSymbol={sym}
-                onRangeChange={
-                  tx.busy
-                    ? undefined
-                    : (edge, value) =>
-                        setMoving(current =>
-                          current
-                            ? {
-                                ...current,
-                                [edge === 'min' ? 'minText' : 'maxText']: String(value),
-                              }
-                            : current,
-                        )
-                }
-              />
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <label className="text-xs text-smoke-500">
-                  Min price
-                  <input
-                    className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
-                    type="number"
-                    min="0"
-                    value={moving.minText}
-                    disabled={tx.busy}
-                    onChange={event =>
-                      setMoving(current =>
-                        current ? { ...current, minText: event.target.value } : current,
-                      )
-                    }
-                  />
-                </label>
-                <label className="text-xs text-smoke-500">
-                  Max price
-                  <input
-                    className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
-                    type="number"
-                    min="0"
-                    value={moving.maxText}
-                    disabled={tx.busy}
-                    onChange={event =>
-                      setMoving(current =>
-                        current ? { ...current, maxText: event.target.value } : current,
-                      )
-                    }
-                  />
-                </label>
-              </div>
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  className="btn-primary min-h-[32px] px-3 text-xs"
-                  disabled={tx.busy || reviewing !== null || isViewAs}
-                  onClick={() => void move()}
-                >
-                  {reviewing === moving.tokenId ? 'Refreshing…' : 'Move liquidity'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary min-h-[32px] px-3 text-xs"
-                  disabled={tx.busy}
-                  onClick={() => setMoving(null)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>,
+            <EditPositionPanel
+              key={editing.tokenId.toString()}
+              chainId={chainId}
+              projectId={projectId}
+              pool={pool}
+              positionManager={positionManager}
+              position={editing}
+              sym={sym}
+              floor={floor ?? null}
+              onClose={() => setEditing(null)}
+              onDone={() => refresh()}
+            />,
             panelHost,
           )
         : null}
