@@ -8,11 +8,14 @@ import {
   useState,
 } from 'react'
 import {
+  decodeAbiParameters,
   formatEther,
   toFunctionSelector,
+  zeroAddress,
   type AbiFunction,
   type AbiParameter,
   type Address,
+  type Hex,
 } from 'viem'
 import { useAccount } from 'wagmi'
 import {
@@ -178,6 +181,132 @@ function ArgumentValue({
   )
 }
 
+/** Zero address is how V4 spells native ETH inside a pool key. */
+function v4Currency(address: string): string {
+  return address.toLowerCase() === zeroAddress ? `native ETH (${zeroAddress})` : address
+}
+
+/**
+ * Decode a Uniswap V4 PositionManager `unlockData` plan into readable steps.
+ * Covers only the actions this app builds (mint/burn/decrease/take/close/
+ * sweep); anything unrecognized falls back to the raw argument view — a
+ * pretty rendering must never paper over bytes it can't fully account for.
+ * Amounts are raw token units on purpose: this dialog shows the exact payload.
+ */
+export function describeV4UnlockData(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.startsWith('0x')) return null
+  try {
+    const [actions, params] = decodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      value as Hex,
+    )
+    const codes = actions.slice(2).match(/.{2}/g) ?? []
+    if (!codes.length || codes.length !== params.length) return null
+    const lines: string[] = []
+    for (const [index, byte] of codes.entries()) {
+      const data = params[index]
+      const step = `${index + 1}. `
+      switch (parseInt(byte, 16)) {
+        case 0x01: {
+          const [tokenId, liquidity, amount0Min, amount1Min] = decodeAbiParameters(
+            [
+              { type: 'uint256' },
+              { type: 'uint128' },
+              { type: 'uint128' },
+              { type: 'uint128' },
+              { type: 'bytes' },
+            ],
+            data,
+          )
+          lines.push(
+            step +
+              (liquidity === 0n
+                ? `DECREASE_LIQUIDITY — collect the fees accrued on position #${tokenId}; the position itself is untouched`
+                : `DECREASE_LIQUIDITY — remove ${liquidity} liquidity from position #${tokenId}; reverts unless it frees at least ${amount0Min} of currency0 + ${amount1Min} of currency1`),
+          )
+          break
+        }
+        case 0x02: {
+          const [key, tickLower, tickUpper, liquidity, amount0Max, amount1Max, owner] =
+            decodeAbiParameters(
+              [
+                {
+                  type: 'tuple',
+                  components: [
+                    { type: 'address' },
+                    { type: 'address' },
+                    { type: 'uint24' },
+                    { type: 'int24' },
+                    { type: 'address' },
+                  ],
+                },
+                { type: 'int24' },
+                { type: 'int24' },
+                { type: 'uint256' },
+                { type: 'uint128' },
+                { type: 'uint128' },
+                { type: 'address' },
+                { type: 'bytes' },
+              ],
+              data,
+            )
+          lines.push(
+            step + `MINT_POSITION — a new position owned by ${owner}`,
+            `   pool: ${v4Currency(key[0])} / ${key[1]} | fee ${key[2]} | tick spacing ${key[3]} | hook ${key[4]}`,
+            `   ticks ${tickLower} → ${tickUpper} | liquidity ${liquidity}`,
+            `   deposits at most ${amount0Max} of currency0 + ${amount1Max} of currency1`,
+          )
+          break
+        }
+        case 0x03: {
+          const [tokenId, amount0Min, amount1Min] = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
+            data,
+          )
+          lines.push(
+            step +
+              `BURN_POSITION — burn position #${tokenId}; reverts unless it frees at least ${amount0Min} of currency0 + ${amount1Min} of currency1`,
+          )
+          break
+        }
+        case 0x11: {
+          const [currency0, currency1, recipient] = decodeAbiParameters(
+            [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+            data,
+          )
+          lines.push(
+            step +
+              `TAKE_PAIR — send everything freed (${v4Currency(currency0)} + ${currency1}) to ${recipient}`,
+          )
+          break
+        }
+        case 0x12: {
+          const [currency] = decodeAbiParameters([{ type: 'address' }], data)
+          lines.push(
+            step +
+              `CLOSE_CURRENCY — settle the net ${v4Currency(currency)} balance; any leftover goes back to the caller`,
+          )
+          break
+        }
+        case 0x14: {
+          const [currency, recipient] = decodeAbiParameters(
+            [{ type: 'address' }, { type: 'address' }],
+            data,
+          )
+          lines.push(step + `SWEEP — refund unused ${v4Currency(currency)} to ${recipient}`)
+          break
+        }
+        default:
+          return null
+      }
+    }
+    lines.push('The exact bytes are in the raw payload below.')
+    return lines.join('\n')
+  } catch {
+    return null
+  }
+}
+
 function ArgumentRow({
   parameter,
   value,
@@ -287,14 +416,38 @@ function PrettyCall({
           </p>
           {fn.inputs.length ? (
             <div className="mt-3 space-y-2">
-              {fn.inputs.map((parameter, argumentIndex) => (
-                <ArgumentRow
-                  key={`${parameter.name || 'argument'}-${argumentIndex}`}
-                  parameter={parameter}
-                  value={args[argumentIndex]}
-                  chainId={call.chainId}
-                />
-              ))}
+              {fn.inputs.map((parameter, argumentIndex) => {
+                const decodedPlan =
+                  fn.name === 'modifyLiquidities' && parameter.name === 'unlockData'
+                    ? describeV4UnlockData(args[argumentIndex])
+                    : null
+                if (decodedPlan) {
+                  return (
+                    <div
+                      key={`${parameter.name || 'argument'}-${argumentIndex}`}
+                      className="rounded-lg bg-grey-25 px-3 py-2.5"
+                    >
+                      <p className="text-xs font-medium text-smoke-700">
+                        {parameter.name}{' '}
+                        <span className="font-mono font-normal text-smoke-500">
+                          {parameter.type} · decoded plan
+                        </span>
+                      </p>
+                      <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-smoke-700">
+                        {decodedPlan}
+                      </pre>
+                    </div>
+                  )
+                }
+                return (
+                  <ArgumentRow
+                    key={`${parameter.name || 'argument'}-${argumentIndex}`}
+                    parameter={parameter}
+                    value={args[argumentIndex]}
+                    chainId={call.chainId}
+                  />
+                )
+              })}
             </div>
           ) : null}
         </div>

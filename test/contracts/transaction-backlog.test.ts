@@ -461,6 +461,52 @@ describe('remaining local transaction builders', () => {
     expect(decodeAbiParameters([{ type: 'address' }], params[3])).toEqual([TERMINAL])
   })
 
+  it('renders a move plan as readable steps in the review dialog', async () => {
+    const { describeV4UnlockData } = await import('@/components/TransactionReviewProvider')
+    const mintParams = encodeAbiParameters(
+      [
+        {
+          type: 'tuple',
+          components: [
+            { type: 'address' },
+            { type: 'address' },
+            { type: 'uint24' },
+            { type: 'int24' },
+            { type: 'address' },
+          ],
+        },
+        { type: 'int24' },
+        { type: 'int24' },
+        { type: 'uint256' },
+        { type: 'uint128' },
+        { type: 'uint128' },
+        { type: 'address' },
+        { type: 'bytes' },
+      ],
+      [['0x0000000000000000000000000000000000000000', TOKEN, 10000, 200, HOOK], -69200, -64400, 777n, 11n, 22n, ALICE, '0x'],
+    )
+    const mintUnlockData = encodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      ['0x021212', [mintParams, '0x', '0x']],
+    )
+    const unlockData = buildMoveLiquidityUnlockData({
+      tokenId: 42n,
+      currency0: '0x0000000000000000000000000000000000000000',
+      currency1: TOKEN,
+      amount0Min: 100n,
+      amount1Min: 200n,
+      mintUnlockData,
+    })
+    const text = describeV4UnlockData(unlockData)!
+    expect(text).toContain('1. BURN_POSITION — burn position #42')
+    expect(text).toContain('at least 100 of currency0 + 200 of currency1')
+    expect(text).toContain(`2. MINT_POSITION — a new position owned by ${ALICE}`)
+    expect(text).toContain('ticks -69200 → -64400 | liquidity 777')
+    expect(text).toContain('3. CLOSE_CURRENCY — settle the net native ETH')
+    // Unknown actions must fall back to the raw view, never a partial story.
+    expect(describeV4UnlockData('0xdead')).toBeNull()
+  })
+
   it('never floors a non-zero LP amount to zero', () => {
     // A 1-wei dust side must not become an unbounded 0 minimum.
     expect(retainedFloor(0n)).toBe(0n)

@@ -6,7 +6,8 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import ReactDOM from 'react-dom'
 import { decodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -198,6 +199,9 @@ export function LiquidityPositions({
   // Per-chain scan outcomes reported up by the row groups, so the aggregate
   // empty state is knowable without lifting each chain's queries out of them.
   const [scan, setScan] = useState<Record<number, number | 'loading' | 'error'>>({})
+  // The move editor portals here, BELOW the scroll wrapper — as a table row it
+  // would inherit the table's full scrollable width and blow the modal out.
+  const [panelHost, setPanelHost] = useState<HTMLDivElement | null>(null)
   const onStatus = useCallback(
     (chainId: number, status: number | 'loading' | 'error') => {
       setScan(current =>
@@ -239,11 +243,13 @@ export function LiquidityPositions({
                 sym={sym}
                 onChanged={onChanged}
                 onStatus={onStatus}
+                panelHost={panelHost}
               />
             ))}
           </tbody>
         </table>
       </div>
+      <div ref={setPanelHost} className="min-w-0" />
       {isViewAs ? (
         <p className="mt-2 text-xs text-smoke-500">
           You&apos;re viewing another account — connect as its owner to claim,
@@ -265,12 +271,15 @@ function ChainLpRows({
   sym,
   onChanged,
   onStatus,
+  panelHost,
 }: {
   chainId: JBChainId
   projectId: number
   sym: string
   onChanged?: () => void
   onStatus: (chainId: number, status: number | 'loading' | 'error') => void
+  /** Where the move editor renders, below the table's scroll wrapper. */
+  panelHost: HTMLDivElement | null
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address, connectedAddress, isViewAs } = useViewedAccount()
@@ -487,8 +496,10 @@ function ChainLpRows({
         const nothingOwed =
           !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
         return (
-          <React.Fragment key={position.tokenId.toString()}>
-          <tr className="border-t border-smoke-100 align-top">
+          <tr
+            key={position.tokenId.toString()}
+            className="border-t border-smoke-100 align-top"
+          >
             {chainCell}
             <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
               #{position.tokenId.toString()}
@@ -585,113 +596,107 @@ function ChainLpRows({
               </span>
             </td>
           </tr>
-          {moving?.tokenId === position.tokenId ? (
-            <tr>
-              <td colSpan={6} className="pb-3 pt-1">
-                <div className="border border-smoke-200 p-3">
-                  <p className="text-xs font-medium text-ink">
-                    Move position #{position.tokenId.toString()} to a new price band
-                  </p>
-                  <p className="mt-1 text-xs text-smoke-500">
-                    The position is burned and everything it holds is re-minted into the
-                    new band, all in one transaction. Unclaimed fees and anything the new
-                    band doesn&apos;t use return to your wallet. If prices shift too much
-                    before it lands, the whole move cancels itself and the position stays
-                    untouched.
-                  </p>
-                  <LiquidityRangePreview
-                    floor={floor ?? null}
-                    ceiling={pool.issuance ?? null}
-                    current={pool.price}
-                    minimum={Number(moving.minText) || 0}
-                    maximum={Number(moving.maxText) || 0}
-                    pairSymbol={pool.pair.symbol}
-                    tokenSymbol={sym}
-                    onRangeChange={
-                      tx.busy
-                        ? undefined
-                        : (edge, value) =>
-                            setMoving(current =>
-                              current
-                                ? {
-                                    ...current,
-                                    [edge === 'min' ? 'minText' : 'maxText']:
-                                      String(value),
-                                  }
-                                : current,
-                            )
-                    }
-                  />
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <label className="text-xs text-smoke-500">
-                      Min price
-                      <input
-                        className="input mt-1 w-full text-sm"
-                        type="number"
-                        min="0"
-                        value={moving.minText}
-                        disabled={tx.busy}
-                        onChange={event =>
-                          setMoving(current =>
-                            current
-                              ? { ...current, minText: event.target.value }
-                              : current,
-                          )
-                        }
-                      />
-                    </label>
-                    <label className="text-xs text-smoke-500">
-                      Max price
-                      <input
-                        className="input mt-1 w-full text-sm"
-                        type="number"
-                        min="0"
-                        value={moving.maxText}
-                        disabled={tx.busy}
-                        onChange={event =>
-                          setMoving(current =>
-                            current
-                              ? { ...current, maxText: event.target.value }
-                              : current,
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      className="btn-primary min-h-[32px] px-3 text-xs"
-                      disabled={tx.busy || reviewing !== null || isViewAs}
-                      onClick={() => void move()}
-                    >
-                      {reviewing === position.tokenId
-                        ? 'Refreshing…'
-                        : 'Move liquidity'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary min-h-[32px] px-3 text-xs"
-                      disabled={tx.busy}
-                      onClick={() => setMoving(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </td>
-            </tr>
-          ) : null}
-          </React.Fragment>
         )
       })}
-      {(error ?? tx.error) ? (
-        <tr>
-          <td colSpan={6} className="pb-2">
-            <ErrorNote message={error ?? tx.error!} />
-          </td>
-        </tr>
-      ) : null}
+      {/* The editor lives OUTSIDE the scroll wrapper — as a table row it would
+          inherit the table's full scrollable width and blow the modal out. */}
+      {panelHost && moving && pool
+        ? ReactDOM.createPortal(
+            <div className="mt-3 border border-smoke-200 p-3">
+              <p className="text-xs font-medium text-ink">
+                Move position #{moving.tokenId.toString()} on {chainName(chainId)} to a new
+                price band
+              </p>
+              <p className="mt-1 text-xs text-smoke-500">
+                The position is burned and everything it holds is re-minted into the new
+                band, all in one transaction. Unclaimed fees and anything the new band
+                doesn&apos;t use return to your wallet. If prices shift too much before it
+                lands, the whole move cancels itself and the position stays untouched.
+              </p>
+              <LiquidityRangePreview
+                floor={floor ?? null}
+                ceiling={pool.issuance ?? null}
+                current={pool.price}
+                minimum={Number(moving.minText) || 0}
+                maximum={Number(moving.maxText) || 0}
+                pairSymbol={pool.pair.symbol}
+                tokenSymbol={sym}
+                onRangeChange={
+                  tx.busy
+                    ? undefined
+                    : (edge, value) =>
+                        setMoving(current =>
+                          current
+                            ? {
+                                ...current,
+                                [edge === 'min' ? 'minText' : 'maxText']: String(value),
+                              }
+                            : current,
+                        )
+                }
+              />
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <label className="text-xs text-smoke-500">
+                  Min price
+                  <input
+                    className="input mt-1 w-full text-sm"
+                    type="number"
+                    min="0"
+                    value={moving.minText}
+                    disabled={tx.busy}
+                    onChange={event =>
+                      setMoving(current =>
+                        current ? { ...current, minText: event.target.value } : current,
+                      )
+                    }
+                  />
+                </label>
+                <label className="text-xs text-smoke-500">
+                  Max price
+                  <input
+                    className="input mt-1 w-full text-sm"
+                    type="number"
+                    min="0"
+                    value={moving.maxText}
+                    disabled={tx.busy}
+                    onChange={event =>
+                      setMoving(current =>
+                        current ? { ...current, maxText: event.target.value } : current,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  className="btn-primary min-h-[32px] px-3 text-xs"
+                  disabled={tx.busy || reviewing !== null || isViewAs}
+                  onClick={() => void move()}
+                >
+                  {reviewing === moving.tokenId ? 'Refreshing…' : 'Move liquidity'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[32px] px-3 text-xs"
+                  disabled={tx.busy}
+                  onClick={() => setMoving(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>,
+            panelHost,
+          )
+        : null}
+      {panelHost && (error ?? tx.error)
+        ? ReactDOM.createPortal(
+            <div className="mt-2">
+              <ErrorNote message={error ?? tx.error!} />
+            </div>,
+            panelHost,
+          )
+        : null}
     </>
   )
 }
