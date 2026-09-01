@@ -713,7 +713,7 @@ function YourLpCell({
           subtitle={
             <>
               Positions owned by <AddressLabel address={holder} /> in the project&apos;s market
-              pools, across its chains.
+              pools.
             </>
           }
           onClose={() => setOpen(false)}
