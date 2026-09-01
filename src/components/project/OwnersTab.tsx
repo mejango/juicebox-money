@@ -712,7 +712,7 @@ function YourLpCell({
           title="Your liquidity"
           subtitle="Positions owned by this wallet in the project's market pools, across its chains."
           onClose={() => setOpen(false)}
-          maxWidth="max-w-2xl"
+          maxWidth="max-w-4xl"
         >
           <LiquidityPositions
             chains={chains.map(([cid, pid]) => ({
