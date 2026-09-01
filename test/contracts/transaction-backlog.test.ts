@@ -497,12 +497,22 @@ describe('remaining local transaction builders', () => {
       amount1Min: 200n,
       mintUnlockData,
     })
-    const text = describeV4UnlockData(unlockData)!
-    expect(text).toContain('1. BURN_POSITION — burn position #42')
-    expect(text).toContain('at least 100 of currency0 + 200 of currency1')
-    expect(text).toContain(`2. MINT_POSITION — a new position owned by ${ALICE}`)
-    expect(text).toContain('ticks -69200 → -64400 | liquidity 777')
-    expect(text).toContain('3. CLOSE_CURRENCY — settle the net native ETH')
+    const steps = describeV4UnlockData(unlockData)! as Array<Record<string, unknown>>
+    expect(steps).toHaveLength(4)
+    expect(steps[0]).toMatchObject({
+      action: 'BURN_POSITION',
+      position: '#42',
+      minimumOut: { currency0: 100n, currency1: 200n },
+    })
+    expect(steps[1]).toMatchObject({
+      action: 'MINT_POSITION',
+      owner: ALICE,
+      ticks: { lower: -69200, upper: -64400 },
+      liquidity: 777n,
+      maximumIn: { currency0: 11n, currency1: 22n },
+    })
+    expect(steps[2]).toMatchObject({ action: 'CLOSE_CURRENCY' })
+    expect(String((steps[2] as { currency: string }).currency)).toContain('native ETH')
     // Unknown actions must fall back to the raw view, never a partial story.
     expect(describeV4UnlockData('0xdead')).toBeNull()
   })

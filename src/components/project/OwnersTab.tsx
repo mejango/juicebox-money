@@ -717,7 +717,7 @@ function YourLpCell({
             </>
           }
           onClose={() => setOpen(false)}
-          maxWidth="max-w-4xl"
+          maxWidth="max-w-2xl"
         >
           <LiquidityPositions
             chains={chains.map(([cid, pid]) => ({

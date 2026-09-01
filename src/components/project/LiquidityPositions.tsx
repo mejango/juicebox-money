@@ -639,7 +639,7 @@ function ChainLpRows({
                 <label className="text-xs text-smoke-500">
                   Min price
                   <input
-                    className="input mt-1 w-full text-sm"
+                    className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
                     type="number"
                     min="0"
                     value={moving.minText}
@@ -654,7 +654,7 @@ function ChainLpRows({
                 <label className="text-xs text-smoke-500">
                   Max price
                   <input
-                    className="input mt-1 w-full text-sm"
+                    className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
                     type="number"
                     min="0"
                     value={moving.maxText}

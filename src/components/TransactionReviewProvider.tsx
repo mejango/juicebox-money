@@ -193,7 +193,7 @@ function v4Currency(address: string): string {
  * pretty rendering must never paper over bytes it can't fully account for.
  * Amounts are raw token units on purpose: this dialog shows the exact payload.
  */
-export function describeV4UnlockData(value: unknown): string | null {
+export function describeV4UnlockData(value: unknown): unknown[] | null {
   if (typeof value !== 'string' || !value.startsWith('0x')) return null
   try {
     const [actions, params] = decodeAbiParameters(
@@ -202,10 +202,9 @@ export function describeV4UnlockData(value: unknown): string | null {
     )
     const codes = actions.slice(2).match(/.{2}/g) ?? []
     if (!codes.length || codes.length !== params.length) return null
-    const lines: string[] = []
+    const steps: unknown[] = []
     for (const [index, byte] of codes.entries()) {
       const data = params[index]
-      const step = `${index + 1}. `
       switch (parseInt(byte, 16)) {
         case 0x01: {
           const [tokenId, liquidity, amount0Min, amount1Min] = decodeAbiParameters(
@@ -218,11 +217,21 @@ export function describeV4UnlockData(value: unknown): string | null {
             ],
             data,
           )
-          lines.push(
-            step +
-              (liquidity === 0n
-                ? `DECREASE_LIQUIDITY — collect the fees accrued on position #${tokenId}; the position itself is untouched`
-                : `DECREASE_LIQUIDITY — remove ${liquidity} liquidity from position #${tokenId}; reverts unless it frees at least ${amount0Min} of currency0 + ${amount1Min} of currency1`),
+          steps.push(
+            liquidity === 0n
+              ? {
+                  action: 'DECREASE_LIQUIDITY',
+                  position: `#${tokenId}`,
+                  liquidity,
+                  note: 'zero-liquidity decrease: collects accrued fees, position untouched',
+                }
+              : {
+                  action: 'DECREASE_LIQUIDITY',
+                  position: `#${tokenId}`,
+                  liquidity,
+                  minimumOut: { currency0: amount0Min, currency1: amount1Min },
+                  note: 'reverts below the minimums',
+                },
           )
           break
         }
@@ -250,12 +259,20 @@ export function describeV4UnlockData(value: unknown): string | null {
               ],
               data,
             )
-          lines.push(
-            step + `MINT_POSITION — a new position owned by ${owner}`,
-            `   pool: ${v4Currency(key[0])} / ${key[1]} | fee ${key[2]} | tick spacing ${key[3]} | hook ${key[4]}`,
-            `   ticks ${tickLower} → ${tickUpper} | liquidity ${liquidity}`,
-            `   deposits at most ${amount0Max} of currency0 + ${amount1Max} of currency1`,
-          )
+          steps.push({
+            action: 'MINT_POSITION',
+            owner,
+            pool: {
+              currency0: v4Currency(key[0]),
+              currency1: v4Currency(key[1]),
+              fee: key[2],
+              tickSpacing: key[3],
+              hook: key[4],
+            },
+            ticks: { lower: tickLower, upper: tickUpper },
+            liquidity,
+            maximumIn: { currency0: amount0Max, currency1: amount1Max },
+          })
           break
         }
         case 0x03: {
@@ -263,10 +280,12 @@ export function describeV4UnlockData(value: unknown): string | null {
             [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
             data,
           )
-          lines.push(
-            step +
-              `BURN_POSITION — burn position #${tokenId}; reverts unless it frees at least ${amount0Min} of currency0 + ${amount1Min} of currency1`,
-          )
+          steps.push({
+            action: 'BURN_POSITION',
+            position: `#${tokenId}`,
+            minimumOut: { currency0: amount0Min, currency1: amount1Min },
+            note: 'reverts unless the burn frees at least the minimums',
+          })
           break
         }
         case 0x11: {
@@ -274,18 +293,22 @@ export function describeV4UnlockData(value: unknown): string | null {
             [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
             data,
           )
-          lines.push(
-            step +
-              `TAKE_PAIR — send everything freed (${v4Currency(currency0)} + ${currency1}) to ${recipient}`,
-          )
+          steps.push({
+            action: 'TAKE_PAIR',
+            currency0: v4Currency(currency0),
+            currency1: v4Currency(currency1),
+            recipient,
+            note: 'sends everything freed to the recipient',
+          })
           break
         }
         case 0x12: {
           const [currency] = decodeAbiParameters([{ type: 'address' }], data)
-          lines.push(
-            step +
-              `CLOSE_CURRENCY — settle the net ${v4Currency(currency)} balance; any leftover goes back to the caller`,
-          )
+          steps.push({
+            action: 'CLOSE_CURRENCY',
+            currency: v4Currency(currency),
+            note: 'settles the net balance; leftovers return to the caller',
+          })
           break
         }
         case 0x14: {
@@ -293,15 +316,19 @@ export function describeV4UnlockData(value: unknown): string | null {
             [{ type: 'address' }, { type: 'address' }],
             data,
           )
-          lines.push(step + `SWEEP — refund unused ${v4Currency(currency)} to ${recipient}`)
+          steps.push({
+            action: 'SWEEP',
+            currency: v4Currency(currency),
+            recipient,
+            note: 'refunds unused balance',
+          })
           break
         }
         default:
           return null
       }
     }
-    lines.push('The exact bytes are in the raw payload below.')
-    return lines.join('\n')
+    return steps
   } catch {
     return null
   }
@@ -434,7 +461,11 @@ function PrettyCall({
                         </span>
                       </p>
                       <pre className="mt-1 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-smoke-700">
-                        {decodedPlan}
+                        {JSON.stringify(
+                          decodedPlan,
+                          (_, item) => (typeof item === 'bigint' ? item.toString() : item),
+                          2,
+                        )}
                       </pre>
                     </div>
                   )
