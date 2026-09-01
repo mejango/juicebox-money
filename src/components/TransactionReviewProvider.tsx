@@ -467,6 +467,296 @@ function ArgumentRow({
   )
 }
 
+/** Universal Router sentinels the direct-pay swap builders use. */
+const UR_MSG_SENDER = "0x0000000000000000000000000000000000000001";
+const UR_ADDRESS_THIS = "0x0000000000000000000000000000000000000002";
+const UR_CONTRACT_BALANCE = 1n << 255n;
+
+export type UrStep = { title: string; rows: [string, string][] };
+
+function urRecipient(chainId: number, address: string): string {
+  if (address.toLowerCase() === UR_MSG_SENDER) return "you (msg.sender)";
+  if (address.toLowerCase() === UR_ADDRESS_THIS) return "the router (kept for the next step)";
+  return v4AddressLabel(chainId, address);
+}
+
+function urAmount(value: bigint): string {
+  if (value === UR_CONTRACT_BALANCE) return "the router's entire balance from the previous step";
+  if (value === 0n) return "0 (the open amount from the previous step)";
+  return value.toString();
+}
+
+/** A packed V3 path: 20-byte token, 3-byte fee, 20-byte token, … */
+function urV3Path(chainId: number, path: string): string | null {
+  const raw = path.slice(2);
+  if (raw.length < 86 || (raw.length - 40) % 46 !== 0) return null;
+  const parts: string[] = [v4AddressLabel(chainId, `0x${raw.slice(0, 40)}`)];
+  for (let offset = 40; offset < raw.length; offset += 46) {
+    const fee = parseInt(raw.slice(offset, offset + 6), 16);
+    parts.push(`-${fee / 10_000}%→`, v4AddressLabel(chainId, `0x${raw.slice(offset + 6, offset + 46)}`));
+  }
+  return parts.join(" ");
+}
+
+/** The V4_SWAP command's inner action plan (the shapes the pay builders emit). */
+function urV4SwapSteps(chainId: number, input: Hex): UrStep[] | null {
+  const [actions, params] = decodeAbiParameters(
+    [{ type: "bytes" }, { type: "bytes[]" }],
+    input,
+  );
+  const codes = actions.slice(2).match(/.{2}/g) ?? [];
+  if (!codes.length || codes.length !== params.length) return null;
+  const steps: UrStep[] = [];
+  for (const [index, byte] of codes.entries()) {
+    const data = params[index];
+    switch (parseInt(byte, 16)) {
+      case 0x06: {
+        const [swap] = decodeAbiParameters(
+          [
+            {
+              type: "tuple",
+              components: [
+                {
+                  type: "tuple",
+                  components: [
+                    { type: "address" },
+                    { type: "address" },
+                    { type: "uint24" },
+                    { type: "int24" },
+                    { type: "address" },
+                  ],
+                },
+                { type: "bool" },
+                { type: "uint128" },
+                { type: "uint128" },
+                { type: "bytes" },
+              ],
+            },
+          ],
+          data,
+        );
+        const [key, zeroForOne, amountIn, minimumOut] = swap;
+        const currencyIn = zeroForOne ? key[0] : key[1];
+        const currencyOut = zeroForOne ? key[1] : key[0];
+        steps.push({
+          title: "Swap in the project's V4 pool (exact input)",
+          rows: [
+            ["Sell", v4AddressLabel(chainId, currencyIn)],
+            ["Buy", v4AddressLabel(chainId, currencyOut)],
+            ["Amount in", urAmount(amountIn)],
+            ["Minimum out", `${minimumOut} — reverts below this`],
+            ["Fee", `${key[2]} (${key[2] / 10_000}%) | tick spacing ${key[3]}`],
+            ["Hook", v4AddressLabel(chainId, key[4])],
+          ],
+        });
+        break;
+      }
+      case 0x0b: {
+        const [currency, amount] = decodeAbiParameters(
+          [{ type: "address" }, { type: "uint256" }, { type: "bool" }],
+          data,
+        );
+        steps.push({
+          title: "Pay the pool",
+          rows: [
+            ["Currency", v4AddressLabel(chainId, currency)],
+            ["Amount", urAmount(amount)],
+          ],
+        });
+        break;
+      }
+      case 0x0c: {
+        const [currency, maximum] = decodeAbiParameters(
+          [{ type: "address" }, { type: "uint256" }],
+          data,
+        );
+        steps.push({
+          title: "Pay the pool everything owed",
+          rows: [
+            ["Currency", v4AddressLabel(chainId, currency)],
+            ["At most", maximum.toString()],
+          ],
+        });
+        break;
+      }
+      case 0x0e: {
+        const [currency, recipient, amount] = decodeAbiParameters(
+          [{ type: "address" }, { type: "address" }, { type: "uint256" }],
+          data,
+        );
+        steps.push({
+          title: "Take the swap output",
+          rows: [
+            ["Currency", v4AddressLabel(chainId, currency)],
+            ["Recipient", urRecipient(chainId, recipient)],
+            ["Amount", urAmount(amount)],
+          ],
+        });
+        break;
+      }
+      default:
+        return null;
+    }
+  }
+  return steps;
+}
+
+/**
+ * Decode a Uniswap Universal Router `execute(commands, inputs, deadline)` into
+ * readable steps. Covers only the command shapes the pay flow builds (Permit2
+ * permit, wrap, V3 hop, unwrap, V4 swap); anything unrecognized falls back to
+ * the raw argument view — a pretty rendering must never paper over bytes it
+ * can't fully account for.
+ */
+export function describeUniversalRouterExecute(
+  chainId: number,
+  args: readonly unknown[] | undefined,
+): UrStep[] | null {
+  if (!args || args.length < 2) return null;
+  const [commands, inputs] = args as [unknown, unknown];
+  if (typeof commands !== "string" || !commands.startsWith("0x") || !Array.isArray(inputs)) {
+    return null;
+  }
+  try {
+    const codes = commands.slice(2).match(/.{2}/g) ?? [];
+    if (!codes.length || codes.length !== inputs.length) return null;
+    const steps: UrStep[] = [];
+    for (const [index, byte] of codes.entries()) {
+      const data = inputs[index] as Hex;
+      switch (parseInt(byte, 16)) {
+        case 0x00: {
+          const [recipient, amountIn, minimumOut, path, payerIsUser] = decodeAbiParameters(
+            [
+              { type: "address" },
+              { type: "uint256" },
+              { type: "uint256" },
+              { type: "bytes" },
+              { type: "bool" },
+            ],
+            data,
+          );
+          const route = urV3Path(chainId, path);
+          if (!route) return null;
+          steps.push({
+            title: "Swap through a V3 pool (exact input)",
+            rows: [
+              ["Route", route],
+              ["Amount in", urAmount(amountIn)],
+              ["Minimum out", minimumOut === 0n ? "0 — the final V4 minimum below is the real floor" : minimumOut.toString()],
+              ["Paid by", payerIsUser ? "you (via Permit2)" : "the router's balance"],
+              ["Recipient", urRecipient(chainId, recipient)],
+            ],
+          });
+          break;
+        }
+        case 0x0a: {
+          const [permit] = decodeAbiParameters(
+            [
+              {
+                type: "tuple",
+                components: [
+                  {
+                    type: "tuple",
+                    components: [
+                      { type: "address" },
+                      { type: "uint160" },
+                      { type: "uint48" },
+                      { type: "uint48" },
+                    ],
+                  },
+                  { type: "address" },
+                  { type: "uint256" },
+                ],
+              },
+              { type: "bytes" },
+            ],
+            data,
+          );
+          const [details, spender, sigDeadline] = permit;
+          steps.push({
+            title: "Apply your signed Permit2 authorization",
+            rows: [
+              ["Token", v4AddressLabel(chainId, details[0])],
+              ["Amount", details[1].toString()],
+              ["Spender", v4AddressLabel(chainId, spender)],
+              ["Expires", new Date(Number(details[2]) * 1000).toLocaleString()],
+              ["Signature deadline", new Date(Number(sigDeadline) * 1000).toLocaleString()],
+            ],
+          });
+          break;
+        }
+        case 0x0b: {
+          const [recipient, amount] = decodeAbiParameters(
+            [{ type: "address" }, { type: "uint256" }],
+            data,
+          );
+          steps.push({
+            title: "Wrap ETH into WETH",
+            rows: [
+              ["Amount", urAmount(amount)],
+              ["Recipient", urRecipient(chainId, recipient)],
+            ],
+          });
+          break;
+        }
+        case 0x0c: {
+          const [recipient, minimum] = decodeAbiParameters(
+            [{ type: "address" }, { type: "uint256" }],
+            data,
+          );
+          steps.push({
+            title: "Unwrap WETH back to ETH",
+            rows: [
+              ["Minimum", urAmount(minimum)],
+              ["Recipient", urRecipient(chainId, recipient)],
+            ],
+          });
+          break;
+        }
+        case 0x10: {
+          const inner = urV4SwapSteps(chainId, data);
+          if (!inner) return null;
+          steps.push(...inner);
+          break;
+        }
+        default:
+          return null;
+      }
+    }
+    return steps;
+  } catch {
+    return null;
+  }
+}
+
+/** A decoded Universal Router plan in the same row grammar as everything else. */
+function UrPlanView({ steps, deadline }: { steps: UrStep[]; deadline?: unknown }) {
+  return (
+    <div className="mt-3 space-y-3 text-xs">
+      {steps.map((step, index) => (
+        <dl key={index} className="space-y-0.5">
+          <p className="font-medium text-ink">
+            {index + 1}. {step.title}
+          </p>
+          {step.rows.map(([label, value]) => (
+            <V4PlanRow key={label} label={label}>
+              {value}
+            </V4PlanRow>
+          ))}
+        </dl>
+      ))}
+      {deadline != null ? (
+        <dl className="space-y-0.5">
+          <V4PlanRow label="Deadline">
+            {new Date(Number(deadline) * 1000).toLocaleString()}
+          </V4PlanRow>
+        </dl>
+      ) : null}
+      <p className="text-smoke-500">The exact bytes are in the raw payload below.</p>
+    </div>
+  )
+}
+
 function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
   if (!call.abi || !call.functionName) return null
   const selector = call.data.slice(0, 10)
@@ -550,7 +840,13 @@ function PrettyCall({
             {fn.name}(
             {fn.inputs.map(input => input.type).join(', ')})
           </p>
-          {fn.inputs.length ? (
+          {fn.name === 'execute' &&
+          describeUniversalRouterExecute(call.chainId, args) ? (
+            <UrPlanView
+              steps={describeUniversalRouterExecute(call.chainId, args)!}
+              deadline={args[2]}
+            />
+          ) : fn.inputs.length ? (
             <div className="mt-3 space-y-2">
               {fn.inputs.map((parameter, argumentIndex) => {
                 const decodedPlan =
