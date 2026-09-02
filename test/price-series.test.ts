@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { smoothPriceSeries } from '@/lib/price-series'
+import { bucketPoolReserves, smoothPriceSeries } from '@/lib/price-series'
 
 describe('smoothPriceSeries', () => {
   it('attenuates a short-lived spike and preserves exact endpoints', () => {
@@ -21,5 +21,23 @@ describe('smoothPriceSeries', () => {
       { timestamp: 100, value: 12 },
     ]
     expect(smoothPriceSeries(points)).toEqual(points)
+  })
+})
+
+describe('bucketPoolReserves', () => {
+  it('resamples onto even buckets, holding the last observation and skipping the pre-pool span', () => {
+    const buckets = bucketPoolReserves(
+      [
+        { timestamp: 70, pairValue: 3, tokenValue: 4 },
+        { timestamp: 50, pairValue: 1, tokenValue: 2 },
+      ],
+      0,
+      100,
+      4,
+    )
+    expect(buckets).toEqual([
+      { timestamp: 62.5, pairValue: 1, tokenValue: 2 },
+      { timestamp: 87.5, pairValue: 3, tokenValue: 4 },
+    ])
   })
 })

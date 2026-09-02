@@ -23,8 +23,10 @@ import {
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 import {
+  bucketPoolReserves,
   smoothPriceSeries,
   visibleSeries,
+  type PoolReservePoint,
   type PricePoint,
 } from '@/lib/price-series'
 import {
@@ -56,6 +58,12 @@ const CASH_OUT_COLOR = '#C85F9A'
 // Melon green: far from the cash-out pink so the two market lines can't be
 // confused where they run close together.
 const AMM_COLOR = '#4FA270'
+// The pool's reserves as faint bars in the AMM colour: pair side darker, token side above it.
+const RESERVE_PAIR_OPACITY = 0.28
+const RESERVE_TOKEN_OPACITY = 0.13
+const RESERVE_BARS = 48
+// Tallest bar, in viewBox units (the plot is 142 tall).
+const RESERVE_BAR_HEIGHT = 40
 const DAY = 86_400
 
 const PRICE_RANGES = [
@@ -198,8 +206,10 @@ export function PriceChart({
   floorPrice,
   ammPrice,
   ammLiquidity,
+  pairSymbol,
   floorHistory = [],
   ammHistory = [],
+  ammReservesHistory = [],
   cashOutTaxHistory = [],
   note,
 }: {
@@ -210,8 +220,12 @@ export function PriceChart({
   ammPrice?: ReferenceLine
   /** What the pool holds right now, e.g. "1.2M REV + 3.4 ETH". Context for how much the AMM price can bear. */
   ammLiquidity?: string | null
+  /** The pool's pair token, named in the reserve-bars note. */
+  pairSymbol?: string | null
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
+  /** Both sides of the pool over time, drawn as faint bars under the AMM line. */
+  ammReservesHistory?: PoolReservePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
   /** The live cash-out / AMM reads are still confirming. */
   /** Accepted for caller compatibility; the value-less legend no longer shows it. */
@@ -255,6 +269,13 @@ export function PriceChart({
   const ammSeries = marketPriceView === 'trades'
     ? exactAmmSeries
     : smoothPriceSeries(exactAmmSeries)
+  const reserveBars = showAmm
+    ? bucketPoolReserves(ammReservesHistory, t0, t1, RESERVE_BARS)
+    : []
+  const tallestReserve = Math.max(
+    0,
+    ...reserveBars.map(bar => bar.pairValue + bar.tokenValue),
+  )
   const sortedTaxHistory = [...cashOutTaxHistory].sort(
     (a, b) => a.timestamp - b.timestamp,
   )
@@ -336,7 +357,10 @@ export function PriceChart({
               label="AMM price"
               note={
                 priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
-                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '')
+                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '') +
+                (reserveBars.length && pairSymbol
+                  ? ` The faint bars show what the pool held: ${pairSymbol} in the darker shade, ${symbol} in the lighter one, both valued in ${pairSymbol}.`
+                  : '')
               }
               color={AMM_COLOR}
               active={showAmm}
@@ -378,8 +402,35 @@ export function PriceChart({
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
           .join(' ')
+        const barWidth = Math.max(1, ((X(t1) - X(t0)) / RESERVE_BARS) * 0.7)
+        const reserveUnit = tallestReserve > 0 ? RESERVE_BAR_HEIGHT / tallestReserve : 0
         return (
           <>
+            {reserveBars.map(bar => {
+              const pairHeight = bar.pairValue * reserveUnit
+              const tokenHeight = bar.tokenValue * reserveUnit
+              const x = X(bar.timestamp) - barWidth / 2
+              return (
+                <g key={bar.timestamp}>
+                  <rect
+                    x={x}
+                    y={Y(0) - pairHeight}
+                    width={barWidth}
+                    height={pairHeight}
+                    fill={AMM_COLOR}
+                    fillOpacity={RESERVE_PAIR_OPACITY}
+                  />
+                  <rect
+                    x={x}
+                    y={Y(0) - pairHeight - tokenHeight}
+                    width={barWidth}
+                    height={tokenHeight}
+                    fill={AMM_COLOR}
+                    fillOpacity={RESERVE_TOKEN_OPACITY}
+                  />
+                </g>
+              )
+            })}
             {showCashOut && floorSeries.length > 1 ? (
               <polyline
                 points={floorPath}
