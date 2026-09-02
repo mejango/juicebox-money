@@ -46,6 +46,7 @@ import {
 import { formatPrice } from './chartUtils'
 import { resolveMarket, type MarketResult } from './MarketSection'
 import { buildMint, type Mint } from '@/lib/lp-mint'
+import { buildMarketMint, type MarketMint } from '@/lib/market-liquidity'
 
 /**
  * "Add liquidity" — a Uniswap V4 PositionManager MINT (real funds).
@@ -110,7 +111,9 @@ type Plan = {
   account: Address
   posm: Address
   steps: Step[]
-  mint: Mint
+  mint: Mint | MarketMint
+  /** Two single-sided positions spanning the corridor, instead of one band. */
+  market: boolean
   /** Frozen display figures — must equal what the frozen `mint` sends. */
   display: {
     needTok: bigint
@@ -392,7 +395,13 @@ function AddLiquidityForm({
   // around them (floor pinned to the cash-out price, ceiling to the issuance
   // price when the token side needs the room). Range mode keeps the classic
   // pick-a-range flow with counterpart autofill.
-  const [mode, setMode] = useState<'amounts' | 'range' | 'full'>('amounts')
+  // A project with both a cash-out floor and an issuance ceiling has a
+  // corridor to make a market in; that is the default there. Without both,
+  // the solved single band is, and full range stays on offer.
+  const hasCorridor = !!floor && !!ceiling && ceiling > floor
+  const [mode, setMode] = useState<'market' | 'amounts' | 'range' | 'full'>(
+    hasCorridor ? 'market' : 'amounts',
+  )
 
   const solved = useMemo(() => {
     if (mode !== 'amounts' || !(poolP > 0)) return null
@@ -426,10 +435,16 @@ function AddLiquidityForm({
   }, [mode, poolP])
 
   const range = useMemo(() => {
+    if (mode === 'market') return { pa: floor ?? 0, pb: ceiling ?? 0 }
     const pa = parseFloat(minStr)
     const pb = parseFloat(maxStr)
     return { pa: pa > 0 ? pa : 0, pb: pb > 0 ? pb : 0 }
-  }, [minStr, maxStr])
+  }, [mode, minStr, maxStr, floor, ceiling])
+  // Which half of the corridor each market side can still use.
+  const marketRoom = useMemo(
+    () => ({ tok: hasCorridor && poolP < (ceiling ?? 0), pair: hasCorridor && poolP > (floor ?? 0) }),
+    [hasCorridor, poolP, floor, ceiling],
+  )
   const sides = useMemo(
     () => activeSides(range.pa, range.pb, poolP),
     [range, poolP],
@@ -561,7 +576,11 @@ function AddLiquidityForm({
       const pa = range.pa
       const pb = range.pb
       if (!(pa > 0) || !(pb > pa)) {
-        throw new FlowError('Set a valid price range.')
+        throw new FlowError(
+          mode === 'market'
+            ? 'This project has no floor and ceiling to make a market between.'
+            : 'Set a valid price range.',
+        )
       }
 
       // LIVE re-reads — never trust the rendered numbers. Balances first.
@@ -605,20 +624,30 @@ function AddLiquidityForm({
         throw new FlowError('The pool is no longer available on this chain.')
       }
 
-      const mint = buildMint({
-        pool: fresh,
-        pairAmount,
-        tokenAmount,
-        pa,
-        pb,
-        account: address,
-      })
+      const mint =
+        mode === 'market'
+          ? buildMarketMint({
+              pool: fresh,
+              tokenAmount: marketRoom.tok ? tokenAmount : 0n,
+              pairAmount: marketRoom.pair ? pairAmount : 0n,
+              corridor: { floor: floor ?? 0, ceiling: ceiling ?? 0 },
+              account: address,
+            })
+          : buildMint({
+              pool: fresh,
+              pairAmount,
+              tokenAmount,
+              pa,
+              pb,
+              account: address,
+            })
       const steps = await buildPlan(
         publicClient,
         address,
         posm,
         mint,
         labelFor,
+        mode === 'market' ? 'Make the market' : 'Add liquidity',
       )
 
       const needTok = fresh.pairIsC0 ? mint.need.amount1 : mint.need.amount0
@@ -631,14 +660,15 @@ function AddLiquidityForm({
         posm,
         steps,
         mint,
+        market: mode === 'market',
         display: {
           needTok,
           needPair,
           maxTok,
           maxPair,
-          tickLower: mint.tickLower,
-          tickUpper: mint.tickUpper,
-          liquidity: mint.liquidity,
+          tickLower: 'tickLower' in mint ? mint.tickLower : (mint.pairSide?.tickLower ?? mint.tokenSide!.tickLower),
+          tickUpper: 'tickUpper' in mint ? mint.tickUpper : (mint.tokenSide?.tickUpper ?? mint.pairSide!.tickUpper),
+          liquidity: 'liquidity' in mint ? mint.liquidity : (mint.tokenSide?.liquidity ?? 0n) + (mint.pairSide?.liquidity ?? 0n),
           pairSymbol: pairSym,
           pairDecimals: pairDec,
           pairIsNative: pair.isNative,
@@ -856,11 +886,17 @@ function AddLiquidityForm({
 
       <div className="mt-3 flex items-center gap-2">
         {(
-          [
-            ['amounts', 'By amounts'],
-            ['full', 'Full range'],
-            ['range', 'By price range'],
-          ] as const
+          (hasCorridor
+            ? [
+                ['market', 'Make the market'],
+                ['amounts', 'By amounts'],
+                ['range', 'By price range'],
+              ]
+            : [
+                ['amounts', 'By amounts'],
+                ['full', 'Full range'],
+                ['range', 'By price range'],
+              ]) as ReadonlyArray<readonly ['market' | 'amounts' | 'range' | 'full', string]>
         ).map(([id, label]) => (
           <button
             key={id}
@@ -946,10 +982,12 @@ function AddLiquidityForm({
 
       {/* Deposit amounts */}
       <div className="mt-3 grid grid-cols-2 gap-3">
-        <div className={mode === 'range' ? disabledCol(sides.tok) : ''}>
+        <div className={mode === 'range' ? disabledCol(sides.tok) : mode === 'market' ? disabledCol(marketRoom.tok) : ''}>
           <div className="flex items-baseline justify-between">
-            <span className="field-label">{sym} to add</span>
-            {mode === 'amounts' || sides.tok ? (
+            <span className="field-label">
+              {mode === 'market' ? `${sym} to sell above the price` : `${sym} to add`}
+            </span>
+            {mode === 'amounts' || mode === 'market' || sides.tok ? (
               <button
                 onClick={tokMax}
                 disabled={busy || !balances}
@@ -965,7 +1003,7 @@ function AddLiquidityForm({
               inputMode="decimal"
               placeholder="0.00"
               value={tokStr}
-              disabled={busy || (mode === 'range' && !sides.tok)}
+              disabled={busy || (mode === 'range' && !sides.tok) || (mode === 'market' && !marketRoom.tok)}
               onChange={e => onAmountInput('tok', e.target.value)}
               className="min-h-[40px] w-full bg-transparent text-sm outline-none placeholder:text-smoke-500 disabled:cursor-not-allowed"
               aria-label={`${sym} amount`}
@@ -974,10 +1012,12 @@ function AddLiquidityForm({
           </div>
         </div>
 
-        <div className={mode === 'range' ? disabledCol(sides.pair) : ''}>
+        <div className={mode === 'range' ? disabledCol(sides.pair) : mode === 'market' ? disabledCol(marketRoom.pair) : ''}>
           <div className="flex items-baseline justify-between">
-            <span className="field-label">{pairSym} to add</span>
-            {mode === 'amounts' || sides.pair ? (
+            <span className="field-label">
+              {mode === 'market' ? `${pairSym} to buy with below the price` : `${pairSym} to add`}
+            </span>
+            {mode === 'amounts' || mode === 'market' || sides.pair ? (
               <button
                 onClick={pairMax}
                 disabled={busy || !balances}
@@ -993,7 +1033,7 @@ function AddLiquidityForm({
               inputMode="decimal"
               placeholder="0.00"
               value={pairStr}
-              disabled={busy || (mode === 'range' && !sides.pair)}
+              disabled={busy || (mode === 'range' && !sides.pair) || (mode === 'market' && !marketRoom.pair)}
               onChange={e => onAmountInput('pair', e.target.value)}
               className="min-h-[40px] w-full bg-transparent text-sm outline-none placeholder:text-smoke-500 disabled:cursor-not-allowed"
               aria-label={`${pairSym} amount`}
@@ -1005,7 +1045,18 @@ function AddLiquidityForm({
         </div>
       </div>
 
-      {mode === 'amounts' ? (
+      {mode === 'market' ? (
+        <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
+          {sym} sells from the current price up to the ceiling; {pairSym} buys from the current
+          price down to the floor. Two positions, one each side of the price, so the amounts are
+          independent and used in full.
+          {!marketRoom.tok
+            ? ` The price is at or above the ceiling, so only the ${pairSym} side can be placed right now.`
+            : !marketRoom.pair
+              ? ` The price is at or below the floor, so only the ${sym} side can be placed right now.`
+              : ''}
+        </p>
+      ) : mode === 'amounts' ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
           {amountsModeNote({
             tokenAmount: parseFloat(tokStr) > 0 ? parseFloat(tokStr) : 0,
@@ -1048,9 +1099,12 @@ function AddLiquidityForm({
       {plan ? (
         <div className="callout callout-info mt-3 text-xs">
           <p className="font-medium">
-            You add ~{formatTokenAmount(plan.display.needTok, 18)} {sym} +{' '}
+            {plan.market ? 'You make the market: ' : 'You add '}~
+            {formatTokenAmount(plan.display.needTok, 18)} {sym}
+            {plan.market ? ' selling above the price' : ''} +{' '}
             {formatTokenAmount(plan.display.needPair, plan.display.pairDecimals)}{' '}
             {plan.display.pairSymbol}
+            {plan.market ? ' buying below it' : ''}
           </p>
           <p className="mt-1">
             Authorizing up to {formatTokenAmount(plan.display.maxTok, 18)} {sym}{' '}
@@ -1072,7 +1126,7 @@ function AddLiquidityForm({
             </p>
           ) : null}
           <p className="mt-1 text-smoke-700">
-            Uniswap V4 PositionManager mint | fee tier{' '}
+            Uniswap V4 PositionManager {plan.market ? 'mint ×2 (one position each side of the price)' : 'mint'} | fee tier{' '}
             {(plan.display.fee / 10000).toFixed(2)}% | ticks{' '}
             {plan.display.tickLower} to {plan.display.tickUpper}.
           </p>
@@ -1125,7 +1179,9 @@ function AddLiquidityForm({
                 : plan
                   ? tx.phase === 'error'
                     ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
-                    : 'Confirm & add liquidity'
+                    : mode === 'market'
+                      ? 'Confirm & make the market'
+                      : 'Confirm & add liquidity'
                   : 'Review'}
         </button>
       </div>

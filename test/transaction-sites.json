@@ -206,6 +206,30 @@
         }
       ]
     },
+    "src/components/project/MarketEditPanel.tsx": {
+      "hooks": 1,
+      "sends": 3,
+      "sendSites": [
+        {
+          "id": "approve-token-for-permit2",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-position-manager",
+          "actions": [
+            "Authorize the Uniswap position manager"
+          ]
+        },
+        {
+          "id": "edit-market",
+          "actions": [
+            "Make or edit a Uniswap V4 market"
+          ]
+        }
+      ]
+    },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
       "sends": 3,
