@@ -33,7 +33,7 @@ function FeedTabs({
 }) {
   return (
     <div
-      className={`min-w-0 gap-5 overflow-x-auto border-b border-smoke-200 ${className}`}
+      className={`min-w-0 gap-0 overflow-x-auto border-b border-smoke-200 sm:gap-5 ${className}`}
       role="tablist"
       aria-label={label}
     >
@@ -48,7 +48,9 @@ function FeedTabs({
           onClick={() => onChange(feed.id)}
           // These are section headings that happen to be selectable, so they
           // carry the same type scale as the standalone "Latest" heading.
-          className={`min-h-11 shrink-0 border-b-2 font-agrandir text-xl font-medium transition-colors sm:text-2xl ${
+          // Phones spread the feeds edge to edge in equal thirds; wider screens
+          // keep them as a left-aligned row.
+          className={`min-h-11 flex-1 shrink-0 border-b-2 text-center font-agrandir text-xl font-medium transition-colors sm:flex-none sm:text-left sm:text-2xl ${
             active === feed.id
               ? 'border-bluebs-600 text-bluebs-600'
               : 'border-transparent text-smoke-600 hover:text-ink'
