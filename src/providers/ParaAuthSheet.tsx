@@ -610,7 +610,7 @@ export default function ParaAuthSheet({
                 title={label}
                 aria-label={label}
                 aria-busy={pendingMethod === method}
-                className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+                className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0 disabled:opacity-60"
               >
                 <BrandMark
                   method={method}
@@ -661,7 +661,7 @@ export default function ParaAuthSheet({
                         .then(onClose)
                         .catch(cause => setLocalError(messageOf(cause)))
                     }}
-                    className="btn-secondary flex h-10 w-10 items-center justify-center !px-0"
+                    className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0"
                   >
                     {connector.icon ? (
                       // EIP-6963 hands us the wallet's own mark as a data URI.

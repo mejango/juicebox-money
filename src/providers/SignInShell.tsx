@@ -78,7 +78,7 @@ export function SignInShell({
             disabled
             title={label}
             aria-label={label}
-            className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+            className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0 disabled:opacity-60"
           >
             <BrandMark method={method} className="h-5 w-5 shrink-0" />
           </button>
@@ -94,7 +94,7 @@ export function SignInShell({
             disabled
             title={connector.name}
             aria-label={connector.name}
-            className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+            className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0 disabled:opacity-60"
           >
             {connector.icon ? (
               // eslint-disable-next-line @next/next/no-img-element
