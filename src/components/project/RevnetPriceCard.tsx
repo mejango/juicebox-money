@@ -394,10 +394,10 @@ export function RevnetPriceCard({
   )
   const ammLiquidity =
     lp?.status === 'positions' && (lp.totalTok > 0n || lp.totalPair > 0n)
-      ? `${formatCompactTokenAmount(lp.totalTok)} ${data?.projectSymbol || 'tokens'} + ${formatTokenAmount(
-          lp.totalPair,
-          lp.pairDecimals,
-        )} ${lp.pairSymbol}`
+      ? {
+          token: `${formatCompactTokenAmount(lp.totalTok)} ${data?.projectSymbol || 'tokens'}`,
+          pair: `${formatTokenAmount(lp.totalPair, lp.pairDecimals)} ${lp.pairSymbol}`,
+        }
       : null
 
   // Every liquidity change the pool has seen, for the reserve bars: the live
