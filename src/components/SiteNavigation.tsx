@@ -7,7 +7,7 @@ import { useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
 import logoIcon from '@/assets/brand/logo-icon.svg'
 import { projectRouteSegmentFromPathname } from '@/lib/project-handles'
-import { SearchBox } from './SearchBox'
+import { MagnifierIcon, SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
 function GuideLinks({ className = '' }: { className?: string }) {
@@ -95,25 +95,54 @@ function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: bo
 
 function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
   const [searchFocused, setSearchFocused] = useState(false)
+  // The search column can get too narrow for even the word "Search" once the
+  // wallet pill takes its share; then it collapses to an icon at the right,
+  // and tapping it opens the full-width field the focused state already uses.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const expanded = searchFocused || searchOpen
 
   return (
     <nav className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 md:hidden">
-      <div className={searchFocused ? 'hidden' : 'justify-self-start'}>
+      <div className={expanded ? 'hidden' : 'justify-self-start'}>
         <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} />
       </div>
       <div
-        className={`w-full min-w-0 justify-self-center ${
-          searchFocused ? 'col-span-2 col-start-1 max-w-none' : 'col-start-2 max-w-[280px]'
+        className={`w-full min-w-0 @container ${
+          expanded
+            ? 'col-span-2 col-start-1 max-w-none justify-self-center'
+            : 'col-start-2 max-w-[280px] justify-self-end'
         }`}
       >
-        <SearchBox
-          expanded
-          placeholder="Search"
-          onFocusChange={setSearchFocused}
-        />
+        {expanded ? (
+          <SearchBox
+            expanded
+            placeholder="Search"
+            autoFocus={searchOpen}
+            onFocusChange={focused => {
+              setSearchFocused(focused)
+              if (!focused) setSearchOpen(false)
+            }}
+          />
+        ) : (
+          <>
+            <div className="@max-[7.5rem]:hidden">
+              <SearchBox expanded placeholder="Search" onFocusChange={setSearchFocused} />
+            </div>
+            <div className="hidden justify-end @max-[7.5rem]:flex">
+              <button
+                type="button"
+                aria-label="Search"
+                onClick={() => setSearchOpen(true)}
+                className="input-well flex h-11 w-11 items-center justify-center text-smoke-600 hover:text-ink"
+              >
+                <MagnifierIcon className="h-4 w-4" />
+              </button>
+            </div>
+          </>
+        )}
       </div>
       <div className="col-start-3 justify-self-end">
-        {searchFocused ? (
+        {expanded ? (
           <Logo iconOnly inlineOnMobile showGuideLinks={false} />
         ) : (
           <WalletButton />

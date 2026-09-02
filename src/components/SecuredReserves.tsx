@@ -62,7 +62,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
     <section className="flex flex-col gap-3 border-b border-smoke-200 pb-4 sm:gap-4">
       <div className="flex flex-col items-center gap-1 text-center md:items-start md:text-left">
         {metric === 'secured' ? (
-          <span className="group relative inline-flex font-agrandir text-3xl font-medium leading-none sm:text-4xl">
+          <span className="group relative inline-flex font-agrandir text-[clamp(2rem,12vw,3rem)] font-medium leading-none sm:text-4xl">
             <span
               tabIndex={0}
               aria-describedby="secured-reserves-breakdown"
@@ -117,7 +117,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
             </span>
           </span>
         ) : (
-          <span className="inline-flex font-agrandir text-3xl font-medium leading-none tabular-nums sm:text-4xl">
+          <span className="inline-flex font-agrandir text-[clamp(2rem,12vw,3rem)] font-medium leading-none tabular-nums sm:text-4xl">
             {usd(totalUsd)}
           </span>
         )}

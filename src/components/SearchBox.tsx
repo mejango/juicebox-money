@@ -32,7 +32,7 @@ type Result = {
   chainIds: number[]
 }
 
-function MagnifierIcon({ className }: { className?: string }) {
+export function MagnifierIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 20 20"
@@ -54,11 +54,14 @@ export function SearchBox({
   placeholder = 'Search projects',
   compactPlaceholder,
   onFocusChange,
+  autoFocus = false,
 }: {
   expanded?: boolean
   placeholder?: string
   compactPlaceholder?: string
   onFocusChange?: (focused: boolean) => void
+  /** Focus the field on mount — the phone header opens it from an icon. */
+  autoFocus?: boolean
 }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
@@ -261,6 +264,7 @@ export function SearchBox({
       <input
         ref={inputRef}
         type="text"
+        autoFocus={autoFocus}
         value={query}
         onChange={e => setQuery(e.target.value)}
         onFocus={() =>
