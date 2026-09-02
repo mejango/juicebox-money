@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
+import { formatAmount, formatCompactAmount } from '@/lib/format'
 import { priceConcept } from '@/lib/price-concepts'
 import {
   buildStepPoints,
@@ -281,6 +282,22 @@ export function PriceChart({
     0,
     ...reserveBars.map(bar => bar.pairValue + bar.tokenValue),
   )
+  // What the pool held at a moment: the last observation at or before it, the
+  // same hold the bars use. Nothing before the first liquidity change.
+  const reservesAt = (timestamp: number): PoolReservePoint | null => {
+    let low = 0
+    let high = ammReservesHistory.length - 1
+    let found: PoolReservePoint | null = null
+    while (low <= high) {
+      const mid = (low + high) >> 1
+      if (ammReservesHistory[mid].timestamp <= timestamp) {
+        found = ammReservesHistory[mid]
+        low = mid + 1
+      }
+      else high = mid - 1
+    }
+    return found
+  }
   const sortedTaxHistory = [...cashOutTaxHistory].sort(
     (a, b) => a.timestamp - b.timestamp,
   )
@@ -506,6 +523,7 @@ export function PriceChart({
         const floorPoint = pointAt(floorSeries, timestamp)
         const ammPoint = interpolatedPointAt(ammSeries, timestamp)
         const minimum = pointAt(visibleMinimumSeries, timestamp)?.value
+        const reserves = showAmm && pairSymbol ? reservesAt(timestamp) : null
         return (
           <div className="space-y-1.5 text-xs leading-relaxed">
             <p className="border-b border-grey-700 pb-1.5 font-medium text-white">
@@ -538,21 +556,21 @@ export function PriceChart({
                 symbol={symbol}
               />
             ) : null}
-            {showAmm && amm && ammLiquidity ? (
+            {reserves ? (
               <p className="flex items-center gap-1.5 whitespace-nowrap text-grey-300">
-                Pool holds
+                Pool liquidity:
                 <span
                   aria-hidden="true"
                   className="h-2 w-2 shrink-0"
                   style={{ backgroundColor: RESERVE_TOKEN_SWATCH }}
                 />
-                {ammLiquidity.token} +
+                {formatCompactAmount(reserves.tokenAmount)} {symbol} +
                 <span
                   aria-hidden="true"
                   className="h-2 w-2 shrink-0"
                   style={{ backgroundColor: RESERVE_PAIR_SWATCH }}
                 />
-                {ammLiquidity.pair}
+                {formatAmount(reserves.pairAmount)} {pairSymbol}
               </p>
             ) : null}
             {showCashOut && minimum ? (

@@ -242,14 +242,19 @@ export type PoolReservePoint = {
   pairValue: number
   /** The token side valued at this point's pool price, in whole pair tokens. */
   tokenValue: number
+  /** The token side, as held, in whole project tokens. */
+  tokenAmount: number
+  /** The pair side, as held, in whole pair tokens. */
+  pairAmount: number
 }
 
 /**
- * Both sides of the pool over time, for the faint bars under the AMM line:
- * every liquidity change replayed in order, with the reserves re-read at each
- * change (at the price the indexer recorded there) and at each trade's exact
- * post-swap price. Values are only ever compared with each other, so they stay
- * in pair-token units and off the chart's axis.
+ * Both sides of the pool over time, for the faint bars under the AMM line and
+ * the hover tooltip: every liquidity change replayed in order, with the
+ * reserves re-read at each change (at the price the indexer recorded there)
+ * and at each trade's exact post-swap price. The bar values are only ever
+ * compared with each other, so they stay in pair-token units and off the
+ * chart's axis; the amounts are each side as held.
  */
 export function poolReservesSeriesFrom({
   history,
@@ -296,13 +301,17 @@ export function poolReservesSeriesFrom({
         amount0 += amounts.amount0
         amount1 += amounts.amount1
       }
-      const tokenAmount = projectTokenIsCurrency0 ? amount0 : amount1
-      const pairAmount = projectTokenIsCurrency0 ? amount1 : amount0
+      const tokenAmount =
+        Number(projectTokenIsCurrency0 ? amount0 : amount1) / 1e18
+      const pairAmount =
+        Number(projectTokenIsCurrency0 ? amount1 : amount0) / pairScale
       return [
         {
           timestamp,
-          pairValue: Number(pairAmount) / pairScale,
-          tokenValue: (Number(tokenAmount) / 1e18) * price,
+          pairValue: pairAmount,
+          tokenValue: tokenAmount * price,
+          tokenAmount,
+          pairAmount,
         },
       ]
     } catch {
