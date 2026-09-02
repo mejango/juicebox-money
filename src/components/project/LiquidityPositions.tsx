@@ -374,7 +374,9 @@ function ChainLpRows({
 
   const chainCell = (
     <td className="whitespace-nowrap py-2 pr-3">
-      <span className="flex items-center gap-2 text-xs text-smoke-700">
+      {/* Inline so the auto table layout measures the icon + name; a block flex
+          container here reports no min width and the next column overlaps it. */}
+      <span className="inline-flex items-center gap-2 text-xs text-smoke-700">
         <ChainIcon chainId={chainId} size={16} />
         {chainName(chainId)}
       </span>

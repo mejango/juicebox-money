@@ -61,6 +61,10 @@ const AMM_COLOR = '#4FA270'
 // The pool's reserves as faint bars in the AMM colour: pair side darker, token side above it.
 const RESERVE_PAIR_OPACITY = 0.28
 const RESERVE_TOKEN_OPACITY = 0.13
+// The bars are translucent over the white card; the tooltip sits on near-black, so its
+// squares carry the colour the bars actually show — the same tint composited onto white.
+const RESERVE_PAIR_SWATCH = `color-mix(in srgb, ${AMM_COLOR} ${RESERVE_PAIR_OPACITY * 100}%, white)`
+const RESERVE_TOKEN_SWATCH = `color-mix(in srgb, ${AMM_COLOR} ${RESERVE_TOKEN_OPACITY * 100}%, white)`
 const RESERVE_BARS = 48
 // Tallest bar, in viewBox units (the plot is 142 tall).
 const RESERVE_BAR_HEIGHT = 40
@@ -218,8 +222,9 @@ export function PriceChart({
   baseSymbol: string
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
-  /** What the pool holds right now, e.g. "1.2M REV + 3.4 ETH". Context for how much the AMM price can bear. */
-  ammLiquidity?: string | null
+  /** What the pool holds right now, each side formatted with its symbol, e.g. "1.2M REV" and
+   *  "3.4 ETH". Context for how much the AMM price can bear. */
+  ammLiquidity?: { token: string; pair: string } | null
   /** The pool's pair token, named in the reserve-bars note. */
   pairSymbol?: string | null
   floorHistory?: PricePoint[]
@@ -357,7 +362,9 @@ export function PriceChart({
               label="AMM price"
               note={
                 priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
-                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '') +
+                (amm && ammLiquidity
+                  ? ` The pool holds ${ammLiquidity.token} + ${ammLiquidity.pair}.`
+                  : '') +
                 (reserveBars.length && pairSymbol
                   ? ` The faint bars show what the pool held: ${pairSymbol} in the darker shade, ${symbol} in the lighter one, both valued in ${pairSymbol}.`
                   : '')
@@ -532,8 +539,20 @@ export function PriceChart({
               />
             ) : null}
             {showAmm && amm && ammLiquidity ? (
-              <p className="whitespace-nowrap text-grey-300">
-                Pool holds {ammLiquidity}
+              <p className="flex items-center gap-1.5 whitespace-nowrap text-grey-300">
+                Pool holds
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0"
+                  style={{ backgroundColor: RESERVE_TOKEN_SWATCH }}
+                />
+                {ammLiquidity.token} +
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0"
+                  style={{ backgroundColor: RESERVE_PAIR_SWATCH }}
+                />
+                {ammLiquidity.pair}
               </p>
             ) : null}
             {showCashOut && minimum ? (
