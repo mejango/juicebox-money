@@ -461,7 +461,7 @@ export function EditPositionPanel({
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
         <label className="text-xs text-smoke-500">
-          {sym} to hold
+          {sym} in position
           <input
             className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
             type="number"
@@ -474,7 +474,7 @@ export function EditPositionPanel({
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
         <label className="text-xs text-smoke-500">
-          {pairSym} to hold
+          {pairSym} in position
           <input
             className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
             type="number"
