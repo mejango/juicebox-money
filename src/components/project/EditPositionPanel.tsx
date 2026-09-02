@@ -458,6 +458,19 @@ export function EditPositionPanel({
     tx.reset()
   }
 
+  // "X ART + Y USDC", naming only the sides that are nonzero.
+  const amountsText = (token: bigint, pair: bigint) =>
+    [
+      token > 0n ? `${formatTokenAmount(token, 18)} ${sym}` : null,
+      pair > 0n ? `${formatTokenAmount(pair, pairDec)} ${pairSym}` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ')
+  const positive = (amount: bigint) => (amount > 0n ? amount : 0n)
+  const bandText = (of: Pool, plan: EditLiquidityPlan) => {
+    const band = bandPrices(of, plan.tickLower, plan.tickUpper)
+    return `${formatPrice(band.min)} – ${formatPrice(band.max)} ${pairSym}/${sym}`
+  }
   const inWallet = (amount: bigint | undefined, decimals: number, symbol: string) =>
     amount == null ? null : (
       <span className="mt-1 block text-right text-xs text-smoke-500">
@@ -601,38 +614,92 @@ export function EditPositionPanel({
       </p>
 
       {reviewed ? (
-        <div className="callout callout-info mt-3 text-xs">
-          <p className="font-medium">{reviewed.copy.lead}</p>
-          <p className="mt-1">{reviewed.copy.detail}</p>
+        <div className="mt-3 space-y-4">
+          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+            <span className="text-smoke-500">Position</span>
+            <span className="text-right text-ink">
+              #{position.tokenId.toString()} on {chainName(chainId)}
+            </span>
+            <span className="text-smoke-500">Band</span>
+            <span className="text-right text-ink">
+              {bandText(reviewed.pool, reviewed.plan)}
+              {reviewed.plan.kind === 'move' ? ' (new position)' : ' (kept)'}
+            </span>
+            {reviewed.plan.kind !== 'remove' ? (
+              <>
+                <span className="text-smoke-500">Holds after</span>
+                <span className="text-right font-medium text-ink">
+                  ~{formatTokenAmount(reviewed.plan.tokenHolding, 18)} {sym} +{' '}
+                  {formatTokenAmount(reviewed.plan.pairHolding, pairDec)} {pairSym}
+                </span>
+              </>
+            ) : null}
+            {reviewed.plan.tokenFlow > 0n || reviewed.plan.pairFlow > 0n ? (
+              <>
+                <span className="text-smoke-500">From your wallet</span>
+                <span className="text-right text-ink">
+                  {amountsText(positive(reviewed.plan.tokenFlow), positive(reviewed.plan.pairFlow))}
+                </span>
+              </>
+            ) : null}
+            <span className="text-smoke-500">Back to your wallet</span>
+            <span className="text-right text-ink">
+              {reviewed.plan.tokenFlow < 0n || reviewed.plan.pairFlow < 0n
+                ? `${amountsText(positive(-reviewed.plan.tokenFlow), positive(-reviewed.plan.pairFlow))} + unclaimed fees`
+                : 'Unclaimed fees'}
+            </span>
+            {reviewed.plan.tokenFunding > 0n || reviewed.plan.pairFunding > 0n ? (
+              <>
+                <span className="text-smoke-500">Authorizes up to</span>
+                <span className="text-right text-ink">
+                  {amountsText(reviewed.plan.tokenFunding, reviewed.plan.pairFunding)} (1% price
+                  headroom)
+                </span>
+              </>
+            ) : null}
+            {reviewed.plan.tokenMinimum > 0n || reviewed.plan.pairMinimum > 0n ? (
+              <>
+                <span className="text-smoke-500">Enforced onchain</span>
+                <span className="text-right text-ink">
+                  At least {formatTokenAmount(reviewed.plan.tokenMinimum, 18)} {sym} +{' '}
+                  {formatTokenAmount(reviewed.plan.pairMinimum, pairDec)} {pairSym} back (95% floors)
+                </span>
+              </>
+            ) : null}
+          </div>
           {balances.data &&
           (reviewed.plan.tokenFunding > balances.data.tok ||
             reviewed.plan.pairFunding > balances.data.pair) ? (
-            <p className="mt-1 font-medium">
-              Heads up: your balance does not cover the 1% price headroom, so this edit reverts
-              if the price moves against it. Lower the amount to be safe.
+            <p className="text-sm text-orange-600">
+              Heads up: your balance does not cover the 1% price headroom, so this edit reverts if
+              the price moves against it. Lower the amount to be safe.
             </p>
           ) : null}
-          <p className="mt-1 text-smoke-700">{reviewed.copy.tech}</p>
+          {/* Each action's exact payload is reviewed in the one client safety
+              check, the same shell every multi-step flow uses. */}
           <TxSteps
             steps={reviewed.steps.map((step, index) => ({
               key: `${step.kind}:${index}`,
               title: step.label,
             }))}
             activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
-            intro={
-              reviewed.steps.length > 1
-                ? `${reviewed.steps.length} transactions: ${reviewed.steps.length - 1} approval${reviewed.steps.length - 1 > 1 ? 's' : ''} then the edit. Each is reviewed and simulated before you sign.`
-                : 'One transaction. It is reviewed and simulated before you sign.'
-            }
-            className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
+            className="rounded-xl border border-smoke-200 bg-white p-3"
           />
         </div>
       ) : null}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
         <button
           type="button"
-          className="btn-primary min-h-[32px] px-3 text-xs"
+          className="btn-secondary min-h-[44px] px-5 text-sm"
+          disabled={busy}
+          onClick={reviewed ? back : onClose}
+        >
+          {reviewed ? 'Back' : 'Cancel'}
+        </button>
+        <button
+          type="button"
+          className="btn-primary min-h-[44px] px-5 text-sm"
           disabled={busy || isViewAs || !connectedAddress}
           onClick={
             !reviewed
@@ -651,16 +718,8 @@ export function EditPositionPanel({
               : reviewed
                 ? tx.phase === 'error'
                   ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
-                  : 'Confirm & edit position'
+                  : FINAL_STEP[reviewed.plan.kind]
                 : 'Review edit'}
-        </button>
-        <button
-          type="button"
-          className="btn-secondary min-h-[32px] px-3 text-xs"
-          disabled={busy}
-          onClick={reviewed ? back : onClose}
-        >
-          {reviewed ? 'Back' : 'Cancel'}
         </button>
       </div>
       <TxError
