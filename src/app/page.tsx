@@ -200,7 +200,7 @@ async function HomepageDiscovery() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-[1800px] px-4 pb-0 pt-8 sm:px-6 sm:pt-12"
+      className="mx-auto max-w-[1800px] px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
     >
       <HomepageDiscoveryLayout
         hero={<HeroColumn />}
@@ -332,8 +332,10 @@ function EmptyProjects() {
 
 function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
-      <div className="mb-3 translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
+    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6 xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
+      {/* Phones keep the illustration close under the header; wider screens
+          let it drop toward the headline. */}
+      <div className="mb-3 translate-y-2 sm:translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
           alt=""

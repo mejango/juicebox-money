@@ -26,7 +26,10 @@ export function AuditPromptLink({ className }: { className?: string }) {
             // Clipboard unavailable; leave the label unchanged.
           }
         }}
-        className="inline-flex min-h-11 items-center underline decoration-smoke-400 underline-offset-2 hover:text-ink"
+        // The 44px tap target comes from padding cancelled by negative margins,
+        // so a wrapped link keeps the paragraph's own line spacing instead of
+        // opening a gap above it.
+        className="-my-3 inline-block py-3 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
       >
         {copied ? 'AI prompt copied to clipboard' : 'audit or create with your AI'}
       </button>

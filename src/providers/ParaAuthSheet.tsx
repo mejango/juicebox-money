@@ -600,7 +600,7 @@ export default function ParaAuthSheet({
 
       <>
           <p className="mb-2 mt-5 text-xs text-smoke-500">Or, use socials</p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="scroll-row flex gap-1.5 overflow-x-auto">
             {OAUTH_METHODS.map(({ method, label }) => (
               <button
                 key={method}
