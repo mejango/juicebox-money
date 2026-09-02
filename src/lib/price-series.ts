@@ -1,5 +1,10 @@
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
-import { poolPriceFromSqrt } from '@/lib/uniswap-v4'
+import type { BsPoolLiquidityEvent } from '@/lib/lp-positions-queries'
+import {
+  getAmountsForLiquidity,
+  poolPriceFromSqrt,
+  sqrtAtTick,
+} from '@/lib/uniswap-v4'
 
 /**
  * Price observations over time, shared by the Overview price chart and the
@@ -229,4 +234,165 @@ export function ammSeriesFrom({
     }
   })
   return [...initial, ...swaps].sort((a, b) => a.timestamp - b.timestamp)
+}
+
+export type PoolReservePoint = {
+  timestamp: number
+  /** The pair side, as held, in whole pair tokens. */
+  pairValue: number
+  /** The token side valued at this point's pool price, in whole pair tokens. */
+  tokenValue: number
+}
+
+/**
+ * Both sides of the pool over time, for the faint bars under the AMM line:
+ * every liquidity change replayed in order, with the reserves re-read at each
+ * change (at the price the indexer recorded there) and at each trade's exact
+ * post-swap price. Values are only ever compared with each other, so they stay
+ * in pair-token units and off the chart's axis.
+ */
+export function poolReservesSeriesFrom({
+  history,
+  chainId,
+  poolId,
+  pairDecimals,
+  liquidityEvents,
+}: {
+  history: BsRevnetPriceHistory | undefined
+  chainId: number
+  poolId: string | null
+  pairDecimals: number | null
+  liquidityEvents: BsPoolLiquidityEvent[] | null
+}): PoolReservePoint[] {
+  if (!poolId || pairDecimals === null || !liquidityEvents?.length || !history) {
+    return []
+  }
+  const id = poolId.toLowerCase()
+  const pairScale = 10 ** pairDecimals
+  const positions = new Map<
+    string,
+    { lower: bigint; upper: bigint; liquidity: bigint }
+  >()
+
+  const reservesAt = (
+    timestamp: number,
+    sqrtPriceX96: string | null,
+    projectTokenIsCurrency0: boolean | null,
+  ): PoolReservePoint[] => {
+    if (!sqrtPriceX96 || projectTokenIsCurrency0 === null) return []
+    try {
+      const sqrtP = BigInt(sqrtPriceX96)
+      const price = poolPriceFromSqrt(sqrtP, !projectTokenIsCurrency0, pairDecimals)
+      if (price === null) return []
+      let amount0 = 0n
+      let amount1 = 0n
+      for (const position of positions.values()) {
+        const amounts = getAmountsForLiquidity(
+          sqrtP,
+          position.lower,
+          position.upper,
+          position.liquidity,
+        )
+        amount0 += amounts.amount0
+        amount1 += amounts.amount1
+      }
+      const tokenAmount = projectTokenIsCurrency0 ? amount0 : amount1
+      const pairAmount = projectTokenIsCurrency0 ? amount1 : amount0
+      return [
+        {
+          timestamp,
+          pairValue: Number(pairAmount) / pairScale,
+          tokenValue: (Number(tokenAmount) / 1e18) * price,
+        },
+      ]
+    } catch {
+      return []
+    }
+  }
+
+  // Token ordering is a pool constant; any row that names it will do.
+  const projectTokenIsCurrency0 =
+    (history.pools ?? []).find(
+      pool => pool.chainId === chainId && pool.poolId.toLowerCase() === id,
+    )?.projectTokenIsCurrency0 ??
+    history.swaps.find(
+      swap => swap.chainId === chainId && swap.poolId.toLowerCase() === id,
+    )?.projectTokenIsCurrency0 ??
+    null
+
+  type Step =
+    | { at: number; order: 0; event: BsPoolLiquidityEvent }
+    | { at: number; order: 1; sqrtPriceX96: string | null }
+  const timeline: Step[] = [
+    ...liquidityEvents.map(event => ({
+      at: Number(event.timestamp),
+      order: 0 as const,
+      event,
+    })),
+    ...(history.pools ?? []).flatMap(pool =>
+      pool.chainId !== chainId || pool.poolId.toLowerCase() !== id
+        ? []
+        : [{ at: Number(pool.timestamp), order: 1 as const, sqrtPriceX96: pool.initialSqrtPriceX96 }],
+    ),
+    ...history.swaps.flatMap(swap =>
+      swap.chainId !== chainId ||
+      swap.direction === 'mint' ||
+      swap.poolId.toLowerCase() !== id
+        ? []
+        : [{ at: Number(swap.timestamp), order: 1 as const, sqrtPriceX96: swap.sqrtPriceX96 }],
+    ),
+  ].sort((a, b) => a.at - b.at || a.order - b.order)
+
+  // A liquidity change in the same second as a trade applies first, so the
+  // trade's point already reflects it. Trades before the first change carry nothing.
+  const out: PoolReservePoint[] = []
+  let seenLiquidity = false
+  for (const step of timeline) {
+    if (step.order === 0) {
+      const liquidity = BigInt(step.event.liquidityAfter)
+      if (liquidity > 0n) {
+        positions.set(step.event.tokenId, {
+          lower: sqrtAtTick(step.event.tickLower),
+          upper: sqrtAtTick(step.event.tickUpper),
+          liquidity,
+        })
+      }
+      else positions.delete(step.event.tokenId)
+      seenLiquidity = true
+      out.push(...reservesAt(step.at, step.event.sqrtPriceX96, projectTokenIsCurrency0))
+    }
+    else if (seenLiquidity) {
+      out.push(...reservesAt(step.at, step.sqrtPriceX96, projectTokenIsCurrency0))
+    }
+  }
+  return out
+}
+
+/**
+ * The reserves resampled onto `count` even buckets across [t0, t1], each
+ * taking the last observation at or before its centre — so the bars sit on a
+ * regular grid whatever the trade cadence. Buckets before the first
+ * observation are omitted rather than drawn empty.
+ */
+export function bucketPoolReserves(
+  points: PoolReservePoint[],
+  t0: number,
+  t1: number,
+  count: number,
+): PoolReservePoint[] {
+  const sorted = [...points].sort((a, b) => a.timestamp - b.timestamp)
+  if (!sorted.length || !(t1 > t0) || count < 1) return []
+  const width = (t1 - t0) / count
+  const buckets: PoolReservePoint[] = []
+  let index = 0
+  let current: PoolReservePoint | undefined
+  for (let bucket = 0; bucket < count; bucket += 1) {
+    const timestamp = t0 + (bucket + 0.5) * width
+    while (index < sorted.length && sorted[index].timestamp <= timestamp) {
+      current = sorted[index++]
+    }
+    if (!current) continue
+    buckets.push({ ...current, timestamp })
+  }
+  return buckets
 }

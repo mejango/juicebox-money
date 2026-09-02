@@ -42,7 +42,7 @@ export function SignInShell({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
-          <p className="mt-1 text-sm text-smoke-700">You will receive a code.</p>
+          <p className="mt-1 text-sm text-smoke-700">Use your passkey, or receive a code.</p>
         </div>
       </div>
 

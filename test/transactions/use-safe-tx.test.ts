@@ -286,6 +286,40 @@ describe('useSafeTx', () => {
     },
   )
 
+  it('confirms from a direct receipt lookup when the block watcher stalls', async () => {
+    vi.useFakeTimers()
+    try {
+      const getTransactionReceipt = vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue({ status: 'success', blockNumber: 77n })
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransactionReceipt,
+      } as typeof mocks.publicClient
+      const hook = await renderHook()
+      await act(async () => {
+        await hook.ref.current!.send(request)
+      })
+      expect(hook.ref.current).toMatchObject({ phase: 'pending', busy: true })
+
+      // The watcher never answers; the interval lookup does.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_100)
+      })
+      expect(getTransactionReceipt).toHaveBeenCalledTimes(1)
+      expect(hook.ref.current).toMatchObject({ phase: 'pending' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_100)
+      })
+      expect(getTransactionReceipt).toHaveBeenCalledTimes(2)
+      expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
+      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 77n })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('reports a disconnected wallet and reset clears terminal state', async () => {
     mocks.connected = false
     const hook = await renderHook()

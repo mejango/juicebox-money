@@ -6,9 +6,12 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import ReactDOM from 'react-dom'
 import { decodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { ChainIcon } from '@/components/ChainIcon'
+import { chainName } from '@/lib/urn'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -26,6 +29,8 @@ import {
   type MarketResult,
   type UserLpPosition,
 } from './MarketSection'
+import { EditPositionPanel } from './EditPositionPanel'
+import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { PERSIST } from '@/lib/query-persist'
 
 type Pool = Extract<MarketResult, { status: 'pool' }>
@@ -157,30 +162,130 @@ function unlockDataOf(data: Hex): Hex {
 }
 
 /**
- * The connected wallet's own LP positions in this pool: what each holds, what
- * it has earned, and the two things an owner can do with it.
+ * The connected wallet's own LP positions across every project chain, in one
+ * table (the hierarchy juicescan and revnet.money share): Chain | Position |
+ * Holdings | Unclaimed fees | Lifetime fees | actions. Each chain contributes
+ * its own row group so one slow or failing scan never blanks the others.
  *
  * Fees shown are CLAIMABLE NOW, not lifetime earnings — the pool rewrites a
  * position's fee checkpoint on every collect.
  */
 export function LiquidityPositions({
+  chains,
+  sym,
+  onChanged,
+}: {
+  chains: { chainId: JBChainId; projectId: number }[]
+  sym: string
+  onChanged?: () => void
+}) {
+  const { address, isViewAs } = useViewedAccount()
+  // Per-chain scan outcomes reported up by the row groups, so the aggregate
+  // empty state is knowable without lifting each chain's queries out of them.
+  const [scan, setScan] = useState<Record<number, number | 'loading' | 'error'>>({})
+  // The edit panel portals here, BELOW the scroll wrapper — as a table row it
+  // would inherit the table's full scrollable width and blow the modal out.
+  const [panelHost, setPanelHost] = useState<HTMLDivElement | null>(null)
+  const onStatus = useCallback(
+    (chainId: number, status: number | 'loading' | 'error') => {
+      setScan(current =>
+        current[chainId] === status ? current : { ...current, [chainId]: status },
+      )
+    },
+    [],
+  )
+  if (!address || !chains.length) return null
+  const allEmpty = chains.every(chain => scan[chain.chainId] === 0)
+
+  return (
+    <div>
+      {allEmpty ? (
+        <p className="text-sm text-smoke-500">
+          You have no LP positions on any chain.
+        </p>
+      ) : null}
+      {/* Hidden rather than unmounted while empty so the per-chain queries keep
+          watching for a position minted elsewhere. */}
+      <div className={allEmpty ? 'hidden' : 'overflow-x-auto'}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-smoke-500">
+              <th className="py-1.5 pr-3 font-normal">Chain</th>
+              <th className="py-1.5 pr-3 font-normal">Position</th>
+              <th className="py-1.5 pr-3 text-right font-normal">Holdings</th>
+              <th className="py-1.5 pr-3 text-right font-normal">Unclaimed fees</th>
+              <th className="py-1.5 pr-3 text-right font-normal">Lifetime fees</th>
+              <th className="py-1.5 font-normal" />
+            </tr>
+          </thead>
+          <tbody>
+            {chains.map(chain => (
+              <ChainLpRows
+                key={chain.chainId}
+                chainId={chain.chainId}
+                projectId={chain.projectId}
+                sym={sym}
+                onChanged={onChanged}
+                onStatus={onStatus}
+                panelHost={panelHost}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div ref={setPanelHost} className="min-w-0" />
+      {isViewAs ? (
+        <p className="mt-2 text-xs text-smoke-500">
+          You&apos;re viewing another account — connect as its owner to claim,
+          edit, or remove.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * One chain's row group in the spanning positions table: the wallet's
+ * positions in that chain's pool, each with claim/edit/remove. The edit
+ * panel renders below the table, anchored to its position.
+ */
+function ChainLpRows({
   chainId,
   projectId,
   sym,
   onChanged,
+  onStatus,
+  panelHost,
 }: {
   chainId: JBChainId
   projectId: number
   sym: string
   onChanged?: () => void
+  onStatus: (chainId: number, status: number | 'loading' | 'error') => void
+  /** Where the edit panel renders, below the table's scroll wrapper. */
+  panelHost: HTMLDivElement | null
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address, connectedAddress, isViewAs } = useViewedAccount()
   const tx = useSafeTx(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
+  // The position whose holdings/band are being edited in the panel below.
+  const [editing, setEditing] = useState<UserLpPosition | null>(null)
   const summary = useUserLpSummary(chainId, projectId, address)
   const { pool, positionManager } = summary
+  const { data: floor } = useCashOutFloor(chainId, projectId, !!pool)
+
+  useEffect(() => {
+    onStatus(
+      chainId,
+      summary.isLoading
+        ? 'loading'
+        : summary.isError
+          ? 'error'
+          : summary.positions.length,
+    )
+  }, [chainId, onStatus, summary.isLoading, summary.isError, summary.positions.length])
 
   const refresh = () => {
     summary.refresh()
@@ -265,129 +370,169 @@ export function LiquidityPositions({
     }
   }
 
-  if (!address || !pool || !positionManager) return null
+  if (!address) return null
+
+  const chainCell = (
+    <td className="whitespace-nowrap py-2 pr-3">
+      <span className="flex items-center gap-2 text-xs text-smoke-700">
+        <ChainIcon chainId={chainId} size={16} />
+        {chainName(chainId)}
+      </span>
+    </td>
+  )
+
+  if (summary.isLoading) {
+    return (
+      <tr className="border-t border-smoke-100">
+        {chainCell}
+        <td colSpan={5} className="py-2 text-xs text-smoke-500">
+          Reading your positions…
+        </td>
+      </tr>
+    )
+  }
+  // An incomplete log scan must not read as "you have no positions".
+  if (summary.isError) {
+    return (
+      <tr className="border-t border-smoke-100">
+        {chainCell}
+        <td colSpan={5} className="py-2 text-xs text-red-700">
+          Could not verify the complete position history — nothing has been
+          hidden as an empty result.
+        </td>
+      </tr>
+    )
+  }
+  if (!pool || !positionManager || !summary.positions.length) return null
 
   return (
-    <div>
-
-      {summary.isLoading ? (
-        <p className="text-sm text-smoke-500">Reading your positions…</p>
-      ) : summary.isError ? (
-        <p className="text-sm text-red-700">
-          Could not verify the complete position history — nothing has been hidden
-          as an empty result.
-        </p>
-      ) : !summary.positions.length ? (
-        <p className="text-sm text-smoke-500">
-          You have no LP positions in this pool.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-smoke-500">
-                <th className="py-1.5 pr-3 font-normal">Position</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Holdings</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Unclaimed fees</th>
-                <th className="py-1.5 pr-3 text-right font-normal">Lifetime fees</th>
-                <th className="py-1.5 font-normal" />
-              </tr>
-            </thead>
-            <tbody>
-              {summary.positions.map(position => {
-                const owed = summary.feesByToken[position.tokenId.toString()]
-                const nothingOwed =
-                  !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
+    <>
+      {summary.positions.map(position => {
+        const owed = summary.feesByToken[position.tokenId.toString()]
+        const nothingOwed =
+          !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
+        return (
+          <tr
+            key={position.tokenId.toString()}
+            className="border-t border-smoke-100 align-top"
+          >
+            {chainCell}
+            <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
+              #{position.tokenId.toString()}
+            </td>
+            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+              {formatTokenAmount(position.tokenAmount, 18)} {sym}
+              <span className="block text-xs text-smoke-500">
+                {formatTokenAmount(position.pairAmount, pool.pair.decimals)}{' '}
+                {pool.pair.symbol}
+              </span>
+            </td>
+            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+              {owed === undefined ? (
+                <span className="text-smoke-500">Reading…</span>
+              ) : owed === null ? (
+                <span className="text-smoke-500">Unavailable</span>
+              ) : nothingOwed ? (
+                <span className="text-smoke-500">None yet</span>
+              ) : (
+                <>
+                  {formatTokenAmount(owed.tokenFees, 18)} {sym}
+                  <span className="block text-xs text-smoke-500">
+                    {formatTokenAmount(owed.pairFees, pool.pair.decimals)}{' '}
+                    {pool.pair.symbol}
+                  </span>
+                </>
+              )}
+            </td>
+            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+              {(() => {
+                // The pool forgets what a position already took, so
+                // lifetime is only knowable where the index has been
+                // accumulating it.
+                if (position.claimedPairFees === undefined || !owed) {
+                  return <span className="text-smoke-500">—</span>
+                }
+                const lifetimeToken = position.claimedTokenFees! + owed.tokenFees
+                const lifetimePair = position.claimedPairFees + owed.pairFees
+                if (lifetimeToken <= 0n && lifetimePair <= 0n) {
+                  return <span className="text-smoke-500">None yet</span>
+                }
                 return (
-                  <tr
-                    key={position.tokenId.toString()}
-                    className="border-t border-smoke-100 align-top"
-                  >
-                    <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
-                      #{position.tokenId.toString()}
-                    </td>
-                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
-                      {formatTokenAmount(position.tokenAmount, 18)} {sym}
-                      <span className="block text-xs text-smoke-500">
-                        {formatTokenAmount(position.pairAmount, pool.pair.decimals)}{' '}
-                        {pool.pair.symbol}
-                      </span>
-                    </td>
-                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
-                      {owed === undefined ? (
-                        <span className="text-smoke-500">Reading…</span>
-                      ) : owed === null ? (
-                        <span className="text-smoke-500">Unavailable</span>
-                      ) : nothingOwed ? (
-                        <span className="text-smoke-500">None yet</span>
-                      ) : (
-                        <>
-                          {formatTokenAmount(owed.tokenFees, 18)} {sym}
-                          <span className="block text-xs text-smoke-500">
-                            {formatTokenAmount(owed.pairFees, pool.pair.decimals)}{' '}
-                            {pool.pair.symbol}
-                          </span>
-                        </>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
-                      {(() => {
-                        // The pool forgets what a position already took, so
-                        // lifetime is only knowable where the index has been
-                        // accumulating it.
-                        if (position.claimedPairFees === undefined || !owed) {
-                          return <span className="text-smoke-500">—</span>
-                        }
-                        const lifetimeToken = position.claimedTokenFees! + owed.tokenFees
-                        const lifetimePair = position.claimedPairFees + owed.pairFees
-                        if (lifetimeToken <= 0n && lifetimePair <= 0n) {
-                          return <span className="text-smoke-500">None yet</span>
-                        }
-                        return (
-                          <>
-                            {formatTokenAmount(lifetimeToken, 18)} {sym}
-                            <span className="block text-xs text-smoke-500">
-                              {formatTokenAmount(lifetimePair, pool.pair.decimals)}{' '}
-                              {pool.pair.symbol}
-                            </span>
-                          </>
-                        )
-                      })()}
-                    </td>
-                    <td className="whitespace-nowrap py-2 text-right">
-                      <span className="inline-flex gap-2">
-                        <button
-                          type="button"
-                          className="btn-secondary min-h-[32px] px-3 text-xs"
-                          disabled={tx.busy || nothingOwed || isViewAs}
-                          onClick={() => claim(position)}
-                        >
-                          Claim fees
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-secondary min-h-[32px] px-3 text-xs"
-                          disabled={tx.busy || reviewing !== null || isViewAs}
-                          onClick={() => void remove(position)}
-                        >
-                          {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
+                  <>
+                    {formatTokenAmount(lifetimeToken, 18)} {sym}
+                    <span className="block text-xs text-smoke-500">
+                      {formatTokenAmount(lifetimePair, pool.pair.decimals)}{' '}
+                      {pool.pair.symbol}
+                    </span>
+                  </>
                 )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {isViewAs ? (
-        <p className="mt-2 text-xs text-smoke-500">
-          You&apos;re viewing another account — connect as its owner to claim or
-          remove.
-        </p>
-      ) : null}
-      {error ?? tx.error ? <ErrorNote message={error ?? tx.error!} /> : null}
-    </div>
+              })()}
+            </td>
+            <td className="whitespace-nowrap py-2 text-right">
+              <span className="inline-flex gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[32px] px-3 text-xs"
+                  disabled={tx.busy || nothingOwed || isViewAs}
+                  onClick={() => claim(position)}
+                >
+                  Claim fees
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[32px] px-3 text-xs"
+                  disabled={
+                    tx.busy || reviewing !== null || editing !== null || isViewAs
+                  }
+                  onClick={() => {
+                    setError(null)
+                    setEditing(position)
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[32px] px-3 text-xs"
+                  disabled={
+                    tx.busy || reviewing !== null || editing !== null || isViewAs
+                  }
+                  onClick={() => void remove(position)}
+                >
+                  {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}
+                </button>
+              </span>
+            </td>
+          </tr>
+        )
+      })}
+      {/* The panel lives OUTSIDE the scroll wrapper — as a table row it would
+          inherit the table's full scrollable width and blow the modal out. */}
+      {panelHost && editing && pool
+        ? ReactDOM.createPortal(
+            <EditPositionPanel
+              key={editing.tokenId.toString()}
+              chainId={chainId}
+              projectId={projectId}
+              pool={pool}
+              positionManager={positionManager}
+              position={editing}
+              sym={sym}
+              floor={floor ?? null}
+              onClose={() => setEditing(null)}
+              onDone={() => refresh()}
+            />,
+            panelHost,
+          )
+        : null}
+      {panelHost && (error ?? tx.error)
+        ? ReactDOM.createPortal(
+            <div className="mt-2">
+              <ErrorNote message={error ?? tx.error!} />
+            </div>,
+            panelHost,
+          )
+        : null}
+    </>
   )
 }

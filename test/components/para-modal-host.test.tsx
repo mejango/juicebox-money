@@ -170,7 +170,7 @@ describe('ParaModalHost', () => {
     render(<Host />)
 
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('You will receive a code')
+    expect(host()!.textContent).toContain('Use your passkey, or receive a code')
     // Our sheet is what puts the host in the top layer for an auth request.
     expect(host()!.open).toBe(true)
   })
@@ -319,7 +319,7 @@ describe('ParaModalHost', () => {
 
     expect(para.initiateOnRampTransaction).not.toHaveBeenCalled()
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('You will receive a code')
+    expect(host()!.textContent).toContain('Use your passkey, or receive a code')
   })
 
   it('does not reopen the sheet when sign-in for the on-ramp is cancelled', async () => {

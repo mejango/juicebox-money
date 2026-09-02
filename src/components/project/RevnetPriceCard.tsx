@@ -51,7 +51,13 @@ import {
   explainCashOutChange,
   type CashOutObservation,
 } from '@/lib/cashOutChange'
-import { ammSeriesFrom, usdRateOf, type PricePoint } from '@/lib/price-series'
+import { fetchIndexedPoolLiquidityEvents } from '@/lib/lp-positions-queries'
+import {
+  ammSeriesFrom,
+  poolReservesSeriesFrom,
+  usdRateOf,
+  type PricePoint,
+} from '@/lib/price-series'
 import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
 import { cachedQuery, immutableQuery } from '@/lib/query-persist'
 import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
@@ -394,6 +400,19 @@ export function RevnetPriceCard({
         )} ${lp.pairSymbol}`
       : null
 
+  // Every liquidity change the pool has seen, for the reserve bars: the live
+  // read above only knows what the pool holds NOW.
+  const { data: liquidityEvents } = useQuery(
+    cachedQuery({
+      queryKey: ['poolLiquidityEvents', chainId, pool?.poolId ?? null],
+      enabled: !!pool,
+      staleTime: 60_000,
+      retry: 0,
+      queryFn: () =>
+        fetchIndexedPoolLiquidityEvents({ chainId, poolId: pool!.poolId }),
+    }),
+  )
+
   const { data: history } = useQuery(
     cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
@@ -506,6 +525,18 @@ export function RevnetPriceCard({
     [chainId, history, historyRate, perPointRates, references?.pairDecimals, references?.poolId],
   )
 
+  const ammReservesHistory = useMemo(
+    () =>
+      poolReservesSeriesFrom({
+        history,
+        chainId,
+        poolId: references?.poolId ?? null,
+        pairDecimals: references?.pairDecimals ?? null,
+        liquidityEvents: liquidityEvents ?? null,
+      }),
+    [chainId, history, liquidityEvents, references?.pairDecimals, references?.poolId],
+  )
+
   const stages: ChartStage[] = all.map(s => ({
     start: s.ruleset.start,
     duration: s.ruleset.duration,
@@ -552,6 +583,7 @@ export function RevnetPriceCard({
         baseSymbol={baseSymbol}
         floorHistory={floorHistory}
         ammHistory={ammHistory}
+        ammReservesHistory={ammReservesHistory}
         cashOutTaxHistory={cashOutTaxHistory}
         referencesPending={referencesFetching && !!references}
         floorPrice={
@@ -567,6 +599,7 @@ export function RevnetPriceCard({
           references?.amm ? { value: references.amm, label: 'AMM price' } : null
         }
         ammLiquidity={ammLiquidity}
+        pairSymbol={pool?.pair.symbol ?? null}
         note={chartNote}
       />
       {references?.rateUnavailable ? (

@@ -79,6 +79,30 @@
         }
       ]
     },
+    "src/components/project/EditPositionPanel.tsx": {
+      "hooks": 1,
+      "sends": 3,
+      "sendSites": [
+        {
+          "id": "approve-token-for-permit2",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-position-manager",
+          "actions": [
+            "Authorize the Uniswap position manager"
+          ]
+        },
+        {
+          "id": "edit-liquidity-position",
+          "actions": [
+            "Edit Uniswap V4 liquidity"
+          ]
+        }
+      ]
+    },
     "src/components/project/ExtrasTab.tsx": {
       "hooks": 1,
       "sends": 1,

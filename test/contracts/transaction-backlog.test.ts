@@ -26,6 +26,7 @@ import {
 import {
   decodeAbiParameters,
   decodeFunctionData,
+  encodeAbiParameters,
   encodeFunctionData,
   pad,
   toHex,
@@ -45,6 +46,7 @@ import {
   buildProjectPowerAuthorityCall,
   buildRevnetOperatorAuthorityCall,
   buildRouterTerminalAuthorityCall,
+  buildMoveLiquidityUnlockData,
   buildRemoveLiquidityUnlockData,
   buildSendReservedTokensRequest,
   buildSetBuybackTwapAuthorityCall,
@@ -416,6 +418,105 @@ describe('remaining local transaction builders', () => {
         params[1],
       ),
     ).toEqual([TOKEN, TERMINAL, ALICE])
+  })
+
+  it('composes a band move as burn + mint + closes funded by the burn credit', () => {
+    // The mint parameters are lifted verbatim from a standard add-liquidity
+    // unlock; the sweep/closes of that unlock are dropped in favor of the
+    // composed closes so the burn credit settles the mint.
+    const mintParams = encodeAbiParameters([{ type: 'uint256' }], [7n])
+    const mintUnlockData = encodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      ['0x02121214', [mintParams, '0x', '0x', '0x']],
+    )
+    const unlockData = buildMoveLiquidityUnlockData({
+      tokenId: 2864727n,
+      currency0: TOKEN,
+      currency1: TERMINAL,
+      amount0Min: 100n,
+      amount1Min: 200n,
+      mintUnlockData,
+    })
+    const [actions, params] = decodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      unlockData,
+    )
+    // BURN_POSITION, MINT_POSITION, CLOSE_CURRENCY x2.
+    expect(actions).toBe('0x03021212')
+    expect(params).toHaveLength(4)
+    const [tokenId, amount0Min, amount1Min] = decodeAbiParameters(
+      [
+        { type: 'uint256' },
+        { type: 'uint128' },
+        { type: 'uint128' },
+        { type: 'bytes' },
+      ],
+      params[0],
+    )
+    expect(tokenId).toBe(2864727n)
+    expect(amount0Min).toBe(100n)
+    expect(amount1Min).toBe(200n)
+    expect(params[1]).toBe(mintParams)
+    expect(decodeAbiParameters([{ type: 'address' }], params[2])).toEqual([TOKEN])
+    expect(decodeAbiParameters([{ type: 'address' }], params[3])).toEqual([TERMINAL])
+  })
+
+  it('renders a move plan as readable steps in the review dialog', async () => {
+    const { describeV4UnlockData } = await import('@/components/TransactionReviewProvider')
+    const mintParams = encodeAbiParameters(
+      [
+        {
+          type: 'tuple',
+          components: [
+            { type: 'address' },
+            { type: 'address' },
+            { type: 'uint24' },
+            { type: 'int24' },
+            { type: 'address' },
+          ],
+        },
+        { type: 'int24' },
+        { type: 'int24' },
+        { type: 'uint256' },
+        { type: 'uint128' },
+        { type: 'uint128' },
+        { type: 'address' },
+        { type: 'bytes' },
+      ],
+      [['0x0000000000000000000000000000000000000000', TOKEN, 10000, 200, HOOK], -69200, -64400, 777n, 11n, 22n, ALICE, '0x'],
+    )
+    const mintUnlockData = encodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      ['0x021212', [mintParams, '0x', '0x']],
+    )
+    const unlockData = buildMoveLiquidityUnlockData({
+      tokenId: 42n,
+      currency0: '0x0000000000000000000000000000000000000000',
+      currency1: TOKEN,
+      amount0Min: 100n,
+      amount1Min: 200n,
+      mintUnlockData,
+    })
+    const steps = describeV4UnlockData(unlockData)! as Array<Record<string, unknown>>
+    expect(steps).toHaveLength(4)
+    expect(steps[0]).toMatchObject({
+      action: 'BURN_POSITION',
+      position: '#42',
+      minimumOut: { currency0: 100n, currency1: 200n },
+    })
+    expect(steps[1]).toMatchObject({
+      action: 'MINT_POSITION',
+      owner: ALICE,
+      ticks: { lower: -69200, upper: -64400 },
+      liquidity: 777n,
+      maximumIn: { currency0: 11n, currency1: 22n },
+    })
+    expect(steps[2]).toMatchObject({
+      action: 'CLOSE_CURRENCY',
+      currency: '0x0000000000000000000000000000000000000000',
+    })
+    // Unknown actions must fall back to the raw view, never a partial story.
+    expect(describeV4UnlockData('0xdead')).toBeNull()
   })
 
   it('never floors a non-zero LP amount to zero', () => {

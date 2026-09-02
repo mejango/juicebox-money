@@ -50,7 +50,7 @@ import {
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { AddressText } from '@/components/ui/AddressLabel'
+import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { donutSlicePath } from '@/lib/donut'
 import {
@@ -272,7 +272,7 @@ function YouCard({
           : action === 'move'
             ? 'Move between chains'
             : action === 'liquidity'
-              ? 'Add market liquidity'
+              ? 'Add liquidity'
               : null
 
   return (
@@ -326,6 +326,7 @@ function YouCard({
                     holder={address!}
                     isRevnet={isRevnet}
                     tokenSymbol={collateralSymbol}
+                    chains={chains}
                   />
                 ))}
               </tbody>
@@ -336,7 +337,7 @@ function YouCard({
             {actionBtn('cashOut', 'Cash out')}
             {isRevnet ? actionBtn('loan', 'Get a loan') : null}
             {multiChain ? actionBtn('move', 'Move between chains') : null}
-            {actionBtn('liquidity', 'Add market liquidity')}
+            {actionBtn('liquidity', 'Add liquidity')}
             {actionBtn('burn', 'Burn')}
           </div>
 
@@ -414,12 +415,15 @@ function YourChainRow({
   holder,
   isRevnet,
   tokenSymbol,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
   isRevnet: boolean
   tokenSymbol: string
+  /** Every (chainId, projectId) pair in the group — the LP modal spans them all. */
+  chains: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
@@ -638,6 +642,7 @@ function YourChainRow({
                 projectId={projectId}
                 holder={holder}
                 sym={tokenSymbol}
+                chains={chains}
               />
             </td>
           </>
@@ -661,7 +666,7 @@ function YourChainRow({
 
 /**
  * The wallet's LP standing on one chain, in the You table: how many positions
- * it owns and what they have earned, opening the full panel to claim or exit.
+ * it owns, opening the full panel to see earned fees, claim, or exit.
  * Renders "—" where the chain has no pool or the wallet has no position.
  */
 function YourLpCell({
@@ -669,11 +674,13 @@ function YourLpCell({
   projectId,
   holder,
   sym,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
   sym: string
+  chains: [number, number][]
 }) {
   const [open, setOpen] = useState(false)
   const summary = useUserLpSummary(chainId, projectId, holder)
@@ -690,14 +697,6 @@ function YourLpCell({
   }
   if (!summary.positions.length) return <>—</>
 
-  const owed =
-    summary.tokenFees > 0n || summary.pairFees > 0n
-      ? `${formatTokenAmount(summary.tokenFees, 18)} ${sym} + ${formatTokenAmount(
-          summary.pairFees,
-          summary.pool?.pair.decimals ?? 18,
-        )} ${summary.pool?.pair.symbol ?? ''} fees`
-      : null
-
   return (
     <>
       <button
@@ -707,16 +706,26 @@ function YourLpCell({
       >
         {summary.positions.length}{' '}
         {summary.positions.length === 1 ? 'position' : 'positions'}
-        {owed ? <span className="block text-xs text-smoke-500">{owed}</span> : null}
       </button>
       {open ? (
         <ModalShell
           title="Your liquidity"
-          subtitle="Positions owned by this wallet in the project's market pool."
+          subtitle={
+            <>
+              Positions owned by <AddressLabel address={holder} /> in the project&apos;s market
+              pools.
+            </>
+          }
           onClose={() => setOpen(false)}
-          maxWidth="max-w-xl"
+          maxWidth="max-w-2xl"
         >
-          <LiquidityPositions chainId={chainId} projectId={projectId} sym={sym} />
+          <LiquidityPositions
+            chains={chains.map(([cid, pid]) => ({
+              chainId: cid as JBChainId,
+              projectId: pid,
+            }))}
+            sym={sym}
+          />
         </ModalShell>
       ) : null}
     </>
