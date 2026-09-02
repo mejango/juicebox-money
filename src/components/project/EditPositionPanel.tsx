@@ -4,7 +4,7 @@ import { TxSteps } from '@/components/ui/TxSteps'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
@@ -27,6 +27,7 @@ import {
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
+import { solveRangeFromAmounts } from '@/lib/uniswap-v4'
 import { buildPlan, type Step } from './AddLiquidityFlow'
 import { formatPrice } from './chartUtils'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
@@ -69,6 +70,37 @@ function parseAmount(text: string, decimals: number, symbol: string): bigint {
   } catch {
     throw new FlowError(`Enter a valid ${symbol} amount.`)
   }
+}
+
+/**
+ * Which typed side the band cannot fully use, if any: the other side is the
+ * binding one (its holding lands on its target) while this one is cut well
+ * short. Returns which side is capped and how much of the binding side the
+ * full target on the capped side would take at this band's ratio.
+ */
+function cappedSide(
+  preview: {
+    plan: { tokenHolding: bigint; pairHolding: bigint }
+    tokenAmount: bigint
+    pairAmount: bigint
+  },
+  pairDecimals: number,
+): { side: 'token' | 'pair'; needed: string } | null {
+  const { tokenHolding, pairHolding } = preview.plan
+  if (tokenHolding <= 0n || pairHolding <= 0n) return null
+  const short = (holding: bigint, target: bigint) => target > 0n && holding * 100n < target * 99n
+  const tokenShort = short(tokenHolding, preview.tokenAmount)
+  const pairShort = short(pairHolding, preview.pairAmount)
+  if (tokenShort === pairShort) return null
+  return tokenShort
+    ? {
+        side: 'token',
+        needed: formatTokenAmount((preview.tokenAmount * pairHolding) / tokenHolding, pairDecimals),
+      }
+    : {
+        side: 'pair',
+        needed: formatTokenAmount((preview.pairAmount * tokenHolding) / pairHolding, 18),
+      }
 }
 
 /**
@@ -166,6 +198,57 @@ export function EditPositionPanel({
 
   const busy = quoting || running || tx.busy
   const editing = busy || reviewed !== null
+
+  // What the typed targets actually produce at this band and price, computed
+  // locally as they type. The band and price fix the ratio, so one side is
+  // usually the binding one and the other is capped — say so before Review,
+  // and offer the band that would use both amounts in full.
+  const preview = useMemo(() => {
+    let tokenAmount: bigint
+    let pairAmount: bigint
+    try {
+      tokenAmount = parseAmount(tokText, 18, sym)
+      pairAmount = parseAmount(pairText, pairDec, pairSym)
+    } catch {
+      return null
+    }
+    const pa = Number(minText)
+    const pb = Number(maxText)
+    if (rangeTouched && (!(pa > 0) || !(pb > pa))) return null
+    try {
+      const plan = buildEditLiquidityPlan({
+        pool,
+        position,
+        target: { pairAmount, tokenAmount },
+        range: rangeTouched ? { pa, pb } : null,
+        account: connectedAddress ?? '0x0000000000000000000000000000000000000000',
+      })
+      return { plan, tokenAmount, pairAmount }
+    } catch {
+      return null
+    }
+  }, [tokText, pairText, minText, maxText, rangeTouched, pool, position, connectedAddress, sym, pairSym, pairDec])
+  const cappedRaw = preview ? cappedSide(preview, pairDec) : null
+  const capped = cappedRaw
+    ? { ...cappedRaw, binding: cappedRaw.side === 'token' ? pairSym : sym }
+    : null
+
+  const fitBand = () => {
+    if (!preview || !pool.price) return
+    const solved = solveRangeFromAmounts({
+      price: pool.price,
+      tokenAmount: Number(formatUnits(preview.tokenAmount, 18)),
+      pairAmount: Number(formatUnits(preview.pairAmount, pairDec)),
+      floorHint: floor,
+      ceilingHint: pool.issuance,
+    })
+    if (!solved) return
+    setMinText(String(Number(solved.minPrice.toPrecision(6))))
+    setMaxText(String(Number(solved.maxPrice.toPrecision(6))))
+    setRangeTouched(true)
+    planRef.current = null
+    setReviewed(null)
+  }
 
   // Fresh pool and position, read together so the plan never sizes a fresh
   // position against a stale price.
@@ -487,6 +570,31 @@ export function EditPositionPanel({
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>
       </div>
+      {preview && preview.plan.kind !== 'remove' ? (
+        <p className="mt-1.5 text-xs leading-relaxed text-smoke-700" role="status">
+          At this band it holds about {formatTokenAmount(preview.plan.tokenHolding, 18)} {sym} +{' '}
+          {formatTokenAmount(preview.plan.pairHolding, pairDec)} {pairSym}.
+          {capped ? (
+            <>
+              {' '}
+              {capped.binding} limits it here: holding the full{' '}
+              {capped.side === 'token'
+                ? `${formatTokenAmount(preview.tokenAmount, 18)} ${sym}`
+                : `${formatTokenAmount(preview.pairAmount, pairDec)} ${pairSym}`}{' '}
+              at this band takes about {capped.needed} {capped.binding}.{' '}
+              {pool.price && !editing ? (
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-ink"
+                  onClick={fitBand}
+                >
+                  Fit the band to these amounts
+                </button>
+              ) : null}
+            </>
+          ) : null}
+        </p>
+      ) : null}
       <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
         Set both to 0 to remove the position. Keep the band and raise or lower the amounts to
         top up or free part of it without a new position id.
