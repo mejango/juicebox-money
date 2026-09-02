@@ -649,7 +649,7 @@ export default function ParaAuthSheet({
               revealing this section once they arrive would resize a panel the
               visitor is already looking at — and it is centred, so it jumps. */}
           <p className="mb-2 mt-4 text-xs text-smoke-500">... or, a wallet.</p>
-          <div className="flex min-h-10 flex-wrap gap-1.5">
+          <div className="scroll-row flex min-h-10 gap-1.5 overflow-x-auto">
                 {connectors.map(connector => (
                   <button
                     key={connector.id}

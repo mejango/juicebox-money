@@ -13,7 +13,7 @@ import { WalletButton } from './WalletButton'
 function GuideLinks({ className = '' }: { className?: string }) {
   return (
     <div
-      className={`flex h-10 items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-normal text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
+      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-normal text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
     >
       <Link href="/learn" className="hover:text-bluebs-600">
         Learn
@@ -61,8 +61,10 @@ function Logo({
       </Link>
       {showGuideLinks ? (
         <GuideLinks
-          className={`md:self-center md:pl-0 ${
-            inlineOnMobile ? 'self-center pl-0' : 'self-start pl-0.5'
+          // Stacked under the wordmark, the links sit tight against it so the
+          // two lines read as one block centered on the search bar.
+          className={`md:h-10 md:self-center md:pl-0 ${
+            inlineOnMobile ? 'h-10 self-center pl-0' : '-mt-1.5 h-6 self-start pl-0.5 md:mt-0'
           }`}
         />
       ) : null}
@@ -79,7 +81,7 @@ function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: bo
     >
       <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-5">
         <Logo iconOnly={iconOnly} showGuideLinks={false} />
-        <GuideLinks className="translate-y-0.5 md:self-center" />
+        <GuideLinks className="h-10 translate-y-0.5 md:self-center" />
       </div>
       <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center">
         <SearchBox expanded compactPlaceholder="Search" />

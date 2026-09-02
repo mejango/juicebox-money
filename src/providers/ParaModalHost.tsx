@@ -321,8 +321,12 @@ export default function ParaModalHost({
   // after theirs to sit above them. Opening before paint would put it under.
   useEffect(() => {
     if (!host) return
-    if (open && !host.open) host.showModal()
-    else if (!open && host.open) host.close()
+    if (open && !host.open) {
+      host.showModal()
+      // Keep the first open from landing focus (and a focus ring) on the sheet's close button.
+      host.tabIndex = -1
+      host.focus({ preventScroll: true })
+    } else if (!open && host.open) host.close()
   }, [host, open])
 
   if (!host) return null

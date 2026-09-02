@@ -70,7 +70,7 @@ export function SignInShell({
       </div>
 
       <p className="mb-2 mt-5 text-xs text-smoke-500">Or, use socials</p>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="scroll-row flex gap-1.5 overflow-x-auto">
         {OAUTH_METHODS.map(({ method, label }) => (
           <button
             key={method}
@@ -86,7 +86,7 @@ export function SignInShell({
       </div>
 
       <p className="mb-2 mt-4 text-xs text-smoke-500">... or, a wallet.</p>
-      <div className="flex min-h-10 flex-wrap gap-1.5">
+      <div className="scroll-row flex min-h-10 gap-1.5 overflow-x-auto">
         {connectors.map(connector => (
           <button
             key={connector.id}
