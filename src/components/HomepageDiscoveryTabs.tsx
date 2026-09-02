@@ -17,10 +17,10 @@ export function HomepageDiscoveryTabs({
     <fieldset className={styles.root}>
       <legend className="sr-only">Discover Juicebox</legend>
       <div
-        className={`${styles.tablist} mb-5 border-b border-smoke-200 lg:hidden`}
+        className={`${styles.tablist} mb-5 flex border-b border-smoke-200 lg:hidden`}
       >
         <label
-          className={`${styles.tab} min-h-14 px-2 font-agrandir text-xl font-medium`}
+          className={`${styles.tab} min-h-14 flex-1 justify-center px-2 text-center font-agrandir text-xl font-medium sm:flex-none sm:justify-start sm:text-left`}
         >
           <input
             type="radio"
@@ -31,7 +31,7 @@ export function HomepageDiscoveryTabs({
           Trending projects
         </label>
         <label
-          className={`${styles.tab} min-h-14 px-2 font-agrandir text-xl font-medium`}
+          className={`${styles.tab} min-h-14 flex-1 justify-center px-2 text-center font-agrandir text-xl font-medium sm:flex-none sm:justify-start sm:text-left`}
         >
           <input
             type="radio"

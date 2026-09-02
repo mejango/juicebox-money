@@ -279,6 +279,7 @@ export default function ParaModalHost({
     if (typeof document === 'undefined') return null
     const dialog = document.createElement('dialog')
     dialog.className = 'ui-modal-host'
+    dialog.tabIndex = -1
     return dialog
   })
   // ParaProvider renders nothing until Para's API answers, so Driver — and
@@ -324,7 +325,6 @@ export default function ParaModalHost({
     if (open && !host.open) {
       host.showModal()
       // Keep the first open from landing focus (and a focus ring) on the sheet's close button.
-      host.tabIndex = -1
       host.focus({ preventScroll: true })
     } else if (!open && host.open) host.close()
   }, [host, open])

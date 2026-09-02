@@ -383,11 +383,11 @@ export default function HomePage() {
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-20">
           <h2
             id="why-juicebox"
-            className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl"
+            className="text-center font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl md:text-left"
           >
             Why Juicebox?
           </h2>
-          <p className="mt-5 max-w-4xl font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl">
+          <p className="mx-auto mt-5 max-w-4xl text-center font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl md:mx-0 md:text-left">
             What open source businesses, campaigns, and indie projects actually
             want:
           </p>
