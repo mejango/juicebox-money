@@ -17,6 +17,7 @@ import type { AuthorityDeployment } from '@/components/project/AuthorityOverview
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   POWERS,
@@ -229,10 +230,7 @@ function PowerRow({
           power={power}
           rows={rows}
           onCancel={onToggle}
-          onDone={() => {
-            onDone()
-            onToggle()
-          }}
+          onDone={onDone}
         />
       ) : null}
     </li>
@@ -293,8 +291,9 @@ function PowerActionForm({
   )
   const [review, setReview] = useState<{
     calls: AuthorityCall[]
-    lines: string[]
+    rows: TxConfirmRow[]
   } | null>(null)
+  const [done, setDone] = useState(false)
   const [ack, setAck] = useState(false)
   const [ackExtreme, setAckExtreme] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -366,6 +365,7 @@ function PowerActionForm({
 
   const buildReview = () => {
     setError(null)
+    setStatus(null)
     const chosen = enabledRows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one enabled chain.')
@@ -374,7 +374,19 @@ function PowerActionForm({
     try {
       const shared = resolveSharedValues()
       const calls: AuthorityCall[] = []
-      const lines: string[] = []
+      const reviewRows: TxConfirmRow[] = [{ label: 'Power', value: power.label }]
+      for (const field of power.fields) {
+        if (field.kind === 'address' || field.kind === 'addressList') continue
+        reviewRows.push({
+          label: field.label,
+          value:
+            field.kind === 'bool'
+              ? bools[field.name]
+                ? 'Yes'
+                : 'No'
+              : (scalars[field.name] ?? '').trim(),
+        })
+      }
       for (const row of chosen) {
         if (!row.authority || !row.controller) {
           throw new Error(`${row.name}: owner or controller is unknown.`)
@@ -441,11 +453,12 @@ function PowerActionForm({
             label: power.actionLabel,
           }),
         )
-        lines.push(
-          `${row.name}${display.length ? ` | ${display.join(' | ')}` : ''}`,
-        )
+        if (display.length) {
+          reviewRows.push({ label: row.name, value: display.join(' | '), mono: true })
+        }
       }
-      setReview({ calls, lines })
+      reviewRows.push({ label: 'On', value: chosen.map(row => row.name).join(', ') })
+      setReview({ calls, rows: reviewRows })
     } catch (reviewError) {
       setError(
         reviewError instanceof Error
@@ -472,6 +485,7 @@ function PowerActionForm({
           }.`,
         ),
       )
+      setDone(true)
       onDone()
     } catch (submitError) {
       setError(
@@ -594,65 +608,78 @@ function PowerActionForm({
         )}
       </div>
 
-      {review ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p className="font-medium">Review the exact per-chain action</p>
-          <ul className="mt-2 space-y-1 font-mono">
-            {review.lines.map(line => (
-              <li key={line} className="break-all">
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
-        <input
-          type="checkbox"
-          checked={ack}
-          onChange={event => setAck(event.target.checked)}
-          disabled={busy || !review}
-          className="mt-0.5 accent-red-600"
-        />
-        <span className="text-xs leading-relaxed text-red-700">
-          I verified every value and selected chain. {power.danger}
-        </span>
-      </label>
-      {power.extreme ? (
-        <label className="mt-2 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
-          <input
-            type="checkbox"
-            checked={ackExtreme}
-            onChange={event => setAckExtreme(event.target.checked)}
-            disabled={busy || !review}
-            className="mt-0.5 accent-red-600"
-          />
-          <span className="text-xs leading-relaxed text-red-700">
-            I triple-checked each controller address. A mistake can permanently
-            brick the project on that chain.
-          </span>
-        </label>
-      ) : null}
-
       <button
         type="button"
-        onClick={review ? submit : buildReview}
-        disabled={
-          busy ||
-          !selected.size ||
-          (!!review && (!ack || (power.extreme && !ackExtreme)))
-        }
+        onClick={buildReview}
+        disabled={busy || !selected.size}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {busy
-          ? status ?? 'Preparing…'
-          : review
-            ? power.actionLabel
-            : `Review ${power.actionLabel.toLowerCase()}`}
+        Review {power.actionLabel.toLowerCase()}
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {status && !review ? (
+        <p className="mt-2 text-xs text-smoke-700">{status}</p>
+      ) : null}
+      {error && !review ? <ErrorNote message={error} /> : null}
+
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={
+            done ? `${power.label} complete` : `Confirm ${power.actionLabel.toLowerCase()}`
+          }
+          rows={review.rows}
+          steps={review.calls.map(call => ({
+            key: String(call.chainId),
+            title: `${power.actionLabel} on ${chainName(call.chainId)}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : power.actionLabel}
+          actionDisabled={!ack || (power.extreme && !ackExtreme)}
+          onConfirm={() => void submit()}
+          onClose={() => {
+            if (done) {
+              onCancel()
+              return
+            }
+            setReview(null)
+            setAck(false)
+            setAckExtreme(false)
+            setError(null)
+          }}
+        >
+          <label className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+            <input
+              type="checkbox"
+              checked={ack}
+              onChange={event => setAck(event.target.checked)}
+              disabled={busy || done}
+              className="mt-0.5 accent-red-600"
+            />
+            <span className="text-xs leading-relaxed text-red-700">
+              I verified every value and selected chain. {power.danger}
+            </span>
+          </label>
+          {power.extreme ? (
+            <label className="mt-2 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+              <input
+                type="checkbox"
+                checked={ackExtreme}
+                onChange={event => setAckExtreme(event.target.checked)}
+                disabled={busy || done}
+                className="mt-0.5 accent-red-600"
+              />
+              <span className="text-xs leading-relaxed text-red-700">
+                I triple-checked each controller address. A mistake can permanently
+                brick the project on that chain.
+              </span>
+            </label>
+          ) : null}
+        </TxConfirmDialog>
+      ) : null}
     </div>
   )
 }

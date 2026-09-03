@@ -36,6 +36,7 @@ import {
 } from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
 import { ModalShell } from "@/components/ui/ModalShell";
+import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
@@ -51,6 +52,7 @@ import { fetchSafeInfo } from "@/lib/safe";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
+import { chainName } from "@/lib/urn";
 import {
   approvalStatusLabel,
   planRulesetQueue,
@@ -61,6 +63,11 @@ import {
 import { ConceptTerm } from "@/components/project/ConceptTerm";
 import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
 import { DateTimeField } from "@/components/ui/DateTimeField";
+import {
+  FOREVER_SECONDS,
+  deadlineSecondsForHook,
+  deriveStartFrom,
+} from "@/lib/launch";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -124,6 +131,104 @@ type EditorState = {
   allowAddPriceFeed: boolean;
   limits: LimitDraft[];
 };
+
+/** A ruleset queued after the previous one: starts after N of its cycles, or
+ *  on a date (snapped up to the previous ruleset's cycle boundary). */
+type Follower = {
+  id: string;
+  rules: EditorState;
+  startMode: "cycles" | "date";
+  startCycles: string;
+  startDate: string;
+};
+type AfterMode = "wait" | "terminal" | "cycle";
+
+function followerStartOk(f: Follower): boolean {
+  if (f.startMode === "date") {
+    return !!f.startDate && !Number.isNaN(new Date(f.startDate).getTime());
+  }
+  const n = Number(f.startCycles);
+  return Number.isInteger(n) && n >= 1;
+}
+
+/** Ruleset #1's `mustStartAtOrAfter` is fixed by the queue position; each
+ *  follower encodes 0 (the previous ruleset's next boundary) or an absolute
+ *  start. Starts chain from the parent ruleset the queue is based on, the
+ *  way JBRulesets.deriveStartFrom will snap them. */
+export function queueStageStarts({
+  parent,
+  firstMust,
+  stages,
+  now,
+}: {
+  parent: { start: number; duration: number } | null;
+  firstMust: number;
+  stages: {
+    duration: number;
+    startMode?: "cycles" | "date";
+    startCycles?: string;
+    startDate?: string;
+  }[];
+  now: number;
+}): { musts: number[]; starts: number[] } {
+  const musts = [firstMust];
+  const starts = [
+    parent
+      ? deriveStartFrom(parent.start, parent.duration, firstMust || now)
+      : firstMust || now,
+  ];
+  for (let i = 1; i < stages.length; i++) {
+    const prevStart = starts[i - 1];
+    const prevDuration = stages[i - 1].duration;
+    const st = stages[i];
+    let must = 0;
+    if (st.startMode === "date") {
+      must = st.startDate
+        ? Math.floor(new Date(st.startDate).getTime() / 1000)
+        : 0;
+    } else if (st.startMode === "cycles") {
+      const n = Number(st.startCycles) || 1;
+      if (n > 1) must = prevStart + n * prevDuration;
+    }
+    musts.push(must);
+    starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+  }
+  return { musts, starts };
+}
+
+/** The "Afterwards" choice for a timed last ruleset, as an extra stage. */
+export function expandAfterwards(
+  stages: EditorState[],
+  afterMode: AfterMode,
+): EditorState[] {
+  const last = stages[stages.length - 1];
+  const timed = last.duration > 0 && last.duration !== FOREVER_SECONDS;
+  if (!timed || afterMode === "cycle") return stages;
+  if (afterMode === "terminal") {
+    return [...stages, { ...last, duration: FOREVER_SECONDS }];
+  }
+  return [
+    ...stages,
+    {
+      ...last,
+      duration: 0,
+      weight: "0",
+      pausePay: true,
+      limits: last.limits.map((l) => ({ ...l, mode: "none" as const })),
+    },
+  ];
+}
+
+function isWeightValid(weight: string): boolean {
+  const n = Number(weight);
+  if (weight.trim() === "" || !Number.isFinite(n) || n < 0) return false;
+  try {
+    if (parseEther(weight.trim()) === 1n) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
 
 const DURATION_PRESETS: { label: string; seconds: number }[] = [
   { label: "No expiry", seconds: 0 },
@@ -499,7 +604,7 @@ type PrefillData = {
 /** A reviewed, ready-to-send queue: the exact config is frozen so what the
  *  owner confirms is what's sent. */
 type Reviewed = {
-  config: JBRulesetConfig;
+  configs: JBRulesetConfig[];
   account: Address;
   /** Whether the new config removes all payout limits. */
   clearsPayouts: boolean;
@@ -604,8 +709,38 @@ function RulesetEditorForm({
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [scheduledStart, setScheduledStart] = useState("");
 
-  const set = <K extends keyof EditorState>(key: K, value: EditorState[K]) => {
-    setState((s) => ({ ...s, [key]: value }));
+  const [followers, setFollowers] = useState<Follower[]>([]);
+  const [afterMode, setAfterMode] = useState<AfterMode>("cycle");
+
+  const patch = (p: Partial<EditorState>) => {
+    setState((s) => ({ ...s, ...p }));
+    setReview(null);
+    setFlowError(null);
+  };
+  const patchFollower = (id: string, p: Partial<Follower>) => {
+    setFollowers((fs) => fs.map((f) => (f.id === id ? { ...f, ...p } : f)));
+    setReview(null);
+    setFlowError(null);
+  };
+  const addFollower = () => {
+    setFollowers((fs) => {
+      const prev = fs.length ? fs[fs.length - 1].rules : state;
+      return [
+        ...fs,
+        {
+          id: crypto.randomUUID(),
+          rules: { ...prev, limits: prev.limits.map((l) => ({ ...l })) },
+          startMode: "cycles",
+          startCycles: "1",
+          startDate: "",
+        },
+      ];
+    });
+    setReview(null);
+    setFlowError(null);
+  };
+  const removeFollower = (id: string) => {
+    setFollowers((fs) => fs.filter((f) => f.id !== id));
     setReview(null);
     setFlowError(null);
   };
@@ -622,23 +757,26 @@ function RulesetEditorForm({
 
   // Which rows changed (old → new), for the confirm diff.
   const changes = useMemo(() => diffRows(baseline, state), [baseline, state]);
-  const weightValid = (() => {
-    const n = Number(state.weight);
-    if (state.weight.trim() === "" || !Number.isFinite(n) || n < 0) return false;
-    // A weight of exactly 1 wei collides with the JBRulesets inherit sentinel: raw `1` means
-    // "inherit the previous ruleset's decayed weight" (JBRulesets.sol:822-823), not "one
-    // attowei of issuance". Typing 0.000000000000000001 would therefore queue a completely
-    // different — and immutable — encoding from the one shown.
-    try {
-      if (parseEther(state.weight.trim()) === 1n) return false;
-    } catch {
-      return false;
-    }
-    return true;
-  })();
-  const limitsValid = state.limits.every(
-    (l) => l.mode !== "limited" || Number(l.amount) > 0,
+  // A weight of exactly 1 wei collides with the JBRulesets inherit sentinel: raw `1` means
+  // "inherit the previous ruleset's decayed weight" (JBRulesets.sol:822-823), not "one
+  // attowei of issuance". Typing 0.000000000000000001 would therefore queue a completely
+  // different — and immutable — encoding from the one shown.
+  const weightValid = isWeightValid(state.weight);
+  const limitsOk = (rules: EditorState) =>
+    rules.limits.every((l) => l.mode !== "limited" || Number(l.amount) > 0);
+  const limitsValid = limitsOk(state);
+  const stagesRules = [state, ...followers.map((f) => f.rules)];
+  const followersValid = followers.every(
+    (f) => isWeightValid(f.rules.weight) && limitsOk(f.rules) && followerStartOk(f),
   );
+  // A non-final ruleset with no cycle length never ends, so the next one would
+  // start at the same instant and clobber it.
+  const nonFinalOpenEnded = stagesRules.some(
+    (rules, i) => i < stagesRules.length - 1 && rules.duration === 0,
+  );
+  const lastRules = stagesRules[stagesRules.length - 1];
+  const lastTimed =
+    lastRules.duration > 0 && lastRules.duration !== FOREVER_SECONDS;
   const limitBlock = multiCurrencyLimitBlock(state.limits);
   const minimumScheduledStart = Math.max(
     Math.floor(Date.now() / 1000) + 60,
@@ -656,8 +794,69 @@ function RulesetEditorForm({
     ? scheduledStartSeconds
     : (source.option.mustStartAtOrAfter ?? 0);
 
-  const buildConfig = (): JBRulesetConfig => {
-    const fundAccessLimitGroups = state.limits
+  // The ruleset the queued Ruleset #1 is based on: the source itself when
+  // basing on current or appending after the tail; when replacing, the
+  // replaced ruleset's own parent (unknown here unless it is current).
+  const parentRuleset =
+    action === "replace"
+      ? BigInt(r.basedOnId) === BigInt(data.current.ruleset.id)
+        ? data.current.ruleset
+        : null
+      : r;
+  const allStages = expandAfterwards(stagesRules, afterMode);
+  const stageStarts = (now: number) =>
+    queueStageStarts({
+      parent: parentRuleset
+        ? {
+            start: Number(parentRuleset.start),
+            duration: Number(parentRuleset.duration),
+          }
+        : null,
+      firstMust: mustStartAtOrAfter,
+      stages: allStages.map((rules, i) => ({
+        duration: rules.duration,
+        ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}),
+      })),
+      now,
+    });
+  // A ruleset queued now that starts sooner than its approval hook's deadline
+  // is rejected (JBDeadline → Failed) and silently never takes effect. The
+  // parent's hook governs Ruleset #1; #1's hook (carried from the source)
+  // governs everything queued after it.
+  const noticeClash = (() => {
+    const now = Math.floor(Date.now() / 1000);
+    const { starts } = stageStarts(now);
+    const parentSecs = deadlineSecondsForHook(
+      parentRuleset?.approvalHook as Address | undefined,
+      chainId,
+    );
+    const hourly = (secs: number) =>
+      formatDuration(Math.max(0, Math.floor(secs / 3600) * 3600), {
+        exact: true,
+        zeroLabel: "moments",
+      });
+    if (parentSecs && starts[0] - now < parentSecs) {
+      return `Ruleset #1 would start ${hourly(starts[0] - now)} after queueing, sooner than the parent ruleset's ${formatDuration(parentSecs, { exact: true })} rule-change notice, so its approval hook would reject it and it would never take effect. Choose a later start.`;
+    }
+    const secs = deadlineSecondsForHook(r.approvalHook as Address, chainId);
+    if (!secs) return null;
+    for (let i = 1; i < starts.length; i++) {
+      if (starts[i] - now < secs) {
+        const who =
+          i < stagesRules.length
+            ? `Ruleset #${i + 1}`
+            : "The closing ruleset (Afterwards)";
+        return `${who} would start ${hourly(starts[i] - now)} after queueing, sooner than the ${formatDuration(secs, { exact: true })} rule-change notice, so the approval hook would reject it and it would never take effect. Shorten the earlier cycles' count or make them run longer.`;
+      }
+    }
+    return null;
+  })();
+
+  const buildConfig = (
+    rules: EditorState,
+    stageMustStart: number,
+  ): JBRulesetConfig => {
+    const fundAccessLimitGroups = rules.limits
       .map((l) => ({
         terminal,
         token: l.token,
@@ -697,32 +896,32 @@ function RulesetEditorForm({
     ];
 
     return {
-      mustStartAtOrAfter,
-      duration: state.duration,
-      weight: parseUnits(state.weight.trim() || "0", 18),
-      weightCutPercent: pctTo1e9(state.weightCutPct),
+      mustStartAtOrAfter: stageMustStart,
+      duration: rules.duration,
+      weight: parseUnits(rules.weight.trim() || "0", 18),
+      weightCutPercent: pctTo1e9(rules.weightCutPct),
       // Keep the selected source's approval hook so its future rule-change
       // condition carries forward unchanged.
       approvalHook: r.approvalHook,
       metadata: {
         ...m,
-        reservedPercent: pctToBp(state.reservedPct),
-        cashOutTaxRate: pctToBp(state.cashOutTaxPct),
-        pausePay: state.pausePay,
-        pauseCreditTransfers: state.pauseCreditTransfers,
+        reservedPercent: pctToBp(rules.reservedPct),
+        cashOutTaxRate: pctToBp(rules.cashOutTaxPct),
+        pausePay: rules.pausePay,
+        pauseCreditTransfers: rules.pauseCreditTransfers,
         metadata: build721RulesetMetadata({
           metadata: Number(m.metadata ?? 0),
-          pauseTransfers: state.pause721Transfers,
+          pauseTransfers: rules.pause721Transfers,
         }),
-        holdFees: state.holdFees,
-        ownerMustSendPayouts: state.ownerMustSendPayouts,
-        allowOwnerMinting: state.allowOwnerMinting,
-        allowSetTerminals: state.allowSetTerminals,
-        allowSetController: state.allowSetController,
-        allowTerminalMigration: state.allowTerminalMigration,
-        allowSetCustomToken: state.allowSetCustomToken,
-        allowAddAccountingContext: state.allowAddAccountingContext,
-        allowAddPriceFeed: state.allowAddPriceFeed,
+        holdFees: rules.holdFees,
+        ownerMustSendPayouts: rules.ownerMustSendPayouts,
+        allowOwnerMinting: rules.allowOwnerMinting,
+        allowSetTerminals: rules.allowSetTerminals,
+        allowSetController: rules.allowSetController,
+        allowTerminalMigration: rules.allowTerminalMigration,
+        allowSetCustomToken: rules.allowSetCustomToken,
+        allowAddAccountingContext: rules.allowAddAccountingContext,
+        allowAddPriceFeed: rules.allowAddPriceFeed,
       },
       splitGroups,
       fundAccessLimitGroups,
@@ -735,19 +934,21 @@ function RulesetEditorForm({
       return;
     }
     if (!weightValid || !limitsValid || !startValid || busy) return;
+    if (!followersValid || nonFinalOpenEnded || noticeClash) return;
     if (limitBlock) {
       setFlowError(limitBlock);
       return;
     }
-    if (changes.length === 0) {
+    if (changes.length === 0 && followers.length === 0) {
       setFlowError("Nothing changed — edit a rule to queue an update.");
       return;
     }
-    const config = buildConfig();
+    const { musts } = stageStarts(Math.floor(Date.now() / 1000));
+    const configs = allStages.map((rules, i) => buildConfig(rules, musts[i]));
     const clearsPayouts =
       access.some((a) => hasPayoutLimit(a.payoutLimits)) &&
-      config.fundAccessLimitGroups.every((g) => g.payoutLimits.length === 0);
-    setReview({ config, account: address, clearsPayouts });
+      configs[0].fundAccessLimitGroups.every((g) => g.payoutLimits.length === 0);
+    setReview({ configs, account: address, clearsPayouts });
     setFlowError(null);
   };
 
@@ -796,7 +997,7 @@ function RulesetEditorForm({
       }
       if (
         source.option.requiresStartDate &&
-        review.config.mustStartAtOrAfter <
+        review.configs[0].mustStartAtOrAfter <
           Math.max(
             Math.floor(Date.now() / 1000) + 60,
             Number(liveOption.source.start) + 1,
@@ -816,7 +1017,7 @@ function RulesetEditorForm({
         authority,
         controller,
         projectId: BigInt(projectId),
-        rulesetConfigurations: [review.config],
+        rulesetConfigurations: review.configs,
         memo: "",
         label: "Queue new rules",
       });
@@ -845,7 +1046,65 @@ function RulesetEditorForm({
     }
   };
 
-  if (success) {
+  const reviewRows: TxConfirmRow[] = review
+    ? [
+        action === "replace"
+          ? {
+              label: "Replaces",
+              value: `The queued change targeting ${formatRulesetDate(mustStartAtOrAfter)}`,
+            }
+          : action === "after"
+            ? {
+                label: "Starts",
+                value: `No earlier than ${formatRulesetDate(mustStartAtOrAfter)}`,
+              }
+            : { label: "Based on", value: "The current rules" },
+        ...(changes.length === 0
+          ? [{ label: "Ruleset #1", value: "Unchanged" }]
+          : changes.map((c) => ({
+              label: c.label,
+              value: `${c.from} → ${c.to}`,
+            }))),
+        ...followers.flatMap((f, i) => {
+          const prev = i === 0 ? state : followers[i - 1].rules;
+          const diff = diffRows(prev, f.rules);
+          return [
+            {
+              label: `Ruleset #${i + 2} starts`,
+              value:
+                f.startMode === "date"
+                  ? `${formatRulesetDate(Math.floor(new Date(f.startDate).getTime() / 1000))}, snapped to Ruleset #${i + 1}'s cycle`
+                  : `After ${Number(f.startCycles) || 1} cycle${Number(f.startCycles) === 1 ? "" : "s"} of Ruleset #${i + 1}`,
+            },
+            ...(diff.length === 0
+              ? [
+                  {
+                    label: `Ruleset #${i + 2} rules`,
+                    value: `Same as Ruleset #${i + 1}`,
+                  },
+                ]
+              : diff.map((c) => ({
+                  label: `Ruleset #${i + 2}: ${c.label}`,
+                  value: `${c.from} → ${c.to}`,
+                }))),
+          ];
+        }),
+        ...(lastTimed && afterMode !== "cycle"
+          ? [
+              {
+                label: "Afterwards",
+                value:
+                  afterMode === "wait"
+                    ? "Wait — payments and issuance pause until new rules are queued"
+                    : "Terminate — the last terms lock in forever",
+              },
+            ]
+          : []),
+        { label: "On", value: chainName(chainId) },
+      ]
+    : [];
+
+  if (success && !review) {
     return (
       <div>
         <p className="text-sm font-medium text-ink">
@@ -909,186 +1168,155 @@ function RulesetEditorForm({
         </div>
       ) : null}
 
-      <div className="mt-4 space-y-5">
-        <section>
-          <span className="field-label">Cycle length</span>
+      <RulesFields
+        rules={state}
+        onChange={patch}
+        onLimit={setLimit}
+        disabled={busy}
+        weightValid={weightValid}
+      />
+
+      {followers.map((f, i) => {
+        const index = i + 1;
+        const prev = index === 1 ? state : followers[i - 1].rules;
+        const prevTimed = prev.duration > 0 && prev.duration !== FOREVER_SECONDS;
+        return (
+          <div
+            key={f.id}
+            className="mt-5 rounded-lg border border-smoke-200 bg-smoke-75 p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-ink">
+                Ruleset #{index + 1}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeFollower(f.id)}
+                disabled={busy}
+                className="text-xs font-medium text-smoke-700 underline underline-offset-4 hover:text-ink"
+              >
+                Remove
+              </button>
+            </div>
+            <div className="mt-3">
+              <span className="field-label">Starts</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
+                <select
+                  value={f.startMode}
+                  disabled={busy}
+                  onChange={(e) =>
+                    patchFollower(f.id, {
+                      startMode: e.target.value as Follower["startMode"],
+                    })
+                  }
+                  className="input-well select-caret min-h-[40px] w-36 px-3 pr-9 text-sm"
+                >
+                  <option value="cycles">After</option>
+                  <option value="date">On a date</option>
+                </select>
+                {f.startMode === "cycles" ? (
+                  <>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={f.startCycles}
+                      disabled={busy}
+                      onChange={(e) =>
+                        patchFollower(f.id, {
+                          startCycles: e.target.value.slice(0, 5),
+                        })
+                      }
+                      className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums ${
+                        followerStartOk(f) ? "" : "!border-red-400"
+                      }`}
+                    />
+                    <span className="text-sm text-smoke-700">
+                      cycle{Number(f.startCycles) === 1 ? "" : "s"} of Ruleset #
+                      {index}
+                    </span>
+                  </>
+                ) : (
+                  <DateTimeField
+                    value={f.startDate}
+                    disabled={busy}
+                    onChange={(startDate) => patchFollower(f.id, { startDate })}
+                    ariaLabel={`Ruleset #${index + 1} start date and time`}
+                    inputClassName="input-well min-h-[40px] px-3 text-sm"
+                  />
+                )}
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+                {!prevTimed
+                  ? `Ruleset #${index} needs a cycle length so Ruleset #${index + 1} knows when to start.`
+                  : f.startMode === "cycles"
+                    ? `Ruleset #${index} repeats that many times, then these rules take over.`
+                    : `Rule changes land on cycle boundaries, so the start snaps to Ruleset #${index}'s first cycle ending at or after this date.`}
+              </p>
+            </div>
+            <div className="mt-4">
+              <RulesFields
+                rules={f.rules}
+                onChange={(p) =>
+                  patchFollower(f.id, { rules: { ...f.rules, ...p } })
+                }
+                onLimit={(li, lp) =>
+                  patchFollower(f.id, {
+                    rules: {
+                      ...f.rules,
+                      limits: f.rules.limits.map((l, j) =>
+                        j === li ? { ...l, ...lp } : l,
+                      ),
+                    },
+                  })
+                }
+                disabled={busy}
+                weightValid={isWeightValid(f.rules.weight)}
+              />
+            </div>
+          </div>
+        );
+      })}
+
+      <button
+        type="button"
+        onClick={addFollower}
+        disabled={busy}
+        className="mt-4 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+      >
+        + Add a following ruleset
+      </button>
+
+      {lastTimed ? (
+        <div className="mt-5 border-t border-smoke-200 pt-4">
+          <span className="field-label">
+            Afterwards — when Ruleset #{stagesRules.length} ends
+          </span>
           <select
-            value={state.duration}
+            value={afterMode}
             disabled={busy}
-            onChange={(e) => set("duration", Number(e.target.value))}
+            onChange={(e) => {
+              setAfterMode(e.target.value as AfterMode);
+              setReview(null);
+              setFlowError(null);
+            }}
             className="input-well select-caret mt-1.5 min-h-[40px] w-full max-w-xs px-3 pr-9 text-sm"
           >
-            {DURATION_PRESETS.some(
-              (p) => p.seconds === state.duration,
-            ) ? null : (
-              <option value={state.duration}>
-                {formatDuration(state.duration, {
-                  exact: true,
-                  zeroLabel: "No expiry",
-                })}{" "}
-                (current)
-              </option>
-            )}
-            {DURATION_PRESETS.map((p) => (
-              <option key={p.seconds} value={p.seconds}>
-                {p.label}
-              </option>
-            ))}
+            <option value="cycle">Cycle</option>
+            <option value="wait">Wait</option>
+            <option value="terminal">Terminate</option>
           </select>
-        </section>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <NumField
-            label="Issuance (tokens per payment unit)"
-            value={state.weight}
-            onChange={(v) => set("weight", v)}
-            disabled={busy}
-            invalid={!weightValid}
-          />
-          <PctField
-            label="Issuance cut each cycle"
-            note={PROTOCOL_CONCEPTS.issuanceCut}
-            value={state.weightCutPct}
-            onChange={(v) => set("weightCutPct", v)}
-            disabled={busy}
-          />
-          <PctField
-            label="Reserved share"
-            note={PROTOCOL_CONCEPTS.reservedShare}
-            value={state.reservedPct}
-            onChange={(v) => set("reservedPct", v)}
-            disabled={busy}
-          />
-          <PctField
-            label="Cash-out tax"
-            note={PROTOCOL_CONCEPTS.cashOutTax}
-            value={state.cashOutTaxPct}
-            onChange={(v) => set("cashOutTaxPct", v)}
-            disabled={busy}
-          />
-        </div>
-
-        <section>
-          <span className="field-label">Payout limits</span>
-          <p className="mt-1 text-xs text-smoke-700">
-            The most that can leave the project each cycle. Remove it and
-            nothing can be paid out.
+          <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
+            {afterMode === "wait"
+              ? "The project idles — payments and issuance pause until the project owner queues more rules."
+              : afterMode === "terminal"
+                ? "These terms are locked in forever — they can never be changed again."
+                : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes."}
           </p>
-          <div className="mt-2 space-y-3">
-            {state.limits.map((l, i) => (
-              <LimitRow
-                key={l.token}
-                limit={l}
-                disabled={busy}
-                onChange={(patch) => setLimit(i, patch)}
-              />
-            ))}
-            {state.limits.length === 0 ? (
-              <p className="text-xs text-smoke-500">
-                No accounting tokens configured on this chain.
-              </p>
-            ) : null}
-          </div>
-        </section>
-
-        <section>
-          <span className="field-label">Other rules</span>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Toggle
-              label="Pause payments"
-              checked={state.pausePay}
-              onChange={(v) => set("pausePay", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Only project owner can send payouts"
-              checked={state.ownerMustSendPayouts}
-              onChange={(v) => set("ownerMustSendPayouts", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Hold fees"
-              checked={state.holdFees}
-              onChange={(v) => set("holdFees", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Pause internal credit transfers"
-              checked={state.pauseCreditTransfers}
-              onChange={(v) => set("pauseCreditTransfers", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Pause eligible shop item transfers"
-              checked={state.pause721Transfers}
-              onChange={(v) => set("pause721Transfers", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow project owner minting"
-              checked={state.allowOwnerMinting}
-              onChange={(v) => set("allowOwnerMinting", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow changing terminals"
-              checked={state.allowSetTerminals}
-              onChange={(v) => set("allowSetTerminals", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow changing controller"
-              checked={state.allowSetController}
-              onChange={(v) => set("allowSetController", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow terminal migration"
-              checked={state.allowTerminalMigration}
-              onChange={(v) => set("allowTerminalMigration", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow a custom token"
-              checked={state.allowSetCustomToken}
-              onChange={(v) => set("allowSetCustomToken", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow adding accounting tokens"
-              checked={state.allowAddAccountingContext}
-              onChange={(v) => set("allowAddAccountingContext", v)}
-              disabled={busy}
-            />
-            <Toggle
-              label="Allow adding price feeds"
-              checked={state.allowAddPriceFeed}
-              onChange={(v) => set("allowAddPriceFeed", v)}
-              disabled={busy}
-            />
-          </div>
-        </section>
-      </div>
-
-      {review ? (
-        <div className="callout callout-warning mt-4 text-xs">
-          <p className="font-medium">
-            {queueReviewHeading(action, mustStartAtOrAfter)}
-          </p>
-          <ul className="mt-1.5 space-y-1">
-            {changes.map((c) => (
-              <li key={c.label}>
-                {c.label}: {c.from} → {c.to}
-              </li>
-            ))}
-          </ul>
-          {review.clearsPayouts ? (
-            <p className="mt-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 font-medium text-red-700">
-              Payout limit removed — nothing can be paid out until you set a new
-              limit.
-            </p>
-          ) : null}
         </div>
+      ) : null}
+
+      {noticeClash ? (
+        <p className="mt-4 text-xs font-medium text-red-700">{noticeClash}</p>
       ) : null}
 
       {limitBlock ? (
@@ -1099,31 +1327,239 @@ function RulesetEditorForm({
 
       <div className="mt-4 flex justify-end">
       <button
-        onClick={review ? () => void handleConfirm() : handleReview}
+        onClick={handleReview}
         disabled={
           busy ||
-          (isConnected && (!weightValid || !limitsValid || !startValid || !!limitBlock))
+          (isConnected &&
+            (!weightValid ||
+              !limitsValid ||
+              !startValid ||
+              !followersValid ||
+              nonFinalOpenEnded ||
+              !!noticeClash ||
+              !!limitBlock))
         }
         className="btn-primary min-h-[44px] px-5 text-sm"
       >
-        {busy
-          ? "Queueing…"
-          : !isConnected
-            ? "Sign in to continue"
-            : review
-              ? "Confirm and queue"
-              : "Review changes"}
+        {!isConnected ? "Sign in to continue" : "Review changes"}
       </button>
       </div>
 
-      {busy && status ? (
-        <p className="mt-2 text-center text-xs text-smoke-700">{status}</p>
-      ) : null}
+      {review ? null : (
+        <TxError
+          error={flowError}
+          className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+        />
+      )}
 
-      <TxError
-        error={flowError}
-        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-      />
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={success ? "Rules queued" : "Confirm new rules"}
+          rows={reviewRows}
+          steps={[{ title: "Queue new rules" }]}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={flowError}
+          busy={busy}
+          complete={success}
+          action={flowError ? "Retry" : "Confirm and queue"}
+          onConfirm={() => void handleConfirm()}
+          onClose={() => {
+            if (busy) return;
+            setReview(null);
+            setFlowError(null);
+          }}
+        >
+          {review.clearsPayouts ? (
+            <p className="text-sm font-medium text-red-700">
+              Payout limit removed — nothing can be paid out until you set a
+              new limit.
+            </p>
+          ) : null}
+        </TxConfirmDialog>
+      ) : null}
+    </div>
+  );
+}
+
+
+/** The editable rule fields for one ruleset — Ruleset #1 and every follow-on ruleset render the same set. */
+function RulesFields({
+  rules,
+  onChange,
+  onLimit,
+  disabled,
+  weightValid,
+}: {
+  rules: EditorState;
+  onChange: (patch: Partial<EditorState>) => void;
+  onLimit: (i: number, patch: Partial<LimitDraft>) => void;
+  disabled: boolean;
+  weightValid: boolean;
+}) {
+  const set = <K extends keyof EditorState>(key: K, value: EditorState[K]) =>
+    onChange({ [key]: value } as Partial<EditorState>);
+  return (
+    <div className="mt-4 space-y-5">
+      <section>
+        <span className="field-label">Cycle length</span>
+        <select
+          value={rules.duration}
+          disabled={disabled}
+          onChange={(e) => set("duration", Number(e.target.value))}
+          className="input-well select-caret mt-1.5 min-h-[40px] w-full max-w-xs px-3 pr-9 text-sm"
+        >
+          {DURATION_PRESETS.some(
+            (p) => p.seconds === rules.duration,
+          ) ? null : (
+            <option value={rules.duration}>
+              {formatDuration(rules.duration, {
+                exact: true,
+                zeroLabel: "No expiry",
+              })}{" "}
+              (current)
+            </option>
+          )}
+          {DURATION_PRESETS.map((p) => (
+            <option key={p.seconds} value={p.seconds}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <NumField
+          label="Issuance (tokens per payment unit)"
+          value={rules.weight}
+          onChange={(v) => set("weight", v)}
+          disabled={disabled}
+          invalid={!weightValid}
+        />
+        <PctField
+          label="Issuance cut each cycle"
+          note={PROTOCOL_CONCEPTS.issuanceCut}
+          value={rules.weightCutPct}
+          onChange={(v) => set("weightCutPct", v)}
+          disabled={disabled}
+        />
+        <PctField
+          label="Reserved share"
+          note={PROTOCOL_CONCEPTS.reservedShare}
+          value={rules.reservedPct}
+          onChange={(v) => set("reservedPct", v)}
+          disabled={disabled}
+        />
+        <PctField
+          label="Cash-out tax"
+          note={PROTOCOL_CONCEPTS.cashOutTax}
+          value={rules.cashOutTaxPct}
+          onChange={(v) => set("cashOutTaxPct", v)}
+          disabled={disabled}
+        />
+      </div>
+
+      <section>
+        <span className="field-label">Payout limits</span>
+        <p className="mt-1 text-xs text-smoke-700">
+          The most that can leave the project each cycle. Remove it and
+          nothing can be paid out.
+        </p>
+        <div className="mt-2 space-y-3">
+          {rules.limits.map((l, i) => (
+            <LimitRow
+              key={l.token}
+              limit={l}
+              disabled={disabled}
+              onChange={(patch) => onLimit(i, patch)}
+            />
+          ))}
+          {rules.limits.length === 0 ? (
+            <p className="text-xs text-smoke-500">
+              No accounting tokens configured on this chain.
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      <section>
+        <span className="field-label">Other rules</span>
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Toggle
+            label="Pause payments"
+            checked={rules.pausePay}
+            onChange={(v) => set("pausePay", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Only project owner can send payouts"
+            checked={rules.ownerMustSendPayouts}
+            onChange={(v) => set("ownerMustSendPayouts", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Hold fees"
+            checked={rules.holdFees}
+            onChange={(v) => set("holdFees", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Pause internal credit transfers"
+            checked={rules.pauseCreditTransfers}
+            onChange={(v) => set("pauseCreditTransfers", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Pause eligible shop item transfers"
+            checked={rules.pause721Transfers}
+            onChange={(v) => set("pause721Transfers", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow project owner minting"
+            checked={rules.allowOwnerMinting}
+            onChange={(v) => set("allowOwnerMinting", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow changing terminals"
+            checked={rules.allowSetTerminals}
+            onChange={(v) => set("allowSetTerminals", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow changing controller"
+            checked={rules.allowSetController}
+            onChange={(v) => set("allowSetController", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow terminal migration"
+            checked={rules.allowTerminalMigration}
+            onChange={(v) => set("allowTerminalMigration", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow a custom token"
+            checked={rules.allowSetCustomToken}
+            onChange={(v) => set("allowSetCustomToken", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow adding accounting tokens"
+            checked={rules.allowAddAccountingContext}
+            onChange={(v) => set("allowAddAccountingContext", v)}
+            disabled={disabled}
+          />
+          <Toggle
+            label="Allow adding price feeds"
+            checked={rules.allowAddPriceFeed}
+            onChange={(v) => set("allowAddPriceFeed", v)}
+            disabled={disabled}
+          />
+        </div>
+      </section>
     </div>
   );
 }
@@ -1230,16 +1666,6 @@ function sameQueueSource(
     BigInt(a.start) === BigInt(b.start) &&
     BigInt(a.duration) === BigInt(b.duration)
   );
-}
-
-function queueReviewHeading(action: QueueAction, start: number): string {
-  if (action === "replace") {
-    return `These rules replace the queued change targeting ${formatRulesetDate(start)}:`;
-  }
-  if (action === "after") {
-    return `These rules are queued no earlier than ${formatRulesetDate(start)}:`;
-  }
-  return "These rules are queued from the current configuration:";
 }
 
 function queueSuccessCopy(action: QueueAction, start: number): string {

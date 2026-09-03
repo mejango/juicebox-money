@@ -60,9 +60,9 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
 
   return (
     <section className="flex flex-col gap-3 border-b border-smoke-200 pb-4 sm:gap-4">
-      <div className="flex flex-col items-start gap-1">
+      <div className="flex flex-col items-center gap-1 text-center md:items-start md:text-left">
         {metric === 'secured' ? (
-          <span className="group relative inline-flex font-agrandir text-3xl font-medium leading-none sm:text-4xl">
+          <span className="group relative inline-flex font-agrandir text-[clamp(2rem,12vw,3rem)] font-medium leading-none sm:text-4xl">
             <span
               tabIndex={0}
               aria-describedby="secured-reserves-breakdown"
@@ -73,7 +73,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
             <span
               id="secured-reserves-breakdown"
               role="tooltip"
-              className="pointer-events-none absolute left-0 top-full z-20 mt-2 hidden w-64 rounded border border-smoke-200 bg-white px-3 py-2 text-left text-xs font-normal leading-relaxed text-smoke-700 shadow-lg group-hover:block group-focus-within:block"
+              className="pointer-events-none absolute left-1/2 top-full -translate-x-1/2 md:left-0 md:translate-x-0 z-20 mt-2 hidden w-64 rounded border border-smoke-200 bg-white px-3 py-2 text-left text-xs font-normal leading-relaxed text-smoke-700 shadow-lg group-hover:block group-focus-within:block"
             >
               {data.chains.map((chain, index) => {
                 const hasReserves =
@@ -117,7 +117,7 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
             </span>
           </span>
         ) : (
-          <span className="inline-flex font-agrandir text-3xl font-medium leading-none tabular-nums sm:text-4xl">
+          <span className="inline-flex font-agrandir text-[clamp(2rem,12vw,3rem)] font-medium leading-none tabular-nums sm:text-4xl">
             {usd(totalUsd)}
           </span>
         )}

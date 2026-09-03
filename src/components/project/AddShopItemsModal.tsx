@@ -17,13 +17,9 @@ import {
   getPublicClient,
   waitForTransactionReceipt,
 } from 'wagmi/actions'
-import { ChainIcon } from '@/components/ChainIcon'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import {
-  TransactionProgressImage,
-  usePreloadTransactionAnimation,
-} from '@/components/TransactionInProgress'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import {
   StoreEditor,
   itemOk,
@@ -94,7 +90,6 @@ export function AddShopItemsModal({
   isRevnet: boolean
   onClose: () => void
 }) {
-  usePreloadTransactionAnimation()
   const config = useConfig()
   const queryClient = useQueryClient()
   const { switchChainAsync } = useSwitchChain()
@@ -466,69 +461,26 @@ export function AddShopItemsModal({
 
   const footer = (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {phase === 'done' ? (
-        <button
-          type="button"
-          onClick={close}
-          className="btn-primary min-h-[44px] px-5 text-sm"
-        >
-          Done
-        </button>
-      ) : review ? (
-        <>
-          {!hasSubmittedTransactions ? (
-            <button
-              type="button"
-              onClick={backToForm}
-              disabled={busy}
-              className="btn-secondary min-h-[44px] px-5 text-sm"
-            >
-              Back
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void handleConfirm()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {phase === 'checking'
-              ? 'Checking permissions…'
-              : phase === 'pinning'
-                ? 'Saving items…'
-                : phase === 'writing'
-                  ? 'Adding items…'
-                  : phase === 'failed'
-                    ? hasUncertainTransactions
-                      ? 'Check submitted transactions'
-                      : 'Retry unfinished chains'
-                    : 'Add items for sale'}
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={close}
-            disabled={busy}
-            className="btn-secondary min-h-[44px] px-5 text-sm"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReview()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {!isConnected
-              ? 'Sign in to continue'
-              : phase === 'checking'
-                ? 'Checking permissions…'
-                : 'Review items'}
-          </button>
-        </>
-      )}
+      <button
+        type="button"
+        onClick={close}
+        disabled={busy}
+        className="btn-secondary min-h-[44px] px-5 text-sm"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleReview()}
+        disabled={busy}
+        className="btn-primary min-h-[44px] px-5 text-sm"
+      >
+        {!isConnected
+          ? 'Sign in to continue'
+          : phase === 'checking'
+            ? 'Checking permissions…'
+            : 'Review items'}
+      </button>
     </div>
   )
 
@@ -540,151 +492,78 @@ export function AddShopItemsModal({
       onClose={close}
       busy={busy}
     >
-      {!review ? (
-        <>
-          <div className="callout callout-info text-xs">
-            {isConnected
-              ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
-              : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
-          </div>
+      <div className="callout callout-info text-xs">
+        {isConnected
+          ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
+          : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
+      </div>
 
-          <StoreEditor
-            items={items}
-            onChange={next => {
-              setItems(next)
-              setMessage(null)
-            }}
-            currencyLabel={activePricing.symbol}
-            disabled={busy}
-            categories={categories}
-            onAddCategory={name => {
-              const id =
-                categories.reduce(
-                  (largest, category) => Math.max(largest, category.id),
-                  0,
-                ) + 1
-              setCategories(current => [
-                ...current,
-                { id, name: name.slice(0, 40) },
-              ])
-              return id
-            }}
-            chainIds={selected}
-            isRevnet={isRevnet}
-          />
+      <StoreEditor
+        items={items}
+        onChange={next => {
+          setItems(next)
+          setMessage(null)
+        }}
+        currencyLabel={activePricing.symbol}
+        disabled={busy}
+        categories={categories}
+        onAddCategory={name => {
+          const id =
+            categories.reduce(
+              (largest, category) => Math.max(largest, category.id),
+              0,
+            ) + 1
+          setCategories(current => [
+            ...current,
+            { id, name: name.slice(0, 40) },
+          ])
+          return id
+        }}
+        chainIds={selected}
+        isRevnet={isRevnet}
+      />
 
-          <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
-            <span className="field-label">Add on</span>
-            <div
-              role="group"
-              aria-label="Chains to add items on"
-              className="mt-2.5 flex min-w-0 flex-wrap gap-2"
-            >
-              {targets.map(target => {
-                const compatible =
-                  !!target.hook &&
-                  !!target.pricing &&
-                  target.pricing.currency === activePricing.currency &&
-                  target.pricing.decimals === activePricing.decimals
-                const checked = selected.includes(target.chainId)
-                const unavailableReason =
-                  target.error ??
-                  (target.pricing
-                    ? 'Different pricing currency'
-                    : 'Shop unavailable')
-                return (
-                  <ChainPillButton
-                    key={target.chainId}
-                    chainId={target.chainId}
-                    selected={checked}
-                    ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
-                    onClick={() => toggleChain(target.chainId)}
-                    disabled={!compatible || busy}
-                    title={compatible ? undefined : unavailableReason}
-                    size="lg"
-                  >
-                    <span>{chainName(target.chainId)}</span>
-                    {!compatible ? (
-                      <span className="sr-only"> — {unavailableReason}</span>
-                    ) : null}
-                  </ChainPillButton>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      ) : phase === 'done' ? (
-        <div className="py-8 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">
-            ✓
-          </span>
-          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">
-            Items added
-          </h3>
-          <p className="mt-2 text-sm text-smoke-700">{message}</p>
+      <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
+        <span className="field-label">Add on</span>
+        <div
+          role="group"
+          aria-label="Chains to add items on"
+          className="mt-2.5 flex min-w-0 flex-wrap gap-2"
+        >
+          {targets.map(target => {
+            const compatible =
+              !!target.hook &&
+              !!target.pricing &&
+              target.pricing.currency === activePricing.currency &&
+              target.pricing.decimals === activePricing.decimals
+            const checked = selected.includes(target.chainId)
+            const unavailableReason =
+              target.error ??
+              (target.pricing
+                ? 'Different pricing currency'
+                : 'Shop unavailable')
+            return (
+              <ChainPillButton
+                key={target.chainId}
+                chainId={target.chainId}
+                selected={checked}
+                ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
+                onClick={() => toggleChain(target.chainId)}
+                disabled={!compatible || busy}
+                title={compatible ? undefined : unavailableReason}
+                size="lg"
+              >
+                <span>{chainName(target.chainId)}</span>
+                {!compatible ? (
+                  <span className="sr-only"> — {unavailableReason}</span>
+                ) : null}
+              </ChainPillButton>
+            )
+          })}
         </div>
-      ) : (
-        <>
-          <div className="rounded-xl border border-smoke-200 bg-smoke-25 p-4">
-            <span className="field-label">
-              Items to add ({review.items.length})
-            </span>
-            <div className="mt-2 divide-y divide-smoke-200">
-              {review.items.map((item, index) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-3 py-2.5 text-sm"
-                >
-                  <span className="min-w-0 truncate font-medium text-ink">
-                    {index + 1}. {item.name.trim()}
-                  </span>
-                  <span className="shrink-0 text-smoke-700">
-                    {item.price} {activePricing.symbol}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+      </div>
 
-          <div className="mt-4 rounded-xl border border-smoke-200 bg-white p-4">
-            <span className="field-label">Transactions</span>
-            <div className="mt-2 space-y-2">
-              {review.chainIds.map(chainId => {
-                const status = statuses[chainId]?.phase ?? 'pending'
-                return (
-                  <div
-                    key={chainId}
-                    className="flex items-center justify-between gap-3 text-sm"
-                  >
-                    <span className="flex items-center gap-2 font-medium text-ink">
-                      <ChainIcon chainId={chainId} size={24} />
-                      {chainName(chainId)}
-                    </span>
-                    <span
-                      className={`flex items-center gap-2 ${
-                        status === 'done'
-                          ? 'text-melon-700'
-                          : status === 'uncertain'
-                            ? 'text-split-700'
-                          : status === 'failed'
-                            ? 'text-error-600'
-                            : 'text-smoke-700'
-                      }`}
-                    >
-                      {status === 'signing' || status === 'confirming' ? (
-                        <TransactionProgressImage className="h-8 w-8" />
-                      ) : null}
-                      {chainStatusLabel(status)}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
-
-      {message && phase !== 'done' ? (
+      {message && !review ? (
         <p
           className={`mt-4 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed ${
             phase === 'failed' || phase === 'form'
@@ -697,6 +576,65 @@ export function AddShopItemsModal({
         </p>
       ) : null}
 
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={phase === 'done' ? 'Items added' : 'Confirm items'}
+          rows={[
+            { label: 'Items', value: String(review.items.length) },
+            ...review.items.map((item, index) => ({
+              label: `Item ${index + 1}`,
+              value: `${item.name.trim()} — ${item.price} ${activePricing.symbol}`,
+            })),
+            {
+              label: 'On',
+              value: review.chainIds.map(chainId => chainName(chainId)).join(', '),
+            },
+          ]}
+          steps={review.chainIds.map(chainId => {
+            const status = statuses[chainId]
+            return {
+              key: String(chainId),
+              title: `Add items on ${chainName(chainId)}`,
+              detail:
+                status?.phase === 'uncertain'
+                  ? 'Submitted — status unknown'
+                  : status?.phase === 'failed'
+                    ? status.error
+                    : undefined,
+            }
+          })}
+          activeIndex={
+            phase === 'review'
+              ? -1
+              : review.chainIds.filter(
+                  chainId => statuses[chainId]?.phase === 'done',
+                ).length
+          }
+          status={phase === 'failed' ? undefined : message}
+          error={phase === 'failed' ? message : undefined}
+          busy={busy}
+          complete={phase === 'done'}
+          cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
+          action={
+            phase === 'checking'
+              ? 'Checking permissions…'
+              : phase === 'pinning'
+                ? 'Saving items…'
+                : phase === 'writing'
+                  ? 'Adding items…'
+                  : phase === 'failed'
+                    ? hasUncertainTransactions
+                      ? 'Check submitted transactions'
+                      : 'Retry unfinished chains'
+                    : 'Add items for sale'
+          }
+          onConfirm={() => void handleConfirm()}
+          onClose={
+            phase === 'done' || hasSubmittedTransactions ? close : backToForm
+          }
+        />
+      ) : null}
     </ModalShell>
   )
 }
@@ -757,13 +695,4 @@ function cloneDraftItem(item: DraftItem): DraftItem {
       perChainAmount: { ...split.perChainAmount },
     })),
   }
-}
-
-function chainStatusLabel(status: ChainStatus['phase']) {
-  if (status === 'signing') return 'Confirm in wallet'
-  if (status === 'confirming') return 'Confirming…'
-  if (status === 'uncertain') return 'Submitted — status unknown'
-  if (status === 'done') return 'Added'
-  if (status === 'failed') return 'Needs retry'
-  return 'Ready'
 }

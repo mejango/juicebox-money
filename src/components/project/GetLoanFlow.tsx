@@ -29,10 +29,11 @@ import { usePublicClient, useReadContract } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { TxSteps } from '@/components/ui/TxSteps'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
+import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
@@ -319,6 +320,93 @@ export function GetLoanFlow({
     beginBorrow(review)
   }
 
+  const closeReview = () => {
+    if (busy) return
+    setReview(null)
+    setFlowError(null)
+    setAwaitingBorrow(false)
+    permTx.reset()
+    if (borrowTx.phase !== 'success') borrowTx.reset()
+  }
+
+  const borrowStep = review?.needsPermission ? 1 : 0
+  const activeIndex =
+    borrowTx.phase !== 'idle' || permTx.phase === 'success'
+      ? borrowStep
+      : permTx.phase !== 'idle' || quoting
+        ? 0
+        : -1
+  const reviewError = flowError ?? permTx.error ?? borrowTx.error
+
+  const dialog = review ? (
+    <TxConfirmDialog
+      open
+      title={borrowTx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
+      rows={[
+        {
+          label: 'Collateral',
+          value: `${formatTokenAmount(review.collateral)} ${collateralSymbol}`,
+        },
+        {
+          label: 'Loan',
+          value: `~${formatTokenAmount(review.quote, meta.decimals)} ${meta.symbol}`,
+        },
+        {
+          label: 'Fees',
+          value: `2.5% protocol + 1% revnet + ${(review.prepaid / 10).toString()}% prepaid`,
+        },
+        {
+          label: 'You receive',
+          value: `~${formatTokenAmount(
+            netLoanProceeds(review.quote, BigInt(review.prepaid)),
+            meta.decimals,
+          )} ${meta.symbol}`,
+          strong: true,
+        },
+        { label: 'On', value: chainName(chainId) },
+      ]}
+      steps={[
+        ...(review.needsPermission
+          ? [
+              {
+                key: 'permission',
+                title: `Let REVLoans burn your ${collateralSymbol}`,
+                detail:
+                  'A one-off permission so the loan can hold your tokens as collateral.',
+              },
+            ]
+          : []),
+        { key: 'borrow', title: 'Open the loan' },
+      ]}
+      activeIndex={activeIndex}
+      action={
+        quoting
+          ? 'Checking the live quote…'
+          : permTx.phase === 'simulating' || permTx.phase === 'signing'
+            ? 'Approve in your wallet…'
+            : permTx.phase === 'pending'
+              ? 'Approving…'
+              : txPhaseLabel(borrowTx.phase, {
+                  idle: reviewError ? 'Retry' : 'Confirm loan',
+                  pending: 'Opening your loan…',
+                  confirm: 'Confirm the loan in your wallet…',
+                })
+      }
+      onConfirm={handleConfirm}
+      busy={busy}
+      complete={borrowTx.phase === 'success'}
+      status={borrowTx.safeNonceGuidance ?? permTx.safeNonceGuidance}
+      error={reviewError}
+      onClose={closeReview}
+    >
+      <p className="text-xs leading-relaxed text-smoke-700">
+        At least 99% of the live quote must be borrowed or the transaction
+        reverts. Your {collateralSymbol} is held as collateral and returned when
+        you repay. Unrepaid loans are liquidated after 10 years.
+      </p>
+    </TxConfirmDialog>
+  ) : null
+
   const borrowTxUrl = borrowTx.hash
     ? etherscanTxUrl(chainId, borrowTx.hash)
     : null
@@ -353,6 +441,7 @@ export function GetLoanFlow({
             Done
           </button>
         </div>
+        {dialog}
       </div>
     )
   }
@@ -475,87 +564,29 @@ export function GetLoanFlow({
             </span>
           </label>
 
-          {review ? (
-            <div className="callout callout-info text-xs">
-              <p>
-                You receive ~
-                {formatTokenAmount(
-                  netLoanProceeds(review.quote, BigInt(review.prepaid)),
-                  meta.decimals,
-                )}{' '}
-                {meta.symbol} after fees from a ~
-                {formatTokenAmount(review.quote, meta.decimals)} {meta.symbol}{' '}
-                loan against {formatTokenAmount(review.collateral)}{' '}
-                {collateralSymbol}.
-              </p>
-              <p className="mt-1">
-                A 2.5% protocol fee, a 1% revnet fee, and your{' '}
-                {(review.prepaid / 10).toString()}% prepaid fee come out of the
-                loan. At least 99% of the live quote must be borrowed or the
-                transaction reverts.
-              </p>
-              <p className="mt-1 text-smoke-700">
-                Your {collateralSymbol} is held as collateral and returned when
-                you repay. Unrepaid loans are liquidated after 10 years.
-              </p>
-              <TxSteps
-                steps={[
-                  ...(review.needsPermission
-                    ? [
-                        {
-                          key: 'permission',
-                          title: `Let REVLoans burn your ${collateralSymbol}`,
-                          detail:
-                            'A one-off permission so the loan can hold your tokens as collateral.',
-                        },
-                      ]
-                    : []),
-                  { key: 'borrow', title: 'Open the loan' },
-                ]}
-                activeIndex={
-                  borrowTx.busy
-                    ? review.needsPermission
-                      ? 1
-                      : 0
-                    : permTx.busy
-                      ? 0
-                      : -1
-                }
-                className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
-              />
-            </div>
-          ) : null}
-
           <div className="flex justify-end">
             <button
-              onClick={review ? handleConfirm : handleReview}
+              onClick={handleReview}
               disabled={busy || (isConnected && collateral <= 0n)}
               className="btn-primary min-h-[44px] px-5 text-sm"
             >
-              {quoting
+              {quoting && !review
                 ? 'Checking the live quote…'
-                : permTx.phase === 'simulating' || permTx.phase === 'signing'
-                  ? 'Approve in your wallet…'
-                  : permTx.phase === 'pending'
-                    ? 'Approving…'
-                    : txPhaseLabel(borrowTx.phase, {
-                        idle: !isConnected
-                          ? 'Sign in to continue'
-                          : review
-                            ? 'Confirm loan'
-                            : 'Review',
-                        pending: 'Opening your loan…',
-                        confirm: 'Confirm the loan in your wallet…',
-                      })}
+                : !isConnected
+                  ? 'Sign in to continue'
+                  : 'Review'}
             </button>
           </div>
 
-          <TxError
-            error={flowError ?? permTx.error ?? borrowTx.error}
-            className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-          />
+          {!review ? (
+            <TxError
+              error={flowError}
+              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+            />
+          ) : null}
         </div>
       )}
+      {dialog}
     </div>
   )
 }

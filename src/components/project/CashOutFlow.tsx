@@ -31,10 +31,10 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { TxSteps } from '@/components/ui/TxSteps'
 import {
   cashOutExecutionErrorMessage,
   cashOutPoolBufferBps,
@@ -46,10 +46,28 @@ import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transactio
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
+import { chainName } from '@/lib/urn'
 
 /** Max-slippage presets in basis points; 1% is the cross-client default. */
 const SLIPPAGE_PRESETS_BPS = [50, 100, 300]
 const DEFAULT_SLIPPAGE_BPS = 100
+
+/**
+ * The reviewed exit, frozen when the dialog opens. A treasury cash-out is
+ * prepared from fresh protocol state and sent exactly as frozen; a pool sale
+ * freezes the floor it promises and re-quotes once its approvals clear, since
+ * the swap's deadline and the pool comparison cannot be locked before them.
+ */
+type CashOutPlan =
+  | {
+      kind: 'treasury'
+      request: TxRequest
+      venue: 'treasury' | 'amm'
+      minimumReturn: bigint
+      fee: bigint
+      reviewNotice: string | undefined
+    }
+  | { kind: 'pool'; minimumReturn: bigint }
 
 /**
  * The cash-out flow (JBMultiTerminal.cashOutTokensOf), extracted from
@@ -90,6 +108,7 @@ export function CashOutPanel({
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [usedDirectSell, setUsedDirectSell] = useState(false)
+  const [plan, setPlan] = useState<CashOutPlan | null>(null)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400)
@@ -416,7 +435,7 @@ export function CashOutPanel({
     setDebouncedAmount(max)
   }
 
-  const cashOut = async () => {
+  const review = async () => {
     if (!isConnected || !address) {
       openSignIn()
       return
@@ -434,8 +453,54 @@ export function CashOutPanel({
     setErrorMsg(null)
     // What the panel promised, captured before anything is re-quoted.
     const displayedMinimum = bestRoute?.minimumReturn ?? route.minimumReturn
+    if (directSellWins && market?.status === 'pool' && projectToken && swapDeployment) {
+      setPlan({ kind: 'pool', minimumReturn: displayedMinimum })
+      return
+    }
     try {
-      if (directSellWins && market?.status === 'pool' && projectToken && swapDeployment) {
+      // Quote, lock and build one matching request from fresh protocol state.
+      const prepared = await prepareHookAwareCashOut(publicClient!, {
+        chainId,
+        projectId: BigInt(projectId),
+        holder: address,
+        cashOutCount,
+        tokenToReclaim: context.token,
+        terminal: terminal.address,
+        beneficiary: address,
+        slippageBps: BigInt(slippageBps),
+      })
+      if (prepared.route.expectedReturn <= 0n) {
+        throw new Error(
+          'The cash-out quote is no longer available. Review and try again.',
+        )
+      }
+      const request = prepared.transaction
+      setPlan({
+        kind: 'treasury',
+        request: { ...request, abi: request.abi as Abi },
+        venue: prepared.route.route,
+        minimumReturn: prepared.route.minimumReturn,
+        fee: prepared.route.treasuryProtocolFee,
+        reviewNotice: minimumDropNotice({
+          displayedMinimum,
+          freshMinimum: prepared.route.minimumReturn,
+          decimals: receiveDecimals,
+          symbol: receiveSymbol,
+        }),
+      })
+    } catch (e) {
+      setErrorMsg(cashOutExecutionErrorMessage(e))
+    }
+  }
+
+  const cashOut = async () => {
+    if (!plan || !address || busy) return
+    setErrorMsg(null)
+    try {
+      if (plan.kind === 'pool') {
+        if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
+          throw new Error('No direct sell route is available.')
+        }
         if (needsTokenApproval) {
           await approveTx.send(
             buildTokenApproval({
@@ -508,7 +573,7 @@ export function CashOutPanel({
           },
           {
             reviewNotice: minimumDropNotice({
-              displayedMinimum,
+              displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
               decimals: receiveDecimals,
               symbol: receiveSymbol,
@@ -517,37 +582,10 @@ export function CashOutPanel({
         )
         return
       }
-      // Quote, lock and build one matching request from fresh protocol state.
-      const prepared = await prepareHookAwareCashOut(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        holder: address,
-        cashOutCount,
-        tokenToReclaim: context.token,
-        terminal: terminal.address,
-        beneficiary: address,
-        slippageBps: BigInt(slippageBps),
-      })
-      if (prepared.route.expectedReturn <= 0n) {
-        throw new Error(
-          'The cash-out quote is no longer available. Review and try again.',
-        )
-      }
-      const request = prepared.transaction
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      await tx.send(
-        { ...request, abi: request.abi as Abi },
-        {
-          reviewNotice: minimumDropNotice({
-            displayedMinimum,
-            freshMinimum: prepared.route.minimumReturn,
-            decimals: receiveDecimals,
-            symbol: receiveSymbol,
-          }),
-        },
-      )
+      await tx.send(plan.request, { reviewNotice: plan.reviewNotice })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }
@@ -561,9 +599,95 @@ export function CashOutPanel({
     setUsedDirectSell(false)
   }
 
+  const closeReview = () => {
+    setPlan(null)
+    setErrorMsg(null)
+    if (success) return
+    tx.reset()
+    approveTx.reset()
+  }
+
+  const confirmDialog = plan ? (
+    <TxConfirmDialog
+      open
+      title={
+        success
+          ? usedDirectSell
+            ? 'Sold on the pool'
+            : 'Cashed out'
+          : plan.kind === 'pool'
+            ? 'Confirm pool sale'
+            : 'Confirm cash out'
+      }
+      rows={(() => {
+        const rows: TxConfirmRow[] = [
+          {
+            label: plan.kind === 'pool' ? 'Sell' : 'Cash out',
+            value: `${formatTokenAmount(cashOutCount, 18)} ${holdingsSymbol}`,
+            strong: true,
+          },
+          { label: 'On', value: chainName(chainId) },
+          {
+            label: 'You get at least',
+            value: `${formatTokenAmount(plan.minimumReturn, receiveDecimals)} ${receiveSymbol}`,
+            strong: true,
+          },
+        ]
+        if (plan.kind === 'treasury' && plan.venue === 'treasury' && plan.fee > 0n) {
+          rows.push({
+            label: 'Fee',
+            value: `${formatTokenAmount(plan.fee, receiveDecimals)} ${receiveSymbol}`,
+          })
+        }
+        rows.push({
+          label: 'Route',
+          value:
+            plan.kind === 'pool'
+              ? 'Direct pool sale'
+              : plan.venue === 'amm'
+                ? 'Buyback pool via the terminal'
+                : 'Project treasury',
+        })
+        return rows
+      })()}
+      steps={cashOutSteps}
+      activeIndex={cashOutActiveIndex}
+      action={
+        needsTokenApproval
+          ? 'Approve tokens for best execution'
+          : needsRouterApproval
+            ? 'Authorize the swap router'
+            : plan.kind === 'pool'
+              ? 'Confirm & sell'
+              : 'Confirm & cash out'
+      }
+      onConfirm={() => void cashOut()}
+      busy={busy}
+      complete={success}
+      status={
+        tx.phase === 'pending' && txUrl ? (
+          <>
+            Waiting for confirmation —{' '}
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2"
+            >
+              view transaction
+            </a>
+          </>
+        ) : null
+      }
+      error={errorMsg ?? tx.error ?? approveTx.error}
+      onClose={closeReview}
+    />
+  ) : null
+
   if (success) {
     return (
       <div className="flex flex-col items-center py-4 text-center">
+        {confirmDialog}
         <span className="flex h-14 w-14 items-center justify-center rounded-full bg-melon-400">
           <svg
             viewBox="0 0 24 24"
@@ -732,17 +856,9 @@ export function CashOutPanel({
         </p>
       ) : null}
 
-      {cashOutSteps.length > 1 ? (
-        <TxSteps
-          steps={cashOutSteps}
-          activeIndex={cashOutActiveIndex}
-          className="mt-4 rounded-xl border border-smoke-200 bg-white p-3"
-        />
-      ) : null}
-
       <div className="mt-5 flex justify-end">
         <button
-          onClick={cashOut}
+          onClick={() => void review()}
           disabled={
             busy ||
             (isConnected &&
@@ -754,20 +870,13 @@ export function CashOutPanel({
           }
           className="btn-primary min-h-[44px] px-5 text-sm"
         >
-          {txPhaseLabel(tx.busy ? tx.phase : approveTx.phase, {
-            pending: 'Cashing out…',
-            idle: !isConnected
-              ? 'Sign in to cash out'
-              : needsTokenApproval
-                ? 'Approve tokens for best execution'
-                : needsRouterApproval
-                  ? 'Authorize the swap router'
-                  : cashOutCount > 0n
-                    ? directSellWins
-                      ? `Sell ${debouncedAmount.trim()} ${holdingsSymbol} on the pool`
-                      : `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
-                    : 'Cash out',
-          })}
+          {!isConnected
+            ? 'Sign in to cash out'
+            : cashOutCount > 0n
+              ? directSellWins
+                ? `Sell ${debouncedAmount.trim()} ${holdingsSymbol} on the pool`
+                : `Cash out ${debouncedAmount.trim()} ${holdingsSymbol}`
+              : 'Cash out'}
         </button>
       </div>
 
@@ -786,20 +895,8 @@ export function CashOutPanel({
         </p>
       ) : null}
 
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-3 text-center text-sm text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
-      <TxError error={errorMsg ?? tx.error} />
+      <TxError error={plan ? null : (errorMsg ?? tx.error)} />
+      {confirmDialog}
     </div>
   )
 }

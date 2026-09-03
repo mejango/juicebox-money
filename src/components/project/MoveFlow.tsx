@@ -35,9 +35,9 @@ import {
   SUCKER_EXTRA_ABI,
   type Infra,
 } from '@/components/project/SettlementSection'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { TxSteps } from '@/components/ui/TxSteps'
-import { txPhaseLabel, useSafeTx, type TxPhase } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -321,17 +321,23 @@ function MoveFlow({
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedMove | null>(null)
   const [needsApproval, setNeedsApproval] = useState(false)
+  // The confirm dialog. Closing it mid-flow keeps the frozen review and the
+  // current step, so the form's button resumes exactly where it stopped.
+  const [open, setOpen] = useState(false)
+  const [sentHash, setSentHash] = useState<`0x${string}` | null>(null)
   const advancedFor = useRef<number>(-1)
 
   const busy = checking || tx.busy
 
   const txUrl = tx.hash ? etherscanTxUrl(from, tx.hash) : null
+  const sentUrl = sentHash ? etherscanTxUrl(from, sentHash) : null
 
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
     if (tx.phase !== 'success') return
     if (advancedFor.current === step) return
     advancedFor.current = step
+    if (step === 3) setSentHash(tx.hash)
     setStep(s => (s < 4 ? ((s + 1) as typeof s) : s))
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -473,7 +479,9 @@ function MoveFlow({
         account,
       })
       setStep(allowance < amount ? 1 : 2)
+      setSentHash(null)
       advancedFor.current = -1
+      setOpen(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
     } finally {
@@ -564,67 +572,64 @@ function MoveFlow({
     )
   }
 
+  const dialogOpen = open && review !== null && step > 0
+
+  const steps = [
+    ...(needsApproval
+      ? [
+          {
+            key: 'approve',
+            title: 'Approve the bridge',
+            detail: 'Lets the bridge move your ERC-20 for this transfer.',
+          },
+        ]
+      : []),
+    {
+      key: 'prepare',
+      title: 'Prepare the move',
+      detail: "Queues your move into the bridge's outbox.",
+    },
+    {
+      key: 'send',
+      title: `Send to ${chainName(to)}`,
+      detail: `Ships the queued outbox to ${chainName(to)}. Anyone can send this; the value is the bridge's messaging fee, not the bridged tokens.`,
+    },
+  ]
+
+  const rows: TxConfirmRow[] = review
+    ? [
+        {
+          label: 'Move',
+          value: `${formatTokenAmount(review.amount)} tokens`,
+          strong: true,
+        },
+        { label: 'From', value: chainName(from) },
+        { label: 'To', value: chainName(to) },
+        {
+          label: 'Backing',
+          value:
+            review.previewNet > 0n
+              ? `About ${formatTokenAmount(review.previewNet, review.backingDecimals)} ${review.backingSymbol}`
+              : 'None from this chain right now',
+        },
+        ...(review.previewNet > 0n
+          ? [
+              {
+                label: 'Minimum backing',
+                value: `${formatTokenAmount(review.minReclaimed, review.backingDecimals)} ${review.backingSymbol}`,
+              },
+            ]
+          : []),
+        { label: 'Bridge', value: review.infra === 'CCIP' ? 'CCIP' : 'Native' },
+        { label: 'Beneficiary', value: review.account, mono: true },
+      ]
+    : []
+
+  const stepIdle =
+    step === 1 ? 'Approve' : step === 2 ? 'Prepare' : `Send to ${chainName(to)}`
+
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
-      {review ? (
-        <div className="callout callout-info mb-3 text-xs">
-          <p>
-            Moving {formatTokenAmount(review.amount)} tokens to {chainName(to)}.
-          </p>
-          <p className="mt-1">
-            {review.previewNet > 0n ? (
-              <>
-                About{' '}
-                {formatTokenAmount(review.previewNet, review.backingDecimals)}{' '}
-                {review.backingSymbol} of backing moves with them; the prepare
-                reverts below the 99% floor.
-              </>
-            ) : (
-              <>
-                This chain contributes no backing right now — the same token
-                count moves, but no backing goes with it.
-              </>
-            )}
-          </p>
-          <p className="mt-1 text-smoke-700">
-            Bridge: {review.infra === 'CCIP' ? 'CCIP' : 'native'}.
-          </p>
-        </div>
-      ) : null}
-
-      {step > 0 && step < 4 ? (
-        <TxSteps
-          steps={[
-            ...(needsApproval
-              ? [
-                  {
-                    key: 'approve',
-                    title: 'Approve the bridge',
-                    detail: 'Lets the bridge move your ERC-20 for this transfer.',
-                  },
-                ]
-              : []),
-            {
-              key: 'prepare',
-              title: 'Prepare the move',
-              detail: "Queues your move into the bridge's outbox.",
-            },
-            {
-              key: 'send',
-              title: `Send to ${chainName(to)}`,
-              detail: `Ships the queued outbox to ${chainName(to)}.`,
-            },
-          ]}
-          activeIndex={needsApproval ? step - 1 : step - 2}
-          intro={
-            needsApproval
-              ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-              : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-          }
-        />
-      ) : null}
-
-      {/* Step buttons */}
       {step === 0 ? (
         <div className="flex justify-end">
           <button
@@ -635,50 +640,32 @@ function MoveFlow({
             {checking ? 'Checking the route…' : 'Review move'}
           </button>
         </div>
-      ) : null}
-
-      {step === 1 ? (
-        <StepButton
-          label="Approve the bridge"
-          phase={tx.phase}
-          busy={busy}
-          onClick={sendApprove}
-          idleText="Approve"
-          note="Lets the bridge move your ERC-20 for this transfer."
-        />
-      ) : null}
-
-      {step === 2 ? (
-        <StepButton
-          label="Prepare the move"
-          phase={tx.phase}
-          busy={busy}
-          onClick={sendPrepare}
-          idleText="Prepare"
-          note="Queues your move into the bridge's outbox."
-        />
-      ) : null}
-
-      {step === 3 ? (
-        <StepButton
-          label={`Send to ${chainName(to)}`}
-          phase={checking ? 'simulating' : tx.phase}
-          busy={busy}
-          onClick={sendToRemote}
-          idleText="Send"
-          note={`Ships the queued outbox to ${chainName(to)}. Anyone can send this; the value is the bridge's messaging fee, not the bridged tokens.`}
-        />
+      ) : step < 4 && !dialogOpen ? (
+        <div>
+          <p className="mb-2 text-xs text-smoke-700">
+            Move in progress — {steps.length - (needsApproval ? step - 1 : step - 2)} of{' '}
+            {steps.length} onchain actions left.
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setOpen(true)}
+              className="btn-primary min-h-[44px] px-5 text-sm"
+            >
+              Resume move
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {step === 4 ? (
         <div className="callout callout-info text-xs">
           Bridging to {chainName(to)}. Once it lands, claim it from Queued
           movements in the Settlement tab.
-          {txUrl ? (
+          {sentUrl ? (
             <>
               {' '}
               <a
-                href={txUrl}
+                href={sentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-semibold text-bluebs-600 underline underline-offset-2"
@@ -690,56 +677,51 @@ function MoveFlow({
         </div>
       ) : null}
 
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-2 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
+      {!dialogOpen ? (
+        <TxError
+          error={flowError ?? tx.error}
+          className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+        />
       ) : null}
 
-      <TxError
+      <TxConfirmDialog
+        open={dialogOpen}
+        onClose={() => setOpen(false)}
+        title={step === 4 ? 'Move sent' : 'Confirm move'}
+        rows={rows}
+        steps={steps}
+        activeIndex={needsApproval ? step - 1 : step - 2}
+        stepsIntro={
+          needsApproval
+            ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
+            : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
+        }
+        action={txPhaseLabel(step === 3 && checking ? 'simulating' : tx.phase, {
+          pending: 'Submitting…',
+          idle: stepIdle,
+        })}
+        onConfirm={
+          step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
+        }
+        busy={busy}
+        complete={step === 4}
+        status={
+          tx.phase === 'pending' && txUrl ? (
+            <>
+              Waiting for confirmation —{' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                view transaction
+              </a>
+            </>
+          ) : null
+        }
         error={flowError ?? tx.error}
-        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
       />
-    </div>
-  )
-}
-
-function StepButton({
-  label,
-  phase,
-  busy,
-  onClick,
-  idleText,
-  note,
-}: {
-  label: string
-  phase: TxPhase
-  busy: boolean
-  onClick: () => void
-  idleText: string
-  note: string
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-sm font-medium text-ink">{label}</p>
-      <div className="flex justify-end">
-        <button
-          onClick={onClick}
-          disabled={busy}
-          className="btn-primary min-h-[44px] px-5 text-sm"
-        >
-          {txPhaseLabel(phase, { pending: 'Submitting…', idle: idleText })}
-        </button>
-      </div>
-      <p className="mt-1.5 text-xs text-smoke-700">{note}</p>
     </div>
   )
 }

@@ -2,23 +2,86 @@ import type { Address, Hex } from 'viem'
 import type { MarketResult, UserLpPosition } from '@/components/project/MarketSection'
 import { formatTokenAmount } from '@/lib/format'
 import { buildMint, type Mint } from '@/lib/lp-mint'
-import {
-  buildDecreaseLiquidityUnlockData,
-  buildIncreaseLiquidityUnlockData,
-  buildMoveLiquidityUnlockData,
-  buildRemoveLiquidityUnlockData,
-  retainedFloor,
-} from '@/lib/transaction-builders'
+import { decodeAbiParameters, encodeAbiParameters } from 'viem'
+import { retainedFloor } from '@/lib/transaction-builders'
 import { getAmountsForLiquidity, getLiquidityForAmounts, sqrtAtTick } from '@/lib/uniswap-v4'
 
 type Pool = Extract<MarketResult, { status: 'pool' }>
 
 export type EditLiquidityKind = 'increase' | 'decrease' | 'move' | 'remove'
 
-export interface EditLiquidityPlan {
+const ACTION_INCREASE_LIQUIDITY = '00'
+const ACTION_DECREASE_LIQUIDITY = '01'
+const ACTION_MINT_POSITION = '02'
+const ACTION_BURN_POSITION = '03'
+const ACTION_TAKE_PAIR = '11'
+const ACTION_CLOSE_CURRENCY = '12'
+const ACTION_SWEEP = '14'
+
+export const MODIFY_LIQUIDITY_PARAMS = [
+  { type: 'uint256' },
+  { type: 'uint256' },
+  { type: 'uint128' },
+  { type: 'uint128' },
+  { type: 'bytes' },
+] as const
+
+export function encodeUnlock(actions: string, parameters: Hex[]): Hex {
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [`0x${actions}` as Hex, parameters],
+  )
+}
+
+/** The closing actions every wallet-funded plan ends with: settle both currencies, refund unused native value. */
+export function closeActions(pool: Pool, recipient: Address, value: bigint) {
+  const parameters: Hex[] = [
+    encodeAbiParameters([{ type: 'address' }], [pool.key.currency0]),
+    encodeAbiParameters([{ type: 'address' }], [pool.key.currency1]),
+  ]
+  let actions = `${ACTION_CLOSE_CURRENCY}${ACTION_CLOSE_CURRENCY}`
+  if (value > 0n) {
+    const nativeCurrency = pool.pairIsC0 ? pool.key.currency0 : pool.key.currency1
+    parameters.push(
+      encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [nativeCurrency, recipient]),
+    )
+    actions += ACTION_SWEEP
+  }
+  return { actions, parameters }
+}
+
+export function takePairParams(pool: Pool, recipient: Address): Hex {
+  return encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+    [pool.key.currency0, pool.key.currency1, recipient],
+  )
+}
+
+/** Merge per-currency wallet funding from several operations into one allowance list. */
+export function mergeErc20(
+  lists: Array<Array<{ currency: Address; max: bigint }>>,
+): { currency: Address; max: bigint }[] {
+  const byCurrency = new Map<string, { currency: Address; max: bigint }>()
+  for (const list of lists) {
+    for (const side of list) {
+      const key = side.currency.toLowerCase()
+      const current = byCurrency.get(key)
+      byCurrency.set(key, { currency: side.currency, max: (current?.max ?? 0n) + side.max })
+    }
+  }
+  return [...byCurrency.values()]
+}
+
+/**
+ * One position's edit as bare V4 actions, before settlement. The single-position
+ * flow settles it alone; a market edit strings several sides' operations
+ * together under one pair of closes.
+ */
+export interface EditOperations {
   kind: EditLiquidityKind
-  tokenId: bigint
-  unlockData: Hex
+  /** Action bytes (hex pairs, no 0x) and their parameters, settlement excluded. */
+  actions: string
+  parameters: Hex[]
   /** The band the position covers after the edit — its current one unless moved. */
   tickLower: number
   tickUpper: number
@@ -55,6 +118,11 @@ export interface EditLiquidityPlan {
   amount1Max: bigint
 }
 
+export interface EditLiquidityPlan extends EditOperations {
+  tokenId: bigint
+  unlockData: Hex
+}
+
 /**
  * Edit a position in ONE transaction: set what it should hold and, optionally,
  * the band it covers. Target amounts are ceilings — the band and the current
@@ -76,13 +144,7 @@ export interface EditLiquidityPlan {
  * Every path reverts as a whole if the live price outruns the reviewed
  * maxima/floors, leaving the position untouched. Pure: no wallet, no I/O.
  */
-export function buildEditLiquidityPlan({
-  pool,
-  position,
-  target,
-  range,
-  account,
-}: {
+export function buildEditLiquidityPlan(input: {
   pool: Pool
   position: UserLpPosition
   /** What the position should hold: pair in the pair's decimals, token 18-decimal. */
@@ -91,6 +153,37 @@ export function buildEditLiquidityPlan({
   range: { pa: number; pb: number } | null
   account: Address
 }): EditLiquidityPlan {
+  const ops = editOperations(input)
+  const { pool, account } = input
+  const unlockData =
+    ops.kind === 'decrease' || ops.kind === 'remove'
+      ? encodeUnlock(`${ops.actions}${ACTION_TAKE_PAIR}`, [
+          ...ops.parameters,
+          takePairParams(pool, account),
+        ])
+      : (() => {
+          const close = closeActions(pool, account, ops.value)
+          return encodeUnlock(`${ops.actions}${close.actions}`, [
+            ...ops.parameters,
+            ...close.parameters,
+          ])
+        })()
+  return { ...ops, tokenId: input.position.tokenId, unlockData }
+}
+
+export function editOperations({
+  pool,
+  position,
+  target,
+  range,
+  account,
+}: {
+  pool: Pool
+  position: UserLpPosition
+  target: { pairAmount: bigint; tokenAmount: bigint }
+  range: { pa: number; pb: number } | null
+  account: Address
+}): EditOperations {
   if (target.pairAmount < 0n || target.tokenAmount < 0n) throw new Error('Enter a valid amount.')
   const { key, sqrtP, pair, pairIsC0 } = pool
   const byCurrency = (pairAmount: bigint, tokenAmount: bigint) =>
@@ -103,7 +196,6 @@ export function buildEditLiquidityPlan({
       : { pair: amounts.amount1, token: amounts.amount0 }
   const nativeIsC0 = pairIsC0 && pair.isNative
   const nativeIsC1 = !pairIsC0 && pair.isNative
-  const nativeCurrency = pair.isNative ? (pairIsC0 ? key.currency0 : key.currency1) : null
   const base = {
     tokenId: position.tokenId,
     liquidityBefore: position.liquidity,
@@ -118,20 +210,24 @@ export function buildEditLiquidityPlan({
     amount1Max: 0n,
   }
 
-  const removal = (): EditLiquidityPlan => {
+  const burnParams = (pairMinimum: bigint, tokenMinimum: bigint) =>
+    encodeAbiParameters(
+      [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
+      [
+        position.tokenId,
+        pairIsC0 ? pairMinimum : tokenMinimum,
+        pairIsC0 ? tokenMinimum : pairMinimum,
+        '0x',
+      ],
+    )
+  const removal = (): EditOperations => {
     const pairMinimum = retainedFloor(position.pairAmount)
     const tokenMinimum = retainedFloor(position.tokenAmount)
     return {
       ...base,
       kind: 'remove',
-      unlockData: buildRemoveLiquidityUnlockData({
-        tokenId: position.tokenId,
-        currency0: key.currency0,
-        currency1: key.currency1,
-        recipient: account,
-        amount0Min: pairIsC0 ? pairMinimum : tokenMinimum,
-        amount1Min: pairIsC0 ? tokenMinimum : pairMinimum,
-      }),
+      actions: ACTION_BURN_POSITION,
+      parameters: [burnParams(pairMinimum, tokenMinimum)],
       tickLower: position.tickLower,
       tickUpper: position.tickUpper,
       liquidity: 0n,
@@ -191,18 +287,16 @@ export function buildEditLiquidityPlan({
       return {
         ...base,
         kind: 'increase',
-        unlockData: buildIncreaseLiquidityUnlockData({
-          tokenId: position.tokenId,
-          liquidity: delta,
-          currency0: key.currency0,
-          currency1: key.currency1,
-          amount0Max,
-          amount1Max,
-          sweep:
-            value > 0n && nativeCurrency
-              ? { currency: nativeCurrency, recipient: account }
-              : undefined,
-        }),
+        actions: ACTION_INCREASE_LIQUIDITY,
+        parameters: [
+          encodeAbiParameters(MODIFY_LIQUIDITY_PARAMS, [
+            position.tokenId,
+            delta,
+            amount0Max,
+            amount1Max,
+            '0x',
+          ]),
+        ],
         tickLower: position.tickLower,
         tickUpper: position.tickUpper,
         liquidity: targetLiquidity,
@@ -228,15 +322,16 @@ export function buildEditLiquidityPlan({
     return {
       ...base,
       kind: 'decrease',
-      unlockData: buildDecreaseLiquidityUnlockData({
-        tokenId: position.tokenId,
-        liquidity: delta,
-        currency0: key.currency0,
-        currency1: key.currency1,
-        recipient: account,
-        amount0Min,
-        amount1Min,
-      }),
+      actions: ACTION_DECREASE_LIQUIDITY,
+      parameters: [
+        encodeAbiParameters(MODIFY_LIQUIDITY_PARAMS, [
+          position.tokenId,
+          delta,
+          amount0Min,
+          amount1Min,
+          '0x',
+        ]),
+      ],
       tickLower: position.tickLower,
       tickUpper: position.tickUpper,
       liquidity: targetLiquidity,
@@ -266,10 +361,12 @@ export function buildEditLiquidityPlan({
     account,
   })
   const holding = byPair(mint.need)
-  const atLeastZero = (amount: bigint) => (amount > 0n ? amount : 0n)
+  // A single-sided mint carries a 1-wei maximum on its empty side; that dust
+  // is not wallet funding and must not raise an allowance step.
+  const beyondDust = (amount: bigint) => (amount > 1n ? amount : 0n)
   const mintMax = byPair({ amount0: mint.amount0Max, amount1: mint.amount1Max })
-  const pairFunding = atLeastZero(mintMax.pair - position.pairAmount)
-  const tokenFunding = atLeastZero(mintMax.token - position.tokenAmount)
+  const pairFunding = beyondDust(mintMax.pair - position.pairAmount)
+  const tokenFunding = beyondDust(mintMax.token - position.tokenAmount)
   const funding0 = pairIsC0 ? pairFunding : tokenFunding
   const funding1 = pairIsC0 ? tokenFunding : pairFunding
   const value = nativeIsC0 ? funding0 : nativeIsC1 ? funding1 : 0n
@@ -278,19 +375,17 @@ export function buildEditLiquidityPlan({
   if (!nativeIsC1 && funding1 > 0n) erc20.push({ currency: key.currency1, max: funding1 })
   const pairMinimum = retainedFloor(position.pairAmount)
   const tokenMinimum = retainedFloor(position.tokenAmount)
+  // The mint's parameters are already encoded inside the add plan; lift them
+  // out rather than re-encoding the tuple here.
+  const [, mintParts] = decodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    mint.unlockData,
+  )
   return {
     ...base,
     kind: 'move',
-    unlockData: buildMoveLiquidityUnlockData({
-      tokenId: position.tokenId,
-      currency0: key.currency0,
-      currency1: key.currency1,
-      amount0Min: pairIsC0 ? pairMinimum : tokenMinimum,
-      amount1Min: pairIsC0 ? tokenMinimum : pairMinimum,
-      mintUnlockData: mint.unlockData,
-      sweep:
-        value > 0n && nativeCurrency ? { currency: nativeCurrency, recipient: account } : undefined,
-    }),
+    actions: `${ACTION_BURN_POSITION}${ACTION_MINT_POSITION}`,
+    parameters: [burnParams(pairMinimum, tokenMinimum), mintParts[0]],
     tickLower: mint.tickLower,
     tickUpper: mint.tickUpper,
     liquidity: mint.liquidity,

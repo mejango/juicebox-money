@@ -5,20 +5,22 @@ import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } from 'viem'
+import { erc20Abi, formatUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
-import {
-  bandPrices,
-  buildEditLiquidityPlan,
-  describeEditLiquidityPlan,
-  editLiquidityStillFits,
-  type EditLiquidityPlan,
-} from '@/lib/edit-liquidity'
+import { bandPrices } from '@/lib/edit-liquidity'
 import { FlowError, shortError } from '@/lib/errors'
 import { formatTokenAmount } from '@/lib/format'
+import {
+  buildMarketEdit,
+  marketEditStillFits,
+  type MarketCorridor,
+  type MarketEditPlan,
+  type MarketSideEdit,
+  type MarketSides,
+} from '@/lib/market-liquidity'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
 import {
   buildErc20ApproveRequest,
@@ -27,7 +29,6 @@ import {
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
-import { solveRangeFromAmounts } from '@/lib/uniswap-v4'
 import { buildPlan, type Step } from './AddLiquidityFlow'
 import { formatPrice } from './chartUtils'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
@@ -40,86 +41,67 @@ import {
 
 type Pool = Extract<MarketResult, { status: 'pool' }>
 
-const FINAL_STEP: Record<EditLiquidityPlan['kind'], string> = {
-  increase: 'Increase the position',
-  decrease: 'Decrease the position',
-  move: 'Move the position',
-  remove: 'Remove the position',
+const SIDE_VERB: Record<MarketSideEdit['kind'], string> = {
+  increase: 'tops up',
+  decrease: 'frees part of',
+  remove: 'removes',
+  move: 're-fits',
+  mint: 'mints',
+  keep: 'keeps',
 }
 
 type Reviewed = {
   account: Address
   pool: Pool
-  plan: EditLiquidityPlan
+  plan: MarketEditPlan
   steps: Step[]
-  copy: { lead: string; detail: string; tech: string }
-}
-
-/** A target prefilled at full precision, so an untouched field asks for exactly what the position holds. */
-function holdingText(amount: bigint, decimals: number): string {
-  return formatUnits(amount, decimals)
 }
 
 function parseAmount(text: string, decimals: number, symbol: string): bigint {
   const trimmed = text.trim()
   if (trimmed === '') return 0n
   try {
-    const amount = parseUnits(trimmed, decimals)
-    if (amount < 0n) throw new Error()
-    return amount
+    const amount = BigInt(Math.round(Number(trimmed) * 10 ** Math.min(decimals, 6)))
+    if (!Number.isFinite(Number(trimmed)) || amount < 0n) throw new Error()
+    // Exact parse for the full decimals; the float above only validates.
+    const [whole, fraction = ''] = trimmed.split('.')
+    return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals))
   } catch {
     throw new FlowError(`Enter a valid ${symbol} amount.`)
   }
 }
 
-/**
- * Which typed side the band cannot fully use, if any: the other side is the
- * binding one (its holding lands on its target) while this one is cut well
- * short. Returns which side is capped and how much of the binding side the
- * full target on the capped side would take at this band's ratio.
- */
-function cappedSide(
-  preview: {
-    plan: { tokenHolding: bigint; pairHolding: bigint }
-    tokenAmount: bigint
-    pairAmount: bigint
-  },
-  pairDecimals: number,
-): { side: 'token' | 'pair'; needed: string } | null {
-  const { tokenHolding, pairHolding } = preview.plan
-  if (tokenHolding <= 0n || pairHolding <= 0n) return null
-  const short = (holding: bigint, target: bigint) => target > 0n && holding * 100n < target * 99n
-  const tokenShort = short(tokenHolding, preview.tokenAmount)
-  const pairShort = short(pairHolding, preview.pairAmount)
-  if (tokenShort === pairShort) return null
-  return tokenShort
-    ? {
-        side: 'token',
-        needed: formatTokenAmount((preview.tokenAmount * pairHolding) / tokenHolding, pairDecimals),
-      }
-    : {
-        side: 'pair',
-        needed: formatTokenAmount((preview.pairAmount * tokenHolding) / pairHolding, 18),
-      }
+/** Whether either side's band no longer matches the corridor: the stage moved the ceiling or the floor. */
+function corridorMoved(pool: Pool, sides: MarketSides, corridor: MarketCorridor): boolean {
+  const off = (actual: number, expected: number) => Math.abs(actual - expected) / expected > 0.005
+  if (sides.tokenSide) {
+    const band = bandPrices(pool, sides.tokenSide.tickLower, sides.tokenSide.tickUpper)
+    if (off(band.max, corridor.ceiling)) return true
+  }
+  if (sides.pairSide) {
+    const band = bandPrices(pool, sides.pairSide.tickLower, sides.pairSide.tickUpper)
+    if (off(band.min, corridor.floor)) return true
+  }
+  return false
 }
 
 /**
- * One position's edit form: what it should hold and, optionally, a new band.
- * Amounts are ceilings — the band and the current price fix the ratio, so the
- * review states exactly what the position ends up holding and what moves in
- * or out of the wallet. Approvals a top-up needs are queued ahead of the edit
- * itself (each its own reviewed, simulated transaction, like the add flow),
- * the plan is sized from a fresh pool and position read at review time, and
- * it is re-checked against the live price right before the wallet asks.
+ * Edit a market: what each side holds, and whether both sides get re-fit to
+ * the corridor as it stands now. Each side is its own position, so a change
+ * on one side never burns the other. Approvals a top-up needs are queued
+ * ahead of the edit as reviewed transactions, the plan is sized from a fresh
+ * pool and position read at review time, and it is re-checked right before
+ * the wallet asks.
  */
-export function EditPositionPanel({
+export function MarketEditPanel({
   chainId,
   projectId,
   pool,
   positionManager,
-  position,
+  sides,
   sym,
   floor,
+  startEmpty = false,
   onClose,
   onDone,
 }: {
@@ -127,11 +109,12 @@ export function EditPositionPanel({
   projectId: number
   pool: Pool
   positionManager: Address
-  position: UserLpPosition
+  sides: MarketSides
   sym: string
   floor: number | null
+  /** Open with both sides at 0 — the market's Remove action. */
+  startEmpty?: boolean
   onClose: () => void
-  /** Called once the edit has landed (or been proposed to a Safe). */
   onDone: (hash: `0x${string}` | null) => void
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
@@ -142,15 +125,19 @@ export function EditPositionPanel({
   const pairSym = pool.pair.symbol
   const pairDec = pool.pair.decimals
   const projectToken = pool.pairIsC0 ? pool.key.currency1 : pool.key.currency0
-  const band = bandPrices(pool, position.tickLower, position.tickUpper)
+  const corridor = useMemo<MarketCorridor | null>(
+    () => (floor && pool.issuance && pool.issuance > floor ? { floor, ceiling: pool.issuance } : null),
+    [floor, pool.issuance],
+  )
 
-  const [minText, setMinText] = useState(String(Number(band.min.toPrecision(6))))
-  const [maxText, setMaxText] = useState(String(Number(band.max.toPrecision(6))))
-  // Only a band the user actually changed re-mints; otherwise the position's
-  // own ticks are kept exactly, never re-derived from rounded display prices.
-  const [rangeTouched, setRangeTouched] = useState(false)
-  const [tokText, setTokText] = useState(holdingText(position.tokenAmount, 18))
-  const [pairText, setPairText] = useState(holdingText(position.pairAmount, pairDec))
+  const [tokText, setTokText] = useState(
+    startEmpty ? '0' : formatUnits(sides.tokenSide?.tokenAmount ?? 0n, 18),
+  )
+  const [pairText, setPairText] = useState(
+    startEmpty ? '0' : formatUnits(sides.pairSide?.pairAmount ?? 0n, pairDec),
+  )
+  const moved = corridor ? corridorMoved(pool, sides, corridor) : false
+  const [refit, setRefit] = useState(moved)
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -162,8 +149,6 @@ export function EditPositionPanel({
   const runningRef = useRef(false)
   const stepIdxRef = useRef(0)
   const processedRef = useRef<string | null>(null)
-  // The block of the most recent approval receipt: the edit must simulate at
-  // or after it, or a lagging RPC rejects it on allowance.
   const approvalBlockRef = useRef<bigint | undefined>(undefined)
 
   const balances = useQuery({
@@ -199,122 +184,70 @@ export function EditPositionPanel({
   const busy = quoting || running || tx.busy
   const editing = busy || reviewed !== null
 
-  // What the typed targets actually produce at this band and price, computed
-  // locally as they type. The band and price fix the ratio, so one side is
-  // usually the binding one and the other is capped — say so before Review,
-  // and offer the band that would use both amounts in full.
   const preview = useMemo(() => {
-    let tokenAmount: bigint
-    let pairAmount: bigint
+    if (!corridor) return null
     try {
-      tokenAmount = parseAmount(tokText, 18, sym)
-      pairAmount = parseAmount(pairText, pairDec, pairSym)
-    } catch {
-      return null
-    }
-    const pa = Number(minText)
-    const pb = Number(maxText)
-    if (rangeTouched && (!(pa > 0) || !(pb > pa))) return null
-    try {
-      const plan = buildEditLiquidityPlan({
+      return buildMarketEdit({
         pool,
-        position,
-        target: { pairAmount, tokenAmount },
-        range: rangeTouched ? { pa, pb } : null,
+        sides,
+        targets: {
+          tokenAmount: parseAmount(tokText, 18, sym),
+          pairAmount: parseAmount(pairText, pairDec, pairSym),
+        },
+        corridor,
+        refit,
         account: connectedAddress ?? '0x0000000000000000000000000000000000000000',
       })
-      return { plan, tokenAmount, pairAmount }
     } catch {
       return null
     }
-  }, [tokText, pairText, minText, maxText, rangeTouched, pool, position, connectedAddress, sym, pairSym, pairDec])
-  const cappedRaw = preview ? cappedSide(preview, pairDec) : null
-  const capped = cappedRaw
-    ? { ...cappedRaw, binding: cappedRaw.side === 'token' ? pairSym : sym }
-    : null
+  }, [corridor, tokText, pairText, refit, pool, sides, connectedAddress, sym, pairSym, pairDec])
 
-  const fitBand = () => {
-    if (!preview || !pool.price) return
-    const solved = solveRangeFromAmounts({
-      price: pool.price,
-      tokenAmount: Number(formatUnits(preview.tokenAmount, 18)),
-      pairAmount: Number(formatUnits(preview.pairAmount, pairDec)),
-      floorHint: floor,
-      ceilingHint: pool.issuance,
-    })
-    if (!solved) return
-    setMinText(String(Number(solved.minPrice.toPrecision(6))))
-    setMaxText(String(Number(solved.maxPrice.toPrecision(6))))
-    setRangeTouched(true)
-    planRef.current = null
-    setReviewed(null)
-  }
-
-  // Fresh pool and position, read together so the plan never sizes a fresh
-  // position against a stale price.
+  // Fresh pool and both positions, read together so neither is sized stale.
   const readLive = async (account: Address) => {
     const market = await resolveMarket(client!, chainId, projectId, nativeSymbol)
     if (market.status !== 'pool' || market.poolId !== pool.poolId) {
       throw new FlowError('The pool changed while this list was open. Reopen it and try again.')
     }
-    const fresh = (await readUserLpPositions(client!, chainId, market, account)).find(
-      p => p.tokenId === position.tokenId,
-    )
-    if (!fresh) throw new FlowError('This position is no longer owned by your wallet.')
-    return { market, fresh }
+    const positions = await readUserLpPositions(client!, chainId, market, account)
+    const find = (side: UserLpPosition | null) =>
+      side ? (positions.find(p => p.tokenId === side.tokenId) ?? null) : null
+    const fresh: MarketSides = { tokenSide: find(sides.tokenSide), pairSide: find(sides.pairSide) }
+    if ((sides.tokenSide && !fresh.tokenSide) || (sides.pairSide && !fresh.pairSide)) {
+      throw new FlowError('A position in this market is no longer owned by your wallet.')
+    }
+    return { market, fresh, positions }
   }
 
   const handleReview = async () => {
-    if (!connectedAddress || !client || busy) return
+    if (!connectedAddress || !client || busy || !corridor) return
     setReviewError(null)
     setQuoting(true)
     try {
       const tokenAmount = parseAmount(tokText, 18, sym)
       const pairAmount = parseAmount(pairText, pairDec, pairSym)
-      let range: { pa: number; pb: number } | null = null
-      if (rangeTouched) {
-        const pa = Number(minText)
-        const pb = Number(maxText)
-        if (!(pa > 0) || !(pb > pa)) throw new FlowError('Set a valid price range.')
-        range = { pa, pb }
-      }
       const { market, fresh } = await readLive(connectedAddress)
-      const plan = buildEditLiquidityPlan({
+      const plan = buildMarketEdit({
         pool: market,
-        position: fresh,
-        target: { pairAmount, tokenAmount },
-        range,
+        sides: fresh,
+        targets: { tokenAmount, pairAmount },
+        corridor,
+        refit,
         account: connectedAddress,
       })
       const held = balances.data ?? (await balances.refetch()).data
       if (!held) throw new FlowError('Could not read your wallet balances.')
-      // Gate on what the pool actually pulls, not on the maxima: those carry
-      // 1% price headroom that only gets spent if the price moves.
       if (plan.tokenFlow > held.tok) throw new FlowError(`That's more ${sym} than your balance.`)
-      if (plan.pairFlow > held.pair) {
-        throw new FlowError(`That's more ${pairSym} than your balance.`)
-      }
+      if (plan.pairFlow > held.pair) throw new FlowError(`That's more ${pairSym} than your balance.`)
       const steps = await buildPlan(
         client,
         connectedAddress,
         positionManager,
         { erc20: plan.erc20 },
         labelFor,
-        FINAL_STEP[plan.kind],
+        'Edit the market',
       )
-      const resulting = bandPrices(market, plan.tickLower, plan.tickUpper)
-      const copy = describeEditLiquidityPlan({
-        ...plan,
-        tokenSymbol: sym,
-        pairSymbol: pairSym,
-        pairDecimals: pairDec,
-        pairIsNative: pool.pair.isNative,
-        band:
-          plan.kind === 'move'
-            ? `${formatPrice(resulting.min)} – ${formatPrice(resulting.max)} ${pairSym}/${sym}`
-            : undefined,
-      })
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy }
+      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps }
       planRef.current = built
       setReviewed(built)
     } catch (e) {
@@ -350,8 +283,6 @@ export function EditPositionPanel({
           }),
         )
       } else {
-        // Everything that touches funds is frozen inside unlockData; only the
-        // deadline is stamped at send time.
         tx.send(
           buildModifyLiquiditiesRequest({
             chainId,
@@ -362,15 +293,13 @@ export function EditPositionPanel({
           }),
           {
             simulationBlockNumber: approvalBlockRef.current,
-            reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
-            // Runs after the review, so however long it sat open, a changed
-            // position or drift beyond the reviewed maxima still aborts first.
+            reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
             reverify: async () => {
               if (!client) return
-              const { market, fresh } = await readLive(p.account)
-              const problem = editLiquidityStillFits(p.plan, {
+              const { market, positions } = await readLive(p.account)
+              const problem = marketEditStillFits(p.plan, {
                 sqrtP: market.sqrtP,
-                liquidity: fresh.liquidity,
+                liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
               })
               if (problem) throw new FlowError(problem)
             },
@@ -380,10 +309,9 @@ export function EditPositionPanel({
     },
     // readLive closes over stable props; the plan itself is read from the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tx, chainId, positionManager, client],
+    [tx, chainId, positionManager, client, sym],
   )
 
-  // Advance through the steps on each receipt.
   useEffect(() => {
     if (!runningRef.current) return
     const p = planRef.current
@@ -391,10 +319,7 @@ export function EditPositionPanel({
     if (tx.phase === 'success' && tx.hash && tx.hash !== processedRef.current) {
       processedRef.current = tx.hash
       const block = tx.receipt?.blockNumber
-      if (
-        block !== undefined &&
-        (approvalBlockRef.current === undefined || block > approvalBlockRef.current)
-      ) {
+      if (block !== undefined && (approvalBlockRef.current === undefined || block > approvalBlockRef.current)) {
         approvalBlockRef.current = block
       }
       const isLast = stepIdxRef.current >= p.steps.length - 1
@@ -421,7 +346,6 @@ export function EditPositionPanel({
 
   const startRun = () => {
     if (!reviewed || runningRef.current) return
-    // The recipient is baked into unlockData: a changed account must re-review.
     if (!connectedAddress || connectedAddress.toLowerCase() !== reviewed.account.toLowerCase()) {
       planRef.current = null
       setReviewed(null)
@@ -458,7 +382,6 @@ export function EditPositionPanel({
     tx.reset()
   }
 
-  // "X ART + Y USDC", naming only the sides that are nonzero.
   const amountsText = (token: bigint, pair: bigint) =>
     [
       token > 0n ? `${formatTokenAmount(token, 18)} ${sym}` : null,
@@ -467,10 +390,17 @@ export function EditPositionPanel({
       .filter(Boolean)
       .join(' + ')
   const positive = (amount: bigint) => (amount > 0n ? amount : 0n)
-  const bandText = (of: Pool, plan: EditLiquidityPlan) => {
-    const band = bandPrices(of, plan.tickLower, plan.tickUpper)
-    return `${formatPrice(band.min)} – ${formatPrice(band.max)} ${pairSym}/${sym}`
+  const sideLine = (side: MarketSideEdit | null, own: 'token' | 'pair') => {
+    if (!side) return null
+    const symbol = own === 'token' ? sym : pairSym
+    const decimals = own === 'token' ? 18 : pairDec
+    const id = side.tokenId !== null ? ` #${side.tokenId.toString()}` : ''
+    return `${SIDE_VERB[side.kind]}${id}, holds ~${formatTokenAmount(side.holding, decimals)} ${symbol}`
   }
+  const ids = [sides.tokenSide, sides.pairSide]
+    .filter((side): side is UserLpPosition => side !== null)
+    .map(side => `#${side.tokenId.toString()}`)
+    .join(' + ')
   const inWallet = (amount: bigint | undefined, decimals: number, symbol: string) =>
     amount == null ? null : (
       <span className="mt-1 block text-right text-xs text-smoke-500">
@@ -480,19 +410,14 @@ export function EditPositionPanel({
 
   const reviewRows = (r: Reviewed): TxConfirmRow[] => {
     const rows: TxConfirmRow[] = [
-      { label: 'Position', value: `#${position.tokenId.toString()} on ${chainName(chainId)}` },
+      { label: 'Market', value: `${ids} on ${chainName(chainId)}` },
       {
-        label: 'Band',
-        value: `${bandText(r.pool, r.plan)}${r.plan.kind === 'move' ? ' (new position)' : ' (kept)'}`,
+        label: 'Corridor',
+        value: `${corridor ? `${formatPrice(corridor.floor)} – ${formatPrice(corridor.ceiling)} ${pairSym}/${sym}` : '—'}${r.plan.refit ? ' (re-fit)' : ' (kept)'}`,
       },
     ]
-    if (r.plan.kind !== 'remove') {
-      rows.push({
-        label: 'Holds after',
-        value: `~${formatTokenAmount(r.plan.tokenHolding, 18)} ${sym} + ${formatTokenAmount(r.plan.pairHolding, pairDec)} ${pairSym}`,
-        strong: true,
-      })
-    }
+    if (r.plan.token) rows.push({ label: `${sym} side`, value: sideLine(r.plan.token, 'token') })
+    if (r.plan.pair) rows.push({ label: `${pairSym} side`, value: sideLine(r.plan.pair, 'pair') })
     if (r.plan.tokenFlow > 0n || r.plan.pairFlow > 0n) {
       rows.push({
         label: 'From your wallet',
@@ -515,7 +440,7 @@ export function EditPositionPanel({
     if (r.plan.tokenMinimum > 0n || r.plan.pairMinimum > 0n) {
       rows.push({
         label: 'Enforced onchain',
-        value: `At least ${formatTokenAmount(r.plan.tokenMinimum, 18)} ${sym} + ${formatTokenAmount(r.plan.pairMinimum, pairDec)} ${pairSym} back (95% floors)`,
+        value: `At least ${amountsText(r.plan.tokenMinimum, r.plan.pairMinimum)} back (95% floors)`,
       })
     }
     return rows
@@ -524,19 +449,16 @@ export function EditPositionPanel({
   const dialog = reviewed ? (
     <TxConfirmDialog
       open
-      title={done ? 'Position updated' : 'Confirm edit'}
+      title={done ? 'Market updated' : 'Confirm edit'}
       rows={reviewRows(reviewed)}
-      steps={reviewed.steps.map((step, index) => ({
-        key: `${step.kind}:${index}`,
-        title: step.label,
-      }))}
+      steps={reviewed.steps.map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
       activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
       action={
         running
-          ? 'Editing position…'
+          ? 'Editing the market…'
           : tx.phase === 'error'
             ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
-            : FINAL_STEP[reviewed.plan.kind]
+            : 'Edit the market'
       }
       onConfirm={tx.phase === 'error' ? resume : startRun}
       busy={running || tx.busy}
@@ -546,8 +468,7 @@ export function EditPositionPanel({
       onClose={back}
     >
       {balances.data &&
-      (reviewed.plan.tokenFunding > balances.data.tok ||
-        reviewed.plan.pairFunding > balances.data.pair) ? (
+      (reviewed.plan.tokenFunding > balances.data.tok || reviewed.plan.pairFunding > balances.data.pair) ? (
         <p className="text-sm text-orange-600">
           Heads up: your balance does not cover the 1% price headroom, so this edit reverts if
           the price moves against it. Lower the amount to be safe.
@@ -560,14 +481,10 @@ export function EditPositionPanel({
     return (
       <div className="mt-3 border border-smoke-200 p-3">
         <p className="text-xs font-medium text-ink">
-          Position #{position.tokenId.toString()} on {chainName(chainId)} updated.
+          Market {ids} on {chainName(chainId)} updated.
         </p>
         <p className="mt-1 text-xs text-smoke-500">The table above reflects it.</p>
-        <button
-          type="button"
-          className="btn-secondary mt-3 min-h-[32px] px-3 text-xs"
-          onClick={onClose}
-        >
+        <button type="button" className="btn-secondary mt-3 min-h-[32px] px-3 text-xs" onClick={onClose}>
           Close
         </button>
         {dialog}
@@ -578,65 +495,26 @@ export function EditPositionPanel({
   return (
     <div className="mt-3 border border-smoke-200 p-3">
       <p className="text-xs font-medium text-ink">
-        Edit position #{position.tokenId.toString()} on {chainName(chainId)}
+        Edit market {ids} on {chainName(chainId)}
       </p>
       <p className="mt-1 text-xs text-smoke-500">
-        Set what this position should hold and the band it covers. Anything added comes from
-        your wallet and anything freed returns to it, with unclaimed fees, in one transaction.
-        The band and the current price fix the ratio, so amounts are ceilings. Changing the band
-        burns this position and mints a new one; if the price moves too far before it lands,
-        the whole edit reverts and the position stays as it is.
+        {sym} sells from the current price up to the ceiling; {pairSym} buys from the current
+        price down to the floor. Each side is its own position, so each amount is used in full
+        and a change on one side never touches the other. Anything added comes from your wallet
+        and anything freed returns to it, with unclaimed fees, in one transaction.
       </p>
       <LiquidityRangePreview
         floor={floor}
         ceiling={pool.issuance ?? null}
         current={pool.price}
-        minimum={Number(minText) || 0}
-        maximum={Number(maxText) || 0}
+        minimum={corridor?.floor ?? 0}
+        maximum={corridor?.ceiling ?? 0}
         pairSymbol={pairSym}
         tokenSymbol={sym}
-        onRangeChange={
-          editing
-            ? undefined
-            : (edge, value) => {
-                ;(edge === 'min' ? setMinText : setMaxText)(String(value))
-                setRangeTouched(true)
-              }
-        }
       />
       <div className="mt-2 grid grid-cols-2 gap-2">
         <label className="text-xs text-smoke-500">
-          Min price
-          <input
-            className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
-            type="number"
-            min="0"
-            value={minText}
-            disabled={editing}
-            onChange={event => {
-              setMinText(event.target.value)
-              setRangeTouched(true)
-            }}
-          />
-        </label>
-        <label className="text-xs text-smoke-500">
-          Max price
-          <input
-            className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
-            type="number"
-            min="0"
-            value={maxText}
-            disabled={editing}
-            onChange={event => {
-              setMaxText(event.target.value)
-              setRangeTouched(true)
-            }}
-          />
-        </label>
-      </div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <label className="text-xs text-smoke-500">
-          {sym} in position
+          {sym} to sell above the price
           <input
             className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
             type="number"
@@ -649,7 +527,7 @@ export function EditPositionPanel({
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
         <label className="text-xs text-smoke-500">
-          {pairSym} in position
+          {pairSym} to buy with below the price
           <input
             className="input-well mt-1 min-h-[40px] w-full px-3 text-sm"
             type="number"
@@ -662,34 +540,40 @@ export function EditPositionPanel({
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>
       </div>
-      {preview && preview.plan.kind !== 'remove' ? (
+      {corridor ? (
+        <label className="mt-2 flex items-start gap-2 text-xs text-smoke-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={refit}
+            disabled={editing}
+            onChange={event => setRefit(event.target.checked)}
+          />
+          <span>
+            Re-fit both sides to the current corridor ({formatPrice(corridor.floor)} –{' '}
+            {formatPrice(corridor.ceiling)} {pairSym}/{sym}).
+            {moved
+              ? ' The floor or ceiling moved since these positions were minted, so their edges are stale.'
+              : ' Not needed right now — the positions already match it.'}
+          </span>
+        </label>
+      ) : (
+        <p className="mt-2 text-xs text-smoke-500">
+          This project has no floor and ceiling to fit a market to, so the sides can only be
+          topped up, freed or removed as they are.
+        </p>
+      )}
+      {preview ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700" role="status">
-          At this band it holds about {formatTokenAmount(preview.plan.tokenHolding, 18)} {sym} +{' '}
-          {formatTokenAmount(preview.plan.pairHolding, pairDec)} {pairSym}.
-          {capped ? (
-            <>
-              {' '}
-              {capped.binding} limits it here: holding the full{' '}
-              {capped.side === 'token'
-                ? `${formatTokenAmount(preview.tokenAmount, 18)} ${sym}`
-                : `${formatTokenAmount(preview.pairAmount, pairDec)} ${pairSym}`}{' '}
-              at this band takes about {capped.needed} {capped.binding}.{' '}
-              {pool.price && !editing ? (
-                <button
-                  type="button"
-                  className="underline underline-offset-2 hover:text-ink"
-                  onClick={fitBand}
-                >
-                  Fit the band to these amounts
-                </button>
-              ) : null}
-            </>
-          ) : null}
+          {[sideLine(preview.token, 'token'), sideLine(preview.pair, 'pair')]
+            .filter(Boolean)
+            .map((line, index) => `${index === 0 ? sym : pairSym} side ${line}`)
+            .join('. ')}
+          .
         </p>
       ) : null}
       <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-        Set both to 0 to remove the position. Keep the band and raise or lower the amounts to
-        top up or free part of it without a new position id.
+        Set a side to 0 to remove that position. Both at 0 removes the market.
       </p>
 
       <div className="mt-3 flex flex-wrap justify-end gap-2">
@@ -704,7 +588,7 @@ export function EditPositionPanel({
         <button
           type="button"
           className="btn-primary min-h-[44px] px-5 text-sm"
-          disabled={editing || isViewAs || !connectedAddress}
+          disabled={editing || isViewAs || !connectedAddress || !corridor}
           onClick={() => void handleReview()}
         >
           {quoting ? 'Checking…' : 'Review edit'}
@@ -717,4 +601,27 @@ export function EditPositionPanel({
       {dialog}
     </div>
   )
+}
+
+/** The safety-check notice: each side's change in one line, then the wallet flows. */
+function describeMarketEdit(pool: Pool, plan: MarketEditPlan, sym: string): string {
+  const side = (edit: MarketSideEdit | null, own: 'token' | 'pair') => {
+    if (!edit) return null
+    const symbol = own === 'token' ? sym : pool.pair.symbol
+    const decimals = own === 'token' ? 18 : pool.pair.decimals
+    const id = edit.tokenId !== null ? ` position #${edit.tokenId.toString()}` : ' a new position'
+    return `${symbol} side: ${SIDE_VERB[edit.kind]}${id}, holding about ${formatTokenAmount(edit.holding, decimals)} ${symbol} afterwards.`
+  }
+  const pulls = [
+    plan.tokenFlow > 0n ? `${formatTokenAmount(plan.tokenFlow, 18)} ${sym}` : null,
+    plan.pairFlow > 0n ? `${formatTokenAmount(plan.pairFlow, pool.pair.decimals)} ${pool.pair.symbol}` : null,
+  ].filter(Boolean)
+  return [
+    side(plan.token, 'token'),
+    side(plan.pair, 'pair'),
+    pulls.length ? `Your wallet pays about ${pulls.join(' + ')}.` : null,
+    'Unclaimed fees and anything freed return to your wallet in the same transaction. If the price moves too far before it lands, the whole edit reverts and every position stays as it is.',
+  ]
+    .filter(Boolean)
+    .join(' ')
 }

@@ -22,6 +22,7 @@ import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   clientFor,
@@ -414,6 +415,13 @@ function truncateUri(uri: string): string {
   return `${uri.slice(0, 14)}…${uri.slice(-10)}`
 }
 
+/** A review-row value: blank reads as unset, long text is clipped. */
+function reviewValue(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return '—'
+  return trimmed.length > 48 ? `${trimmed.slice(0, 45)}…` : trimmed
+}
+
 /** The shared ChainPicker fed by this card's per-chain read state. */
 function EditChainPicker({
   rows,
@@ -474,6 +482,7 @@ export function MetadataEditor({
   const [customText, setCustomText] = useState('')
   const [customTouched, setCustomTouched] = useState(false)
   const [reviewed, setReviewed] = useState(false)
+  const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -534,6 +543,7 @@ export function MetadataEditor({
 
   const review = () => {
     setError(null)
+    setStatus(null)
     if (!name.trim()) {
       setError('Give the project a name.')
       return
@@ -547,6 +557,44 @@ export function MetadataEditor({
       return
     }
     setReviewed(true)
+  }
+
+  const closeReview = () => {
+    setReviewed(false)
+    setDone(false)
+    setError(null)
+  }
+
+  const chosen = rows.filter(row => selected.has(row.chainId))
+
+  const reviewRows = (): TxConfirmRow[] => {
+    const fields: [string, string, string][] = [
+      ['Name', initial.name, name],
+      ['Tagline', initial.tagline, tagline],
+      ['Description', initial.description, description],
+      ['Payment notice', initial.payDisclosure ?? '', payNotice],
+      ['Website', initial.infoUri ?? '', infoUri],
+      ['X / Twitter', initial.twitter ?? '', twitter],
+      ['Discord', initial.discord ?? '', discord],
+      ['Telegram', initial.telegram ?? '', telegram],
+      ['WhatsApp', initial.whatsapp ?? '', whatsapp],
+      ['Instagram', initial.instagram ?? '', instagram],
+    ]
+    const changed: TxConfirmRow[] = fields
+      .filter(([, before, after]) => before.trim() !== after.trim())
+      .map(([label, before, after]) => ({
+        label,
+        value: `${reviewValue(before)} → ${reviewValue(after)}`,
+      }))
+    if (logoFile) {
+      changed.push({ label: 'Logo', value: initial.logoUri ? 'Replaced' : 'Added' })
+    }
+    if (customTouched) changed.push({ label: 'Custom properties', value: 'Replaced' })
+    if (!changed.length) {
+      changed.push({ label: 'Fields', value: 'Unchanged — profile re-pinned as is' })
+    }
+    changed.push({ label: 'On', value: chosen.map(row => row.name).join(', ') })
+    return changed
   }
 
   const pinMetadata = async (): Promise<string> => {
@@ -598,7 +646,6 @@ export function MetadataEditor({
 
   const submit = async () => {
     if (!reviewed || busy) return
-    const chosen = rows.filter(row => selected.has(row.chainId))
     setBusy(true)
     setError(null)
     try {
@@ -636,6 +683,7 @@ export function MetadataEditor({
           }.`,
         ),
       )
+      setDone(true)
       onDone()
     } catch (submitError) {
       setError(
@@ -834,28 +882,38 @@ export function MetadataEditor({
         ) : null}
       </details>
 
-      {reviewed ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p>
-            <span className="font-medium">{name.trim()}</span> will use one
-            pinned profile on {rows
-              .filter(row => selected.has(row.chainId))
-              .map(row => row.name)
-              .join(', ')}.
-          </p>
-        </div>
-      ) : null}
-
       <button
         type="button"
-        onClick={reviewed ? submit : review}
+        onClick={review}
         disabled={busy || !name.trim() || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {busy ? status ?? 'Preparing…' : reviewed ? 'Save project metadata' : 'Review changes'}
+        Review changes
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {status && !reviewed ? (
+        <p className="mt-2 text-xs text-smoke-700">{status}</p>
+      ) : null}
+      {error && !reviewed ? <ErrorNote message={error} /> : null}
+
+      {reviewed ? (
+        <TxConfirmDialog
+          open
+          title={done ? 'Project metadata updated' : 'Confirm project metadata'}
+          rows={reviewRows()}
+          steps={chosen.map(row => ({
+            key: String(row.chainId),
+            title: `Set project metadata on ${row.name}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : 'Confirm & save'}
+          onConfirm={() => void submit()}
+          onClose={closeReview}
+        />
+      ) : null}
     </div>
   )
 }
@@ -903,17 +961,20 @@ function TokenEditor({
   const [name, setName] = useState(commonName)
   const [symbol, setSymbol] = useState(commonSymbol)
   const [review, setReview] = useState<AuthorityCall[] | null>(null)
+  const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const invalidate = () => {
     setReview(null)
+    setDone(false)
     setError(null)
   }
 
   const buildReview = () => {
     setError(null)
+    setStatus(null)
     const chosen = rows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one chain.')
@@ -981,6 +1042,7 @@ function TokenEditor({
           }.`,
         ),
       )
+      setDone(true)
       onDone()
     } catch (submitError) {
       setError(
@@ -1047,42 +1109,68 @@ function TokenEditor({
         />
       </div>
 
-      {review ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p className="font-medium">Review per-chain behavior</p>
-          <ul className="mt-2 space-y-1">
-            {rows
-              .filter(row => selected.has(row.chainId))
-              .map(row => (
-                <li key={row.chainId} className="flex items-center gap-2">
-                  <ChainIcon chainId={row.chainId} size={16} />
-                  {row.name}: {row.token ? 'rename existing token' : 'deploy ERC-20'}
-                </li>
-              ))}
-          </ul>
-          <p className="mt-2">
-            Final metadata: <span className="font-medium">{name.trim()}</span>{' '}
-            ({symbol}). Existing balances are unchanged.
-          </p>
-          {review.some(call => call.functionName === 'deployERC20For') ? (
-            <p className="mt-2">
-              Every deploy here uses the same salt, so the ERC-20 lands on one
-              address across the chains you sign from this account.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
       <button
         type="button"
-        onClick={review ? submit : buildReview}
+        onClick={buildReview}
         disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {busy ? status ?? 'Preparing…' : review ? 'Save token metadata' : 'Review changes'}
+        Review changes
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {status && !review ? (
+        <p className="mt-2 text-xs text-smoke-700">{status}</p>
+      ) : null}
+      {error && !review ? <ErrorNote message={error} /> : null}
+
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={done ? 'Token metadata updated' : 'Confirm token metadata'}
+          rows={[
+            {
+              label: 'Name',
+              value:
+                commonName === name.trim()
+                  ? name.trim()
+                  : `${reviewValue(commonName)} → ${name.trim()}`,
+            },
+            {
+              label: 'Symbol',
+              value:
+                commonSymbol === symbol
+                  ? symbol
+                  : `${reviewValue(commonSymbol)} → ${symbol}`,
+            },
+            {
+              label: 'On',
+              value: review.map(call => chainName(call.chainId)).join(', '),
+            },
+          ]}
+          steps={review.map(call => ({
+            key: String(call.chainId),
+            title: `${
+              call.functionName === 'deployERC20For'
+                ? 'Deploy the ERC-20'
+                : 'Rename the token'
+            } on ${chainName(call.chainId)}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : 'Confirm & save'}
+          onConfirm={() => void submit()}
+          onClose={invalidate}
+        >
+          <p className="text-xs leading-relaxed text-smoke-700">
+            Existing balances are unchanged.
+            {review.some(call => call.functionName === 'deployERC20For')
+              ? ' Every deploy uses the same salt, so the ERC-20 lands on one address across the chains you sign from this account.'
+              : ''}
+          </p>
+        </TxConfirmDialog>
+      ) : null}
     </div>
   )
 }

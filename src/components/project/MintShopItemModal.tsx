@@ -24,6 +24,7 @@ import {
   getPublicClient,
 } from 'wagmi/actions'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom } from '@/lib/gas'
@@ -243,34 +244,8 @@ export function MintShopItemModal({
     }
   }
 
-  const footer = phase === 'done' || phase === 'uncertain' ? (
-    <button type="button" onClick={onClose} className="btn-primary min-h-[44px] px-5 text-sm">
-      {phase === 'done' ? 'Done' : 'Close'}
-    </button>
-  ) : review ? (
-    <div className="flex justify-end gap-2">
-      <button
-        type="button"
-        onClick={() => {
-          setReview(null)
-          setPhase('form')
-          setMessage(null)
-        }}
-        disabled={busy}
-        className="btn-secondary min-h-[44px] px-5 text-sm"
-      >
-        Back
-      </button>
-      <button
-        type="button"
-        onClick={() => void handleConfirm()}
-        disabled={busy}
-        className="btn-primary min-h-[44px] px-5 text-sm"
-      >
-        {busy ? 'Checking & minting…' : 'Mint without payment'}
-      </button>
-    </div>
-  ) : (
+  const settled = phase === 'done' || phase === 'uncertain'
+  const footer = (
     <div className="flex justify-end gap-2">
       <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
         Cancel
@@ -289,81 +264,84 @@ export function MintShopItemModal({
       onClose={onClose}
       busy={busy}
     >
-      {phase === 'done' ? (
-        <div className="py-8 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">✓</span>
-          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">Items minted</h3>
-          <p className="mt-2 text-sm text-smoke-700">
-            {review?.quantity} × {itemName} sent to {review?.beneficiary}.
-          </p>
-          {hash ? <p className="mt-2 break-all font-mono text-xs text-smoke-500">{hash}</p> : null}
+      <div className="space-y-5">
+        <div className="callout callout-info text-xs">
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the MINT_721 permission can use this. The contract will reject tiers that did not enable free minting or lack inventory.
         </div>
-      ) : phase === 'uncertain' ? (
-        <div className="callout callout-info text-sm">
-          The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.
-          {hash ? <p className="mt-2 break-all font-mono text-xs">{hash}</p> : null}
-        </div>
-      ) : review ? (
-        <div className="space-y-4">
-          <div className="callout callout-warning text-xs">
-            This free mint consumes {review.quantity} item{review.quantity === 1 ? '' : 's'} of inventory, collects no payment, and cannot be undone.
-          </div>
-          <dl className="space-y-2 rounded-xl border border-smoke-200 bg-white p-4 text-sm">
-            <ReviewRow label="Item" value={`${review.quantity} × ${itemName}`} />
-            <ReviewRow label="Beneficiary" value={review.beneficiary} mono />
-            <ReviewRow label="Chain" value={chainName(chainId)} />
-          </dl>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <div className="callout callout-info text-xs">
-            Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the MINT_721 permission can use this. The contract will reject tiers that did not enable free minting or lack inventory.
-          </div>
-          <label className="block">
-            <span className="field-label">Beneficiary address</span>
-            <input
-              value={beneficiary}
-              onChange={event => {
-                setBeneficiary(event.target.value.slice(0, 64))
-                setMessage(null)
-              }}
-              placeholder="0x…"
-              disabled={busy}
-              autoComplete="off"
-              spellCheck={false}
-              className="input-well mt-2 min-h-[44px] w-full px-3 font-mono text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="field-label">Quantity</span>
-            <input
-              type="number"
-              min={1}
-              max={maxQuantity}
-              step={1}
-              value={quantity}
-              onChange={event => {
-                setQuantity(event.target.value.slice(0, 2))
-                setMessage(null)
-              }}
-              disabled={busy}
-              className="input-well mt-2 min-h-[44px] w-28 px-3 text-sm tabular-nums"
-            />
-            <p className="mt-1 text-xs text-smoke-500">Up to {maxQuantity} per transaction and no more than current inventory.</p>
-          </label>
-        </div>
-      )}
-      {message ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}
+        <label className="block">
+          <span className="field-label">Beneficiary address</span>
+          <input
+            value={beneficiary}
+            onChange={event => {
+              setBeneficiary(event.target.value.slice(0, 64))
+              setMessage(null)
+            }}
+            placeholder="0x…"
+            disabled={busy}
+            autoComplete="off"
+            spellCheck={false}
+            className="input-well mt-2 min-h-[44px] w-full px-3 font-mono text-sm"
+          />
+        </label>
+        <label className="block">
+          <span className="field-label">Quantity</span>
+          <input
+            type="number"
+            min={1}
+            max={maxQuantity}
+            step={1}
+            value={quantity}
+            onChange={event => {
+              setQuantity(event.target.value.slice(0, 2))
+              setMessage(null)
+            }}
+            disabled={busy}
+            className="input-well mt-2 min-h-[44px] w-28 px-3 text-sm tabular-nums"
+          />
+          <p className="mt-1 text-xs text-smoke-500">Up to {maxQuantity} per transaction and no more than current inventory.</p>
+        </label>
+      </div>
+      {message && !review ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={phase === 'done' ? 'Items minted' : phase === 'uncertain' ? 'Mint submitted' : 'Confirm mint'}
+          rows={[
+            { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
+            { label: 'Beneficiary', value: review.beneficiary, mono: true },
+            { label: 'On', value: chainName(chainId) },
+            ...(hash ? [{ label: 'Transaction', value: hash, mono: true }] : []),
+          ]}
+          steps={[{ title: `Mint ${review.quantity} × ${itemName}` }]}
+          activeIndex={busy ? 0 : -1}
+          action={busy ? 'Checking & minting…' : 'Mint without payment'}
+          onConfirm={() => void handleConfirm()}
+          busy={busy}
+          complete={settled}
+          status={
+            phase === 'uncertain'
+              ? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.'
+              : undefined
+          }
+          error={phase === 'uncertain' ? undefined : message}
+          onClose={() => {
+            if (settled) {
+              onClose()
+              return
+            }
+            setReview(null)
+            setPhase('form')
+            setMessage(null)
+          }}
+        >
+          {settled ? null : (
+            <div className="callout callout-warning text-xs">
+              This free mint consumes {review.quantity} item{review.quantity === 1 ? '' : 's'} of inventory, collects no payment, and cannot be undone.
+            </div>
+          )}
+        </TxConfirmDialog>
+      ) : null}
     </ModalShell>
-  )
-}
-
-function ReviewRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <dt className="text-smoke-600">{label}</dt>
-      <dd className={`break-all text-right text-ink ${mono ? 'font-mono text-xs' : 'font-medium'}`}>{value}</dd>
-    </div>
   )
 }
 

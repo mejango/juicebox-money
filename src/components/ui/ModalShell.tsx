@@ -77,6 +77,9 @@ export function ModalDialog({
     if (!dialog) return
     // showModal() throws InvalidStateError on an already open dialog.
     if (!dialog.open) dialog.showModal()
+    // showModal() hands focus to the first focusable descendant, which is the close button in every
+    // shell here, so its focus ring lit up on every open. Start on the dialog itself instead.
+    dialog.focus({ preventScroll: true })
     const releaseScroll = lockBodyScroll()
     return () => {
       releaseScroll()
@@ -93,7 +96,8 @@ export function ModalDialog({
       ref={dialogRef}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      className={`modal-dialog ${className}`}
+      className={`modal-dialog focus:outline-none ${className}`}
+      tabIndex={-1}
       onCancel={event => {
         // React owns the open state: unmounting the element is what closes the
         // dialog. Always stop the UA from closing it itself, so an owner that

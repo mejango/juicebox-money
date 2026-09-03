@@ -13,6 +13,7 @@ import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { chainName } from '@/lib/urn'
 import { ErrorNote } from '@/components/ui/TxError'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
@@ -30,6 +31,13 @@ import {
   type UserLpPosition,
 } from './MarketSection'
 import { EditPositionPanel } from './EditPositionPanel'
+import { MarketEditPanel } from './MarketEditPanel'
+import {
+  buildCollectMarketFeesUnlockData,
+  groupMarketPositions,
+  type MarketSides,
+  type PositionGroup,
+} from '@/lib/market-liquidity'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { PERSIST } from '@/lib/query-persist'
 
@@ -270,8 +278,21 @@ function ChainLpRows({
   const tx = useSafeTx(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
-  // The position whose holdings/band are being edited in the panel below.
+  // The write frozen for the confirm dialog: fee claim for one or both sides,
+  // or a burn with the freshly re-read amounts behind its onchain minimums.
+  const [pending, setPending] = useState<
+    | { kind: 'claim'; positions: UserLpPosition[] }
+    | { kind: 'remove'; position: UserLpPosition; pairMin: bigint; tokenMin: bigint }
+    | null
+  >(null)
+  const [started, setStarted] = useState(false)
+  // The position whose holdings/band are being edited in the panel below, or
+  // the market (two sides) being edited or removed.
   const [editing, setEditing] = useState<UserLpPosition | null>(null)
+  const [editingMarket, setEditingMarket] = useState<{
+    sides: MarketSides
+    startEmpty: boolean
+  } | null>(null)
   const summary = useUserLpSummary(chainId, projectId, address)
   const { pool, positionManager } = summary
   const { data: floor } = useCashOutFloor(chainId, projectId, !!pool)
@@ -292,22 +313,43 @@ function ChainLpRows({
     onChanged?.()
   }
 
-  const claim = (position: UserLpPosition) => {
-    if (!connectedAddress || !pool || !positionManager) return
+  const stage = (next: NonNullable<typeof pending>) => {
     setError(null)
-    const collect = buildCollectUniswapV4FeesTx({
-      positionManager,
-      tokenId: position.tokenId,
-      currency0: pool.key.currency0,
-      currency1: pool.key.currency1,
-      recipient: connectedAddress,
-      deadline: swapDeadline(tx.isSafe),
-    })
+    setStarted(false)
+    tx.reset()
+    setPending(next)
+  }
+
+  const claim = (positions: UserLpPosition[]) => {
+    if (!connectedAddress || !pool || !positionManager) return
+    stage({ kind: 'claim', positions })
+  }
+
+  const runClaim = (positions: UserLpPosition[]) => {
+    if (!connectedAddress || !pool || !positionManager) return
+    setStarted(true)
+    const unlockData =
+      positions.length === 1
+        ? unlockDataOf(
+            buildCollectUniswapV4FeesTx({
+              positionManager,
+              tokenId: positions[0].tokenId,
+              currency0: pool.key.currency0,
+              currency1: pool.key.currency1,
+              recipient: connectedAddress,
+              deadline: swapDeadline(tx.isSafe),
+            }).data,
+          )
+        : buildCollectMarketFeesUnlockData(
+            pool,
+            positions.map(position => position.tokenId),
+            connectedAddress,
+          )
     tx.send(
       buildModifyLiquiditiesRequest({
         chainId,
         positionManager,
-        unlockData: unlockDataOf(collect.data),
+        unlockData,
         deadline: swapDeadline(tx.isSafe),
         value: 0n,
       }),
@@ -315,7 +357,7 @@ function ChainLpRows({
     refresh()
   }
 
-  // Re-read the position immediately before building the burn: the list can sit
+  // Re-read the position immediately before freezing the burn: the list can sit
   // open while the market moves, and a stale amount must never become the
   // reviewed minimum.
   const remove = async (position: UserLpPosition) => {
@@ -342,25 +384,12 @@ function ChainLpRows({
         await readUserLpPositions(client, chainId, freshMarket, connectedAddress)
       ).find(p => p.tokenId === position.tokenId)
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
-      const pairMin = retainedFloor(fresh.pairAmount)
-      const tokenMin = retainedFloor(fresh.tokenAmount)
-      tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: buildRemoveLiquidityUnlockData({
-            tokenId: fresh.tokenId,
-            currency0: pool.key.currency0,
-            currency1: pool.key.currency1,
-            recipient: connectedAddress,
-            amount0Min: pool.pairIsC0 ? pairMin : tokenMin,
-            amount1Min: pool.pairIsC0 ? tokenMin : pairMin,
-          }),
-          deadline: swapDeadline(tx.isSafe),
-          value: 0n,
-        }),
-      )
-      refresh()
+      stage({
+        kind: 'remove',
+        position: fresh,
+        pairMin: retainedFloor(fresh.pairAmount),
+        tokenMin: retainedFloor(fresh.tokenAmount),
+      })
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Could not remove this position.',
@@ -368,6 +397,35 @@ function ChainLpRows({
     } finally {
       setReviewing(null)
     }
+  }
+
+  const runRemove = (frozen: Extract<NonNullable<typeof pending>, { kind: 'remove' }>) => {
+    if (!connectedAddress || !pool || !positionManager) return
+    setStarted(true)
+    tx.send(
+      buildModifyLiquiditiesRequest({
+        chainId,
+        positionManager,
+        unlockData: buildRemoveLiquidityUnlockData({
+          tokenId: frozen.position.tokenId,
+          currency0: pool.key.currency0,
+          currency1: pool.key.currency1,
+          recipient: connectedAddress,
+          amount0Min: pool.pairIsC0 ? frozen.pairMin : frozen.tokenMin,
+          amount1Min: pool.pairIsC0 ? frozen.tokenMin : frozen.pairMin,
+        }),
+        deadline: swapDeadline(tx.isSafe),
+        value: 0n,
+      }),
+    )
+    refresh()
+  }
+
+  const closePending = () => {
+    if (tx.busy) return
+    setPending(null)
+    setStarted(false)
+    tx.reset()
   }
 
   if (!address) return null
@@ -407,9 +465,11 @@ function ChainLpRows({
   }
   if (!pool || !positionManager || !summary.positions.length) return null
 
-  return (
-    <>
-      {summary.positions.map(position => {
+  const groups = groupMarketPositions(pool, summary.positions)
+  const anyBusy =
+    tx.busy || reviewing !== null || editing !== null || editingMarket !== null || isViewAs
+
+  const renderSingle = (position: UserLpPosition) => {
         const owed = summary.feesByToken[position.tokenId.toString()]
         const nothingOwed =
           !owed || (owed.pairFees <= 0n && owed.tokenFees <= 0n)
@@ -476,7 +536,7 @@ function ChainLpRows({
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
                   disabled={tx.busy || nothingOwed || isViewAs}
-                  onClick={() => claim(position)}
+                  onClick={() => claim([position])}
                 >
                   Claim fees
                 </button>
@@ -484,7 +544,7 @@ function ChainLpRows({
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
                   disabled={
-                    tx.busy || reviewing !== null || editing !== null || isViewAs
+                    tx.busy || reviewing !== null || editing !== null || editingMarket !== null || isViewAs
                   }
                   onClick={() => {
                     setError(null)
@@ -497,7 +557,7 @@ function ChainLpRows({
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
                   disabled={
-                    tx.busy || reviewing !== null || editing !== null || isViewAs
+                    tx.busy || reviewing !== null || editing !== null || editingMarket !== null || isViewAs
                   }
                   onClick={() => void remove(position)}
                 >
@@ -507,9 +567,138 @@ function ChainLpRows({
             </td>
           </tr>
         )
-      })}
+  }
+
+  // A market: two positions that meet at the price. Holdings and fees are the
+  // two sides added up; every action covers both.
+  const renderMarket = (group: Extract<PositionGroup, { kind: 'market' }>) => {
+    const sides = [group.tokenSide, group.pairSide]
+    const owedSides = sides.map(side => summary.feesByToken[side.tokenId.toString()])
+    const feesKnown = owedSides.every(owed => owed !== undefined)
+    const feesUsable = owedSides.every(owed => !!owed)
+    const owedToken = owedSides.reduce((sum, owed) => sum + (owed?.tokenFees ?? 0n), 0n)
+    const owedPair = owedSides.reduce((sum, owed) => sum + (owed?.pairFees ?? 0n), 0n)
+    const nothingOwed = !feesUsable || (owedToken <= 0n && owedPair <= 0n)
+    const tokenHeld = sides.reduce((sum, side) => sum + side.tokenAmount, 0n)
+    const pairHeld = sides.reduce((sum, side) => sum + side.pairAmount, 0n)
+    const lifetimeKnown = feesUsable && sides.every(side => side.claimedPairFees !== undefined)
+    const lifetimeToken = lifetimeKnown
+      ? sides.reduce((sum, side) => sum + side.claimedTokenFees!, 0n) + owedToken
+      : 0n
+    const lifetimePair = lifetimeKnown
+      ? sides.reduce((sum, side) => sum + side.claimedPairFees!, 0n) + owedPair
+      : 0n
+    return (
+      <tr
+        key={`market:${group.tokenSide.tokenId.toString()}:${group.pairSide.tokenId.toString()}`}
+        className="border-t border-smoke-100 align-top"
+      >
+        {chainCell}
+        <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
+          Market
+          <span className="block text-smoke-500">
+            #{group.tokenSide.tokenId.toString()} · #{group.pairSide.tokenId.toString()}
+          </span>
+        </td>
+        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+          {formatTokenAmount(tokenHeld, 18)} {sym}
+          <span className="block text-xs text-smoke-500">
+            {formatTokenAmount(pairHeld, pool.pair.decimals)} {pool.pair.symbol}
+          </span>
+        </td>
+        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+          {!feesKnown ? (
+            <span className="text-smoke-500">Reading…</span>
+          ) : !feesUsable ? (
+            <span className="text-smoke-500">Unavailable</span>
+          ) : nothingOwed ? (
+            <span className="text-smoke-500">None yet</span>
+          ) : (
+            <>
+              {formatTokenAmount(owedToken, 18)} {sym}
+              <span className="block text-xs text-smoke-500">
+                {formatTokenAmount(owedPair, pool.pair.decimals)} {pool.pair.symbol}
+              </span>
+            </>
+          )}
+        </td>
+        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+          {!lifetimeKnown ? (
+            <span className="text-smoke-500">—</span>
+          ) : lifetimeToken <= 0n && lifetimePair <= 0n ? (
+            <span className="text-smoke-500">None yet</span>
+          ) : (
+            <>
+              {formatTokenAmount(lifetimeToken, 18)} {sym}
+              <span className="block text-xs text-smoke-500">
+                {formatTokenAmount(lifetimePair, pool.pair.decimals)} {pool.pair.symbol}
+              </span>
+            </>
+          )}
+        </td>
+        <td className="whitespace-nowrap py-2 text-right">
+          <span className="inline-flex gap-2">
+            <button
+              type="button"
+              className="btn-secondary min-h-[32px] px-3 text-xs"
+              disabled={anyBusy || nothingOwed}
+              onClick={() => claim(sides)}
+            >
+              Claim fees
+            </button>
+            <button
+              type="button"
+              className="btn-secondary min-h-[32px] px-3 text-xs"
+              disabled={anyBusy}
+              onClick={() => {
+                setError(null)
+                setEditingMarket({ sides: group, startEmpty: false })
+              }}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className="btn-secondary min-h-[32px] px-3 text-xs"
+              disabled={anyBusy}
+              onClick={() => {
+                setError(null)
+                setEditingMarket({ sides: group, startEmpty: true })
+              }}
+            >
+              Remove
+            </button>
+          </span>
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <>
+      {groups.map(group =>
+        group.kind === 'single' ? renderSingle(group.position) : renderMarket(group),
+      )}
       {/* The panel lives OUTSIDE the scroll wrapper — as a table row it would
           inherit the table's full scrollable width and blow the modal out. */}
+      {panelHost && editingMarket && pool
+        ? ReactDOM.createPortal(
+            <MarketEditPanel
+              key={`${editingMarket.sides.tokenSide?.tokenId ?? '-'}:${editingMarket.sides.pairSide?.tokenId ?? '-'}`}
+              chainId={chainId}
+              projectId={projectId}
+              pool={pool}
+              positionManager={positionManager}
+              sides={editingMarket.sides}
+              sym={sym}
+              floor={floor ?? null}
+              startEmpty={editingMarket.startEmpty}
+              onClose={() => setEditingMarket(null)}
+              onDone={() => refresh()}
+            />,
+            panelHost,
+          )
+        : null}
       {panelHost && editing && pool
         ? ReactDOM.createPortal(
             <EditPositionPanel
@@ -527,11 +716,127 @@ function ChainLpRows({
             panelHost,
           )
         : null}
-      {panelHost && (error ?? tx.error)
+      {panelHost && error
         ? ReactDOM.createPortal(
             <div className="mt-2">
-              <ErrorNote message={error ?? tx.error!} />
+              <ErrorNote message={error} />
             </div>,
+            panelHost,
+          )
+        : null}
+      {/* A <dialog> cannot sit inside <tbody>; it goes out with the panels. */}
+      {panelHost && pending && connectedAddress
+        ? ReactDOM.createPortal(
+            (() => {
+              const pairLine = (value: bigint) => (
+                <span className="block text-xs text-smoke-500">
+                  {formatTokenAmount(value, pool.pair.decimals)} {pool.pair.symbol}
+                </span>
+              )
+              const complete = started && tx.phase === 'success'
+              const rows: TxConfirmRow[] = []
+              if (pending.kind === 'claim') {
+                const owedToken = pending.positions.reduce(
+                  (sum, p) => sum + (summary.feesByToken[p.tokenId.toString()]?.tokenFees ?? 0n),
+                  0n,
+                )
+                const owedPair = pending.positions.reduce(
+                  (sum, p) => sum + (summary.feesByToken[p.tokenId.toString()]?.pairFees ?? 0n),
+                  0n,
+                )
+                rows.push({
+                  label: 'Position',
+                  value: pending.positions.map(p => `#${p.tokenId.toString()}`).join(' and '),
+                  mono: true,
+                })
+                rows.push({
+                  label: 'Claims',
+                  value: (
+                    <>
+                      {formatTokenAmount(owedToken, 18)} {sym}
+                      {pairLine(owedPair)}
+                    </>
+                  ),
+                  strong: true,
+                })
+              } else {
+                rows.push({
+                  label: 'Position',
+                  value: `#${pending.position.tokenId.toString()}`,
+                  mono: true,
+                })
+                rows.push({
+                  label: 'Removes',
+                  value: (
+                    <>
+                      {formatTokenAmount(pending.position.tokenAmount, 18)} {sym}
+                      {pairLine(pending.position.pairAmount)}
+                    </>
+                  ),
+                  strong: true,
+                })
+                rows.push({
+                  label: 'At least',
+                  value: (
+                    <>
+                      {formatTokenAmount(pending.tokenMin, 18)} {sym}
+                      {pairLine(pending.pairMin)}
+                      <span className="block text-xs text-smoke-500">
+                        95% minimum, enforced onchain
+                      </span>
+                    </>
+                  ),
+                })
+              }
+              rows.push({ label: 'To', value: connectedAddress, mono: true })
+              rows.push({ label: 'On', value: chainName(chainId) })
+              return (
+                <TxConfirmDialog
+                  open
+                  title={
+                    pending.kind === 'claim'
+                      ? complete
+                        ? 'Fees claimed'
+                        : 'Claim fees'
+                      : complete
+                        ? 'Liquidity removed'
+                        : 'Remove liquidity'
+                  }
+                  rows={rows}
+                  steps={[
+                    {
+                      title: pending.kind === 'claim' ? 'Claim fees' : 'Remove liquidity',
+                      detail:
+                        tx.phase === 'simulating'
+                          ? 'Checking…'
+                          : tx.phase === 'signing'
+                            ? 'Confirm in your wallet…'
+                            : tx.phase === 'pending'
+                              ? 'Sending…'
+                              : undefined,
+                    },
+                  ]}
+                  activeIndex={started ? 0 : -1}
+                  action={
+                    tx.phase === 'error'
+                      ? 'Retry'
+                      : pending.kind === 'claim'
+                        ? 'Confirm & claim fees'
+                        : 'Confirm & remove liquidity'
+                  }
+                  onConfirm={() => {
+                    if (tx.phase === 'error') tx.reset()
+                    if (pending.kind === 'claim') runClaim(pending.positions)
+                    else runRemove(pending)
+                  }}
+                  busy={tx.busy}
+                  complete={complete}
+                  status={tx.safeNonceGuidance}
+                  error={tx.error}
+                  onClose={closePending}
+                />
+              )
+            })(),
             panelHost,
           )
         : null}

@@ -15,6 +15,7 @@ import { getAccount, getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { buildSet721TierMediaRequest } from '@/lib/transaction-builders'
@@ -97,6 +98,7 @@ export function ReplaceTierMediaModal({
   const pinnedRef = useRef<Hex | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'pinning' | 'writing' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
+  const [plan, setPlan] = useState<{ account: Address; chainIds: number[] } | null>(null)
 
   const itemName = current?.name ?? `Item #${tierId}`
   const busy = ['checking', 'pinning', 'writing'].includes(phase)
@@ -185,7 +187,16 @@ export function ReplaceTierMediaModal({
     setPreview(next.type.startsWith('image/') ? URL.createObjectURL(next) : null)
   }
 
-  const handleSubmit = async () => {
+  const assertTargetsReady = async (runTargets: ShopWriteTarget[], account: Address) => {
+    for (const target of runTargets) {
+      if (statusesRef.current[target.chainId]?.phase === 'done') continue
+      const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient | undefined
+      if (!client || !target.hook) throw new Error(`${chainName(target.chainId)} is unavailable.`)
+      await assertMetadataReady(client, { chainId: target.chainId, projectId: target.projectId, hook: target.hook, account })
+    }
+  }
+
+  const handleReview = async () => {
     if (!isConnected || !address) {
       openSignIn()
       return
@@ -197,14 +208,29 @@ export function ReplaceTierMediaModal({
       return
     }
     setMessage(null)
+    setPhase('checking')
+    try {
+      await assertTargetsReady(runTargets, address)
+      setPlan({ account: address, chainIds: runTargets.map(t => t.chainId) })
+    } catch (error) {
+      setMessage(shortError(error, 'Could not update the media.'))
+    } finally {
+      setPhase('form')
+    }
+  }
+
+  const handleSubmit = async () => {
+    if (!plan || !file || !address || busy) return
+    if (plan.account.toLowerCase() !== address.toLowerCase()) {
+      setPlan(null)
+      setMessage('Connected account changed. Start the media update again.')
+      return
+    }
+    const runTargets = chainTargets.filter(t => plan.chainIds.includes(t.chainId))
+    setMessage(null)
     try {
       setPhase('checking')
-      for (const target of runTargets) {
-        if (statusesRef.current[target.chainId]?.phase === 'done') continue
-        const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient | undefined
-        if (!client || !target.hook) throw new Error(`${chainName(target.chainId)} is unavailable.`)
-        await assertMetadataReady(client, { chainId: target.chainId, projectId: target.projectId, hook: target.hook, account: address })
-      }
+      await assertTargetsReady(runTargets, address)
 
       if (!pinnedRef.current) {
         setPhase('pinning')
@@ -301,38 +327,29 @@ export function ReplaceTierMediaModal({
   }
 
   const started = Object.keys(statuses).length > 0
-  const footer =
-    phase === 'done' ? (
-      <button type="button" onClick={onClose} className="btn-primary min-h-[44px] px-5 text-sm">
-        Done
+  const footer = (
+    <div className="flex justify-end gap-2">
+      <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
+        {started ? 'Close' : 'Cancel'}
       </button>
-    ) : (
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
-          {started ? 'Close' : 'Cancel'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleSubmit()}
-          disabled={busy || !file || !targets}
-          className="btn-primary min-h-[44px] px-5 text-sm"
-        >
-          {!isConnected
-            ? 'Sign in to continue'
-            : phase === 'checking'
-              ? 'Checking permission…'
-              : phase === 'pinning'
-                ? 'Uploading…'
-                : phase === 'writing'
-                  ? 'Updating…'
-                  : started
-                    ? 'Retry remaining chains'
-                    : selected.length > 1
-                      ? `Replace media on ${selected.length} chains`
-                      : 'Replace media'}
-        </button>
-      </div>
-    )
+      <button
+        type="button"
+        onClick={() => void handleReview()}
+        disabled={busy || !file || !targets}
+        className="btn-primary min-h-[44px] px-5 text-sm"
+      >
+        {!isConnected
+          ? 'Sign in to continue'
+          : phase === 'checking'
+            ? 'Checking permission…'
+            : started
+              ? 'Retry remaining chains'
+              : selected.length > 1
+                ? `Replace media on ${selected.length} chains`
+                : 'Replace media'}
+      </button>
+    </div>
+  )
 
   return (
     <ModalShell
@@ -342,92 +359,137 @@ export function ReplaceTierMediaModal({
       onClose={onClose}
       busy={busy}
     >
-      {phase === 'done' ? (
-        <div className="py-8 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">✓</span>
-          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">Media replaced</h3>
-          <p className="mt-2 text-sm text-smoke-700">
-            {itemName} now points at the new media on {selected.length === 1 ? chainName(selected[0]) : `${selected.length} chains`}. Indexers can take a few minutes to catch up.
-          </p>
+      <div className="space-y-5">
+        <div className="callout callout-info text-xs">
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. Name, description and category carry over.
         </div>
-      ) : (
-        <div className="space-y-5">
-          <div className="callout callout-info text-xs">
-            Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. Name, description and category carry over.
-          </div>
-          <label className="block">
-            <span className="field-label">New media</span>
-            <input
-              type="file"
-              accept="image/*,video/*,audio/*,application/pdf,text/*"
-              disabled={busy || started}
-              onChange={event => pick(event.target.files?.[0] ?? null)}
-              className="mt-2 block w-full text-sm text-smoke-700 file:mr-3 file:rounded-lg file:border file:border-smoke-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-            />
-            {preview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={preview} alt="" className="mt-3 max-h-48 rounded-lg object-contain" />
-            ) : file ? (
-              <p className="mt-2 text-xs text-smoke-500">{file.name}</p>
-            ) : null}
-          </label>
-          <div>
-            <span className="field-label">Chains</span>
-            {!targets || !eligible ? (
-              <div role="status" aria-label="Resolving linked shops" className="mt-2 h-9 w-full animate-pulse rounded-lg bg-smoke-100" />
-            ) : (
-              <ul className="mt-2 space-y-1.5">
-                {chainTargets.map(target => {
-                  const reason = eligible[target.chainId] ?? null
-                  const status = statuses[target.chainId]
-                  const checked = selected.includes(target.chainId)
-                  return (
-                    <li key={target.chainId} className="flex items-center justify-between gap-3 text-sm">
-                      <label className={`flex items-center gap-2 ${reason ? 'text-smoke-400' : 'text-ink'}`}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={!!reason || busy || started}
-                          onChange={event =>
-                            setSelected(prev =>
-                              event.target.checked
-                                ? [...prev, target.chainId]
-                                : prev.filter(id => id !== target.chainId),
-                            )
-                          }
-                          className="h-4 w-4 accent-ink"
-                        />
-                        <ChainIcon chainId={target.chainId} size={16} />
-                        {chainName(target.chainId)}
-                        {reason ? <span className="text-xs">— {reason}</span> : null}
-                      </label>
-                      {status ? (
-                        <span className={`text-xs ${status.phase === 'failed' ? 'text-error-700' : status.phase === 'done' ? 'text-melon-700' : 'text-smoke-500'}`}>
-                          {status.phase === 'signing'
-                            ? 'Awaiting signature…'
-                            : status.phase === 'confirming'
-                              ? 'Confirming…'
-                              : status.phase === 'done'
-                                ? 'Updated'
-                                : status.phase === 'uncertain'
-                                  ? 'Submitted, unconfirmed'
-                                  : status.phase === 'failed'
-                                    ? status.error
-                                    : 'Pending'}
-                        </span>
-                      ) : null}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </div>
+        <label className="block">
+          <span className="field-label">New media</span>
+          <input
+            type="file"
+            accept="image/*,video/*,audio/*,application/pdf,text/*"
+            disabled={busy || started}
+            onChange={event => pick(event.target.files?.[0] ?? null)}
+            className="mt-2 block w-full text-sm text-smoke-700 file:mr-3 file:rounded-lg file:border file:border-smoke-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+          />
+          {preview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="" className="mt-3 max-h-48 rounded-lg object-contain" />
+          ) : file ? (
+            <p className="mt-2 text-xs text-smoke-500">{file.name}</p>
+          ) : null}
+        </label>
+        <div>
+          <span className="field-label">Chains</span>
+          {!targets || !eligible ? (
+            <div role="status" aria-label="Resolving linked shops" className="mt-2 h-9 w-full animate-pulse rounded-lg bg-smoke-100" />
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {chainTargets.map(target => {
+                const reason = eligible[target.chainId] ?? null
+                const status = statuses[target.chainId]
+                const checked = selected.includes(target.chainId)
+                return (
+                  <li key={target.chainId} className="flex items-center justify-between gap-3 text-sm">
+                    <label className={`flex items-center gap-2 ${reason ? 'text-smoke-400' : 'text-ink'}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!!reason || busy || started}
+                        onChange={event =>
+                          setSelected(prev =>
+                            event.target.checked
+                              ? [...prev, target.chainId]
+                              : prev.filter(id => id !== target.chainId),
+                          )
+                        }
+                        className="h-4 w-4 accent-ink"
+                      />
+                      <ChainIcon chainId={target.chainId} size={16} />
+                      {chainName(target.chainId)}
+                      {reason ? <span className="text-xs">— {reason}</span> : null}
+                    </label>
+                    {status ? (
+                      <span className={`text-xs ${status.phase === 'failed' ? 'text-error-700' : status.phase === 'done' ? 'text-melon-700' : 'text-smoke-500'}`}>
+                        {status.phase === 'signing'
+                          ? 'Awaiting signature…'
+                          : status.phase === 'confirming'
+                            ? 'Confirming…'
+                            : status.phase === 'done'
+                              ? 'Updated'
+                              : status.phase === 'uncertain'
+                                ? 'Submitted, unconfirmed'
+                                : status.phase === 'failed'
+                                  ? status.error
+                                  : 'Pending'}
+                      </span>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
-      )}
-      {message ? (
+      </div>
+      {message && !plan ? (
         <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">
           {message}
         </p>
+      ) : null}
+      {plan && file ? (
+        <TxConfirmDialog
+          open
+          title={phase === 'done' ? 'Media replaced' : 'Confirm media update'}
+          rows={[
+            { label: 'Item', value: itemName },
+            { label: 'New media', value: file.name },
+            { label: 'On', value: plan.chainIds.map(id => chainName(id)).join(', ') },
+          ]}
+          steps={plan.chainIds.map(id => {
+            const status = statuses[id]
+            return {
+              key: String(id),
+              title: `Update ${chainName(id)}`,
+              detail:
+                status?.phase === 'uncertain'
+                  ? 'Submitted, unconfirmed'
+                  : status?.phase === 'failed'
+                    ? status.error
+                    : undefined,
+            }
+          })}
+          activeIndex={
+            started || phase !== 'form'
+              ? plan.chainIds.filter(id => statuses[id]?.phase === 'done').length
+              : -1
+          }
+          status={
+            phase === 'checking'
+              ? 'Checking permission…'
+              : phase === 'pinning'
+                ? 'Pinning the media and metadata…'
+                : phase === 'done'
+                  ? `${itemName} now points at the new media. Already-minted items update too. Indexers can take a few minutes to catch up.`
+                  : undefined
+          }
+          error={message}
+          busy={busy}
+          complete={phase === 'done'}
+          cancelLabel={started ? 'Close' : 'Cancel'}
+          action={
+            phase === 'checking'
+              ? 'Checking permission…'
+              : phase === 'pinning'
+                ? 'Uploading…'
+                : phase === 'writing'
+                  ? 'Updating…'
+                  : started
+                    ? 'Retry remaining chains'
+                    : 'Confirm & replace media'
+          }
+          onConfirm={() => void handleSubmit()}
+          onClose={phase === 'done' ? onClose : () => setPlan(null)}
+        />
       ) : null}
     </ModalShell>
   )

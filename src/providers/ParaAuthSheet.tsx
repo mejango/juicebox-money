@@ -600,7 +600,7 @@ export default function ParaAuthSheet({
 
       <>
           <p className="mb-2 mt-5 text-xs text-smoke-500">Or, use socials</p>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="scroll-row flex gap-1.5 overflow-x-auto">
             {OAUTH_METHODS.map(({ method, label }) => (
               <button
                 key={method}
@@ -610,7 +610,7 @@ export default function ParaAuthSheet({
                 title={label}
                 aria-label={label}
                 aria-busy={pendingMethod === method}
-                className="btn-secondary flex h-10 w-10 items-center justify-center !px-0 disabled:opacity-60"
+                className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0 disabled:opacity-60"
               >
                 <BrandMark
                   method={method}
@@ -649,7 +649,7 @@ export default function ParaAuthSheet({
               revealing this section once they arrive would resize a panel the
               visitor is already looking at — and it is centred, so it jumps. */}
           <p className="mb-2 mt-4 text-xs text-smoke-500">... or, a wallet.</p>
-          <div className="flex min-h-10 flex-wrap gap-1.5">
+          <div className="scroll-row flex min-h-10 gap-1.5 overflow-x-auto">
                 {connectors.map(connector => (
                   <button
                     key={connector.id}
@@ -661,7 +661,7 @@ export default function ParaAuthSheet({
                         .then(onClose)
                         .catch(cause => setLocalError(messageOf(cause)))
                     }}
-                    className="btn-secondary flex h-10 w-10 items-center justify-center !px-0"
+                    className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0"
                   >
                     {connector.icon ? (
                       // EIP-6963 hands us the wallet's own mark as a data URI.

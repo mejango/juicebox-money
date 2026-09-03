@@ -44,6 +44,11 @@ export type DraftStage = {
   cutFreqDays: string;
   /** Revnet, stage 2+: starts this many days after the previous stage. */
   daysAfter: string;
+  /** Project, stage 2+: start after N cycles of the previous ruleset, or
+   *  on a date (snapped up to the previous ruleset's cycle boundary). */
+  startMode: "cycles" | "date";
+  startCycles: string;
+  startDate: string;
   reservedPct: string;
   reservedSplits: DraftSplit[];
   payouts: "none" | "flexible" | "routed";
@@ -111,6 +116,9 @@ export function newDraftStage(
     cutPct: "",
     cutFreqDays: "30",
     daysAfter: "30",
+    startMode: "cycles",
+    startCycles: "1",
+    startDate: "",
     reservedPct: "0",
     reservedSplits: [],
     payouts: "none",
@@ -163,6 +171,31 @@ const UNIT_SECONDS = {
   years: 31_536_000,
 } as const;
 
+/** Unix seconds a later project stage must start at or after, given the
+ *  previous stage's (estimated) start and duration. 0 = the previous
+ *  stage's next cycle boundary, today's default encoding. */
+export function stageMustStartAtOrAfter(
+  stage: DraftStage,
+  prevStart: number,
+  prevDuration: number,
+): number {
+  if (stage.startMode === "date") {
+    return stage.startDate
+      ? Math.floor(new Date(stage.startDate).getTime() / 1000)
+      : 0;
+  }
+  const cycles = Number(stage.startCycles) || 1;
+  return cycles > 1 ? prevStart + cycles * prevDuration : 0;
+}
+
+export function stageStartOk(stage: DraftStage): boolean {
+  if (stage.startMode === "date") {
+    return !Number.isNaN(new Date(stage.startDate).getTime());
+  }
+  const n = Number(stage.startCycles);
+  return Number.isInteger(n) && n >= 1;
+}
+
 /** The stage's duration in seconds (0 = flexible). */
 export function stageDurationSeconds(stage: DraftStage): number {
   if (stage.durationValue === "custom") {
@@ -173,7 +206,7 @@ export function stageDurationSeconds(stage: DraftStage): number {
   return Number(stage.durationValue) || 0;
 }
 
-function secondsLabel(seconds: number): string {
+export function secondsLabel(seconds: number): string {
   if (seconds % 31_536_000 === 0 && seconds >= 31_536_000)
     return `${seconds / 31_536_000} year${seconds === 31_536_000 ? "" : "s"}`;
   if (seconds % 604_800 === 0 && seconds >= 604_800)
@@ -255,6 +288,7 @@ export function stageOk(
             (stage.routedModeUsdc !== "all" ||
               splitsTotal(stage.payoutSplitsUsdc, "percent") <= 100))))) &&
     (stage.durationValue !== "custom" || stageDurationSeconds(stage) > 0) &&
+    (isFirst || stageStartOk(stage)) &&
     (!stage.cashOuts || stageTaxOk(stage)) &&
     (!stage.surplusCapOn ||
       (Number(stage.surplusAmount) > 0 && numOk(stage.surplusAmount)))
@@ -278,6 +312,17 @@ export function stageRoutesEverything(
 }
 
 /** Summary parts for a stage (website/'s stageSummaryRaw). */
+/** "after 3 cycles of Ruleset #1" / "on Jan 5, 2027 (snapped to Ruleset #1's cycle)". */
+function startLabel(stage: DraftStage, index: number): string {
+  if (stage.startMode === "date") {
+    return stage.startDate
+      ? `Starts ${new Date(stage.startDate).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}, snapped to Ruleset #${index}'s cycle`
+      : "Starts on a date";
+  }
+  const n = Number(stage.startCycles) || 1;
+  return `Starts after ${n} cycle${n === 1 ? "" : "s"} of Ruleset #${index}`;
+}
+
 export function stageSummaryParts(
   stage: DraftStage,
   index: number,
@@ -297,7 +342,7 @@ export function stageSummaryParts(
       `Starts ${Number(stage.daysAfter) || "?"} days after Stage #${index}`,
     );
   } else {
-    parts.push(`Starts after Ruleset #${index}`);
+    parts.push(startLabel(stage, index));
   }
   const duration = stageDurationSeconds(stage);
   if (flavor !== "revnet")
@@ -539,7 +584,9 @@ export function StageRulesEditor({
           ? stage.scheduleOn && stage.schedule
             ? "Scheduled"
             : "At launch"
-          : `After Ruleset #${index}`
+          : stage.startMode === "date"
+            ? `On a date`
+            : `After ${Number(stage.startCycles) || 1}× Ruleset #${index}`
       } | ${
         duration === 0
           ? "flexible"
@@ -640,6 +687,59 @@ export function StageRulesEditor({
         ) : null}
         {isRevnet ? null : (
           <>
+            {isFirst ? null : (
+              <div className="mb-3">
+                <span className="field-label">Starts</span>
+                <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                  <select
+                    value={stage.startMode}
+                    onChange={(e) =>
+                      set({
+                        startMode: e.target.value as DraftStage["startMode"],
+                      })
+                    }
+                    disabled={disabled}
+                    className="input-well select-caret min-h-[44px] w-36 px-3.5 pr-9 text-sm disabled:opacity-60"
+                  >
+                    <option value="cycles">After</option>
+                    <option value="date">On a date</option>
+                  </select>
+                  {stage.startMode === "cycles" ? (
+                    <>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={stage.startCycles}
+                        onChange={(e) =>
+                          set({ startCycles: e.target.value.slice(0, 5) })
+                        }
+                        disabled={disabled}
+                        className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                          stageStartOk(stage) ? "" : "!border-red-400"
+                        }`}
+                      />
+                      <span className="text-sm text-smoke-700">
+                        cycle{Number(stage.startCycles) === 1 ? "" : "s"} of
+                        Ruleset #{index}
+                      </span>
+                    </>
+                  ) : (
+                    <DateTimeField
+                      value={stage.startDate}
+                      onChange={(startDate) => set({ startDate })}
+                      disabled={disabled}
+                      ariaLabel={`Ruleset #${index + 1} start date and time`}
+                      inputClassName="input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                    />
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  {stage.startMode === "cycles"
+                    ? `Ruleset #${index} repeats that many times, then these rules take over.`
+                    : `Rule changes land on cycle boundaries, so the start snaps to Ruleset #${index}'s first cycle ending at or after this date.`}
+                </p>
+              </div>
+            )}
             <div className="mb-3">
               <CheckRow
                 checked={stage.acceptPayments}

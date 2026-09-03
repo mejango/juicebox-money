@@ -55,6 +55,7 @@ Legend:
 | Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take | **E** | `contracts/transaction-backlog.test.ts` |
 | Remove Uniswap V4 liquidity | `modifyLiquidities` burn + take with 95% floors | **E** | `contracts/transaction-backlog.test.ts` |
 | Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts` |
+| Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
 | Submit a reviewed direct write | review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |

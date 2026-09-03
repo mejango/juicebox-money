@@ -1,11 +1,11 @@
 'use client'
 
-import { TxSteps } from '@/components/ui/TxSteps'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import {
@@ -29,8 +29,8 @@ import {
   readBoundedProjectHandle,
   readBoundedProjectHandleParts,
   readDirectEnsProjectRecord,
-  type ProjectHandleSetupPhase,
 } from '@/lib/project-handles'
+import { chainName } from '@/lib/urn'
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
 import {
@@ -128,49 +128,6 @@ function dedupeAddresses(addresses: readonly Address[]): Address[] {
     seen.add(key)
     return true
   })
-}
-
-function ProjectHandleSetupProgress({
-  phase,
-  expectedRecord,
-}: {
-  phase: ProjectHandleSetupPhase | null
-  expectedRecord: string
-}) {
-  const activeStep =
-    phase === 'verified'
-      ? 2
-      : phase === 'authority-claim'
-        ? 1
-        : phase === 'ens-record'
-          ? 0
-          : null
-  const steps = [
-    {
-      id: 'ens-record',
-      label: (
-        <>
-          Set the ENS{' '}
-          <span className="font-mono">{PROJECT_HANDLE_TEXT_KEY}</span> text
-          record to <span className="font-mono">{expectedRecord}</span>
-        </>
-      ),
-    },
-    {
-      id: 'authority-claim',
-      label: <>Publish the JBProjectHandles reverse claim on Ethereum</>,
-    },
-  ]
-
-  return (
-    <TxSteps
-      steps={steps.map(({ id, label }) => ({ key: id, title: label }))}
-      activeIndex={activeStep ?? -1}
-      ariaLabel="Project handle setup progress"
-      intro="Two independently authorized onchain steps publish this handle. A verified step is skipped when you resume."
-      className="mt-4 rounded-xl border border-smoke-200 bg-white p-3"
-    />
-  )
 }
 
 async function readHandleAuthorityIdentities(
@@ -292,6 +249,7 @@ export function ProjectHandleCard({
       ),
   })
   const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [input, setInput] = useState('')
   const [memoryDraft, setMemoryDraft] =
     useState<ScopedProjectHandleDraft | null>(null)
@@ -412,6 +370,7 @@ export function ProjectHandleCard({
   const openEditor = () => {
     setError(null)
     setProgress(null)
+    setConfirming(false)
     const resumable =
       memoryDraft?.key === draftKey
         ? memoryDraft.ensName
@@ -756,6 +715,20 @@ export function ProjectHandleCard({
     }
   }
 
+  const openConfirm = () => {
+    if (!normalized) {
+      setError('Enter a valid ENS name ending in .eth.')
+      return
+    }
+    if (!address) {
+      openSignIn()
+      return
+    }
+    setError(null)
+    setProgress(null)
+    setConfirming(true)
+  }
+
   const saveHandle = async () => {
     if (sequenceRunning || busy) return
     // Re-read and complete the ENS half even when the preview is stale. Only a
@@ -914,6 +887,18 @@ export function ProjectHandleCard({
     !previewQuery.data?.resolver ||
     alreadyVerified ||
     (setupPhase === 'authority-claim' && crossChainAuthorityBlocked)
+  const setupStepIndex =
+    busy === 'ens'
+      ? 0
+      : busy === 'claim'
+        ? 1
+        : setupPhase === 'verified'
+          ? 2
+          : setupPhase === 'authority-claim'
+            ? 1
+            : setupPhase === 'ens-record'
+              ? 0
+              : -1
 
   return (
     <section className="card p-5">
@@ -1011,7 +996,7 @@ export function ProjectHandleCard({
                     <button
                       type="button"
                       disabled={setupDisabled}
-                      onClick={() => void saveHandle()}
+                      onClick={openConfirm}
                       className="btn-primary min-h-[44px] px-5 text-sm disabled:opacity-50"
                     >
                       {busy === 'ens'
@@ -1094,11 +1079,6 @@ export function ProjectHandleCard({
                 </div>
               ) : null}
 
-              <ProjectHandleSetupProgress
-                phase={setupPhase}
-                expectedRecord={expectedRecord}
-              />
-
               {needsMainnetSafe ? (
                 <div className="callout callout-warning mt-3 text-xs leading-relaxed">
                   <p>
@@ -1145,9 +1125,81 @@ export function ProjectHandleCard({
                 </div>
               ) : null}
 
-              {progress ? (
+              {progress && !confirming ? (
                 <p className="text-sm text-bluebs-700">{progress}</p>
               ) : null}
+              {pendingSafeUrl && !confirming ? (
+                <a
+                  href={pendingSafeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block text-sm text-bluebs-600 hover:underline"
+                >
+                  Open pending handle setup in Safe ↗
+                </a>
+              ) : null}
+              <ErrorNote message={confirming ? '' : (error ?? '')} />
+              </div>
+            </ModalShell>
+          ) : null}
+
+          {editing && confirming && normalized ? (
+            <TxConfirmDialog
+              open
+              title={alreadyVerified ? 'Handle verified' : 'Confirm handle'}
+              rows={[
+                { label: 'Handle', value: `@${normalized.handle}`, strong: true },
+                { label: 'ENS name', value: normalized.ensName },
+                {
+                  label: 'Project',
+                  value: `${chainName(deployment.chainId)} #${deployment.projectId}`,
+                },
+                {
+                  label: 'ENS record',
+                  value: `${PROJECT_HANDLE_TEXT_KEY} = ${expectedRecord}`,
+                  mono: true,
+                },
+                { label: 'On', value: chainName(PROJECT_HANDLES_CHAIN_ID) },
+              ]}
+              steps={[
+                {
+                  key: 'ens-record',
+                  title: (
+                    <>
+                      Set the ENS{' '}
+                      <span className="font-mono">{PROJECT_HANDLE_TEXT_KEY}</span>{' '}
+                      text record to{' '}
+                      <span className="font-mono">{expectedRecord}</span>
+                    </>
+                  ),
+                },
+                {
+                  key: 'authority-claim',
+                  title: 'Publish the JBProjectHandles reverse claim on Ethereum',
+                },
+              ]}
+              stepsIntro="Two independently authorized onchain steps publish this handle. A verified step is skipped when you resume."
+              activeIndex={setupStepIndex}
+              status={progress}
+              error={error}
+              busy={dialogLocked}
+              complete={alreadyVerified}
+              cancelLabel={pendingSafeUrl ? 'Close' : 'Cancel'}
+              actionDisabled={setupDisabled}
+              action={
+                error
+                  ? 'Retry'
+                  : setupPhase === 'authority-claim'
+                    ? 'Confirm & publish handle'
+                    : 'Confirm & set handle'
+              }
+              onConfirm={() => void saveHandle()}
+              onClose={() => {
+                if (dialogLocked) return
+                setConfirming(false)
+                if (alreadyVerified) setEditing(false)
+              }}
+            >
               {pendingSafeUrl ? (
                 <a
                   href={pendingSafeUrl}
@@ -1158,9 +1210,7 @@ export function ProjectHandleCard({
                   Open pending handle setup in Safe ↗
                 </a>
               ) : null}
-              <ErrorNote message={error ?? ''} />
-              </div>
-            </ModalShell>
+            </TxConfirmDialog>
           ) : null}
         </div>
       )}

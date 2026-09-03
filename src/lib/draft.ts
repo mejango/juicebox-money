@@ -124,6 +124,9 @@ function sanitizeStage(raw: unknown): DraftStage {
     cutPct: numStr(s.cutPct, 5),
     cutFreqDays: numStr(s.cutFreqDays, 5) || '30',
     daysAfter: numStr(s.daysAfter, 5) || '30',
+    startMode: s.startMode === 'date' ? 'date' : 'cycles',
+    startCycles: numStr(s.startCycles, 5) || '1',
+    startDate: str(s.startDate, 32),
     reservedPct: numStr(s.reservedPct, 5) || '0',
     reservedSplits: (Array.isArray(s.reservedSplits) ? s.reservedSplits : [])
       .slice(0, 100)

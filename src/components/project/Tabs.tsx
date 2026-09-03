@@ -281,13 +281,13 @@ export function ProjectTabs({
                 </button>
               )
             })}
+            <ProjectOverflowMenu
+              tabs={overflowTabs}
+              activeSlug={activityActive ? activitySlug : normalActiveSlug}
+              expanded={overflowExpanded}
+              onToggle={() => setOverflowExpanded(current => !current)}
+            />
           </div>
-          <ProjectOverflowMenu
-            tabs={overflowTabs}
-            activeSlug={activityActive ? activitySlug : normalActiveSlug}
-            expanded={overflowExpanded}
-            onToggle={() => setOverflowExpanded(current => !current)}
-          />
         </div>
 
         <div
