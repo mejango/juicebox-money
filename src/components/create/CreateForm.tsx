@@ -107,9 +107,9 @@ import {
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
 import {
-  TransactionProgressImage,
-  usePreloadTransactionAnimation,
-} from "@/components/TransactionInProgress";
+  TxConfirmDialog,
+  type TxConfirmRow,
+} from "@/components/ui/TxConfirmDialog";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -266,7 +266,6 @@ function StepBadge({ n }: { n: number }) {
 }
 
 export function CreateForm() {
-  usePreloadTransactionAnimation();
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
   const { switchChainAsync } = useSwitchChain();
@@ -405,6 +404,7 @@ export function CreateForm() {
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
   // validation throws inside launch()'s try.
@@ -1588,6 +1588,7 @@ export function CreateForm() {
     setStatuses({});
     setLaunchError(null);
     setPhase("form");
+    setConfirmOpen(false);
   };
 
   // Poll bendystraw for freshly launched projects until they're indexed.
@@ -1766,6 +1767,7 @@ export function CreateForm() {
       setPhase("done");
     } else {
       setPhase("failed");
+      setConfirmOpen(true);
       // A chain restored from `signing` has no transaction hash, but a mobile or
       // WalletConnect wallet may have broadcast AFTER the reload — resuming would re-send
       // and mint a DUPLICATE project there. Nothing on-chain can rule that out from here,
@@ -1854,10 +1856,193 @@ export function CreateForm() {
     })
     .map((id) => chainName(id));
 
+  // ---- Confirm dialog: review rows, one wallet step per chain, and the run's
+  // progress. Rendered on the success view too so Done reveals it. ----
+  const ownerValue = !authorityEnabled ? (
+    "No retained authority"
+  ) : ownerOverrides.length > 0 ? (
+    "Set per chain"
+  ) : resolvedAddress(owner.trim()) ? (
+    <AddressLabel address={resolvedAddress(owner.trim())!} />
+  ) : owner.trim() ? (
+    owner.trim()
+  ) : address ? (
+    <AddressLabel address={address} />
+  ) : (
+    "Wallet connected at launch"
+  );
+  const launchRows: TxConfirmRow[] = [
+    {
+      label: flavor === "revnet" ? "Revnet operator" : "Project owner",
+      value: ownerValue,
+    },
+    {
+      label: "Launching",
+      value:
+        flavor === "simple"
+          ? "Simple project"
+          : flavor === "revnet"
+            ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ""}`
+            : "Project",
+    },
+    {
+      label: "Chains",
+      value: `${selected.map((id) => chainName(id)).join(", ")}${
+        selected.length > 1 && !linkChains ? " (not linked)" : ""
+      }`,
+    },
+    {
+      label: "Accounting",
+      value: customOn
+        ? `$${customMeta?.symbol ?? "TOKEN"}`
+        : accepts.map((t) => (t === "eth" ? "ETH" : "USDC")).join(" + "),
+    },
+    ...(isSimpleProject
+      ? [
+          {
+            label: "Rules",
+            value: `Issues 10,000 tokens per ${unitLabel} | Unlimited owner withdrawals | Cash outs off`,
+          },
+        ]
+      : stages.map((stage, i) => ({
+          label: `${flavor === "revnet" ? "Stage" : "Ruleset"} #${i + 1}`,
+          value: stageSummary(stage, i, unitLabel, rulesFlavor, multiToken),
+        }))),
+    {
+      label: selected.length > 1 ? "Creation fees" : "Creation fee",
+      value:
+        totalFee !== null
+          ? `${formatTokenAmount(totalFee, 18, 6)} ${
+              selected.length === 1
+                ? (JB_CHAINS[selected[0] as JBChainId]?.nativeTokenSymbol ??
+                  "ETH")
+                : "ETH"
+            }`
+          : "…",
+      strong: true,
+    },
+  ];
+  const launchSteps = selected.map((chainId) => {
+    const s = statuses[chainId];
+    const detail =
+      !s || s.phase === "pending"
+        ? undefined
+        : s.phase === "signing"
+          ? "Confirm in your wallet…"
+          : s.phase === "confirming"
+            ? s.safeProposalHash
+              ? `Safe proposal ${s.safeProposalHash} — co-sign and execute it in your Safe`
+              : "Confirming onchain…"
+            : s.phase === "uncertain"
+              ? "Submitted; confirmation is unavailable. Do not submit again."
+              : s.phase === "done"
+                ? `Launched — Project #${s.projectId}`
+                : "Failed";
+    return {
+      key: String(chainId),
+      title: `Launch on ${chainName(chainId)}`,
+      detail,
+    };
+  });
+  const launchNext = selected.findIndex(
+    (id) => statuses[id]?.phase !== "done",
+  );
+  const launchActiveIndex =
+    phase === "form" || phase === "pinning"
+      ? -1
+      : launchNext === -1
+        ? selected.length
+        : launchNext;
+  const stalledChain = selected
+    .map((id) => statuses[id])
+    .find((s) => s?.phase === "failed" || s?.phase === "uncertain");
+  // While a Safe proposal is pending, `txHash` holds the safeTxHash — not a
+  // transaction hash — so the explorer link waits for the executing hash.
+  const launchTxLinks = selected.flatMap((id) => {
+    const s = statuses[id];
+    const url =
+      s?.txHash && !s.safeProposalHash ? etherscanTxUrl(id, s.txHash) : null;
+    return url ? [{ chainId: id, txHash: s!.txHash!, url }] : [];
+  });
+  const launchLocked = phase === "pinning" || phase === "launching";
+  const launchDialog = confirmOpen ? (
+    <TxConfirmDialog
+      open
+      eyebrow="Launch"
+      title={phase === "done" ? `${name.trim()} is live` : "Confirm launch"}
+      rows={launchRows}
+      steps={launchSteps}
+      activeIndex={launchActiveIndex}
+      status={phase === "pinning" ? "Saving your project details…" : null}
+      error={launchError ?? stalledChain?.error ?? null}
+      busy={launchLocked}
+      complete={phase === "done"}
+      action={
+        phase === "failed"
+          ? stalledChain?.phase === "uncertain"
+            ? "Check again"
+            : "Try again"
+          : "Confirm & launch"
+      }
+      onConfirm={() => (phase === "failed" ? retry() : void launch())}
+      onClose={() => {
+        if (launchLocked) return;
+        setConfirmOpen(false);
+        if (phase === "form") setLaunchError(null);
+      }}
+    >
+      {launchTxLinks.length > 0 ? (
+        <ul className="space-y-1">
+          {launchTxLinks.map(({ chainId, txHash, url }) => (
+            <li key={chainId}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate font-mono text-[10px] text-bluebs-600 underline"
+              >
+                View {txHash} on {chainName(chainId)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {phase === "failed" ? (
+        <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
+          <p>
+            {launchedChainNames.length > 0
+              ? `Abandoning stops this run. The ${
+                  launchedChainNames.length === 1 ? "project" : "projects"
+                } already launched on ${launchedChainNames.join(", ")} ${
+                  launchedChainNames.length === 1 ? "is" : "are"
+                } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
+                  launchedChainNames.length === 1 ? "it" : "them"
+                }.${
+                  maybeLaunchedChainNames.length > 0
+                    ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
+                    : ""
+                }`
+              : maybeLaunchedChainNames.length > 0
+                ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
+                : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
+          </p>
+          <button
+            type="button"
+            onClick={abandonLaunch}
+            className="mt-1 font-medium underline underline-offset-2"
+          >
+            Abandon this launch
+          </button>
+        </div>
+      ) : null}
+    </TxConfirmDialog>
+  ) : null;
+
   // ---- Success view ----
   if (phase === "done") {
     return (
       <div className="relative mx-auto max-w-2xl px-4 py-14 sm:px-6 sm:py-20">
+        {launchDialog}
         <div className="card p-8 text-center sm:p-10">
           <div className="relative mx-auto w-fit" aria-hidden>
             <Image
@@ -3371,12 +3556,6 @@ export function CreateForm() {
           />
         </div>
 
-        <p className="mt-5 text-sm leading-relaxed text-smoke-700">
-          {selected.length > 1
-            ? `You’ll confirm one transaction per chain — ${selected.length} transactions total.`
-            : "You’ll confirm one transaction to launch."}
-        </p>
-
         {isSafeConnection(config) ? (
           // The start time is pinned now because every chain must encode the same value —
           // that shared value is what links the chains. A multisig executing days later
@@ -3405,7 +3584,13 @@ export function CreateForm() {
         ) : null}
 
         <button
-          onClick={launch}
+          onClick={() => {
+            if (!connected || !address) {
+              openSignIn();
+              return;
+            }
+            if (canLaunch) setConfirmOpen(true);
+          }}
           disabled={connected && !canLaunch}
           className="btn-primary mt-2 min-h-[56px] w-full text-base"
         >
@@ -3421,127 +3606,6 @@ export function CreateForm() {
                     ? `Launch on ${selected.length} chains`
                     : "Launch project"}
         </button>
-
-        {launchError ? (
-          <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {launchError}
-          </p>
-        ) : null}
-
-        {phase === "failed" ? (
-          <div className="mt-3 rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
-            <p>
-              {launchedChainNames.length > 0
-                ? `Abandoning stops this run. The ${
-                    launchedChainNames.length === 1 ? "project" : "projects"
-                  } already launched on ${launchedChainNames.join(", ")} ${
-                    launchedChainNames.length === 1 ? "is" : "are"
-                  } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
-                    launchedChainNames.length === 1 ? "it" : "them"
-                  }.${
-                    maybeLaunchedChainNames.length > 0
-                      ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
-                      : ""
-                  }`
-                : maybeLaunchedChainNames.length > 0
-                  ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
-                  : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
-            </p>
-            <button
-              type="button"
-              onClick={abandonLaunch}
-              className="mt-1 font-medium underline underline-offset-2"
-            >
-              Abandon this launch
-            </button>
-          </div>
-        ) : null}
-
-        {/* Per-chain progress checklist */}
-        {phase === "launching" ||
-        Object.values(statuses).some((s) => s.phase !== "pending") ? (
-          <ul className="mt-5 space-y-2" aria-live="polite">
-            {selected.map((chainId) => {
-              const s = statuses[chainId] ?? { phase: "pending" as const };
-              // While a Safe proposal is pending, `txHash` holds the
-              // safeTxHash — not a transaction hash. Linking an explorer at it
-              // yields a dead page, so suppress the link until the executing
-              // transaction hash replaces it.
-              const txUrl =
-                s.txHash && !s.safeProposalHash
-                  ? etherscanTxUrl(chainId, s.txHash)
-                  : null;
-              const label =
-                s.phase === "pending"
-                  ? "Waiting"
-                  : s.phase === "signing"
-                    ? "Confirm in your wallet…"
-                    : s.phase === "confirming"
-                      ? "Confirming onchain…"
-                      : s.phase === "uncertain"
-                        ? (s.error ??
-                          "Submitted; confirmation is unavailable. Do not submit again.")
-                        : s.phase === "done"
-                          ? `Launched — Project #${s.projectId}`
-                          : (s.error ?? "Failed");
-              return (
-                <li
-                  key={chainId}
-                  className="flex items-center gap-3 rounded-xl border border-smoke-200 bg-white px-4 py-3"
-                >
-                  {s.phase === "done" ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-melon-400">
-                      <CheckIcon className="h-3.5 w-3.5 text-ink" />
-                    </span>
-                  ) : s.phase === "failed" || s.phase === "uncertain" ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-red-500 text-xs font-bold text-red-600">
-                      {s.phase === "uncertain" ? "?" : "!"}
-                    </span>
-                  ) : s.phase === "pending" ? (
-                    <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
-                  ) : (
-                    <TransactionProgressImage className="h-9 w-9" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
-                      <ChainIcon chainId={chainId} size={16} />
-                      {chainName(chainId)}
-                    </p>
-                    <p
-                      className={`text-xs ${s.phase === "failed" || s.phase === "uncertain" ? "text-red-600" : "text-smoke-700"}`}
-                    >
-                      {label}
-                    </p>
-                    {txUrl ? (
-                      <a
-                        href={txUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block truncate font-mono text-[10px] text-bluebs-600 underline"
-                      >
-                        View {s.txHash}
-                      </a>
-                    ) : s.safeProposalHash ? (
-                      <p className="mt-1 block truncate font-mono text-[10px] text-smoke-600">
-                        Safe proposal {s.safeProposalHash} — co-sign and execute
-                        it in your Safe
-                      </p>
-                    ) : null}
-                  </div>
-                  {(s.phase === "failed" || s.phase === "uncertain") &&
-                  phase === "failed" ? (
-                    <button
-                      onClick={retry}
-                      className="btn-secondary shrink-0 px-4 py-1.5 text-xs"
-                    >
-                      {s.phase === "uncertain" ? "Check again" : "Retry"}
-                    </button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
       </section>
 
       {/* Back / Next wizard footer */}
@@ -3566,6 +3630,7 @@ export function CreateForm() {
         ) : null}
       </div>
 
+      {launchDialog}
     </div>
   );
 }

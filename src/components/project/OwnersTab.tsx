@@ -52,6 +52,7 @@ import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { donutSlicePath } from '@/lib/donut'
 import {
   LiquidityPositions,
@@ -843,6 +844,55 @@ function ClaimFlow({
     tx.send(review.request)
   }
 
+  const closeReview = () => {
+    if (busy) return
+    setReview(null)
+    if (tx.phase === 'error') tx.reset()
+  }
+
+  const dialog = review ? (
+    <TxConfirmDialog
+      open
+      title={tx.phase === 'success' ? 'Claimed' : 'Confirm claim'}
+      rows={[
+        {
+          label: 'Claim',
+          value: `${formatTokenAmount(review.amount)} credits`,
+          strong: true,
+        },
+        { label: 'To', value: review.account, mono: true },
+        { label: 'On', value: chainName(chainId) },
+      ]}
+      steps={[{ title: 'Claim credits as ERC-20' }]}
+      activeIndex={tx.phase === 'idle' ? -1 : 0}
+      status={
+        tx.phase === 'pending' && txUrl ? (
+          <>
+            Waiting for confirmation —{' '}
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2"
+            >
+              view transaction
+            </a>
+          </>
+        ) : null
+      }
+      error={tx.error}
+      busy={busy}
+      complete={tx.phase === 'success'}
+      action={tx.phase === 'error' ? 'Retry' : 'Confirm claim'}
+      onConfirm={handleConfirm}
+      onClose={closeReview}
+    >
+      <p className="text-sm text-smoke-700">
+        Nothing else changes — same balance, now movable.
+      </p>
+    </TxConfirmDialog>
+  ) : null
+
   if (tx.phase === 'success') {
     return (
       <div className="callout callout-success mt-2 text-xs">
@@ -860,47 +910,30 @@ function ClaimFlow({
             </a>
           </>
         ) : null}
+        {dialog}
       </div>
     )
   }
 
   return (
     <div className="mt-2">
-      {review ? (
-        <div className="callout callout-info text-xs">
-          {formatTokenAmount(review.amount)} credits will become ERC-20 tokens
-          in your wallet. Nothing else changes — same balance, now movable.
-        </div>
-      ) : null}
       <button
-        onClick={review ? handleConfirm : handleReview}
-        disabled={busy}
+        onClick={handleReview}
+        disabled={busy || !!review}
         className="btn-secondary mt-2 min-h-[36px] px-4 text-xs"
       >
         {checking
           ? 'Checking your credits…'
           : txPhaseLabel(tx.phase, {
               pending: 'Claiming…',
-              idle: review ? 'Confirm claim' : 'Claim as ERC-20',
+              idle: 'Claim as ERC-20',
             })}
       </button>
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
       <TxError
-        error={flowError ?? tx.error}
+        error={flowError}
         className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
       />
+      {dialog}
     </div>
   )
 }
@@ -1689,6 +1722,9 @@ function ChainSplitsBlock({
           projectId={projectId}
           controller={controller}
           pending={availablePending}
+          splits={rows}
+          symbol={symbol}
+          isRevnet={isRevnet}
           onDone={() => void refetchPending()}
         />
       </div>
@@ -1706,12 +1742,18 @@ function DistributeFlow({
   projectId,
   controller,
   pending,
+  splits,
+  symbol,
+  isRevnet,
   onDone,
 }: {
   chainId: JBChainId
   projectId: number
   controller: Address | undefined
   pending: bigint | undefined
+  splits: readonly SplitRow[]
+  symbol: string
+  isRevnet: boolean
   onDone: () => void
 }) {
   const { isConnected, openSignIn } = useWallet()
@@ -1720,6 +1762,12 @@ function DistributeFlow({
   const busy = tx.busy
 
   const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
+
+  /** The frozen request and the pending amount it will distribute. */
+  const [plan, setPlan] = useState<{
+    request: ReturnType<typeof buildSendReservedTokensRequest>
+    amount: bigint
+  } | null>(null)
 
   useEffect(() => {
     if (tx.phase === 'success') onDone()
@@ -1732,20 +1780,84 @@ function DistributeFlow({
       openSignIn()
       return
     }
-    tx.send(
-      buildSendReservedTokensRequest({
+    setPlan({
+      request: buildSendReservedTokensRequest({
         chainId,
         controller,
         projectId: BigInt(projectId),
       }),
-    )
+      amount: pending,
+    })
   }
+
+  const handleConfirm = () => {
+    if (!plan || busy) return
+    tx.send(plan.request)
+  }
+
+  const closePlan = () => {
+    if (busy) return
+    setPlan(null)
+    if (tx.phase === 'error') tx.reset()
+  }
+
+  const planRows: TxConfirmRow[] = plan
+    ? [
+        {
+          label: 'Send',
+          value: `${formatTokenAmount(plan.amount)} ${symbol}`,
+          strong: true,
+        },
+        ...(splits.length
+          ? splits.map((split) => ({
+              label: (
+                <SplitRecipient split={split} chainId={chainId} showBurn />
+              ),
+              value: `${formatTokenAmount(
+                (plan.amount * BigInt(split.percent)) /
+                  BigInt(SPLITS_TOTAL_PERCENT),
+              )} ${symbol}`,
+            }))
+          : [{ label: 'To', value: isRevnet ? 'Revnet owner' : 'Project owner' }]),
+        { label: 'On', value: chainName(chainId) },
+      ]
+    : []
 
   return (
     <div className="mt-2 flex flex-col items-end">
+      {plan ? (
+        <TxConfirmDialog
+          open
+          title={tx.phase === 'success' ? 'Distributed' : 'Confirm distribution'}
+          rows={planRows}
+          steps={[{ title: 'Send pending splits' }]}
+          activeIndex={tx.phase === 'idle' ? -1 : 0}
+          status={
+            tx.phase === 'pending' && txUrl ? (
+              <>
+                Waiting for confirmation —{' '}
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  view transaction
+                </a>
+              </>
+            ) : null
+          }
+          error={tx.error}
+          busy={busy}
+          complete={tx.phase === 'success'}
+          action={tx.phase === 'error' ? 'Retry' : 'Confirm & distribute'}
+          onConfirm={handleConfirm}
+          onClose={closePlan}
+        />
+      ) : null}
       <button
         onClick={handleDistribute}
-        disabled={busy || !controller || !pending || pending <= 0n}
+        disabled={busy || !!plan || !controller || !pending || pending <= 0n}
         className="btn-secondary min-h-[40px] px-4 text-sm"
       >
         {tx.phase === 'success'
@@ -1773,23 +1885,6 @@ function DistributeFlow({
           ) : null}
         </p>
       ) : null}
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
-      <TxError
-        error={tx.error}
-        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
-      />
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { TxSteps } from '@/components/ui/TxSteps'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -408,6 +408,75 @@ export function MarketEditPanel({
       </span>
     )
 
+  const reviewRows = (r: Reviewed): TxConfirmRow[] => {
+    const rows: TxConfirmRow[] = [
+      { label: 'Market', value: `${ids} on ${chainName(chainId)}` },
+      {
+        label: 'Corridor',
+        value: `${corridor ? `${formatPrice(corridor.floor)} – ${formatPrice(corridor.ceiling)} ${pairSym}/${sym}` : '—'}${r.plan.refit ? ' (re-fit)' : ' (kept)'}`,
+      },
+    ]
+    if (r.plan.token) rows.push({ label: `${sym} side`, value: sideLine(r.plan.token, 'token') })
+    if (r.plan.pair) rows.push({ label: `${pairSym} side`, value: sideLine(r.plan.pair, 'pair') })
+    if (r.plan.tokenFlow > 0n || r.plan.pairFlow > 0n) {
+      rows.push({
+        label: 'From your wallet',
+        value: amountsText(positive(r.plan.tokenFlow), positive(r.plan.pairFlow)),
+      })
+    }
+    rows.push({
+      label: 'Back to your wallet',
+      value:
+        r.plan.tokenFlow < 0n || r.plan.pairFlow < 0n
+          ? `${amountsText(positive(-r.plan.tokenFlow), positive(-r.plan.pairFlow))} + unclaimed fees`
+          : 'Unclaimed fees',
+    })
+    if (r.plan.tokenFunding > 0n || r.plan.pairFunding > 0n) {
+      rows.push({
+        label: 'Authorizes up to',
+        value: `${amountsText(r.plan.tokenFunding, r.plan.pairFunding)} (1% price headroom)`,
+      })
+    }
+    if (r.plan.tokenMinimum > 0n || r.plan.pairMinimum > 0n) {
+      rows.push({
+        label: 'Enforced onchain',
+        value: `At least ${amountsText(r.plan.tokenMinimum, r.plan.pairMinimum)} back (95% floors)`,
+      })
+    }
+    return rows
+  }
+
+  const dialog = reviewed ? (
+    <TxConfirmDialog
+      open
+      title={done ? 'Market updated' : 'Confirm edit'}
+      rows={reviewRows(reviewed)}
+      steps={reviewed.steps.map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
+      activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+      action={
+        running
+          ? 'Editing the market…'
+          : tx.phase === 'error'
+            ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
+            : 'Edit the market'
+      }
+      onConfirm={tx.phase === 'error' ? resume : startRun}
+      busy={running || tx.busy}
+      complete={done !== null}
+      status={tx.safeNonceGuidance}
+      error={tx.error}
+      onClose={back}
+    >
+      {balances.data &&
+      (reviewed.plan.tokenFunding > balances.data.tok || reviewed.plan.pairFunding > balances.data.pair) ? (
+        <p className="text-sm text-orange-600">
+          Heads up: your balance does not cover the 1% price headroom, so this edit reverts if
+          the price moves against it. Lower the amount to be safe.
+        </p>
+      ) : null}
+    </TxConfirmDialog>
+  ) : null
+
   if (done) {
     return (
       <div className="mt-3 border border-smoke-200 p-3">
@@ -418,6 +487,7 @@ export function MarketEditPanel({
         <button type="button" className="btn-secondary mt-3 min-h-[32px] px-3 text-xs" onClick={onClose}>
           Close
         </button>
+        {dialog}
       </div>
     )
   }
@@ -506,115 +576,29 @@ export function MarketEditPanel({
         Set a side to 0 to remove that position. Both at 0 removes the market.
       </p>
 
-      {reviewed ? (
-        <div className="mt-3 space-y-4">
-          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <span className="text-smoke-500">Market</span>
-            <span className="text-right text-ink">
-              {ids} on {chainName(chainId)}
-            </span>
-            <span className="text-smoke-500">Corridor</span>
-            <span className="text-right text-ink">
-              {corridor ? `${formatPrice(corridor.floor)} – ${formatPrice(corridor.ceiling)} ${pairSym}/${sym}` : '—'}
-              {reviewed.plan.refit ? ' (re-fit)' : ' (kept)'}
-            </span>
-            {reviewed.plan.token ? (
-              <>
-                <span className="text-smoke-500">{sym} side</span>
-                <span className="text-right text-ink">{sideLine(reviewed.plan.token, 'token')}</span>
-              </>
-            ) : null}
-            {reviewed.plan.pair ? (
-              <>
-                <span className="text-smoke-500">{pairSym} side</span>
-                <span className="text-right text-ink">{sideLine(reviewed.plan.pair, 'pair')}</span>
-              </>
-            ) : null}
-            {reviewed.plan.tokenFlow > 0n || reviewed.plan.pairFlow > 0n ? (
-              <>
-                <span className="text-smoke-500">From your wallet</span>
-                <span className="text-right text-ink">
-                  {amountsText(positive(reviewed.plan.tokenFlow), positive(reviewed.plan.pairFlow))}
-                </span>
-              </>
-            ) : null}
-            <span className="text-smoke-500">Back to your wallet</span>
-            <span className="text-right text-ink">
-              {reviewed.plan.tokenFlow < 0n || reviewed.plan.pairFlow < 0n
-                ? `${amountsText(positive(-reviewed.plan.tokenFlow), positive(-reviewed.plan.pairFlow))} + unclaimed fees`
-                : 'Unclaimed fees'}
-            </span>
-            {reviewed.plan.tokenFunding > 0n || reviewed.plan.pairFunding > 0n ? (
-              <>
-                <span className="text-smoke-500">Authorizes up to</span>
-                <span className="text-right text-ink">
-                  {amountsText(reviewed.plan.tokenFunding, reviewed.plan.pairFunding)} (1% price headroom)
-                </span>
-              </>
-            ) : null}
-            {reviewed.plan.tokenMinimum > 0n || reviewed.plan.pairMinimum > 0n ? (
-              <>
-                <span className="text-smoke-500">Enforced onchain</span>
-                <span className="text-right text-ink">
-                  At least {amountsText(reviewed.plan.tokenMinimum, reviewed.plan.pairMinimum)} back (95% floors)
-                </span>
-              </>
-            ) : null}
-          </div>
-          {balances.data &&
-          (reviewed.plan.tokenFunding > balances.data.tok || reviewed.plan.pairFunding > balances.data.pair) ? (
-            <p className="text-sm text-orange-600">
-              Heads up: your balance does not cover the 1% price headroom, so this edit reverts if
-              the price moves against it. Lower the amount to be safe.
-            </p>
-          ) : null}
-          <TxSteps
-            steps={reviewed.steps.map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
-            activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
-            className="rounded-xl border border-smoke-200 bg-white p-3"
-          />
-        </div>
-      ) : null}
-
       <div className="mt-3 flex flex-wrap justify-end gap-2">
         <button
           type="button"
           className="btn-secondary min-h-[44px] px-5 text-sm"
           disabled={busy}
-          onClick={reviewed ? back : onClose}
+          onClick={onClose}
         >
-          {reviewed ? 'Back' : 'Cancel'}
+          Cancel
         </button>
         <button
           type="button"
           className="btn-primary min-h-[44px] px-5 text-sm"
-          disabled={busy || isViewAs || !connectedAddress || !corridor}
-          onClick={
-            !reviewed
-              ? () => void handleReview()
-              : running
-                ? undefined
-                : tx.phase === 'error'
-                  ? resume
-                  : startRun
-          }
+          disabled={editing || isViewAs || !connectedAddress || !corridor}
+          onClick={() => void handleReview()}
         >
-          {quoting
-            ? 'Checking…'
-            : running
-              ? 'Editing the market…'
-              : reviewed
-                ? tx.phase === 'error'
-                  ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
-                  : 'Edit the market'
-                : 'Review edit'}
+          {quoting ? 'Checking…' : 'Review edit'}
         </button>
       </div>
       <TxError
-        error={reviewError ?? tx.error}
+        error={reviewError}
         className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
       />
-      {tx.safeNonceGuidance ? <p className="mt-2 text-xs text-smoke-500">{tx.safeNonceGuidance}</p> : null}
+      {dialog}
     </div>
   )
 }

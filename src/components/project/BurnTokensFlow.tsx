@@ -10,11 +10,13 @@ import {
 import { useMemo, useState } from 'react'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { buildBurnTokensRequest } from '@/lib/burnTokens'
 import { formatTokenAmount } from '@/lib/format'
+import { chainName } from '@/lib/urn'
 
 export function BurnTokensFlow({
   chainId,
@@ -33,6 +35,9 @@ export function BurnTokensFlow({
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [plan, setPlan] = useState<ReturnType<
+    typeof buildBurnTokensRequest
+  > | null>(null)
   const tokenCount = useMemo(() => {
     try {
       return amount.trim() ? parseEther(amount.trim()) : 0n
@@ -57,10 +62,13 @@ export function BurnTokensFlow({
   })
   const exceedsBalance = balance !== undefined && tokenCount > balance
 
-  async function burn() {
+  const sending = tx.busy || tx.phase === 'review'
+
+  async function review() {
     if (!isConnected) return openSignIn()
     if (!address || !controller || tokenCount <= 0n || exceedsBalance) return
     setError(null)
+    tx.reset()
     try {
       const [freshBalanceResult, freshControllerResult] = await Promise.all([
         refetch(),
@@ -74,17 +82,28 @@ export function BurnTokensFlow({
       if (!freshController || freshController === zeroAddress) {
         throw new Error('The project has no active controller.')
       }
-      const request = buildBurnTokensRequest({
+      setPlan(
+        buildBurnTokensRequest({
           chainId,
           controller: freshController as Address,
           holder: address,
           projectId: BigInt(projectId),
           tokenCount,
           memo,
-      })
+        }),
+      )
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Burn failed.')
+    }
+  }
+
+  async function burn() {
+    if (!plan || sending) return
+    setError(null)
+    try {
       await tx.send(
         {
-          ...request,
+          ...plan,
           label: `Permanently burn ${formatTokenAmount(tokenCount, 18)} ${tokenSymbol}`,
         },
         {
@@ -110,6 +129,12 @@ export function BurnTokensFlow({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Burn failed.')
     }
+  }
+
+  function closeReview() {
+    setPlan(null)
+    setError(null)
+    if (tx.phase !== 'success') tx.reset()
   }
 
   return (
@@ -156,23 +181,51 @@ export function BurnTokensFlow({
       {exceedsBalance ? (
         <p className="mt-2 text-sm text-red-600">That is more than you hold.</p>
       ) : null}
-      <TxError error={error} />
+      <TxError error={plan ? null : error} />
       <div className="mt-4 flex justify-end">
         <button
           type="button"
           className="btn-primary min-h-[44px] px-5 text-sm"
           disabled={
-            tx.busy ||
+            sending ||
             (isConnected && (!controller || tokenCount <= 0n || exceedsBalance))
           }
-          onClick={burn}
+          onClick={review}
         >
-          {txPhaseLabel(tx.phase, {
-            idle: isConnected ? 'Burn tokens permanently' : 'Sign in to burn',
-            pending: 'Burning tokens…',
-          })}
+          {isConnected ? 'Burn tokens permanently' : 'Sign in to burn'}
         </button>
       </div>
+      {plan ? (
+        <TxConfirmDialog
+          open
+          onClose={closeReview}
+          title={tx.phase === 'success' ? 'Tokens burned' : 'Confirm burn'}
+          rows={[
+            {
+              label: 'Burn',
+              value: `${formatTokenAmount(tokenCount, 18)} ${tokenSymbol}`,
+              strong: true,
+            },
+            ...(memo.trim() ? [{ label: 'Memo', value: memo.trim() }] : []),
+            { label: 'On', value: chainName(chainId) },
+          ]}
+          steps={[
+            {
+              title: 'Burn tokens',
+              detail: 'Removes them from supply for good. Nothing comes back.',
+            },
+          ]}
+          activeIndex={sending ? 0 : -1}
+          complete={tx.phase === 'success'}
+          busy={sending}
+          action={tx.phase === 'error' || error ? 'Retry' : 'Confirm & burn'}
+          onConfirm={() => void burn()}
+          status={
+            tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined
+          }
+          error={error ?? tx.error}
+        />
+      ) : null}
     </div>
   )
 }

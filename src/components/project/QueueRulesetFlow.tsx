@@ -36,6 +36,7 @@ import {
 } from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
 import { ModalShell } from "@/components/ui/ModalShell";
+import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
@@ -51,6 +52,7 @@ import { fetchSafeInfo } from "@/lib/safe";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
+import { chainName } from "@/lib/urn";
 import {
   approvalStatusLabel,
   planRulesetQueue,
@@ -1044,7 +1046,65 @@ function RulesetEditorForm({
     }
   };
 
-  if (success) {
+  const reviewRows: TxConfirmRow[] = review
+    ? [
+        action === "replace"
+          ? {
+              label: "Replaces",
+              value: `The queued change targeting ${formatRulesetDate(mustStartAtOrAfter)}`,
+            }
+          : action === "after"
+            ? {
+                label: "Starts",
+                value: `No earlier than ${formatRulesetDate(mustStartAtOrAfter)}`,
+              }
+            : { label: "Based on", value: "The current rules" },
+        ...(changes.length === 0
+          ? [{ label: "Ruleset #1", value: "Unchanged" }]
+          : changes.map((c) => ({
+              label: c.label,
+              value: `${c.from} → ${c.to}`,
+            }))),
+        ...followers.flatMap((f, i) => {
+          const prev = i === 0 ? state : followers[i - 1].rules;
+          const diff = diffRows(prev, f.rules);
+          return [
+            {
+              label: `Ruleset #${i + 2} starts`,
+              value:
+                f.startMode === "date"
+                  ? `${formatRulesetDate(Math.floor(new Date(f.startDate).getTime() / 1000))}, snapped to Ruleset #${i + 1}'s cycle`
+                  : `After ${Number(f.startCycles) || 1} cycle${Number(f.startCycles) === 1 ? "" : "s"} of Ruleset #${i + 1}`,
+            },
+            ...(diff.length === 0
+              ? [
+                  {
+                    label: `Ruleset #${i + 2} rules`,
+                    value: `Same as Ruleset #${i + 1}`,
+                  },
+                ]
+              : diff.map((c) => ({
+                  label: `Ruleset #${i + 2}: ${c.label}`,
+                  value: `${c.from} → ${c.to}`,
+                }))),
+          ];
+        }),
+        ...(lastTimed && afterMode !== "cycle"
+          ? [
+              {
+                label: "Afterwards",
+                value:
+                  afterMode === "wait"
+                    ? "Wait — payments and issuance pause until new rules are queued"
+                    : "Terminate — the last terms lock in forever",
+              },
+            ]
+          : []),
+        { label: "On", value: chainName(chainId) },
+      ]
+    : [];
+
+  if (success && !review) {
     return (
       <div>
         <p className="text-sm font-medium text-ink">
@@ -1259,61 +1319,6 @@ function RulesetEditorForm({
         <p className="mt-4 text-xs font-medium text-red-700">{noticeClash}</p>
       ) : null}
 
-      {review ? (
-        <div className="callout callout-warning mt-4 text-xs">
-          <p className="font-medium">
-            {queueReviewHeading(action, mustStartAtOrAfter)}
-          </p>
-          <ul className="mt-1.5 space-y-1">
-            {changes.map((c) => (
-              <li key={c.label}>
-                {c.label}: {c.from} → {c.to}
-              </li>
-            ))}
-            {changes.length === 0 ? <li>Ruleset #1: unchanged</li> : null}
-          </ul>
-          {followers.map((f, i) => {
-            const prev = i === 0 ? state : followers[i - 1].rules;
-            const diff = diffRows(prev, f.rules);
-            return (
-              <div key={f.id} className="mt-2">
-                <p className="font-medium">
-                  Ruleset #{i + 2} —{" "}
-                  {f.startMode === "date"
-                    ? `starts ${formatRulesetDate(Math.floor(new Date(f.startDate).getTime() / 1000))}, snapped to Ruleset #${i + 1}'s cycle`
-                    : `starts after ${Number(f.startCycles) || 1} cycle${Number(f.startCycles) === 1 ? "" : "s"} of Ruleset #${i + 1}`}
-                </p>
-                <ul className="mt-1 space-y-1">
-                  {diff.length === 0 ? (
-                    <li>Same rules as Ruleset #{i + 1}</li>
-                  ) : (
-                    diff.map((c) => (
-                      <li key={c.label}>
-                        {c.label}: {c.from} → {c.to}
-                      </li>
-                    ))
-                  )}
-                </ul>
-              </div>
-            );
-          })}
-          {lastTimed && afterMode !== "cycle" ? (
-            <p className="mt-2">
-              Afterwards:{" "}
-              {afterMode === "wait"
-                ? "wait — payments and issuance pause until new rules are queued"
-                : "terminate — the last terms lock in forever"}
-            </p>
-          ) : null}
-          {review.clearsPayouts ? (
-            <p className="mt-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 font-medium text-red-700">
-              Payout limit removed — nothing can be paid out until you set a new
-              limit.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
       {limitBlock ? (
         <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
           {limitBlock}
@@ -1322,7 +1327,7 @@ function RulesetEditorForm({
 
       <div className="mt-4 flex justify-end">
       <button
-        onClick={review ? () => void handleConfirm() : handleReview}
+        onClick={handleReview}
         disabled={
           busy ||
           (isConnected &&
@@ -1336,24 +1341,44 @@ function RulesetEditorForm({
         }
         className="btn-primary min-h-[44px] px-5 text-sm"
       >
-        {busy
-          ? "Queueing…"
-          : !isConnected
-            ? "Sign in to continue"
-            : review
-              ? "Confirm and queue"
-              : "Review changes"}
+        {!isConnected ? "Sign in to continue" : "Review changes"}
       </button>
       </div>
 
-      {busy && status ? (
-        <p className="mt-2 text-center text-xs text-smoke-700">{status}</p>
-      ) : null}
+      {review ? null : (
+        <TxError
+          error={flowError}
+          className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+        />
+      )}
 
-      <TxError
-        error={flowError}
-        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-      />
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={success ? "Rules queued" : "Confirm new rules"}
+          rows={reviewRows}
+          steps={[{ title: "Queue new rules" }]}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={flowError}
+          busy={busy}
+          complete={success}
+          action={flowError ? "Retry" : "Confirm and queue"}
+          onConfirm={() => void handleConfirm()}
+          onClose={() => {
+            if (busy) return;
+            setReview(null);
+            setFlowError(null);
+          }}
+        >
+          {review.clearsPayouts ? (
+            <p className="text-sm font-medium text-red-700">
+              Payout limit removed — nothing can be paid out until you set a
+              new limit.
+            </p>
+          ) : null}
+        </TxConfirmDialog>
+      ) : null}
     </div>
   );
 }
@@ -1641,16 +1666,6 @@ function sameQueueSource(
     BigInt(a.start) === BigInt(b.start) &&
     BigInt(a.duration) === BigInt(b.duration)
   );
-}
-
-function queueReviewHeading(action: QueueAction, start: number): string {
-  if (action === "replace") {
-    return `These rules replace the queued change targeting ${formatRulesetDate(start)}:`;
-  }
-  if (action === "after") {
-    return `These rules are queued no earlier than ${formatRulesetDate(start)}:`;
-  }
-  return "These rules are queued from the current configuration:";
 }
 
 function queueSuccessCopy(action: QueueAction, start: number): string {

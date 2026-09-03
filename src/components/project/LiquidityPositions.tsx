@@ -13,6 +13,7 @@ import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { chainName } from '@/lib/urn'
 import { ErrorNote } from '@/components/ui/TxError'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
@@ -277,6 +278,14 @@ function ChainLpRows({
   const tx = useSafeTx(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
+  // The write frozen for the confirm dialog: fee claim for one or both sides,
+  // or a burn with the freshly re-read amounts behind its onchain minimums.
+  const [pending, setPending] = useState<
+    | { kind: 'claim'; positions: UserLpPosition[] }
+    | { kind: 'remove'; position: UserLpPosition; pairMin: bigint; tokenMin: bigint }
+    | null
+  >(null)
+  const [started, setStarted] = useState(false)
   // The position whose holdings/band are being edited in the panel below, or
   // the market (two sides) being edited or removed.
   const [editing, setEditing] = useState<UserLpPosition | null>(null)
@@ -304,9 +313,21 @@ function ChainLpRows({
     onChanged?.()
   }
 
+  const stage = (next: NonNullable<typeof pending>) => {
+    setError(null)
+    setStarted(false)
+    tx.reset()
+    setPending(next)
+  }
+
   const claim = (positions: UserLpPosition[]) => {
     if (!connectedAddress || !pool || !positionManager) return
-    setError(null)
+    stage({ kind: 'claim', positions })
+  }
+
+  const runClaim = (positions: UserLpPosition[]) => {
+    if (!connectedAddress || !pool || !positionManager) return
+    setStarted(true)
     const unlockData =
       positions.length === 1
         ? unlockDataOf(
@@ -336,7 +357,7 @@ function ChainLpRows({
     refresh()
   }
 
-  // Re-read the position immediately before building the burn: the list can sit
+  // Re-read the position immediately before freezing the burn: the list can sit
   // open while the market moves, and a stale amount must never become the
   // reviewed minimum.
   const remove = async (position: UserLpPosition) => {
@@ -363,25 +384,12 @@ function ChainLpRows({
         await readUserLpPositions(client, chainId, freshMarket, connectedAddress)
       ).find(p => p.tokenId === position.tokenId)
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
-      const pairMin = retainedFloor(fresh.pairAmount)
-      const tokenMin = retainedFloor(fresh.tokenAmount)
-      tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: buildRemoveLiquidityUnlockData({
-            tokenId: fresh.tokenId,
-            currency0: pool.key.currency0,
-            currency1: pool.key.currency1,
-            recipient: connectedAddress,
-            amount0Min: pool.pairIsC0 ? pairMin : tokenMin,
-            amount1Min: pool.pairIsC0 ? tokenMin : pairMin,
-          }),
-          deadline: swapDeadline(tx.isSafe),
-          value: 0n,
-        }),
-      )
-      refresh()
+      stage({
+        kind: 'remove',
+        position: fresh,
+        pairMin: retainedFloor(fresh.pairAmount),
+        tokenMin: retainedFloor(fresh.tokenAmount),
+      })
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Could not remove this position.',
@@ -389,6 +397,35 @@ function ChainLpRows({
     } finally {
       setReviewing(null)
     }
+  }
+
+  const runRemove = (frozen: Extract<NonNullable<typeof pending>, { kind: 'remove' }>) => {
+    if (!connectedAddress || !pool || !positionManager) return
+    setStarted(true)
+    tx.send(
+      buildModifyLiquiditiesRequest({
+        chainId,
+        positionManager,
+        unlockData: buildRemoveLiquidityUnlockData({
+          tokenId: frozen.position.tokenId,
+          currency0: pool.key.currency0,
+          currency1: pool.key.currency1,
+          recipient: connectedAddress,
+          amount0Min: pool.pairIsC0 ? frozen.pairMin : frozen.tokenMin,
+          amount1Min: pool.pairIsC0 ? frozen.tokenMin : frozen.pairMin,
+        }),
+        deadline: swapDeadline(tx.isSafe),
+        value: 0n,
+      }),
+    )
+    refresh()
+  }
+
+  const closePending = () => {
+    if (tx.busy) return
+    setPending(null)
+    setStarted(false)
+    tx.reset()
   }
 
   if (!address) return null
@@ -679,11 +716,127 @@ function ChainLpRows({
             panelHost,
           )
         : null}
-      {panelHost && (error ?? tx.error)
+      {panelHost && error
         ? ReactDOM.createPortal(
             <div className="mt-2">
-              <ErrorNote message={error ?? tx.error!} />
+              <ErrorNote message={error} />
             </div>,
+            panelHost,
+          )
+        : null}
+      {/* A <dialog> cannot sit inside <tbody>; it goes out with the panels. */}
+      {panelHost && pending && connectedAddress
+        ? ReactDOM.createPortal(
+            (() => {
+              const pairLine = (value: bigint) => (
+                <span className="block text-xs text-smoke-500">
+                  {formatTokenAmount(value, pool.pair.decimals)} {pool.pair.symbol}
+                </span>
+              )
+              const complete = started && tx.phase === 'success'
+              const rows: TxConfirmRow[] = []
+              if (pending.kind === 'claim') {
+                const owedToken = pending.positions.reduce(
+                  (sum, p) => sum + (summary.feesByToken[p.tokenId.toString()]?.tokenFees ?? 0n),
+                  0n,
+                )
+                const owedPair = pending.positions.reduce(
+                  (sum, p) => sum + (summary.feesByToken[p.tokenId.toString()]?.pairFees ?? 0n),
+                  0n,
+                )
+                rows.push({
+                  label: 'Position',
+                  value: pending.positions.map(p => `#${p.tokenId.toString()}`).join(' and '),
+                  mono: true,
+                })
+                rows.push({
+                  label: 'Claims',
+                  value: (
+                    <>
+                      {formatTokenAmount(owedToken, 18)} {sym}
+                      {pairLine(owedPair)}
+                    </>
+                  ),
+                  strong: true,
+                })
+              } else {
+                rows.push({
+                  label: 'Position',
+                  value: `#${pending.position.tokenId.toString()}`,
+                  mono: true,
+                })
+                rows.push({
+                  label: 'Removes',
+                  value: (
+                    <>
+                      {formatTokenAmount(pending.position.tokenAmount, 18)} {sym}
+                      {pairLine(pending.position.pairAmount)}
+                    </>
+                  ),
+                  strong: true,
+                })
+                rows.push({
+                  label: 'At least',
+                  value: (
+                    <>
+                      {formatTokenAmount(pending.tokenMin, 18)} {sym}
+                      {pairLine(pending.pairMin)}
+                      <span className="block text-xs text-smoke-500">
+                        95% minimum, enforced onchain
+                      </span>
+                    </>
+                  ),
+                })
+              }
+              rows.push({ label: 'To', value: connectedAddress, mono: true })
+              rows.push({ label: 'On', value: chainName(chainId) })
+              return (
+                <TxConfirmDialog
+                  open
+                  title={
+                    pending.kind === 'claim'
+                      ? complete
+                        ? 'Fees claimed'
+                        : 'Claim fees'
+                      : complete
+                        ? 'Liquidity removed'
+                        : 'Remove liquidity'
+                  }
+                  rows={rows}
+                  steps={[
+                    {
+                      title: pending.kind === 'claim' ? 'Claim fees' : 'Remove liquidity',
+                      detail:
+                        tx.phase === 'simulating'
+                          ? 'Checking…'
+                          : tx.phase === 'signing'
+                            ? 'Confirm in your wallet…'
+                            : tx.phase === 'pending'
+                              ? 'Sending…'
+                              : undefined,
+                    },
+                  ]}
+                  activeIndex={started ? 0 : -1}
+                  action={
+                    tx.phase === 'error'
+                      ? 'Retry'
+                      : pending.kind === 'claim'
+                        ? 'Confirm & claim fees'
+                        : 'Confirm & remove liquidity'
+                  }
+                  onConfirm={() => {
+                    if (tx.phase === 'error') tx.reset()
+                    if (pending.kind === 'claim') runClaim(pending.positions)
+                    else runRemove(pending)
+                  }}
+                  busy={tx.busy}
+                  complete={complete}
+                  status={tx.safeNonceGuidance}
+                  error={tx.error}
+                  onClose={closePending}
+                />
+              )
+            })(),
             panelHost,
           )
         : null}

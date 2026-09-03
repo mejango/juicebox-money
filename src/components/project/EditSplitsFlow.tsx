@@ -30,6 +30,7 @@ import {
   splitOk,
   type DraftSplit,
 } from '@/components/create/SplitsEditor'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import { runAuthorityCalls } from '@/lib/authority'
@@ -45,6 +46,7 @@ import { isKnownController } from '@/lib/manage'
 import { fetchSafeInfo } from '@/lib/safe'
 import type { RawSplit } from '@/lib/splits-types'
 import { buildSplitGroupsAuthorityCall } from '@/lib/transaction-builders'
+import { chainName } from '@/lib/urn'
 
 /** A stable string of the on-chain splits, for fingerprint comparison. */
 function fingerprint(splits: readonly RawSplit[]): string {
@@ -252,8 +254,8 @@ export function assembleSplits(
  * Locked splits (a lockedUntil in the future) can't be removed or reduced, so
  * they're held OUT of the editable list — shown read-only and re-submitted
  * byte-for-byte — which is also what the JBSplits contract requires. Live
- * splits are fingerprinted at open and re-read at submit: if they changed
- * onchain in the meantime the send aborts, since a stale prefill could
+ * splits are fingerprinted at open and re-read at review: if they changed
+ * onchain in the meantime the save is refused, since a stale prefill could
  * silently clear a recipient. setSplitGroupsOf goes to the project's resolved
  * controller through the same simulation-first Safe/Relayr authority router
  * used by the Owner/Operator tab.
@@ -416,6 +418,8 @@ function EditSplitsModal({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  // The exact splits frozen at review, so what's confirmed is what's sent.
+  const [plan, setPlan] = useState<JBSplit[] | null>(null)
   const initialized = useRef(false)
 
   const splitsAddr = jbContractAddress['6'][JBCoreContracts.JBSplits][
@@ -500,10 +504,11 @@ function EditSplitsModal({
     setFlowError(null)
     setStatus(null)
     setSuccess(false)
+    setPlan(null)
     initialized.current = false
   }
 
-  const submit = async () => {
+  const review = async () => {
     if (busy || !publicClient) return
     setFlowError(null)
     if (!rowsValid) {
@@ -515,59 +520,70 @@ function EditSplitsModal({
       return
     }
 
-    // Fingerprint recheck: a stale prefill could clear a recipient that
-    // changed onchain while the modal was open.
-    let fresh: readonly RawSplit[]
+    setBusy(true)
     try {
-      fresh = (await publicClient.readContract({
-        address: splitsAddr,
-        abi: jbSplitsAbi,
-        functionName: 'splitsOf',
-        args: [BigInt(projectId), rulesetId, groupId],
-      })) as readonly RawSplit[]
-    } catch {
-      setFlowError('Couldn’t re-check the current splits. Try again.')
-      return
-    }
-    if (baseline !== null && fingerprint(fresh) !== baseline) {
-      setFlowError(
-        'Splits changed onchain while you were editing — reopen to start from the current splits.',
-      )
-      return
-    }
-
-    // Re-read the fallback too: an empty save is only safe against the
-    // ruleset-0 group as it stands at send time. A failed read stays
-    // `unknown`, which blocks the clear but leaves other saves alone.
-    let freshFallback: FallbackSplits = { status: 'unknown' }
-    if (rulesetId === FALLBACK_RULESET_ID) {
-      freshFallback = { status: 'empty' }
-    } else {
+      // Fingerprint recheck: a stale prefill could clear a recipient that
+      // changed onchain while the modal was open.
+      let fresh: readonly RawSplit[]
       try {
-        freshFallback = describeFallbackSplits(
-          (await publicClient.readContract({
-            address: splitsAddr,
-            abi: jbSplitsAbi,
-            functionName: 'splitsOf',
-            args: [BigInt(projectId), FALLBACK_RULESET_ID, groupId],
-          })) as readonly RawSplit[],
-        )
+        fresh = (await publicClient.readContract({
+          address: splitsAddr,
+          abi: jbSplitsAbi,
+          functionName: 'splitsOf',
+          args: [BigInt(projectId), rulesetId, groupId],
+        })) as readonly RawSplit[]
       } catch {
-        freshFallback = { status: 'unknown' }
+        setFlowError('Couldn’t re-check the current splits. Try again.')
+        return
       }
-    }
+      if (baseline !== null && fingerprint(fresh) !== baseline) {
+        setFlowError(
+          'Splits changed onchain while you were editing — reopen to start from the current splits.',
+        )
+        return
+      }
 
-    const assembled = assembleSplits(
-      lockedRows,
-      drafts,
-      freshFallback,
-      chainId,
-    )
-    if ('error' in assembled) {
-      setFlowError(assembled.error)
-      return
+      // Re-read the fallback too: an empty save is only safe against the
+      // ruleset-0 group as it stands at send time. A failed read stays
+      // `unknown`, which blocks the clear but leaves other saves alone.
+      let freshFallback: FallbackSplits = { status: 'unknown' }
+      if (rulesetId === FALLBACK_RULESET_ID) {
+        freshFallback = { status: 'empty' }
+      } else {
+        try {
+          freshFallback = describeFallbackSplits(
+            (await publicClient.readContract({
+              address: splitsAddr,
+              abi: jbSplitsAbi,
+              functionName: 'splitsOf',
+              args: [BigInt(projectId), FALLBACK_RULESET_ID, groupId],
+            })) as readonly RawSplit[],
+          )
+        } catch {
+          freshFallback = { status: 'unknown' }
+        }
+      }
+
+      const assembled = assembleSplits(
+        lockedRows,
+        drafts,
+        freshFallback,
+        chainId,
+      )
+      if ('error' in assembled) {
+        setFlowError(assembled.error)
+        return
+      }
+      setPlan(assembled.splits)
+    } finally {
+      setBusy(false)
     }
-    const { splits } = assembled
+  }
+
+  const submit = async () => {
+    if (busy || !plan) return
+    setFlowError(null)
+    const splits = plan
 
     const call = buildSplitGroupsAuthorityCall({
       chainId,
@@ -632,7 +648,7 @@ function EditSplitsModal({
         </button>
       </div>
 
-      {success ? (
+      {success && !plan ? (
         <div className="mt-3">
           <p className="text-sm font-medium text-ink">
             {status}
@@ -704,21 +720,54 @@ function EditSplitsModal({
           ) : null}
 
           <button
-            onClick={submit}
+            onClick={review}
             disabled={busy || !rowsValid || overAllocated || !!clearBlocked}
             className="btn-primary mt-3 min-h-[44px] w-full text-sm"
           >
-            {busy ? status ?? 'Saving…' : 'Save splits'}
+            {busy && !plan ? 'Checking…' : 'Save splits'}
           </button>
 
-          {status && !busy ? (
-            <p className="mt-2 text-xs text-smoke-700">{status}</p>
-          ) : null}
+          {plan ? null : (
+            <TxError
+              error={flowError}
+              className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
+            />
+          )}
 
-          <TxError
-            error={flowError}
-            className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-          />
+          {plan ? (
+            <TxConfirmDialog
+              open
+              title={success ? 'Splits saved' : 'Confirm splits'}
+              rows={[
+                { label: 'Group', value: title },
+                {
+                  label: 'Recipients',
+                  value:
+                    live && live.length !== plan.length
+                      ? `${live.length} → ${plan.length}`
+                      : String(plan.length),
+                },
+                {
+                  label: 'Allocated',
+                  value: `${billionthsToPct(totalPercent, 6)}% (${billionthsToPct(SPLITS_TOTAL_PERCENT - totalPercent, 6)}% to the project owner)`,
+                },
+                { label: 'On', value: chainName(chainId) },
+              ]}
+              steps={[{ title: `Edit ${title}` }]}
+              activeIndex={busy ? 0 : -1}
+              status={status}
+              error={flowError}
+              busy={busy}
+              complete={success}
+              action={flowError ? 'Retry' : 'Confirm and save'}
+              onConfirm={() => void submit()}
+              onClose={() => {
+                if (busy) return
+                setPlan(null)
+                setFlowError(null)
+              }}
+            />
+          ) : null}
         </div>
       )}
     </div>

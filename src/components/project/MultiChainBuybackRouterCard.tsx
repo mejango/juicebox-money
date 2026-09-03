@@ -20,6 +20,7 @@ import type { AuthorityDeployment } from '@/components/project/AuthorityOverview
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
@@ -64,7 +65,7 @@ const MAX_TWAP_WINDOW = 172_800
 
 type Review = {
   calls: AuthorityCall[]
-  lines: string[]
+  rows: TxConfirmRow[]
 }
 
 const ACTIONS: Record<
@@ -537,11 +538,19 @@ function BuybackActionForm({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
 
   useEffect(() => {
     setReview(null)
     setAck(false)
   }, [selected, addresses, fee, tickSpacing, twapWindow, sqrtPriceX96])
+
+  const closeReview = () => {
+    if (busy) return
+    setReview(null)
+    setError(null)
+    if (done) onDone()
+  }
 
   const buildReview = () => {
     setError(null)
@@ -604,7 +613,7 @@ function BuybackActionForm({
       }
 
       const calls: AuthorityCall[] = []
-      const lines: string[] = []
+      const reviewRows: TxConfirmRow[] = []
       for (const row of chosen) {
         if (!row.authority) throw new Error(`${row.name}: owner/operator is unknown.`)
         const input = addresses[row.chainId] ?? ''
@@ -677,8 +686,10 @@ function BuybackActionForm({
             }),
           )
         }
-        lines.push(
-          `${row.name}: ${truncateAddress(address)}${
+        reviewRows.push({
+          label: row.name,
+          mono: true,
+          value: `${truncateAddress(address)}${
             kind === 'pool'
               ? ` | fee ${fee} | spacing ${tickSpacing} | TWAP ${twapWindow}s | price ${sqrtPriceX96}`
               : kind === 'twap'
@@ -689,9 +700,12 @@ function BuybackActionForm({
                   }s → ${twapWindow}s`
                 : ''
           }`,
-        )
+        })
       }
-      setReview({ calls, lines })
+      reviewRows.push({ label: 'On', value: chosen.map(row => row.name).join(', ') })
+      setStatus(null)
+      setDone(false)
+      setReview({ calls, rows: reviewRows })
     } catch (reviewError) {
       setError(
         reviewError instanceof Error
@@ -718,7 +732,7 @@ function BuybackActionForm({
           }.`,
         ),
       )
-      onDone()
+      setDone(true)
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -808,25 +822,12 @@ function BuybackActionForm({
         </div>
       ) : null}
 
-      {review ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p className="font-medium">Review the exact per-chain change</p>
-          <ul className="mt-2 space-y-1 font-mono">
-            {review.lines.map(line => (
-              <li key={line} className="break-all">
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
       <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
         <input
           type="checkbox"
           checked={ack}
           onChange={event => setAck(event.target.checked)}
-          disabled={busy || !review}
+          disabled={busy}
           className="mt-0.5 accent-red-600"
         />
         <span className="text-xs leading-relaxed text-red-700">
@@ -836,14 +837,32 @@ function BuybackActionForm({
 
       <button
         type="button"
-        onClick={review ? submit : buildReview}
-        disabled={busy || !selected.size || (!!review && !ack)}
+        onClick={buildReview}
+        disabled={busy || !selected.size || !ack}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {busy ? status ?? 'Preparing…' : review ? action.title : 'Review changes'}
+        Review changes
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {error && !review ? <ErrorNote message={error} /> : null}
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={done ? `${action.title} complete` : `Confirm ${action.title.toLowerCase()}`}
+          rows={review.rows}
+          steps={review.calls.map(call => ({
+            key: String(call.chainId),
+            title: `${action.title} on ${chainName(call.chainId)}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : action.title}
+          onConfirm={() => void submit()}
+          onClose={closeReview}
+        />
+      ) : null}
     </div>
   )
 }

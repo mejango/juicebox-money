@@ -139,9 +139,8 @@ async function typeCustom(
 
 async function saveAndReadPin(renderer: TestRenderer.ReactTestRenderer) {
   await act(async () => buttonWith(renderer, 'Review changes').props.onClick())
-  await act(async () =>
-    buttonWith(renderer, 'Save project metadata').props.onClick(),
-  )
+  expect(renderedText(renderer.root)).toContain('Confirm project metadata')
+  await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
   const pinCall = mocks.pinJson.mock.calls.at(-1)
   expect(pinCall, 'expected a Juicebox Center pin').toBeTruthy()
   return pinCall![0] as Record<string, unknown>
@@ -215,7 +214,7 @@ describe('metadata editor custom properties', () => {
     await act(async () => buttonWith(renderer, 'Review changes').props.onClick())
 
     expect(renderedText(renderer.root)).toMatch(/valid JSON/i)
-    expect(buttonWith(renderer, 'Save project metadata')).toBeUndefined()
+    expect(buttonWith(renderer, 'Confirm & save')).toBeUndefined()
     expect(
       mocks.pinJson.mock.calls,
     ).toHaveLength(0)

@@ -56,6 +56,9 @@ vi.mock('@/components/ui/ModalShell', () => ({
       createElement('button', { onClick: onClose }, 'Close dialog'),
       children,
     ),
+  ModalDialog: ({ children }: { children: ReactNode }) =>
+    createElement('div', null, children),
+  ModalCloseButton: () => null,
 }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('wagmi', () => ({

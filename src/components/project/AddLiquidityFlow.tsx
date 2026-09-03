@@ -1,6 +1,6 @@
 'use client'
 
-import { TxSteps } from '@/components/ui/TxSteps'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import {
   JB_CHAINS,
   type JBChainId,
@@ -127,6 +127,10 @@ type Plan = {
     pairDecimals: number
     pairIsNative: boolean
     fee: number
+    /** Band edges and the live price the mint was frozen at, in pair per token. */
+    pa: number
+    pb: number
+    price: number
   }
 }
 
@@ -673,6 +677,9 @@ function AddLiquidityForm({
           pairDecimals: pairDec,
           pairIsNative: pair.isNative,
           fee: Number(fresh.key.fee),
+          pa,
+          pb,
+          price: fresh.price,
         },
       }
       planRef.current = built
@@ -809,21 +816,159 @@ function AddLiquidityForm({
     sendStep(plan.steps[stepIdxRef.current])
   }
 
-  const startOver = () => {
-    runningRef.current = false
+  // Closing the dialog drops the frozen plan; the inputs and any success stay.
+  const closePlan = () => {
+    if (runningRef.current || tx.busy) return
     processedRef.current = null
     stepIdxRef.current = 0
-    setRunning(false)
     setStepIdx(0)
-    setDone(false)
-    setMintHash(null)
     planRef.current = null
     setPlan(null)
-    setReviewError(null)
     tx.reset()
   }
 
+  const startOver = () => {
+    closePlan()
+    setDone(false)
+    setMintHash(null)
+    setReviewError(null)
+  }
+
   // ----- render ------------------------------------------------------------
+
+  const runningDetail =
+    tx.phase === 'simulating'
+      ? 'Checking…'
+      : tx.phase === 'signing'
+        ? 'Confirm in your wallet…'
+        : tx.phase === 'pending'
+          ? 'Sending…'
+          : undefined
+
+  const disabledCol = (active: boolean) => (active ? '' : 'opacity-45')
+
+  const amount = (value: bigint, decimals: number, symbol: string) =>
+    `~${formatTokenAmount(value, decimals)} ${symbol}`
+  const band = (lo: number, hi: number) => (
+    <span className="block text-xs text-smoke-500">
+      {formatPrice(lo)} → {formatPrice(hi)} {pairSym} per {sym}
+    </span>
+  )
+
+  const confirmDialog = plan
+    ? (() => {
+        const d = plan.display
+        const rows: TxConfirmRow[] = []
+        if (plan.market) {
+          if (d.needTok > 0n) {
+            rows.push({
+              label: 'Sells above the price',
+              value: (
+                <>
+                  {amount(d.needTok, 18, sym)}
+                  {band(d.price, d.pb)}
+                </>
+              ),
+              strong: true,
+            })
+          }
+          if (d.needPair > 0n) {
+            rows.push({
+              label: 'Buys below the price',
+              value: (
+                <>
+                  {amount(d.needPair, d.pairDecimals, d.pairSymbol)}
+                  {band(d.pa, d.price)}
+                </>
+              ),
+              strong: true,
+            })
+          }
+        } else {
+          rows.push({
+            label: 'Adds',
+            value: (
+              <>
+                {[
+                  d.needTok > 0n ? amount(d.needTok, 18, sym) : null,
+                  d.needPair > 0n ? amount(d.needPair, d.pairDecimals, d.pairSymbol) : null,
+                ]
+                  .filter(Boolean)
+                  .join(' + ')}
+                {band(d.pa, d.pb)}
+              </>
+            ),
+            strong: true,
+          })
+        }
+        rows.push({ label: 'On', value: chainName })
+        rows.push({
+          label: 'Authorizes up to',
+          value: (
+            <>
+              {formatTokenAmount(d.maxTok, 18)} {sym} and{' '}
+              {formatTokenAmount(d.maxPair, d.pairDecimals)} {d.pairSymbol}
+              <span className="block text-xs text-smoke-500">
+                1% headroom
+                {d.pairIsNative ? `; unused ${d.pairSymbol} is refunded` : ''}
+              </span>
+            </>
+          ),
+        })
+        rows.push({ label: 'Fee tier', value: `${(d.fee / 10000).toFixed(2)}%` })
+        rows.push({ label: 'Ticks', value: `${d.tickLower} to ${d.tickUpper}` })
+        return (
+          <TxConfirmDialog
+            open
+            title={
+              done
+                ? plan.market
+                  ? 'Market made'
+                  : 'Liquidity added'
+                : plan.market
+                  ? 'Make the market'
+                  : 'Add liquidity'
+            }
+            rows={rows}
+            steps={plan.steps.map((step, index) => ({
+              key: `${step.kind}:${index}`,
+              title: step.label,
+              detail: running && index === stepIdx ? runningDetail : undefined,
+            }))}
+            activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+            stepsIntro={
+              plan.steps.length > 1
+                ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
+                : 'One transaction: the mint. It is reviewed and simulated before you sign.'
+            }
+            action={
+              running
+                ? plan.market
+                  ? 'Making the market…'
+                  : 'Adding liquidity…'
+                : tx.phase === 'error'
+                  ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
+                  : plan.market
+                    ? 'Confirm & make the market'
+                    : 'Confirm & add liquidity'
+            }
+            onConfirm={tx.phase === 'error' ? resume : startRun}
+            busy={running || tx.busy}
+            complete={done}
+            status={tx.safeNonceGuidance}
+            error={tx.error}
+            onClose={closePlan}
+          >
+            {balances && (d.maxTok > balances.tok || d.maxPair > balances.pair) ? (
+              <p className="text-sm text-orange-600">
+                Heads up: your balance does not cover that headroom, so this mint
+                reverts if the price moves against it. Lower the amount to be safe.
+              </p>
+            ) : null}
+          </TxConfirmDialog>
+        )
+      })()
+    : null
 
   if (done) {
     const url = mintHash ? etherscanTxUrl(chainId, mintHash) : null
@@ -850,20 +995,10 @@ function AddLiquidityForm({
             Add more
           </button>
         </div>
+        {confirmDialog}
       </div>
     )
   }
-
-  const runningDetail =
-    tx.phase === 'simulating'
-      ? 'Checking…'
-      : tx.phase === 'signing'
-        ? 'Confirm in your wallet…'
-        : tx.phase === 'pending'
-          ? 'Sending…'
-          : undefined
-
-  const disabledCol = (active: boolean) => (active ? '' : 'opacity-45')
 
   return (
     <div className={framed ? 'card p-5' : ''}>
@@ -1095,101 +1230,25 @@ function AddLiquidityForm({
         </p>
       ) : null}
 
-      {/* Review panel */}
-      {plan ? (
-        <div className="callout callout-info mt-3 text-xs">
-          <p className="font-medium">
-            {plan.market ? 'You make the market: ' : 'You add '}~
-            {formatTokenAmount(plan.display.needTok, 18)} {sym}
-            {plan.market ? ' selling above the price' : ''} +{' '}
-            {formatTokenAmount(plan.display.needPair, plan.display.pairDecimals)}{' '}
-            {plan.display.pairSymbol}
-            {plan.market ? ' buying below it' : ''}
-          </p>
-          <p className="mt-1">
-            Authorizing up to {formatTokenAmount(plan.display.maxTok, 18)} {sym}{' '}
-            and{' '}
-            {formatTokenAmount(plan.display.maxPair, plan.display.pairDecimals)}{' '}
-            {plan.display.pairSymbol} (1% headroom
-            {plan.display.pairIsNative
-              ? `; unused ${plan.display.pairSymbol} is refunded`
-              : ''}
-            ).
-          </p>
-          {balances &&
-          (plan.display.maxTok > balances.tok ||
-            plan.display.maxPair > balances.pair) ? (
-            <p className="mt-1 font-medium">
-              Heads up: your balance does not cover that headroom, so this mint
-              reverts if the price moves against it. Lower the amount to be
-              safe.
-            </p>
-          ) : null}
-          <p className="mt-1 text-smoke-700">
-            Uniswap V4 PositionManager {plan.market ? 'mint ×2 (one position each side of the price)' : 'mint'} | fee tier{' '}
-            {(plan.display.fee / 10000).toFixed(2)}% | ticks{' '}
-            {plan.display.tickLower} to {plan.display.tickUpper}.
-          </p>
-          <TxSteps
-            steps={plan.steps.map((step, index) => ({
-              key: `${step.kind}:${index}`,
-              title: step.label,
-              detail: running && index === stepIdx ? runningDetail : undefined,
-            }))}
-            activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
-            intro={
-              plan.steps.length > 1
-                ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
-                : 'One transaction: the mint. It is reviewed and simulated before you sign.'
-            }
-            className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
-          />
-        </div>
-      ) : null}
-
-      <div className="mt-3 flex flex-wrap justify-end gap-3">
-        {plan && !running ? (
-          <button
-            onClick={startOver}
-            disabled={busy}
-            className="btn-secondary min-h-[44px] px-5 text-sm"
-          >
-            Edit amounts
-          </button>
-        ) : null}
+      <div className="mt-3 flex justify-end">
         <button
-          onClick={
-            !plan
-              ? handleReview
-              : running
-                ? undefined
-                : tx.phase === 'error'
-                  ? resume // resume at the step that failed, not from the start
-                  : startRun
-          }
+          onClick={handleReview}
           disabled={busy}
           className="btn-primary min-h-[44px] px-5 text-sm"
         >
           {quoting
             ? 'Checking amounts…'
-            : running
-              ? 'Adding liquidity…'
-              : !isConnected
-                ? 'Sign in to continue'
-                : plan
-                  ? tx.phase === 'error'
-                    ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
-                    : mode === 'market'
-                      ? 'Confirm & make the market'
-                      : 'Confirm & add liquidity'
-                  : 'Review'}
+            : !isConnected
+              ? 'Sign in to continue'
+              : 'Review'}
         </button>
       </div>
 
       <TxError
-        error={reviewError ?? tx.error}
+        error={reviewError}
         className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
       />
+      {confirmDialog}
     </div>
   )
 }

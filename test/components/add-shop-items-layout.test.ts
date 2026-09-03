@@ -12,4 +12,10 @@ describe('add shop items layout', () => {
       'className="mt-6 border-t border-smoke-200 pt-5 pb-5"',
     )
   })
+
+  it('reviews the frozen items in the shared confirm dialog', () => {
+    expect(source).toContain("'Review items'}")
+    expect(source).toContain('<TxConfirmDialog')
+    expect(source).toContain("'Add items for sale'")
+  })
 })

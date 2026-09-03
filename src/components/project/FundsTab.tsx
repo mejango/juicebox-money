@@ -35,8 +35,9 @@ import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { FlowError, shortError } from '@/lib/errors'
@@ -47,6 +48,7 @@ import {
   treasuryUsdValue,
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { chainName } from '@/lib/urn'
 import {
   buildSendPayoutsRequest,
   buildUseAllowanceRequest,
@@ -897,7 +899,8 @@ function FundsTxFlow({
   // template interpolated `undefined` into the host and produced `https://undefined/tx/…`.
   const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
 
-  const busy = quoting || tx.busy
+  const sending = tx.busy || tx.phase === 'review'
+  const busy = quoting || sending
 
   // Refresh the card's numbers once the transaction lands.
   useEffect(() => {
@@ -1073,7 +1076,7 @@ function FundsTxFlow({
   }
 
   const handleConfirm = () => {
-    if (!review || busy) return
+    if (!review || sending) return
     // Account-unchanged recheck: the reviewed args embed the beneficiary.
     if (address?.toLowerCase() !== review.account.toLowerCase()) {
       setReview(null)
@@ -1083,7 +1086,97 @@ function FundsTxFlow({
     tx.send(review.request)
   }
 
+  const closeReview = () => {
+    setReview(null)
+    if (tx.phase !== 'success') tx.reset()
+  }
+
   if (!line) return null
+
+  const dialog = review ? (
+    <TxConfirmDialog
+      open
+      onClose={closeReview}
+      title={
+        tx.phase === 'success'
+          ? kind === 'payouts'
+            ? 'Payouts sent'
+            : 'Funds withdrawn'
+          : `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
+      }
+      rows={(() => {
+        const rows: TxConfirmRow[] = [
+          {
+            label: kind === 'payouts' ? 'Distribute' : 'Withdraw',
+            value: `${formatTokenAmount(parsedAmount, decimals)} ${amountLabel}`,
+            strong: true,
+          },
+        ]
+        if (!tokenKeyed) rows.push({ label: 'Paid in', value: tokenSymbol })
+        rows.push(
+          {
+            label: kind === 'payouts' ? 'Recipients get' : 'You get',
+            value: `~${formatTokenAmount(review.quote, ctx.decimals)} ${tokenSymbol}`,
+          },
+          {
+            label: 'At least',
+            value: `${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol}`,
+          },
+          kind === 'payouts'
+            ? { label: 'To', value: 'The configured payout recipients' }
+            : { label: 'Beneficiary', value: review.account, mono: true },
+          { label: 'On', value: chainName(chainId) },
+        )
+        return rows
+      })()}
+      steps={[
+        {
+          title: label,
+          detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} ${
+            kind === 'payouts' ? 'is paid out' : 'reaches you'
+          }.`,
+        },
+      ]}
+      activeIndex={sending ? 0 : -1}
+      complete={tx.phase === 'success'}
+      busy={sending}
+      action={
+        tx.phase === 'error'
+          ? 'Retry'
+          : kind === 'payouts'
+            ? 'Confirm & send payouts'
+            : 'Confirm & withdraw'
+      }
+      onConfirm={handleConfirm}
+      status={
+        tx.phase === 'pending' ? (
+          <>
+            Waiting for confirmation
+            {txUrl ? (
+              <>
+                {' — '}
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  view transaction
+                </a>
+              </>
+            ) : null}
+          </>
+        ) : undefined
+      }
+      error={tx.error}
+    >
+      <p className="text-xs text-smoke-700">
+        {kind === 'payouts'
+          ? 'Recipients outside Juicebox receive 2.5% less — the protocol fee.'
+          : 'A 2.5% protocol fee applies.'}
+      </p>
+    </TxConfirmDialog>
+  ) : null
 
   if (!open) {
     return (
@@ -1122,6 +1215,7 @@ function FundsTxFlow({
             Done
           </button>
         </div>
+        {dialog}
       </div>
     )
   }
@@ -1209,70 +1303,23 @@ function FundsTxFlow({
         .
       </p>
 
-      {review ? (
-        <div className="callout callout-info mt-3 text-xs">
-          <p>
-            {kind === 'payouts' ? (
-              <>
-                ~{formatTokenAmount(review.quote, ctx.decimals)} {tokenSymbol}{' '}
-                will be paid out to the recipients.
-              </>
-            ) : (
-              <>
-                You&apos;ll receive ~
-                {formatTokenAmount(review.quote, ctx.decimals)} {tokenSymbol}{' '}
-                after the fee.
-              </>
-            )}
-          </p>
-          <p className="mt-1">
-            At least {formatTokenAmount(review.min, ctx.decimals)} {tokenSymbol}{' '}
-            {kind === 'payouts' ? 'must be paid out' : 'must reach you'}, or
-            the transaction reverts.
-          </p>
-          <p className="mt-1 text-smoke-700">
-            {kind === 'payouts'
-              ? 'Recipients outside Juicebox receive 2.5% less — the protocol fee.'
-              : 'A 2.5% protocol fee applies.'}
-          </p>
-        </div>
-      ) : null}
-
       <button
-        onClick={review ? handleConfirm : handleReview}
+        onClick={handleReview}
         disabled={busy || (isConnected && parsedAmount <= 0n)}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
         {quoting
           ? 'Checking what you can send…'
-          : txPhaseLabel(tx.phase, {
-              pending: 'Sending…',
-              idle: !isConnected
-                ? 'Sign in to continue'
-                : review
-                  ? `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
-                  : 'Review',
-            })}
+          : !isConnected
+            ? 'Sign in to continue'
+            : 'Review'}
       </button>
 
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-2 text-center text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
-
       <TxError
-        error={flowError ?? tx.error}
+        error={flowError}
         className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
       />
+      {dialog}
     </div>
   )
 }

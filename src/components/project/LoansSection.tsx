@@ -21,8 +21,8 @@ import { usePublicClient, useReadContract } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { TxSteps } from '@/components/ui/TxSteps'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
   etherscanTxUrl,
@@ -35,6 +35,7 @@ import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { PERSIST } from '@/lib/query-persist'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { explorerTokenUrl } from '@/lib/chainDisplay'
+import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
@@ -331,6 +332,18 @@ type OnChainLoan = {
   sourceToken: Address
 }
 
+/** A reviewed repayment: read fresh when Repay is pressed and frozen until
+ *  the dialog closes, so what the holder confirms is what gets sent. */
+type RepayPlan = {
+  request: ReturnType<typeof buildRepayLoanTx>
+  amount: bigint
+  maxRepay: bigint
+  collateral: bigint
+  isNative: boolean
+  /** The ERC-20 approval prompt, when the allowance doesn't already cover the cap. */
+  approve: ReturnType<typeof buildErc20ApproveRequest> | null
+}
+
 function RepayFlow({
   chainId,
   loan,
@@ -353,20 +366,14 @@ function RepayFlow({
   const approveTx = useSafeTx(chainId)
   const repayTx = useSafeTx(chainId)
 
-  const [open, setOpen] = useState(false)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
-  const [pendingRepay, setPendingRepay] = useState<ReturnType<
-    typeof buildRepayLoanTx
-  > | null>(null)
-  // Set the moment the source allowance is read, so the second prompt is named
-  // before the first one opens.
-  const [needsApproval, setNeedsApproval] = useState(false)
+  const [plan, setPlan] = useState<RepayPlan | null>(null)
 
   const loans = revLoansAddress(chainId)
   const meta = tokenMeta(contexts, loan.token, chainId, symbols)
 
-  const busy = checking || approveTx.busy || repayTx.busy
+  const busy = approveTx.busy || repayTx.busy
 
   const repayTxUrl = repayTx.hash
     ? etherscanTxUrl(chainId, repayTx.hash)
@@ -377,18 +384,16 @@ function RepayFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repayTx.phase])
 
-  // Once the ERC-20 approval lands, send the repayment held in state.
+  // Once the ERC-20 approval lands, send the repayment held in the plan.
   useEffect(() => {
-    if (approveTx.phase === 'success' && pendingRepay) {
-      const req = pendingRepay
-      setPendingRepay(null)
-      repayTx.send(req)
+    if (approveTx.phase === 'success' && plan?.approve) {
+      repayTx.send(plan.request)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveTx.phase])
 
   const handleRepay = async () => {
-    if (!publicClient || busy) return
+    if (!publicClient || checking || busy) return
     if (address?.toLowerCase() !== holder.toLowerCase()) {
       setFlowError('Your connected account changed — reopen the loan to repay.')
       return
@@ -431,35 +436,32 @@ function RepayFlow({
         value: isNative ? maxRepay : 0n,
       })
 
-      if (isNative) {
-        setNeedsApproval(false)
-        await repayTx.send(request)
-        return
-      }
-
       // ERC-20 source: approve REVLoans for the cap first (its own reviewed
       // step), then repay. Skip when the allowance already covers it.
-      const allowance = (await publicClient.readContract({
-        abi: erc20Abi,
-        address: fresh.sourceToken,
-        functionName: 'allowance',
-        args: [holder, loans],
-      })) as bigint
-      if (allowance >= maxRepay) {
-        setNeedsApproval(false)
-        await repayTx.send(request)
-        return
-      }
-      setPendingRepay(request)
-      setNeedsApproval(true)
-      await approveTx.send(
-        buildErc20ApproveRequest({
-          chainId,
-          token: fresh.sourceToken,
-          spender: loans,
-          amount: maxRepay,
-        }),
-      )
+      const allowance = isNative
+        ? maxRepay
+        : ((await publicClient.readContract({
+            abi: erc20Abi,
+            address: fresh.sourceToken,
+            functionName: 'allowance',
+            args: [holder, loans],
+          })) as bigint)
+      setPlan({
+        request,
+        amount: fresh.amount,
+        maxRepay,
+        collateral: fresh.collateral,
+        isNative,
+        approve:
+          allowance >= maxRepay
+            ? null
+            : buildErc20ApproveRequest({
+                chainId,
+                token: fresh.sourceToken,
+                spender: loans,
+                amount: maxRepay,
+              }),
+      })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -467,80 +469,140 @@ function RepayFlow({
     }
   }
 
-  if (repayTx.phase === 'success') {
-    return (
-      <span className="text-xs text-smoke-700">
-        Repaid
-        {repayTxUrl ? (
-          <>
-            {' — '}
-            <a
-              href={repayTxUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-            >
-              view
-            </a>
-          </>
-        ) : null}
-      </span>
-    )
+  const handleConfirm = async () => {
+    if (!plan || busy) return
+    if (address?.toLowerCase() !== holder.toLowerCase()) {
+      setFlowError('Your connected account changed — reopen the loan to repay.')
+      return
+    }
+    setFlowError(null)
+    if (plan.isNative) {
+      await repayTx.send(plan.request)
+      return
+    }
+    if (!plan.approve || approveTx.phase === 'success') {
+      await repayTx.send(plan.request)
+      return
+    }
+    await approveTx.send(plan.approve)
   }
 
-  if (!open) {
+  const closeDialog = () => {
+    if (busy) return
+    setPlan(null)
+    setFlowError(null)
+    approveTx.reset()
+    if (repayTx.phase !== 'success') repayTx.reset()
+  }
+
+  const repayStep = plan?.approve ? 1 : 0
+  const activeIndex =
+    repayTx.phase !== 'idle' || approveTx.phase === 'success'
+      ? repayStep
+      : approveTx.phase !== 'idle'
+        ? 0
+        : -1
+  const error = flowError ?? approveTx.error ?? repayTx.error
+
+  const dialog = plan ? (
+    <TxConfirmDialog
+      open
+      title={repayTx.phase === 'success' ? 'Loan repaid' : 'Confirm repayment'}
+      rows={[
+        {
+          label: 'Loan',
+          value: `${formatTokenAmount(plan.amount, meta.decimals)} ${meta.symbol}`,
+        },
+        {
+          label: 'Repay up to',
+          value: `${formatTokenAmount(plan.maxRepay, meta.decimals)} ${meta.symbol}`,
+          strong: true,
+        },
+        {
+          label: 'Collateral returned',
+          value: `${formatTokenAmount(plan.collateral)} ${collateralSymbol}`,
+        },
+        { label: 'On', value: chainName(chainId) },
+      ]}
+      steps={[
+        ...(plan.approve
+          ? [
+              {
+                key: 'approve',
+                title: `Approve ${meta.symbol} for REVLoans`,
+                detail: 'Covers the principal plus the current fee.',
+              },
+            ]
+          : []),
+        { key: 'repay', title: 'Repay and reclaim your collateral' },
+      ]}
+      activeIndex={activeIndex}
+      action={
+        approveTx.phase === 'simulating' || approveTx.phase === 'signing'
+          ? 'Approve the repayment…'
+          : approveTx.phase === 'pending'
+            ? 'Approving…'
+            : repayTx.phase === 'simulating'
+              ? 'Double-checking…'
+              : txPhaseLabel(repayTx.phase, {
+                  idle: error ? 'Retry' : 'Confirm repayment',
+                  pending: 'Repaying…',
+                })
+      }
+      onConfirm={() => void handleConfirm()}
+      busy={busy}
+      complete={repayTx.phase === 'success'}
+      status={repayTx.safeNonceGuidance ?? approveTx.safeNonceGuidance}
+      error={error}
+      onClose={closeDialog}
+    >
+      <p className="text-xs leading-relaxed text-smoke-700">
+        The cap covers the principal plus the current fee in {meta.symbol},
+        with a small buffer for fee drift. Anything unused is refunded.
+      </p>
+    </TxConfirmDialog>
+  ) : null
+
+  if (repayTx.phase === 'success') {
     return (
-      <button
-        onClick={() => setOpen(true)}
-        className="btn-secondary min-h-[32px] px-3 text-xs"
-      >
-        Repay
-      </button>
+      <>
+        <span className="text-xs text-smoke-700">
+          Repaid
+          {repayTxUrl ? (
+            <>
+              {' — '}
+              <a
+                href={repayTxUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
+              >
+                view
+              </a>
+            </>
+          ) : null}
+        </span>
+        {dialog}
+      </>
     )
   }
 
   return (
-    <div className="text-left">
-      <p className="text-xs leading-relaxed text-smoke-700">
-        Repays the principal plus the current fee in {meta.symbol} and returns
-        your {formatTokenAmount(loan.collateral)} {collateralSymbol} collateral.
-      </p>
-      {needsApproval ? (
-        <TxSteps
-          steps={[
-            {
-              key: 'approve',
-              title: `Approve ${meta.symbol} for REVLoans`,
-              detail: 'Covers the principal plus the current fee.',
-            },
-            { key: 'repay', title: 'Repay and reclaim your collateral' },
-          ]}
-          activeIndex={pendingRepay ? 0 : 1}
-          className="mt-2 rounded-xl border border-smoke-200 bg-white p-3"
-        />
-      ) : null}
+    <>
       <button
         onClick={handleRepay}
-        disabled={busy}
-        className="btn-primary mt-2 min-h-[36px] px-4 text-xs"
+        disabled={checking || busy}
+        className="btn-secondary min-h-[32px] px-3 text-xs"
       >
-        {checking
-          ? 'Reading the loan…'
-          : approveTx.phase === 'simulating' || approveTx.phase === 'signing'
-            ? 'Approve the repayment…'
-            : approveTx.phase === 'pending'
-              ? 'Approving…'
-              : repayTx.phase === 'simulating'
-                ? 'Double-checking…'
-                : txPhaseLabel(repayTx.phase, {
-                    idle: 'Confirm repayment',
-                    pending: 'Repaying…',
-                  })}
+        {checking ? 'Reading the loan…' : 'Repay'}
       </button>
-      <TxError
-        error={flowError ?? approveTx.error ?? repayTx.error}
-        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
-      />
-    </div>
+      {!plan ? (
+        <TxError
+          error={flowError}
+          className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-left text-xs text-red-700"
+        />
+      ) : null}
+      {dialog}
+    </>
   )
 }

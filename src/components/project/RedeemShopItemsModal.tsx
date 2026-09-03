@@ -27,8 +27,9 @@ import { useConfig } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import {
   etherscanTxUrl,
@@ -63,6 +64,13 @@ type ItemCashOutQuote = {
   cashOutTaxRate: bigint
   metadata: `0x${string}`
   tokenIdsKey: string
+}
+
+type RedeemPlan = {
+  quote: ItemCashOutQuote
+  minReclaimed: bigint
+  request: ReturnType<typeof buildCashOutTx>
+  reviewNotice: ReturnType<typeof minimumDropNotice>
 }
 
 const isFeelessForAbi = [
@@ -103,11 +111,13 @@ export function RedeemShopItemsModal({
   )
   const [preparing, setPreparing] = useState(false)
   const [prepareError, setPrepareError] = useState<string | null>(null)
+  const [plan, setPlan] = useState<RedeemPlan | null>(null)
   const tx = useSafeTx(selectedChainId)
 
   useEffect(() => {
     setSelected(new Set(target.items.map(item => item.tokenId)))
     setPrepareError(null)
+    setPlan(null)
     tx.reset()
     // The joined key deliberately resets selection if ownership changes while
     // the modal is open without depending on a freshly allocated array.
@@ -303,7 +313,7 @@ export function RedeemShopItemsModal({
     tx.reset()
   }
 
-  const redeem = async () => {
+  const prepare = async () => {
     if (!isConnected || !address) {
       openSignIn()
       return
@@ -315,7 +325,7 @@ export function RedeemShopItemsModal({
     const displayedMinimum = quote ? slippageFloor(quote.net) : null
     try {
       // Refresh ownership, hook preview, fee state, and minimum immediately
-      // before simulation/signing. The sent request is frozen from this read.
+      // before the review. The reviewed request is frozen from this read.
       const refreshed = await refetchQuote()
       if (refreshed.error) {
         throw refreshed.error
@@ -337,8 +347,10 @@ export function RedeemShopItemsModal({
         throw new Error('Your account or item selection changed. Review again.')
       }
       const minReclaimed = slippageFloor(reviewed.net)
-      await tx.send(
-        buildCashOutTx({
+      setPlan({
+        quote: reviewed,
+        minReclaimed,
+        request: buildCashOutTx({
           chainId: reviewed.chainId,
           terminal: reviewed.terminal,
           holder: reviewed.holder,
@@ -349,15 +361,13 @@ export function RedeemShopItemsModal({
           beneficiary: reviewed.holder,
           metadata: reviewed.metadata,
         }),
-        {
-          reviewNotice: minimumDropNotice({
-            displayedMinimum,
-            freshMinimum: minReclaimed,
-            decimals: reviewed.decimals,
-            symbol: reviewed.symbol,
-          }),
-        },
-      )
+        reviewNotice: minimumDropNotice({
+          displayedMinimum,
+          freshMinimum: minReclaimed,
+          decimals: reviewed.decimals,
+          symbol: reviewed.symbol,
+        }),
+      })
     } catch (error) {
       setPrepareError(
         error instanceof Error
@@ -366,6 +376,20 @@ export function RedeemShopItemsModal({
       )
     } finally {
       setPreparing(false)
+    }
+  }
+
+  const redeem = async () => {
+    if (!plan || busy) return
+    setPrepareError(null)
+    try {
+      await tx.send(plan.request, { reviewNotice: plan.reviewNotice })
+    } catch (error) {
+      setPrepareError(
+        error instanceof Error
+          ? error.message
+          : 'Could not redeem these items.',
+      )
     }
   }
 
@@ -378,6 +402,14 @@ export function RedeemShopItemsModal({
   }, [target.items])
 
   const txUrl = tx.hash ? etherscanTxUrl(selectedChainId, tx.hash) : null
+  const itemsSummary = groups
+    .map(([tierId, items]) => [
+      tierId,
+      items.filter(item => selected.has(item.tokenId)).length,
+    ])
+    .filter(([, count]) => count > 0)
+    .map(([tierId, count]) => `${count} × ${names[tierId] ?? `Item #${tierId}`}`)
+    .join(', ')
 
   return (
     <ModalShell
@@ -496,13 +528,13 @@ export function RedeemShopItemsModal({
       ) : null}
 
       <TxError
-        error={prepareError ?? tx.error}
+        error={plan ? null : prepareError}
         className="mt-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
       />
 
       <button
         type="button"
-        onClick={tx.phase === 'success' ? onClose : redeem}
+        onClick={tx.phase === 'success' ? onClose : prepare}
         disabled={
           tx.phase !== 'success' &&
           (busy || selectedTokenIds.length === 0 || !quote || quote.net <= 0n)
@@ -511,12 +543,9 @@ export function RedeemShopItemsModal({
       >
         {tx.phase === 'success'
           ? 'Done'
-          : preparing || tx.phase === 'simulating'
+          : preparing
             ? 'Double-checking the redemption…'
-            : txPhaseLabel(tx.phase, {
-                idle: `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`,
-                pending: 'Redeeming items…',
-              })}
+            : `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`}
       </button>
 
       {quote && quote.net > 0n && tx.phase !== 'success' ? (
@@ -525,6 +554,43 @@ export function RedeemShopItemsModal({
           {formatTokenAmount(slippageFloor(quote.net), quote.decimals)}{' '}
           {quote.symbol}, or the transaction reverts.
         </p>
+      ) : null}
+
+      {plan ? (
+        <TxConfirmDialog
+          open
+          title={tx.phase === 'success' ? 'Items redeemed' : 'Confirm redemption'}
+          rows={[
+            { label: 'Items', value: itemsSummary },
+            {
+              label: 'You get',
+              value: `~${formatTokenAmount(plan.quote.net, plan.quote.decimals)} ${plan.quote.symbol}`,
+            },
+            {
+              label: 'At least',
+              value: `${formatTokenAmount(plan.minReclaimed, plan.quote.decimals)} ${plan.quote.symbol}`,
+              strong: true,
+            },
+            { label: 'On', value: chainName(selectedChainId) },
+          ]}
+          steps={[
+            {
+              title: `Redeem ${selectedTokenIds.length} item${selectedTokenIds.length === 1 ? '' : 's'}`,
+            },
+          ]}
+          activeIndex={tx.busy || tx.phase === 'error' ? 0 : -1}
+          action={tx.phase === 'error' ? 'Retry' : 'Confirm & redeem'}
+          onConfirm={() => void redeem()}
+          busy={tx.busy}
+          complete={tx.phase === 'success'}
+          status={tx.safeNonceGuidance}
+          error={prepareError ?? tx.error}
+          onClose={() => {
+            setPlan(null)
+            setPrepareError(null)
+            if (tx.phase !== 'success') tx.reset()
+          }}
+        />
       ) : null}
     </ModalShell>
   )

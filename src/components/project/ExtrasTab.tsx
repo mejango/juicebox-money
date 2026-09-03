@@ -14,8 +14,9 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField } from '@/components/create/AddressField'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
 import { draftFileName } from '@/lib/draft'
@@ -454,66 +455,16 @@ function PayerAddressCard({
             </div>
           ) : null}
 
-          {review ? (
-            <div className="callout callout-info mt-4 text-xs">
-              <p>
-                Deploys a payer address on {chainName(chainId)} that{' '}
-                {review.addToBalance
-                  ? 'adds every ETH transfer to the project balance without minting tokens'
-                  : 'pays the project with every ETH transfer'}
-                .
-              </p>
-              {!review.addToBalance ? (
-                <p className="mt-1">
-                  Tokens go to{' '}
-                  {review.beneficiary === zeroAddress
-                    ? 'whoever sends the ETH'
-                    : truncateAddress(review.beneficiary)}
-                  .
-                </p>
-              ) : null}
-              {review.memo ? (
-                <p className="mt-1">Memo: {review.memo}</p>
-              ) : null}
-              <p className="mt-1 text-smoke-700">
-                {review.owner === zeroAddress
-                  ? 'These settings can never be changed.'
-                  : `${truncateAddress(review.owner)} can change these settings later.`}
-              </p>
-            </div>
-          ) : null}
-
           <button
-            onClick={review ? handleConfirm : handleReview}
+            onClick={handleReview}
             disabled={busy}
             className="btn-primary mt-4 min-h-[44px] px-5 text-sm"
           >
-            {txPhaseLabel(tx.phase, {
-              pending: 'Deploying…',
-              idle: !isConnected
-                ? 'Sign in to continue'
-                : review
-                  ? 'Confirm deploy'
-                  : 'Review deploy',
-            })}
+            {isConnected ? 'Review deploy' : 'Sign in to continue'}
           </button>
 
-          {tx.phase === 'pending' && txUrl ? (
-            <p className="mt-2 text-center text-xs text-smoke-700">
-              Waiting for confirmation —{' '}
-              <a
-                href={txUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2"
-              >
-                view transaction
-              </a>
-            </p>
-          ) : null}
-
           <TxError
-            error={flowError ?? tx.error}
+            error={flowError ?? (review ? null : tx.error)}
             className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
           />
         </>
@@ -540,6 +491,48 @@ function PayerAddressCard({
         </ModalShell>
       ) : null}
 
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={
+            tx.phase === 'success' ? 'Payer address deployed' : 'Confirm deploy'
+          }
+          rows={payerReviewRows(review, chainId)}
+          steps={[{ title: 'Deploy the payer address' }]}
+          activeIndex={tx.busy || tx.phase === 'success' ? 0 : -1}
+          action="Confirm deploy"
+          onConfirm={handleConfirm}
+          busy={busy}
+          complete={tx.phase === 'success'}
+          status={
+            tx.phase === 'pending' && txUrl ? (
+              <>
+                Waiting for confirmation —{' '}
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  view transaction
+                </a>
+              </>
+            ) : null
+          }
+          error={tx.error}
+          onClose={() => {
+            setReview(null)
+            if (tx.phase !== 'success') tx.reset()
+          }}
+        >
+          <p className="text-xs text-smoke-700">
+            {review.owner === zeroAddress
+              ? 'These settings can never be changed.'
+              : `${truncateAddress(review.owner)} can change these settings later.`}
+          </p>
+        </TxConfirmDialog>
+      ) : null}
+
       <PayerAddressList
         rows={payerRows}
         isLoading={payersLoading}
@@ -548,6 +541,34 @@ function PayerAddressCard({
       />
     </div>
   )
+}
+
+function payerReviewRows(
+  review: ReviewedDeploy,
+  chainId: JBChainId,
+): TxConfirmRow[] {
+  const rows: TxConfirmRow[] = [
+    {
+      label: 'Behavior',
+      value: review.addToBalance ? 'Add to balance' : 'Pay',
+      strong: true,
+    },
+    { label: 'On', value: chainName(chainId) },
+  ]
+  if (!review.addToBalance) {
+    rows.push(
+      review.beneficiary === zeroAddress
+        ? { label: 'Tokens go to', value: 'Whoever sends the ETH' }
+        : { label: 'Tokens go to', value: review.beneficiary, mono: true },
+    )
+  }
+  if (review.memo) rows.push({ label: 'Memo', value: review.memo })
+  rows.push(
+    review.owner === zeroAddress
+      ? { label: 'Admin', value: 'None' }
+      : { label: 'Admin', value: review.owner, mono: true },
+  )
+  return rows
 }
 
 function payerUsd(value: string): string {

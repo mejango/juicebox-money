@@ -23,6 +23,7 @@ import {
 } from "@/components/project/SafeQueueCard";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
+import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { ErrorNote } from "@/components/ui/TxError";
 import {
   clientFor,
@@ -562,18 +563,27 @@ function TransferAuthorityFlow({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{
+    to: Address;
+    calls: AuthorityCall[];
+  } | null>(null);
+  const [step, setStep] = useState(-1);
+  const [done, setDone] = useState(false);
 
-  const submit = async () => {
+  const title = isRevnet ? "Transfer revnet operator" : "Transfer project ownership";
+
+  const review = () => {
     const to = resolvedAddress(destination);
     if (!to) {
       setError("Enter a valid destination address or ENS name.");
       return;
     }
     if (!ack) return;
-    setBusy(true);
     setError(null);
-    try {
-      const calls: AuthorityCall[] = rows.map((row) => {
+    setStatus(null);
+    setPlan({
+      to,
+      calls: rows.map((row) => {
         if (isRevnet) {
           return buildRevnetOperatorAuthorityCall({
             chainId: row.chainId,
@@ -588,10 +598,26 @@ function TransferAuthorityFlow({
           projectId: BigInt(row.projectId),
           destination: to,
         });
-      });
+      }),
+    });
+  };
+
+  const submit = async () => {
+    if (!plan || busy) return;
+    setBusy(true);
+    setError(null);
+    setStep(0);
+    try {
       const result = await runAuthorityCalls({
-        calls,
-        onProgress: (progress) => setStatus(progress.message),
+        calls: plan.calls,
+        onProgress: (progress) => {
+          setStatus(progress.message);
+          // Progress names the chain it is on (JB_CHAINS name); that names the step.
+          const index = plan.calls.findIndex((call) =>
+            progress.message.includes(JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`),
+          );
+          if (index >= 0) setStep(index);
+        },
       });
       const queued = result.safeResults.filter(
         (item) => item.status === "queued",
@@ -604,7 +630,7 @@ function TransferAuthorityFlow({
           ? `Your Safe action is recorded${queued ? `; ${queued} queued` : ""}${waiting ? `; ${waiting} awaiting more onchain approvals` : ""}.`
           : `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
       );
-      onDone();
+      setDone(true);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -616,6 +642,55 @@ function TransferAuthorityFlow({
     }
   };
 
+  const closeReview = () => {
+    if (busy) return;
+    const finished = done;
+    setPlan(null);
+    setStep(-1);
+    setDone(false);
+    setError(null);
+    if (finished) onDone();
+  };
+
+  const relinquish = isRevnet && plan?.to === zeroAddress;
+  const dialog = plan ? (
+    <TxConfirmDialog
+      open
+      title={
+        done
+          ? relinquish
+            ? "Operator relinquished"
+            : "Transferred"
+          : `Confirm ${isRevnet ? "operator" : "ownership"} transfer`
+      }
+      rows={[
+        {
+          label: isRevnet ? "New operator" : "New owner",
+          value: relinquish ? "None (relinquish)" : plan.to,
+          mono: !relinquish,
+          strong: true,
+        },
+        {
+          label: "Project",
+          value: [...new Set(rows.map((row) => `#${row.projectId}`))].join(", "),
+        },
+        { label: "On", value: rows.map((row) => row.name).join(", ") },
+      ]}
+      steps={rows.map((row) => ({
+        key: String(row.chainId),
+        title: `${isRevnet ? "Set operator" : "Transfer ownership"} on ${row.name}`,
+      }))}
+      activeIndex={step}
+      status={status}
+      error={error}
+      busy={busy}
+      complete={done}
+      action={error ? "Retry" : `Confirm & ${isRevnet ? "set operator" : "transfer"}`}
+      onConfirm={() => void submit()}
+      onClose={closeReview}
+    />
+  ) : null;
+
   if (!open) {
     return (
       <button
@@ -623,7 +698,7 @@ function TransferAuthorityFlow({
         onClick={() => setOpen(true)}
         className="btn-secondary mt-4 min-h-[38px] px-4 text-sm"
       >
-        {isRevnet ? "Transfer revnet operator" : "Transfer project ownership"}
+        {title}
       </button>
     );
   }
@@ -631,9 +706,7 @@ function TransferAuthorityFlow({
   return (
     <div className="mt-4 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-medium text-ink">
-          {isRevnet ? "Transfer revnet operator" : "Transfer project ownership"}
-        </p>
+        <p className="text-sm font-medium text-ink">{title}</p>
         <button
           type="button"
           onClick={() => setOpen(false)}
@@ -680,18 +753,15 @@ function TransferAuthorityFlow({
       </label>
       <button
         type="button"
-        onClick={submit}
-        disabled={busy || !ack || !destination.trim()}
+        onClick={review}
+        disabled={busy || !!plan || !ack || !destination.trim()}
         className="btn-primary mt-3 min-h-[42px] w-full text-sm"
       >
-        {busy
-          ? (status ?? "Preparing…")
-          : isRevnet
-            ? "Transfer revnet operator"
-            : "Transfer project ownership"}
+        {title}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {error && !plan ? <ErrorNote message={error} /> : null}
+      {dialog}
     </div>
   );
 }
@@ -958,11 +1028,21 @@ function PermissionEditor({
     );
   };
   const [ack, setAck] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{
+    operator: Address;
+    chosen: AuthorityDeployment[];
+    permissions: string[];
+    calls: AuthorityCall[];
+  } | null>(null);
+  const [step, setStep] = useState(-1);
+  const [done, setDone] = useState(false);
 
-  const submit = async () => {
+  /** Re-read each chain's current bitmap and freeze the exact calls. */
+  const review = async () => {
     const operator = resolvedAddress(operatorInput);
     if (!operator || operator === zeroAddress) {
       setError("Enter a valid non-zero operator address or ENS name.");
@@ -973,8 +1053,9 @@ function PermissionEditor({
       setError("Choose at least one chain.");
       return;
     }
-    setBusy(true);
+    setChecking(true);
     setError(null);
+    setStatus(null);
     try {
       const calls: AuthorityCall[] = [];
       for (const deployment of chosen) {
@@ -1012,9 +1093,41 @@ function PermissionEditor({
           }),
         );
       }
-      const result = await runAuthorityCalls({
+      setPlan({
+        operator,
+        chosen,
+        permissions: V6_PERMISSIONS.filter((permission) =>
+          selected.has(permission.id),
+        ).map((permission) => `${permission.label} #${permission.id}`),
         calls,
-        onProgress: (progress) => setStatus(progress.message),
+      });
+    } catch (reviewError) {
+      setError(
+        reviewError instanceof Error
+          ? reviewError.message
+          : "Could not read the current permissions.",
+      );
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!plan || busy) return;
+    setBusy(true);
+    setError(null);
+    setStep(0);
+    try {
+      const result = await runAuthorityCalls({
+        calls: plan.calls,
+        onProgress: (progress) => {
+          setStatus(progress.message);
+          // Progress names the chain it is on (JB_CHAINS name); that names the step.
+          const index = plan.calls.findIndex((call) =>
+            progress.message.includes(JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`),
+          );
+          if (index >= 0) setStep(index);
+        },
       });
       const queued = result.safeResults.filter(
         (item) => item.status === "queued",
@@ -1022,9 +1135,9 @@ function PermissionEditor({
       setStatus(
         queued
           ? `Queued on ${queued} Safe chain${queued === 1 ? "" : "s"}; co-sign and execute above.`
-          : `Permissions updated on ${chosen.length} chain${chosen.length === 1 ? "" : "s"}.`,
+          : `Permissions updated on ${plan.chosen.length} chain${plan.chosen.length === 1 ? "" : "s"}.`,
       );
-      onDone();
+      setDone(true);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -1036,6 +1149,62 @@ function PermissionEditor({
     }
   };
 
+  const closeReview = () => {
+    if (busy) return;
+    const finished = done;
+    setPlan(null);
+    setStep(-1);
+    setDone(false);
+    setError(null);
+    if (finished) onDone();
+  };
+
+  const dialog = plan ? (
+    <TxConfirmDialog
+      open
+      title={
+        done
+          ? grant
+            ? "Permissions updated"
+            : "Operator added"
+          : grant
+            ? "Confirm permissions"
+            : "Confirm operator"
+      }
+      rows={[
+        { label: "Operator", value: plan.operator, mono: true, strong: true },
+        {
+          label: "Permissions",
+          value: plan.permissions.length
+            ? plan.permissions.join(", ")
+            : "None (revokes every known permission)",
+        },
+        {
+          label: "Project",
+          value: grant?.wildcard
+            ? "All projects"
+            : [...new Set(plan.chosen.map((row) => `#${row.projectId}`))].join(", "),
+        },
+        {
+          label: "On",
+          value: plan.chosen.map((row) => chainName(row.chainId)).join(", "),
+        },
+      ]}
+      steps={plan.chosen.map((row) => ({
+        key: String(row.chainId),
+        title: `${grant ? "Set permissions" : "Add operator"} on ${chainName(row.chainId)}`,
+      }))}
+      activeIndex={step}
+      status={status}
+      error={error}
+      busy={busy}
+      complete={done}
+      action={error ? "Retry" : grant ? "Confirm & update" : "Confirm & add"}
+      onConfirm={() => void submit()}
+      onClose={closeReview}
+    />
+  ) : null;
+
   return (
     <div className="mt-5 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
@@ -1045,7 +1214,7 @@ function PermissionEditor({
         <button
           type="button"
           onClick={onCancel}
-          disabled={busy}
+          disabled={checking || busy}
           className="text-xs text-smoke-700 hover:text-ink"
         >
           Cancel
@@ -1093,7 +1262,7 @@ function PermissionEditor({
           setSelectedChains(chains);
           reseed(chains);
         }}
-        disabled={busy}
+        disabled={checking || busy}
         rowClassName={() =>
           "flex cursor-pointer items-center gap-2 rounded-lg border border-smoke-200 px-3 py-2 text-sm"
         }
@@ -1123,7 +1292,7 @@ function PermissionEditor({
               onToggle={() =>
                 setSelected((current) => toggleInSet(current, permission.id))
               }
-              disabled={busy}
+              disabled={checking || busy}
               title={`${permission.label} #${permission.id}`}
               blurb={permission.description}
             />
@@ -1136,7 +1305,7 @@ function PermissionEditor({
           type="checkbox"
           checked={ack}
           onChange={(event) => setAck(event.target.checked)}
-          disabled={busy}
+          disabled={checking || busy}
           className="mt-0.5 accent-red-600"
         />
         <span className="text-xs leading-relaxed text-red-700">
@@ -1147,18 +1316,21 @@ function PermissionEditor({
 
       <button
         type="button"
-        onClick={submit}
-        disabled={busy || !ack || !operatorInput.trim() || !selectedChains.size}
+        onClick={() => void review()}
+        disabled={
+          checking || busy || !!plan || !ack || !operatorInput.trim() || !selectedChains.size
+        }
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {busy
-          ? (status ?? "Preparing…")
+        {checking
+          ? "Reading current permissions…"
           : grant
             ? "Update permissions"
             : "Add operator"}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {error && !plan ? <ErrorNote message={error} /> : null}
+      {dialog}
     </div>
   );
 }

@@ -34,6 +34,8 @@ vi.mock('@/components/ui/ModalShell', () => ({
     createElement('div', null, children),
   ModalDialog: ({ children }: { children: ReactNode }) =>
     createElement('div', null, children),
+  ModalCloseButton: (props: Record<string, unknown>) =>
+    createElement('button', props),
 }))
 vi.mock('wagmi', () => ({
   usePublicClient: () =>
@@ -466,6 +468,7 @@ describe('project payer write flow', () => {
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
     expect(renderedText(renderer.root)).toMatch(/connected account changed/i)
   })
 })
@@ -498,6 +501,13 @@ describe('auto-issuance write flow', () => {
       stageId: 3n,
       beneficiary: ALICE,
     })
+    expect(renderedText(renderer.root)).toContain('Confirm distribution')
+    expect(mocks.send).not.toHaveBeenCalled()
+
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & distribute').props.onClick(),
+    )
+
     expect(mocks.send).toHaveBeenCalledWith(AUTO_ISSUE_REQUEST)
   })
 
@@ -510,6 +520,7 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm distribution')
     expect(renderedText(renderer.root)).toMatch(/nothing left to distribute/i)
   })
 
@@ -565,6 +576,11 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('Confirm cash out')
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
+    )
 
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
@@ -608,8 +624,13 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
 
+    await act(async () =>
+      buttonWith(renderer, 'Sell 2 JBT on the pool').props.onClick(),
+    )
+
     // Both allowances are empty, so the queue is approve → authorize → sell,
     // and the first step is the one awaiting a click.
+    expect(renderedText(renderer.root)).toContain('Confirm pool sale')
     const steps = renderer.root.findAllByType('li').map(step => renderedText(step))
     expect(steps).toEqual([
       expect.stringContaining('Approve JBT for the swap router'),
@@ -689,6 +710,9 @@ describe('cash-out write flow', () => {
       mocks.publicClient,
       expect.objectContaining({ slippageBps: 250n }),
     )
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
+    )
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })
 
@@ -718,6 +742,7 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm cash out')
     expect(renderedText(renderer.root)).toContain(
       'The cash-out quote is no longer available.',
     )

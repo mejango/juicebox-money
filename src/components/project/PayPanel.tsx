@@ -1,6 +1,6 @@
 "use client";
 
-import { TxSteps } from "@/components/ui/TxSteps"
+import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   bytes32ToCidV0,
   JBCoreContracts,
@@ -31,7 +31,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
-import { ModalCloseButton, ModalShell } from "@/components/ui/ModalShell";
+import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   erc20Abi,
@@ -2428,28 +2428,73 @@ export function PayPanel({
         </p>
       ) : null}
       {sequenceOpen ? (
-        <PaymentSequenceDialog
-          mode={mode}
-          chainName={chainName(chainId)}
-          amount={`${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`}
-          tokenReturn={
-            mode === "pay" && sequenceSummary
-              ? `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`
-              : null
+        <TxConfirmDialog
+          open
+          eyebrow="Payment sequence"
+          title={
+            sequenceComplete
+              ? mode === "pay"
+                ? "Payment confirmed"
+                : "Added to the balance"
+              : mode === "pay"
+                ? "Confirm payment"
+                : "Confirm add to balance"
           }
-          projectTokenSymbol={projectTokenLabel}
-          paymentTokenSymbol={symbol}
-          actions={sequenceActions}
-          activeActionIndex={sequenceActionIndex}
-          completedKinds={sequenceCompletedKinds}
-          beneficiary={address ?? null}
-          memo={memo.trim() || null}
+          rows={(() => {
+            const activeAction = sequenceActions[sequenceActionIndex] ?? null;
+            const rows: TxConfirmRow[] = [
+              {
+                label: "Send",
+                value: `${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`,
+                strong: true,
+              },
+              { label: "On", value: chainName(chainId) },
+            ];
+            if (mode === "pay" && sequenceSummary) {
+              rows.push({
+                label: "You get at least",
+                value: `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`,
+                strong: true,
+              });
+            }
+            if (
+              activeAction?.kind === "payment" &&
+              activeAction.swapInputRoute &&
+              activeAction.swapInputRoute.kind !== "single-v4"
+            ) {
+              rows.push({
+                label: "Route",
+                value: `${symbol} → ${activeAction.swapInputRoute.bridgeTokenSymbol} → ${projectTokenLabel}`,
+              });
+            }
+            if (address) rows.push({ label: "Beneficiary", value: address, mono: true });
+            if (memo.trim()) rows.push({ label: "Note", value: memo.trim() });
+            return rows;
+          })()}
+          steps={sequenceActions.map(action => ({
+            key: `${action.kind}:${action.label}`,
+            title: action.label,
+          }))}
+          activeIndex={Math.max(
+            sequenceActionIndex,
+            sequenceActions.filter(action =>
+              sequenceCompletedKinds.includes(action.kind),
+            ).length,
+          )}
           status={sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
-          started={paymentSequenceLocked(sequenceStarted, sequencePending)}
-          waitingForSafe={!!sequenceSafeStage}
+          busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete}
-          onStart={() => void runPaymentSequence()}
+          cancelLabel={sequenceSafeStage ? "Close" : "Cancel"}
+          actionDisabled={!!sequenceSafeStage}
+          action={
+            sequenceSafeStage
+              ? "Waiting for Safe"
+              : mode === "pay"
+                ? "Confirm & Pay"
+                : "Confirm & Add"
+          }
+          onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             setSequenceOpen(false);
@@ -2464,169 +2509,6 @@ export function PayPanel({
     </div>
   );
 }
-
-function PaymentSequenceDialog({
-  mode,
-  chainName: paymentChainName,
-  amount,
-  tokenReturn,
-  projectTokenSymbol,
-  paymentTokenSymbol,
-  actions,
-  activeActionIndex,
-  completedKinds,
-  beneficiary,
-  memo,
-  status,
-  error,
-  started,
-  waitingForSafe,
-  complete,
-  onStart,
-  onClose,
-}: {
-  mode: "pay" | "addbalance";
-  chainName: string;
-  amount: string;
-  tokenReturn: string | null;
-  projectTokenSymbol: string;
-  paymentTokenSymbol: string;
-  actions: PaymentSequenceAction[];
-  activeActionIndex: number;
-  completedKinds: PaymentSequenceAction["kind"][];
-  beneficiary: Address | null;
-  memo: string | null;
-  status: string | null;
-  error: string | null;
-  started: boolean;
-  waitingForSafe: boolean;
-  complete: boolean;
-  onStart: () => void;
-  onClose: () => void;
-}) {
-  const activeAction = actions[activeActionIndex] ?? null;
-  return (
-    <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/50 px-3 py-6 sm:items-center">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="payment-sequence-title"
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl"
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
-              Payment sequence
-            </p>
-            <h2 id="payment-sequence-title" className="mt-1 font-agrandir text-xl font-medium text-ink">
-              {complete
-                ? mode === "pay"
-                  ? "Payment confirmed"
-                  : "Added to the balance"
-                : mode === "pay"
-                  ? "Confirm payment"
-                  : "Confirm add to balance"}
-            </h2>
-          </div>
-          <ModalCloseButton
-            onClick={onClose}
-            disabled={started}
-            aria-label="Close payment"
-            className="-mr-2 -mt-2 transition-transform hover:scale-110 hover:bg-transparent disabled:opacity-40"
-          />
-        </header>
-        <div className="space-y-4 px-5 py-5">
-          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <span className="text-smoke-500">Send</span>
-            <span className="text-right font-medium text-ink">{amount}</span>
-            <span className="text-smoke-500">On</span>
-            <span className="text-right text-ink">{paymentChainName}</span>
-            {tokenReturn ? (
-              <>
-                <span className="text-smoke-500">You get at least</span>
-                <span className="text-right font-medium text-ink">{tokenReturn}</span>
-              </>
-            ) : null}
-            {activeAction?.kind === "payment" &&
-            activeAction.swapInputRoute &&
-            activeAction.swapInputRoute.kind !== "single-v4" ? (
-              <>
-                <span className="text-smoke-500">Route</span>
-                <span className="text-right text-ink">
-                  {paymentTokenSymbol} →{" "}
-                  {activeAction.swapInputRoute.bridgeTokenSymbol} →{" "}
-                  {projectTokenSymbol}
-                </span>
-              </>
-            ) : null}
-            {beneficiary ? (
-              <>
-                <span className="text-smoke-500">Beneficiary</span>
-                <span className="break-all text-right font-mono text-xs text-ink">
-                  {beneficiary}
-                </span>
-              </>
-            ) : null}
-            {memo ? (
-              <>
-                <span className="text-smoke-500">Note</span>
-                <span className="break-words text-right text-ink">{memo}</span>
-              </>
-            ) : null}
-          </div>
-
-          <TxSteps
-            steps={actions.map(action => ({
-              key: `${action.kind}:${action.label}`,
-              title: action.label,
-            }))}
-            activeIndex={
-              complete
-                ? actions.length
-                : Math.max(
-                    activeActionIndex,
-                    actions.filter(action => completedKinds.includes(action.kind))
-                      .length,
-                  )
-            }
-            className="rounded-xl border border-smoke-200 bg-white p-3"
-          />
-          {/* Each action's exact payload is reviewed in the one client safety
-              check, the same shell every multi-step flow uses. */}
-
-          {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        </div>
-        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
-          {complete ? (
-            <button type="button" className="btn-primary min-h-[44px] px-5 text-sm" onClick={onClose}>
-              Done
-            </button>
-          ) : (
-            <>
-              <button type="button" className="btn-secondary min-h-[44px] px-5 text-sm" disabled={started} onClick={onClose}>
-                {waitingForSafe ? "Close" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={started || waitingForSafe}
-                onClick={onStart}
-              >
-                {waitingForSafe
-                  ? "Waiting for Safe"
-                  : mode === "pay"
-                    ? "Confirm & Pay"
-                    : "Confirm & Add"}
-              </button>
-            </>
-          )}
-        </footer>
-      </section>
-    </div>
-  );
-}
-
 
 async function waitForPaymentReceipt(client: PublicClient, hash: Hex) {
   try {
