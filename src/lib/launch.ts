@@ -248,6 +248,16 @@ export function deriveStartFrom(
   return start
 }
 
+/** Seconds a deployed JBDeadline hook demands, by its address on `chainId`; 0 for no hook or a custom one. */
+export function deadlineSecondsForHook(hook: Address | undefined, chainId: number): number {
+  if (!hook || hook === zeroAddress) return 0
+  for (const key of Object.keys(DEADLINE_SECONDS) as (keyof typeof DEADLINE_SECONDS)[]) {
+    const addr = v6Address(DEADLINE_CONTRACT[key], chainId as JBChainId)
+    if (addr && addr.toLowerCase() === hook.toLowerCase()) return DEADLINE_SECONDS[key]
+  }
+  return 0
+}
+
 const DEADLINE_CONTRACT: Record<
   Exclude<ApprovalDeadline, 'none' | 'custom'>,
   'JBDeadline3Hours' | 'JBDeadline1Day' | 'JBDeadline3Days' | 'JBDeadline7Days'
