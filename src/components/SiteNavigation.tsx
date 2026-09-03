@@ -109,7 +109,7 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
         <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={iconOnly} />
       </div>
       {!expanded && !iconOnly ? (
-        <GuideLinks className="col-start-1 row-start-2 -mt-1 h-6 self-start pl-0.5" />
+        <GuideLinks className="col-start-1 row-start-2 h-6 self-start pl-0.5" />
       ) : null}
       <div
         className={`row-start-1 w-full min-w-0 @container ${
