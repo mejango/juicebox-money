@@ -57,6 +57,8 @@ import {
 import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
+  DEADLINE_SECONDS,
+  deriveStartFrom,
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
@@ -83,7 +85,9 @@ import {
   StageRulesEditor,
   newDraftStage,
   stageCashOutTax,
+  secondsLabel,
   stageDurationSeconds,
+  stageMustStartAtOrAfter,
   stageOk,
   stageRoutesEverything,
   stageSummary,
@@ -651,6 +655,58 @@ export function CreateForm() {
       ));
   const tickerOk =
     flavor !== "revnet" || /^[A-Z0-9]{1,11}$/.test(ticker.trim());
+  const lastStage = stages[stages.length - 1];
+  const lastDuration = stageDurationSeconds(lastStage);
+  // "Afterwards" applies only when the last stage is timed (website/ parity).
+  const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
+  // The approval condition is meaningless when rules end in a forever stage.
+  const deadlineApplies =
+    lastDuration !== FOREVER_SECONDS &&
+    !(afterApplies && afterMode === "terminal");
+  /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
+   *  previous stage's next cycle boundary) and the start it lands on, chained
+   *  from stage 1's known start — its scheduled time, the multichain pin, or
+   *  `now` for a single chain whose stage 1 starts at the deploy block. */
+  const projectStageStarts = (
+    deployStart: number,
+    now: number,
+  ): { musts: number[]; starts: number[] } => {
+    const first = stages[0];
+    const firstMust =
+      first.scheduleOn && first.schedule
+        ? Math.floor(new Date(first.schedule).getTime() / 1000)
+        : selected.length > 1
+          ? deployStart
+          : 0;
+    const musts = [firstMust];
+    const starts = [firstMust || now];
+    for (let i = 1; i < stages.length; i++) {
+      const prevStart = starts[i - 1];
+      const prevDuration = stageDurationSeconds(stages[i - 1]);
+      const must = stageMustStartAtOrAfter(stages[i], prevStart, prevDuration);
+      musts.push(must);
+      starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+    }
+    return { musts, starts };
+  };
+  // A stage queued at launch that starts sooner than the notice deadline is
+  // rejected by the hook (JBDeadline → Failed) and silently never takes
+  // effect. Covers the standby/terminal stage "Afterwards" appends too.
+  const noticeSeconds =
+    flavor !== "revnet" && !isSimpleProject && deadlineApplies
+      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
+      : 0;
+  const noticeClash = (() => {
+    if (!noticeSeconds) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const { starts } = projectStageStarts(now + 600, now);
+    const all =
+      afterApplies && afterMode !== "cycle"
+        ? [...starts, starts[starts.length - 1] + lastDuration]
+        : starts;
+    const index = all.findIndex((s, i) => i > 0 && s - now < noticeSeconds);
+    return index === -1 ? null : { index, lead: all[index] - now };
+  })();
   const stagesOk =
     isSimpleProject ||
     stages.every((s, i) => stageOk(s, i === 0, rulesFlavor, multiToken));
@@ -711,6 +767,7 @@ export function CreateForm() {
       selected.length > 0 &&
       stagesOk &&
       badStage === -1 &&
+      noticeClash === null &&
       itemsOk &&
       (phase === "form" || phase === "failed"));
 
@@ -861,7 +918,7 @@ export function CreateForm() {
   const toStageRules = (
     stage: DraftStage,
     index: number,
-    deployStart: number,
+    mustStartAtOrAfter: number,
     chainId: number,
   ): StageRules => {
     const routed =
@@ -892,17 +949,9 @@ export function CreateForm() {
     const reserved = buildReservedSplits(stage.reservedSplits, chainId);
     return {
       duration: stageDurationSeconds(stage),
-      // Stage 1 honors a scheduled start; multichain launches pin a shared
-      // near-future start so every chain begins at the same moment. Later
-      // stages chain automatically (encoded 0 in launch.ts).
-      mustStartAtOrAfter:
-        index === 0
-          ? stage.scheduleOn && stage.schedule
-            ? Math.floor(new Date(stage.schedule).getTime() / 1000)
-            : selected.length > 1
-              ? deployStart
-              : 0
-          : 0,
+      // From projectStageStarts: stage 1's scheduled time / multichain pin /
+      // 0, later stages 0 (next boundary) or an absolute N-cycles/date start.
+      mustStartAtOrAfter,
       // Empty rate on a later stage = keep the previous (cut) rate.
       weight:
         stage.issuanceRate.trim() === "" && index > 0
@@ -1049,7 +1098,9 @@ export function CreateForm() {
     // cost is that a launch EXECUTED much later (a Safe collecting signatures over days)
     // begins with stage 1 already in the past. Inherent to the hash requirement, so the
     // review step warns Safe users rather than trying to re-derive it at execution time.
-    const deployStart = Math.floor(Date.now() / 1000) + 600;
+    const now = Math.floor(Date.now() / 1000);
+    const deployStart = now + 600;
+    const { musts: projectMusts } = projectStageStarts(deployStart, now);
     return Object.fromEntries(
       selected.map((chainId) => {
         let planStages: StageRules[];
@@ -1067,7 +1118,7 @@ export function CreateForm() {
           planStages = [createSimpleProjectStage()];
         } else {
           planStages = stages.map((stage, i) =>
-            toStageRules(stage, i, deployStart, chainId),
+            toStageRules(stage, i, projectMusts[i], chainId),
           );
         }
         return [
@@ -1786,14 +1837,6 @@ export function CreateForm() {
   // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter((v) => v.trim()).length;
   const linksSummary = linkCount > 0 ? `${linkCount} added` : "None";
-  const lastStage = stages[stages.length - 1];
-  const lastDuration = stageDurationSeconds(lastStage);
-  // "Afterwards" applies only when the last stage is timed (website/ parity).
-  const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
-  // The approval condition is meaningless when rules end in a forever stage.
-  const deadlineApplies =
-    lastDuration !== FOREVER_SECONDS &&
-    !(afterApplies && afterMode === "terminal");
 
   // What abandoning a failed run leaves behind, per chain: projects that
   // provably launched are kept, and a chain whose send could not be verified
@@ -2812,7 +2855,7 @@ export function CreateForm() {
                   ? "The project idles — payments and issuance pause until the project owner queues more rules."
                   : afterMode === "terminal"
                     ? "These terms are locked in forever — they can never be changed again."
-                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes."}
+                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes. To hand off to new rules after a set number of cycles or on a date, pick Custom… and set when it starts."}
               </p>
             </div>
           ) : null}
@@ -2839,6 +2882,17 @@ export function CreateForm() {
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
+              {noticeClash ? (
+                <p className="mt-2 text-xs text-red-600">
+                  {noticeClash.index < stages.length
+                    ? `Ruleset #${noticeClash.index + 1}`
+                    : "The closing ruleset (Afterwards)"}{" "}
+                  would start {secondsLabel(Math.floor(noticeClash.lead / 3600) * 3600)} after launch,
+                  sooner than the {APPROVAL_LABELS[approvalDeadline as keyof typeof APPROVAL_LABELS]} notice, so the
+                  notice would reject it and it would never take effect.
+                  Shorten the notice or make the earlier rules run longer.
+                </p>
+              ) : null}
               {approvalDeadline === "custom" ? (
                 <div className="mt-3">
                   <p className="mb-2 text-xs leading-relaxed text-smoke-700">

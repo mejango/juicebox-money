@@ -26,6 +26,7 @@ import {
   build721TierConfigs,
   buildLaunchRequest,
   createSimpleProjectStage,
+  deriveStartFrom,
   launchAcceptsAnyToken,
   nativeBridgeViable,
   requiredFeedPairs,
@@ -50,6 +51,7 @@ type EncodableRequest = {
 }
 
 type LaunchRuleset = {
+  mustStartAtOrAfter: bigint
   metadata: { cashOutTaxRate: number; baseCurrency: number; metadata: number }
   splitGroups: {
     groupId: bigint
@@ -786,6 +788,31 @@ describe('launch helper invariants', () => {
     expect(nativeBridgeViable([1, 10, 8453], ['eth'], false)).toBe(false)
     expect(nativeBridgeViable([1, 10], ['usdc'], false)).toBe(false)
     expect(nativeBridgeViable([1, 10], ['eth'], true)).toBe(false)
+  })
+
+  // Mirrors JBRulesets.deriveStartFrom: a later ruleset lands on the base's
+  // first cycle boundary at or after mustStartAtOrAfter.
+  it('derives a later stage start the way JBRulesets does', () => {
+    const start = 1_000
+    const day = 86_400
+    expect(deriveStartFrom(start, 0, 5_000)).toBe(5_000)
+    expect(deriveStartFrom(start, day, 0)).toBe(start + day)
+    expect(deriveStartFrom(start, day, start + day)).toBe(start + day)
+    expect(deriveStartFrom(start, day, start + 3 * day)).toBe(start + 3 * day)
+    expect(deriveStartFrom(start, day, start + 3 * day + 1)).toBe(start + 4 * day)
+    expect(deriveStartFrom(start, day, start + 2 * day + day - 1)).toBe(start + 3 * day)
+  })
+
+  it('encodes every stage start, so a later stage can wait N cycles or a date', () => {
+    const first = { ...createSimpleProjectStage(), duration: 86_400 }
+    const second = { ...createSimpleProjectStage(), mustStartAtOrAfter: 1_800_000_000 }
+    const third = createSimpleProjectStage()
+    const config = projectConfig(
+      requestFor(plan({ stages: [first, second, third], afterMode: 'cycle' })),
+    )
+    expect(
+      config.rulesetConfigurations.map((r) => Number(r.mustStartAtOrAfter)),
+    ).toEqual([0, 1_800_000_000, 0])
   })
 
   it('expands terminal and standby aftermath without mutating the input stage', () => {

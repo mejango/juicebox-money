@@ -219,6 +219,35 @@ export type ApprovalDeadline =
   | '7days'
   | 'custom'
 
+/** Seconds each deadline hook demands between queueing and start. A stage
+ *  queued at launch that starts sooner than this is REJECTED by the hook
+ *  (JBDeadline.approvalStatusOf → Failed) and silently never takes effect. */
+export const DEADLINE_SECONDS: Record<
+  Exclude<ApprovalDeadline, 'none' | 'custom'>,
+  number
+> = {
+  '3hours': 3 * 3600,
+  '1day': 86_400,
+  '3days': 3 * 86_400,
+  '7days': 7 * 86_400,
+}
+
+/** JBRulesets.deriveStartFrom: the start a ruleset queued on `base` gets —
+ *  the first cycle boundary of the base at or after `mustStartAtOrAfter`. */
+export function deriveStartFrom(
+  baseStart: number,
+  baseDuration: number,
+  mustStartAtOrAfter: number,
+): number {
+  if (baseDuration === 0) return mustStartAtOrAfter
+  const nextImmediate = baseStart + baseDuration
+  if (nextImmediate >= mustStartAtOrAfter) return nextImmediate
+  let start =
+    mustStartAtOrAfter - ((mustStartAtOrAfter - nextImmediate) % baseDuration)
+  while (mustStartAtOrAfter > start) start += baseDuration
+  return start
+}
+
 const DEADLINE_CONTRACT: Record<
   Exclude<ApprovalDeadline, 'none' | 'custom'>,
   'JBDeadline3Hours' | 'JBDeadline1Day' | 'JBDeadline3Days' | 'JBDeadline7Days'
@@ -234,9 +263,10 @@ export type StageRules = {
   /** Seconds. 0 = flexible/open-ended (last stage only — a 0-duration
    *  non-final stage never advances). FOREVER_SECONDS = lasts forever. */
   duration: number
-  /** Unix seconds the FIRST stage must start at or after; 0 = deploy block.
-   *  Later stages always encode 0 — the controller chains each after the
-   *  previous stage's duration. */
+  /** Unix seconds the stage must start at or after; 0 = deploy block, which
+   *  on a later stage snaps to the previous stage's next cycle boundary
+   *  (JBRulesets.deriveStartFrom). An absolute value lets a later stage wait
+   *  N cycles or a date; the contract still snaps it UP to a boundary. */
   mustStartAtOrAfter: number
   /** Tokens issued per ETH/USD paid — 18-dec FP. On stage 2+, the raw sentinel `1n` means
    *  inherit the previous stage's (cut) rate — "A weight of 1 is a special case that
@@ -760,11 +790,11 @@ export function buildLaunchRequest(args: {
         ? (plan.approvalCustomAddress ?? zeroAddress)
         : v6Address(DEADLINE_CONTRACT[plan.approvalDeadline], chainId)
 
-  const rulesetConfigurations = stages.map((stage, i) =>
+  const rulesetConfigurations = stages.map((stage) =>
     buildRulesetConfiguration({
-      // Only the first stage carries a real start; later stages encode 0 so
-      // the controller chains each after the previous stage's duration.
-      mustStartAtOrAfter: i === 0 ? stage.mustStartAtOrAfter : 0,
+      // 0 on a later stage = the previous stage's next cycle boundary; an
+      // absolute value waits N cycles or a date (the contract snaps it up).
+      mustStartAtOrAfter: stage.mustStartAtOrAfter,
       duration: stage.duration,
       weight: stage.weight,
       weightCutPercent: stage.weightCutPercent,
