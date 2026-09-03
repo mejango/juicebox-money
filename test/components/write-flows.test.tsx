@@ -420,7 +420,7 @@ describe('project payer write flow', () => {
         .find(input => input.props.type === 'checkbox')!
         .props.onChange({ target: { checked: true } })
     })
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain('Confirm deploy')
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
@@ -460,7 +460,7 @@ describe('project payer write flow', () => {
     await act(async () =>
       buttonWith(renderer, 'Create payer address').props.onClick(),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     mocks.address = '0x3333333333333333333333333333333333333333'
     await act(async () =>

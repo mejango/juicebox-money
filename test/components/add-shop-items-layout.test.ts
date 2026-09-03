@@ -14,7 +14,7 @@ describe('add shop items layout', () => {
   })
 
   it('reviews the frozen items in the shared confirm dialog', () => {
-    expect(source).toContain("'Review items'}")
+    expect(source).toContain("'Add items for sale'}")
     expect(source).toContain('<TxConfirmDialog')
     expect(source).toContain("'Add items for sale'")
   })

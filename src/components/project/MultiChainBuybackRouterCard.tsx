@@ -841,7 +841,7 @@ function BuybackActionForm({
         disabled={busy || !selected.size || !ack}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        Review changes
+        {action.title}
       </button>
       {error && !review ? <ErrorNote message={error} /> : null}
       {review ? (

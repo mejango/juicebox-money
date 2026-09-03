@@ -251,7 +251,7 @@ export function MintShopItemModal({
         Cancel
       </button>
       <button type="button" onClick={() => void handleReview()} disabled={busy || maxQuantity === 0} className="btn-primary min-h-[44px] px-5 text-sm">
-        {!isConnected ? 'Sign in to continue' : busy ? 'Checking permission…' : 'Review mint'}
+        {!isConnected ? 'Sign in to continue' : 'Mint without payment'}
       </button>
     </div>
   )
@@ -302,26 +302,33 @@ export function MintShopItemModal({
         </label>
       </div>
       {message && !review ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}
-      {review ? (
+      {review || phase === 'checking' ? (
         <TxConfirmDialog
           open
+          preparing={!review}
           title={phase === 'done' ? 'Items minted' : phase === 'uncertain' ? 'Mint submitted' : 'Confirm mint'}
-          rows={[
-            { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
-            { label: 'Beneficiary', value: review.beneficiary, mono: true },
-            { label: 'On', value: chainName(chainId) },
-            ...(hash ? [{ label: 'Transaction', value: hash, mono: true }] : []),
-          ]}
-          steps={[{ title: `Mint ${review.quantity} × ${itemName}` }]}
+          rows={
+            review
+              ? [
+                  { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
+                  { label: 'Beneficiary', value: review.beneficiary, mono: true },
+                  { label: 'On', value: chainName(chainId) },
+                  ...(hash ? [{ label: 'Transaction', value: hash, mono: true }] : []),
+                ]
+              : []
+          }
+          steps={review ? [{ title: `Mint ${review.quantity} × ${itemName}` }] : []}
           activeIndex={busy ? 0 : -1}
           action={busy ? 'Checking & minting…' : 'Mint without payment'}
           onConfirm={() => void handleConfirm()}
           busy={busy}
           complete={settled}
           status={
-            phase === 'uncertain'
-              ? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.'
-              : undefined
+            !review
+              ? 'Checking your mint permission…'
+              : phase === 'uncertain'
+                ? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.'
+                : undefined
           }
           error={phase === 'uncertain' ? undefined : message}
           onClose={() => {
@@ -334,7 +341,7 @@ export function MintShopItemModal({
             setMessage(null)
           }}
         >
-          {settled ? null : (
+          {settled || !review ? null : (
             <div className="callout callout-warning text-xs">
               This free mint consumes {review.quantity} item{review.quantity === 1 ? '' : 's'} of inventory, collects no payment, and cannot be undone.
             </div>

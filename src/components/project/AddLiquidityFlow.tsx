@@ -968,7 +968,22 @@ function AddLiquidityForm({
           </TxConfirmDialog>
         )
       })()
-    : null
+    : quoting
+      ? (
+        <TxConfirmDialog
+          open
+          preparing
+          title={mode === 'market' ? 'Make the market' : 'Add liquidity'}
+          steps={[]}
+          activeIndex={-1}
+          action={mode === 'market' ? 'Confirm & make the market' : 'Confirm & add liquidity'}
+          onConfirm={() => undefined}
+          busy
+          status="Reading the pool and your balances…"
+          onClose={closePlan}
+        />
+      )
+      : null
 
   if (done) {
     const url = mintHash ? etherscanTxUrl(chainId, mintHash) : null
@@ -1236,11 +1251,11 @@ function AddLiquidityForm({
           disabled={busy}
           className="btn-primary min-h-[44px] px-5 text-sm"
         >
-          {quoting
-            ? 'Checking amounts…'
-            : !isConnected
-              ? 'Sign in to continue'
-              : 'Review'}
+          {!isConnected
+            ? 'Sign in to continue'
+            : mode === 'market'
+              ? 'Make the market'
+              : 'Add liquidity'}
         </button>
       </div>
 

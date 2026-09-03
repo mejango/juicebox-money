@@ -561,7 +561,7 @@ function ChainLpRows({
                   }
                   onClick={() => void remove(position)}
                 >
-                  {reviewing === position.tokenId ? 'Refreshing…' : 'Remove'}
+                  Remove
                 </button>
               </span>
             </td>
@@ -837,6 +837,23 @@ function ChainLpRows({
                 />
               )
             })(),
+            panelHost,
+          )
+        : null}
+      {panelHost && !pending && reviewing !== null
+        ? ReactDOM.createPortal(
+            <TxConfirmDialog
+              open
+              preparing
+              title="Remove liquidity"
+              steps={[]}
+              activeIndex={-1}
+              action="Confirm & remove liquidity"
+              onConfirm={() => undefined}
+              busy
+              status="Reading the pool and your position…"
+              onClose={() => undefined}
+            />,
             panelHost,
           )
         : null}

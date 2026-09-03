@@ -572,7 +572,9 @@ function MoveFlow({
     )
   }
 
-  const dialogOpen = open && review !== null && step > 0
+  // Before the route is checked the confirm is already up, in its preparing state.
+  const preparing = checking && step === 0
+  const dialogOpen = (open && review !== null && step > 0) || preparing
 
   const steps = [
     ...(needsApproval
@@ -637,7 +639,7 @@ function MoveFlow({
             disabled={busy}
             className="btn-primary min-h-[44px] px-5 text-sm"
           >
-            {checking ? 'Checking the route…' : 'Review move'}
+            Move to {chainName(to)}
           </button>
         </div>
       ) : step < 4 && !dialogOpen ? (
@@ -686,6 +688,7 @@ function MoveFlow({
 
       <TxConfirmDialog
         open={dialogOpen}
+        preparing={preparing}
         onClose={() => setOpen(false)}
         title={step === 4 ? 'Move sent' : 'Confirm move'}
         rows={rows}
@@ -706,7 +709,9 @@ function MoveFlow({
         busy={busy}
         complete={step === 4}
         status={
-          tx.phase === 'pending' && txUrl ? (
+          preparing ? (
+            'Checking the route and your balances…'
+          ) : tx.phase === 'pending' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a

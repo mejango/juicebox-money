@@ -138,7 +138,7 @@ async function typeCustom(
 }
 
 async function saveAndReadPin(renderer: TestRenderer.ReactTestRenderer) {
-  await act(async () => buttonWith(renderer, 'Review changes').props.onClick())
+  await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
   expect(renderedText(renderer.root)).toContain('Confirm project metadata')
   await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
   const pinCall = mocks.pinJson.mock.calls.at(-1)
@@ -211,7 +211,7 @@ describe('metadata editor custom properties', () => {
   it('blocks the save on invalid JSON instead of dropping it', async () => {
     const renderer = await renderEditor()
     await typeCustom(renderer, '{"leagueID": }')
-    await act(async () => buttonWith(renderer, 'Review changes').props.onClick())
+    await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
 
     expect(renderedText(renderer.root)).toMatch(/valid JSON/i)
     expect(buttonWith(renderer, 'Confirm & save')).toBeUndefined()
@@ -223,7 +223,7 @@ describe('metadata editor custom properties', () => {
   it('blocks the save when the box holds an array or a scalar', async () => {
     const renderer = await renderEditor()
     await typeCustom(renderer, '[1, 2]')
-    await act(async () => buttonWith(renderer, 'Review changes').props.onClick())
+    await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
 
     expect(renderedText(renderer.root)).toMatch(/JSON object/i)
     expect(

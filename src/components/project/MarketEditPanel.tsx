@@ -446,28 +446,30 @@ export function MarketEditPanel({
     return rows
   }
 
-  const dialog = reviewed ? (
+  const dialog = reviewed || quoting ? (
     <TxConfirmDialog
       open
+      preparing={!reviewed}
       title={done ? 'Market updated' : 'Confirm edit'}
-      rows={reviewRows(reviewed)}
-      steps={reviewed.steps.map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
+      rows={reviewed ? reviewRows(reviewed) : []}
+      steps={(reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
       activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
       action={
         running
           ? 'Editing the market…'
-          : tx.phase === 'error'
+          : reviewed && tx.phase === 'error'
             ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
             : 'Edit the market'
       }
       onConfirm={tx.phase === 'error' ? resume : startRun}
-      busy={running || tx.busy}
+      busy={busy}
       complete={done !== null}
-      status={tx.safeNonceGuidance}
+      status={!reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}
       error={tx.error}
       onClose={back}
     >
-      {balances.data &&
+      {reviewed &&
+      balances.data &&
       (reviewed.plan.tokenFunding > balances.data.tok || reviewed.plan.pairFunding > balances.data.pair) ? (
         <p className="text-sm text-orange-600">
           Heads up: your balance does not cover the 1% price headroom, so this edit reverts if
@@ -591,7 +593,7 @@ export function MarketEditPanel({
           disabled={editing || isViewAs || !connectedAddress || !corridor}
           onClick={() => void handleReview()}
         >
-          {quoting ? 'Checking…' : 'Review edit'}
+          Edit the market
         </button>
       </div>
       <TxError

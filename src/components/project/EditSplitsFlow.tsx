@@ -724,7 +724,7 @@ function EditSplitsModal({
             disabled={busy || !rowsValid || overAllocated || !!clearBlocked}
             className="btn-primary mt-3 min-h-[44px] w-full text-sm"
           >
-            {busy && !plan ? 'Checking…' : 'Save splits'}
+            Save splits
           </button>
 
           {plan ? null : (
@@ -734,28 +734,33 @@ function EditSplitsModal({
             />
           )}
 
-          {plan ? (
+          {plan || busy ? (
             <TxConfirmDialog
               open
+              preparing={!plan}
               title={success ? 'Splits saved' : 'Confirm splits'}
-              rows={[
-                { label: 'Group', value: title },
-                {
-                  label: 'Recipients',
-                  value:
-                    live && live.length !== plan.length
-                      ? `${live.length} → ${plan.length}`
-                      : String(plan.length),
-                },
-                {
-                  label: 'Allocated',
-                  value: `${billionthsToPct(totalPercent, 6)}% (${billionthsToPct(SPLITS_TOTAL_PERCENT - totalPercent, 6)}% to the project owner)`,
-                },
-                { label: 'On', value: chainName(chainId) },
-              ]}
+              rows={
+                plan
+                  ? [
+                      { label: 'Group', value: title },
+                      {
+                        label: 'Recipients',
+                        value:
+                          live && live.length !== plan.length
+                            ? `${live.length} → ${plan.length}`
+                            : String(plan.length),
+                      },
+                      {
+                        label: 'Allocated',
+                        value: `${billionthsToPct(totalPercent, 6)}% (${billionthsToPct(SPLITS_TOTAL_PERCENT - totalPercent, 6)}% to the project owner)`,
+                      },
+                      { label: 'On', value: chainName(chainId) },
+                    ]
+                  : []
+              }
               steps={[{ title: `Edit ${title}` }]}
               activeIndex={busy ? 0 : -1}
-              status={status}
+              status={!plan ? 'Reading the live splits…' : status}
               error={flowError}
               busy={busy}
               complete={success}

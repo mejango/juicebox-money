@@ -3378,15 +3378,13 @@ export function CreateForm() {
         </div>
       </section>
 
-      {/* 4 — Review & launch */}
+      {/* 4 — Launch */}
       <section
         className={step === launchStep ? "card mt-6 p-6 sm:p-7" : "hidden"}
       >
         <div className="flex items-center gap-3">
           <StepBadge n={launchStep + 1} />
-          <h2 className="font-agrandir text-xl font-medium">
-            Review &amp; launch
-          </h2>
+          <h2 className="font-agrandir text-xl font-medium">Ready to launch?</h2>
         </div>
 
         <dl className="mt-5 space-y-2.5 text-sm">

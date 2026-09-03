@@ -39,6 +39,7 @@ export function TxConfirmDialog({
   onConfirm,
   busy = false,
   complete = false,
+  preparing = false,
   status,
   error,
 }: {
@@ -58,6 +59,8 @@ export function TxConfirmDialog({
   onConfirm: () => void
   busy?: boolean
   complete?: boolean
+  /** Rows and steps are still being read; `status` says what is happening. */
+  preparing?: boolean
   status?: ReactNode
   error?: ReactNode
 }) {
@@ -106,21 +109,29 @@ export function TxConfirmDialog({
           />
         </header>
         <div className="space-y-4 px-5 py-5">
-          {rows && rows.length > 0 ? (
-            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-              {rows.map((row, index) => (
-                <TxConfirmRowItem key={index} row={row} />
-              ))}
-            </div>
-          ) : null}
-          {children}
-          <TxSteps
-            steps={steps}
-            activeIndex={complete ? steps.length : activeIndex}
-            intro={stepsIntro}
-            className="rounded-xl border border-smoke-200 bg-white p-3"
-          />
-          {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
+          {preparing ? (
+            <p className="py-2 text-sm text-bluebs-700" role="status">
+              {status ?? 'Preparing…'}
+            </p>
+          ) : (
+            <>
+              {rows && rows.length > 0 ? (
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                  {rows.map((row, index) => (
+                    <TxConfirmRowItem key={index} row={row} />
+                  ))}
+                </div>
+              ) : null}
+              {children}
+              <TxSteps
+                steps={steps}
+                activeIndex={complete ? steps.length : activeIndex}
+                intro={stepsIntro}
+                className="rounded-xl border border-smoke-200 bg-white p-3"
+              />
+              {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
+            </>
+          )}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </div>
         <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
@@ -145,7 +156,8 @@ export function TxConfirmDialog({
               <button
                 type="button"
                 className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={busy || actionDisabled}
+                disabled={busy || preparing || actionDisabled}
+                aria-busy={preparing || undefined}
                 onClick={onConfirm}
               >
                 {action}

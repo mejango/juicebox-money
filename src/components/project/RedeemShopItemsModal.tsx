@@ -543,9 +543,7 @@ export function RedeemShopItemsModal({
       >
         {tx.phase === 'success'
           ? 'Done'
-          : preparing
-            ? 'Double-checking the redemption…'
-            : `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`}
+          : `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`}
       </button>
 
       {quote && quote.net > 0n && tx.phase !== 'success' ? (
@@ -556,23 +554,28 @@ export function RedeemShopItemsModal({
         </p>
       ) : null}
 
-      {plan ? (
+      {plan || preparing ? (
         <TxConfirmDialog
           open
+          preparing={!plan}
           title={tx.phase === 'success' ? 'Items redeemed' : 'Confirm redemption'}
-          rows={[
-            { label: 'Items', value: itemsSummary },
-            {
-              label: 'You get',
-              value: `~${formatTokenAmount(plan.quote.net, plan.quote.decimals)} ${plan.quote.symbol}`,
-            },
-            {
-              label: 'At least',
-              value: `${formatTokenAmount(plan.minReclaimed, plan.quote.decimals)} ${plan.quote.symbol}`,
-              strong: true,
-            },
-            { label: 'On', value: chainName(selectedChainId) },
-          ]}
+          rows={
+            plan
+              ? [
+                  { label: 'Items', value: itemsSummary },
+                  {
+                    label: 'You get',
+                    value: `~${formatTokenAmount(plan.quote.net, plan.quote.decimals)} ${plan.quote.symbol}`,
+                  },
+                  {
+                    label: 'At least',
+                    value: `${formatTokenAmount(plan.minReclaimed, plan.quote.decimals)} ${plan.quote.symbol}`,
+                    strong: true,
+                  },
+                  { label: 'On', value: chainName(selectedChainId) },
+                ]
+              : []
+          }
           steps={[
             {
               title: `Redeem ${selectedTokenIds.length} item${selectedTokenIds.length === 1 ? '' : 's'}`,
@@ -581,9 +584,9 @@ export function RedeemShopItemsModal({
           activeIndex={tx.busy || tx.phase === 'error' ? 0 : -1}
           action={tx.phase === 'error' ? 'Retry' : 'Confirm & redeem'}
           onConfirm={() => void redeem()}
-          busy={tx.busy}
+          busy={busy}
           complete={tx.phase === 'success'}
-          status={tx.safeNonceGuidance}
+          status={!plan ? 'Getting a fresh redemption quote…' : tx.safeNonceGuidance}
           error={prepareError ?? tx.error}
           onClose={() => {
             setPlan(null)

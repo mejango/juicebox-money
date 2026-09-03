@@ -340,13 +340,11 @@ export function ReplaceTierMediaModal({
       >
         {!isConnected
           ? 'Sign in to continue'
-          : phase === 'checking'
-            ? 'Checking permission…'
-            : started
-              ? 'Retry remaining chains'
-              : selected.length > 1
-                ? `Replace media on ${selected.length} chains`
-                : 'Replace media'}
+          : started
+            ? 'Retry remaining chains'
+            : selected.length > 1
+              ? `Replace media on ${selected.length} chains`
+              : 'Replace media'}
       </button>
     </div>
   )
@@ -436,16 +434,21 @@ export function ReplaceTierMediaModal({
           {message}
         </p>
       ) : null}
-      {plan && file ? (
+      {(plan || phase === 'checking') && file ? (
         <TxConfirmDialog
           open
+          preparing={!plan}
           title={phase === 'done' ? 'Media replaced' : 'Confirm media update'}
-          rows={[
-            { label: 'Item', value: itemName },
-            { label: 'New media', value: file.name },
-            { label: 'On', value: plan.chainIds.map(id => chainName(id)).join(', ') },
-          ]}
-          steps={plan.chainIds.map(id => {
+          rows={
+            plan
+              ? [
+                  { label: 'Item', value: itemName },
+                  { label: 'New media', value: file.name },
+                  { label: 'On', value: plan.chainIds.map(id => chainName(id)).join(', ') },
+                ]
+              : []
+          }
+          steps={(plan?.chainIds ?? []).map(id => {
             const status = statuses[id]
             return {
               key: String(id),
@@ -459,13 +462,13 @@ export function ReplaceTierMediaModal({
             }
           })}
           activeIndex={
-            started || phase !== 'form'
+            plan && (started || phase !== 'form')
               ? plan.chainIds.filter(id => statuses[id]?.phase === 'done').length
               : -1
           }
           status={
             phase === 'checking'
-              ? 'Checking permission…'
+              ? 'Checking your permission on the selected chains…'
               : phase === 'pinning'
                 ? 'Pinning the media and metadata…'
                 : phase === 'done'

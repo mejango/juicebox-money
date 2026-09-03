@@ -109,6 +109,7 @@ export function CashOutPanel({
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [usedDirectSell, setUsedDirectSell] = useState(false)
   const [plan, setPlan] = useState<CashOutPlan | null>(null)
+  const [preparing, setPreparing] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400)
@@ -457,6 +458,7 @@ export function CashOutPanel({
       setPlan({ kind: 'pool', minimumReturn: displayedMinimum })
       return
     }
+    setPreparing(true)
     try {
       // Quote, lock and build one matching request from fresh protocol state.
       const prepared = await prepareHookAwareCashOut(publicClient!, {
@@ -490,6 +492,8 @@ export function CashOutPanel({
       })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
+    } finally {
+      setPreparing(false)
     }
   }
 
@@ -682,6 +686,19 @@ export function CashOutPanel({
       error={errorMsg ?? tx.error ?? approveTx.error}
       onClose={closeReview}
     />
+  ) : preparing ? (
+    <TxConfirmDialog
+      open
+      preparing
+      title="Confirm cash out"
+      steps={[]}
+      activeIndex={-1}
+      action="Confirm & cash out"
+      onConfirm={() => undefined}
+      busy
+      status="Getting a fresh cash-out quote…"
+      onClose={closeReview}
+    />
   ) : null
 
   if (success) {
@@ -861,6 +878,7 @@ export function CashOutPanel({
           onClick={() => void review()}
           disabled={
             busy ||
+            preparing ||
             (isConnected &&
               (cashOutCount <= 0n ||
                 exceedsBalance ||
