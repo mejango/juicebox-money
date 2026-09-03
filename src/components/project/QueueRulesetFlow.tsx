@@ -1341,7 +1341,7 @@ function RulesetEditorForm({
         }
         className="btn-primary min-h-[44px] px-5 text-sm"
       >
-        {!isConnected ? "Sign in to continue" : "Review changes"}
+        {!isConnected ? "Sign in to continue" : "Queue new rules"}
       </button>
       </div>
 

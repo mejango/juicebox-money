@@ -338,11 +338,12 @@ export function GetLoanFlow({
         : -1
   const reviewError = flowError ?? permTx.error ?? borrowTx.error
 
-  const dialog = review ? (
+  const dialog = review || quoting ? (
     <TxConfirmDialog
       open
+      preparing={!review}
       title={borrowTx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
-      rows={[
+      rows={review ? [
         {
           label: 'Collateral',
           value: `${formatTokenAmount(review.collateral)} ${collateralSymbol}`,
@@ -364,8 +365,8 @@ export function GetLoanFlow({
           strong: true,
         },
         { label: 'On', value: chainName(chainId) },
-      ]}
-      steps={[
+      ] : []}
+      steps={review ? [
         ...(review.needsPermission
           ? [
               {
@@ -377,7 +378,7 @@ export function GetLoanFlow({
             ]
           : []),
         { key: 'borrow', title: 'Open the loan' },
-      ]}
+      ] : []}
       activeIndex={activeIndex}
       action={
         quoting
@@ -395,7 +396,11 @@ export function GetLoanFlow({
       onConfirm={handleConfirm}
       busy={busy}
       complete={borrowTx.phase === 'success'}
-      status={borrowTx.safeNonceGuidance ?? permTx.safeNonceGuidance}
+      status={
+        !review
+          ? 'Getting a fresh loan quote…'
+          : (borrowTx.safeNonceGuidance ?? permTx.safeNonceGuidance)
+      }
       error={reviewError}
       onClose={closeReview}
     >
@@ -570,11 +575,7 @@ export function GetLoanFlow({
               disabled={busy || (isConnected && collateral <= 0n)}
               className="btn-primary min-h-[44px] px-5 text-sm"
             >
-              {quoting && !review
-                ? 'Checking the live quote…'
-                : !isConnected
-                  ? 'Sign in to continue'
-                  : 'Review'}
+              {!isConnected ? 'Sign in to continue' : 'Open the loan'}
             </button>
           </div>
 

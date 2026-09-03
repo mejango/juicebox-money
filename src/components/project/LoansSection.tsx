@@ -504,11 +504,12 @@ function RepayFlow({
         : -1
   const error = flowError ?? approveTx.error ?? repayTx.error
 
-  const dialog = plan ? (
+  const dialog = plan || checking ? (
     <TxConfirmDialog
       open
+      preparing={!plan}
       title={repayTx.phase === 'success' ? 'Loan repaid' : 'Confirm repayment'}
-      rows={[
+      rows={plan ? [
         {
           label: 'Loan',
           value: `${formatTokenAmount(plan.amount, meta.decimals)} ${meta.symbol}`,
@@ -523,8 +524,8 @@ function RepayFlow({
           value: `${formatTokenAmount(plan.collateral)} ${collateralSymbol}`,
         },
         { label: 'On', value: chainName(chainId) },
-      ]}
-      steps={[
+      ] : []}
+      steps={plan ? [
         ...(plan.approve
           ? [
               {
@@ -535,7 +536,7 @@ function RepayFlow({
             ]
           : []),
         { key: 'repay', title: 'Repay and reclaim your collateral' },
-      ]}
+      ] : []}
       activeIndex={activeIndex}
       action={
         approveTx.phase === 'simulating' || approveTx.phase === 'signing'
@@ -550,9 +551,13 @@ function RepayFlow({
                 })
       }
       onConfirm={() => void handleConfirm()}
-      busy={busy}
+      busy={checking || busy}
       complete={repayTx.phase === 'success'}
-      status={repayTx.safeNonceGuidance ?? approveTx.safeNonceGuidance}
+      status={
+        !plan
+          ? 'Reading the loan and its current fee…'
+          : (repayTx.safeNonceGuidance ?? approveTx.safeNonceGuidance)
+      }
       error={error}
       onClose={closeDialog}
     >
@@ -594,7 +599,7 @@ function RepayFlow({
         disabled={checking || busy}
         className="btn-secondary min-h-[32px] px-3 text-xs"
       >
-        {checking ? 'Reading the loan…' : 'Repay'}
+        Repay
       </button>
       {!plan ? (
         <TxError

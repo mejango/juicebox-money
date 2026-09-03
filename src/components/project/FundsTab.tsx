@@ -1093,9 +1093,10 @@ function FundsTxFlow({
 
   if (!line) return null
 
-  const dialog = review ? (
+  const dialog = review || quoting ? (
     <TxConfirmDialog
       open
+      preparing={!review}
       onClose={closeReview}
       title={
         tx.phase === 'success'
@@ -1105,6 +1106,7 @@ function FundsTxFlow({
           : `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
       }
       rows={(() => {
+        if (!review) return []
         const rows: TxConfirmRow[] = [
           {
             label: kind === 'payouts' ? 'Distribute' : 'Withdraw',
@@ -1129,17 +1131,21 @@ function FundsTxFlow({
         )
         return rows
       })()}
-      steps={[
-        {
-          title: label,
-          detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} ${
-            kind === 'payouts' ? 'is paid out' : 'reaches you'
-          }.`,
-        },
-      ]}
+      steps={
+        review
+          ? [
+              {
+                title: label,
+                detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} ${
+                  kind === 'payouts' ? 'is paid out' : 'reaches you'
+                }.`,
+              },
+            ]
+          : []
+      }
       activeIndex={sending ? 0 : -1}
       complete={tx.phase === 'success'}
-      busy={sending}
+      busy={busy}
       action={
         tx.phase === 'error'
           ? 'Retry'
@@ -1149,7 +1155,11 @@ function FundsTxFlow({
       }
       onConfirm={handleConfirm}
       status={
-        tx.phase === 'pending' ? (
+        !review ? (
+          kind === 'payouts'
+            ? 'Checking what can be paid out…'
+            : 'Checking what you can withdraw…'
+        ) : tx.phase === 'pending' ? (
           <>
             Waiting for confirmation
             {txUrl ? (
@@ -1308,11 +1318,11 @@ function FundsTxFlow({
         disabled={busy || (isConnected && parsedAmount <= 0n)}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {quoting
-          ? 'Checking what you can send…'
-          : !isConnected
-            ? 'Sign in to continue'
-            : 'Review'}
+        {!isConnected
+          ? 'Sign in to continue'
+          : kind === 'payouts'
+            ? 'Send payouts'
+            : 'Withdraw'}
       </button>
 
       <TxError

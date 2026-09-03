@@ -1159,9 +1159,10 @@ function PermissionEditor({
     if (finished) onDone();
   };
 
-  const dialog = plan ? (
+  const dialog = plan || checking ? (
     <TxConfirmDialog
       open
+      preparing={!plan}
       title={
         done
           ? grant
@@ -1171,7 +1172,7 @@ function PermissionEditor({
             ? "Confirm permissions"
             : "Confirm operator"
       }
-      rows={[
+      rows={plan ? [
         { label: "Operator", value: plan.operator, mono: true, strong: true },
         {
           label: "Permissions",
@@ -1189,15 +1190,15 @@ function PermissionEditor({
           label: "On",
           value: plan.chosen.map((row) => chainName(row.chainId)).join(", "),
         },
-      ]}
-      steps={plan.chosen.map((row) => ({
+      ] : []}
+      steps={(plan?.chosen ?? []).map((row) => ({
         key: String(row.chainId),
         title: `${grant ? "Set permissions" : "Add operator"} on ${chainName(row.chainId)}`,
       }))}
       activeIndex={step}
-      status={status}
+      status={!plan ? "Reading the current permissions…" : status}
       error={error}
-      busy={busy}
+      busy={checking || busy}
       complete={done}
       action={error ? "Retry" : grant ? "Confirm & update" : "Confirm & add"}
       onConfirm={() => void submit()}
@@ -1322,11 +1323,7 @@ function PermissionEditor({
         }
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {checking
-          ? "Reading current permissions…"
-          : grant
-            ? "Update permissions"
-            : "Add operator"}
+        {grant ? "Update permissions" : "Add operator"}
       </button>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error && !plan ? <ErrorNote message={error} /> : null}

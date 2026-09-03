@@ -234,7 +234,7 @@ describe('payer deploy input validation', () => {
         target: { value: 'not-an-address' },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       'Enter a valid beneficiary address or ENS name, or leave it empty.',
@@ -258,7 +258,7 @@ describe('payer deploy input validation', () => {
         target: { value: 'nope.not-ens' },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       'Enter a valid admin address or ENS name.',
@@ -285,7 +285,7 @@ describe('payer deploy input validation', () => {
         target: { value: ADMIN },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       `${ADMIN.slice(0, 6)}…${ADMIN.slice(-4)} can change these settings later.`,
@@ -301,11 +301,11 @@ describe('payer deploy input validation', () => {
 
   it('closes the dialog without sending anything', async () => {
     const renderer = await openDialog()
-    expect(renderedText(renderer.root)).toContain('Review deploy')
+    expect(renderedText(renderer.root)).toContain('Deploy payer address')
 
     await act(async () => buttonWith(renderer, 'Close dialog').props.onClick())
 
-    expect(renderedText(renderer.root)).not.toContain('Review deploy')
+    expect(renderedText(renderer.root)).not.toContain('Deploy payer address')
     expect(mocks.send).not.toHaveBeenCalled()
   })
 })

@@ -521,31 +521,35 @@ export function EditPositionPanel({
     return rows
   }
 
-  const dialog = reviewed ? (
+  const dialog = reviewed || quoting ? (
     <TxConfirmDialog
       open
+      preparing={!reviewed}
       title={done ? 'Position updated' : 'Confirm edit'}
-      rows={reviewRows(reviewed)}
-      steps={reviewed.steps.map((step, index) => ({
+      rows={reviewed ? reviewRows(reviewed) : []}
+      steps={(reviewed?.steps ?? []).map((step, index) => ({
         key: `${step.kind}:${index}`,
         title: step.label,
       }))}
       activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
       action={
-        running
-          ? 'Editing position…'
-          : tx.phase === 'error'
-            ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
-            : FINAL_STEP[reviewed.plan.kind]
+        !reviewed
+          ? 'Edit position'
+          : running
+            ? 'Editing position…'
+            : tx.phase === 'error'
+              ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
+              : FINAL_STEP[reviewed.plan.kind]
       }
       onConfirm={tx.phase === 'error' ? resume : startRun}
-      busy={running || tx.busy}
+      busy={busy}
       complete={done !== null}
-      status={tx.safeNonceGuidance}
+      status={!reviewed ? 'Reading the pool and your position…' : tx.safeNonceGuidance}
       error={tx.error}
       onClose={back}
     >
-      {balances.data &&
+      {reviewed &&
+      balances.data &&
       (reviewed.plan.tokenFunding > balances.data.tok ||
         reviewed.plan.pairFunding > balances.data.pair) ? (
         <p className="text-sm text-orange-600">
@@ -707,7 +711,7 @@ export function EditPositionPanel({
           disabled={editing || isViewAs || !connectedAddress}
           onClick={() => void handleReview()}
         >
-          {quoting ? 'Checking…' : 'Review edit'}
+          Edit position
         </button>
       </div>
       <TxError

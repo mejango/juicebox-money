@@ -38,6 +38,7 @@ export function BurnTokensFlow({
   const [plan, setPlan] = useState<ReturnType<
     typeof buildBurnTokensRequest
   > | null>(null)
+  const [preparing, setPreparing] = useState(false)
   const tokenCount = useMemo(() => {
     try {
       return amount.trim() ? parseEther(amount.trim()) : 0n
@@ -69,6 +70,7 @@ export function BurnTokensFlow({
     if (!address || !controller || tokenCount <= 0n || exceedsBalance) return
     setError(null)
     tx.reset()
+    setPreparing(true)
     try {
       const [freshBalanceResult, freshControllerResult] = await Promise.all([
         refetch(),
@@ -94,6 +96,8 @@ export function BurnTokensFlow({
       )
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Burn failed.')
+    } finally {
+      setPreparing(false)
     }
   }
 
@@ -188,6 +192,7 @@ export function BurnTokensFlow({
           className="btn-primary min-h-[44px] px-5 text-sm"
           disabled={
             sending ||
+            preparing ||
             (isConnected && (!controller || tokenCount <= 0n || exceedsBalance))
           }
           onClick={review}
@@ -195,9 +200,10 @@ export function BurnTokensFlow({
           {isConnected ? 'Burn tokens permanently' : 'Sign in to burn'}
         </button>
       </div>
-      {plan ? (
+      {plan || preparing ? (
         <TxConfirmDialog
           open
+          preparing={!plan}
           onClose={closeReview}
           title={tx.phase === 'success' ? 'Tokens burned' : 'Confirm burn'}
           rows={[
@@ -217,11 +223,15 @@ export function BurnTokensFlow({
           ]}
           activeIndex={sending ? 0 : -1}
           complete={tx.phase === 'success'}
-          busy={sending}
+          busy={sending || preparing}
           action={tx.phase === 'error' || error ? 'Retry' : 'Confirm & burn'}
           onConfirm={() => void burn()}
           status={
-            tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined
+            !plan
+              ? 'Reading your balance and the controller…'
+              : tx.phase === 'pending'
+                ? 'Waiting for confirmation…'
+                : undefined
           }
           error={error ?? tx.error}
         />

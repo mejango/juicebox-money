@@ -190,7 +190,7 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
     { index: 1, heading: 'How should it appear?', label: 'Look & Feel' },
     { index: 2, heading: 'How should it work?', label: 'Stages' },
     { index: 3, heading: 'Stock your shop', label: 'Shop' },
-    { index: 4, heading: 'Review & launch', label: 'Launch' },
+    { index: 4, heading: 'Ready to launch?', label: 'Launch' },
   ] as const
 
   for (const step of steps) {

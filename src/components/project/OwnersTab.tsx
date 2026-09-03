@@ -850,23 +850,30 @@ function ClaimFlow({
     if (tx.phase === 'error') tx.reset()
   }
 
-  const dialog = review ? (
+  const dialog = review || checking ? (
     <TxConfirmDialog
       open
+      preparing={!review}
       title={tx.phase === 'success' ? 'Claimed' : 'Confirm claim'}
-      rows={[
-        {
-          label: 'Claim',
-          value: `${formatTokenAmount(review.amount)} credits`,
-          strong: true,
-        },
-        { label: 'To', value: review.account, mono: true },
-        { label: 'On', value: chainName(chainId) },
-      ]}
+      rows={
+        review
+          ? [
+              {
+                label: 'Claim',
+                value: `${formatTokenAmount(review.amount)} credits`,
+                strong: true,
+              },
+              { label: 'To', value: review.account, mono: true },
+              { label: 'On', value: chainName(chainId) },
+            ]
+          : []
+      }
       steps={[{ title: 'Claim credits as ERC-20' }]}
       activeIndex={tx.phase === 'idle' ? -1 : 0}
       status={
-        tx.phase === 'pending' && txUrl ? (
+        !review ? (
+          'Reading your credit balance…'
+        ) : tx.phase === 'pending' && txUrl ? (
           <>
             Waiting for confirmation —{' '}
             <a
@@ -922,12 +929,10 @@ function ClaimFlow({
         disabled={busy || !!review}
         className="btn-secondary mt-2 min-h-[36px] px-4 text-xs"
       >
-        {checking
-          ? 'Checking your credits…'
-          : txPhaseLabel(tx.phase, {
-              pending: 'Claiming…',
-              idle: 'Claim as ERC-20',
-            })}
+        {txPhaseLabel(tx.phase, {
+          pending: 'Claiming…',
+          idle: 'Claim as ERC-20',
+        })}
       </button>
       <TxError
         error={flowError}

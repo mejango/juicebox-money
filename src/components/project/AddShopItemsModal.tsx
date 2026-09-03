@@ -475,11 +475,7 @@ export function AddShopItemsModal({
         disabled={busy}
         className="btn-primary min-h-[44px] px-5 text-sm"
       >
-        {!isConnected
-          ? 'Sign in to continue'
-          : phase === 'checking'
-            ? 'Checking permissions…'
-            : 'Review items'}
+        {!isConnected ? 'Sign in to continue' : 'Add items for sale'}
       </button>
     </div>
   )
@@ -576,22 +572,27 @@ export function AddShopItemsModal({
         </p>
       ) : null}
 
-      {review ? (
+      {review || phase === 'checking' ? (
         <TxConfirmDialog
           open
+          preparing={!review}
           title={phase === 'done' ? 'Items added' : 'Confirm items'}
-          rows={[
-            { label: 'Items', value: String(review.items.length) },
-            ...review.items.map((item, index) => ({
-              label: `Item ${index + 1}`,
-              value: `${item.name.trim()} — ${item.price} ${activePricing.symbol}`,
-            })),
-            {
-              label: 'On',
-              value: review.chainIds.map(chainId => chainName(chainId)).join(', '),
-            },
-          ]}
-          steps={review.chainIds.map(chainId => {
+          rows={
+            review
+              ? [
+                  { label: 'Items', value: String(review.items.length) },
+                  ...review.items.map((item, index) => ({
+                    label: `Item ${index + 1}`,
+                    value: `${item.name.trim()} — ${item.price} ${activePricing.symbol}`,
+                  })),
+                  {
+                    label: 'On',
+                    value: review.chainIds.map(chainId => chainName(chainId)).join(', '),
+                  },
+                ]
+              : []
+          }
+          steps={(review?.chainIds ?? []).map(chainId => {
             const status = statuses[chainId]
             return {
               key: String(chainId),
@@ -605,13 +606,19 @@ export function AddShopItemsModal({
             }
           })}
           activeIndex={
-            phase === 'review'
+            !review || phase === 'review'
               ? -1
               : review.chainIds.filter(
                   chainId => statuses[chainId]?.phase === 'done',
                 ).length
           }
-          status={phase === 'failed' ? undefined : message}
+          status={
+            !review
+              ? 'Checking your permissions on the selected chains…'
+              : phase === 'failed'
+                ? undefined
+                : message
+          }
           error={phase === 'failed' ? message : undefined}
           busy={busy}
           complete={phase === 'done'}

@@ -403,21 +403,26 @@ export function DistributeFlow({
     else tx.reset()
   }
 
-  const dialog = plan ? (
+  const dialog = plan || checking ? (
     <TxConfirmDialog
       open
+      preparing={!plan}
       onClose={closeReview}
       title={tx.phase === 'success' ? 'Distributed' : 'Confirm distribution'}
-      rows={[
-        {
-          label: 'Mint',
-          value: `${formatTokenAmount(plan.amount)} ${tokenSymbol}`.trim(),
-          strong: true,
-        },
-        { label: 'Beneficiary', value: beneficiary, mono: true },
-        { label: 'Stage', value: stageLabel },
-        { label: 'On', value: chainName(chainId) },
-      ]}
+      rows={
+        plan
+          ? [
+              {
+                label: 'Mint',
+                value: `${formatTokenAmount(plan.amount)} ${tokenSymbol}`.trim(),
+                strong: true,
+              },
+              { label: 'Beneficiary', value: beneficiary, mono: true },
+              { label: 'Stage', value: stageLabel },
+              { label: 'On', value: chainName(chainId) },
+            ]
+          : []
+      }
       steps={[
         {
           title: 'Auto-issue tokens',
@@ -426,11 +431,13 @@ export function DistributeFlow({
       ]}
       activeIndex={sending ? 0 : -1}
       complete={tx.phase === 'success'}
-      busy={sending}
+      busy={busy}
       action={tx.phase === 'error' ? 'Retry' : 'Confirm & distribute'}
       onConfirm={() => void handleDistribute()}
       status={
-        tx.phase === 'pending' ? (
+        !plan ? (
+          'Reading what is left to distribute…'
+        ) : tx.phase === 'pending' ? (
           <>
             Waiting for confirmation
             {txUrl ? (
@@ -469,7 +476,7 @@ export function DistributeFlow({
         disabled={busy}
         className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-50"
       >
-        {checking ? 'Checking…' : 'Distribute'}
+        Distribute
       </button>
       <TxError
         error={plan ? null : flowError}

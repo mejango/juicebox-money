@@ -460,7 +460,7 @@ function PayerAddressCard({
             disabled={busy}
             className="btn-primary mt-4 min-h-[44px] px-5 text-sm"
           >
-            {isConnected ? 'Review deploy' : 'Sign in to continue'}
+            {isConnected ? 'Deploy payer address' : 'Sign in to continue'}
           </button>
 
           <TxError

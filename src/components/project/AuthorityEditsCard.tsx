@@ -888,7 +888,7 @@ export function MetadataEditor({
         disabled={busy || !name.trim() || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        Review changes
+        Save project details
       </button>
       {status && !reviewed ? (
         <p className="mt-2 text-xs text-smoke-700">{status}</p>
@@ -1115,7 +1115,7 @@ function TokenEditor({
         disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        Review changes
+        Save token details
       </button>
       {status && !review ? (
         <p className="mt-2 text-xs text-smoke-700">{status}</p>

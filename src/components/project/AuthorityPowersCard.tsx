@@ -614,7 +614,7 @@ function PowerActionForm({
         disabled={busy || !selected.size}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        Review {power.actionLabel.toLowerCase()}
+        {power.actionLabel}
       </button>
       {status && !review ? (
         <p className="mt-2 text-xs text-smoke-700">{status}</p>
