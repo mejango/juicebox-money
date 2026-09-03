@@ -102,12 +102,17 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
   const expanded = searchFocused || searchOpen
 
   return (
-    <nav className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 md:hidden">
-      <div className={expanded ? 'hidden' : 'justify-self-start'}>
-        <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} />
+    // The logo alone shares row one with the search and wallet, so it centers
+    // on them; the guide links hang in a second row underneath.
+    <nav className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
+      <div className={expanded ? 'hidden' : 'row-start-1 justify-self-start'}>
+        <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={iconOnly} />
       </div>
+      {!expanded && !iconOnly ? (
+        <GuideLinks className="col-start-1 row-start-2 -mt-1 h-6 self-start pl-0.5" />
+      ) : null}
       <div
-        className={`w-full min-w-0 @container ${
+        className={`row-start-1 w-full min-w-0 @container ${
           expanded
             ? 'col-span-2 col-start-1 max-w-none justify-self-center'
             : 'col-start-2 max-w-[280px] justify-self-end'
@@ -141,7 +146,7 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
           </>
         )}
       </div>
-      <div className="col-start-3 justify-self-end">
+      <div className="col-start-3 row-start-1 justify-self-end">
         {expanded ? (
           <Logo iconOnly inlineOnMobile showGuideLinks={false} />
         ) : (
