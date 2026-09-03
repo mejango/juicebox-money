@@ -1,13 +1,6 @@
 'use client'
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  type ButtonHTMLAttributes,
-  type ReactNode,
-} from 'react'
+import { createContext, type ButtonHTMLAttributes, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
 
 /**
  * Body scroll lock, reference counted.
@@ -147,6 +140,17 @@ export function ModalCloseButton({
  * Escape, ×) while transactions are in flight; `onClose` may layer its own
  * guards (e.g. a discard-confirm) on top.
  */
+const ModalCardContext = createContext<HTMLDivElement | null>(null)
+
+/**
+ * The card of the ModalShell this component is rendered inside, or null when
+ * it is not inside one. A confirm view uses it to replace the card's content
+ * in place rather than open a second dialog over the first.
+ */
+export function useEnclosingModalCard(): HTMLDivElement | null {
+  return useContext(ModalCardContext)
+}
+
 export function ModalShell({
   title,
   subtitle,
@@ -166,6 +170,7 @@ export function ModalShell({
   children: ReactNode
 }) {
   const titleId = useId()
+  const [card, setCard] = useState<HTMLDivElement | null>(null)
 
   const close = useCallback(() => {
     if (!busy) onClose()
@@ -179,6 +184,7 @@ export function ModalShell({
       className="items-start justify-center px-3 py-5 sm:px-6 sm:py-10"
     >
       <div
+        ref={setCard}
         data-modal-card
         className={`card w-full ${maxWidth} overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)] ${
           footer
@@ -211,7 +217,7 @@ export function ModalShell({
             footer ? 'min-h-0 flex-1' : 'max-h-[calc(100vh-10rem)]'
           }`}
         >
-          {children}
+          <ModalCardContext.Provider value={card}>{children}</ModalCardContext.Provider>
         </div>
         {footer ? (
           <div

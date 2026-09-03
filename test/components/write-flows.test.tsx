@@ -36,6 +36,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
     createElement('div', null, children),
   ModalCloseButton: (props: Record<string, unknown>) =>
     createElement('button', props),
+  useEnclosingModalCard: () => null,
 }))
 vi.mock('wagmi', () => ({
   usePublicClient: () =>

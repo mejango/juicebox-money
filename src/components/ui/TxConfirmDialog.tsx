@@ -1,7 +1,12 @@
 'use client'
 
-import { useId, type ReactNode } from 'react'
-import { ModalCloseButton, ModalDialog } from '@/components/ui/ModalShell'
+import { useEffect, useId, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  ModalCloseButton,
+  ModalDialog,
+  useEnclosingModalCard,
+} from '@/components/ui/ModalShell'
 import { TxSteps } from '@/components/ui/TxSteps'
 
 export type TxConfirmRow = {
@@ -57,15 +62,30 @@ export function TxConfirmDialog({
   error?: ReactNode
 }) {
   const titleId = useId()
+  // Inside a ModalShell already, the confirm replaces that card's content in
+  // place: one scrim, one card, and closing brings the form back.
+  const host = useEnclosingModalCard()
+  useEffect(() => {
+    if (!host || !open) return
+    const hidden = Array.from(host.children).filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement &&
+        !child.hasAttribute('data-tx-confirm') &&
+        !child.hidden,
+    )
+    hidden.forEach(child => (child.hidden = true))
+    return () => hidden.forEach(child => (child.hidden = false))
+  }, [host, open])
   if (!open) return null
-  return (
-    <ModalDialog
-      onClose={onClose}
-      dismissible={!busy}
-      labelledBy={titleId}
-      className="items-start justify-center px-3 py-6 sm:items-center"
+  const section = (
+    <section
+      data-tx-confirm
+      className={
+        host
+          ? 'w-full bg-bone'
+          : 'w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl'
+      }
     >
-      <section className="w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
@@ -133,7 +153,17 @@ export function TxConfirmDialog({
             </>
           )}
         </footer>
-      </section>
+    </section>
+  )
+  if (host) return createPortal(section, host)
+  return (
+    <ModalDialog
+      onClose={onClose}
+      dismissible={!busy}
+      labelledBy={titleId}
+      className="items-start justify-center px-3 py-6 sm:items-center"
+    >
+      {section}
     </ModalDialog>
   )
 }
