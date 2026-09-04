@@ -22,14 +22,17 @@ export function IssuanceLadder({
   baseSymbol,
   stageLabel,
   viewHeight,
+  defaultYears = 1,
 }: {
   stages: ChartStage[]
   symbol: string
   baseSymbol: string
   stageLabel?: string
   viewHeight?: number
+  /** Initial range, in years (a CHART_RANGES value). */
+  defaultYears?: number
 }) {
-  const [years, setYears] = useState(1)
+  const [years, setYears] = useState(defaultYears)
 
   const now = useMemo(() => Math.floor(Date.now() / 1000), [])
   const resolved = useMemo(() => resolveStages(stages), [stages])

@@ -95,6 +95,7 @@ import {
   type DraftStage,
 } from "./StageRulesEditor";
 import type { ChartStage } from "@/components/project/chartUtils";
+import { IssuanceLadder } from "@/components/project/IssuanceLadder";
 import {
   AddButton,
   CheckIcon,
@@ -1116,7 +1117,7 @@ export function CreateForm() {
     } else {
       starts = projectStageStarts(now, now).starts;
     }
-    return stages.map((stage, i) => {
+    const drafted = stages.map((stage, i) => {
       const cutOn = flavor !== "revnet" || stage.cutOn;
       let weight = 0n;
       try {
@@ -1135,6 +1136,17 @@ export function CreateForm() {
         inheritsWeight: stage.issuanceRate.trim() === "" && i > 0,
       };
     });
+    // Mirror launch.ts resolveStages: Afterwards appends the final ruleset.
+    const last = drafted[drafted.length - 1];
+    if (flavor === "revnet" || !afterApplies || afterMode === "cycle")
+      return drafted;
+    const start = last.start + last.duration;
+    return [
+      ...drafted,
+      afterMode === "terminal"
+        ? { ...last, start, duration: FOREVER_SECONDS }
+        : { start, duration: 0, weight: 0n, weightCutPercent: 0 },
+    ];
   })();
 
   /** Per-chain launch plans (recipients can differ per chain), sharing one
@@ -3038,7 +3050,6 @@ export function CreateForm() {
                     flavor={rulesFlavor}
                     tokenLabel={tokenLabel}
                     multiToken={multiToken}
-                    schedule={chartStages}
                   />
                 </div>
               ) : null}
@@ -3095,6 +3106,20 @@ export function CreateForm() {
                     ? "These terms are locked in forever — they can never be changed again."
                     : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes. To hand off to new rules after a set number of cycles or on a date, pick Custom… and set when it starts."}
               </p>
+            </div>
+          ) : null}
+
+          {chartStages.some((s) => s.weight > 0n || s.inheritsWeight) ? (
+            <div className="mt-5 border-t border-smoke-200 pt-4">
+              <span className="field-label">Issuance over time</span>
+              <IssuanceLadder
+                stages={chartStages}
+                symbol={tokenLabel}
+                baseSymbol={unitLabel}
+                stageLabel={flavor === "revnet" ? "Stage" : "Ruleset"}
+                viewHeight={80}
+                defaultYears={91 / 365}
+              />
             </div>
           ) : null}
 
