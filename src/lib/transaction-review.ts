@@ -6,7 +6,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { explorerOrigin } from '@/lib/chainDisplay'
+import { displayChainName, explorerOrigin } from '@/lib/chainDisplay'
 
 export type TransactionReviewCall = {
   chainId: number
@@ -184,6 +184,39 @@ export function transactionReviewJson(
 }
 
 /** A website/-style prompt which keeps the exact reviewed RPC call intact. */
+const ETHERSCAN_SKILL_LINE =
+  "If your agent has Etherscan's skills installed (`npx skills add etherscan/skills`), run `etherscan-contract-review` on each target address to pull its verified source, proxy roles, and privileged controls before decoding. Otherwise work from the explorer pages."
+
+/**
+ * The post-transaction counterpart of the review prompt: a mined tx the user
+ * wants explained (or diagnosed) from explorer evidence. Points at Etherscan's
+ * transaction-debugger skill when the reader's agent has it, and degrades to
+ * the explorer page when it doesn't.
+ */
+export function buildTransactionDebugPrompt(
+  calls: { chainId: number; txHash: string }[],
+): string {
+  const lines = [
+    'A Juicebox V6 transaction (the nana V6 / revnet V6 protocol release, not an older Juicebox version) was mined. Explain what happened in it and whether it did what a Juicebox user would expect.',
+    '',
+  ]
+  calls.forEach(call => {
+    const explorer = explorerOrigin(call.chainId)
+    lines.push(
+      `- ${displayChainName(call.chainId)} (chain ${call.chainId}): ${explorer ? `${explorer}/tx/${call.txHash}` : call.txHash}`,
+    )
+  })
+  lines.push(
+    '',
+    "If your agent has Etherscan's skills installed (`npx skills add etherscan/skills`), use `etherscan-transaction-debugger` in security mode on each hash. Otherwise work from the explorer page: receipt status, decoded input, event logs, and internal transactions.",
+    '',
+    'Verify contract source only against the Juicebox V6 repositories: https://github.com/Bananapus/version-6 (repositories ending in `-v6`; same-named repositories without that suffix are older versions).',
+    '',
+    'Report the decoded method and arguments, every native and token movement with its recipient, every permission, ownership, or ruleset change, and, if it reverted, the narrowest root cause the evidence supports. Mark each claim observed, derived, or inferred. Never invent a function name, amount, or revert reason. End with one line: what the transaction did in plain English, and anything that looks wrong.',
+  )
+  return lines.join('\n')
+}
+
 export function buildTransactionReviewPrompt(
   request: TransactionReviewRequest,
 ): string {
@@ -213,6 +246,7 @@ export function buildTransactionReviewPrompt(
   lines.push(
     '- Use only V6 repositories (normally ending in `-v6`); same-named repositories without that suffix may be older and incompatible.',
   )
+  lines.push(`- ${ETHERSCAN_SKILL_LINE}`)
   request.calls.forEach((call, index) => {
     // Explorer hosts live in ONE place (lib/chainDisplay). This file used to keep a second
     // copy and the two drifted on OP mainnet, where one pointed at a host that never resolved.
