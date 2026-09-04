@@ -20,10 +20,14 @@ export function IssuanceLadder({
   stages,
   symbol,
   baseSymbol,
+  stageLabel,
+  viewHeight,
 }: {
   stages: ChartStage[]
   symbol: string
   baseSymbol: string
+  stageLabel?: string
+  viewHeight?: number
 }) {
   const [years, setYears] = useState(1)
 
@@ -43,6 +47,8 @@ export function IssuanceLadder({
       showNowMarker={now < t1}
       showScaleLabel={false}
       frameless
+      stageLabel={stageLabel}
+      viewHeight={viewHeight}
       header={
         <div className="flex items-center justify-end gap-2">
           <ChartRangeSelect
