@@ -208,7 +208,8 @@ function HomepageDiscovery() {
             headingClassName="hidden sm:flex"
             panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
           >
-            <Suspense fallback={<ActivityRows rows={8} />}>
+            {/* Ghost rows must outrun the card, which fills the column on wide screens. */}
+            <Suspense fallback={<ActivityRows rows={14} />}>
               <ActivityPanel />
             </Suspense>
           </DashboardColumn>
