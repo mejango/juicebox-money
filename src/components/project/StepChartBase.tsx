@@ -279,9 +279,26 @@ export function StepChartBase({
                 strokeWidth="1"
                 strokeDasharray="3 3"
               />
-              <text x={X(s.start) + 3} y={PT + 8} fontSize="6.5" fill="#9C9580">
-                {stageLabel} {i + 1}
-              </text>
+              {(() => {
+                // Sit the label just under the line as it leaves the boundary:
+                // within a stage the ladder only rises, so below is clear of it.
+                // Fall back to above when the line hugs the axis.
+                const r = rateAtTime(resolved, s.start)
+                const lineY = r > 0 ? Y(1 / r) : PT
+                const below = lineY + 9
+                const flip = X(s.start) > VW - PR - 30
+                return (
+                  <text
+                    x={flip ? X(s.start) - 3 : X(s.start) + 3}
+                    y={below <= VH - PB - 2 ? below : lineY - 4}
+                    fontSize="6.5"
+                    fill="#9C9580"
+                    textAnchor={flip ? 'end' : 'start'}
+                  >
+                    {stageLabel} {i + 1}
+                  </text>
+                )
+              })()}
             </g>
           ) : null,
         )}
