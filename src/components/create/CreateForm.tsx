@@ -3112,8 +3112,8 @@ export function CreateForm() {
           {chartStages.some((s) => s.weight > 0n || s.inheritsWeight) ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <p className="text-xs leading-relaxed text-smoke-700">
-                Preview: what each {tokenLabel === "tokens" ? "token" : tokenLabel}{" "}
-                costs over time under the rules above.
+                Preview {tokenLabel === "tokens" ? "token" : tokenLabel}{" "}
+                issuance price over time with the above rules:
               </p>
               <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
                 <IssuanceLadder
