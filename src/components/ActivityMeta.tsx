@@ -1,5 +1,4 @@
 import { ChainIcon } from '@/components/ChainIcon'
-import { TxDebugPromptLink } from '@/components/TxDebugPromptLink'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { formatTokenAmount, formatUsd18 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
@@ -102,7 +101,6 @@ export function ActivityOnChain({
           )
         })}
       </span>
-      <TxDebugPromptLink calls={entries} />
     </>
   )
 }
