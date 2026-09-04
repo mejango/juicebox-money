@@ -499,6 +499,7 @@ export async function getProjectActivity(
             { cashOutTokensEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
+            { sendReservedTokensToSplitEvent_not: null }
             { autoIssueEvent_not: null }
             { mintTokensEvent_not: null }
             { borrowLoanEvent_not: null }
@@ -558,6 +559,7 @@ export async function getProjectActivityByProject(
             { cashOutTokensEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
+            { sendReservedTokensToSplitEvent_not: null }
             { autoIssueEvent_not: null }
             { mintTokensEvent_not: null }
             { borrowLoanEvent_not: null }

@@ -106,7 +106,22 @@ export function ActivityOnChain({
 }
 
 /**
- * The row's flow cluster: the in/out tag, then the bold amount. Renders an
+ * A project-token headline for rows that move tokens rather than value: the
+ * formatted count ("3.6m ART") and the tag that says how they moved.
+ */
+export type ActivityHeadline = {
+  amount: string
+  tag: 'reserved'
+}
+
+const FLOW_TAG_CLASS: Record<'in' | 'out' | ActivityHeadline['tag'], string> = {
+  in: 'border-bluebs-500 text-bluebs-600',
+  out: 'border-peel-500 text-peel-600',
+  reserved: 'border-melon-500 text-melon-700',
+}
+
+/**
+ * The row's flow cluster: the bold amount, then the in/out tag. Renders an
  * (empty) span even without a flow so flex layouts keep their two sides.
  */
 export function ActivityAmountLine({
@@ -114,14 +129,22 @@ export function ActivityAmountLine({
   amountToken,
   direction,
   kind,
+  headline,
 }: {
   amountUsd: string | null | undefined
   amountToken?: ActivityAmountToken | null
   direction?: 'in' | 'out' | null
   /** What happened, for rows that move no value — shown instead of in/out. */
   kind?: string | null
+  /** A token-count headline with its own tag; takes the amount's place. */
+  headline?: ActivityHeadline | null
 }) {
-  const amount = activityAmountLabel(amountUsd, amountToken)
+  const amount = headline?.amount ?? activityAmountLabel(amountUsd, amountToken)
+  const tag = headline
+    ? headline.tag
+    : amount && (direction === 'in' || direction === 'out')
+      ? direction
+      : null
 
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-sm text-smoke-500">
@@ -132,15 +155,11 @@ export function ActivityAmountLine({
           {kind}
         </span>
       ) : null}
-      {amount && (direction === 'in' || direction === 'out') ? (
+      {tag ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
-            direction === 'in'
-              ? 'border-bluebs-500 text-bluebs-600'
-              : 'border-peel-500 text-peel-600'
-          }`}
+          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${FLOW_TAG_CLASS[tag]}`}
         >
-          {direction}
+          {tag}
         </span>
       ) : null}
     </span>

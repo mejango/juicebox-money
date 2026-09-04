@@ -23,7 +23,7 @@ import {
   isProjectFeedActivity,
   mergeActivityEvents,
 } from '@/components/ActivityList'
-import { ActivityMeta } from '@/components/ActivityMeta'
+import { ActivityAmountLine, ActivityMeta } from '@/components/ActivityMeta'
 import {
   suckerGroupAccountingToken,
   type BsActivityEvent,
@@ -259,6 +259,50 @@ describe('ActivityMeta amount denomination', () => {
         amountUsd: '12000000000000000000',
       }),
     ).not.toContain('$')
+  })
+})
+
+describe('ActivityAmountLine headline', () => {
+  it('leads with the token count and its own tag in place of the kind chip', () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    act(() => {
+      renderer = TestRenderer.create(
+        <ActivityAmountLine
+          amountUsd={null}
+          kind="Reserved tokens"
+          headline={{ amount: '3.6m ART', tag: 'reserved' }}
+        />,
+      )
+    })
+    const text = textOf(renderer.toJSON())
+    expect(text).toContain('3.6m ART')
+    expect(text).toContain('reserved')
+    expect(text).not.toContain('Reserved tokens')
+    const tag = renderer.root.findAll(
+      node => node.type === 'span' && node.children.join('') === 'reserved',
+    )
+    expect(tag[0].props.className).toContain('melon')
+    act(() => renderer.unmount())
+  })
+
+  it('gives a reserved distribution its total as the headline', () => {
+    const parts = activityParts(
+      {
+        id: 'e',
+        chainId: 1,
+        projectId: 2,
+        timestamp: 1700000000,
+        txHash: '0xabc',
+        from: '0xf00',
+        sendReservedTokensToSplitsEvent: {
+          tokenCount: '3600000000000000000000000',
+          from: '0xf00',
+        },
+      } as BsActivityEvent,
+      'ART',
+    )
+    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved' })
+    expect(parts.actor).toBe('0xf00')
   })
 })
 
