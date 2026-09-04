@@ -363,6 +363,18 @@ export function CreateForm() {
   );
   const [approvalDeadline, setApprovalDeadline] =
     useState<ApprovalDeadline>("1day");
+  const addStage = (stageFlavor?: "revnet") => {
+    const next = { ...newDraftStage(false, stageFlavor), expanded: true };
+    setStages((prev) => [
+      ...prev.map((s) => ({ ...s, expanded: false })),
+      next,
+    ]);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`stage-${next.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
   const setStage = (id: string, next: DraftStage) =>
     setStages((prev) => prev.map((s) => (s.id === id ? next : s)));
   // Step 1's Basics starts open; everything else starts collapsed.
@@ -2913,7 +2925,8 @@ export function CreateForm() {
           {stages.map((stage, i) => (
             <div
               key={stage.id}
-              className="mt-4 rounded-xl border border-smoke-300 bg-bone first:mt-0"
+              id={`stage-${stage.id}`}
+              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0"
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
@@ -2967,6 +2980,9 @@ export function CreateForm() {
                     isFirst={i === 0}
                     isLast={i === stages.length - 1}
                     index={i}
+                    prevDuration={
+                      i > 0 ? stageDurationSeconds(stages[i - 1]) : 0
+                    }
                     unitLabel={unitLabel}
                     unitChoice={
                       !customOn
@@ -2994,12 +3010,7 @@ export function CreateForm() {
           {flavor === "revnet" ? (
             <div className="mt-4">
               <AddButton
-                onClick={() =>
-                  setStages((prev) => [
-                    ...prev.map((s) => ({ ...s, expanded: false })),
-                    { ...newDraftStage(false, "revnet"), expanded: true },
-                  ])
-                }
+                onClick={() => addStage("revnet")}
                 disabled={busy}
               >
                 Add a stage
@@ -3017,10 +3028,7 @@ export function CreateForm() {
                   value={afterMode}
                   onChange={(e) => {
                     if (e.target.value === "custom") {
-                      setStages((prev) => [
-                        ...prev.map((s) => ({ ...s, expanded: false })),
-                        { ...newDraftStage(false), expanded: true },
-                      ]);
+                      addStage();
                       setAfterMode("wait");
                     } else {
                       setAfterMode(e.target.value as typeof afterMode);
