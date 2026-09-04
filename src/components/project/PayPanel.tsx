@@ -995,6 +995,8 @@ export function PayPanel({
     isFetching: previewLoading,
     isError: previewError,
     isPlaceholderData: previewIsPrevious,
+    isStale: previewIsStale,
+    refetch: refetchPreview,
   } = useQuery({
     queryKey: [
       "previewPay",
@@ -1047,6 +1049,8 @@ export function PayPanel({
     isFetching: directSwapQuoteLoading,
     isError: directSwapQuoteError,
     isPlaceholderData: directSwapQuoteIsPrevious,
+    isStale: directSwapQuoteIsStale,
+    refetch: refetchDirectSwapQuote,
   } = useQuery({
     queryKey: [
       "directPaySwapQuote",
@@ -1499,6 +1503,15 @@ export function PayPanel({
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return;
+    // A quote older than the query's staleTime is refetched first; the effect
+    // below re-enters once the refreshed quote is in. A live quote is used as is.
+    const swapQuoteStale = !!activeSwapQuote && directSwapQuoteIsStale;
+    if (mode === "pay" && (previewIsStale || swapQuoteStale)) {
+      setSubmitWhenFresh(true);
+      void refetchPreview();
+      if (swapQuoteStale) void refetchDirectSwapQuote();
+      return;
+    }
     let actions: PaymentSequenceAction[]
     try {
       // `buildDirectPaySwapTx` throws on a zero amount, reachable from credit-only
@@ -1525,6 +1538,19 @@ export function PayPanel({
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
   };
+
+  const [submitWhenFresh, setSubmitWhenFresh] = useState(false);
+  useEffect(() => {
+    if (!submitWhenFresh) return;
+    if (previewError) {
+      setSubmitWhenFresh(false);
+      return;
+    }
+    if (!previewReady || previewIsStale || (activeSwapQuote && directSwapQuoteIsStale)) return;
+    setSubmitWhenFresh(false);
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
 
   const runPaymentSequence = async () => {
     if (

@@ -1505,7 +1505,7 @@ function ReviewModal({
       onClose={() => onFinish(false)}
       labelledBy={titleId}
       describedBy={descriptionId}
-      className="modal-dialog-blur items-start justify-center px-3 py-4 sm:px-6 sm:py-8"
+      className="items-start justify-center px-3 py-4 sm:px-6 sm:py-8"
     >
       <div
         className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl sm:max-h-[calc(100vh-4rem)]"
