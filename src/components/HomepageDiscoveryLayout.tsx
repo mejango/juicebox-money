@@ -107,9 +107,11 @@ export function HomepageDiscoveryLayout({
         aria-labelledby="home-all-activity-tab"
         className={`${
           activeFeed === 'activity' ? 'block' : 'hidden'
-        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:col-start-3 xl:row-span-2 xl:row-start-1`}
+        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:relative xl:col-start-3 xl:row-span-2 xl:row-start-1`}
       >
-        {activity}
+        {/* Absolute at xl so the feed fills both rows without its own content
+            sizing them; the Top stack and hero set the height. */}
+        <div className='xl:absolute xl:inset-0'>{activity}</div>
       </div>
 
       <div className="order-4 min-w-0 sm:col-start-1 sm:row-start-3 md:row-start-2 xl:contents">

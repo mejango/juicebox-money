@@ -203,7 +203,11 @@ function HomepageDiscovery() {
           </Suspense>
         }
         activity={
-          <DashboardColumn title="Latest" headingClassName="hidden sm:flex">
+          <DashboardColumn
+            title="Latest"
+            headingClassName="hidden sm:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
             <Suspense fallback={<ActivityRows rows={8} />}>
               <ActivityPanel />
             </Suspense>
