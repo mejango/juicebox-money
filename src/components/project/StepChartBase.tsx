@@ -125,6 +125,7 @@ export function StepChartBase({
   scaleMax,
   frameless = false,
   stageLabel = 'Stage',
+  stageLabels,
   viewHeight = DEFAULT_VH,
   header,
   footer,
@@ -154,6 +155,8 @@ export function StepChartBase({
   frameless?: boolean
   /** Word for the boundary labels ("Stage 2" / "Ruleset 2"). */
   stageLabel?: string
+  /** Per-stage overrides of the boundary label, by resolved index. */
+  stageLabels?: (string | undefined)[]
   /** viewBox height; the chart keeps full width, so smaller = shorter. */
   viewHeight?: number
   /** Rendered inside the card above the svg (summary tiles, range pills). */
@@ -210,10 +213,14 @@ export function StepChartBase({
   const Y = (v: number) =>
     PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / scaleTop)))
 
+  // The ladder breaks where there is no issuance (rate 0) instead of drawing
+  // a line at a price that does not exist.
   const path = points
-    // No issuance has an infinite price; pin it to the top of the finite
-    // issuance-price range, matching website/'s chart.
-    .map(([t, v]) => `${X(t).toFixed(1)},${Y(v ?? maxV).toFixed(1)}`)
+    .map(([t, v], i) =>
+      v === null
+        ? ''
+        : `${i === 0 || points[i - 1][1] === null ? 'M' : 'L'}${X(t).toFixed(1)},${Y(v).toFixed(1)}`,
+    )
     .join(' ')
 
   const t = Math.min(t1, Math.max(t0, hoverT ?? Math.min(now, t1)))
@@ -295,7 +302,7 @@ export function StepChartBase({
                     fill="#9C9580"
                     textAnchor={flip ? 'end' : 'start'}
                   >
-                    {stageLabel} {i + 1}
+                    {stageLabels?.[i] ?? `${stageLabel} ${i + 1}`}
                   </text>
                 )
               })()}
@@ -328,8 +335,8 @@ export function StepChartBase({
         ) : null}
         {/* The price ladder */}
         {showLadder ? (
-          <polyline
-            points={path}
+          <path
+            d={path}
             fill="none"
             stroke={ISSUANCE_COLOR}
             strokeWidth="2"

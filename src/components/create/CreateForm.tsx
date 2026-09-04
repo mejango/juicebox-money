@@ -3111,15 +3111,27 @@ export function CreateForm() {
 
           {chartStages.some((s) => s.weight > 0n || s.inheritsWeight) ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
-              <span className="field-label">Issuance over time</span>
-              <IssuanceLadder
-                stages={chartStages}
-                symbol={tokenLabel}
-                baseSymbol={unitLabel}
-                stageLabel={flavor === "revnet" ? "Stage" : "Ruleset"}
-                viewHeight={80}
-                defaultYears={91 / 365}
-              />
+              <p className="text-xs leading-relaxed text-smoke-700">
+                Preview: what each {tokenLabel === "tokens" ? "token" : tokenLabel}{" "}
+                costs over time under the rules above.
+              </p>
+              <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
+                <IssuanceLadder
+                  stages={chartStages}
+                  symbol={tokenLabel}
+                  baseSymbol={unitLabel}
+                  stageLabel={flavor === "revnet" ? "Stage" : "Ruleset"}
+                  stageLabels={chartStages.map((_, i) =>
+                    i < stages.length
+                      ? undefined
+                      : afterMode === "terminal"
+                        ? "Locked in"
+                        : "Idle",
+                  )}
+                  viewHeight={80}
+                  defaultYears={91 / 365}
+                />
+              </div>
             </div>
           ) : null}
 

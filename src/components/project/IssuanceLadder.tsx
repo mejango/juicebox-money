@@ -21,6 +21,7 @@ export function IssuanceLadder({
   symbol,
   baseSymbol,
   stageLabel,
+  stageLabels,
   viewHeight,
   defaultYears = 1,
 }: {
@@ -28,6 +29,7 @@ export function IssuanceLadder({
   symbol: string
   baseSymbol: string
   stageLabel?: string
+  stageLabels?: (string | undefined)[]
   viewHeight?: number
   /** Initial range, in years (a CHART_RANGES value). */
   defaultYears?: number
@@ -51,6 +53,7 @@ export function IssuanceLadder({
       showScaleLabel={false}
       frameless
       stageLabel={stageLabel}
+      stageLabels={stageLabels}
       viewHeight={viewHeight}
       header={
         <div className="flex items-center justify-end gap-2">
