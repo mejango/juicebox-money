@@ -12,7 +12,8 @@ export function formatTokenAmount(
 /** A token amount already in whole-token units. */
 export function formatAmount(value: number, maxDigits = 4): string {
   if (value === 0) return '0'
-  if (value < 0.0001) return '<0.0001'
+  // A real amount never reads as nothing: below the digit budget, show its first significant figure.
+  if (value > 0 && value < 0.0001) return value.toFixed(Math.ceil(-Math.log10(value))).replace(/0+$/, '')
   return value.toLocaleString('en-US', { maximumFractionDigits: maxDigits })
 }
 

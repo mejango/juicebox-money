@@ -453,38 +453,96 @@ export function combinedActivityParts(
     : sorted
   const parts = ordered.map(event => activityParts(event, tokenUnit))
   const primary = parts[0]
+  // Several pays in one tx (a payer contract fanning out) read as one payment:
+  // the payer's total, then who got what. Its buy swaps carry the payer, not
+  // the payee; the remint each one pairs with names the recipient instead.
+  const pays = ordered.filter(entry => entry.payEvent)
+  const fanOut = pays.length > 1
+  const sumOf = (values: (string | null | undefined)[]): string | undefined => {
+    if (values.some(value => value == null)) return undefined
+    try {
+      return values.reduce((total, value) => total + BigInt(value!), 0n).toString()
+    } catch {
+      return undefined
+    }
+  }
+  const gotNode = (chainId: number, who: string, count: string) => (
+    <>
+      <ActorLink href={addressUrl(chainId, who)} actor={who} /> got{' '}
+      <span className="font-medium">
+        {formatCompactTokenAmount(count)} {tokenUnit}
+      </span>
+    </>
+  )
+  if (fanOut) {
+    ordered.forEach((entry, index) => {
+      const pay = entry.payEvent
+      if (!pay) return
+      let issued = false
+      try {
+        issued = BigInt(pay.newlyIssuedTokenCount) > 0n
+      } catch {
+        issued = false
+      }
+      if (!issued) return
+      parts[index] = {
+        ...parts[index],
+        action: gotNode(entry.chainId, pay.beneficiary, pay.newlyIssuedTokenCount),
+      }
+    })
+  }
 
   // A buyback pay pairs the pool swap (gross output) with the reserved-rate
   // remint (the payer's net). Say what the mint IS instead of a bare "minted X".
-  // Each buy swap pairs with its own remint in order: a tx with two buyback
-  // pays has two swaps and two remints, and pairing every mint with one swap
-  // (or refusing to pair at all) mislabels or drops the reserve.
+  // Each buy swap pairs with its own remint: a tx with two buyback pays has
+  // two swaps and two remints, and pairing every mint with one swap (or
+  // refusing to pair at all) mislabels or drops the reserve. The indexer
+  // returns a tx's events in no particular order, so pairing goes by amount
+  // rank (largest swap ↔ largest remint): one reserve rate applies to every
+  // pay in a tx, which keeps the ranks aligned.
+  const descending = (a: string, b: string) => {
+    try {
+      const left = BigInt(a)
+      const right = BigInt(b)
+      return left < right ? 1 : left > right ? -1 : 0
+    } catch {
+      return 0
+    }
+  }
   const swaps = ordered
     .filter(entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell')
     .map(entry => entry.swapEvent!)
-  const mints = ordered.filter(entry => entry.mintTokensEvent)
+    .sort((a, b) => descending(a.projectTokenAmount, b.projectTokenAmount))
+  const mints = ordered
+    .filter(entry => entry.mintTokensEvent)
+    .sort((a, b) =>
+      descending(a.mintTokensEvent!.beneficiaryTokenCount, b.mintTokensEvent!.beneficiaryTokenCount),
+    )
   mints.forEach((entry, index) => {
     const swapEvent = swaps[index]
-    if (!swapEvent) return
     const mintIndex = ordered.indexOf(entry)
     const mint = entry.mintTokensEvent!
-    const reservePercent = reservePercentLabel(
-      swapEvent.projectTokenAmount,
-      mint.beneficiaryTokenCount,
-    )
-    if (reservePercent) {
-      parts[mintIndex] = {
-        ...parts[mintIndex],
-        action: (
-          <>
-            received{' '}
-            <span className="font-medium">
-              {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
-            </span>{' '}
-            after the {reservePercent}% reserve
-          </>
-        ),
-      }
+    const reservePercent = swapEvent
+      ? reservePercentLabel(swapEvent.projectTokenAmount, mint.beneficiaryTokenCount)
+      : null
+    if (!reservePercent && !fanOut) return
+    const reserve = reservePercent ? <> after the {reservePercent}% reserve</> : null
+    parts[mintIndex] = {
+      ...parts[mintIndex],
+      action: fanOut ? (
+        <>
+          {gotNode(entry.chainId, mint.beneficiary, mint.beneficiaryTokenCount)}
+          {reserve}
+        </>
+      ) : (
+        <>
+          received{' '}
+          <span className="font-medium">
+            {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
+          </span>
+          {reserve}
+        </>
+      ),
     }
   })
   // A reserved distribution's headline carries the total; its per-split
@@ -523,6 +581,7 @@ export function combinedActivityParts(
     ordered.length > 1
       ? ordered.filter(entry => {
           if (entry.sendReservedTokensToSplitsEvent) return !hasReceipts
+          if (entry.swapEvent && fanOut) return false
           if (!entry.payEvent) return true
           try {
             return BigInt(entry.payEvent.newlyIssuedTokenCount) > 0n
@@ -536,11 +595,16 @@ export function combinedActivityParts(
   )
   return {
     ...primary,
+    actor: fanOut ? pays[0].from : primary.actor,
     action: joinActionNodes(actions),
     actions,
     memo: parts.find(part => part.memo)?.memo ?? null,
-    amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
-    amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
+    amountUsd: fanOut
+      ? sumOf(pays.map(entry => entry.payEvent!.amountUsd))
+      : parts.find(part => part.amountUsd != null)?.amountUsd,
+    amountRaw: fanOut
+      ? sumOf(pays.map(entry => entry.payEvent!.amount))
+      : parts.find(part => part.amountRaw != null)?.amountRaw,
     // A distribution is done "by" its caller; its receipts' inbound flow is
     // theirs, not the row's.
     direction: distributed

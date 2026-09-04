@@ -119,6 +119,61 @@ describe('combinedActivityParts', () => {
     const sentence = renderToStaticMarkup(<>{parts.action}</>)
     expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
     expect(sentence).not.toContain('minted')
+
+    // The indexer returns a tx's events in no particular order: pairing goes
+    // by amount rank, so a shuffled tx labels every remint the same way.
+    const shuffled = combinedActivityParts(
+      [
+        mintOf('m1', '62000000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '124000000000000000000'),
+        swapOf('s1', '100000000000000000000'),
+      ],
+      'ART',
+    )
+    const shuffledSentence = renderToStaticMarkup(<>{shuffled.action}</>)
+    expect(shuffledSentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(shuffledSentence).not.toContain('minted')
+  })
+
+  it("reads a fan-out (two pays in one tx) as the payer's total and who got what", () => {
+    const payOf = (id: string, beneficiary: string, amount: string) =>
+      event({
+        id,
+        from: '0xpayer',
+        payEvent: { ...pay.payEvent!, beneficiary, amount, amountUsd: null, newlyIssuedTokenCount: '0' },
+      })
+    const swapOf = (id: string, projectTokenAmount: string) =>
+      event({
+        id,
+        from: '0xpayer',
+        swapEvent: { ...swap.swapEvent!, from: '0xpayer', projectTokenAmount },
+      } as Partial<BsActivityEvent>)
+    const mintOf = (id: string, beneficiary: string, beneficiaryTokenCount: string) =>
+      event({
+        id,
+        mintTokensEvent: { beneficiary, beneficiaryTokenCount },
+      } as Partial<BsActivityEvent>)
+    const parts = combinedActivityParts(
+      [
+        payOf('p1', '0xalice', '4000000000000000'),
+        swapOf('s1', '100000000000000000000'),
+        mintOf('m1', '0xalice', '62000000000000000000'),
+        payOf('p2', '0xbob', '6000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '0xbob', '124000000000000000000'),
+      ],
+      'ART',
+    )
+    // The row is the payment: the payer and the total, not the first payee and its share.
+    expect(parts.actor).toBe('0xpayer')
+    expect(parts.amountRaw).toBe('10000000000000000')
+    const sentence = renderToStaticMarkup(<>{parts.action}</>)
+    expect(sentence).toContain('0xalice')
+    expect(sentence).toContain('0xbob')
+    expect(sentence.match(/ got /g)).toHaveLength(2)
+    expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(sentence).not.toContain('bought')
   })
 
   it('drops the mint record when the pay itself issued the tokens', () => {
