@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   combinedActivityParts,
   groupSameTxEvents,
+  projectFeedEvents,
 } from '@/components/ActivityList'
 import type { BsActivityEvent } from '@/lib/bendystraw'
+
+vi.mock('@/hooks/useEnsName', () => ({
+  useEnsName: () => ({ data: null }),
+}))
 
 function event(overrides: Partial<BsActivityEvent>): BsActivityEvent {
   return {
@@ -139,6 +144,71 @@ describe('combinedActivityParts', () => {
     const parts = combinedActivityParts([pay], 'ART')
     expect(renderToStaticMarkup(<>{parts.action}</>)).toBe(
       'paid into the project',
+    )
+  })
+})
+
+// A reserved distribution: the total plus one receipt per split, all in one
+// tx. The row leads with the total and lists the recipients, largest first.
+describe('reserved distributions', () => {
+  const distribution = event({
+    id: 'r',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitsEvent: {
+      tokenCount: '3600000000000000000000000',
+      from: '0xfrom',
+    },
+  })
+  const toAddress = event({
+    id: 's1',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitEvent: {
+      tokenCount: '600000000000000000000000',
+      beneficiary: '0xsmall',
+      splitProjectId: 0,
+      from: '0xfrom',
+    },
+  })
+  const toProject = event({
+    id: 's2',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitEvent: {
+      tokenCount: '3000000000000000000000000',
+      beneficiary: '0x0000000000000000000000000000000000000000',
+      splitProjectId: 7,
+      from: '0xfrom',
+    },
+  })
+
+  it('renders one row: the total as headline, a bullet per recipient', () => {
+    const groups = groupSameTxEvents([toAddress, distribution, toProject])
+    expect(groups).toHaveLength(1)
+    const parts = combinedActivityParts(groups[0], 'ART')
+    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved' })
+    expect(parts.actor).toBe('0xfrom')
+    const bullets = parts.actions.map(action =>
+      renderToStaticMarkup(<>{action}</>),
+    )
+    expect(bullets).toHaveLength(2)
+    expect(bullets[0]).toContain('3m ART')
+    expect(bullets[0]).toContain('to project #7')
+    expect(bullets[1]).toContain('600k ART')
+    expect(bullets[1]).toContain('title="0xsmall"')
+    expect(bullets.join()).not.toContain('distributed reserved')
+  })
+
+  it('admits receipts to the project feed only alongside their distribution', () => {
+    expect(projectFeedEvents([toAddress, toProject])).toEqual([])
+    expect(projectFeedEvents([toAddress, distribution])).toHaveLength(2)
+    const other = event({ ...toAddress, txHash: '0xother' })
+    expect(projectFeedEvents([other, distribution])).toEqual([distribution])
+  })
+
+  it('keeps a receipt without its distribution as a "received" line', () => {
+    const parts = combinedActivityParts([toAddress], 'ART')
+    expect(parts.headline).toBeNull()
+    expect(renderToStaticMarkup(<>{parts.action}</>)).toContain(
+      'from a reserved split',
     )
   })
 })
