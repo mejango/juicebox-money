@@ -807,10 +807,10 @@ export function activityParts(
   )
   const memo = pay?.memo ?? event.addToBalanceEvent?.memo ?? null
   // A reserved distribution leads with the count the way value flows lead
-  // with the amount: "3.6m ART" tagged "reserved".
+  // with the amount: "3.6m ART" tagged "reserved distro".
   const headline: ActivityHeadline | null =
     issuedTokens && event.sendReservedTokensToSplitsEvent
-      ? { amount: `${tokenCount} ${tokenUnit}`, tag: 'reserved' }
+      ? { amount: `${tokenCount} ${tokenUnit}`, tag: 'reserved distro' }
       : null
 
   return {

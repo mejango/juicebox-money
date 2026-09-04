@@ -185,7 +185,7 @@ function Row({
         </ProjectLink>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 text-xs text-smoke-500">
-            <span suppressHydrationWarning>
+            <span className="shrink-0 whitespace-nowrap" suppressHydrationWarning>
               {relativeTime === 'now' ? 'now' : `${relativeTime} ago`}
             </span>
             <ActivityMeta

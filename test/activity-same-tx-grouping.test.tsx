@@ -184,7 +184,7 @@ describe('reserved distributions', () => {
     const groups = groupSameTxEvents([toAddress, distribution, toProject])
     expect(groups).toHaveLength(1)
     const parts = combinedActivityParts(groups[0], 'ART')
-    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved' })
+    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved distro' })
     expect(parts.actor).toBe('0xfrom')
     const bullets = parts.actions.map(action =>
       renderToStaticMarkup(<>{action}</>),
