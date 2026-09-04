@@ -528,6 +528,7 @@ export function StageRulesEditor({
   isFirst,
   isLast,
   index,
+  prevDuration = 0,
   unitLabel,
   unitChoice,
   disabled,
@@ -541,6 +542,8 @@ export function StageRulesEditor({
   isFirst: boolean;
   isLast: boolean;
   index: number;
+  /** Previous ruleset's duration in seconds (0 = flexible); reminds the user what a cycle is. */
+  prevDuration?: number;
   unitLabel: string;
   /** When set, the issuance unit is a choice (ETH/USD) picked inline. */
   unitChoice?: {
@@ -721,6 +724,9 @@ export function StageRulesEditor({
                       <span className="text-sm text-smoke-700">
                         cycle{Number(stage.startCycles) === 1 ? "" : "s"} of
                         Ruleset #{index}
+                        {prevDuration > 0
+                          ? ` (${secondsLabel(prevDuration)} each)`
+                          : ""}
                       </span>
                     </>
                   ) : (
@@ -735,7 +741,11 @@ export function StageRulesEditor({
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                   {stage.startMode === "cycles"
-                    ? `Ruleset #${index} repeats that many times, then these rules take over.`
+                    ? `Ruleset #${index} repeats that many times, then these rules take over${
+                        prevDuration > 0
+                          ? ` — ${secondsLabel((Number(stage.startCycles) || 1) * prevDuration)} after Ruleset #${index} starts`
+                          : ""
+                      }.`
                     : `Rule changes land on cycle boundaries, so the start snaps to Ruleset #${index}'s first cycle ending at or after this date.`}
                 </p>
               </div>
