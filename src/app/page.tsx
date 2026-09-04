@@ -33,7 +33,8 @@ import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 import { TopProjectRows } from '@/components/TopProjectRows'
 import { SecuredReserves } from '@/components/SecuredReserves'
-import { formatTokenAmount } from '@/lib/format'
+import { formatTokenAmount, timeAgo } from '@/lib/format'
+import { getNewProjects, type NewProject } from '@/lib/new-projects'
 import { getHomepageReserves } from '@/lib/homepage-reserves'
 
 export const revalidate = 120
@@ -212,7 +213,6 @@ function HomepageDiscovery() {
           <DashboardColumn
             title="Trending"
             headingClassName="hidden xl:flex"
-            panelClassName="xl:h-auto xl:flex-1"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TrendingPanel />
@@ -220,9 +220,24 @@ function HomepageDiscovery() {
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top" headingClassName="hidden xl:flex">
+          <DashboardColumn
+            title="Top"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TopPanel />
+            </Suspense>
+          </DashboardColumn>
+        }
+        newProjects={
+          <DashboardColumn
+            title="New"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
+            <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
+              <NewPanel />
             </Suspense>
           </DashboardColumn>
         }
@@ -265,6 +280,11 @@ async function TopPanel() {
   return (
     <TopProjectRows initialProjects={top.slice(0, 8)} initialHasMore={top.length > 8} />
   )
+}
+
+async function NewPanel() {
+  const projects = await settled<NewProject[]>(getNewProjects(8), [])
+  return <NewProjectRows projects={projects} />
 }
 
 function ReservesSkeleton() {
@@ -377,6 +397,50 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
       ))}
     </ol>
   )
+}
+
+function NewProjectRows({ projects }: { projects: NewProject[] }) {
+  if (!projects.length) return <EmptyProjects />
+  return (
+    <ol className="divide-y divide-smoke-100">
+      {projects.map((project, index) => (
+        <li key={project.key}>
+          <ProjectLink
+            href={project.href}
+            projectHint={{ name: project.name, logoUri: project.logoUri, tagline: project.tagline }}
+            className="group flex h-28 items-center gap-3 px-4 py-3"
+            aria-label={`Open ${project.name}`}
+          >
+            <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
+              {index + 1}
+            </span>
+            <ProjectLogo
+              name={project.name}
+              logoUri={project.logoUri}
+              size={40}
+              eager={index < 4}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
+                {project.name}
+              </span>
+              <span className="mt-0.5 block text-xs text-smoke-600">
+                Launched:{' '}
+                <span className="tabular-nums text-smoke-700">
+                  {formatLaunched(project.createdAt)}
+                </span>
+              </span>
+            </span>
+          </ProjectLink>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function formatLaunched(createdAt: number): string {
+  const ago = timeAgo(createdAt)
+  return ago === 'now' ? 'just now' : `${ago} ago`
 }
 
 function formatRecentVolume(card: TrendingCard): string {
