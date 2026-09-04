@@ -89,6 +89,33 @@ describe('combinedActivityParts', () => {
     )
   })
 
+  it('pairs each remint with its own swap when one tx holds two buyback pays', () => {
+    const swapOf = (id: string, projectTokenAmount: string) =>
+      event({
+        id,
+        from: '0xbundler',
+        swapEvent: { ...swap.swapEvent!, projectTokenAmount },
+      } as Partial<BsActivityEvent>)
+    const mintOf = (id: string, beneficiaryTokenCount: string) =>
+      event({
+        id,
+        mintTokensEvent: { beneficiary: '0xpayer', beneficiaryTokenCount },
+      } as Partial<BsActivityEvent>)
+    // 100 → 62 and 200 → 124 are both a 38% reserve.
+    const parts = combinedActivityParts(
+      [
+        swapOf('s1', '100000000000000000000'),
+        mintOf('m1', '62000000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '124000000000000000000'),
+      ],
+      'ART',
+    )
+    const sentence = renderToStaticMarkup(<>{parts.action}</>)
+    expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(sentence).not.toContain('minted')
+  })
+
   it('drops the mint record when the pay itself issued the tokens', () => {
     // An issuance-route pay: its mintTokensEvent is the same issuance
     // double-reported, so only the pay fragment renders — worded like the

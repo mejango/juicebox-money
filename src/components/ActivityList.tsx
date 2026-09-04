@@ -415,13 +415,18 @@ export function combinedActivityParts(
 
   // A buyback pay pairs the pool swap (gross output) with the reserved-rate
   // remint (the payer's net). Say what the mint IS instead of a bare "minted X".
-  const swapEvent = ordered.find(
-    entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell',
-  )?.swapEvent
+  // Each buy swap pairs with its own remint in order: a tx with two buyback
+  // pays has two swaps and two remints, and pairing every mint with one swap
+  // (or refusing to pair at all) mislabels or drops the reserve.
+  const swaps = ordered
+    .filter(entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell')
+    .map(entry => entry.swapEvent!)
   const mints = ordered.filter(entry => entry.mintTokensEvent)
-  if (swapEvent && mints.length === 1) {
-    const mintIndex = ordered.indexOf(mints[0])
-    const mint = mints[0].mintTokensEvent!
+  mints.forEach((entry, index) => {
+    const swapEvent = swaps[index]
+    if (!swapEvent) return
+    const mintIndex = ordered.indexOf(entry)
+    const mint = entry.mintTokensEvent!
     const reservePercent = reservePercentLabel(
       swapEvent.projectTokenAmount,
       mint.beneficiaryTokenCount,
@@ -440,7 +445,7 @@ export function combinedActivityParts(
         ),
       }
     }
-  }
+  })
   // A zero-issuance pay's "paid into the project" adds nothing next to the
   // row's amount and "in" tag — drop its fragment when other actions exist.
   // The pay still anchors the row's actor, amount, direction, and memo.
