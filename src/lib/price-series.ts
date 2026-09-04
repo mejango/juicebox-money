@@ -379,9 +379,10 @@ export function poolReservesSeriesFrom({
 
 /**
  * The reserves resampled onto `count` even buckets across [t0, t1], each
- * taking the last observation at or before its centre — so the bars sit on a
- * regular grid whatever the trade cadence. Buckets before the first
- * observation are omitted rather than drawn empty.
+ * taking the last observation at or before its close — so the bars sit on a
+ * regular grid whatever the trade cadence and the final bar reflects
+ * everything up to `t1`. Buckets before the first observation are omitted
+ * rather than drawn empty.
  */
 export function bucketPoolReserves(
   points: PoolReservePoint[],
@@ -397,7 +398,8 @@ export function bucketPoolReserves(
   let current: PoolReservePoint | undefined
   for (let bucket = 0; bucket < count; bucket += 1) {
     const timestamp = t0 + (bucket + 0.5) * width
-    while (index < sorted.length && sorted[index].timestamp <= timestamp) {
+    const close = t0 + (bucket + 1) * width
+    while (index < sorted.length && sorted[index].timestamp <= close) {
       current = sorted[index++]
     }
     if (!current) continue
