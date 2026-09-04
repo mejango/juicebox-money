@@ -425,7 +425,7 @@ export function ShopTab({
         <div className="flex justify-end">{addItemsButton}</div>
       ) : null}
 
-      {!!address && (credits ?? 0n) > 0n ? (
+      {!!address && shop.tiers.length > 0 && (credits ?? 0n) > 0n ? (
         <p className="callout callout-info text-sm">
           Your shop credit:{' '}
           <span className="font-medium">
