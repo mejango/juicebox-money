@@ -23,7 +23,7 @@ const NOW_COLOR = '#F5A312'
 
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320
-const VH = 180
+const DEFAULT_VH = 180
 const PL = 0
 const PR = 0
 const PT = 16
@@ -124,6 +124,8 @@ export function StepChartBase({
   showScaleLabel = true,
   scaleMax,
   frameless = false,
+  stageLabel = 'Stage',
+  viewHeight = DEFAULT_VH,
   header,
   footer,
   renderSeries,
@@ -150,6 +152,10 @@ export function StepChartBase({
   scaleMax?: number
   /** Skip the card chrome when the chart already sits inside a card. */
   frameless?: boolean
+  /** Word for the boundary labels ("Stage 2" / "Ruleset 2"). */
+  stageLabel?: string
+  /** viewBox height; the chart keeps full width, so smaller = shorter. */
+  viewHeight?: number
   /** Rendered inside the card above the svg (summary tiles, range pills). */
   header?: ReactNode
   /** Rendered inside the card below the svg (legend, methodology tips). */
@@ -166,6 +172,7 @@ export function StepChartBase({
   /** PriceChart uses a cursor-following tooltip; issuance-only charts retain the caption below. */
   inspectionPlacement?: 'below' | 'tooltip'
 }) {
+  const VH = viewHeight
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [hoverPosition, setHoverPosition] = useState<{
     x: number
@@ -273,7 +280,7 @@ export function StepChartBase({
                 strokeDasharray="3 3"
               />
               <text x={X(s.start) + 3} y={PT + 8} fontSize="6.5" fill="#9C9580">
-                Stage {i + 1}
+                {stageLabel} {i + 1}
               </text>
             </g>
           ) : null,

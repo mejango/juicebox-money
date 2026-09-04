@@ -94,6 +94,7 @@ import {
   stageSummaryParts,
   type DraftStage,
 } from "./StageRulesEditor";
+import type { ChartStage } from "@/components/project/chartUtils";
 import {
   AddButton,
   CheckIcon,
@@ -363,6 +364,9 @@ export function CreateForm() {
   );
   const [approvalDeadline, setApprovalDeadline] =
     useState<ApprovalDeadline>("1day");
+  // Pinned at mount so the chart's stage 1 start never drifts past the
+  // ladder's own mount-time "now" and reads as "no issuance".
+  const chartNow = useMemo(() => Math.floor(Date.now() / 1000), []);
   const addStage = (stageFlavor?: "revnet") => {
     const next = { ...newDraftStage(false, stageFlavor), expanded: true };
     setStages((prev) => [
@@ -1092,6 +1096,46 @@ export function CreateForm() {
     }
     return prevStart + days * 86_400;
   };
+
+  /** The draft schedule as chart input (weights display-grade; the plan
+   *  encoders stay the source of truth for what gets sent). */
+  const chartStages: ChartStage[] = (() => {
+    if (isSimpleProject) return [];
+    const now = chartNow;
+    let starts: number[];
+    if (flavor === "revnet") {
+      starts = [];
+      let start =
+        stages[0].scheduleOn && stages[0].schedule
+          ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
+          : now;
+      stages.forEach((stage, i) => {
+        if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
+        starts.push(start);
+      });
+    } else {
+      starts = projectStageStarts(now, now).starts;
+    }
+    return stages.map((stage, i) => {
+      const cutOn = flavor !== "revnet" || stage.cutOn;
+      let weight = 0n;
+      try {
+        weight = parseUnits(stage.issuanceRate || "0", 18);
+      } catch {}
+      return {
+        start: starts[i],
+        duration:
+          flavor === "revnet"
+            ? cutOn
+              ? Math.round(Number(stage.cutFreqDays || "0") * 86_400)
+              : 0
+            : stageDurationSeconds(stage),
+        weight,
+        weightCutPercent: cutOn ? Math.round(Number(stage.cutPct || "0") * 1e7) : 0,
+        inheritsWeight: stage.issuanceRate.trim() === "" && i > 0,
+      };
+    });
+  })();
 
   /** Per-chain launch plans (recipients can differ per chain), sharing one
    *  deployStart so multichain first rulesets begin together.
@@ -2994,6 +3038,7 @@ export function CreateForm() {
                     flavor={rulesFlavor}
                     tokenLabel={tokenLabel}
                     multiToken={multiToken}
+                    schedule={chartStages}
                   />
                 </div>
               ) : null}

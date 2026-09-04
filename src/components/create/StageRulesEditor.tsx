@@ -19,6 +19,8 @@ import { AddressField } from "./AddressField";
 import { resolvedAddress } from "@/lib/ens";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
+import { IssuanceLadder } from "@/components/project/IssuanceLadder";
+import type { ChartStage } from "@/components/project/chartUtils";
 
 /**
  * One stage = one queued ruleset (website/ parity). Every rule here is
@@ -536,6 +538,7 @@ export function StageRulesEditor({
   flavor,
   tokenLabel,
   multiToken,
+  schedule,
 }: {
   stage: DraftStage;
   onChange: (stage: DraftStage) => void;
@@ -558,6 +561,8 @@ export function StageRulesEditor({
   tokenLabel: string;
   /** ETH+USDC accounting: payouts configure per token. */
   multiToken: boolean;
+  /** Every draft stage as chart input, so the Issuance section can plot the whole schedule. */
+  schedule?: ChartStage[];
 }) {
   const isRevnet = flavor === "revnet";
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch });
@@ -940,6 +945,15 @@ export function StageRulesEditor({
               % issuance cut each time the rules cycle
             </span>
           </div>
+        ) : null}
+        {schedule?.some((s) => s.weight > 0n || s.inheritsWeight) ? (
+          <IssuanceLadder
+            stages={schedule}
+            symbol={tokenLabel}
+            baseSymbol={unitLabel}
+            stageLabel={isRevnet ? "Stage" : "Ruleset"}
+            viewHeight={80}
+          />
         ) : null}
         {isRevnet ? (
           <div className="mt-4">
