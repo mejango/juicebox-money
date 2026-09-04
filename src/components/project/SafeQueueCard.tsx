@@ -1,8 +1,8 @@
 "use client";
 
+import { chainName } from '@/lib/urn'
 import { getAccount } from "@wagmi/core";
 import {
-  JB_CHAINS,
   JBCoreContracts,
   RevnetCoreContracts,
   jbBuybackHookRegistryAbi,
@@ -1623,8 +1623,7 @@ export function SafeQueueCard({
                   className="flex flex-wrap items-center justify-between gap-2 text-xs"
                 >
                   <span>
-                    {JB_CHAINS[chainId as JBChainId]?.name ??
-                      `Chain ${chainId}`}
+                    {chainName(chainId)}
                   </span>
                   {hash && explorerTxUrl(chainId, hash) ? (
                     <a

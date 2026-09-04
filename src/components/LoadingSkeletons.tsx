@@ -30,7 +30,7 @@ export function ProjectCardSkeleton({ index = 0 }: { index?: number }) {
   )
 }
 
-function ActivityRows({ rows = 7 }: { rows?: number }) {
+export function ActivityRows({ rows = 7 }: { rows?: number }) {
   return (
     <div className="divide-y divide-smoke-100" aria-hidden="true">
       {Array.from({ length: rows }, (_, index) => (

@@ -1,5 +1,6 @@
 'use client'
 
+import { chainName } from '@/lib/urn'
 import { getAccount, getPublicClient } from '@wagmi/core'
 import {
   isAddress,
@@ -11,7 +12,6 @@ import {
   type PublicClient,
 } from 'viem'
 import {
-  JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbProjectsAbi,
@@ -300,13 +300,13 @@ export async function runAuthorityCalls({
         }) as PublicClient | undefined
         if (!client) {
           throw new Error(
-            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+            `Could not verify the authority on ${chainName(call.chainId)}.`,
           )
         }
         const identity = await readAuthorityIdentity(client, authority)
         if (!identity) {
           throw new Error(
-            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+            `Could not verify the authority on ${chainName(call.chainId)}.`,
           )
         }
         return identity
@@ -318,7 +318,7 @@ export async function runAuthorityCalls({
     if (unsupported.length) {
       throw new Error(
         `The project authority is an unsupported contract on ${unsupported
-          .map(call => JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`)
+          .map(call => chainName(call.chainId))
           .join(', ')}. Only an EOA or a canonical Safe is supported.`,
       )
     }
@@ -345,10 +345,9 @@ export async function runAuthorityCalls({
       }
       if (!identities.matches) {
         const sourceName =
-          JB_CHAINS[call.detectionChainId]?.name ??
-          `chain ${call.detectionChainId}`
+          chainName(call.detectionChainId)
         const destinationName =
-          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+          chainName(call.chainId)
         if (
           identities.source.kind === 'safe' &&
           identities.destination.kind === 'eoa'
@@ -385,7 +384,7 @@ export async function runAuthorityCalls({
     if (safeCount > 0 && safeCount !== group.length) {
       const missing = group
         .filter((_, index) => authorityIdentities[index].kind !== 'safe')
-        .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+        .map(call => chainName(call.chainId))
       throw new Error(
         `This Safe is not deployed on ${missing.join(', ')}. Deploy the same Safe there from the Account card, or deselect those chains.`,
       )
@@ -413,7 +412,7 @@ export async function runAuthorityCalls({
       if (unavailable.length) {
         throw new Error(
           `The connected wallet is not a signer of ${authority} on ${unavailable
-            .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+            .map(call => chainName(call.chainId))
             .join(', ')}. Switch to a signer that belongs to every selected Safe.`,
         )
       }
@@ -424,7 +423,7 @@ export async function runAuthorityCalls({
     if (connected.toLowerCase() !== authority.toLowerCase()) {
       throw new Error(
         `The connected wallet is not the authority on ${group
-          .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+          .map(call => chainName(call.chainId))
           .join(', ')}. Switch to ${authority}.`,
       )
     }
@@ -460,7 +459,7 @@ export async function runAuthorityCalls({
         const chainId = record.chain
         const chain =
           typeof chainId === 'number'
-            ? JB_CHAINS[chainId as JBChainId]?.name ?? `Chain ${chainId}`
+            ? chainName(chainId)
             : `Call ${index + 1}`
         const state = record.status?.state || 'Pending'
         return `${chain}: ${state}`
@@ -522,7 +521,7 @@ export async function runAuthorityCalls({
     onProgress?.({
       kind: 'checking',
       message: `Checking ${index + 1}/${callsToSimulate.length} on ${
-        JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+        chainName(call.chainId)
       }…`,
     })
     try {
@@ -560,7 +559,7 @@ export async function runAuthorityCalls({
             : 'The call would revert.'
       throw new Error(
         `${call.label ?? 'Action'} cannot run on ${
-          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+          chainName(call.chainId)
         }: ${detail}`,
       )
     }
@@ -701,7 +700,7 @@ export async function runAuthorityCalls({
         onProgress?.({
           kind: 'direct',
           message: `Confirming ${index + 1}/${group.length} directly on ${
-            JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+            chainName(call.chainId)
           }…`,
         })
         await simulateStateChangingTransaction(client, {
@@ -729,7 +728,7 @@ export async function runAuthorityCalls({
         if (receipt.status !== 'success') {
           throw new Error(
             `${call.label ?? 'Project action'} reverted on ${
-              JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+              chainName(call.chainId)
             }.`,
           )
         }

@@ -422,7 +422,7 @@ export function AuthorityOverview({
               ? []
               : [{
                   chainId: 1 as JBChainId,
-                  name: JB_CHAINS[1].name,
+                  name: chainName(1),
                   projectId: group.rows[0].projectId,
                   isRevnet,
                   handleOnly: true,
@@ -614,7 +614,7 @@ function TransferAuthorityFlow({
           setStatus(progress.message);
           // Progress names the chain it is on (JB_CHAINS name); that names the step.
           const index = plan.calls.findIndex((call) =>
-            progress.message.includes(JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`),
+            progress.message.includes(chainName(call.chainId)),
           );
           if (index >= 0) setStep(index);
         },
@@ -1124,7 +1124,7 @@ function PermissionEditor({
           setStatus(progress.message);
           // Progress names the chain it is on (JB_CHAINS name); that names the step.
           const index = plan.calls.findIndex((call) =>
-            progress.message.includes(JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`),
+            progress.message.includes(chainName(call.chainId)),
           );
           if (index >= 0) setStep(index);
         },
@@ -1256,7 +1256,7 @@ function PermissionEditor({
         label="Set on"
         rows={deployments.map((deployment) => ({
           chainId: deployment.chainId,
-          name: JB_CHAINS[deployment.chainId]?.name ?? deployment.chainId,
+          name: chainName(deployment.chainId),
         }))}
         selected={selectedChains}
         onChange={(chains) => {
