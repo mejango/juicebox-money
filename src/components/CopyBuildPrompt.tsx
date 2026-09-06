@@ -1,52 +1,70 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { PLATFORM_BUILD_PROMPT } from '@/lib/build-prompt'
 
 const SKILLS_URL = 'https://github.com/mejango/juicebox-skills'
 
-/** The one line for readers building with an agent: the prompt to hand it and the skills it
- *  should work from. */
 export function CopyBuildPrompt({ className = '' }: { className?: string }) {
-  const [copied, setCopied] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [status, setStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current)
-    },
-    [],
-  )
+  async function copy() {
+    setStatus('copying')
+    try {
+      await navigator.clipboard.writeText(PLATFORM_BUILD_PROMPT)
+      setStatus('copied')
+    } catch {
+      setStatus('failed')
+    }
+  }
 
   return (
-    <p className={className}>
-      Building with an agent?{' '}
+    <details className={className}>
+      <summary className="min-h-11 py-3 font-agrandir font-medium text-bluebs-700">
+        Build with an AI assistant
+      </summary>
+      <p className="mt-2 leading-relaxed">
+        Describe your product in the prompt below, then give your assistant the{' '}
+        <a
+          href={SKILLS_URL}
+          className="font-medium text-bluebs-700 underline underline-offset-4 hover:text-bluebs-800"
+        >
+          Juicebox V6 skills
+        </a>{' '}
+        for contract addresses, interfaces, and fee calculations. Review its proposed transactions
+        against the current contracts before signing.
+      </p>
       <button
         type="button"
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(PLATFORM_BUILD_PROMPT)
-            setCopied(true)
-            if (timer.current) clearTimeout(timer.current)
-            timer.current = setTimeout(() => setCopied(false), 2000)
-          } catch {
-            setCopied(false)
-          }
-        }}
-        className="font-agrandir font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
+        onClick={copy}
+        disabled={status === 'copying'}
+        className="btn-secondary mt-3 min-h-11 max-w-full whitespace-normal px-4 py-2 text-left"
       >
-        {copied ? 'prompt copied' : 'copy the Juicebox build prompt'}
+        {status === 'copying' ? 'Copying…' : 'Copy the Juicebox build prompt'}
       </button>
-      , and give it the{' '}
-      <a
-        href={SKILLS_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="font-agrandir font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
-      >
-        Juicebox V6 skills
-      </a>{' '}
-      so it works from the deployed addresses, ABIs, and fee math rather than from memory.
-    </p>
+      <p role="status" aria-atomic="true" className="mt-2 text-sm leading-relaxed">
+        {status === 'copied'
+          ? 'Prompt copied. Paste it into your assistant and describe your product.'
+          : status === 'failed'
+            ? 'Copy was blocked by your browser. Select and copy the prompt below.'
+            : ''}
+      </p>
+      <details className="mt-2" open={status === 'failed' ? true : undefined}>
+        <summary className="min-h-11 py-3 text-bluebs-700 underline underline-offset-4">
+          Read or manually copy the prompt
+        </summary>
+        <label htmlFor="juicebox-build-prompt" className="mb-2 block font-medium">
+          Juicebox build prompt
+        </label>
+        <textarea
+          id="juicebox-build-prompt"
+          readOnly
+          value={PLATFORM_BUILD_PROMPT}
+          rows={10}
+          spellCheck={false}
+          className="block w-full rounded-lg border border-smoke-300 bg-white p-3 text-sm leading-relaxed text-ink"
+        />
+      </details>
+    </details>
   )
 }

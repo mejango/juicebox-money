@@ -33,6 +33,19 @@ function lockBodyScroll(): () => void {
 }
 
 /**
+ * Dialogs replace rather than stack: the dialog below a newly opened one stays
+ * open in the top layer but paints nothing (see `[data-covered]` in
+ * globals.css) until the newer one closes. Returns the uncover.
+ */
+function coverDialogsBelow(dialog: HTMLDialogElement) {
+  const covered = Array.from(
+    document.querySelectorAll<HTMLDialogElement>('dialog[open]:not([data-covered])'),
+  ).filter(other => other !== dialog)
+  covered.forEach(other => other.setAttribute('data-covered', ''))
+  return () => covered.forEach(other => other.removeAttribute('data-covered'))
+}
+
+/**
  * The bare native modal: a `<dialog>` opened with `showModal()`, so the top
  * layer owns the backdrop, focus containment, and — the reason this exists —
  * the inertness of everything behind it. A screen reader cannot reach the page
@@ -73,8 +86,10 @@ export function ModalDialog({
     // showModal() hands focus to the first focusable descendant, which is the close button in every
     // shell here, so its focus ring lit up on every open. Start on the dialog itself instead.
     dialog.focus({ preventScroll: true })
+    const uncover = coverDialogsBelow(dialog)
     const releaseScroll = lockBodyScroll()
     return () => {
+      uncover()
       releaseScroll()
       if (dialog.open) dialog.close()
     }

@@ -1,23 +1,14 @@
-import { GuideInteractions } from '@/components/GuideInteractions'
-import { buildGuideHtml, learnGuideHtml } from '@/lib/juicescan-learn-build'
+import { GuideSections } from '@/components/GuideSections'
+import { BUILD_SECTIONS } from '@/lib/build-guide'
+import { LEARN_SECTIONS } from '@/lib/learn-guide'
 
 export function ProtocolGuide({ guide }: { guide: 'learn' | 'build' }) {
-  const containerId = `tab-${guide}`
-  // Trusted in-repo constant: the guide markup is assembled entirely from
-  // string literals in juicescan-learn-build.ts, with every interpolated value
-  // escaped there. No user input reaches this HTML. Rendering it on the server
-  // is what makes the guides readable to crawlers that do not execute JS.
-  const guideHtml = guide === 'learn' ? learnGuideHtml() : buildGuideHtml()
-
   return (
-    <>
-      <div
-        id={containerId}
-        className="juicebox-guide"
-        aria-label={guide === 'learn' ? 'Learn Juicebox' : 'Build with Juicebox'}
-        dangerouslySetInnerHTML={{ __html: guideHtml }}
+    <div id={`tab-${guide}`}>
+      <GuideSections
+        sections={guide === 'learn' ? LEARN_SECTIONS : BUILD_SECTIONS}
+        ariaLabel={guide === 'learn' ? 'Learn Juicebox' : 'Build with Juicebox'}
       />
-      <GuideInteractions containerId={containerId} />
-    </>
+    </div>
   )
 }

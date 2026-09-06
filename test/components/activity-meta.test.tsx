@@ -270,7 +270,7 @@ describe('ActivityAmountLine headline', () => {
         <ActivityAmountLine
           amountUsd={null}
           kind="Reserved tokens"
-          headline={{ amount: '3.6m ART', tag: 'reserved' }}
+          headline={{ amount: '3.6m ART', tag: 'reserved distro' }}
         />,
       )
     })
@@ -279,7 +279,7 @@ describe('ActivityAmountLine headline', () => {
     expect(text).toContain('reserved')
     expect(text).not.toContain('Reserved tokens')
     const tag = renderer.root.findAll(
-      node => node.type === 'span' && node.children.join('') === 'reserved',
+      node => node.type === 'span' && node.children.join('') === 'reserved distro',
     )
     expect(tag[0].props.className).toContain('melon')
     act(() => renderer.unmount())
@@ -301,7 +301,7 @@ describe('ActivityAmountLine headline', () => {
       } as BsActivityEvent,
       'ART',
     )
-    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved' })
+    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved distro' })
     expect(parts.actor).toBe('0xf00')
   })
 })

@@ -68,11 +68,12 @@
     background-color: rgb(2 6 23 / 0.55);
   }
 
-  /* The transaction review dialog dims harder and blurs, because it can open
-     on top of another modal. */
-  .modal-dialog-blur::backdrop {
-    background-color: rgb(2 6 23 / 0.6);
-    backdrop-filter: blur(2px);
+  /* Dialogs replace rather than stack: while a newer dialog is open, the one
+     below it stays open in the top layer but paints nothing, so there is one
+     scrim at a time. ModalDialog sets and clears the attribute. */
+  dialog[data-covered],
+  dialog[data-covered]::backdrop {
+    visibility: hidden;
   }
 
   /* Host for a third-party overlay that renders its own chrome (Para's

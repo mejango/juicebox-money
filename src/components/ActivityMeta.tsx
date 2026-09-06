@@ -111,13 +111,13 @@ export function ActivityOnChain({
  */
 export type ActivityHeadline = {
   amount: string
-  tag: 'reserved'
+  tag: 'reserved distro'
 }
 
 const FLOW_TAG_CLASS: Record<'in' | 'out' | ActivityHeadline['tag'], string> = {
   in: 'border-bluebs-500 text-bluebs-600',
   out: 'border-peel-500 text-peel-600',
-  reserved: 'border-melon-500 text-melon-700',
+  'reserved distro': 'border-melon-500 text-melon-700',
 }
 
 /**
@@ -202,11 +202,11 @@ export function ActivityMeta({
     : null
 
   return (
-    <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-smoke-500">
-      {amount ? <span>{amount}</span> : null}
+    <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs text-smoke-500">
+      {amount ? <span className="truncate">{amount}</span> : null}
       {hasAmount && (direction === 'in' || direction === 'out') ? (
         <span
-          className={`inline-flex h-5 min-w-7 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
+          className={`inline-flex h-5 min-w-7 shrink-0 items-center justify-center border px-1.5 text-center text-[10px] font-medium leading-none ${
             direction === 'in'
               ? 'border-bluebs-500 text-bluebs-600'
               : 'border-peel-500 text-peel-600'
@@ -221,7 +221,7 @@ export function ActivityMeta({
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`View transaction on ${chainName(chainId)}`}
-          className="inline-flex transition-opacity hover:opacity-70"
+          className="inline-flex shrink-0 transition-opacity hover:opacity-70"
         >
           <ChainIcon chainId={chainId} size={18} />
         </a>

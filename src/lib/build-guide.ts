@@ -8,12 +8,25 @@ const SKILLS = 'https://github.com/mejango/juicebox-skills/tree/main/plugins/jui
 const legacy = (id: string, overrides: Partial<GuideSection>): GuideSection => {
   const section = LEGACY_BUILD_SECTIONS.find(candidate => candidate.id === id)
   if (!section) throw new Error(`Unknown legacy build section: ${id}`)
-  return { ...section, ...overrides }
+  const source = id.startsWith('build-revnet')
+    ? 'https://github.com/rev-net/revnet-core-v6'
+    : id === 'build-bendystraw'
+      ? `${REPO}/src/lib/bendystraw.ts`
+      : id === 'build-clients'
+        ? 'https://github.com/mejango/juicebox-money'
+        : 'https://github.com/Bananapus/version-6'
+  return {
+    ...section,
+    ...overrides,
+    blocks: [
+      ...(overrides.blocks ?? section.blocks ?? []),
+      { type: 'links', items: [{ href: source, label: 'Source reference' }] },
+    ],
+  }
 }
 
 /**
- * The Build guide, in order. New sections carry the audience tracks; the sections that came from
- * the juicescan renderer keep their verbatim content and are re-homed into the right part.
+ * The Build guide, in order. New sections carry the audience tracks; reference sections retain their stable links and are checked against the V6 contracts.
  */
 export const BUILD_SECTIONS: readonly GuideSection[] = [
   // ------------------------------------------------------------------ Start here
@@ -22,8 +35,8 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Start here',
     title: 'Pick the model, and who this guide is for',
     paragraphs: [
-      'Juicebox gives you a project: a balance with programmable rules, a token, and a set of contracts that enforce the rules without anyone in the middle. A project has an owner who can change those rules at the next cycle. A revnet is a project whose owner is a contract that never will.',
-      'This guide is written for three kinds of builder, and every section is tagged with who it is for. Project builders launch and run a project from this site without writing code. App builders connect a product to Juicebox with the SDK and the indexer. Contract builders extend the protocol with hooks and their own contracts. The parts overlap; read the tags and skip what is not yours.',
+      'Juicebox gives you a project with a balance, programmable rules, and project tokens. Owners can change permitted terms subject to ruleset timing and approval. A revnet commits its core economic schedule at launch and retains a limited set of operator controls.',
+      'This guide has paths for three kinds of builder, with audience tags on the sections specific to each path. Project builders launch and run a project from this site without writing code. App builders connect a product to Juicebox with the SDK and the indexer. Contract builders extend the protocol with hooks and their own contracts. The parts overlap; read the tags and skip what is not yours.',
     ],
     blocks: [
       {
@@ -34,8 +47,9 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Pay a team a budget each cycle, from revenue or donations', 'Project (payout limits)'],
           ['Keep the option to change rules, add tokens, or migrate later', 'Project (rulesets, superpowers)'],
           ['Sell NFTs or memberships and treat the sales as revenue', 'Either, with a shop'],
-          ['Back a token with revenue and promise nobody can change the terms', 'Revnet (stages)'],
-          ['Let holders exit against the balance, or borrow against it', 'Revnet (cash outs, loans)'],
+          ['Commit an issuance schedule and cash out terms at launch', 'Revnet (stages; inspect retained operator controls)'],
+          ['Let holders cash out against surplus', 'Project or revnet, when the terms allow it'],
+          ['Let holders borrow using project tokens as collateral', 'Revnet (loans, subject to available funds and terms)'],
         ],
       },
       {
@@ -48,11 +62,38 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     ],
   },
   {
+    id: 'start-your-first-build',
+    part: 'Start here',
+    title: 'Choose your first useful result',
+    paragraphs: [
+      'You do not need to read this entire reference in order. Pick one result, follow its path, and return to the operation map when you need another feature. The Learn glossary explains terms such as ruleset, terminal, indexer, and SDK.',
+    ],
+    blocks: [
+      {
+        type: 'steps',
+        items: [
+          'Launch a project without code: open the wizard, choose testnet, configure a small example, review the terms, and complete a test payment and payout before launching on mainnet.',
+          'Build an app: install the SDK, read a testnet project with the example below, then add indexed discovery and a quoted transaction flow.',
+          'Build a contract: inspect the V6 interfaces and deployed addresses, implement one hook or integration, and verify it against the local workflow and a pinned fork.',
+        ],
+      },
+      {
+        type: 'links',
+        items: [
+          { href: '#founders-launch-from-the-wizard', label: 'Project builder path' },
+          { href: '#apps-set-up-the-sdk', label: 'App builder quickstart' },
+          { href: '#contracts-install-and-launch', label: 'Contract builder path' },
+          { href: '/learn#learn-glossary', label: 'Plain-language glossary' },
+        ],
+      },
+    ],
+  },
+  {
     id: 'start-operation-map',
     part: 'Start here',
     title: 'Every operation, in one table',
     paragraphs: [
-      'Each thing a person can do to a project maps to one contract call. This site exposes each as a button; the SDK ships a builder for each; the sections below show how to quote, bound, and sign it.',
+      'Start with the user action, then identify its contract entrypoint. Some flows require multiple transactions, such as approving an ERC-20 before paying or claiming a cross-chain transfer. SDK helper names are listed where available; the call outlines below are reference shapes, with placeholders to replace before use.',
     ],
     blocks: [
       {
@@ -91,7 +132,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Start here',
     title: 'The contracts, and where their addresses live',
     paragraphs: [
-      'Every contract has a single address per chain, and there is one source of truth for those addresses: deploy-all-v6 publishes one artifact per contract per chain (address, ABI, source name). The SDK’s jbContractAddress map and the skills library’s chain-config.json are generated from it.',
+      'Shared protocol deployments are listed by chain in deploy-all-v6 artifacts, including their address and ABI. The SDK’s address map follows those deployments. Project-specific tokens, hooks, terminals, and bridge instances can have their own addresses: resolve a project’s current controller and terminals through JBDirectory before composing a transaction.',
     ],
     blocks: [
       {
@@ -137,7 +178,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Launch from the wizard',
     paragraphs: [
-      'The create page walks through five steps: Flavor, Look and feel, Rules (Stages for a revnet), Shop, Launch. The simple flavor skips Rules and launches with sensible defaults. Everything you set in Rules can be changed later by queuing a new ruleset; everything in a revnet’s Stages cannot.',
+      'The create page walks through five steps: Flavor, Look and feel, Rules (Stages for a revnet), Shop, Launch. The simple flavor skips Rules and launches with sensible defaults. Later rulesets can replace permitted project terms subject to the active timing and approval requirements. Revnet stage economics are committed at launch; metadata and other permitted operator controls remain editable.',
     ],
     blocks: [
       {
@@ -171,7 +212,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'The rules, field by field',
     paragraphs: [
-      'A ruleset is one cycle of terms. These are the fields the wizard exposes, what they mean, and the units the contracts hold them in.',
+      'A ruleset defines project terms and can repeat across multiple cycles. These are the fields the wizard exposes, what they mean, and the units the contracts hold them in.',
     ],
     blocks: [
       {
@@ -182,13 +223,13 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Issuance', 'Tokens issued per unit of the base currency paid, priced in ETH or USD. Default 10,000. Leave blank on a later ruleset to inherit the previous one’s decayed rate'],
           ['Issuance cut', 'A percentage the rate drops by each cycle (a revnet says “cut X% every N days” instead)'],
           ['Reserved split', 'The share of every issuance that goes to your reserved recipients instead of the payer. Set by adding recipients; the percent is their total'],
-          ['Cash outs', 'Off, or on with a tax: 0, 10, 30, 50%, or any value below 100. Off is written as a 100% tax. A revnet cannot switch them off'],
-          ['Payouts', 'None; flexible (the owner may withdraw up to a limit); or routed to recipients as percentages or fixed amounts, per accounting token. Limits are per cycle and per chain'],
+          ['Cash outs', 'Off, or on with a tax: 0, 10, 30, 50%, or any value below 100. Off is written as a 100% tax. A revnet commits its tax schedule and may also have an initial cash out delay'],
+          ['Payouts', 'None; flexible (payouts can send the owner the amount within the configured limit); or routed to recipients as percentages or fixed amounts, per accounting token. Limits are per cycle and per chain'],
           ['Surplus allowance', 'Whether the owner may also withdraw from the surplus above the payout limit: unlimited or capped'],
-          ['Hold fees', 'Keep the protocol fee in the project for 28 days instead of paying it at once; adding funds back with the flag set returns it'],
+          ['Hold fees', 'Delay eligible payout and allowance fee processing for 28 days; adding funds back with the return-held-fees option can restore a matching amount'],
           ['Accept payments', 'Off pauses paying'],
           ['Owner can mint any time', 'The allowOwnerMinting flag'],
-          ['Superpowers', 'Whether this ruleset lets the owner set terminals, set the controller, migrate terminals, set a custom token, add accounting contexts, or add price feeds. Off by default; a project that never turns them on cannot do those things'],
+          ['Superpowers', 'Whether this ruleset lets the owner set terminals, set the controller, migrate terminals, set a custom token, add accounting contexts, or add price feeds. These actions require the relevant flag while that ruleset is active; check whether an owner can queue a later ruleset that enables it'],
           ['Afterwards, notice', 'What follows this ruleset, and how much notice a rule change needs: an approval hook of 3 hours, 1 day, 3 days, or 7 days, or none'],
         ],
       },
@@ -216,7 +257,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'points',
         items: [
           { key: 'Which contract', text: 'a revnet goes through REVDeployer.deployFor; a linked multichain project through JBOmnichainDeployer.launchProjectFor, which also deploys the chain’s suckers; anything else through JB721TiersHookProjectDeployer.launchProjectFor, which sets up the shop as the data hook. This site never calls JBController.launchProjectFor directly.' },
-          { key: 'Creation fee', text: 'read from JBProjects.creationFee() right before each send and passed as the transaction value. It is paid as a payment into the Juicebox fee project, so you receive its tokens.' },
+          { key: 'Creation fee', text: 'read from JBProjects.creationFee() right before each send and passed as the transaction value. JBProjects forwards it to the configured fee receiver; when routed as a project payment, token rewards go to the resolved fee payer.' },
           { key: 'One transaction per chain', text: 'signed in sequence, with a shared salt kept in your session so a linked project gets matching sucker addresses. The same wallet must sign on every chain.' },
           { key: 'Afterwards', text: 'each chain has its own project ID; the page lives at /<chain>:<id>. The Rulesets (or Terms) tab shows the terms as the contracts hold them.' },
         ],
@@ -237,7 +278,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Running it: the owner’s tabs',
     paragraphs: [
-      'Everything an owner or operator can do lives on the project page. Each tab is one contract surface.',
+      'The project page groups available management actions into tabs. What you can use depends on the connected account, project rules, and installed extensions.',
     ],
     blocks: [
       {
@@ -271,7 +312,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'The fees',
     paragraphs: [
-      'The protocol charges 2.5% on money leaving a project as payouts, allowance withdrawals, and cash outs. Every fee is a payment into the Juicebox fee project, so the payer receives its tokens.',
+      'The core protocol generally charges 2.5% on payouts, allowance withdrawals, and eligible cash out value. Exceptions depend on the route and fee-exempt addresses. Fees fund the Juicebox fee project, with its token rewards going to the operation’s designated beneficiary when processed as a payment. Network gas and extension or swap fees are separate.',
     ],
     blocks: [
       {
@@ -279,7 +320,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         label: 'Fees to expect',
         rows: [
           ['Launch', 'JBProjects.creationFee(), at most 0.001 ETH, per chain'],
-          ['Payments in', 'None'],
+          ['Payments in', 'No core protocol fee; a swap or extension can add costs'],
           ['Payouts', '2.5% on each payout, except to another Juicebox project through the same terminal and to feeless addresses'],
           ['Surplus allowance', '2.5%, skipped if the owner or beneficiary is feeless'],
           ['Cash outs, tax above 0%', '2.5% on the value returned'],
@@ -305,10 +346,64 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Set up the SDK',
     paragraphs: [
-      '@bananapus/nana-sdk-core carries the ABIs, the addresses, the reads, and a pure builder for every write. Do not hand-maintain selectors or addresses in product code. The root entry exports every ABI, jbContractAddress, the chain list, the bendystraw helpers, and project-metadata reads; the /v6 entry exports the reads and builders.',
+      '@bananapus/nana-sdk-core carries the ABIs, the addresses, the reads, and pure transaction builders. Do not hand-maintain selectors or addresses in product code. The root entry exports every ABI, jbContractAddress, the chain list, the bendystraw helpers, and project-metadata reads; the /v6 entry exports the reads and builders.',
       'Builders are pure: validated input in, a { chainId, address, abi, functionName, args, value } request out. Keep reads on a public client for the target chain and writes on a wallet client connected to that same chain.',
     ],
     blocks: [
+      {
+        type: 'code',
+        label: 'Create a small JavaScript project',
+        code: [
+          'mkdir juicebox-starter',
+          'cd juicebox-starter',
+          'npm init -y',
+          'npm install @bananapus/nana-sdk-core viem',
+        ].join('\n'),
+      },
+      {
+        type: 'text',
+        text: 'Create a V6 project on Base Sepolia with the wizard, or use a known V6 test project on that network. Its URL contains the project ID. Save this as read-project.mjs; it reads chain state and needs no wallet or private key.',
+      },
+      {
+        type: 'code',
+        label: 'read-project.mjs — read a Base Sepolia project',
+        code: [
+          'import { createPublicClient, http } from "viem";',
+          'import { baseSepolia } from "@bananapus/nana-sdk-core/chains";',
+          'import { getCurrentRuleset } from "@bananapus/nana-sdk-core/v6";',
+          '',
+          'const projectIdText = process.env.JB_PROJECT_ID;',
+          'if (!projectIdText || !/^[1-9][0-9]*$/.test(projectIdText)) {',
+          '  throw new Error("Set JB_PROJECT_ID to your Base Sepolia project ID.");',
+          '}',
+          '',
+          'const client = createPublicClient({',
+          '  chain: baseSepolia,',
+          '  transport: http(process.env.BASE_SEPOLIA_RPC_URL),',
+          '});',
+          'const result = await getCurrentRuleset(client, {',
+          '  chainId: baseSepolia.id,',
+          '  projectId: BigInt(projectIdText),',
+          '});',
+          'if (result.ruleset.id === 0) {',
+          '  throw new Error("No active V6 ruleset: check the network and project ID.");',
+          '}',
+          'console.dir(result, { depth: null });',
+        ].join('\n'),
+      },
+      {
+        type: 'code',
+        label: 'Run the read example',
+        code: [
+          '# Replace 123 with your Base Sepolia project ID.',
+          'JB_PROJECT_ID=123 node read-project.mjs',
+          '# Set BASE_SEPOLIA_RPC_URL as well to use your own RPC endpoint.',
+        ].join('\n'),
+      },
+      {
+        type: 'text',
+        text: 'A successful read prints ruleset and metadata, including issuance, timing, and cash out settings. Compare them with the project’s Rulesets tab. If the RPC fails, retry through a configured endpoint; if the ID is wrong or no V6 ruleset is active, the example stops with an explanation.',
+      },
       {
         type: 'table',
         label: '/v6 exports, grouped',
@@ -322,7 +417,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         type: 'code',
-        label: 'Imports and address lookup',
+        label: 'TypeScript imports and address lookup (chainId supplied by your app)',
         code: [
           'import {',
           '  buildPayTx, buildQueueRulesetsTx, buildRulesetConfiguration, buildRulesetMetadata,',
@@ -340,8 +435,9 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'links',
         items: [
           { href: 'https://www.npmjs.com/package/@bananapus/nana-sdk-core', label: 'V6 SDK package' },
-          { href: 'https://github.com/Bananapus/juice-sdk-v4', label: 'SDK source' },
-          { href: `${SKILLS}/jb-sdk/SKILL.md`, label: 'jb-sdk skill' },
+          { href: 'https://github.com/Bananapus/juice-sdk-v4', label: 'SDK source (repository name is historical; includes V6)' },
+          { href: 'https://github.com/Bananapus/juice-sdk-v4/blob/main/packages/core/src/v6/rulesets.ts', label: 'Ruleset reader source' },
+          { href: '/create', label: 'Create a testnet project' },
         ],
       },
     ],
@@ -380,6 +476,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
   },
   legacy('build-bendystraw', {
     id: 'apps-indexed-data',
+    aliases: ['build-bendystraw'],
     part: 'App builders',
     audience: ['frontend'],
     title: 'Indexed data: Bendystraw',
@@ -413,7 +510,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           { href: `${REPO}/src/lib/authority.ts`, label: 'runAuthorityCalls' },
           { href: `${REPO}/src/lib/relayr.ts`, label: 'Relayr' },
           { href: `${REPO}/src/lib/safe.ts`, label: 'Safe' },
-          { href: `${SKILLS}/jb-safe-and-relayr-execution/SKILL.md`, label: 'jb-safe-and-relayr-execution skill' },
+          { href: `${SKILLS}/jb-relayr/SKILL.md`, label: 'Relayr integration skill' },
         ],
       },
     ],
@@ -454,6 +551,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'diagram',
         label: 'Build → simulate → decode → review → write → confirm',
+        description: 'Refresh chain state, build one request, simulate it for the actual account, decode and review it, then submit that same request. Report success only after a successful transaction receipt.',
         lines: [
           '  fresh reads',
           '    → pure builder',
@@ -470,7 +568,6 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           { href: `${REPO}/src/lib/transaction-review.ts`, label: 'Review' },
           { href: `${REPO}/src/lib/transaction-builders.ts`, label: 'Every write builder' },
           { href: `${REPO}/scripts/check-transaction-inventory.mjs`, label: 'Write-site inventory check' },
-          { href: `${SKILLS}/jb-tx-safety/SKILL.md`, label: 'jb-tx-safety skill' },
         ],
       },
     ],
@@ -480,13 +577,31 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'App builders',
     audience: ['frontend'],
     title: 'Run this site locally',
+    paragraphs: [
+      'Use the Node.js and npm versions declared in package.json. Copy the example public configuration before starting. NEXT_PUBLIC values are shipped to the browser, so they must never contain private keys or secrets.',
+    ],
     blocks: [
+      {
+        type: 'code',
+        label: 'Clone, install, and start the reference app',
+        code: [
+          'git clone https://github.com/mejango/juicebox-money.git',
+          'cd juicebox-money',
+          'npm ci',
+          'cp .env.example .env.local',
+          'npm run dev',
+        ].join('\n'),
+      },
+      {
+        type: 'text',
+        text: 'Open http://localhost:3001. Confirm the configured indexer, RPC service, wallet providers, and allowed origin work in your environment. Start with project reads, then connect a testnet wallet for transaction flows.',
+      },
       {
         type: 'table',
         label: 'Commands',
         rows: [
           ['npm run dev', 'Next.js on port 3001'],
-          ['npm run check', 'The release-equivalent gate: types, lint, schema check, unit tests, build, browser tests'],
+          ['npm run check', 'Full repository gate: dependencies, types, lint, source/deployment/schema checks, tests, production build, browser checks, and budgets'],
           ['npm test / npm run test:browser', 'Vitest, then Playwright against the built app with a fixture server'],
           ['npm run schema:check', 'Regenerates and verifies the Bendystraw operation registry'],
         ],
@@ -495,7 +610,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'points',
         items: [
           { key: 'Env', text: 'NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_BENDYSTRAW_URL, NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL, NEXT_PUBLIC_PARA_API_KEY, NEXT_PUBLIC_PARA_ENV, NEXT_PUBLIC_VERSION; WalletConnect and the on-ramp provider are optional. No RPC or IPFS keys live in the client.' },
-          { key: 'Tests', text: 'PR tests use fixtures; nothing in them reaches a wallet, an RPC, the index, or Relayr.' },
+          { key: 'Tests', text: 'the fixture-based browser suite isolates external services; use the documented fork and live-service checks separately when validating an integration.' },
         ],
       },
       {
@@ -527,7 +642,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Life of a revnet',
     title: 'Go deeper on revnets',
     paragraphs: [
-      'revnet.money carries the full revnet build guide: the wizard field by field, .jb drafts and agent launches, what deploy does, the operator’s nine permissions, loans from a contract, the extension points REVOwner allows and forbids, and the sharp edges. Everything there is checked against revnet-core-v6.',
+      'revnet.money carries the full revnet build guide: the wizard field by field, .jb drafts and agent launches, what deploy does, the operator’s nine permissions, loans from a contract, the extension points REVOwner allows and forbids, and the sharp edges. Use its linked source references to verify the configuration you plan to deploy.',
     ],
     blocks: [
       {
@@ -607,12 +722,12 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'points',
         items: [
           { key: 'Installing a data hook', text: 'set metadata.dataHook and useDataHookForPay / useDataHookForCashOut on the ruleset. beforePayRecordedWith returns the weight to use and pay hook specifications; beforeCashOutRecordedWith returns the tax rate, count, supply, surplus, and cash out hook specifications.' },
-          { key: 'Funds', text: 'native value arrives at a pay or cash out hook as msg.value; ERC-20 arrives as an allowance you must transferFrom during the call, revoked afterwards. A hook that is not feeless receives the amount net of the 2.5% fee. A specification with noop = true is informational and never called.' },
-          { key: 'Two metadatas', text: 'hookMetadata is authored by the data hook and is yours to trust; payerMetadata / cashOutMetadata is whatever the caller sent and must be treated as hostile.' },
+          { key: 'Funds', text: 'native value arrives at a pay or cash out hook as msg.value; ERC-20 arrives as an allowance you must transferFrom during the call, revoked afterwards. Fee treatment depends on the operation and recipient; quote the net amount delivered to the hook. A specification with noop = true is informational and never called.' },
+          { key: 'Two metadatas', text: 'hookMetadata is authored by the data hook, while payerMetadata / cashOutMetadata comes from the caller. Trust hookMetadata only after authenticating the calling terminal and the expected hook path; validate caller-supplied fields.' },
           { key: 'Metadata format', text: 'JBMetadataResolver: a reserved first word, then a table of 4-byte ids with word offsets, then 32-byte-aligned blobs. createMetadata(ids, datas), addToMetadata, getDataFor(id, metadata). Ids are getId(purpose, target) = bytes4(bytes20(target) ^ bytes20(keccak256(purpose))).' },
           { key: 'Minting from a hook', text: 'JBController.mintTokensOf lets the terminal, the ruleset’s data hook, or any address the data hook’s hasMintPermissionFor approves mint without a grant; everyone else needs MINT_TOKENS (10) and allowOwnerMinting.' },
           { key: 'Split hooks', text: 'a split whose hook field is set receives its share through processSplitWith. On the reserved-token path the controller approves an ERC-20 for the amount and burns whatever the hook leaves unspent; on payouts the terminal checks ERC-165 first.' },
-          { key: 'Reentrancy', text: 'pay and cashOutTokensOf have no guard and call hooks after state is recorded; add nonReentrant. Use override(ERC165, IERC165) for supportsInterface.' },
+          { key: 'Reentrancy', text: 'pay and cashOutTokensOf call hooks after recording state. Review every callback and protect your own state transitions against reentrancy; a blanket guard on core-dependent flows can also break intended composition. Use override(ERC165, IERC165) for supportsInterface.' },
         ],
       },
       {
@@ -661,7 +776,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'points',
         items: [
-          { key: 'Who is the payer', text: 'context.payer is the terminal’s msg.sender. Through a router, project payer, or wrapper it is that contract, unless the contract exposes originalPayer() (IJBPayerTracker), which the router registry probes. Expose it, or beneficiaries and refunds land on your intermediary.' },
+          { key: 'Who is the payer', text: 'context.payer is the terminal’s msg.sender. Through a router, project payer, or wrapper it is that contract, unless the contract exposes originalPayer() (IJBPayerTracker), which the router registry probes. Expose the original payer where the integration expects it, and set beneficiary/refund addresses explicitly so rewards or refunds are not accidentally credited to the intermediary.' },
           { key: 'Router terminal cold start', text: 'the router registry reverts accountingContextForTokenOf for projects below its threshold; it is not universally accepting. Probe with previewPayFor before assuming a route.' },
           { key: 'Buyback metadata is three words', text: 'the pay metadata under getId("pay") for the buyback hook decodes as (amountToSwapWith, minimumSwapAmountOut, skipSplits). Always encode all three.' },
           { key: 'Payouts to a project without a terminal', text: 'a payout split to a project that has no terminal for the token is caught, the balance is restored, and no fee is taken, but the payout limit is still consumed.' },
@@ -674,7 +789,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'links',
         items: [
           { href: `${SKILLS}/jb-terminal-selection/SKILL.md`, label: 'jb-terminal-selection skill' },
-          { href: `${SKILLS}/jb-buyback-hook/SKILL.md`, label: 'jb-buyback-hook skill' },
+          { href: 'https://github.com/Bananapus/nana-buyback-hook-v6', label: 'Buyback hook integration reference' },
           { href: `${SKILLS}/jb-suckers/SKILL.md`, label: 'jb-suckers skill' },
         ],
       },
