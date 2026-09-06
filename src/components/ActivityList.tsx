@@ -509,8 +509,14 @@ export function combinedActivityParts(
       return 0
     }
   }
+  // A hook's leftover issuance is combined with its pool output before the
+  // beneficiary's mint. A sale also mints tokens internally. Neither shape
+  // gives us an independent remint to pair with a buy from these fields alone.
+  const canPairRemints = ordered.every(
+    entry => !entry.swapEvent || entry.swapEvent.direction.toLowerCase() === 'buy',
+  )
   const swaps = ordered
-    .filter(entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell')
+    .filter(entry => entry.swapEvent?.direction.toLowerCase() === 'buy')
     .map(entry => entry.swapEvent!)
     .sort((a, b) => descending(a.projectTokenAmount, b.projectTokenAmount))
   const mints = ordered
@@ -519,6 +525,7 @@ export function combinedActivityParts(
       descending(a.mintTokensEvent!.beneficiaryTokenCount, b.mintTokensEvent!.beneficiaryTokenCount),
     )
   mints.forEach((entry, index) => {
+    if (!canPairRemints) return
     const swapEvent = swaps[index]
     const mintIndex = ordered.indexOf(entry)
     const mint = entry.mintTokensEvent!
@@ -581,7 +588,7 @@ export function combinedActivityParts(
     ordered.length > 1
       ? ordered.filter(entry => {
           if (entry.sendReservedTokensToSplitsEvent) return !hasReceipts
-          if (entry.swapEvent && fanOut) return false
+          if (entry.swapEvent?.direction.toLowerCase() === 'buy' && fanOut) return false
           if (!entry.payEvent) return true
           try {
             return BigInt(entry.payEvent.newlyIssuedTokenCount) > 0n
@@ -661,6 +668,7 @@ const ACTIVITY_KINDS: [string, string][] = [
 ]
 
 function activityKind(event: BsActivityEvent): string | null {
+  if (event.swapEvent?.direction.toLowerCase() === 'mint') return 'Issuance'
   const fields = event as unknown as Record<string, unknown>
   return ACTIVITY_KINDS.find(([field]) => fields[field])?.[1] ?? null
 }
@@ -683,7 +691,9 @@ export function activityParts(
   const mint = event.mintTokensEvent
   const loan = event.borrowLoanEvent
   const swap = event.swapEvent
-  const swapIsSell = swap?.direction.toLowerCase() === 'sell'
+  const swapDirection = swap?.direction.toLowerCase()
+  const swapIsSell = swapDirection === 'sell'
+  const swapIsPurchase = swapDirection === 'buy' || swapDirection === 'mint'
   const actor =
     pay?.beneficiary ??
     cashOut?.beneficiary ??
@@ -742,7 +752,7 @@ export function activityParts(
         ? 'out'
         : event.repayLoanEvent ||
             event.mintNftEvent ||
-          (swap && !swapIsSell) ||
+            swapIsPurchase ||
             event.bridgeClaimEvent ||
             event.sendPayoutToSplitEvent ||
             event.sendReservedTokensToSplitEvent
@@ -840,11 +850,11 @@ export function activityParts(
     <>removed shop item #{event.removeNftTierEvent.tierId}</>
   ) : swap ? (
     <>
-      {swapIsSell ? 'sold' : 'bought'}{' '}
+      {swapIsSell ? 'sold' : swapIsPurchase ? 'bought' : 'swapped'}{' '}
       <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>{' '}
-      via the buyback pool
+      {swapDirection === 'mint' ? 'from issuance' : 'via the buyback pool'}
     </>
   ) : event.buybackPoolEvent ? (
     <>set up a buyback pool</>

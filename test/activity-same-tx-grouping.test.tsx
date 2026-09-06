@@ -57,6 +57,113 @@ const mint = event({
   },
 } as Partial<BsActivityEvent>)
 
+describe('buyback direction across the project, home, and account feeds', () => {
+  const plainAction = (parts: ReturnType<typeof combinedActivityParts>) =>
+    renderToStaticMarkup(<>{parts.action}</>).replace(/<[^>]*>/g, '')
+  const swapOf = (direction: string, overrides: Partial<BsActivityEvent> = {}) =>
+    event({
+      ...swap,
+      swapEvent: {
+        ...swap.swapEvent!,
+        direction,
+        projectTokenAmount: '2340000000000000000',
+        terminalTokenAmount: '23000000000000',
+      },
+      ...overrides,
+    })
+  const cashOut = event({
+    id: 'cash-out',
+    cashOutTokensEvent: {
+      beneficiary: '0xseller',
+      cashOutCount: '2390000000000000000',
+      reclaimAmount: '23000000000000',
+      reclaimAmountUsd: null,
+    },
+  })
+
+  it.each(['sell', 'SELL'])('describes a %s swap as a sale and outward flow', direction => {
+    const parts = combinedActivityParts([swapOf(direction)], 'SBB')
+    expect(plainAction(parts)).toBe('sold 2.34 SBB via the buyback pool')
+    expect(parts.direction).toBe('out')
+    expect(parts.actor).toBe('0xbundler')
+    expect(parts.amountRaw).toBe('23000000000000')
+  })
+
+  it('keeps both cash-out and pool-sale amounts without describing a purchase', () => {
+    const parts = combinedActivityParts([swapOf('sell'), cashOut], 'SBB')
+    expect(plainAction(parts)).toBe(
+      'cashed out 2.39 SBB and sold 2.34 SBB via the buyback pool',
+    )
+    expect(parts.actions).toHaveLength(2)
+    expect(parts.direction).toBe('out')
+    expect(parts.actor).toBe('0xseller')
+  })
+
+  it('keeps a fee project purchase separate from the sale in the same transaction', () => {
+    const groups = groupSameTxEvents([
+      cashOut,
+      swapOf('sell'),
+      swapOf('buy', { id: 'fee-buy', projectId: 1 }),
+    ])
+    expect(groups).toHaveLength(2)
+    const sale = combinedActivityParts(groups[0], 'SBB')
+    const purchase = combinedActivityParts(groups[1], 'JBX')
+    expect(sale.direction).toBe('out')
+    expect(plainAction(sale)).not.toContain('bought')
+    expect(purchase.direction).toBe('in')
+    expect(plainAction(purchase)).toBe('bought 2.34 JBX via the buyback pool')
+  })
+
+  it.each(['mint', 'MINT'])('describes a %s fallback as issuance', direction => {
+    const parts = combinedActivityParts([swapOf(direction)], 'SBB')
+    expect(plainAction(parts)).toBe('bought 2.34 SBB from issuance')
+    expect(parts.direction).toBe('in')
+    expect(parts.kind).toBe('Issuance')
+  })
+
+  it('does not invent a purchase or a reserve percentage for an unknown direction', () => {
+    const unknown = swapOf('unknown')
+    const parts = combinedActivityParts([unknown], 'SBB')
+    expect(plainAction(parts)).toBe('swapped 2.34 SBB via the buyback pool')
+    expect(parts.direction).toBeNull()
+    const withMint = combinedActivityParts([
+      unknown,
+      event({
+        ...mint,
+        mintTokensEvent: { ...mint.mintTokensEvent!, beneficiaryTokenCount: '1000000000000000000' },
+      }),
+    ], 'SBB')
+    expect(plainAction(withMint)).not.toContain('reserve')
+  })
+
+  it('does not infer a reserve from the combined receipt of a pool buy and leftover issuance', () => {
+    const parts = combinedActivityParts([
+      pay,
+      event({ ...swap, swapEvent: { ...swap.swapEvent!, projectTokenAmount: '80000000000000000000' } }),
+      event({
+        ...swap,
+        id: 'leftover',
+        swapEvent: { ...swap.swapEvent!, direction: 'mint', projectTokenAmount: '20000000000000000000' },
+      }),
+      event({
+        ...mint,
+        mintTokensEvent: { ...mint.mintTokensEvent!, beneficiaryTokenCount: '70000000000000000000' },
+      }),
+    ], 'SBB')
+    expect(plainAction(parts)).toContain('bought 80 SBB via the buyback pool')
+    expect(plainAction(parts)).toContain('bought 20 SBB from issuance')
+    expect(plainAction(parts)).toContain('minted 70 SBB')
+    expect(plainAction(parts)).not.toContain('reserve')
+  })
+
+  it('does not pair a sale\'s internal mint with a pool purchase', () => {
+    const parts = combinedActivityParts([swap, swapOf('sell', { id: 'sell' }), mint], 'SBB')
+    expect(plainAction(parts)).toContain('sold 2.34 SBB via the buyback pool')
+    expect(plainAction(parts)).toContain('minted')
+    expect(plainAction(parts)).not.toContain('reserve')
+  })
+})
+
 describe('groupSameTxEvents', () => {
   it('folds events sharing one tx and keeps other txs separate', () => {
     const other = event({ id: 'd', txHash: '0xother', payEvent: pay.payEvent })
