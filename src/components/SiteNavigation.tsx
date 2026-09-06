@@ -11,19 +11,32 @@ import { MagnifierIcon, SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 
 function GuideLinks({ className = '' }: { className?: string }) {
+  const pathname = usePathname()
   return (
     <div
-      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-normal text-smoke-600 sm:gap-2 sm:text-sm ${className}`}
+      className={`flex items-center gap-1.5 whitespace-nowrap font-agrandir text-xs font-medium leading-normal text-smoke-700 sm:gap-2 sm:text-sm ${className}`}
     >
-      <Link href="/learn" className="hover:text-bluebs-600">
+      <Link
+        href="/learn"
+        aria-current={pathname === '/learn' ? 'page' : undefined}
+        className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
+      >
         Learn
       </Link>
       <span aria-hidden>|</span>
-      <Link href="/build" className="hover:text-bluebs-600">
+      <Link
+        href="/build"
+        aria-current={pathname === '/build' ? 'page' : undefined}
+        className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
+      >
         Build
       </Link>
       <span aria-hidden>|</span>
-      <Link href="/audit" className="hover:text-bluebs-600">
+      <Link
+        href="/audit"
+        aria-current={pathname === '/audit' ? 'page' : undefined}
+        className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
+      >
         Audit
       </Link>
     </div>
@@ -64,7 +77,7 @@ function Logo({
           // Stacked under the wordmark, the links sit tight against it so the
           // two lines read as one block centered on the search bar.
           className={`md:h-10 md:self-center md:pl-0 ${
-            inlineOnMobile ? 'h-10 self-center pl-0' : '-mt-1.5 h-6 self-start pl-0.5 md:mt-0'
+            inlineOnMobile ? 'h-10 self-center pl-0' : 'min-h-11 self-start md:mt-0'
           }`}
         />
       ) : null}
@@ -75,6 +88,7 @@ function Logo({
 function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: boolean }) {
   return (
     <nav
+      aria-label="Main navigation"
       className={`mx-auto hidden min-h-[84px] w-full grid-cols-[minmax(max-content,1fr)_minmax(10rem,24rem)_minmax(max-content,1fr)] items-center gap-x-[clamp(0.5rem,1.5vw,1.5rem)] px-6 py-2 md:grid ${
         isWide ? 'max-w-[1800px]' : 'max-w-6xl'
       }`}
@@ -104,12 +118,12 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
   return (
     // The logo alone shares row one with the search and wallet, so it centers
     // on them; the guide links hang in a second row underneath.
-    <nav className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
+    <nav aria-label="Main navigation" className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
       <div className={expanded ? 'hidden' : 'row-start-1 justify-self-start'}>
         <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={iconOnly} />
       </div>
       {!expanded && !iconOnly ? (
-        <GuideLinks className="col-start-1 row-start-2 h-6 self-start pl-0.5" />
+        <GuideLinks className="col-span-3 col-start-1 row-start-2 min-h-11 justify-self-start" />
       ) : null}
       <div
         className={`row-start-1 w-full min-w-0 @container ${
@@ -138,7 +152,7 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
                 type="button"
                 aria-label="Search"
                 onClick={() => setSearchOpen(true)}
-                className="input-well flex h-11 w-11 items-center justify-center text-smoke-600 hover:text-ink"
+                className="input-well flex h-11 w-11 shrink-0 items-center justify-center text-smoke-600 hover:text-ink"
               >
                 <MagnifierIcon className="h-4 w-4" />
               </button>
