@@ -7,19 +7,42 @@ const environments = [
     name: 'mainnet',
     chains: [10, 8453],
     paymentChainId: 10,
-    paymentOptions: [1, 10, 8453, 42161],
+    paymentChainName: 'Optimism',
   },
   {
     name: 'testnet',
     chains: [11155111, 11155420, 84532, 421614],
     paymentChainId: 11155420,
-    paymentOptions: [11155111, 11155420, 84532, 421614],
+    paymentChainName: 'Optimism Sepolia',
   },
 ] as const
 
 test.use({ viewport: { width: 390, height: 844 } })
 
 for (const environment of environments) {
+  test(`does not offer a ${environment.name} funding chain before the launch quote`, async ({ page }) => {
+    await page.addInitScript(({ account, salt, chains }) => {
+      localStorage.setItem('jbm-launch-pending-v1', JSON.stringify({
+        account,
+        salt,
+        transport: 'relayr',
+        projectUri: 'ipfs://QmPendingLaunch',
+        store: { name: 'Pending collection' },
+        plans: Object.fromEntries(chains.map(chainId => [chainId, { projectName: 'Pending project' }])),
+        chains,
+        statuses: Object.fromEntries(chains.map(chainId => [chainId, { phase: 'pending' }])),
+        createdAt: 1_800_000_000_000,
+      }))
+    }, { account, salt, chains: environment.chains })
+
+    await page.goto('/create')
+    const dialog = page.getByRole('dialog', { name: 'Confirm launch' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByText("Sign each chain's launch request, then review the Relayr quote and pay once.")).toBeVisible()
+    await expect(dialog.getByRole('combobox')).toHaveCount(0)
+    await expect(dialog.getByText(/Checking the saved Relayr payment/)).toHaveCount(0)
+  })
+
   test(`restores the chosen ${environment.name} funding chain and protects a published launch`, async ({ page }) => {
     await page.addInitScript(({ account, salt, chains, paymentChainId }) => {
       localStorage.setItem('jbm-launch-pending-v1', JSON.stringify({
@@ -45,12 +68,9 @@ for (const environment of environments) {
     }, { account, salt, chains: environment.chains, paymentChainId: environment.paymentChainId })
 
     await page.goto('/create')
-    const fundingChain = page.getByRole('combobox', { name: /Pay the launch quote on/ })
-    await expect(fundingChain).toHaveValue(String(environment.paymentChainId))
-    await expect(fundingChain).toBeDisabled()
-    expect(await fundingChain.locator('option').evaluateAll(options =>
-      options.map(option => Number((option as HTMLOptionElement).value)),
-    )).toEqual(environment.paymentOptions)
+    const dialog = page.getByRole('dialog', { name: 'Confirm launch' })
+    await expect(dialog.getByRole('combobox')).toHaveCount(0)
+    await expect(dialog.getByText(`Checking the saved Relayr payment on ${environment.paymentChainName}.`)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Abandon this launch' })).toHaveCount(0)
     await expect(page.getByText('This launch has published authorizations that may still execute.')).toBeVisible()

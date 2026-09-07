@@ -133,7 +133,7 @@ import {
   type ChainEnvironment,
 } from "@/lib/chains";
 import { itemOk, type DraftItem } from "./store-draft";
-import { relayrPaymentChains, relayrSupportsChains } from "@/lib/relayr-chains";
+import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
@@ -435,7 +435,6 @@ export function CreateForm() {
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
-  const [paymentChainChoice, setPaymentChainChoice] = useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
@@ -458,13 +457,6 @@ export function CreateForm() {
     : selected.length > 1 &&
       relayrSupportsChains(selected) &&
       !isSafeConnection(config);
-  const paymentChainIds = relayrPaymentChains(restoredSessionRef.current?.chains ?? selected);
-  // Keep an interrupted run's choice verbatim. A fresh draft follows its
-  // network family, defaulting to Base or Base Sepolia until the user chooses.
-  const paymentChainId = paymentChainChoice !== null &&
-    (restoredSessionRef.current !== null || paymentChainIds.includes(paymentChainChoice))
-    ? paymentChainChoice
-    : paymentChainIds.find(id => id === 8453 || id === 84532) ?? paymentChainIds[0] ?? 8453;
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -1645,7 +1637,6 @@ export function CreateForm() {
       await runRelayrLaunch({
         session,
         account: address,
-        paymentChainId,
         onStatus: updateStatus,
         onProgress: setRelayrProgress,
       });
@@ -1708,7 +1699,6 @@ export function CreateForm() {
           createdAt: Date.now(),
           account: address,
           transport: usesRelayr ? "relayr" : "direct",
-          paymentChainId,
         };
         // The relayed path reserves its journal under the same browser lock
         // used for submission. Never overwrite another tab's active launch.
@@ -1948,8 +1938,6 @@ export function CreateForm() {
     const session = loadLaunchSession();
     if (!session) return;
     restoredSessionRef.current = session;
-    const savedPaymentChain = session.relayr?.paymentChainId ?? session.paymentChainId;
-    if (savedPaymentChain) setPaymentChainChoice(savedPaymentChain);
     setEnvironment(environmentForChainIds(session.chains));
     setSelected(session.chains);
     statusesRef.current = session.statuses;
@@ -2203,26 +2191,10 @@ export function CreateForm() {
         if (phase === "form") setLaunchError(null);
       }}
     >
-      {usesRelayr && phase !== "done" ? (
-        <label className="block space-y-1 text-sm">
-          <span>Pay the launch quote on</span>
-          <select
-            value={paymentChainId}
-            disabled={launchLocked || Boolean(relayrFundingStarted)}
-            onChange={(event) => setPaymentChainChoice(Number(event.target.value))}
-            className="w-full border border-smoke-300 bg-white px-3 py-2"
-          >
-            {paymentChainIds.map((chainId) => (
-              <option key={chainId} value={chainId}>
-                {chainName(chainId)}
-              </option>
-            ))}
-          </select>
-          <span className="block text-xs text-smoke-600">
-            One payment covers the quoted destination gas and creation fees.
-            The exact amount is reviewed before you pay.
-          </span>
-        </label>
+      {usesRelayr && phase !== "done" && relayrFundingStarted && activeLaunchSession?.relayr?.paymentChainId ? (
+        <p className="text-sm text-smoke-700">
+          Checking the saved Relayr payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
+        </p>
       ) : null}
       {launchTxLinks.length > 0 ? (
         <ul className="space-y-1">

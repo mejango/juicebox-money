@@ -59,6 +59,7 @@ describe('funding chain selection modal', () => {
     const select = document.querySelector<HTMLSelectElement>('dialog select')!
     const dialog = document.querySelector('dialog')!
     expect(select.value).toBe('')
+    expect([...select.classList]).toEqual(expect.arrayContaining(['select-caret', 'pr-9']))
     expect(button('Continue').disabled).toBe(true)
     expect(document.querySelector(`label[for="${select.id}"]`)?.textContent).toBe('Funding chain')
     expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Choose a funding chain')

@@ -27,6 +27,8 @@ import {
   relayrDestinationHash,
   relayrPay,
   relayrPaymentDetails,
+  relayrPaymentOptions,
+  relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
   type RelayrEntry,
@@ -39,6 +41,7 @@ import { publicClient } from '@/lib/wallet-core'
 import { chainName } from '@/lib/urn'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { relayrPaymentChains, relayrSupportsChains } from '@/lib/relayr-chains'
+import { requireFundingChainSelection } from '@/lib/transaction-review'
 
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
@@ -53,7 +56,7 @@ type SignedLaunch = {
 /** Exact signatures and quote bindings survive refreshes, including the wallet's no-hash send window. */
 export type LaunchRelayrJournal = {
   account: Address
-  paymentChainId: number
+  paymentChainId?: number
   phase: 'signing' | 'quoting' | 'quoted' | 'payment-signing' | 'submitted' | 'executing'
   signed: SignedLaunch[]
   superseded?: SignedLaunch[]
@@ -108,10 +111,9 @@ function walletRejected(error: unknown): boolean {
  * One authorization per destination, one reviewed payment on the user's selected chain.
  * The launch journal owns recovery: provider labels never establish creation or permit a new payment.
  */
-export async function runRelayrLaunch({ session, account, paymentChainId, onStatus, onProgress }: {
+export async function runRelayrLaunch({ session, account, onStatus, onProgress }: {
   session: LaunchSession
   account: Address
-  paymentChainId: number
   onStatus: (chainId: number, status: LaunchChainStatus & { error?: string }) => void
   onProgress: (message: string) => void
 }): Promise<void> {
@@ -121,9 +123,6 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
   }
   if (!session.account || !isAddressEqual(session.account, account)) {
     throw new Error('Connect the wallet that originally signed this launch.')
-  }
-  if (!relayrPaymentChains(session.chains).includes(paymentChainId)) {
-    throw new Error('Choose a supported payment chain from the same network environment as this launch.')
   }
   if (activeLaunches.has(session.salt)) throw new Error('This launch is already running.')
   activeLaunches.add(session.salt)
@@ -145,8 +144,8 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     const saved = loadLaunchSession({ strict: true })
     if (saved && saved.salt !== session.salt) throw new Error('Another launch is saved in this browser. Resume it before starting a different launch.')
     const current = saved?.salt === session.salt ? saved : session
-    if (!canRelayrLaunch(current) || !relayrPaymentChains(current.chains).includes(paymentChainId)) {
-      throw new Error('The saved launch and payment must use supported chains from the same network environment.')
+    if (!canRelayrLaunch(current)) {
+      throw new Error('The saved launch must use supported chains from the same network environment.')
     }
     const persist = () => {
       const latest = loadLaunchSession()
@@ -183,12 +182,20 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
         !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing'].includes(journal.phase))) {
       throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
     }
-    if (journal && ['payment-signing', 'submitted', 'executing'].includes(journal.phase) &&
-        journal.paymentChainId !== paymentChainId) {
-      throw new Error('The original Relayr payment may already be submitted. Keep its saved payment chain while checking it.')
+    if (journal && ['payment-signing', 'submitted', 'executing'].includes(journal.phase)) {
+      if (journal.paymentChainId === undefined || !relayrPaymentChains(current.chains).includes(journal.paymentChainId)) {
+        throw new Error('The original Relayr payment requires its saved payment chain in the launch network environment.')
+      }
+      current.paymentChainId = journal.paymentChainId
+    } else {
+      // Older unfunded sessions may contain a pre-quote preference. Every new
+      // payment requires a fresh, explicit choice among the actual quote offers.
+      delete current.paymentChainId
+      if (journal) {
+        delete journal.paymentChainId
+        delete journal.paymentDeadline
+      }
     }
-    current.paymentChainId = paymentChainId
-    if (journal) journal.paymentChainId = paymentChainId
     const pinnedRequest = (signed: SignedLaunch) => {
       const request = requestOf(signed)
       const expected = buildLaunchRequest({ chainId: signed.chainId as JBChainId, owner: account,
@@ -233,7 +240,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     }
     if (journal?.abandonable && ['signing', 'quoting', 'quoted'].includes(journal.phase) && journal.signed.length) {
       const previous = journal
-      journal = { account, paymentChainId, phase: 'signing', signed: [], records: [],
+      journal = { account, phase: 'signing', signed: [], records: [],
         published: true, abandonable: true,
         retryNonces: { ...previous.retryNonces, ...Object.fromEntries(previous.signed.map(item => [item.chainId, item.nonce])) },
         superseded: [...(previous.superseded ?? []), ...previous.signed] }
@@ -329,7 +336,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
       if (allDone) return true
       if (allRemainingRetryable) {
         current.relayr = {
-          account, paymentChainId, phase: 'signing', signed: [], records: [],
+          account, phase: 'signing', signed: [], records: [],
           published: true,
           ...(allRemainingExpired ? { abandonable: true } : {}),
           superseded: [...(original.superseded ?? []), ...original.signed]
@@ -337,6 +344,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
           retryNonces: Object.fromEntries(original.signed.filter(item => current.statuses[item.chainId]?.phase !== 'done')
             .map(item => [item.chainId, item.nonce])),
         }
+        delete current.paymentChainId
         persist()
       }
       return false
@@ -360,6 +368,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
       // Re-running would risk paying twice. Keep the original funding journal for manual resolution.
       if (journal.phase === 'payment-signing' && !journal.paymentHash) {
         current.relayr = journal
+        current.paymentChainId = journal.paymentChainId
         if (await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])]) &&
             await originalPaymentExpired()) journal.abandonable = true
         persist()
@@ -370,7 +379,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
       journal = current.relayr
     }
 
-    journal ??= { account, paymentChainId, phase: 'signing', signed: [], records: [] }
+    journal ??= { account, phase: 'signing', signed: [], records: [] }
     current.relayr = journal
     persist()
     const remaining = current.chains.filter(chainId => current.statuses[chainId]?.phase !== 'done')
@@ -461,40 +470,58 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
           if (nonce !== BigInt(signed.nonce)) throw new Error('An earlier launch authorization may have executed. Check its original bundle.')
           retryNonces[signed.chainId] = signed.nonce
         }
-        current.relayr = { account, paymentChainId, phase: 'signing', signed: [], records: [],
+        current.relayr = { account, phase: 'signing', signed: [], records: [],
           retryNonces, ...(journal.published ? { published: true, superseded: [...(journal.superseded ?? []), ...journal.signed] } : {}) }
         persist()
       }
       throw error
     }
-    if (!journal.quote) {
+    const requestQuote = async () => {
       assertAuthorizationAvailable(remaining)
-      journal.phase = 'quoting'
-      journal.published = true
-      delete journal.abandonable
+      journal!.phase = 'quoting'
+      journal!.published = true
+      delete journal!.abandonable
+      delete journal!.quote
+      delete journal!.paymentChainId
+      delete journal!.paymentDeadline
+      delete current.paymentChainId
       persist() // exact signed entries are durable BEFORE publishing them to Relayr
-      onProgress(`Getting one payment quote on ${chainName(paymentChainId)} for all selected chains.`)
-      journal.quote = await relayrPostBundle(journal.signed.map(item => item.entry))
-      journal.phase = 'quoted'
+      onProgress('Getting payment options for all selected chains.')
+      journal!.quote = await relayrPostBundle(journal!.signed.map(item => item.entry))
+      journal!.phase = 'quoted'
       persist()
     }
-    let payment = journal.quote.payment_info.find(option => option.chain === paymentChainId)
-    if (!payment) throw new Error(`Relayr did not offer payment on ${chainName(paymentChainId)}. No payment was sent.`)
-    try {
-      journal.paymentDeadline = relayrPaymentDetails(payment, journal.quote.bundle_uuid).deadline.toString()
-    } catch {
-      // Refresh only an unfunded quote, keeping the exact signed destinations and chosen chain.
-      journal.quote = await relayrPostBundle(journal.signed.map(item => item.entry))
-      persist()
-      payment = journal.quote.payment_info.find(option => option.chain === paymentChainId)
-      if (!payment) throw new Error(`Relayr did not offer payment on ${chainName(paymentChainId)}. No payment was sent.`)
-      journal.paymentDeadline = relayrPaymentDetails(payment, journal.quote.bundle_uuid).deadline.toString()
-    }
+    if (!journal.quote) await requestQuote()
     requireQuoteBindings()
+    const destinations = journal.signed.map(item => item.chainId)
+    let payments = relayrPaymentOptions(journal.quote!, destinations)
+    if (!payments.length) {
+      // An unfunded quote can be refreshed using exactly the same signed calls.
+      // Its returned funding options must be explicitly reviewed again.
+      await requestQuote()
+      requireQuoteBindings()
+      payments = relayrPaymentOptions(journal.quote!, destinations)
+    }
+    if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
+    onProgress('Choose a quoted funding chain for the launch payment.')
+    const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })))
+    const payment = payments.find(option => option.chain === paymentChainId)
+    if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
+    requireAccount()
+    requireQuoteBindings()
+    // The chooser has no time limit. An expired offer must never reach the
+    // wallet; retry refreshes it and asks for another explicit funding choice.
+    const details = relayrPaymentDetails(payment, journal.quote!.bundle_uuid)
+    if (details.chainId !== paymentChainId || !relayrPaymentChains(destinations).includes(details.chainId)) {
+      throw new Error('The launch funding option changed. Review the quote again.')
+    }
+    journal.paymentChainId = paymentChainId
+    current.paymentChainId = paymentChainId
+    journal.paymentDeadline = details.deadline.toString()
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote.bundle_uuid, journal.signed.map(item => item.chainId), hash => {
+      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, hash => {
         journal!.paymentHash = hash
         journal!.phase = 'submitted'
         persist()
@@ -505,6 +532,9 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     } catch (error) {
       if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
         journal.phase = 'quoted'
+        delete journal.paymentChainId
+        delete journal.paymentDeadline
+        delete current.paymentChainId
         persist()
       }
       throw error
@@ -513,7 +543,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     persist()
     onProgress('Payment confirmed. Checking each destination launch onchain.')
     try {
-      journal.records = await relayrPoll(journal.quote.bundle_uuid, journal.signed.length, records => {
+      journal.records = await relayrPoll(journal.quote!.bundle_uuid, journal.signed.length, records => {
         journal!.records = records
         persist()
       })
