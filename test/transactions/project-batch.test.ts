@@ -21,7 +21,6 @@ vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.rev
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
 vi.mock('@/lib/relayr', () => ({
   loadRelayrPendingSession: (scope: string) => mocks.pending.get(scope) ?? null,
-  relayrSupportsChain: (chain: number) => [1, 10, 8453].includes(chain),
   relayrTargetSupportsForwarder: async () => true,
   runRelayrCalls: mocks.relayr,
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
@@ -90,6 +89,52 @@ describe('durable project batches', () => {
     expect(loadProjectBatch(scope)).toBeNull()
     expect(loadProjectBatch(projectBatchScope(action, 10, 7))).toBeNull()
     expect(batch.calls[0].context).toEqual(calls[0].context)
+  })
+
+  it('relays fresh calls across all four Sepolia chains in one saved bundle', async () => {
+    const chains = [11155111, 11155420, 84532, 421614]
+    const completed = await run(chains.map(chain => call(chain)))
+    expect(completed.status).toBe('complete')
+    expect(completed.relayrChainIds).toEqual(chains)
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+    expect(mocks.relayr.mock.calls[0][0].calls.map((item: ProjectBatchCall) => item.chainId)).toEqual(chains)
+    expect(mocks.authority).not.toHaveBeenCalled()
+  })
+
+  it('never combines mainnet and testnet calls into the same paid round', async () => {
+    mocks.client.getTransaction.mockImplementation(async () => {
+      const submitted = mocks.authority.mock.calls.at(-1)![0].calls[0] as ProjectBatchCall
+      return { hash: HASH, chainId: submitted.chainId, from: ACCOUNT, to: TARGET,
+        input: submitted.data, value: 3n, blockHash: BLOCK }
+    })
+    const completed = await run([call(), call(11155111), call(10), call(84532)])
+    expect(completed.status).toBe('complete')
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+    expect(mocks.relayr.mock.calls[0][0].calls.map((item: ProjectBatchCall) => item.chainId)).toEqual([1, 10])
+    expect(mocks.authority.mock.calls.map(([options]) => options.calls[0].chainId)).toEqual([11155111, 84532])
+  })
+
+  it('preserves legacy direct testnet recovery after Relayr support is enabled', async () => {
+    mocks.identity.mockResolvedValue({ kind: 'contract' })
+    mocks.client.getTransaction.mockImplementation(async () => {
+      const submitted = mocks.authority.mock.calls.at(-1)![0].calls[0] as ProjectBatchCall
+      return { hash: HASH, chainId: submitted.chainId, from: ACCOUNT, to: TARGET,
+        input: submitted.data, value: 3n, blockHash: BLOCK }
+    })
+    mocks.client.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt timeout'))
+    await expect(run([call(11155111), call(11155420), call(84532)])).rejects.toThrow('receipt timeout')
+    const saved = loadProjectBatch(scope)!
+    const key = `jb-project-batch:v1:journal:${saved.id}`
+    const legacy = JSON.parse(window.localStorage.getItem(key)!)
+    delete legacy.relayrChainIds
+    window.localStorage.setItem(key, JSON.stringify(legacy))
+    mocks.identity.mockResolvedValue({ kind: 'eoa' })
+
+    const completed = await run()
+    expect(completed.status).toBe('complete')
+    expect(mocks.relayr).not.toHaveBeenCalled()
+    expect(mocks.authority).toHaveBeenCalledTimes(3)
+    expect(completed.completedIds).toHaveLength(3)
   })
 
   it('resumes an already paid round without rebuilding or revalidating stale source state', async () => {

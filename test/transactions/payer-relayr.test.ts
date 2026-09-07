@@ -3,6 +3,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunct
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
 import type { RelayrEntry, RelayrQuote } from '@/lib/relayr'
+import { relayrPaymentChains } from '@/lib/relayr-chains'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -76,7 +77,7 @@ function makeReview(chains = [1, 10]) {
 
 function quoteFor(entries: RelayrEntry[]): RelayrQuote {
   const deadline = Math.floor(Date.now() / 1_000) + 3_600
-  return { bundle_uuid: BUNDLE, payment_info: [1, 10].map(chain => ({ chain, amount: '1000',
+  return { bundle_uuid: BUNDLE, payment_info: relayrPaymentChains(entries.map(entry => entry.chain)).map(chain => ({ chain, amount: '1000',
     target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN, payment_deadline: deadline,
     calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '')}${'0'.repeat(32)}${deadline.toString(16).padStart(64, '0')}` as Hex })),
     expectedTransactions: entries.map((entry, index) => ({ chain: entry.chain, entry,
@@ -141,10 +142,10 @@ beforeEach(() => {
   mocks.send.mockReset().mockImplementation(async (chain: number) => mocks.safe ? SAFE_PROPOSAL : hashFor(chain))
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quoteFor(entries))
   mocks.pay.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-    await args[4]?.()
-    args[5]?.()
+    await args[5]?.()
+    args[6]?.()
     mocks.paymentSent()
-    args[3]?.(PAYMENT_HASH)
+    args[4]?.(PAYMENT_HASH)
     return PAYMENT_HASH
   })
   mocks.poll.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPoll>) => {
@@ -154,6 +155,34 @@ beforeEach(() => {
 })
 
 describe('payer deployment review and raw Relayr execution', () => {
+  it('deploys on all four testnets using one raw bundle and one explicitly chosen testnet payment', async () => {
+    const testnets = [11155111, 11155420, 84532, 421614]
+    review = makeReview(testnets)
+    mocks.funding.mockResolvedValue(84532)
+    const result = await runPayerDeployments(review, vi.fn())
+    expect(result.phase).toBe('complete')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
+    expect(mocks.funding.mock.calls[0][0].map((option: { chainId: number }) => option.chainId)).toEqual(testnets)
+    expect(mocks.pay.mock.calls[0][0].chain).toBe(84532)
+    expect(mocks.pay.mock.calls[0][3]).toEqual(testnets)
+    expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('retains the original raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
+    review = makeReview([11155111, 11155420])
+    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
+      payment_info: quoteFor([{ ...entries[0], chain: 1 }]).payment_info,
+    }))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/network family/)
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    expect(mocks.funding).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(/network family/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+
   it('uses each linked project ID and the explicit admin/beneficiary in raw factory calls with one chosen funding payment', async () => {
     const result = await runPayerDeployments(review, vi.fn())
     expect(result.phase).toBe('complete')
@@ -214,7 +243,7 @@ describe('payer deployment review and raw Relayr execution', () => {
 
   it('persists the payment send window and never repays an ambiguous no-hash send', async () => {
     mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
-      args[5]?.()
+      args[6]?.()
       expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-sending')
       throw new Error('Wallet disconnected after send.')
     })
@@ -300,8 +329,8 @@ describe('payer deployment review and raw Relayr execution', () => {
 })
 
 describe('direct and Safe payer recovery', () => {
-  it('uses direct sequential calls on testnets, and resumes receipts without cloning a successful earlier chain again', async () => {
-    review = makeReview([11155111, 11155420])
+  it('preserves a legacy direct testnet review and resumes receipts without cloning a successful earlier chain again', async () => {
+    review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
     mocks.waitReceipt.mockRejectedValueOnce(new Error('Receipt unavailable.'))
     await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/unavailable/)
     expect(mocks.send).toHaveBeenCalledTimes(1)
@@ -314,7 +343,7 @@ describe('direct and Safe payer recovery', () => {
   })
 
   it('keeps an ambiguous direct send pending and never advances to another chain', async () => {
-    review = makeReview([11155111, 11155420])
+    review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
     mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
     await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/response lost/)
     const saved = loadPayerDeployment(review.scope)!

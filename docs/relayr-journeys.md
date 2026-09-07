@@ -1,8 +1,10 @@
 # Relayr journeys across the V6 clients
 
 Relayr pays for independent destination calls with one native-token payment on
-Ethereum, Optimism, Base, or Arbitrum. An ordinary wallet signs each destination
-request, reviews the available funding options, and pays on its selected chain.
+Ethereum, Optimism, Base, or Arbitrum, including their Sepolia testnets. Each
+bundle and its funding options stay within one network family: mainnets or
+testnets. An ordinary wallet signs each destination request, reviews the
+available funding options, and pays on its selected chain.
 The clients continue to use their existing direct and Safe transaction routes
 where forwarding is unsuitable. This integration uses user-paid Relayr; it does
 not introduce Center gas sponsorship.
@@ -11,7 +13,7 @@ not introduce Center gas sponsorship.
 
 | Journey | Juicebox Money | Revnet Money | Juicescan |
 | --- | --- | --- | --- |
-| Multichain creation | Relayr for supported mainnets and an ordinary wallet; saved launch configuration and per-chain recovery | Reviewed Relayr deployment | Reviewed Relayr deployment |
+| Multichain creation | Relayr for supported mainnets or testnets and an ordinary wallet; saved launch configuration and per-chain recovery | Reviewed Relayr deployment | Reviewed Relayr deployment |
 | Queue rulesets | Selected eligible project chains, with a live baseline and controller for each chain | Intentionally unavailable: revnet stages are fixed | Multichain queueing, including supported hook-deployment variants |
 | Project profile (`setUriOf`) | Selected chains through the authority router | Selected chains through reviewed Relayr | Selected chains through the operator editor |
 | Token name/symbol (`setTokenMetadataOf`) and deployment (`deployERC20For`) | Selected chains; each destination updates or deploys its own token | Selected chains; each destination updates or deploys its own token | Selected chains through the token editor |
@@ -19,7 +21,7 @@ not introduce Center gas sponsorship.
 | Operator permissions | Selected chains; preserves unknown permission IDs | Read-only permission view | Selected chains; preserves unknown permission IDs |
 | Buyback hook, router terminal, TWAP | Selected chains with destination-specific addresses | Selected available chains | Selected available chains |
 | Payment terminals, controller, accounting tokens | Selected chains where the ruleset permits the action | No general editor | Selected chains where the ruleset permits the action |
-| Edit existing splits | Current reserved address recipients on selected eligible mainnets; other split groups individually | Multichain split-recipient update | Applicable multichain split operations |
+| Edit existing splits | Current reserved address recipients on selected eligible chains within one network family; other split groups individually | Multichain split-recipient update | Applicable multichain split operations |
 | Execute approved Safe transactions | One currently executable transaction per chain; later Safe nonces wait | Existing Safe route | Existing Safe execution route |
 | Add shop items and replace their media | Selected shops, frozen tier configuration and original metadata | Selected shops, including a media editor | Selected shops, including a media editor |
 | Deploy project payer addresses | Raw factory calls with explicit owner, beneficiary, and local project ID | Raw factory calls with explicit per-chain review | Raw factory calls with explicit per-chain review |
@@ -55,8 +57,8 @@ individual submission.
 
 Money's current reserved-recipient editor resolves each peer's current ruleset
 ID and preserves its locked recipients. Shared unlocked recipients are limited
-to addresses. Payout groups, project recipients, custom hooks, Safe accounts,
-and testnets use individual edits until their destination mappings and routing
+to addresses. Payout groups, project recipients, custom hooks, and Safe accounts
+use individual edits until their destination mappings and routing
 are established. The review shows each chain's resulting allocation and owner
 remainder; changing one group does not replace other groups.
 
@@ -65,10 +67,10 @@ baseline. Unedited metadata, hooks, splits, and fund-access limits stay local to
 that chain. Token-denominated changes need an established mapping on every
 selected chain. The confirmation shows the expected start on each chain because
 existing ruleset calendars and approval hooks can differ. Selections requiring
-Safe execution, testnets, and mixed authorities can still be edited individually.
+Safe execution or mixed authorities can still be edited individually.
 Older owner editors still require individual submissions for unsupported
 forwarding targets or repeated calls on one chain. The six project batch
-journeys above have a durable per-call journal: eligible mainnet calls use
+journeys above have a durable per-call journal: eligible same-family calls use
 Relayr, other calls use reviewed direct or Safe transactions, and subsequent
 calls on the same chain wait for earlier calls to complete.
 
@@ -100,8 +102,9 @@ atomic.
   payment, and published recovery records preserve the reservation after a reload.
   Another action must resolve that reservation before funding conflicting calls.
 - Funding options must match the validated Relayr payment contract, native token,
-  bundle identity, and deadline. An unavailable selected chain cannot silently
-  become another funding chain.
+  bundle identity, deadline, and destination network family. An unavailable
+  selected chain cannot silently become another funding chain. Testnet calls
+  never offer a mainnet payment.
 - After funding review, the clients simulate the exact signed destination calls
   again before requesting payment. A stale nonce, changed prerequisite, or
   insufficient signed gas limit stops funding.
@@ -120,6 +123,18 @@ atomic.
   Safe proposal remains pending until its exact execution is proven. A definite
   wallet rejection before publication permits a new review; unknown submissions
   remain blocked against replay.
+- Saved direct attempts retain their original transport when testnet support
+  becomes available. They must be recovered or safely abandoned before starting
+  a fresh relayed action. Money's older project-batch journals retain their
+  original mainnet-only eligibility; new same-family testnet batches use Relayr.
+
+On 2026-09-07, the live `https://api.relayr.ba5ed.com/v1/chains` response listed
+all eight supported chains. Read-only `eth_chainId` and `eth_getCode` requests
+also verified the existing payment address
+`0x1c05f7841379d4393574c0ffa17908ec40ffd97d` on chain IDs 11155111, 11155420,
+84532, and 421614. Each returned the same 297-byte runtime and expected Keccak-256
+hash `0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6`.
+The payment address, selector, and runtime allowlist remain unchanged.
 
 Recovery is browser-local and some ambiguous outcomes need wallet activity or
 external transaction evidence. Money preserves the exact published requests for

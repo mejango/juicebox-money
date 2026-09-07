@@ -8,13 +8,14 @@ import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { canonicalSafeTxHash, receiptHasSafeExecutionSuccess, type SafeQueuedTx } from '@/lib/safe'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import {
-  loadRelayrPendingSession, relayrSupportsChain, relayrTargetSupportsForwarder,
+  loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
   relayrErrorIsDefiniteNoSubmission,
   relayrDestinationHash, relayrRecordChain,
 } from '@/lib/relayr'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { relayrPaymentChains, relayrSupportsChain } from '@/lib/relayr-chains'
 
 export type ProjectBatchCall = AuthorityCall & {
   id: string
@@ -44,6 +45,8 @@ export type ProjectBatch = {
   submissions: Record<string, CallSubmission>
   relayrRounds: number[]
   relayrCallIds?: Record<string, string[]>
+  /** Freeze chain eligibility; older journals retain their original mainnet-only routing. */
+  relayrChainIds?: number[]
   abandoned?: boolean
 }
 
@@ -79,6 +82,10 @@ function readBatch(scope: string): ProjectBatch | null {
       new Set(batch.calls.map(call => call.id)).size !== batch.calls.length ||
       !Array.isArray(batch.completedIds) || batch.completedIds.some(id => !batch.calls.some(call => call.id === id)) ||
       !Array.isArray(batch.rounds) || encode(batch.rounds) !== encode(projectBatchRounds(batch.calls)) ||
+      (batch.relayrChainIds !== undefined && (!Array.isArray(batch.relayrChainIds) ||
+        new Set(batch.relayrChainIds).size !== batch.relayrChainIds.length ||
+        batch.relayrChainIds.some(chainId => !relayrSupportsChain(chainId) ||
+          !batch.calls.some(call => call.chainId === chainId)))) ||
       !batch.submissions || !Array.isArray(batch.relayrRounds) || !aliases(batch).includes(scope)) {
     throw new Error('The saved project action could not be verified. Keep the original action pending.')
   }
@@ -221,7 +228,8 @@ export async function runProjectBatch({
       const frozen = decode<ProjectBatchCall[]>(encode(proposedCalls))
       batch = { version: 1, id: crypto.randomUUID(), scope, action, account, title,
         status: 'pending', calls: frozen, completedIds: [], rounds: projectBatchRounds(frozen),
-        submissions: {}, relayrRounds: [] }
+        submissions: {}, relayrRounds: [],
+        relayrChainIds: [...new Set(frozen.map(call => call.chainId).filter(relayrSupportsChain))] }
       // Save the entire intent and every participant before any signature can escape.
       persist(batch, true)
       for (const call of batch.calls) await reverify?.(call)
@@ -245,15 +253,27 @@ export async function runProjectBatch({
       const relayrScope = `project-batch:${journal.id}:${round}`
       const boundRelayIds = journal.relayrCallIds?.[String(round)]
       let relayCalls = boundRelayIds ? pending.filter(call => boundRelayIds.includes(call.id)) : []
-      if (!boundRelayIds && (journal.relayrRounds.includes(round) || loadRelayrPendingSession(relayrScope))) relayCalls = pending
-      if (!journal.relayrRounds.includes(round) && !isSafeConnection(wagmiConfig)) {
+      const savedRelay = loadRelayrPendingSession(relayrScope)
+      if (!boundRelayIds && (journal.relayrRounds.includes(round) || savedRelay)) relayCalls = pending
+      if (!boundRelayIds && !journal.relayrRounds.includes(round) && !savedRelay && !isSafeConnection(wagmiConfig)) {
+        const relayrChainIds = journal.relayrChainIds ?? [1, 10, 8453, 42161]
         const eligibility = await Promise.all(pending.map(async call => {
-          if (!relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
+          if (!relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
           const identity = await readAuthorityIdentity(clientFor(call.chainId), call.authority)
           return (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa') && await relayrTargetSupportsForwarder(call)
         }))
         const eligible = pending.filter((_call, index) => eligibility[index])
-        if (eligible.length > 1) relayCalls = eligible
+        const families = new Map<number, ProjectBatchCall[]>()
+        for (const call of eligible) {
+          const family = relayrPaymentChains([call.chainId])[0]
+          if (family === undefined) continue
+          const calls = families.get(family) ?? []
+          calls.push(call)
+          families.set(family, calls)
+        }
+        // A saved round owns one paid bundle. Never combine real and test funds;
+        // other-family calls keep the existing separately reviewed direct path.
+        relayCalls = [...families.values()].find(calls => calls.length > 1) ?? []
       }
       if (relayCalls.length) {
         if (!journal.relayrRounds.includes(round)) journal.relayrRounds.push(round)

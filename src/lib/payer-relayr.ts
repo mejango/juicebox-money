@@ -11,7 +11,8 @@ import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { receiptHasSafeExecutionSuccess, SAFE_EXEC_ABI } from '@/lib/safe'
-import { relayrDestinationHash, relayrErrorIsDefiniteNoSubmission, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, relayrSupportsChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
+import { relayrDestinationHash, relayrErrorIsDefiniteNoSubmission, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
+import { relayrSupportsChains } from '@/lib/relayr-chains'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -101,7 +102,7 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
   if (value.archived && (value.phase !== 'complete' || !value.outcomes.every(outcome => outcome.state === 'verified'))) {
     throw new Error('An unresolved payer deployment cannot be archived.')
   }
-  if (value.transport === 'relayr' && (value.calls.length < 2 || !value.calls.every(call => relayrSupportsChain(call.chainId)))) {
+  if (value.transport === 'relayr' && (value.calls.length < 2 || !relayrSupportsChains(value.calls.map(call => call.chainId)))) {
     throw new Error('The saved payer relay contains unsupported destination chains.')
   }
   if ((value.phase === 'quoted' || value.phase === 'publishing') && value.paymentHash) {
@@ -223,7 +224,7 @@ export function buildPayerDeploymentReview({ projects, selectedChainIds, account
   const safe = isSafeConnection(wagmiConfig)
   return snapshot({
     version: 1, id: crypto.randomUUID(), scope: payerDeploymentScope(projects), account,
-    transport: safe ? 'safe' : calls.length > 1 && calls.every(call => relayrSupportsChain(call.chainId)) ? 'relayr' : 'direct',
+    transport: safe ? 'safe' : calls.length > 1 && relayrSupportsChains(calls.map(call => call.chainId)) ? 'relayr' : 'direct',
     calls, outcomes: calls.map(call => ({ chainId: call.chainId, state: 'ready' })),
     phase: 'reviewed', createdAt: Date.now(), records: [],
   })
@@ -401,7 +402,8 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       if (!session.quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
       assertQuoteBindings(session)
       if (session.phase === 'quoted') {
-        const payments = relayrPaymentOptions(session.quote)
+        const payments = relayrPaymentOptions(session.quote, session.calls.map(call => call.chainId))
+        if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
         const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })))
         const payment = payments.find(item => item.chain === fundingChain)
         if (!payment) throw new Error('Choose one of the quoted funding chains.')
@@ -410,7 +412,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           for (const call of session.calls) await preflight(call, zeroAddress)
         }
         try {
-          const hash = await relayrPay(payment, session.account, session.quote.bundle_uuid, hash => {
+          const hash = await relayrPay(payment, session.account, session.quote.bundle_uuid, session.calls.map(call => call.chainId), hash => {
             session.paymentHash = hash
             session.phase = 'executing'
             persist()

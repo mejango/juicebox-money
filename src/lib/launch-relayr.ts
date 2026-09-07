@@ -38,8 +38,8 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { chainName } from '@/lib/urn'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
+import { relayrPaymentChains, relayrSupportsChains } from '@/lib/relayr-chains'
 
-const MAINNETS = new Set([1, 10, 8453, 42161])
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
 
@@ -73,8 +73,7 @@ function launchData(request: ReturnType<typeof buildLaunchRequest>): Hex {
 
 export function canRelayrLaunch(session: LaunchSession): boolean {
   return session.transport === 'relayr' && session.chains.length > 1 &&
-    session.chains.length <= 4 && new Set(session.chains).size === session.chains.length &&
-    session.chains.every(chain => MAINNETS.has(chain))
+    session.chains.length <= 4 && relayrSupportsChains(session.chains)
 }
 
 function forwarderFor(chainId: number): Address {
@@ -118,13 +117,13 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
 }): Promise<void> {
   assertNoViewAs()
   if (!canRelayrLaunch(session) || isSafeConnection(wagmiConfig)) {
-    throw new Error('Relayed creation requires an ordinary wallet and multiple supported mainnets.')
+    throw new Error('Relayed creation requires an ordinary wallet and multiple supported chains from the same network environment.')
   }
   if (!session.account || !isAddressEqual(session.account, account)) {
     throw new Error('Connect the wallet that originally signed this launch.')
   }
-  if (!MAINNETS.has(paymentChainId)) {
-    throw new Error('Choose a supported mainnet for the launch payment.')
+  if (!relayrPaymentChains(session.chains).includes(paymentChainId)) {
+    throw new Error('Choose a supported payment chain from the same network environment as this launch.')
   }
   if (activeLaunches.has(session.salt)) throw new Error('This launch is already running.')
   activeLaunches.add(session.salt)
@@ -146,6 +145,9 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     const saved = loadLaunchSession({ strict: true })
     if (saved && saved.salt !== session.salt) throw new Error('Another launch is saved in this browser. Resume it before starting a different launch.')
     const current = saved?.salt === session.salt ? saved : session
+    if (!canRelayrLaunch(current) || !relayrPaymentChains(current.chains).includes(paymentChainId)) {
+      throw new Error('The saved launch and payment must use supported chains from the same network environment.')
+    }
     const persist = () => {
       const latest = loadLaunchSession()
       if (latest && latest.salt !== current.salt) throw new Error('Another tab changed the active launch. Stop and recover the original launch before continuing.')
@@ -492,7 +494,7 @@ export async function runRelayrLaunch({ session, account, paymentChainId, onStat
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote.bundle_uuid, hash => {
+      journal.paymentHash = await relayrPay(payment, account, journal.quote.bundle_uuid, journal.signed.map(item => item.chainId), hash => {
         journal!.paymentHash = hash
         journal!.phase = 'submitted'
         persist()

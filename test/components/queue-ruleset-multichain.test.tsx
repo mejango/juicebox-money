@@ -1,22 +1,34 @@
 import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { type ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { decodeFunctionData, parseEther, zeroAddress, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  wallet: { address: '0x1111111111111111111111111111111111111111' },
+  wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true },
   clientFor: vi.fn(), runAuthorityCalls: vi.fn(), loadSession: vi.fn(), resume: vi.fn(),
   current: vi.fn(), upcoming: vi.fn(), contexts: vi.fn(), identity: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
+vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => mocks.wallet }))
+vi.mock('wagmi', async original => ({
+  ...await original<typeof import('wagmi')>(),
+  usePublicClient: ({ chainId }: { chainId: number }) => mocks.clientFor(chainId),
+  useReadContract: ({ chainId, functionName }: { chainId: JBChainId; functionName: string }) => ({ data: functionName === 'ownerOf' ? mocks.wallet.address : v6Address('JBController', chainId) }),
+}))
+vi.mock('@/components/ui/ModalShell', () => ({
+  ModalShell: ({ children }: { children: ReactNode }) => children,
+  useEnclosingModalCard: () => null,
+}))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor, runAuthorityCalls: mocks.runAuthorityCalls, safeOutcomeMessage: (_result: unknown, message: string) => message }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), loadRelayrPendingSession: mocks.loadSession, resumeRelayrSession: mocks.resume }))
 vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.identity }))
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'ETH' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getUpcomingRuleset: mocks.upcoming, getAccountingContexts: mocks.contexts }))
 
-import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, QueueRecovery } from '@/components/project/QueueRulesetFlow'
+import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { relayrCallsScope } from '@/lib/relayr'
 
 type Rules = Parameters<typeof rulesForQueueDestination>[0]
@@ -36,8 +48,8 @@ function source(chainId: JBChainId): Source {
   const split = { percent: 100_000_000, projectId: 987n, beneficiary: OTHER, preferAddToBalance: true, lockedUntil: 2_000_000_000, hook: HOOK }
   return { action: 'current', option: { action: 'current', source: ruleset, mustStartAtOrAfter: 0, requiresStartDate: false }, entry: { ruleset, metadata }, rulesetId: 50n, terminal: v6Address('JBMultiTerminal', chainId), access: [{ ctx: { token: NATIVE_TOKEN, decimals: 18, currency: 1 }, symbol: 'ETH', payoutLimits: [{ amount: parseEther('2'), currency: 1 }], surplusAllowances: [{ amount: 3n, currency: 2 }] }], reservedSplits: [split], payoutSplits: [{ token: NATIVE_TOKEN, splits: [split] }] }
 }
-function review(): Review {
-  const destinations = ([1, 8453] as JBChainId[]).map((chainId, index) => {
+function review(chainIds: readonly JBChainId[] = [1, 8453]): Review {
+  const destinations = chainIds.map((chainId, index) => {
     const src = source(chainId)
     const data = { current: src.entry, upcoming: null, latest: src.entry, latestApprovalStatus: 0, plan: { defaultAction: 'current' as const, options: [src.option], hasQueuedRuleset: false, hasMultipleQueuedRulesets: false }, sources: { current: src } }
     return { chainId, projectId: index ? 303 : 101, controller: v6Address('JBController', chainId), authority: ACCOUNT, source: src, data, configs: [buildQueueDestinationConfig(rules({ weight: '200' }), 2_000_000_000, src)], starts: [2_000_000_000], changes: [] }
@@ -47,12 +59,7 @@ function review(): Review {
 const storage = new Map<string, string>()
 let currentReview: Review
 const reads = new Map<number, ReturnType<typeof vi.fn>>()
-beforeEach(() => {
-  storage.clear(); reads.clear(); currentReview = review(); mocks.wallet.address = ACCOUNT
-  vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } })
-  mocks.identity.mockResolvedValue({ kind: 'eoa' })
-  mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })
-  mocks.resume.mockResolvedValue({ records: [] })
+function installReads() {
   for (const destination of currentReview.destinations) {
     const src = destination.source
     reads.set(destination.chainId, vi.fn(async request => {
@@ -66,6 +73,14 @@ beforeEach(() => {
       throw new Error(`Unexpected read ${request.functionName}`)
     }))
   }
+}
+beforeEach(() => {
+  storage.clear(); reads.clear(); currentReview = review(); mocks.wallet.address = ACCOUNT
+  vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } })
+  mocks.identity.mockResolvedValue({ kind: 'eoa' })
+  mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })
+  mocks.resume.mockResolvedValue({ records: [] })
+  installReads()
   mocks.clientFor.mockImplementation(chain => ({ readContract: reads.get(chain) }))
   mocks.current.mockImplementation(async (_client, args) => currentReview.destinations.find(item => item.chainId === args.chainId)!.source.entry)
   mocks.upcoming.mockImplementation(mocks.current)
@@ -74,6 +89,55 @@ beforeEach(() => {
 })
 
 describe('multichain ruleset configuration', () => {
+  it('enables all testnet peers in the ruleset editor and disables a linked mainnet', async () => {
+    currentReview = review([11155111, 11155420, 84532, 421614, 1])
+    installReads()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+    const home = currentReview.destinations[0]
+    queryClient.setQueryData(['queueRulesetPrefill', home.chainId, home.projectId, home.controller], home.data)
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<QueryClientProvider client={queryClient}><QueueRulesetFlow chainId={home.chainId} projectId={home.projectId} isRevnet={false} chains={currentReview.destinations.map(item => [item.chainId, item.projectId])} /></QueryClientProvider>) })
+    try {
+      await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('Edit rules'))!.props.onClick() })
+      await act(async () => { await queryClient.refetchQueries({ queryKey: ['queueRulesetDestinations'] }) })
+      const selection = renderer.root.findAllByType('fieldset').find(fieldset => fieldset.findAllByType('legend').some(legend => legend.children.includes('Queue on')))!
+      const boxes = selection.findAllByType('input')
+      expect(boxes.map(box => box.props.disabled)).toEqual([true, false, false, false, true])
+      for (const box of boxes.slice(1, 4)) await act(async () => { box.props.onChange() })
+      expect(selection.findAllByType('input').map(box => box.props.checked)).toEqual([true, true, true, true, false])
+    } finally {
+      await act(async () => renderer.unmount())
+      queryClient.clear()
+    }
+  })
+
+  it('revalidates one frozen ruleset call on each of the four testnets', async () => {
+    currentReview = review([11155111, 11155420, 84532, 421614])
+    installReads()
+    const calls = reviewedQueueCalls(currentReview, 'current')
+    for (const [index, call] of calls.entries()) {
+      await expect(call.reverifyAuthority!()).resolves.toBeUndefined()
+      const decoded = decodeFunctionData({ abi: jbControllerAbi, data: call.data })
+      expect(decoded.args?.[0]).toBe(BigInt(currentReview.destinations[index].projectId))
+    }
+    expect(calls.map(call => call.chainId)).toEqual([11155111, 11155420, 84532, 421614])
+  })
+
+  it('rejects a mixed mainnet/testnet ruleset review before signing or funding', async () => {
+    currentReview = review([1, 84532])
+    installReads()
+    await expect(reviewedQueueCalls(currentReview, 'current')[0].reverifyAuthority!()).rejects.toThrow(/all mainnets or all testnets/)
+  })
+
+  it('keeps a testnet Safe update separate after its authority changes', async () => {
+    currentReview = review([11155111, 84532])
+    installReads()
+    mocks.identity.mockResolvedValue({ kind: 'safe', owners: [ACCOUNT] })
+    await expect(reviewedQueueCalls(currentReview, 'current')[0].reverifyAuthority!()).rejects.toThrow(/Safe accounts.*separately|separately for Safe accounts/)
+    const separate = { ...currentReview, destinations: [currentReview.destinations[0]] }
+    await expect(reviewedQueueCalls(separate, 'current')[0].reverifyAuthority!()).resolves.toBeUndefined()
+  })
+
   it('changes only reviewed scalar fields, preserving other chain settings and all source hooks/locked splits/allowances', () => {
     const baseline = rules()
     const peer = rules({ duration: 172800, cashOutTaxPct: '25', holdFees: true })
@@ -164,7 +228,8 @@ describe('queue recovery after cancellation or partial execution', () => {
   async function mountSaved() {
     const journal = { scope: relayrCallsScope(reviewedQueueCalls(currentReview, 'current')), review: currentReview, action: 'current' as const }
     saveQueueJournal(journal)
-    const reloaded = readQueueJournal('jbm:queue-rulesets:8453:303')!
+    const peer = currentReview.destinations.at(-1)!
+    const reloaded = readQueueJournal(`jbm:queue-rulesets:${peer.chainId}:${peer.projectId}`)!
     const completed = vi.fn()
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<QueueRecovery journal={reloaded} onComplete={completed} />) })
@@ -195,6 +260,20 @@ describe('queue recovery after cancellation or partial execution', () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'confirmed' })
     const { renderer, completed, journal } = await mountSaved()
     mocks.current.mockRejectedValue(new Error('Already queued / inaccessible'))
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({ scope: journal.scope, account: ACCOUNT }))
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    expect(mocks.current).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+  })
+  it('resumes saved testnet results without rerouting after live eligibility changes', async () => {
+    currentReview = review([11155111, 84532])
+    installReads()
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'confirmed', records: [{ chainId: 11155111, status: 'confirmed' }, { chainId: 84532, status: 'pending' }] })
+    const { renderer, completed, journal } = await mountSaved()
+    mocks.identity.mockResolvedValue({ kind: 'safe', owners: [ACCOUNT] })
+    mocks.current.mockRejectedValue(new Error('Live reads are unavailable'))
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
     expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({ scope: journal.scope, account: ACCOUNT }))
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
