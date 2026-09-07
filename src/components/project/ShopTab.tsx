@@ -16,6 +16,7 @@ import {
   DISCOUNT_DENOMINATOR,
   effectiveTierPrice,
   getAccountingContexts,
+  getAllRulesets,
   getCurrentRuleset,
   getProject721Shop,
 } from '@bananapus/nana-sdk-core/v6'
@@ -34,6 +35,7 @@ import {
   ShopTabSkeleton,
 } from '@/components/LoadingSkeletons'
 import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
+import { describeTransferSchedule } from '@/lib/transfer-schedule'
 import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
   AddShopItemsModal,
@@ -178,6 +180,13 @@ type Shop = {
   cashOutEnabled: boolean
   /** Whether the current ruleset has the 721 transfer-pause bit enabled. */
   transfersPaused: boolean | null
+  /**
+   * Whether each stage pauses transfers, oldest first. Only read for a revnet, whose
+   * stages are queued once at deployFor and can never be requeued — so this is the
+   * settled schedule rather than a reading of the current moment. Null elsewhere,
+   * where a future ruleset really can still change the answer.
+   */
+  transferPauseByStage: { stage: number; paused: boolean }[] | null
   pricing: { currency: number; decimals: number; symbol: string }
   tiers: ShopTier[]
   configFlags: ShopConfigFlags | null
@@ -544,6 +553,9 @@ export function ShopTab({
             detailTier.flags?.transfersPausable
               ? shop.transfersPaused
               : false
+          }
+          transferPauseByStage={
+            detailTier.flags?.transfersPausable ? shop.transferPauseByStage : null
           }
           onMint={
             detailTier.flags?.allowOwnerMint && detailTier.remaining > 0
@@ -1571,6 +1583,7 @@ function TierDetailModal({
   media,
   pricing,
   transfersPaused,
+  transferPauseByStage,
   onMint,
   onReplaceMedia,
   onClose,
@@ -1583,6 +1596,7 @@ function TierDetailModal({
   media: TierMedia | undefined
   pricing: Shop['pricing']
   transfersPaused: boolean | null
+  transferPauseByStage: Shop['transferPauseByStage']
   onMint?: () => void
   onReplaceMedia?: () => void
   onClose: () => void
@@ -1800,11 +1814,14 @@ function TierDetailModal({
                 <DetailFact
                   label="Transfers"
                   value={
-                    transfersPaused == null
+                    // A revnet's stages are fixed at launch, so state the whole
+                    // schedule rather than whichever stage happens to be running.
+                    describeTransferSchedule(transferPauseByStage) ??
+                    (transfersPaused == null
                       ? 'Current ruleset unavailable'
                       : transfersPaused
                         ? 'Paused now'
-                        : 'Allowed now; ruleset-pausable'
+                        : 'Allowed now; ruleset-pausable')
                   }
                 />
               ) : null}
@@ -1929,7 +1946,7 @@ async function readShop(
   isRevnet: boolean,
   nativeSymbol: string,
 ): Promise<Shop | null> {
-  const [identity, current] = await Promise.all([
+  const [identity, current, allRulesets] = await Promise.all([
     getProject721Shop(client, {
       chainId,
       projectId: BigInt(projectId),
@@ -1940,6 +1957,16 @@ async function readShop(
       chainId,
       projectId: BigInt(projectId),
     }).catch(() => null),
+    // Only a revnet's schedule is settled: its stages are queued at deployFor and no
+    // revnet actor holds QUEUE_RULESETS. A plain project can still queue a ruleset that
+    // changes the answer, so there it stays a statement about the current stage.
+    isRevnet
+      ? getAllRulesets(client, {
+          chainId,
+          projectId: BigInt(projectId),
+          size: 50n,
+        }).catch(() => null)
+      : Promise.resolve(null),
   ])
   if (!identity) return null
   const resolved = identity
@@ -2052,6 +2079,16 @@ async function readShop(
     transfersPaused: current
       ? decode721RulesetMetadata(Number(current.metadata.metadata ?? 0))
           .pauseTransfers
+      : null,
+    transferPauseByStage: allRulesets?.length
+      ? [...allRulesets]
+          // Oldest first, numbered the way the Rulesets tab numbers stages.
+          .sort((left, right) => left.ruleset.start - right.ruleset.start)
+          .map((entry, index) => ({
+            stage: index + 1,
+            paused: decode721RulesetMetadata(Number(entry.metadata.metadata ?? 0))
+              .pauseTransfers,
+          }))
       : null,
     pricing: { currency, decimals, symbol },
     tiers,
