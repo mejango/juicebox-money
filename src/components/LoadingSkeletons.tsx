@@ -1,5 +1,4 @@
 import { Skeleton, SkeletonLines, SkeletonTable } from './ui/Skeleton'
-import { HomepageDiscoveryTabs } from './HomepageDiscoveryTabs'
 import { ProjectLogoWithFallback } from './ProjectLogoWithFallback'
 import { Revalidating } from './ui/Revalidating'
 import type { ProjectNavigationHint } from '@/lib/project-navigation'
@@ -56,54 +55,6 @@ export function ActivityRailSkeleton({ rows = 7 }: { rows?: number }) {
       <span className="sr-only">Loading activity</span>
       <ActivityRows rows={rows} />
     </div>
-  )
-}
-
-export function HomepageDiscoverySkeleton() {
-  return (
-    <section
-      id="trending"
-      className="mx-auto max-w-6xl px-4 pb-0 pt-8 sm:px-6 sm:pt-16"
-      role="status"
-      aria-label="Loading projects and activity"
-    >
-      <span className="sr-only">Loading projects and activity</span>
-      <HomepageDiscoveryTabs
-        name="homepage-discovery-loading"
-        trending={
-          <>
-            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
-              Trending projects
-            </h2>
-            <div className="space-y-3 sm:hidden">
-              {Array.from({ length: 4 }, (_, index) => (
-                <ProjectCardSkeleton key={index} index={index} />
-              ))}
-            </div>
-            <div className="hidden items-start gap-3 sm:grid sm:grid-cols-2">
-              {[0, 1].map(column => (
-                <div key={column} className="flex flex-col gap-3">
-                  {Array.from({ length: 3 }, (_, index) => (
-                    <ProjectCardSkeleton
-                      key={index}
-                      index={index * 2 + column}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </>
-        }
-        activity={
-          <>
-            <h2 className="mb-5 hidden font-agrandir text-2xl font-medium sm:text-3xl lg:block">
-              Fresh activity
-            </h2>
-            <ActivityRailSkeleton rows={6} />
-          </>
-        }
-      />
-    </section>
   )
 }
 

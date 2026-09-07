@@ -120,9 +120,9 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
     // on them; the guide links hang in a second row underneath.
     <nav aria-label="Main navigation" className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
       <div className={expanded ? 'hidden' : 'row-start-1 justify-self-start'}>
-        <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={iconOnly} />
+        <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={false} />
       </div>
-      {!expanded && !iconOnly ? (
+      {!expanded ? (
         <GuideLinks className="col-span-3 col-start-1 row-start-2 min-h-11 justify-self-start" />
       ) : null}
       <div

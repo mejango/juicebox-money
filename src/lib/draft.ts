@@ -1,6 +1,6 @@
 import type { DraftItem } from '@/components/create/StoreEditor'
 import type { DraftSplit } from '@/components/create/SplitsEditor'
-import type { DraftStage } from '@/components/create/StageRulesEditor'
+import type { DraftStage } from '@/components/create/stage-draft'
 import type { ApprovalDeadline, TreasuryCurrency } from '@/lib/launch'
 
 /**

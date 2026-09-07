@@ -1,7 +1,6 @@
 import type { TxRequest } from "@/hooks/useSafeTx";
 import { addPermit2SignatureToDirectPaySwap } from "@bananapus/nana-sdk-core/v6/direct-pay";
 import {
-  PERMIT2_ADDRESS,
   permit2SignatureNeedsOnchainFallback,
   permit2TypedData,
   shouldUsePermit2Signature,
@@ -10,7 +9,6 @@ import {
 import type { Hex } from "viem";
 
 export {
-  PERMIT2_ADDRESS,
   permit2SignatureNeedsOnchainFallback,
   permit2TypedData,
   shouldUsePermit2Signature,

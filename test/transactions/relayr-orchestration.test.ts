@@ -1,4 +1,5 @@
-import type { Address, Hex } from 'viem'
+import { encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
+import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -8,11 +9,15 @@ const mocks = vi.hoisted(() => ({
     request: vi.fn(),
     estimateGas: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
+    getTransaction: vi.fn(),
+    getTransactionReceipt: vi.fn(),
+    getBlock: vi.fn(),
   },
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
   requireReview: vi.fn(),
+  requireFundingChainSelection: vi.fn(),
   isSafeConnection: vi.fn(),
   waitForSafeExecutionHash: vi.fn(),
 }))
@@ -31,6 +36,7 @@ vi.mock('@/lib/wallet-core', () => ({
 }))
 vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
+  requireFundingChainSelection: mocks.requireFundingChainSelection,
 }))
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: mocks.isSafeConnection,
@@ -50,8 +56,10 @@ import {
   runRelayrCalls,
   saveRelayrPendingSession,
   loadRelayrPendingSession,
+  listRelayrPendingScopes,
   clearRelayrPendingSession,
   type RelayrCall,
+  type RelayrEntry,
   type RelayrPayment,
 } from '@/lib/relayr'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
@@ -61,6 +69,9 @@ const BOB = '0x2222222222222222222222222222222222222222' as Address
 const TARGET = '0x3333333333333333333333333333333333333333' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const DESTINATION_HASH = `0x${'cd'.repeat(32)}` as Hex
+const SECOND_DESTINATION_HASH = `0x${'ef'.repeat(32)}` as Hex
+const BLOCK_HASH = `0x${'45'.repeat(32)}` as Hex
+const TRUSTED_FORWARDER_SELECTOR = toFunctionSelector('isTrustedForwarder(address)')
 const BUNDLE_UUID = '01234567-89ab-cdef-0123-456789abcdef'
 const OTHER_UUID = 'fedcba98-7654-3210-fedc-ba9876543210'
 const THIRD_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
@@ -94,6 +105,62 @@ function paymentFor(
 
 const payment = paymentFor()
 
+function signedEntry(chain: JBChainId = 1): RelayrEntry {
+  return {
+    chain,
+    target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain],
+    data: encodeFunctionData({
+      abi: erc2771ForwarderAbi,
+      functionName: 'execute',
+      args: [{ from: ALICE, to: TARGET, value: 5n, gas: 500_000n,
+        deadline: PAYMENT_DEADLINE, data: '0x1234', signature: `0x${'11'.repeat(65)}` }],
+    }),
+    value: '5',
+    virtual_nonce: 0,
+  }
+}
+
+function successfulRecords(entries: readonly RelayrEntry[]) {
+  return entries.map((entry, index) => ({
+    tx_uuid: [OTHER_UUID, THIRD_UUID][index],
+    request: entry,
+    status: { state: 'success', data: { hash: [DESTINATION_HASH, SECOND_DESTINATION_HASH][index] } },
+  }))
+}
+
+/** Destination RPC proof is derived from the exact signed payload sent in POST. */
+function installDestinationProof(entries: () => readonly RelayrEntry[]) {
+  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
+    const entry = entries()[hash === DESTINATION_HASH ? 0 : 1]
+    if (!entry) throw new Error(`No destination transaction fixture for ${hash}`)
+    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value),
+      chainId: entry.chain, blockHash: BLOCK_HASH }
+  })
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    transactionHash: hash, status: 'success', blockHash: BLOCK_HASH, blockNumber: 100n,
+  }))
+  mocks.client.getBlock.mockResolvedValue({ hash: BLOCK_HASH })
+}
+
+function installSuccessfulBundle(payments = [payment]) {
+  const posts: RelayrEntry[][] = []
+  installDestinationProof(() => posts.at(-1) ?? [])
+  vi.mocked(fetch).mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
+      const entries = (JSON.parse(String(init.body)) as { transactions: RelayrEntry[] }).transactions
+      posts.push(entries)
+      return response({ bundle_uuid: BUNDLE_UUID, payment_info: payments,
+        txn_uuids: entries.map((_, index) => [OTHER_UUID, THIRD_UUID][index]) })
+    }
+    if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
+      return response({ transactions: successfulRecords(posts.at(-1) ?? []) })
+    }
+    throw new Error(`Unexpected Relayr request: ${url}`)
+  })
+  return posts
+}
+
 function response(body: unknown, status = 200): Response {
   return new Response(
     typeof body === 'string' ? body : JSON.stringify(body),
@@ -107,8 +174,10 @@ function localStorageWindow() {
     values,
     window: {
       localStorage: {
+        get length() { return values.size },
+        key: (index: number) => [...values.keys()][index] ?? null,
         getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => values.set(key, value),
+        setItem: (key: string, value: string) => { values.set(key, value) },
         removeItem: (key: string) => values.delete(key),
       },
     },
@@ -116,6 +185,8 @@ function localStorageWindow() {
 }
 
 beforeEach(() => {
+  for (const scope of listRelayrPendingScopes()) clearRelayrPendingSession(scope)
+  vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, execute: (lock: object) => Promise<unknown>) => execute({}) } })
   mocks.account = ALICE
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
@@ -126,6 +197,7 @@ beforeEach(() => {
     account: ALICE,
   })
   mocks.requireReview.mockResolvedValue(undefined)
+  mocks.requireFundingChainSelection.mockResolvedValue(1)
   mocks.isSafeConnection.mockReturnValue(false)
   mocks.waitForSafeExecutionHash.mockResolvedValue(HASH)
   mocks.client.readContract.mockImplementation(async input => {
@@ -133,12 +205,16 @@ beforeEach(() => {
       return ['0x0f', 'JBForwarder', '1', 1n, TARGET, '0x00', []]
     }
     if (input.functionName === 'nonces') return 4n
+    if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
   mocks.client.estimateGas.mockResolvedValue(21_000n)
-  mocks.client.request.mockImplementation(async ({ method }) => {
+  mocks.client.request.mockImplementation(async ({ method, params }) => {
     if (method === 'eth_getCode') return PAYMENT_RUNTIME
-    if (method === 'eth_call') return '0x'
+    if (method === 'eth_call') {
+      return params[0].data.startsWith(TRUSTED_FORWARDER_SELECTOR)
+        ? `0x${'0'.repeat(63)}1` : '0x'
+    }
     throw new Error(`Unexpected RPC method ${method}`)
   })
   mocks.client.waitForTransactionReceipt.mockResolvedValue({ status: 'success' })
@@ -593,9 +669,11 @@ describe('Relayr polling and resume semantics', () => {
     )
   })
 
-  it('resumes an already successful paid bundle without signing or paying again', async () => {
+  it('resumes an exact paid bundle without new signatures/payment even when another journal is corrupt', async () => {
     const storage = localStorageWindow()
     vi.stubGlobal('window', storage.window)
+    const entry = signedEntry()
+    installDestinationProof(() => [entry])
     saveRelayrPendingSession('scope', {
       bundleUuid: 'saved-bundle',
       paymentHash: HASH,
@@ -603,11 +681,13 @@ describe('Relayr polling and resume semantics', () => {
       paymentStatus: 'confirmed',
       chainIds: [1],
       expectedCount: 1,
-      records: [{ chain: 1, status: { state: 'success' } }],
+      records: successfulRecords([entry]),
+      expectedTransactions: [{ txUuid: OTHER_UUID, chain: 1, entry }],
       itemCount: 1,
       account: ALICE,
       createdAt: 1,
     })
+    storage.values.set('jb-relayr-pending-v1:unrelated-corrupt', '{not json')
 
     await expect(
       runRelayrCalls({
@@ -622,7 +702,11 @@ describe('Relayr polling and resume semantics', () => {
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
-    expect(storage.values.size).toBe(0)
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
+    expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
+    expect(mocks.client.getBlock).toHaveBeenCalledWith({ blockNumber: 100n })
+    expect(storage.values.get('jb-relayr-pending-v1:unrelated-corrupt')).toBe('{not json')
+    expect(storage.values.has('jb-relayr-pending-v1:scope')).toBe(false)
   })
 
   it('refuses to resume a paid bundle from a different account', async () => {
@@ -651,38 +735,43 @@ describe('Relayr polling and resume semantics', () => {
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
+  it('retains a proven paid bundle until its application completion checkpoint succeeds', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    installSuccessfulBundle()
+    const checkpoint = vi.fn().mockRejectedValueOnce(new Error('application completion could not be saved'))
+    const options = { calls: [{ chainId: 1 as const, target: TARGET, data: '0x1234' as const }],
+      account: ALICE, pendingScope: 'application-checkpoint', onComplete: checkpoint }
+    await expect(runRelayrCalls(options)).rejects.toThrow('application completion could not be saved')
+    expect(loadRelayrPendingSession(options.pendingScope)?.paymentHash).toBe(HASH)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    checkpoint.mockImplementationOnce(async records => {
+      expect(records).toHaveLength(1)
+      expect(loadRelayrPendingSession(options.pendingScope)?.paymentHash).toBe(HASH)
+    })
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks another project action while this account has a published forwarder authorization', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    saveRelayrPendingSession('another-project-action', {
+      bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      chainIds: [1], expectedCount: 1, records: [], publishedEntries: [signedEntry()], itemCount: 1, account: ALICE, createdAt: 1,
+    })
+    await expect(runRelayrCalls({ calls: [{ chainId: 1, target: TARGET, data: '0x1234' }], account: ALICE,
+      pendingScope: 'new-project-action' })).rejects.toThrow('Another published action')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('signs every exact destination, pays once, and waits for execution', async () => {
     const storage = localStorageWindow()
     vi.stubGlobal('window', storage.window)
-    vi.mocked(fetch).mockImplementation(async (input, init) => {
-      const url = String(input)
-      if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
-        return response({
-          bundle_uuid: BUNDLE_UUID,
-          payment_info: [payment],
-          transactions: [],
-          txn_uuids: [OTHER_UUID],
-        })
-      }
-      if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
-        return response({
-          transactions: [
-            {
-              tx_uuid: OTHER_UUID,
-              request: {
-                chain: 1,
-                target: TARGET,
-                data: '0x1234',
-                value: '5',
-                virtual_nonce: 0,
-              },
-              status: { state: 'success', data: { hash: DESTINATION_HASH } },
-            },
-          ],
-        })
-      }
-      throw new Error(`Unexpected Relayr request: ${url}`)
-    })
+    const posts = installSuccessfulBundle()
     const progress = vi.fn()
     const reverify = vi.fn().mockResolvedValue(undefined)
     const calls: RelayrCall[] = [
@@ -710,6 +799,11 @@ describe('Relayr polling and resume semantics', () => {
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith([
+      expect.objectContaining({ chainId: 1, label: expect.stringContaining('Ethereum') }),
+    ])
+    expect(posts[0][0].data).not.toBe('0x1234')
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
     expect(reverify).toHaveBeenCalledTimes(5)
     expect(progress.mock.calls.map(call => call[0].phase)).toEqual([
       'signing',
@@ -720,5 +814,305 @@ describe('Relayr polling and resume semantics', () => {
       'executing',
     ])
     expect(storage.values.size).toBe(0)
+  })
+})
+
+describe('Relayr funding choice and exact execution proof', () => {
+  const calls: RelayrCall[] = [{ chainId: 1, target: TARGET, data: '0x1234', value: 5n }]
+
+  beforeEach(() => {
+    vi.stubGlobal('window', localStorageWindow().window)
+  })
+
+  it.each(['other-action', 'same-action'])('does not interpret corrupt JSON in %s as an unused nonce', async scope => {
+    const storage = localStorageWindow()
+    storage.values.set(`jb-relayr-pending-v1:${scope}`, '{not json')
+    vi.stubGlobal('window', storage.window)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'same-action' })).rejects.toThrow('records could not be read completely')
+    expect(storage.values.get(`jb-relayr-pending-v1:${scope}`)).toBe('{not json')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('preserves malformed exact-entry evidence when a tolerant own-scope read precedes authorization', async () => {
+    const storage = localStorageWindow()
+    const raw = JSON.stringify({ bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      chainIds: [1], expectedCount: 1, records: [], itemCount: 1, account: ALICE, createdAt: 1, publishedEntries: 'corrupt entries' })
+    storage.values.set('jb-relayr-pending-v1:malformed-own', raw)
+    vi.stubGlobal('window', storage.window)
+    expect(loadRelayrPendingSession('malformed-own')).not.toBeNull()
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'malformed-own' })).rejects.toThrow('records could not be read completely')
+    expect(storage.values.get('jb-relayr-pending-v1:malformed-own')).toBe(raw)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
+  it.each(['key', 'getItem'] as const)('fails closed if saved nonce reservations cannot be enumerated/read through %s', async method => {
+    const storage = localStorageWindow()
+    storage.values.set('jb-relayr-pending-v1:unreadable', '{}')
+    vi.stubGlobal('window', storage.window)
+    vi.spyOn(storage.window.localStorage, method).mockImplementation(() => { throw new Error('Storage is unavailable') })
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'new-action' })).rejects.toThrow('records could not be read completely')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not hide a reused durable scope behind this tab’s old cleared marker', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    const remove = vi.spyOn(storage.window.localStorage, 'removeItem').mockImplementation(() => { throw new Error('Temporary remove failure') })
+    clearRelayrPendingSession('reused-scope')
+    remove.mockRestore()
+    storage.values.set('jb-relayr-pending-v1:reused-scope', JSON.stringify({
+      bundleUuid: 'new-bundle-from-another-tab', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      chainIds: [1], expectedCount: 1, records: [], itemCount: 1, account: ALICE, createdAt: 1, publishedEntries: [signedEntry()],
+    }))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'different-action' })).rejects.toThrow('Another published action')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
+  it('does not bypass a corrupt launch journal when authorizing a project action', async () => {
+    const storage = localStorageWindow()
+    storage.values.set('jbm-launch-pending-v1', '{not json')
+    vi.stubGlobal('window', storage.window)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'new-action' })).rejects.toThrow('Saved launch authorizations could not be read')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does not publish or leave a stranded session when durable publication storage fails', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    vi.spyOn(storage.window.localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('storage full')
+    })
+    await expect(runRelayrCalls({
+      calls, account: ALICE, pendingScope: 'publication-storage-failed',
+    })).rejects.toThrow(/enable browser storage/i)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession('publication-storage-failed')).toBeNull()
+    expect(storage.values.size).toBe(0)
+  })
+
+  it('restores the unpaid publication when saving the payment attempt fails', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    const store = storage.window.localStorage.setItem
+    const write = vi.spyOn(storage.window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (JSON.parse(value).paymentStatus === 'sending') throw new Error('storage full')
+      store(key, value)
+    })
+    const posts = installSuccessfulBundle()
+    const options = { calls, account: ALICE, pendingScope: 'payment-storage-failed' }
+    await expect(runRelayrCalls(options)).rejects.toThrow(/enable browser storage/i)
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'unpaid', paymentHash: null, bundleUuid: BUNDLE_UUID,
+      expectedTransactions: [{ txUuid: OTHER_UUID }],
+    })
+
+    write.mockRestore()
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(posts[1]).toEqual(posts[0])
+  })
+
+  it('refuses a scope locked in another tab before signing or paying', async () => {
+    const request = vi.fn(async (_name, _options, callback: (lock: null) => Promise<unknown>) => callback(null))
+    vi.stubGlobal('navigator', { locks: { request } })
+    await expect(runRelayrCalls({
+      calls, account: ALICE, pendingScope: 'other-tab-lock',
+    })).rejects.toThrow(/already being processed in another tab/i)
+    expect(request).toHaveBeenCalledWith('jb-relayr:other-tab-lock', { ifAvailable: true }, expect.any(Function))
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a concurrent invocation of the same scope while the first choice is open', async () => {
+    const posts = installSuccessfulBundle()
+    let release!: (chainId: number) => void
+    let reached!: () => void
+    const choice = new Promise<number>(resolve => { release = resolve })
+    const choosing = new Promise<void>(resolve => { reached = resolve })
+    mocks.requireFundingChainSelection.mockImplementationOnce(() => { reached(); return choice })
+    const options = { calls, account: ALICE, pendingScope: 'same-scope-lock' }
+    const first = runRelayrCalls(options)
+    await choosing
+    await expect(runRelayrCalls(options)).rejects.toThrow(/already being processed/i)
+    release(1)
+    await expect(first).resolves.toMatchObject({ paymentHash: HASH })
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a missing selected funding chain without using another quoted option', async () => {
+    const posts = installSuccessfulBundle()
+    await expect(runRelayrCalls({
+      calls, account: ALICE, pendingScope: 'missing-funding', paymentChainId: 10,
+    })).rejects.toThrow(/no payment option on your selected funding chain/i)
+    expect(posts).toHaveLength(1)
+    expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession('missing-funding')).toMatchObject({
+      paymentStatus: 'unpaid', paymentHash: null,
+      publishedEntries: [expect.objectContaining({ chain: 1 })],
+    })
+  })
+
+  it('funds the chain the user chooses even when the connected chain has a quote', async () => {
+    installSuccessfulBundle([payment, paymentFor({ chain: 10, amount: '200' })])
+    mocks.requireFundingChainSelection.mockResolvedValueOnce(10)
+    await expect(runRelayrCalls({
+      calls, account: ALICE, pendingScope: 'explicit-funding',
+    })).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith([
+      expect.objectContaining({ chainId: 1 }),
+      expect.objectContaining({ chainId: 10 }),
+    ])
+    expect(mocks.connectedWallet).toHaveBeenLastCalledWith(10, expect.any(Object))
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ value: 200n }))
+  })
+
+  it('proves each independently signed destination after one funding payment', async () => {
+    const posts = installSuccessfulBundle()
+    await expect(runRelayrCalls({
+      calls: [...calls, { chainId: 10, target: BOB, data: '0x5678', value: 2n }],
+      account: ALICE, pendingScope: 'two-destination-proof', paymentChainId: 1,
+    })).resolves.toMatchObject({
+      paymentHash: HASH,
+      records: [{ tx_uuid: OTHER_UUID }, { tx_uuid: THIRD_UUID }],
+    })
+    expect(posts[0].map(entry => [entry.chain, entry.virtual_nonce])).toEqual([[1, 0], [10, 0]])
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+    expect(mocks.wallet.signTypedData.mock.calls.map(([input]) => input.message.nonce)).toEqual([4n, 4n])
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: SECOND_DESTINATION_HASH })
+    expect(mocks.client.getBlock).toHaveBeenCalledTimes(2)
+    expect(loadRelayrPendingSession('two-destination-proof')).toBeNull()
+  })
+
+  it('requires another funding choice after cancellation while reusing the original signature', async () => {
+    const posts = installSuccessfulBundle()
+    mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('Funding chain selection cancelled. Nothing was sent.'))
+    const options = { calls, account: ALICE, pendingScope: 'cancelled-choice' }
+    await expect(runRelayrCalls(options)).rejects.toThrow(/selection cancelled/i)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'unpaid', paymentHash: null })
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(2)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(posts).toHaveLength(2)
+    expect(posts[1]).toEqual(posts[0])
+    expect(mocks.client.readContract.mock.calls.filter(([input]) => input.functionName === 'nonces')).toHaveLength(1)
+  })
+
+  it('reuses exactly the published signature after the quote response is lost', async () => {
+    const posts = installSuccessfulBundle()
+    let lostEntries: RelayrEntry[] = []
+    vi.mocked(fetch).mockImplementationOnce(async (_input, init) => {
+      lostEntries = (JSON.parse(String(init?.body)) as { transactions: RelayrEntry[] }).transactions
+      throw new DOMException('quote response lost', 'TimeoutError')
+    })
+    const options = { calls, account: ALICE, pendingScope: 'lost-quote' }
+    await expect(runRelayrCalls(options)).rejects.toThrow(/did not return a quote/i)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'unpaid', bundleUuid: 'publication-pending',
+      publishedEntries: [expect.objectContaining({ data: lostEntries[0].data })],
+    })
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(posts).toEqual([lostEntries])
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.client.readContract.mock.calls.filter(([input]) => input.functionName === 'nonces')).toHaveLength(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+  })
+
+  it('keeps the original publication when its signature can no longer be verified', async () => {
+    const posts = installSuccessfulBundle()
+    mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('closed'))
+    const options = { calls, account: ALICE, pendingScope: 'invalid-original-signature' }
+    await expect(runRelayrCalls(options)).rejects.toThrow('closed')
+    const read = mocks.client.readContract.getMockImplementation()!
+    mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? false : read(input))
+
+    await expect(runRelayrCalls(options)).rejects.toThrow(/authorization or trusted forwarder changed/i)
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'unpaid' })
+  })
+
+  it('rejects dependent calls on the same chain before signing or publishing', async () => {
+    await expect(runRelayrCalls({
+      calls: [...calls, { ...calls[0], data: '0x5678' }], account: ALICE, pendingScope: 'duplicate-chain',
+    })).rejects.toThrow(/one independent call per destination chain/i)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('retains a no-hash payment attempt and never signs or pays again while proof is unavailable', async () => {
+    const posts = installSuccessfulBundle()
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    const options = { calls, account: ALICE, pendingScope: 'no-hash-payment' }
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentSendingError' })
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'sending', paymentHash: null, bundleUuid: BUNDLE_UUID,
+    })
+    mocks.client.getTransaction.mockRejectedValueOnce(new Error('Destination RPC unavailable'))
+    await expect(runRelayrCalls(options)).rejects.toThrow('Destination RPC unavailable')
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'sending', paymentHash: null })
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['transaction UUID', 'calldata', 'receipt status', 'canonical block'])('keeps paid bundles pending when %s proof is wrong', async problem => {
+    const posts = installSuccessfulBundle()
+    if (problem === 'transaction UUID') {
+      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST'
+        ? originalFetch(input, init)
+        : response({ transactions: successfulRecords(posts[0]).map(record => ({ ...record, tx_uuid: THIRD_UUID })) }))
+    } else if (problem === 'calldata') {
+      const originalTransaction = mocks.client.getTransaction.getMockImplementation()!
+      mocks.client.getTransaction.mockImplementation(async input => ({ ...await originalTransaction(input), input: '0x1234' }))
+    } else if (problem === 'receipt status') {
+      const originalReceipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+      mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await originalReceipt(input), status: 'reverted' }))
+    } else {
+      mocks.client.getBlock.mockResolvedValue({ hash: HASH })
+    }
+    const options = { calls, account: ALICE, pendingScope: `wrong-${problem}` }
+    await expect(runRelayrCalls(options)).rejects.toThrow(/exact destination|does not prove|no longer canonical/i)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'confirmed', paymentHash: HASH })
+    await expect(runRelayrCalls(options)).rejects.toThrow(/exact destination|does not prove|no longer canonical/i)
+    expect(loadRelayrPendingSession(options.pendingScope)).not.toBeNull()
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not clear a legacy paid session using API success labels alone', async () => {
+    const scope = 'legacy-api-only'
+    saveRelayrPendingSession(scope, {
+      bundleUuid: BUNDLE_UUID, paymentHash: HASH, paymentChainId: 1, paymentStatus: 'confirmed',
+      chainIds: [1], expectedCount: 1, itemCount: 1, account: ALICE, createdAt: Date.now(),
+      records: successfulRecords([signedEntry()]),
+    })
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: scope })).rejects.toThrow(/lacks exact destination proof/i)
+    expect(loadRelayrPendingSession(scope)?.paymentHash).toBe(HASH)
+    expect(mocks.client.getTransaction).not.toHaveBeenCalled()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

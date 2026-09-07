@@ -377,7 +377,7 @@ describe('LP edit encoders', () => {
   })
 
   it('renders an increase plan as a readable step in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewProvider')
+    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
     const steps = describeV4UnlockData(
       buildIncreaseLiquidityUnlockData({
         tokenId: 7n,
