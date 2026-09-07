@@ -48,7 +48,7 @@ export const ensRegistryAbi = [
   },
 ] as const
 
-export const ensNameWrapperAbi = [
+const ensNameWrapperAbi = [
   {
     type: 'function',
     name: 'ownerOf',

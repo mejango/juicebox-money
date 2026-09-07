@@ -9,7 +9,7 @@ import {
   describeSuckerClaim,
   describeSplitGroups,
   type PrettyStep,
-} from "@/components/TransactionReviewProvider"
+} from "@/components/TransactionReviewDialog"
 import { safeSetupAbi, safeToL2SetupAbi } from "@/lib/cross-chain-authority"
 import { createHookMetadata, hookMetadataId, jbControllerAbi } from "@bananapus/nana-sdk-core";
 import {

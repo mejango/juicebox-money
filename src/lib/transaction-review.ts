@@ -55,6 +55,65 @@ type TransactionReviewHandler = (
 
 const transactionReviewHandlers: TransactionReviewHandler[] = []
 
+export type FundingChainOption = {
+  chainId: number
+  /** The chain name and quoted funding cost shown to the user. */
+  label: string
+}
+
+type FundingChainSelectionHandler = (
+  options: readonly FundingChainOption[],
+) => Promise<number | null>
+
+const fundingChainSelectionHandlers: FundingChainSelectionHandler[] = []
+
+export function registerFundingChainSelectionHandler(
+  handler: FundingChainSelectionHandler,
+): () => void {
+  fundingChainSelectionHandlers.push(handler)
+  return () => {
+    const index = fundingChainSelectionHandlers.lastIndexOf(handler)
+    if (index >= 0) fundingChainSelectionHandlers.splice(index, 1)
+  }
+}
+
+/** Funding always requires an explicit choice, even with one quoted option. */
+export async function requireFundingChainSelection(
+  options: readonly FundingChainOption[],
+): Promise<number> {
+  const snapshot = options.map(option => ({ ...option }))
+  const chainIds = new Set(snapshot.map(option => option.chainId))
+  if (
+    !snapshot.length ||
+    chainIds.size !== snapshot.length ||
+    snapshot.some(
+      option =>
+        !Number.isSafeInteger(option.chainId) ||
+        option.chainId <= 0 ||
+        !option.label.trim(),
+    )
+  ) {
+    throw new Error(
+      'No valid funding chain choices are available. Request a new quote.',
+    )
+  }
+  const handler =
+    fundingChainSelectionHandlers[fundingChainSelectionHandlers.length - 1]
+  if (!handler) {
+    throw new Error(
+      'Funding chain selection is unavailable. Reload the page before continuing.',
+    )
+  }
+  const selected = await handler(snapshot)
+  if (selected === null) {
+    throw new Error('Funding chain selection cancelled. Nothing was sent.')
+  }
+  if (!chainIds.has(selected)) {
+    throw new Error('The selected funding chain is not available in this quote.')
+  }
+  return selected
+}
+
 /**
  * The provider registers the only UI capable of approving a transaction.
  * Keeping the entry point in a small client module lets non-React wallet

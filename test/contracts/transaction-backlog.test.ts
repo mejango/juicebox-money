@@ -462,7 +462,7 @@ describe('remaining local transaction builders', () => {
   })
 
   it('renders a move plan as readable steps in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewProvider')
+    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
     const mintParams = encodeAbiParameters(
       [
         {

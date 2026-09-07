@@ -29,7 +29,7 @@ export function chainName(chainId: number): string {
   return displayChainName(chainId)
 }
 
-export const LEGACY_SITE = 'https://old.juicebox.money'
+const LEGACY_SITE = 'https://old.juicebox.money'
 
 /**
  * Rebuild a request path on the legacy site with each segment decoded once and

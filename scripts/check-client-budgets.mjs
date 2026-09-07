@@ -9,27 +9,25 @@ const legacyManifestPath = join(distDir, 'app-build-manifest.json')
 
 const budgets = {
   routes: {
-    // The root layout carries the shared Wagmi + exact-transaction-review
-    // runtime on every route. Keep a narrow ceiling around its measured size;
-    // aggregate and largest-chunk budgets below still catch shared regressions.
-    // The shared Bendystraw client includes fail-closed network routing, and
-    // canonical SDK chain metadata replaces the warning-prone viem barrel.
-    // The shared all-chain direct-pay and Permit2 review paths add ~6 KiB to
-    // the landing route after package-import optimization. Next 16's emitted
-    // route graph measures ~426 KiB in CI on Next 16.3 + wagmi 3.7.6; keep a narrow ceiling
-    // around that baseline while the aggregate and largest-chunk budgets below
-    // still catch broader regressions.
+    // The root layout carries shared Wagmi and an always-ready transaction
+    // review queue. The full decoder/dialog loads on request; home measures
+    // ~423 KiB after that split. Retain the original route ceiling.
     '/page': 428 * KIB,
     '/[urn]/page': 570 * KIB,
-    // The production create graph measures ~483 KiB. Leave only a small
-    // allowance for build variance.
+    // Rules/shop editors load when their step opens; drafts and validation
+    // stay in the parent. Create measures ~481 KiB, within the original cap.
     '/create/page': 485 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK here; the per-route budgets above and the
   // per-SDK lazy-load assertions below are what actually protect first paint.
-  allScripts: 2400 * KIB,
+  // Six project batch groups and durable Safe/nonce recovery measured 2402.8
+  // KiB. Deferring review and create editors adds 5.1 KiB across emitted
+  // chunks (separate gzip streams), while initial home/create loads shrink by
+  // 13.0/20.3 KiB. Final aggregate is 2407.9 KiB; allow 2.1 KiB of headroom.
+  // Route ceilings are unchanged, and the assertions below protect lazy UI.
+  allScripts: 2410 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
@@ -178,6 +176,26 @@ if (!chunks.length) {
   )
   if (largest.size > budgets.largestChunk) {
     fail(`largest client chunk exceeds budget (${largest.path})`)
+  }
+
+  // The global queue must be available before a write, but its full calldata
+  // decoder and dialog have no work until a review is requested.
+  const reviewFiles = new Set(
+    chunks
+      .filter(path => readFileSync(path, 'utf8').includes('Raw transaction payload'))
+      .map(path => relative(distDir, path).split(sep).join('/')),
+  )
+  if (!reviewFiles.size) {
+    fail('transaction review dialog is missing from the production build')
+  } else {
+    const eager = Object.keys(budgets.routes).flatMap(route =>
+      (pages[route] ?? []).filter(file => reviewFiles.has(file)),
+    )
+    if (eager.length) {
+      fail(`transaction review dialog is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
+    } else {
+      process.stdout.write('PASS transaction review dialog is lazy-loaded\n')
+    }
   }
 
   const paraScripts = chunks.filter(path => {

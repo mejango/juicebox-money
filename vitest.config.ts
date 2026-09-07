@@ -39,7 +39,9 @@ export default defineConfig({
         branches: 8,
         functions: 9.1,
         lines: 10.9,
-        'src/components/project/AutoIssuanceSection.tsx': {
+        // The issuance write/recovery boundary now lives in this shared flow;
+        // AutoIssuanceSection retains the allocation table and delegates writes.
+        'src/components/project/ProjectTokenBatchFlow.tsx': {
           statements: 30,
           branches: 25,
           functions: 18,

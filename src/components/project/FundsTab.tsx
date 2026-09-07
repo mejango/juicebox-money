@@ -32,6 +32,7 @@ import {
 } from 'viem'
 import { useConfig, usePublicClient, useReadContract } from 'wagmi'
 import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
+import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
@@ -49,10 +50,7 @@ import {
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-import {
-  buildSendPayoutsRequest,
-  buildUseAllowanceRequest,
-} from '@/lib/transaction-builders'
+import { buildUseAllowanceRequest } from '@/lib/transaction-builders'
 import { PERSIST } from '@/lib/query-persist'
 
 /** A payout limit or surplus allowance entry with its live usage. */
@@ -371,7 +369,7 @@ function remainingLabel(
 /**
  * A single, token-tabbed Funds surface matching website/: the selected
  * accounting token is aggregated across every deployment, then broken down
- * by chain. Writes remain scoped to the project's home deployment.
+ * by chain. Payouts select live destinations; surplus allowances stay local.
  */
 export function FundsTab({
   chainId,
@@ -655,34 +653,7 @@ export function FundsTab({
               </p>
             )}
             <div className="mt-4">
-              {hasPayoutLimit &&
-              (!home.ownerMustSendPayouts || isOwner) ? (
-                <FundsTxFlow
-                  kind="payouts"
-                  chainId={chainId}
-                  projectId={projectId}
-                  ctx={home.ctx}
-                  terminal={home.terminal}
-                  store={home.store}
-                  limitsAddress={home.limitsAddress}
-                  lines={home.payoutLines.filter(line => line.amount > 0n)}
-                  balance={home.balance}
-                  tokenSymbol={home.tokenSymbol}
-                  onDone={() => void refetch()}
-                />
-              ) : hasPayoutLimit && home.ownerMustSendPayouts ? (
-                <p className="text-xs text-smoke-700">
-                  Only the project owner can distribute payouts.
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-secondary min-h-[40px] px-4 text-sm"
-                  disabled
-                >
-                  Distribute payouts
-                </button>
-              )}
+              <DistributionBatchFlow kind="payouts" chainId={chainId} projectId={projectId} chains={chainPairs} homeToken={home.ctx.token} onDone={() => void refetch()} />
             </div>
           </section>
 
@@ -701,7 +672,6 @@ export function FundsTab({
             <div className="mt-5">
               {isOwner && hasAllowance ? (
                 <FundsTxFlow
-                  kind="allowance"
                   chainId={chainId}
                   projectId={projectId}
                   ctx={home.ctx}
@@ -817,12 +787,8 @@ function PayoutsTable({
 /** A reviewed, ready-to-send transaction: the exact args (including the min
  *  that was displayed) are frozen here so what the user confirms is what's
  *  sent. */
-type FundsWriteRequest =
-  | ReturnType<typeof buildSendPayoutsRequest>
-  | ReturnType<typeof buildUseAllowanceRequest>
-
 type ReviewedTx = {
-  request: FundsWriteRequest
+  request: ReturnType<typeof buildUseAllowanceRequest>
   /** The simulated amount that will be paid out, in the token's decimals. */
   quote: bigint
   /** The minTokensPaidOut param inside `args`, in the token's decimals. */
@@ -831,25 +797,7 @@ type ReviewedTx = {
   account: Address
 }
 
-/**
- * The two branches ARE identical at runtime, and deliberately so: `FundsWriteRequest` is a
- * union of per-function shapes, and `simulateContract` only resolves a single overload once
- * the union is narrowed. Calling it on the un-narrowed union does not typecheck. Discriminate
- * first, then call — do not "simplify" this back into one call.
- */
-async function simulateFundsRequest(
-  publicClient: PublicClient,
-  request: FundsWriteRequest,
-  account: Address,
-) {
-  if (request.functionName === 'sendPayoutsOf') {
-    return publicClient.simulateContract({ ...request, account })
-  }
-  return publicClient.simulateContract({ ...request, account })
-}
-
 function FundsTxFlow({
-  kind,
   chainId,
   projectId,
   ctx,
@@ -861,14 +809,13 @@ function FundsTxFlow({
   tokenSymbol,
   onDone,
 }: {
-  kind: 'payouts' | 'allowance'
   chainId: JBChainId
   projectId: number
   ctx: JBAccountingContext
   terminal: Address
   store: Address
   limitsAddress: Address
-  /** The configured limit/allowance entries (amount > 0). */
+  /** The configured surplus allowance entries (amount > 0). */
   lines: LimitLine[]
   /** The project's balance of the token, for the MAX convenience cap. */
   balance: bigint
@@ -919,8 +866,7 @@ function FundsTxFlow({
     }
   }, [amount, decimals])
 
-  const label =
-    kind === 'payouts' ? 'Distribute payouts' : 'Use surplus allowance'
+  const label = 'Use surplus allowance'
 
   const closeAndReset = () => {
     setOpen(false)
@@ -951,8 +897,7 @@ function FundsTxFlow({
         publicClient.readContract({
           abi: jbFundAccessLimitsAbi,
           address: limitsAddress,
-          functionName:
-            kind === 'payouts' ? 'payoutLimitsOf' : 'surplusAllowancesOf',
+          functionName: 'surplusAllowancesOf',
           args: [
             BigInt(projectId),
             BigInt(fresh.ruleset.id),
@@ -970,32 +915,25 @@ function FundsTxFlow({
       const freshLine = freshLimits.find(l => l.currency === line.currency)
       if (!freshLine || freshLine.amount <= 0n) {
         throw new FlowError(
-          kind === 'payouts'
-            ? 'Nothing can be paid out under the current rules.'
-            : 'The current rules no longer grant a surplus allowance.',
+          'The current rules no longer grant a surplus allowance.',
         )
       }
       const used = (await publicClient.readContract({
         abi: jbTerminalStoreAbi,
         address: store,
-        functionName:
-          kind === 'payouts' ? 'usedPayoutLimitOf' : 'usedSurplusAllowanceOf',
+        functionName: 'usedSurplusAllowanceOf',
         args: [
           terminal,
           BigInt(projectId),
           ctx.token,
-          kind === 'payouts'
-            ? BigInt(fresh.ruleset.cycleNumber)
-            : BigInt(fresh.ruleset.id),
+          BigInt(fresh.ruleset.id),
           BigInt(line.currency),
         ],
       })) as bigint
       const remaining = freshLine.amount > used ? freshLine.amount - used : 0n
       if (remaining <= 0n) {
         throw new FlowError(
-          kind === 'payouts'
-            ? 'The payout limit for this cycle has already been fully used.'
-            : 'The surplus allowance has already been fully used.',
+          'The surplus allowance has already been fully used.',
         )
       }
       if (parsedAmount > remaining) {
@@ -1015,39 +953,22 @@ function FundsTxFlow({
       // The exact call args for a given min-out: the quote simulates with 0,
       // and the reviewed transaction reuses the same builder with the
       // enforced min, so the two can never drift.
-      const requestWithMin = (
-        min: bigint,
-      ): FundsWriteRequest =>
-        kind === 'payouts'
-          ? buildSendPayoutsRequest({
-              chainId,
-              terminal,
-              projectId: BigInt(projectId),
-              token: ctx.token,
-              amount: parsedAmount,
-              currency: BigInt(line.currency),
-              minTokensPaidOut: min,
-            })
-          : buildUseAllowanceRequest({
-              chainId,
-              terminal,
-              projectId: BigInt(projectId),
-              token: ctx.token,
-              amount: parsedAmount,
-              currency: BigInt(line.currency),
-              minTokensPaidOut: min,
-              beneficiary: address,
-            })
+      const requestWithMin = (min: bigint) => buildUseAllowanceRequest({
+        chainId,
+        terminal,
+        projectId: BigInt(projectId),
+        token: ctx.token,
+        amount: parsedAmount,
+        currency: BigInt(line.currency),
+        minTokensPaidOut: min,
+        beneficiary: address,
+      })
 
       // Quote: simulate the exact call with min = 0. The simulated return
-      // value (amountPaidOut / netAmountPaidOut) is the quote, in the
+      // value (netAmountPaidOut) is the quote, in the
       // token's decimals.
       const quoteRequest = requestWithMin(0n)
-      const sim = await simulateFundsRequest(
-        publicClient,
-        quoteRequest,
-        address,
-      )
+      const sim = await publicClient.simulateContract({ ...quoteRequest, account: address })
       const quote = sim.result as bigint
       if (quote <= 0n) {
         throw new FlowError(
@@ -1055,12 +976,8 @@ function FundsTxFlow({
         )
       }
 
-      // The min the transaction enforces: for payouts in the token's own
-      // currency the quote is exact (no price conversion), so demand it
-      // exactly; anywhere a price feed is involved (other currencies, and
-      // the allowance flow per spec) allow 1% of drift.
-      const min =
-        kind === 'payouts' && tokenKeyed ? quote : (quote * 99n) / 100n
+      // Allowance withdrawals retain a 1% minimum-output tolerance.
+      const min = (quote * 99n) / 100n
 
       setReview({
         request: requestWithMin(min),
@@ -1098,18 +1015,12 @@ function FundsTxFlow({
       open
       preparing={!review}
       onClose={closeReview}
-      title={
-        tx.phase === 'success'
-          ? kind === 'payouts'
-            ? 'Payouts sent'
-            : 'Funds withdrawn'
-          : `Confirm ${kind === 'payouts' ? 'payouts' : 'withdrawal'}`
-      }
+      title={tx.phase === 'success' ? 'Funds withdrawn' : 'Confirm withdrawal'}
       rows={(() => {
         if (!review) return []
         const rows: TxConfirmRow[] = [
           {
-            label: kind === 'payouts' ? 'Distribute' : 'Withdraw',
+            label: 'Withdraw',
             value: `${formatTokenAmount(parsedAmount, decimals)} ${amountLabel}`,
             strong: true,
           },
@@ -1117,16 +1028,14 @@ function FundsTxFlow({
         if (!tokenKeyed) rows.push({ label: 'Paid in', value: tokenSymbol })
         rows.push(
           {
-            label: kind === 'payouts' ? 'Recipients get' : 'You get',
+            label: 'You get',
             value: `~${formatTokenAmount(review.quote, ctx.decimals)} ${tokenSymbol}`,
           },
           {
             label: 'At least',
             value: `${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol}`,
           },
-          kind === 'payouts'
-            ? { label: 'To', value: 'The configured payout recipients' }
-            : { label: 'Beneficiary', value: review.account, mono: true },
+          { label: 'Beneficiary', value: review.account, mono: true },
           { label: 'On', value: chainName(chainId) },
         )
         return rows
@@ -1136,9 +1045,7 @@ function FundsTxFlow({
           ? [
               {
                 title: label,
-                detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} ${
-                  kind === 'payouts' ? 'is paid out' : 'reaches you'
-                }.`,
+                detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} reaches you.`,
               },
             ]
           : []
@@ -1147,18 +1054,12 @@ function FundsTxFlow({
       complete={tx.phase === 'success'}
       busy={busy}
       action={
-        tx.phase === 'error'
-          ? 'Retry'
-          : kind === 'payouts'
-            ? 'Confirm & send payouts'
-            : 'Confirm & withdraw'
+        tx.phase === 'error' ? 'Retry' : 'Confirm & withdraw'
       }
       onConfirm={handleConfirm}
       status={
         !review ? (
-          kind === 'payouts'
-            ? 'Checking what can be paid out…'
-            : 'Checking what you can withdraw…'
+          'Checking what you can withdraw…'
         ) : tx.phase === 'pending' ? (
           <>
             Waiting for confirmation
@@ -1181,9 +1082,7 @@ function FundsTxFlow({
       error={tx.error}
     >
       <p className="text-xs text-smoke-700">
-        {kind === 'payouts'
-          ? 'Recipients outside Juicebox receive 2.5% less — the protocol fee.'
-          : 'A 2.5% protocol fee applies.'}
+        A 2.5% protocol fee applies.
       </p>
     </TxConfirmDialog>
   ) : null
@@ -1203,9 +1102,7 @@ function FundsTxFlow({
     return (
       <div className="rounded-xl border border-smoke-200 p-4">
         <p className="text-sm font-medium text-ink">
-          {kind === 'payouts'
-            ? 'Payouts sent to the recipients.'
-            : 'Funds sent to your wallet.'}
+          Funds sent to your wallet.
         </p>
         <div className="mt-2 flex gap-3 text-sm font-semibold">
           {txUrl ? (
@@ -1318,11 +1215,7 @@ function FundsTxFlow({
         disabled={busy || (isConnected && parsedAmount <= 0n)}
         className="btn-primary mt-3 min-h-[44px] w-full text-sm"
       >
-        {!isConnected
-          ? 'Sign in to continue'
-          : kind === 'payouts'
-            ? 'Send payouts'
-            : 'Withdraw'}
+        {!isConnected ? 'Sign in to continue' : 'Withdraw'}
       </button>
 
       <TxError

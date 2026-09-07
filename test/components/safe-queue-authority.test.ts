@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   simulateStateChangingTransaction: vi.fn(),
   getTransaction: vi.fn(),
   getTransactionReceipt: vi.fn(),
+  getBlock: vi.fn(),
   readSafeNonce: vi.fn(),
 }))
 
@@ -23,6 +24,7 @@ vi.mock('@/lib/authority', () => ({
     readContract: mocks.readContract,
     getTransaction: mocks.getTransaction,
     getTransactionReceipt: mocks.getTransactionReceipt,
+    getBlock: mocks.getBlock,
   }),
 }))
 vi.mock('@/lib/project-handles', async (importOriginal) => ({
@@ -63,6 +65,7 @@ const OTHER = '0x2222222222222222222222222222222222222222' as Address
 const RESOLVER = '0x3333333333333333333333333333333333333333' as Address
 const CHAIN_ID = 1 as JBChainId
 const DESTINATION_HASH = `0x${'ab'.repeat(32)}` as Hex
+const BLOCK_HASH = `0x${'ef'.repeat(32)}` as Hex
 const SAFE_TX_HASH = `0x${'cd'.repeat(32)}` as Hex
 const TX_UUID = 'fedcba98-7654-3210-fedc-ba9876543210'
 const EXECUTION_SUCCESS_TOPIC = keccak256(
@@ -95,6 +98,10 @@ beforeEach(() => {
   mocks.readBoundedProjectHandle.mockResolvedValue('design.juicebox')
   mocks.simulateStateChangingTransaction.mockResolvedValue('0x')
   mocks.getTransaction.mockResolvedValue({
+    hash: DESTINATION_HASH,
+    chainId: CHAIN_ID,
+    blockHash: BLOCK_HASH,
+    blockNumber: 100n,
     to: SAFE,
     value: 5n,
     input: '0x1234',
@@ -102,6 +109,8 @@ beforeEach(() => {
   mocks.getTransactionReceipt.mockResolvedValue({
     status: 'success',
     transactionHash: DESTINATION_HASH,
+    blockHash: BLOCK_HASH,
+    blockNumber: 100n,
     logs: [
       {
         address: SAFE,
@@ -111,6 +120,7 @@ beforeEach(() => {
     ],
   })
   mocks.readSafeNonce.mockResolvedValue(2n)
+  mocks.getBlock.mockResolvedValue({ hash: BLOCK_HASH })
 })
 
 function chain(isRevnet: boolean): SafeQueueChain {
@@ -335,6 +345,10 @@ describe('Relayr Safe destination proof', () => {
 
   it('binds a Relayr success row to the exact outer call and Safe success event', async () => {
     mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: entry.data,
@@ -350,6 +364,10 @@ describe('Relayr Safe destination proof', () => {
 
   it('keeps the paid bundle unresolved when calldata or the Safe event differs', async () => {
     mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: '0x5678',
@@ -361,6 +379,8 @@ describe('Relayr Safe destination proof', () => {
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       logs: [],
     })
     await expect(
@@ -368,8 +388,51 @@ describe('Relayr Safe destination proof', () => {
     ).rejects.toThrow(/exact Safe execution/i)
   })
 
+  it('retains a receipt that no longer belongs to the canonical block', async () => {
+    mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
+      to: SAFE,
+      value: 0n,
+      input: entry.data,
+    })
+    mocks.getBlock.mockResolvedValueOnce({ hash: `0x${'ff'.repeat(32)}` })
+    await expect(
+      verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
+    ).rejects.toThrow(/no longer canonical/i)
+    expect(mocks.getBlock).toHaveBeenCalledWith({ blockNumber: 100n })
+  })
+
+  it.each([
+    { hash: `0x${'ff'.repeat(32)}` },
+    { chainId: 10 },
+    { blockHash: `0x${'ff'.repeat(32)}` },
+    { blockNumber: 99n },
+  ])('rejects a destination transaction with mismatching inclusion fields: %o', async (fields) => {
+    mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
+      to: SAFE,
+      value: 0n,
+      input: entry.data,
+      ...fields,
+    })
+    await expect(
+      verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
+    ).rejects.toThrow(/exact Safe execution/i)
+    expect(mocks.getBlock).not.toHaveBeenCalled()
+  })
+
   it('accepts the Safe 1.3 non-indexed ExecutionSuccess layout', async () => {
     mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: entry.data,
@@ -377,6 +440,8 @@ describe('Relayr Safe destination proof', () => {
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       logs: [
         {
           address: SAFE,
@@ -392,6 +457,10 @@ describe('Relayr Safe destination proof', () => {
 
   it('rejects a nonzero Safe reimbursement payment in the success event', async () => {
     mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: entry.data,
@@ -399,6 +468,8 @@ describe('Relayr Safe destination proof', () => {
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       logs: [
         {
           address: SAFE,
@@ -425,6 +496,10 @@ describe('Relayr Safe destination proof', () => {
       queued(call.target, call.data),
     )
     mocks.getTransaction.mockResolvedValue({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: resolverEntry.data,
@@ -468,6 +543,10 @@ describe('Relayr Safe destination proof', () => {
       queued(call.target, call.data),
     )
     mocks.getTransaction.mockResolvedValue({
+      hash: DESTINATION_HASH,
+      chainId: CHAIN_ID,
+      blockHash: BLOCK_HASH,
+      blockNumber: 100n,
       to: SAFE,
       value: 0n,
       input: handleEntry.data,

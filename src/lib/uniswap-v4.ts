@@ -114,7 +114,7 @@ export function solveRangeFromAmounts(inputs: {
  * matches a classic v2 pool to within ~0.01% while staying inside usable tick
  * bounds at any pair decimals.
  */
-export const FULL_RANGE_FACTOR = 1e9
+const FULL_RANGE_FACTOR = 1e9
 
 export function fullRangeBounds(
   price: number,

@@ -18,7 +18,7 @@ import {
 import { chainName } from '@/lib/urn'
 
 /** A pair JBPrices proved it cannot resolve on one chain. */
-export type MissingFeed = { chainId: number; aLabel: string; bLabel: string }
+type MissingFeed = { chainId: number; aLabel: string; bLabel: string }
 
 /**
  * The launch guard's verdict. Anything other than `ok` blocks the launch —
