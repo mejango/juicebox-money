@@ -175,7 +175,7 @@ beforeEach(() => {
 
 describe('Authority gas estimation reaches the signed Relayr request', () => {
   it.each([
-    [11155111, 11155420],
+    [1, 11155111],
     [1, 1],
   ] as const)('rejects direct batches on chains %s and %s before sending their first call', async (first, second) => {
     await expect(runAuthorityCalls({ calls: [

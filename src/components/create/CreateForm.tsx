@@ -133,6 +133,7 @@ import {
   type ChainEnvironment,
 } from "@/lib/chains";
 import { itemOk, type DraftItem } from "./store-draft";
+import { relayrPaymentChains, relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
@@ -434,7 +435,7 @@ export function CreateForm() {
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
-  const [paymentChainId, setPaymentChainId] = useState(8453);
+  const [paymentChainChoice, setPaymentChainChoice] = useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
@@ -455,8 +456,15 @@ export function CreateForm() {
   const usesRelayr = restoredSessionRef.current
     ? restoredSessionRef.current.transport === "relayr"
     : selected.length > 1 &&
-      selected.every((id) => PRODUCTION_CHAINS.some((chain) => chain.id === id)) &&
+      relayrSupportsChains(selected) &&
       !isSafeConnection(config);
+  const paymentChainIds = relayrPaymentChains(restoredSessionRef.current?.chains ?? selected);
+  // Keep an interrupted run's choice verbatim. A fresh draft follows its
+  // network family, defaulting to Base or Base Sepolia until the user chooses.
+  const paymentChainId = paymentChainChoice !== null &&
+    (restoredSessionRef.current !== null || paymentChainIds.includes(paymentChainChoice))
+    ? paymentChainChoice
+    : paymentChainIds.find(id => id === 8453 || id === 84532) ?? paymentChainIds[0] ?? 8453;
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -1940,7 +1948,8 @@ export function CreateForm() {
     const session = loadLaunchSession();
     if (!session) return;
     restoredSessionRef.current = session;
-    if (session.paymentChainId) setPaymentChainId(session.paymentChainId);
+    const savedPaymentChain = session.relayr?.paymentChainId ?? session.paymentChainId;
+    if (savedPaymentChain) setPaymentChainChoice(savedPaymentChain);
     setEnvironment(environmentForChainIds(session.chains));
     setSelected(session.chains);
     statusesRef.current = session.statuses;
@@ -2200,12 +2209,12 @@ export function CreateForm() {
           <select
             value={paymentChainId}
             disabled={launchLocked || Boolean(relayrFundingStarted)}
-            onChange={(event) => setPaymentChainId(Number(event.target.value))}
+            onChange={(event) => setPaymentChainChoice(Number(event.target.value))}
             className="w-full border border-smoke-300 bg-white px-3 py-2"
           >
-            {PRODUCTION_CHAINS.map((chain) => (
-              <option key={chain.id} value={chain.id}>
-                {chain.name}
+            {paymentChainIds.map((chainId) => (
+              <option key={chainId} value={chainId}>
+                {chainName(chainId)}
               </option>
             ))}
           </select>

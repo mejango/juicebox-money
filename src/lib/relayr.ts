@@ -25,6 +25,7 @@ import { requireFundingChainSelection, requireTransactionReview } from '@/lib/tr
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
+import { relayrSupportsChain, relayrSupportsChains, relayrPaymentChains } from '@/lib/relayr-chains'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -54,14 +55,9 @@ export const RELAYR_PAYMENT_CODE_HASH =
   '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6' as Hex
 export const RELAYR_NATIVE_TOKEN =
   '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
-const RELAYR_PAYMENT_CHAINS = new Set<number>([1, 10, 8453, 42161])
 export const TRUSTED_FORWARDER_ABI = [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
   inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }] as const
 const activeRelayrScopes = new Set<string>()
-
-export function relayrSupportsChain(chainId: number): boolean {
-  return RELAYR_PAYMENT_CHAINS.has(chainId)
-}
 
 /** Serialize payment and recovery for one saved action across tabs as well as components. */
 export async function withRelayrScopeLock<T>(scope: string, execute: () => Promise<T>): Promise<T> {
@@ -907,6 +903,9 @@ export async function buildForwardedTx(
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
 ): Promise<RelayrQuote> {
+  if (!relayrSupportsChains([...new Set(transactions.map(transaction => transaction.chain))])) {
+    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
+  }
   const nextNonce = new Map<number, number>()
   const ordered = transactions.map(transaction => {
     const nonce = nextNonce.get(transaction.chain) ?? 0
@@ -1006,7 +1005,7 @@ export function relayrPaymentDetails(
   const chainId = Number(payment?.chain) as JBChainId
   if (
     !Number.isSafeInteger(chainId) ||
-    !RELAYR_PAYMENT_CHAINS.has(chainId) ||
+    !relayrSupportsChain(chainId) ||
     !SUPPORTED_CHAINS.some(chain => chain.id === chainId)
   ) {
     throw new Error('Relayr returned an unsupported payment chain.')
@@ -1128,9 +1127,10 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
 }
 
 /** Invalid provider options never reach the funding picker or amount sorter. */
-export function relayrPaymentOptions(quote: RelayrQuote): RelayrPayment[] {
+export function relayrPaymentOptions(quote: RelayrQuote, destinationChainIds: readonly number[]): RelayrPayment[] {
+  const allowed = relayrPaymentChains([...new Set(destinationChainIds)])
   const options = quote.payment_info.filter(payment => {
-    try { relayrPaymentDetails(payment, quote.bundle_uuid); return true } catch { return false }
+    try { return allowed.includes(relayrPaymentDetails(payment, quote.bundle_uuid).chainId) } catch { return false }
   })
   const chains = new Set<number>()
   return options.filter(payment => {
@@ -1144,12 +1144,22 @@ export async function relayrPay(
   payment: RelayrPayment,
   expectedAccount: Address,
   expectedBundleUuid: string,
+  destinationChainIds: readonly number[],
   onSubmitted?: (hash: Hex) => void,
   reverify?: () => Promise<void>,
   onSending?: () => void,
 ): Promise<Hex> {
   assertNoViewAs()
-  let details = relayrPaymentDetails(payment, expectedBundleUuid)
+  const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])
+  const readBoundPayment = () => {
+    const current = relayrPaymentDetails(payment, expectedBundleUuid)
+    if (!fundingChains.includes(current.chainId)) {
+      throw new Error('Choose a supported Relayr funding chain in the same network family as these destinations.')
+    }
+    return current
+  }
+  let details = readBoundPayment()
+  const reviewed = details
   await reverify?.()
   const chainId = details.chainId
   const client = publicClient(chainId)
@@ -1176,7 +1186,10 @@ export async function relayrPay(
     ],
   })
 
-  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  details = readBoundPayment()
+  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
+    throw new Error('The Relayr payment changed. Review the original funding choice again.')
+  }
   await reverify?.()
   const { wallet, account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
@@ -1190,7 +1203,10 @@ export async function relayrPay(
   }
   // Review and wallet preparation are open-ended. Re-authenticate the exact
   // quote immediately before the fixed-gas write.
-  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  details = readBoundPayment()
+  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
+    throw new Error('The Relayr payment changed. Review the original funding choice again.')
+  }
   await reverify?.()
   onSending?.()
   let hash: Hex
@@ -1518,13 +1534,18 @@ async function executeRelayrCalls({
   }
 
   if (isSafeConnection(wagmiConfig) || calls.some(call => !relayrSupportsChain(call.chainId))) {
-    throw new Error('Relayed authority actions require an ordinary wallet and supported mainnet destinations.')
+    throw new Error('Relayed authority actions require an ordinary wallet and supported destinations.')
   }
   if (new Set(calls.map(call => call.chainId)).size !== calls.length) {
     throw new Error('Relayr can authorize one independent call per destination chain. Complete dependent calls in sequence.')
   }
-  if (paymentChainId !== undefined && !relayrSupportsChain(paymentChainId)) {
-    throw new Error('Choose a supported Relayr funding chain.')
+  const destinations = calls.map(call => call.chainId)
+  const fundingChains = relayrPaymentChains(destinations)
+  if (!fundingChains.length) {
+    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
+  }
+  if (paymentChainId !== undefined && !fundingChains.includes(paymentChainId)) {
+    throw new Error('Choose a supported Relayr funding chain in the same network family as these destinations.')
   }
   for (const call of calls) {
     if (!await relayrTargetSupportsForwarder(call)) {
@@ -1576,8 +1597,8 @@ async function executeRelayrCalls({
   const quote = await relayrPostBundle(entries)
   session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions }
   if (pendingScope) session = persistRelayrPublication(pendingScope, session)
-  const payments = relayrPaymentOptions(quote)
-  if (!payments.length) throw new Error('Relayr returned no supported payment option.')
+  const payments = relayrPaymentOptions(quote, destinations)
+  if (!payments.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
   const selectedChain = paymentChainId ?? await requireFundingChainSelection(
     payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })),
   )
@@ -1605,7 +1626,7 @@ async function executeRelayrCalls({
   }
   let paymentHash: Hex
   try {
-    paymentHash = await relayrPay(payment, account, quote.bundle_uuid, hash => {
+    paymentHash = await relayrPay(payment, account, quote.bundle_uuid, destinations, hash => {
       session = { ...session, paymentHash: hash, paymentStatus: 'submitted' }
       if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
       onProgress?.({ phase: 'payment-submitted', payment, paymentHash: hash, bundleUuid: quote.bundle_uuid })

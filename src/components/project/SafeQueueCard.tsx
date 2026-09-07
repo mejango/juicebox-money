@@ -47,7 +47,6 @@ import {
   relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
-  relayrSupportsChain,
   saveRelayrPendingSession,
   saveRelayrPendingSessionDurably,
   withRelayrScopeLock,
@@ -58,6 +57,7 @@ import {
   type RelayrSafeExecutionProof,
   type RelayrTransactionRecord,
 } from "@/lib/relayr";
+import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   confirmSafeTx,
   canonicalSafeTxHash,
@@ -1053,8 +1053,8 @@ export function SafeQueueCard({
     return rows;
   }, [query.data]);
   const relayrBatch = useMemo(() => {
-    return new Set(ready.map((row) => row.chain.chainId)).size > 1 &&
-      ready.every((row) => relayrSupportsChain(row.chain.chainId));
+    const destinations = [...new Set(ready.map((row) => row.chain.chainId))];
+    return destinations.length > 1 && relayrSupportsChains(destinations);
   }, [ready]);
   const readyBatchCount = relayrBatch
     ? new Set(ready.map((row) => row.chain.chainId)).size
@@ -1312,7 +1312,7 @@ export function SafeQueueCard({
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
       const quote = await relayrPostBundle(entries);
-      const payments = relayrPaymentOptions(quote);
+      const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
       setPaymentIndex(-1);
       setBatchReview({ quote, rows: verifiedRows, entries, payments });
       setNotice(null);
@@ -1372,7 +1372,7 @@ export function SafeQueueCard({
       if (deadlineSoon) {
         setNotice("The Relayr quote is about to expire — requesting a fresh one…");
         const refreshedQuote = await relayrPostBundle(batchReview.entries);
-        const payments = relayrPaymentOptions(refreshedQuote);
+        const payments = relayrPaymentOptions(refreshedQuote, batchReview.entries.map((entry) => entry.chain));
         setBatchReview({ ...batchReview, quote: refreshedQuote, payments });
         setPaymentIndex(-1);
         setNotice("The quote was refreshed. Choose a funding chain and review the new payment.");
@@ -1434,6 +1434,7 @@ export function SafeQueueCard({
         payment,
         address,
         quote.bundle_uuid,
+        batchReview.entries.map((entry) => entry.chain),
         (hash) => {
           submittedSession = saveRelayrPendingSession(pendingScope, {
             bundleUuid: quote.bundle_uuid,

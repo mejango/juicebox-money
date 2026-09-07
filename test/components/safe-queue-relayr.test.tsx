@@ -175,7 +175,7 @@ beforeEach(() => {
   })
   mocks.clear.mockReset().mockImplementation(() => { mocks.session = null })
   mocks.pay.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-    args[5]?.()
+    args[6]?.()
     throw new RelayrPaymentSendingError()
   })
   mocks.poll.mockReset().mockRejectedValue(new Error('Bundle outcomes remain unresolved.'))
@@ -187,6 +187,23 @@ afterEach(async () => {
 })
 
 describe('Safe queue Relayr execution', () => {
+  it('relays only the executable nonce on each testnet and offers no mainnet payment', async () => {
+    const testnets = [11155111, 11155420, 84532, 421614] as const
+    mocks.rows = testnets.map(id => chain(id, [5, 6]))
+    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 3_600, [1, 11155111, 84532]))
+    await renderQueue()
+    await click(/Review 4 ready executions/)
+    expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
+    expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5, 5, 5])
+    expect(renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')).toHaveLength(2)
+    await selectPayment(1)
+    await click(/Pay once and execute 4/)
+    expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ chain: 84532 }), OWNER, BUNDLE, [...testnets],
+      expect.any(Function), expect.any(Function), expect.any(Function))
+    expect(mocks.execute).not.toHaveBeenCalled()
+    expect(mocks.session).toMatchObject({ paymentStatus: 'sending', chainIds: [...testnets], paymentChainId: 84532 })
+  })
+
   it('quotes only the current nonce per chain and requires an explicit funding selection', async () => {
     await renderQueue()
     await click(/Review 2 ready executions/)
@@ -199,7 +216,7 @@ describe('Safe queue Relayr execution', () => {
     await selectPayment(1)
     await click(/Pay once and execute 2/)
     expect(mocks.pay).toHaveBeenCalledWith(
-      expect.objectContaining({ chain: 10 }), OWNER, BUNDLE,
+      expect.objectContaining({ chain: 10 }), OWNER, BUNDLE, [1, 10],
       expect.any(Function), expect.any(Function), expect.any(Function),
     )
     expect(mocks.session).toMatchObject({
@@ -230,14 +247,15 @@ describe('Safe queue Relayr execution', () => {
       .toHaveLength(1)
   })
 
-  it('executes unsupported chains directly and preserves dependent nonce order', async () => {
-    mocks.rows = [chain(11155111, [5, 6]), chain(11155420, [5])]
+  it('executes mixed network families directly and preserves dependent nonce order', async () => {
+    mocks.rows = [chain(11155111, [5, 6]), chain(1, [5])]
     await renderQueue()
     await click(/Review 3 ready executions/)
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.pay).not.toHaveBeenCalled()
-    expect(mocks.execute.mock.calls.map(args => [args[0], args[2].nonce]))
-      .toEqual([[11155111, 5], [11155111, 6], [11155420, 5]])
+    expect(mocks.execute).toHaveBeenCalledTimes(3)
+    expect(mocks.execute.mock.calls.filter(args => args[0] === 11155111).map(args => args[2].nonce)).toEqual([5, 6])
+    expect(mocks.execute.mock.calls.filter(args => args[0] === 1).map(args => args[2].nonce)).toEqual([5])
   })
 
   it('stops later direct Safe nonces while the first execution is still pending', async () => {
@@ -269,8 +287,8 @@ describe('Safe queue Relayr execution', () => {
 
   it('keeps a confirmed payment and every chain outcome when Relayr reports a partial failure', async () => {
     mocks.pay.mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-      args[5]?.()
-      args[3]?.(HASH)
+      args[6]?.()
+      args[4]?.(HASH)
       return HASH
     })
     mocks.poll.mockImplementation(async (_bundle, _count, onUpdate) => {

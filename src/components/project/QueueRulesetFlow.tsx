@@ -46,6 +46,7 @@ import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
 import { readAuthorityIdentity } from "@/lib/cross-chain-authority";
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
+import { relayrSupportsChain, relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   billionthsToPct,
   etherscanTxUrl,
@@ -733,7 +734,6 @@ export function QueueRecovery({ journal, onComplete }: { journal: QueueRecoveryJ
   </div>;
 }
 
-const QUEUE_RELAYR_MAINNETS = new Set([1, 10, 8453, 42161]);
 
 type QueueDestination = {
   chainId: JBChainId;
@@ -929,6 +929,11 @@ export function reviewedQueueCalls(review: Reviewed, action: QueueAction): Autho
           if (live.authority.toLowerCase() !== destination.authority.toLowerCase() || live.controller.toLowerCase() !== destination.controller.toLowerCase() || queueSourceFingerprint(liveSource) !== queueSourceFingerprint(destination.source)) {
             throw new Error(`The authority, queue, or rules changed on ${chainName(destination.chainId)}. Reload and review before sending.`);
           }
+          if (review.destinations.length > 1) {
+            if (!relayrSupportsChains(review.destinations.map(item => item.chainId))) throw new Error("Choose supported chains from the same network family: all mainnets or all testnets.");
+            const identity = await readAuthorityIdentity(clientFor(destination.chainId), live.authority);
+            if (live.authority.toLowerCase() !== review.account.toLowerCase() || (identity?.kind !== "eoa" && identity?.kind !== "delegated-eoa")) throw new Error("Queue rules separately for Safe accounts and different authorities.");
+          }
           const now = Math.floor(Date.now() / 1000);
           if (destination.source.option.requiresStartDate && destination.configs[0].mustStartAtOrAfter < Math.max(now + 60, Number(liveSource!.entry.ruleset.start) + 1)) {
             throw new Error("The chosen start is no longer safely in the future. Choose a later time and review again.");
@@ -1011,7 +1016,7 @@ function RulesetEditorForm({
       try {
         const destination = await readQueueDestination(id, pid, address!);
         const identity = await readAuthorityIdentity(clientFor(id), destination.authority);
-        const relayable = QUEUE_RELAYR_MAINNETS.has(id) && destination.authority.toLowerCase() === address!.toLowerCase() && (identity?.kind === "eoa" || identity?.kind === "delegated-eoa");
+        const relayable = relayrSupportsChain(id) && destination.authority.toLowerCase() === address!.toLowerCase() && (identity?.kind === "eoa" || identity?.kind === "delegated-eoa");
         return { chainId: id, destination, relayable, error: null };
       } catch (err) {
         return { chainId: id, destination: null, relayable: false, error: err instanceof Error ? err.message : "Could not verify this chain." };
@@ -1189,6 +1194,7 @@ function RulesetEditorForm({
         }
       }
       const multi = selectedChains.size > 1;
+      if (multi && !relayrSupportsChains(projectChains.filter(([id]) => selectedChains.has(id)).map(([id]) => id))) throw new Error("Choose supported chains from the same network family: all mainnets or all testnets.");
       const live = await Promise.all(projectChains.filter(([id]) => selectedChains.has(id)).map(([id, pid]) => readQueueDestination(id, pid, address)));
       const route = live.find(destination => destination.chainId === chainId)!;
       if (!route || queueSourceFingerprint(route.data.sources[action]) !== queueSourceFingerprint(source)) {
@@ -1197,8 +1203,8 @@ function RulesetEditorForm({
       if (multi) {
         for (const destination of live) {
           const identity = await readAuthorityIdentity(clientFor(destination.chainId), destination.authority);
-          if (!QUEUE_RELAYR_MAINNETS.has(destination.chainId) || destination.authority.toLowerCase() !== address.toLowerCase() || (identity?.kind !== "eoa" && identity?.kind !== "delegated-eoa")) {
-            throw new Error("Queue rules separately for Safe accounts, different authorities, and testnets.");
+          if (!relayrSupportsChain(destination.chainId) || destination.authority.toLowerCase() !== address.toLowerCase() || (identity?.kind !== "eoa" && identity?.kind !== "delegated-eoa")) {
+            throw new Error("Queue rules separately for Safe accounts and different authorities.");
           }
         }
       }
@@ -1371,7 +1377,7 @@ function RulesetEditorForm({
         <legend className="field-label">Queue on</legend>
         {projectChains.map(([id]) => {
           const row = destinationsQuery.data?.find(item => item.chainId === id);
-          const eligible = id === chainId || (primaryRelayable && row?.relayable && !!row.destination?.data.sources[action]);
+          const eligible = id === chainId || (primaryRelayable && relayrSupportsChains([chainId, id]) && row?.relayable && !!row.destination?.data.sources[action]);
           return <label key={id} className="flex items-start gap-2 text-sm text-smoke-700">
             <input type="checkbox" className="mt-1" checked={selectedChains.has(id)} disabled={busy || review !== null || id === chainId || !eligible} onChange={() => {
               setSelectedChains(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -1380,7 +1386,7 @@ function RulesetEditorForm({
             <span>{chainName(id)}{id === chainId ? " (shown here)" : !row ? " — checking…" : row.error ? ` — ${row.error}` : !eligible ? " — edit this chain separately" : ""}</span>
           </label>;
         })}
-        <p className="text-xs text-smoke-600">Changed rules apply to the selected chains. Each chain keeps its other settings, recipients, and rule-change notice. Safe accounts and testnets are queued separately.</p>
+        <p className="text-xs text-smoke-600">Changed rules apply to the selected chains. Choose all mainnets or all testnets; each chain keeps its other settings, recipients, and rule-change notice. Safe accounts are queued separately.</p>
       </fieldset> : null}
 
       <QueueActionPicker

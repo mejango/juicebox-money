@@ -28,6 +28,12 @@ vi.mock('@/providers/Providers', () => ({
   SUPPORTED_CHAINS: [
     { id: 1, name: 'Ethereum' },
     { id: 10, name: 'Optimism' },
+    { id: 8453, name: 'Base' },
+    { id: 42161, name: 'Arbitrum' },
+    { id: 11155111, name: 'Sepolia' },
+    { id: 11155420, name: 'OP Sepolia' },
+    { id: 84532, name: 'Base Sepolia' },
+    { id: 421614, name: 'Arbitrum Sepolia' },
   ],
 }))
 vi.mock('@/lib/wallet-core', () => ({
@@ -75,6 +81,9 @@ const TRUSTED_FORWARDER_SELECTOR = toFunctionSelector('isTrustedForwarder(addres
 const BUNDLE_UUID = '01234567-89ab-cdef-0123-456789abcdef'
 const OTHER_UUID = 'fedcba98-7654-3210-fedc-ba9876543210'
 const THIRD_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+const DESTINATION_HASHES = [DESTINATION_HASH, SECOND_DESTINATION_HASH, `0x${'12'.repeat(32)}`, `0x${'34'.repeat(32)}`] as Hex[]
+const DESTINATION_UUIDS = [OTHER_UUID, THIRD_UUID, 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa']
+const TESTNETS = [11155111, 11155420, 84532, 421614] as const
 const PAYMENT_DEADLINE = 4_000_000_000
 const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
 
@@ -122,16 +131,16 @@ function signedEntry(chain: JBChainId = 1): RelayrEntry {
 
 function successfulRecords(entries: readonly RelayrEntry[]) {
   return entries.map((entry, index) => ({
-    tx_uuid: [OTHER_UUID, THIRD_UUID][index],
+    tx_uuid: DESTINATION_UUIDS[index],
     request: entry,
-    status: { state: 'success', data: { hash: [DESTINATION_HASH, SECOND_DESTINATION_HASH][index] } },
+    status: { state: 'success', data: { hash: DESTINATION_HASHES[index] } },
   }))
 }
 
 /** Destination RPC proof is derived from the exact signed payload sent in POST. */
 function installDestinationProof(entries: () => readonly RelayrEntry[]) {
   mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
-    const entry = entries()[hash === DESTINATION_HASH ? 0 : 1]
+    const entry = entries()[DESTINATION_HASHES.indexOf(hash)]
     if (!entry) throw new Error(`No destination transaction fixture for ${hash}`)
     return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value),
       chainId: entry.chain, blockHash: BLOCK_HASH }
@@ -151,7 +160,7 @@ function installSuccessfulBundle(payments = [payment]) {
       const entries = (JSON.parse(String(init.body)) as { transactions: RelayrEntry[] }).transactions
       posts.push(entries)
       return response({ bundle_uuid: BUNDLE_UUID, payment_info: payments,
-        txn_uuids: entries.map((_, index) => [OTHER_UUID, THIRD_UUID][index]) })
+        txn_uuids: entries.map((_, index) => DESTINATION_UUIDS[index]) })
     }
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
       return response({ transactions: successfulRecords(posts.at(-1) ?? []) })
@@ -223,6 +232,57 @@ beforeEach(() => {
 })
 
 describe('Relayr quote and payment boundaries', () => {
+  it.each(TESTNETS)('authenticates and pays the canonical contract on testnet %s', async chain => {
+    const testnetPayment = paymentFor({ chain })
+    await expect(relayrPay(testnetPayment, ALICE, BUNDLE_UUID, TESTNETS)).resolves.toBe(HASH)
+    expect(mocks.connectedWallet).toHaveBeenCalledWith(chain, expect.any(Object))
+    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+      calls: [expect.objectContaining({ chainId: chain, to: RELAYR_PAYMENT_ADDRESS, data: testnetPayment.calldata })],
+    }))
+    expect(mocks.client.request).toHaveBeenCalledWith({ method: 'eth_getCode', params: [RELAYR_PAYMENT_ADDRESS, 'latest'] })
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { chain: 1, destinations: [...TESTNETS] },
+    { chain: 11155111, destinations: [1, 10] },
+    { chain: 1, destinations: [1, 11155111] },
+    { chain: 1, destinations: [] },
+  ])('refuses funding chain $chain for destinations $destinations before wallet review', async ({ chain, destinations }) => {
+    await expect(relayrPay(paymentFor({ chain }), ALICE, BUNDLE_UUID, destinations)).rejects.toThrow(/same network family/)
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.connectedWallet).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each(['review', 'wallet'] as const)('rejects a funding-chain change during %s even within the same family', async boundary => {
+    const offered = paymentFor({ chain: 11155111 })
+    const change = () => { offered.chain = 84532 }
+    if (boundary === 'review') mocks.requireReview.mockImplementationOnce(async () => change())
+    else mocks.connectedWallet.mockImplementationOnce(async () => { change(); return { wallet: mocks.wallet, account: ALICE } })
+    await expect(relayrPay(offered, ALICE, BUNDLE_UUID, TESTNETS)).rejects.toThrow(/payment changed/)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the network family when a quote changes while its payment review is open', async () => {
+    const offered = paymentFor({ chain: 11155111 })
+    mocks.requireReview.mockImplementationOnce(async () => { offered.chain = 1 })
+    await expect(relayrPay(offered, ALICE, BUNDLE_UUID, TESTNETS)).rejects.toThrow(/same network family/)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects unrecognized payment runtime on a supported testnet', async () => {
+    mocks.client.request.mockResolvedValueOnce('0x6000')
+    await expect(relayrPay(paymentFor({ chain: 84532 }), ALICE, BUNDLE_UUID, TESTNETS)).rejects.toThrow(/code is not recognized/)
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects mixed-family raw bundles before publication', async () => {
+    await expect(relayrPostBundle([signedEntry(1), signedEntry(11155111)])).rejects.toThrow(/one network family/)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('refuses to run or pay while view-as is active', async () => {
     setViewAs(TARGET)
     try {
@@ -284,14 +344,14 @@ describe('Relayr quote and payment boundaries', () => {
       new DOMException('timed out', 'TimeoutError'),
     )
 
-    await expect(relayrPostBundle([])).rejects.toThrow(
+    await expect(relayrPostBundle([{ chain: 1, target: TARGET, data: '0x01', value: '0' }])).rejects.toThrow(
       /nothing was paid.*safe to try again/i,
     )
   })
 
   it('surfaces bounded Relayr HTTP detail', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response('bad quote', 503))
-    await expect(relayrPostBundle([])).rejects.toThrow(
+    await expect(relayrPostBundle([{ chain: 1, target: TARGET, data: '0x01', value: '0' }])).rejects.toThrow(
       'Relayr HTTP 503: bad quote',
     )
   })
@@ -301,7 +361,7 @@ describe('Relayr quote and payment boundaries', () => {
     const reverify = vi.fn().mockResolvedValue(undefined)
 
     await expect(
-      relayrPay(payment, ALICE, BUNDLE_UUID, submitted, reverify),
+      relayrPay(payment, ALICE, BUNDLE_UUID, [1], submitted, reverify),
     ).resolves.toBe(HASH)
     expect(mocks.requireReview).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -350,7 +410,7 @@ describe('Relayr quote and payment boundaries', () => {
       throw new Error(`Unexpected RPC method ${method}`)
     })
 
-    await expect(relayrPay(payment, ALICE, BUNDLE_UUID)).rejects.toThrow(/account changed/i)
+    await expect(relayrPay(payment, ALICE, BUNDLE_UUID, [1])).rejects.toThrow(/account changed/i)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -359,7 +419,7 @@ describe('Relayr quote and payment boundaries', () => {
       new Error('RPC unavailable'),
     )
 
-    await expect(relayrPay(payment, ALICE, BUNDLE_UUID)).rejects.toEqual(
+    await expect(relayrPay(payment, ALICE, BUNDLE_UUID, [1])).rejects.toEqual(
       expect.objectContaining({
         name: 'RelayrPaymentSubmittedError',
         hash: HASH,
@@ -376,7 +436,7 @@ describe('Relayr quote and payment boundaries', () => {
     const submitted = vi.fn()
 
     await expect(
-      relayrPay(payment, ALICE, BUNDLE_UUID, submitted),
+      relayrPay(payment, ALICE, BUNDLE_UUID, [1], submitted),
     ).rejects.toEqual(
       expect.objectContaining({
         name: 'RelayrPaymentSubmittedError',
@@ -390,7 +450,7 @@ describe('Relayr quote and payment boundaries', () => {
 
   it('treats a post-send persistence callback failure as submitted', async () => {
     await expect(
-      relayrPay(payment, ALICE, BUNDLE_UUID, () => {
+      relayrPay(payment, ALICE, BUNDLE_UUID, [1], () => {
         throw new Error('storage callback failed')
       }),
     ).rejects.toEqual(
@@ -414,7 +474,7 @@ describe('Relayr quote and payment boundaries', () => {
       /quote expired/i,
     ],
   ])('rejects an unsafe quote before review', async (unsafe, message) => {
-    await expect(relayrPay(unsafe, ALICE, BUNDLE_UUID)).rejects.toThrow(message)
+    await expect(relayrPay(unsafe, ALICE, BUNDLE_UUID, [1])).rejects.toThrow(message)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
@@ -433,6 +493,7 @@ describe('Relayr quote and payment boundaries', () => {
         paymentFor({}, Math.floor(start / 1000) + 60),
         ALICE,
         BUNDLE_UUID,
+        [1],
       ),
     ).rejects.toThrow(/quote expired/i)
     expect(mocks.requireReview).toHaveBeenCalledTimes(1)
@@ -458,7 +519,7 @@ describe('Relayr quote and payment boundaries', () => {
     ).toThrow(/unrecognized payment function/i)
 
     mocks.client.request.mockResolvedValueOnce('0x6000')
-    await expect(relayrPay(payment, ALICE, BUNDLE_UUID)).rejects.toThrow(
+    await expect(relayrPay(payment, ALICE, BUNDLE_UUID, [1])).rejects.toThrow(
       /code is not recognized/i,
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
@@ -822,6 +883,43 @@ describe('Relayr funding choice and exact execution proof', () => {
 
   beforeEach(() => {
     vi.stubGlobal('window', localStorageWindow().window)
+  })
+
+  it('signs all four testnet destinations and pays once from only the offered testnet funding options', async () => {
+    const posts = installSuccessfulBundle([payment, paymentFor({ chain: 11155111 }), paymentFor({ chain: 84532 }), paymentFor({ chain: 421614, target: TARGET })])
+    mocks.requireFundingChainSelection.mockResolvedValue(84532)
+    const testnetCalls = TESTNETS.map(chainId => ({ ...calls[0], chainId }))
+    const checkpoint = vi.fn().mockRejectedValueOnce(new Error('Completion storage failed'))
+    const options = { calls: testnetCalls, account: ALICE, pendingScope: 'four-testnets', onComplete: checkpoint }
+    await expect(runRelayrCalls(options)).rejects.toThrow('Completion storage failed')
+    expect(posts).toHaveLength(1)
+    expect(posts[0].map(entry => entry.chain)).toEqual(TESTNETS)
+    expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => Number(request.domain.chainId))).toEqual(TESTNETS)
+    expect(mocks.requireFundingChainSelection.mock.calls[0][0].map((option: { chainId: number }) => option.chainId)).toEqual([11155111, 84532])
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentChainId: 84532, paymentStatus: 'confirmed' })
+    // A paid recovery is bound to the original payment even if the caller's UI
+    // now carries its old mainnet default. It checks proof without paying again.
+    await runRelayrCalls({ ...options, paymentChainId: 1 })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(4)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+  })
+
+  it('does not sign when the requested funding chain belongs to another network family', async () => {
+    await expect(runRelayrCalls({ calls: TESTNETS.map(chainId => ({ ...calls[0], chainId })),
+      account: ALICE, paymentChainId: 1, pendingScope: 'wrong-family' })).rejects.toThrow(/same network family/)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps an unpaid testnet authorization when Relayr offers only mainnet funding', async () => {
+    installSuccessfulBundle([payment])
+    await expect(runRelayrCalls({ calls: TESTNETS.map(chainId => ({ ...calls[0], chainId })),
+      account: ALICE, pendingScope: 'no-testnet-offer' })).rejects.toThrow(/network family/)
+    expect(loadRelayrPendingSession('no-testnet-offer')).toMatchObject({ paymentStatus: 'unpaid', chainIds: [...TESTNETS] })
+    expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
   it.each(['other-action', 'same-action'])('does not interpret corrupt JSON in %s as an unused nonce', async scope => {

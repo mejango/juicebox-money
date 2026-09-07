@@ -170,6 +170,54 @@ describe('multichain launch session persistence', () => {
     expect(remainingLaunchChains(restored!)).toEqual([10, 8453])
   })
 
+  it.each([undefined, 'direct'] as const)(
+    'preserves a four-Sepolia launch with transport %s and its exact pinned progress',
+    transport => {
+      const chains = [11155111, 11155420, 84532, 421614]
+      const store = pinnedStore()
+      const plans = Object.fromEntries(chains.map(chainId => {
+        const plan = planFor(store)
+        return [chainId, {
+          ...plan,
+          chains,
+          owner: `0x${chainId.toString(16).padStart(40, '0')}` as const,
+          stages: plan.stages!.map(stage => ({
+            ...stage,
+            autoIssuances: stage.autoIssuances?.map(issuance => ({
+              ...issuance,
+              chainId: 84532,
+            })),
+          })),
+        }]
+      }))
+      const original = session({
+        ...(transport ? { transport } : {}),
+        chains,
+        plans,
+        store,
+        statuses: {
+          11155111: { phase: 'done', txHash: `0x${'11'.repeat(32)}`, projectId: 7 },
+          11155420: { phase: 'confirming', txHash: `0x${'22'.repeat(32)}` },
+          84532: { phase: 'pending' },
+          421614: { phase: 'failed' },
+        },
+      })
+
+      expect(saveLaunchSession(original)).toBe(true)
+      const restored = loadLaunchSession({ strict: true })!
+
+      expect(restored).toEqual(original)
+      expect(restored.transport).toBe(transport)
+      expect(restored.relayr).toBeUndefined()
+      expect(remainingLaunchChains(restored)).toEqual([11155420, 84532, 421614])
+      expect(restored.plans[84532].stages![0].autoIssuances![0]).toEqual({
+        count: 1_000n * 10n ** 18n,
+        beneficiary: '0x1111111111111111111111111111111111111111',
+        chainId: 84532,
+      })
+    },
+  )
+
   it('re-sends interrupted signatures but keeps submitted transactions waiting', () => {
     saveLaunchSession(session())
     // Refresh mid-signature: nothing provably submitted — resume re-sends.

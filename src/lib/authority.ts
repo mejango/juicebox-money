@@ -25,11 +25,11 @@ import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { gasWithinCap } from '@/lib/gas'
 import { waitForTrackedReceipt } from '@/lib/receipt'
+import { relayrSupportsChains } from '@/lib/relayr-chains'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
   relayrRecordChain,
-  relayrSupportsChain,
   relayrTargetSupportsForwarder,
   runRelayrCalls,
   type RelayrCall,
@@ -451,7 +451,7 @@ export async function runAuthorityCalls({
     const pendingScope = relayrCallsScope(toRelayrCalls(group))
     if (!loadRelayrPendingSession(pendingScope) && (
       uniqueChains.size <= 1 || uniqueChains.size !== group.length ||
-      group.some(call => !relayrSupportsChain(call.chainId)) ||
+      !relayrSupportsChains(group.map(call => call.chainId)) ||
       !(await Promise.all(toRelayrCalls(group).map(relayrTargetSupportsForwarder))).every(Boolean)
     )) {
       // Direct writes have no durable per-call recovery journal. Sending more

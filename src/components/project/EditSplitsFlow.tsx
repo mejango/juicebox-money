@@ -39,6 +39,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from '@/lib/relayr'
+import { relayrSupportsChain, relayrSupportsChains } from '@/lib/relayr-chains'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import { resolvedAddress } from '@/lib/ens'
 import {
@@ -251,8 +252,6 @@ export function assembleSplits(
   }
 }
 
-const SPLIT_RELAYR_MAINNETS = new Set([1, 10, 8453, 42161])
-
 export type SplitSnapshot = {
   chainId: JBChainId
   projectId: number
@@ -320,7 +319,7 @@ export async function readSplitDestination({ chainId, projectId, groupId, accoun
   ])
   return { chainId, projectId, groupId, rulesetId: targetRulesetId, owner, controller, authority,
     currentSplits, fallbackSplits,
-    relayable: SPLIT_RELAYR_MAINNETS.has(chainId) && authority.toLowerCase() === account.toLowerCase() && (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa'),
+    relayable: relayrSupportsChain(chainId) && authority.toLowerCase() === account.toLowerCase() && (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa'),
   }
 }
 
@@ -360,7 +359,10 @@ export function reviewedSplitCalls(review: SplitReview): AuthorityCall[] {
       if (splitSnapshotFingerprint(current) !== splitSnapshotFingerprint(destination)) {
         throw new Error(`The authority, current ruleset, or split recipients changed on ${chainName(destination.chainId)}. Reopen and review the live splits.`)
       }
-      if (review.destinations.length > 1 && !current.relayable) throw new Error('Edit Safe accounts and testnets separately.')
+      if (review.destinations.length > 1) {
+        if (!relayrSupportsChains(review.destinations.map(item => item.chainId))) throw new Error('Choose supported chains from the same network family: all mainnets or all testnets.')
+        if (!current.relayable) throw new Error('Edit Safe accounts and different authorities separately.')
+      }
       if (destination.splits.length === 0) {
         const blocked = clearBlockReason(describeFallbackSplits(current.fallbackSplits))
         if (blocked) throw new Error(blocked)
@@ -785,6 +787,7 @@ function EditSplitsModal({
     setBusy(true)
     try {
       const chosen = projectChains.filter(([id]) => selectedChains.has(id))
+      if (chosen.length > 1 && !relayrSupportsChains(chosen.map(([id]) => id))) throw new Error('Choose supported chains from the same network family: all mainnets or all testnets.')
       for (const [id, pid] of chosen) {
         if (pendingSplitJournal(splitJournalKey(id, pid, groupId))) {
           onPending()
@@ -801,7 +804,7 @@ function EditSplitsModal({
       const now = lockSnapshotAt ?? Math.floor(Date.now() / 1000)
       const destinations = snapshots.map(snapshot => {
         if (snapshots.length > 1) {
-          if (!snapshot.relayable) throw new Error('Edit Safe accounts and testnets separately.')
+          if (!snapshot.relayable) throw new Error('Edit Safe accounts and different authorities separately.')
           const baselineSnapshot = destinationsQuery.data?.find(row => row.chainId === snapshot.chainId)?.snapshot
           if (!baselineSnapshot || splitSnapshotFingerprint(baselineSnapshot) !== splitSnapshotFingerprint(snapshot)) throw new Error(`The split settings changed on ${chainName(snapshot.chainId)}. Reopen to review the live recipients.`)
           return { ...snapshot, splits: assembleReservedDestination(snapshot, drafts, now) }
@@ -920,7 +923,7 @@ function EditSplitsModal({
             {projectChains.map(([id]) => {
               const row = destinationsQuery.data?.find(item => item.chainId === id)
               const selected = selectedChains.has(id)
-              const eligible = primaryRelayable && row?.snapshot?.relayable && addressOnlySplits(row.snapshot.currentSplits, lockSnapshotAt ?? Math.floor(Date.now() / 1000))
+              const eligible = primaryRelayable && relayrSupportsChains(id === chainId ? [chainId] : [chainId, id]) && row?.snapshot?.relayable && addressOnlySplits(row.snapshot.currentSplits, lockSnapshotAt ?? Math.floor(Date.now() / 1000))
               return <label key={id} className="flex items-start gap-2 text-sm text-smoke-700">
                 <input type="checkbox" className="mt-1" checked={selected} disabled={busy || plan !== null || id === chainId || (!eligible && !selected)} onChange={() => {
                   setSelectedChains(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -929,7 +932,7 @@ function EditSplitsModal({
                 <span>{chainName(id)}{id === chainId ? ' (shown here)' : !row ? ' — checking…' : row.error ? ` — ${row.error}` : !eligible ? ' — edit this chain separately' : ''}</span>
               </label>
             })}
-            <p className="text-xs text-smoke-600">The selected chains share the address recipients below. Each chain keeps its own locked recipients. Project recipients, hooks, Safe accounts, and testnets are edited separately.</p>
+            <p className="text-xs text-smoke-600">The selected chains share the address recipients below. Choose all mainnets or all testnets; each chain keeps its own locked recipients. Project recipients, hooks, and Safe accounts are edited separately.</p>
           </fieldset> : <p className="mb-3 text-xs text-smoke-600">These recipients apply on {chainName(chainId)}. {isReserved ? '' : 'Payout token groups are edited separately on each chain.'}</p>}
           {multiBlocked ? <p className="mb-3 text-xs font-medium text-red-700">{multiBlocked}</p> : null}
 

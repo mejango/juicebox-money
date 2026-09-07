@@ -80,7 +80,7 @@ const renderers: ReactTestRenderer[] = []
 let review: SplitReview
 
 function snapshot(chainId: JBChainId): SplitSnapshot {
-  const peer = chainId === 8453
+  const peer = chainId === 8453 || chainId === 84532
   return {
     chainId,
     projectId: peer ? 303 : 101,
@@ -139,7 +139,7 @@ beforeEach(() => {
   mocks.permissions.mockResolvedValue(false)
   mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [] })
   mocks.resume.mockResolvedValue({ records: [] })
-  for (const chainId of [1, 8453] as const) {
+  for (const chainId of [1, 8453, 11155111, 11155420, 84532, 421614] as const) {
     live.set(chainId, snapshot(chainId))
     reads.set(chainId, vi.fn(async request => {
       const destination = live.get(chainId)!
@@ -184,6 +184,29 @@ afterEach(async () => {
 })
 
 describe('multichain reserved split replacement', () => {
+  it('allows all four testnets in one frozen reserved-recipient review', async () => {
+    const destinations = await Promise.all(([11155111, 11155420, 84532, 421614] as const).map(async chainId => {
+      const expected = live.get(chainId)!
+      const destination = await readSplitDestination({ chainId, projectId: expected.projectId, groupId: expected.groupId, account: ACCOUNT })
+      expect(destination.relayable).toBe(true)
+      return { ...destination, splits: assembleReservedDestination(destination, [draft()], NOW) }
+    }))
+    const calls = reviewedSplitCalls({ ...review, destinations })
+    for (const [index, call] of calls.entries()) {
+      await expect(call.reverifyAuthority!()).resolves.toBeUndefined()
+      const decoded = decodeFunctionData({ abi: jbControllerAbi, data: call.data })
+      expect(decoded.args?.[0]).toBe(BigInt(destinations[index].projectId))
+      expect(decoded.args?.[1]).toBe(destinations[index].rulesetId)
+    }
+    expect(calls.map(call => call.chainId)).toEqual([11155111, 11155420, 84532, 421614])
+  })
+
+  it('rejects mixed mainnet/testnet split funding before reusing a reviewed call', async () => {
+    const testnet = snapshot(84532)
+    const mixed = { ...review, destinations: [review.destinations[0], { ...testnet, splits: assembleReservedDestination(testnet, [draft()], NOW) }] }
+    await expect(reviewedSplitCalls(mixed)[0].reverifyAuthority!()).rejects.toThrow(/all mainnets or all testnets/)
+  })
+
   it('resolves each linked project’s own current ruleset, controller, and split group', async () => {
     for (const chainId of [1, 8453] as const) {
       const expected = live.get(chainId)!
@@ -431,6 +454,28 @@ describe('split replacement recovery', () => {
     expect(mocks.current).not.toHaveBeenCalled()
     expect(completed).toHaveBeenCalledOnce()
     expect(storage.size).toBe(0)
+  })
+
+  it('reconciles the saved testnet bundle even when its authority is no longer eligible for a new bundle', async () => {
+    review = { ...review, destinations: ([11155111, 84532] as const).map(chainId => {
+      const destination = snapshot(chainId)
+      return { ...destination, splits: assembleReservedDestination(destination, [draft()], NOW) }
+    }) }
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'confirmed', records: [{ chainId: 11155111, status: 'confirmed' }, { chainId: 84532, status: 'pending' }] })
+    const journal = { scope: relayrCallsScope(reviewedSplitCalls(review)), review }
+    saveSplitJournal(journal)
+    const restored = readSplitJournal(journalKey(84532, 303))!
+    mocks.identity.mockResolvedValue({ kind: 'safe', owners: [ACCOUNT] })
+    mocks.current.mockRejectedValue(new Error('Live reads are unavailable'))
+    const completed = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<SplitRecovery journal={restored} onComplete={completed} />) })
+    renderers.push(renderer)
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({ scope: journal.scope, account: ACCOUNT }))
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    expect(mocks.current).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
   })
 
   it('requires the wallet that reviewed the saved update before any recovery call', async () => {

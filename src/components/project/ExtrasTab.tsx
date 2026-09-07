@@ -314,7 +314,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                     <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)} · project #{pid}
                   </label>)}
                 </fieldset>
-                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported mainnet deployments can share one Relayr payment; Safe and testnet deployments confirm in sequence.</p>
+                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one Relayr payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
                 <button onClick={handleReview} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
               </>
             )}
