@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { LaunchPlan } from '@/lib/launch'
-import type { RelayrEntry, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
+import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
 const m = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
@@ -13,22 +13,26 @@ const m = vi.hoisted(() => ({
   forward: vi.fn(),
   quote: vi.fn(),
   pay: vi.fn(),
-  paymentDetails: vi.fn(),
+  funding: vi.fn(),
   poll: vi.fn(),
   client: vi.fn(),
   pending: vi.fn(),
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
-vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
+  SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
+}))
+vi.mock('@/lib/transaction-review', () => ({ requireFundingChainSelection: m.funding }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectCreationFee: m.fee }))
 vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId }))
-vi.mock('@/lib/relayr', () => ({
+vi.mock('@/lib/relayr', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/relayr')>()),
   TRUSTED_FORWARDER_ABI: [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
     inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }],
   buildForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
-  relayrPaymentDetails: m.paymentDetails, relayrPoll: m.poll,
+  relayrPoll: m.poll,
   relayrDestinationHash: (record: RelayrTransactionRecord) => record.status?.data?.hash ?? null,
   readRelayrPendingSessionsForAuthorization: () => {
     const session = m.pending()
@@ -36,6 +40,7 @@ vi.mock('@/lib/relayr', () => ({
   },
 }))
 
+import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 
@@ -45,6 +50,7 @@ const HASH = `0x${'aa'.repeat(32)}` as Hex
 const BLOCK = `0x${'bb'.repeat(32)}` as Hex
 const ABI = parseAbi(['function deploy(address owner, bytes32 salt) payable'])
 const NOW = 1_900_000_000
+const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
 let storage: Map<string, string>
 let quote: RelayrQuote
@@ -53,6 +59,12 @@ let records: RelayrTransactionRecord[]
 let clients: Map<number, ReturnType<typeof makeClient>>
 let failed: Set<number>
 let offeredPaymentChains: number[]
+
+function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
+  return { chain, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN,
+    payment_deadline: deadline,
+    calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` as Hex }
+}
 
 function hashFor(chainId: number): Hex { return `0x${chainId.toString(16).padStart(64, '0')}` }
 function makeClient(chainId: number) {
@@ -80,8 +92,8 @@ function session(chains = [1, 10], paymentChainId = 8453): LaunchSession {
     transport: 'relayr', account: ACCOUNT, paymentChainId,
   }
 }
-function run(paymentChainId = 8453, value = loadLaunchSession() ?? session()) {
-  return runRelayrLaunch({ session: value, account: m.account, paymentChainId, onStatus: vi.fn(), onProgress: vi.fn() })
+function run(value = loadLaunchSession() ?? session()) {
+  return runRelayrLaunch({ session: value, account: m.account, onStatus: vi.fn(), onProgress: vi.fn() })
 }
 
 beforeEach(() => {
@@ -102,7 +114,7 @@ beforeEach(() => {
   offeredPaymentChains = [8453, 1]
   m.client.mockImplementation(chain => clients.get(chain))
   m.fee.mockResolvedValue(17n)
-  m.paymentDetails.mockReturnValue({ deadline: BigInt(NOW + 600) })
+  m.funding.mockResolvedValue(8453)
   m.build.mockImplementation(({ chainId, owner, salt, creationFee }) => ({ chainId, address: TARGET,
     abi: ABI, functionName: 'deploy', args: [owner, salt], value: creationFee }))
   m.projectId.mockImplementation((_receipt, chainId) => chainId + 100)
@@ -121,7 +133,7 @@ beforeEach(() => {
     expect(loadLaunchSession()?.relayr?.signed).toHaveLength(signed.length)
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
-      payment_info: offeredPaymentChains.map(chain => ({ chain, amount: '200', target: TARGET, calldata: '0x1234' as Hex })),
+      payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
       expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry })) }
     records = signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { state: 'Confirmed', data: { hash: hashFor(entry.chain) } } }))
     return quote
@@ -139,6 +151,116 @@ beforeEach(() => {
 })
 
 describe('relayed launch execution and recovery', () => {
+  it('waits for the quote before showing any funding choices or persisting a preferred chain', async () => {
+    const makeQuote = m.quote.getMockImplementation()!
+    let release!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    m.quote.mockImplementationOnce(async signed => { await waiting; return makeQuote(signed) })
+    const pending = run()
+    await vi.waitFor(() => expect(m.quote).toHaveBeenCalledTimes(1))
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.paymentChainId).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBeUndefined()
+    release()
+    await pending
+    expect(m.funding).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers exactly the valid same-family quote choices, including a single explicit choice', async () => {
+    saveLaunchSession(session(TESTNETS, 421614))
+    const makeQuote = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), payment_info: [
+      paymentFor(1), paymentFor(11155111), paymentFor(11155111),
+      { ...paymentFor(84532), target: TARGET }, paymentFor(421614, NOW + 10),
+    ] }))
+    m.funding.mockResolvedValue(11155111)
+    await run()
+    expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Chain 11155111') }])
+    expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
+  })
+
+  it('validates quote destination bindings before presenting its funding choices', async () => {
+    const makeQuote = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), expectedTransactions: [] }))
+    await expect(run()).rejects.toThrow('does not bind')
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('rejects a chain absent from the displayed quote without sending payment', async () => {
+    m.funding.mockResolvedValue(42161)
+    await expect(run()).rejects.toThrow('selected funding chain is not available')
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBeUndefined()
+  })
+
+  it('refreshes an expired unpaid quote using the exact signed entries and asks for the newly offered chain', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    const originalEntries = structuredClone(entries)
+    vi.mocked(Date.now).mockReturnValue((NOW + 700) * 1000)
+    offeredPaymentChains = [10]
+    const makeQuote = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), payment_info: [paymentFor(10, NOW + 1300)] }))
+    m.funding.mockResolvedValue(10)
+    await run()
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.quote).toHaveBeenCalledTimes(2)
+    expect(m.quote.mock.calls[1][0]).toEqual(originalEntries)
+    expect(m.funding.mock.calls[1][0]).toEqual([{ chainId: 10, label: expect.any(String) }])
+    expect(m.pay.mock.calls[0][0].chain).toBe(10)
+  })
+
+  it('refreshes unusable funding offers before asking for a choice', async () => {
+    const makeQuote = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), payment_info: [paymentFor(11155111)] }))
+    await run()
+    expect(m.quote).toHaveBeenCalledTimes(2)
+    expect(m.quote.mock.calls[1][0]).toEqual(m.quote.mock.calls[0][0])
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.funding).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not open the chooser when both quotes lack usable same-family funding offers', async () => {
+    offeredPaymentChains = [11155111]
+    await expect(run()).rejects.toThrow('no usable payment options')
+    expect(m.quote).toHaveBeenCalledTimes(2)
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
+  })
+
+  it('fails safely when a quote expires in the chooser and requests a new explicit choice on retry', async () => {
+    m.funding.mockImplementationOnce(async () => { vi.mocked(Date.now).mockReturnValue((NOW + 700) * 1000); return 8453 })
+    await expect(run()).rejects.toThrow('quote expired')
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBeUndefined()
+    const makeQuote = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), payment_info: [paymentFor(1, NOW + 1300)] }))
+    m.funding.mockResolvedValue(1)
+    await run()
+    expect(m.quote).toHaveBeenCalledTimes(2)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.funding).toHaveBeenCalledTimes(2)
+    expect(m.pay.mock.calls[0][0].chain).toBe(1)
+  })
+
+  it.each([undefined, 11155111])('rejects a started mainnet journal with invalid saved funding chain %s without reopening the picker', async paymentChainId => {
+    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinations, _submitted, verify, sending) => {
+      await verify(); sending(); throw new Error('Wallet response lost')
+    })
+    await expect(run()).rejects.toThrow('Wallet response lost')
+    const saved = loadLaunchSession()!
+    saved.relayr!.paymentChainId = paymentChainId
+    saveLaunchSession(saved)
+    await expect(run()).rejects.toThrow('saved payment chain')
+    expect(m.funding).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves a corrupt launch record and refuses new authorizations', async () => {
     storage.set('jbm-launch-pending-v1', '{not json')
     await expect(run()).rejects.toThrow('Saved launch authorizations could not be read')
@@ -180,15 +302,16 @@ describe('relayed launch execution and recovery', () => {
 
   it('launches all four Sepolia destinations with one payment and recovers without another authorization or charge', async () => {
     saveLaunchSession(session(TESTNETS, 84532))
+    m.funding.mockResolvedValue(84532)
     offeredPaymentChains = [84532, 11155111]
     m.poll.mockImplementationOnce(async () => { records = []; throw new Error('offline') })
-    await expect(run(84532)).rejects.toThrow('unfinished')
+    await expect(run()).rejects.toThrow('unfinished')
     const saved = loadLaunchSession()!
     expect(saved.transport).toBe('relayr')
     expect(saved.relayr).toMatchObject({ paymentChainId: 84532, paymentHash: HASH })
     expect(saved.relayr?.signed.map(item => item.chainId)).toEqual(TESTNETS)
     records = entries.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { data: { hash: hashFor(entry.chain) } } })).reverse()
-    await run(84532, saved)
+    await run(saved)
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).toHaveBeenCalledTimes(1)
@@ -202,23 +325,30 @@ describe('relayed launch execution and recovery', () => {
   it('reuses an unpaid testnet quote only on an explicitly chosen offered testnet chain', async () => {
     saveLaunchSession(session(TESTNETS, 421614))
     offeredPaymentChains = [84532, 11155111]
-    await expect(run(421614)).rejects.toThrow('did not offer payment')
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
     expect(m.pay).not.toHaveBeenCalled()
-    await expect(run(8453)).rejects.toThrow('same network environment')
-    await run(11155111)
+    expect(loadLaunchSession()?.paymentChainId).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBeUndefined()
+    expect(m.funding.mock.calls[0][0].map((option: { chainId: number }) => option.chainId)).toEqual([84532, 11155111])
+    m.funding.mockResolvedValue(11155111)
+    await run()
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).toHaveBeenCalledTimes(1)
     expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
   })
 
-  it('does not silently select another funding chain; an unpaid quote can be used on a newly selected offered chain', async () => {
-    await expect(run(42161)).rejects.toThrow('did not offer payment')
+  it('does not reuse the old preselected funding chain; an unpaid quote requires a new explicit choice', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
     expect(m.pay).not.toHaveBeenCalled()
-    await run(1)
+    m.funding.mockResolvedValue(1)
+    await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay.mock.calls[0][0].chain).toBe(1)
+    expect(m.funding).toHaveBeenCalledTimes(2)
   })
 
   it('recovers a submitted bundle without fresh signatures, quote, or payment', async () => {
@@ -230,6 +360,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.funding).toHaveBeenCalledTimes(1)
   })
 
   it('never treats provider-only success or failure as a completed launch or permission to pay again', async () => {
@@ -285,15 +416,19 @@ describe('relayed launch execution and recovery', () => {
   ])('journals ambiguous funding on $funding and never changes chain or repays', async ({ chains, funding, alternative }) => {
     saveLaunchSession(session(chains, funding))
     offeredPaymentChains = [funding, alternative]
+    m.funding.mockResolvedValue(funding)
     m.pay.mockImplementation(async (_p, _a, _u, _destinationChainIds, _submitted, verify, sending) => {
       await verify(); sending(); throw new Error('wallet disconnected after broadcasting')
     })
-    await expect(run(funding)).rejects.toThrow('wallet disconnected')
+    await expect(run()).rejects.toThrow('wallet disconnected')
     m.poll.mockImplementation(async () => { throw new Error('offline') })
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
-    await expect(run(funding)).rejects.toThrow('unresolved')
+    await expect(run()).rejects.toThrow('unresolved')
     expect(m.pay).toHaveBeenCalledTimes(1)
-    await expect(run(alternative)).rejects.toThrow('saved payment chain')
+    m.funding.mockResolvedValue(alternative)
+    await expect(run()).rejects.toThrow('unresolved')
+    expect(m.funding).toHaveBeenCalledTimes(1)
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
   })
 
   it('allows retrying a positively rejected funding prompt', async () => {
@@ -302,8 +437,11 @@ describe('relayed launch execution and recovery', () => {
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
+    expect(loadLaunchSession()?.relayr?.paymentChainId).toBeUndefined()
+    expect(loadLaunchSession()?.paymentChainId).toBeUndefined()
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.funding).toHaveBeenCalledTimes(2)
   })
 
   it('accepts supported network families and blocks Safe wallets, mixed chains, direct sessions, and changed accounts', async () => {
@@ -331,7 +469,7 @@ describe('relayed launch execution and recovery', () => {
 
   it('cannot overwrite another launch using the shared browser storage slot', async () => {
     expect(saveLaunchSession({ ...session(), salt: HASH })).toBe(false)
-    await expect(run(8453, { ...session(), salt: HASH })).rejects.toThrow('Another launch is saved')
+    await expect(run({ ...session(), salt: HASH })).rejects.toThrow('Another launch is saved')
     expect(loadLaunchSession()?.salt).toBe(session().salt)
     expect(completeLaunchSession(HASH)).toBe(false)
     expect(abandonLaunchSession(HASH)).toBe(false)
@@ -365,10 +503,11 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it('makes an unfunded published quote safely abandonable only after canonical unused signature expiry', async () => {
-    await expect(run(42161)).rejects.toThrow('did not offer payment')
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
     expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
     for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
-    await expect(run(42161)).rejects.toThrow('expired unused')
+    await expect(run()).rejects.toThrow('expired unused')
     expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
     expect(m.pay).not.toHaveBeenCalled()
   })
@@ -430,7 +569,7 @@ describe('relayed launch execution and recovery', () => {
     m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, submitted, verify, sending) => {
       await verify(); sending(); submitted(HASH); throw new Error('reload after funding submission')
     })
-    await expect(runRelayrLaunch({ session: loadLaunchSession()!, account: ACCOUNT, paymentChainId: 8453,
+    await expect(runRelayrLaunch({ session: loadLaunchSession()!, account: ACCOUNT,
       onProgress: vi.fn(), onStatus: (chainId, next) => {
         uiStatuses[chainId] = { ...uiStatuses[chainId], ...next }
         recordLaunchChainStatus(chainId, uiStatuses[chainId])
