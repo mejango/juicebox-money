@@ -119,13 +119,19 @@ export default function RootLayout({
       className={`${agrandir.variable} ${agrandirWide.variable} ${beatrice.variable}`}
     >
       <body className="flex min-h-screen flex-col">
+        <a
+          href="#main-content"
+          className="sr-only fixed left-4 top-4 z-50 rounded-lg bg-white px-4 py-3 font-medium text-bluebs-800 shadow-lg focus:not-sr-only"
+        >
+          Skip to content
+        </a>
         <Providers>
           <ScrollToTop />
           <header className="sticky top-0 z-40 border-b border-smoke-200 bg-bone/90 backdrop-blur">
             <SiteNavigation />
           </header>
 
-          <main className="flex-1">{children}</main>
+          <main id="main-content" tabIndex={-1} className="flex-1 scroll-mt-28">{children}</main>
 
           <SiteFooter />
 

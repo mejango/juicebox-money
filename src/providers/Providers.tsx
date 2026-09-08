@@ -34,7 +34,7 @@ import {
   optimism,
   optimismSepolia,
   sepolia,
-} from 'wagmi/chains'
+} from '@bananapus/nana-sdk-core/chains'
 
 export const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
+import { formatAmount, formatCompactAmount } from '@/lib/format'
 import { priceConcept } from '@/lib/price-concepts'
 import {
   buildStepPoints,
@@ -23,8 +24,10 @@ import {
   shouldShowCashOutAsymptote,
 } from '@/lib/cashOut'
 import {
+  bucketPoolReserves,
   smoothPriceSeries,
   visibleSeries,
+  type PoolReservePoint,
   type PricePoint,
 } from '@/lib/price-series'
 import {
@@ -56,6 +59,16 @@ const CASH_OUT_COLOR = '#C85F9A'
 // Melon green: far from the cash-out pink so the two market lines can't be
 // confused where they run close together.
 const AMM_COLOR = '#4FA270'
+// The pool's reserves as faint bars in the AMM colour: pair side darker, token side above it.
+const RESERVE_PAIR_OPACITY = 0.28
+const RESERVE_TOKEN_OPACITY = 0.13
+// The bars are translucent over the white card; the tooltip sits on near-black, so its
+// squares carry the colour the bars actually show — the same tint composited onto white.
+const RESERVE_PAIR_SWATCH = `color-mix(in srgb, ${AMM_COLOR} ${RESERVE_PAIR_OPACITY * 100}%, white)`
+const RESERVE_TOKEN_SWATCH = `color-mix(in srgb, ${AMM_COLOR} ${RESERVE_TOKEN_OPACITY * 100}%, white)`
+const RESERVE_BARS = 48
+// Tallest bar, in viewBox units (the plot is 142 tall).
+const RESERVE_BAR_HEIGHT = 40
 const DAY = 86_400
 
 const PRICE_RANGES = [
@@ -198,8 +211,10 @@ export function PriceChart({
   floorPrice,
   ammPrice,
   ammLiquidity,
+  pairSymbol,
   floorHistory = [],
   ammHistory = [],
+  ammReservesHistory = [],
   cashOutTaxHistory = [],
   note,
 }: {
@@ -208,10 +223,15 @@ export function PriceChart({
   baseSymbol: string
   floorPrice?: ReferenceLine
   ammPrice?: ReferenceLine
-  /** What the pool holds right now, e.g. "1.2M REV + 3.4 ETH". Context for how much the AMM price can bear. */
-  ammLiquidity?: string | null
+  /** What the pool holds right now, each side formatted with its symbol, e.g. "1.2M REV" and
+   *  "3.4 ETH". Context for how much the AMM price can bear. */
+  ammLiquidity?: { token: string; pair: string } | null
+  /** The pool's pair token, named in the reserve-bars note. */
+  pairSymbol?: string | null
   floorHistory?: PricePoint[]
   ammHistory?: PricePoint[]
+  /** Both sides of the pool over time, drawn as faint bars under the AMM line. */
+  ammReservesHistory?: PoolReservePoint[]
   cashOutTaxHistory?: CashOutTaxPoint[]
   /** The live cash-out / AMM reads are still confirming. */
   /** Accepted for caller compatibility; the value-less legend no longer shows it. */
@@ -255,6 +275,29 @@ export function PriceChart({
   const ammSeries = marketPriceView === 'trades'
     ? exactAmmSeries
     : smoothPriceSeries(exactAmmSeries)
+  const reserveBars = showAmm
+    ? bucketPoolReserves(ammReservesHistory, t0, t1, RESERVE_BARS)
+    : []
+  const tallestReserve = Math.max(
+    0,
+    ...reserveBars.map(bar => bar.pairValue + bar.tokenValue),
+  )
+  // What the pool held at a moment: the last observation at or before it, the
+  // same hold the bars use. Nothing before the first liquidity change.
+  const reservesAt = (timestamp: number): PoolReservePoint | null => {
+    let low = 0
+    let high = ammReservesHistory.length - 1
+    let found: PoolReservePoint | null = null
+    while (low <= high) {
+      const mid = (low + high) >> 1
+      if (ammReservesHistory[mid].timestamp <= timestamp) {
+        found = ammReservesHistory[mid]
+        low = mid + 1
+      }
+      else high = mid - 1
+    }
+    return found
+  }
   const sortedTaxHistory = [...cashOutTaxHistory].sort(
     (a, b) => a.timestamp - b.timestamp,
   )
@@ -336,7 +379,12 @@ export function PriceChart({
               label="AMM price"
               note={
                 priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
-                (amm && ammLiquidity ? ` The pool holds ${ammLiquidity}.` : '')
+                (amm && ammLiquidity
+                  ? ` The pool holds ${ammLiquidity.token} + ${ammLiquidity.pair}.`
+                  : '') +
+                (reserveBars.length && pairSymbol
+                  ? ` The faint bars show what the pool held: ${pairSymbol} in the darker shade, ${symbol} in the lighter one, both valued in ${pairSymbol}.`
+                  : '')
               }
               color={AMM_COLOR}
               active={showAmm}
@@ -378,8 +426,35 @@ export function PriceChart({
             `${X(point.timestamp).toFixed(1)},${Y(point.value).toFixed(1)}`,
           )
           .join(' ')
+        const barWidth = Math.max(1, ((X(t1) - X(t0)) / RESERVE_BARS) * 0.7)
+        const reserveUnit = tallestReserve > 0 ? RESERVE_BAR_HEIGHT / tallestReserve : 0
         return (
           <>
+            {reserveBars.map(bar => {
+              const pairHeight = bar.pairValue * reserveUnit
+              const tokenHeight = bar.tokenValue * reserveUnit
+              const x = X(bar.timestamp) - barWidth / 2
+              return (
+                <g key={bar.timestamp}>
+                  <rect
+                    x={x}
+                    y={Y(0) - pairHeight}
+                    width={barWidth}
+                    height={pairHeight}
+                    fill={AMM_COLOR}
+                    fillOpacity={RESERVE_PAIR_OPACITY}
+                  />
+                  <rect
+                    x={x}
+                    y={Y(0) - pairHeight - tokenHeight}
+                    width={barWidth}
+                    height={tokenHeight}
+                    fill={AMM_COLOR}
+                    fillOpacity={RESERVE_TOKEN_OPACITY}
+                  />
+                </g>
+              )
+            })}
             {showCashOut && floorSeries.length > 1 ? (
               <polyline
                 points={floorPath}
@@ -448,6 +523,7 @@ export function PriceChart({
         const floorPoint = pointAt(floorSeries, timestamp)
         const ammPoint = interpolatedPointAt(ammSeries, timestamp)
         const minimum = pointAt(visibleMinimumSeries, timestamp)?.value
+        const reserves = showAmm && pairSymbol ? reservesAt(timestamp) : null
         return (
           <div className="space-y-1.5 text-xs leading-relaxed">
             <p className="border-b border-grey-700 pb-1.5 font-medium text-white">
@@ -480,9 +556,21 @@ export function PriceChart({
                 symbol={symbol}
               />
             ) : null}
-            {showAmm && amm && ammLiquidity ? (
-              <p className="whitespace-nowrap text-grey-300">
-                Pool holds {ammLiquidity}
+            {reserves ? (
+              <p className="flex items-center gap-1.5 whitespace-nowrap text-grey-300">
+                Pool liquidity:
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0"
+                  style={{ backgroundColor: RESERVE_TOKEN_SWATCH }}
+                />
+                {formatCompactAmount(reserves.tokenAmount)} {symbol} +
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0"
+                  style={{ backgroundColor: RESERVE_PAIR_SWATCH }}
+                />
+                {formatAmount(reserves.pairAmount)} {pairSymbol}
               </p>
             ) : null}
             {showCashOut && minimum ? (

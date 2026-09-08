@@ -72,3 +72,61 @@ export async function fetchIndexedLpPositions({
     return null
   }
 }
+
+/** One ModifyLiquidity in a buyback pool, in the order it happened. Amounts are fixed-point strings. */
+export type BsPoolLiquidityEvent = {
+  timestamp: number
+  tokenId: string
+  tickLower: number
+  tickUpper: number
+  liquidityAfter: string
+  /** The pool's price at that block; null when the indexer could not read it. */
+  sqrtPriceX96: string | null
+}
+
+const POOL_LIQUIDITY_EVENTS_QUERY = `
+  query($chainId: Int!, $poolId: String!, $limit: Int!, $offset: Int!) {
+    buybackPoolLiquidityEvents(
+      where: { chainId: $chainId, poolId: $poolId, version: 6 }
+      orderBy: "timestamp"
+      orderDirection: "asc"
+      limit: $limit
+      offset: $offset
+    ) {
+      items {
+        timestamp
+        tokenId
+        tickLower
+        tickUpper
+        liquidityAfter
+        sqrtPriceX96
+      }
+      totalCount
+    }
+  }
+`
+
+/**
+ * Every liquidity change a pool has seen, oldest first. The position table only
+ * holds LIVE liquidity, so this is the only way to know what the pool held at an
+ * earlier point. Null when the query failed; empty when the pool never held any.
+ */
+export async function fetchIndexedPoolLiquidityEvents({
+  chainId,
+  poolId,
+}: {
+  chainId: number
+  poolId: string
+}): Promise<BsPoolLiquidityEvent[] | null> {
+  try {
+    const page = await getPagedItems<BsPoolLiquidityEvent>(
+      POOL_LIQUIDITY_EVENTS_QUERY,
+      'buybackPoolLiquidityEvents',
+      { chainId, poolId },
+      { pageSize: 250 },
+    )
+    return page.items
+  } catch {
+    return null
+  }
+}

@@ -7,7 +7,7 @@ import {
   optimism,
   optimismSepolia,
   sepolia,
-} from 'wagmi/chains'
+} from '@bananapus/nana-sdk-core/chains'
 
 export const PRODUCTION_CHAINS = [mainnet, optimism, base, arbitrum] as const
 export const TESTNET_CHAINS = [

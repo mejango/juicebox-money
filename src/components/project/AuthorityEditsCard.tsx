@@ -5,13 +5,18 @@ import {
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
+  jbProjectsAbi,
+  type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getTokenAddress } from '@bananapus/nana-sdk-core/v6'
+import { getAccount } from '@wagmi/core'
+import { getTokenAddress, hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import {
   encodeFunctionData,
   erc20Abi,
+  isAddress,
+  isAddressEqual,
   zeroAddress,
   type Address,
   type Hex,
@@ -22,6 +27,7 @@ import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   clientFor,
@@ -34,11 +40,16 @@ import { projectLogoUrl } from '@/lib/format'
 import { TOKEN_SYMBOL_RE, omnichainTokenSalt } from '@/lib/manage'
 import {
   customPropertiesText,
+  customMetadataProperties,
   fetchProjectMetadataJson,
   mergeProjectMetadata,
   parseCustomProperties,
   preservedMetadataKeys,
+  type EditedMetadataKey,
 } from '@/lib/project-metadata'
+import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
+import { wagmiConfig } from '@/providers/Providers'
+import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import {
   buildDeployTokenAuthorityCall,
   buildTokenMetadataAuthorityCall,
@@ -219,6 +230,7 @@ export function AuthorityEditsCard({
             {open === 'metadata' ? (
               <MetadataEditor
                 rows={rows}
+                isRevnet={isRevnet}
                 initial={profile}
                 onCancel={() => setOpen(null)}
                 onDone={() => query.refetch()}
@@ -414,6 +426,13 @@ function truncateUri(uri: string): string {
   return `${uri.slice(0, 14)}…${uri.slice(-10)}`
 }
 
+/** A review-row value: blank reads as unset, long text is clipped. */
+function reviewValue(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return '—'
+  return trimmed.length > 48 ? `${trimmed.slice(0, 45)}…` : trimmed
+}
+
 /** The shared ChainPicker fed by this card's per-chain read state. */
 function EditChainPicker({
   rows,
@@ -442,19 +461,186 @@ function EditChainPicker({
   )
 }
 
+type MetadataDestination = {
+  chainId: JBChainId
+  projectId: number
+  indexedAuthority: Address | null
+  owner: Address
+  authority: Address
+  controller: Address
+  uri: string
+  nextUri: string
+}
+
+type MetadataReview = {
+  account: Address
+  isRevnet: boolean
+  scope: string
+  destinations: MetadataDestination[]
+  rows: TxConfirmRow[]
+}
+
+const metadataReviewKey = (row: { chainId: number; projectId: number }) =>
+  `jb-metadata-review-v1:${row.chainId}:${row.projectId}`
+
+async function withMetadataReviewLocks<T>(
+  rows: readonly { chainId: number; projectId: number }[],
+  execute: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(rows.map(metadataReviewKey))].sort()
+  const lock = (index: number): Promise<T> => index === keys.length
+    ? execute()
+    : withRelayrScopeLock(keys[index], () => lock(index + 1))
+  return lock(0)
+}
+
+async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: boolean, account: Address) {
+  const client = clientFor(deployment.chainId)
+  const [owner, controller] = await Promise.all([
+    client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBProjects][deployment.chainId],
+      abi: jbProjectsAbi, functionName: 'ownerOf', args: [BigInt(deployment.projectId)] }),
+    client.readContract({
+      address: jbContractAddress['6'][JBCoreContracts.JBDirectory][deployment.chainId],
+      abi: jbDirectoryAbi, functionName: 'controllerOf', args: [BigInt(deployment.projectId)],
+    }),
+  ])
+  if (!isAddress(owner) || !isAddress(controller) || isAddressEqual(controller, zeroAddress)) {
+    throw new Error(`${chainName(deployment.chainId)}: could not verify the live controller and authority.`)
+  }
+  const permitted = (operator: Address) => hasPermissions(client, {
+    chainId: deployment.chainId, account: owner, operator,
+    projectId: BigInt(deployment.projectId), permissionIds: [JBPermissionIdsV6.SET_PROJECT_URI],
+    includeRoot: true, includeWildcardProjectId: true,
+  })
+  const candidates = [owner]
+  const indexed = await readAuthorityOf(client, deployment, { indexedOnly: isRevnet, detectRevnet: !isRevnet, strict: true })
+  if (indexed && !isAddressEqual(indexed, owner)) candidates.push(indexed)
+  let authority: Address | null = null
+  for (const candidate of candidates) {
+    const identity = isAddressEqual(account, candidate) ? null : await readAuthorityIdentity(client, candidate)
+    const canSign = isAddressEqual(account, candidate) ||
+      (identity?.kind === 'safe' && identity.owners.some(signer => isAddressEqual(signer, account)))
+    if (canSign && (isAddressEqual(candidate, owner) || await permitted(candidate))) {
+      authority = candidate
+      break
+    }
+  }
+  if (!authority && await permitted(account)) authority = account
+  if (!authority) throw new Error(`${chainName(deployment.chainId)}: this wallet cannot set the project metadata URI.`)
+  const uri = await client.readContract({ address: controller, abi: jbControllerAbi,
+    functionName: 'uriOf', args: [BigInt(deployment.projectId)] })
+  if (typeof uri !== 'string') throw new Error('Could not read the current project metadata URI.')
+  return { owner, authority, controller, uri }
+}
+
+function metadataReviewCalls(review: MetadataReview, requireSaved = true): AuthorityCall[] {
+  return review.destinations.map(destination => ({
+    chainId: destination.chainId,
+    authority: destination.authority,
+    target: destination.controller,
+    data: encodeFunctionData({ abi: jbControllerAbi, functionName: 'setUriOf',
+      args: [BigInt(destination.projectId), destination.nextUri] }),
+    abi: jbControllerAbi,
+    functionName: 'setUriOf',
+    args: [BigInt(destination.projectId), destination.nextUri],
+    contractName: 'JBController',
+    gas: 250_000n,
+    label: `Set project ${destination.projectId} metadata`,
+    reverifyAuthority: async () => {
+      const connected = getAccount(wagmiConfig).address
+      if (!connected || !isAddressEqual(connected, review.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
+      if (requireSaved && typeof window !== 'undefined') {
+        const saved = readMetadataReview([destination])
+        if (!saved || saved.scope !== review.scope || !isAddressEqual(saved.account, review.account)) {
+          throw new Error('The original metadata review changed in another tab. Reopen the saved review before continuing.')
+        }
+      }
+      const live = await readMetadataBaseline(destination, review.isRevnet, review.account)
+      if (!isAddressEqual(live.owner, destination.owner) || !isAddressEqual(live.authority, destination.authority) ||
+          !isAddressEqual(live.controller, destination.controller) || live.uri !== destination.uri) {
+        throw new Error(`${chainName(destination.chainId)}: the controller, authority, or metadata URI changed after review. The original metadata update was not sent.`)
+      }
+    },
+  }))
+}
+
+function readMetadataReview(rows: readonly { chainId: number; projectId: number }[]): MetadataReview | null {
+  if (typeof window === 'undefined') return null
+  for (const row of rows) {
+    try {
+      const raw = window.localStorage.getItem(metadataReviewKey(row))
+      if (!raw) continue
+      const review = JSON.parse(raw) as MetadataReview
+      if (!isAddress(review.account) || !Array.isArray(review.destinations) || !review.destinations.length ||
+          review.destinations.length > 16 || typeof review.isRevnet !== 'boolean' || !Array.isArray(review.rows) ||
+          review.rows.some(item => !item || typeof item.label !== 'string' || typeof item.value !== 'string') ||
+          !review.destinations.some(item => item.chainId === row.chainId && item.projectId === row.projectId) ||
+          review.destinations.some(item => !Number.isSafeInteger(item.chainId) || item.chainId < 1 ||
+            !Number.isSafeInteger(item.projectId) || item.projectId < 1 || !isAddress(item.owner) || !isAddress(item.authority) ||
+            !isAddress(item.controller) || typeof item.uri !== 'string' || typeof item.nextUri !== 'string') ||
+          review.scope !== relayrCallsScope(metadataReviewCalls(review))) continue
+      return review
+    } catch { /* An invalid local review cannot authorize a transaction. */ }
+  }
+  return null
+}
+
+function saveMetadataReview(review: MetadataReview): void {
+  if (typeof window === 'undefined') return
+  const text = JSON.stringify(review)
+  for (const destination of review.destinations) {
+    const previous = readMetadataReview([destination])
+    if (previous && (previous.scope !== review.scope || !isAddressEqual(previous.account, review.account))) {
+      throw new Error('Finish or close the original metadata review before reviewing another update for this project.')
+    }
+    window.localStorage.setItem(metadataReviewKey(destination), text)
+    if (window.localStorage.getItem(metadataReviewKey(destination)) !== text) {
+      throw new Error('Allow browser storage before submitting this metadata update.')
+    }
+  }
+}
+
+async function clearMetadataReview(review: MetadataReview): Promise<void> {
+  return withMetadataReviewLocks(review.destinations, async () => {
+    if (loadRelayrPendingSession(review.scope)) {
+      throw new Error('The original metadata authorizations are already published. Resume that saved update before changing it.')
+    }
+    removeMetadataReview(review)
+  })
+}
+
+function removeMetadataReview(review: MetadataReview): void {
+  if (typeof window === 'undefined') return
+  for (const destination of review.destinations) {
+    if (readMetadataReview([destination])?.scope === review.scope) window.localStorage.removeItem(metadataReviewKey(destination))
+  }
+}
+
+/** Stable JSON identity makes equivalent per-chain metadata share a single pin. */
+function metadataJsonKey(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]))
+      : item)
+}
+
 export function MetadataEditor({
   rows,
+  isRevnet = false,
   initial,
   onCancel,
   onDone,
 }: {
   rows: EditChainState[]
+  isRevnet?: boolean
   initial: AuthorityEditProfile
   onCancel: () => void
   onDone: () => void
 }) {
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(rows.filter(row => !row.error).map(row => row.chainId)),
+    // Metadata-only delegates need not be the indexed full revnet operator.
+    // The live setter-specific permission check runs while building the review.
+    () => new Set(rows.filter(row => !!row.controller).map(row => row.chainId)),
   )
   const [name, setName] = useState(initial.name)
   const [tagline, setTagline] = useState(initial.tagline)
@@ -468,23 +654,25 @@ export function MetadataEditor({
   const [payNotice, setPayNotice] = useState(initial.payDisclosure ?? '')
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
-  // The Advanced box holds the metadata's UNRECOGNIZED keys as JSON. It only
-  // replaces them once the user has actually edited it, so a save made before
-  // the live JSON lands (or with the box never opened) preserves them.
+  // Compare the Advanced box with its own prefill so edits affect the same
+  // custom keys everywhere while preserving unrelated per-chain properties.
   const [customText, setCustomText] = useState('')
+  const [customBaseline, setCustomBaseline] = useState<Record<string, unknown>>({})
   const [customTouched, setCustomTouched] = useState(false)
-  const [reviewed, setReviewed] = useState(false)
+  const [frozen, setFrozen] = useState<MetadataReview | null>(() => readMetadataReview(rows))
+  const [reviewed, setReviewed] = useState(!!frozen)
+  const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // The CURRENT pinned projectUri JSON. Saving merges the edited fields into
-  // this object so tags and custom fields round-trip untouched; the fetch is
-  // repeated at pin time (fail-closed) if this read hasn't landed yet.
-  const metadataUri = rows.find(row => row.uri)?.uri ?? null
+  // This first-chain read only prefills the optional custom-property replacement.
+  // Each destination's live URI is read separately when building the review.
+  const metadataSource = rows.find(row => row.uri)
+  const metadataUri = metadataSource?.uri ?? null
   const currentMetadata = useQuery({
     queryKey: ['authorityEditCurrentUriJson', metadataUri],
-    enabled: !!metadataUri,
+    enabled: !!metadataUri && !frozen,
     staleTime: 60_000,
     retry: 1,
     queryFn: () => fetchProjectMetadataJson(metadataUri!),
@@ -500,6 +688,7 @@ export function MetadataEditor({
   useEffect(() => {
     if (customTouched) return
     setCustomText(customPropertiesText(currentMetadata.data ?? null))
+    setCustomBaseline(customMetadataProperties(currentMetadata.data ?? null))
   }, [currentMetadata.data, customTouched])
 
   useEffect(
@@ -509,7 +698,18 @@ export function MetadataEditor({
     [logoPreview],
   )
 
-  const invalidate = () => {
+  const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
+
+  const invalidate = async () => {
+    if (locked) return
+    if (frozen) {
+      try { await clearMetadataReview(frozen) }
+      catch (invalidateError) {
+        setError(invalidateError instanceof Error ? invalidateError.message : 'This metadata review is active in another tab.')
+        return
+      }
+    }
+    setFrozen(null)
     setReviewed(false)
     setError(null)
   }
@@ -532,120 +732,147 @@ export function MetadataEditor({
     setLogoPreview(URL.createObjectURL(file))
   }
 
-  const review = () => {
+  const chosen = rows.filter(row => selected.has(row.chainId))
+
+  const review = async () => {
+    if (busy) return
     setError(null)
-    if (!name.trim()) {
-      setError('Give the project a name.')
-      return
-    }
-    if (!selected.size) {
-      setError('Choose at least one chain.')
-      return
-    }
-    if (!parsedCustom.ok) {
-      setError(parsedCustom.error)
-      return
-    }
-    setReviewed(true)
+    setStatus(null)
+    if (frozen) { setReviewed(true); return }
+    if (!name.trim()) { setError('Give the project a name.'); return }
+    if (!chosen.length) { setError('Choose at least one chain.'); return }
+    const custom = parseCustomProperties(customText)
+    if (!custom.ok) { setError(custom.error); return }
+    const account = getAccount(wagmiConfig).address
+    if (!account) { setError('Connect a wallet first.'); return }
+    setBusy(true)
+    try {
+      const pending = readMetadataReview(rows)
+      if (pending && loadRelayrPendingSession(pending.scope)) {
+        setFrozen(pending)
+        setReviewed(true)
+        return
+      }
+      const fields: [EditedMetadataKey, string, string, string][] = [
+        ['name', 'Name', initial.name, name],
+        ['projectTagline', 'Tagline', initial.tagline, tagline],
+        ['description', 'Description', initial.description, description],
+        ['payDisclosure', 'Payment notice', initial.payDisclosure ?? '', payNotice],
+        ['infoUri', 'Website', initial.infoUri ?? '', infoUri],
+        ['twitter', 'X / Twitter', initial.twitter ?? '', twitter],
+        ['discord', 'Discord', initial.discord ?? '', discord],
+        ['telegram', 'Telegram', initial.telegram ?? '', telegram],
+        ['whatsapp', 'WhatsApp', initial.whatsapp ?? '', whatsapp],
+        ['instagram', 'Instagram', initial.instagram ?? '', instagram],
+      ]
+      const changed = fields.filter(([, , before, after]) => before.trim() !== after.trim())
+      const customKeys = customTouched ? [...new Set([
+        ...Object.keys(customBaseline), ...Object.keys(custom.properties),
+      ])].filter(key => !(key in customBaseline) || !(key in custom.properties) ||
+        metadataJsonKey(customBaseline[key]) !== metadataJsonKey(custom.properties[key])) : []
+      const edits: Partial<Record<EditedMetadataKey, string>> = Object.fromEntries(
+        changed.map(([key, , , after]) => [key, after.trim()]),
+      )
+      if (logoFile) {
+        setStatus('Uploading the logo…')
+        edits.logoUri = (await jbCenterIpfs.pinImage(logoFile)).uri
+      }
+      const metadata = new Map<string, Promise<Record<string, unknown>>>()
+      const pins = new Map<string, Promise<string>>()
+      const destinations: MetadataDestination[] = []
+      const confirmationRows: TxConfirmRow[] = []
+      for (const row of chosen) {
+        setStatus(`Reading the current profile on ${row.name}…`)
+        const baseline = await readMetadataBaseline(row, isRevnet, account)
+        if (destinations.length && !isAddressEqual(destinations[0].authority, baseline.authority)) {
+          throw new Error('Choose chains controlled by the same owner/operator for one metadata update. Submit other authorities separately.')
+        }
+        let existing: Record<string, unknown> = {}
+        if (baseline.uri) {
+          if (!metadata.has(baseline.uri)) metadata.set(baseline.uri, fetchProjectMetadataJson(baseline.uri))
+          existing = await metadata.get(baseline.uri)!
+        }
+        const nextCustom = customMetadataProperties(existing)
+        for (const key of customKeys) {
+          if (key in custom.properties) nextCustom[key] = custom.properties[key]
+          else delete nextCustom[key]
+        }
+        const next = mergeProjectMetadata(existing, edits, customTouched ? nextCustom : undefined)
+        const key = metadataJsonKey(next)
+        if (!pins.has(key)) {
+          setStatus(`Pinning the profile for ${row.name}…`)
+          pins.set(key, jbCenterIpfs.pinJson(next).then(pin => pin.uri))
+        }
+        const nextUri = await pins.get(key)!
+        destinations.push({ chainId: row.chainId, projectId: row.projectId,
+          indexedAuthority: row.indexedAuthority, ...baseline, nextUri })
+        confirmationRows.push({ label: row.name, value: `Project ${row.projectId} · ${baseline.controller}` })
+        for (const [field, label, , after] of changed) {
+          const before = typeof existing[field] === 'string' ? existing[field] as string : ''
+          confirmationRows.push({ label: `${row.name} · ${label}`, value: `${reviewValue(before)} → ${reviewValue(after)}` })
+        }
+        if (logoFile) confirmationRows.push({ label: `${row.name} · Logo`, value: existing.logoUri ? 'Replaced' : 'Added' })
+        for (const key of customKeys) confirmationRows.push({
+          label: `${row.name} · Custom property ${key}`,
+          value: key in custom.properties ? 'Set to the reviewed value' : 'Removed',
+        })
+        if (!changed.length && !logoFile && !customKeys.length) {
+          confirmationRows.push({ label: `${row.name} · Fields`, value: 'Unchanged — this chain’s profile is re-pinned as is' })
+        }
+      }
+      const nextReview: MetadataReview = { account, isRevnet, scope: '', destinations, rows: confirmationRows }
+      nextReview.scope = relayrCallsScope(metadataReviewCalls(nextReview))
+      // Every destination is rechecked after potentially slow metadata fetches and pins.
+      for (const call of metadataReviewCalls(nextReview, false)) await call.reverifyAuthority?.()
+      await withMetadataReviewLocks(nextReview.destinations, async () => saveMetadataReview(nextReview))
+      setFrozen(nextReview)
+      setReviewed(true)
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'Could not review project metadata.')
+    } finally { setBusy(false) }
   }
 
-  const pinMetadata = async (): Promise<string> => {
-    // Re-parse rather than trust the reviewed state: an unparseable box must
-    // never reach the pin, and the user's JSON is never silently dropped.
-    const custom = parseCustomProperties(customText)
-    if (!custom.ok) throw new Error(custom.error)
-
-    let logoUri = initial.logoUri ?? undefined
-    if (logoFile) {
-      setStatus('Uploading the logo…')
-      logoUri = (await jbCenterIpfs.pinImage(logoFile)).uri
+  const closeReview = async () => {
+    if (frozen && !loadRelayrPendingSession(frozen.scope)) {
+      try { await clearMetadataReview(frozen) }
+      catch (closeError) {
+        setError(closeError instanceof Error ? closeError.message : 'This metadata review is active in another tab.')
+        return
+      }
+      setFrozen(null)
     }
-
-    // Merge over the CURRENT pinned JSON so fields this form doesn't edit —
-    // tags, coverImageUri, custom fields — survive the save. If the project
-    // has a uri that can't be read right now, fail the save rather than
-    // silently rebuilding the profile from only the known fields.
-    setStatus('Reading the current profile…')
-    const existing = metadataUri
-      ? (currentMetadata.data ?? (await fetchProjectMetadataJson(metadataUri)))
-      : {}
-
-    setStatus('Pinning the project profile…')
-    const pin = await jbCenterIpfs.pinJson(
-      mergeProjectMetadata(
-        existing,
-        {
-          name: name.trim(),
-          projectTagline: tagline.trim(),
-          description: description.trim(),
-          infoUri: infoUri.trim(),
-          twitter: twitter.trim(),
-          discord: discord.trim(),
-          telegram: telegram.trim(),
-          whatsapp: whatsapp.trim(),
-          instagram: instagram.trim(),
-          payDisclosure: payNotice.trim(),
-          // Only ever set or keep a logo — there's no removal control here.
-          ...(logoUri ? { logoUri } : {}),
-        },
-        // An untouched box leaves the existing custom properties alone; an
-        // edited one replaces them, so a removed key is removed on-chain.
-        customTouched ? custom.properties : undefined,
-      ),
-    )
-    return pin.uri
+    setReviewed(false)
+    setDone(false)
+    setError(null)
   }
 
   const submit = async () => {
-    if (!reviewed || busy) return
-    const chosen = rows.filter(row => selected.has(row.chainId))
+    if (!reviewed || !frozen || busy) return
     setBusy(true)
     setError(null)
     try {
-      const uri = await pinMetadata()
-      const calls: AuthorityCall[] = chosen.map(row => {
-        if (!row.authority || !row.controller) {
-          throw new Error(`${row.name}: owner/operator or controller is unknown.`)
+      await withMetadataReviewLocks(frozen.destinations, async () => {
+        const account = getAccount(wagmiConfig).address
+        if (!account || !isAddressEqual(account, frozen.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
+        const pending = loadRelayrPendingSession(frozen.scope)
+        if (pending && pending.paymentStatus !== 'unpaid') {
+          await resumeRelayrSession({ scope: frozen.scope, account, onProgress: progress => {
+            if (progress.phase === 'executing') setStatus(`Relayr reports ${progress.done}/${progress.total} complete; checking the original receipts…`)
+          } })
+          setStatus(`Project metadata updated on ${frozen.destinations.length} chains.`)
+        } else {
+          saveMetadataReview(frozen)
+          const calls = metadataReviewCalls(frozen)
+          const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
+          setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         }
-        return {
-          chainId: row.chainId,
-          authority: row.authority,
-          target: row.controller,
-          data: encodeFunctionData({
-            abi: jbControllerAbi,
-            functionName: 'setUriOf',
-            args: [BigInt(row.projectId), uri],
-          }),
-          abi: jbControllerAbi,
-          functionName: 'setUriOf',
-          args: [BigInt(row.projectId), uri],
-          contractName: 'JBController',
-          gas: 250_000n,
-          label: 'Set project metadata',
-        }
+        removeMetadataReview(frozen)
+        setDone(true)
+        onDone()
       })
-      const result = await runAuthorityCalls({
-        calls,
-        onProgress: progress => setStatus(progress.message),
-      })
-      setStatus(
-        outcomeMessage(
-          result,
-          `Project metadata updated on ${calls.length} chain${
-            calls.length === 1 ? '' : 's'
-          }.`,
-        ),
-      )
-      onDone()
     } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Could not update project metadata.',
-      )
-    } finally {
-      setBusy(false)
-    }
+      setError(submitError instanceof Error ? submitError.message : 'Could not update project metadata.')
+    } finally { setBusy(false) }
   }
 
   const preview = logoPreview ?? projectLogoUrl(initial.logoUri)
@@ -666,14 +893,18 @@ export function MetadataEditor({
 
       <div className="mt-4">
         <EditChainPicker
-          rows={rows}
+          rows={rows.map(row => ({ ...row, error: row.controller ? null : row.error }))}
           selected={selected}
           onChange={next => {
             setSelected(next)
             invalidate()
           }}
-          disabled={busy}
+          disabled={busy || locked}
         />
+        <p className="mt-2 text-xs leading-relaxed text-smoke-500">
+          Only fields you change are applied to every selected chain. Other
+          values stay as they are on each chain.
+        </p>
       </div>
 
       <div className="mt-4 grid gap-4">
@@ -684,7 +915,7 @@ export function MetadataEditor({
             setName(value.slice(0, 100))
             invalidate()
           }}
-          disabled={busy}
+          disabled={busy || locked}
           required
         />
         <TextField
@@ -694,7 +925,7 @@ export function MetadataEditor({
             setTagline(value.slice(0, 100))
             invalidate()
           }}
-          disabled={busy}
+          disabled={busy || locked}
           placeholder="One line about the project"
         />
         <label className="block">
@@ -705,7 +936,7 @@ export function MetadataEditor({
               setDescription(event.target.value.slice(0, 10000))
               invalidate()
             }}
-            disabled={busy}
+            disabled={busy || locked}
             rows={4}
             className="input-well mt-1.5 w-full resize-y px-3 py-2.5 text-sm leading-relaxed disabled:opacity-60"
           />
@@ -718,7 +949,7 @@ export function MetadataEditor({
               setPayNotice(event.target.value.slice(0, 1000))
               invalidate()
             }}
-            disabled={busy}
+            disabled={busy || locked}
             rows={2}
             placeholder="Shown to payers before they pay"
             className="input-well mt-1.5 w-full resize-y px-3 py-2.5 text-sm leading-relaxed disabled:opacity-60"
@@ -746,7 +977,7 @@ export function MetadataEditor({
             <input
               type="file"
               accept="image/*"
-              disabled={busy}
+              disabled={busy || locked}
               className="sr-only"
               onChange={event => chooseLogo(event.target.files?.[0] ?? null)}
             />
@@ -775,7 +1006,7 @@ export function MetadataEditor({
                 ;(setter as (value: string) => void)(next.slice(0, 300))
                 invalidate()
               }}
-              disabled={busy}
+              disabled={busy || locked}
               placeholder="https://… or handle"
             />
           ))}
@@ -787,9 +1018,9 @@ export function MetadataEditor({
           Advanced — custom properties (JSON)
         </summary>
         <p className="mt-2 text-xs leading-relaxed text-smoke-500">
-          Anything in this project&apos;s metadata that no field above owns.
-          Saving replaces this set exactly: remove a property here and it is
-          removed on-chain.
+          {metadataSource ? `Prefilled from ${metadataSource.name}. ` : ''}
+          Keys you add, change, or remove are updated on every selected chain.
+          Unchanged keys and other chains&apos; extra custom properties are kept.
         </p>
         <textarea
           aria-label="Custom properties (JSON)"
@@ -799,7 +1030,7 @@ export function MetadataEditor({
             setCustomTouched(true)
             invalidate()
           }}
-          disabled={busy || customLoading || customUnreadable}
+          disabled={busy || locked || customLoading || customUnreadable}
           rows={6}
           spellCheck={false}
           placeholder={
@@ -834,28 +1065,38 @@ export function MetadataEditor({
         ) : null}
       </details>
 
-      {reviewed ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p>
-            <span className="font-medium">{name.trim()}</span> will use one
-            pinned profile on {rows
-              .filter(row => selected.has(row.chainId))
-              .map(row => row.name)
-              .join(', ')}.
-          </p>
-        </div>
-      ) : null}
-
       <button
         type="button"
-        onClick={reviewed ? submit : review}
-        disabled={busy || !name.trim() || !selected.size}
+        onClick={() => void review()}
+        disabled={busy || (!frozen && (!name.trim() || !selected.size))}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {busy ? status ?? 'Preparing…' : reviewed ? 'Save project metadata' : 'Review changes'}
+        {locked ? 'Resume original metadata update' : 'Save project details'}
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {status && !reviewed ? (
+        <p className="mt-2 text-xs text-smoke-700">{status}</p>
+      ) : null}
+      {error && !reviewed ? <ErrorNote message={error} /> : null}
+
+      {reviewed ? (
+        <TxConfirmDialog
+          open
+          title={done ? 'Project metadata updated' : 'Confirm project metadata'}
+          rows={frozen?.rows ?? []}
+          steps={(frozen?.destinations ?? []).map(row => ({
+            key: String(row.chainId),
+            title: `Set project metadata on ${chainName(row.chainId)}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : 'Confirm & save'}
+          onConfirm={() => void submit()}
+          onClose={closeReview}
+        />
+      ) : null}
     </div>
   )
 }
@@ -903,17 +1144,20 @@ function TokenEditor({
   const [name, setName] = useState(commonName)
   const [symbol, setSymbol] = useState(commonSymbol)
   const [review, setReview] = useState<AuthorityCall[] | null>(null)
+  const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const invalidate = () => {
     setReview(null)
+    setDone(false)
     setError(null)
   }
 
   const buildReview = () => {
     setError(null)
+    setStatus(null)
     const chosen = rows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one chain.')
@@ -981,6 +1225,7 @@ function TokenEditor({
           }.`,
         ),
       )
+      setDone(true)
       onDone()
     } catch (submitError) {
       setError(
@@ -1047,42 +1292,68 @@ function TokenEditor({
         />
       </div>
 
-      {review ? (
-        <div className="callout callout-info mt-4 text-xs">
-          <p className="font-medium">Review per-chain behavior</p>
-          <ul className="mt-2 space-y-1">
-            {rows
-              .filter(row => selected.has(row.chainId))
-              .map(row => (
-                <li key={row.chainId} className="flex items-center gap-2">
-                  <ChainIcon chainId={row.chainId} size={16} />
-                  {row.name}: {row.token ? 'rename existing token' : 'deploy ERC-20'}
-                </li>
-              ))}
-          </ul>
-          <p className="mt-2">
-            Final metadata: <span className="font-medium">{name.trim()}</span>{' '}
-            ({symbol}). Existing balances are unchanged.
-          </p>
-          {review.some(call => call.functionName === 'deployERC20For') ? (
-            <p className="mt-2">
-              Every deploy here uses the same salt, so the ERC-20 lands on one
-              address across the chains you sign from this account.
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
       <button
         type="button"
-        onClick={review ? submit : buildReview}
+        onClick={buildReview}
         disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
-        {busy ? status ?? 'Preparing…' : review ? 'Save token metadata' : 'Review changes'}
+        Save token details
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {status && !review ? (
+        <p className="mt-2 text-xs text-smoke-700">{status}</p>
+      ) : null}
+      {error && !review ? <ErrorNote message={error} /> : null}
+
+      {review ? (
+        <TxConfirmDialog
+          open
+          title={done ? 'Token metadata updated' : 'Confirm token metadata'}
+          rows={[
+            {
+              label: 'Name',
+              value:
+                commonName === name.trim()
+                  ? name.trim()
+                  : `${reviewValue(commonName)} → ${name.trim()}`,
+            },
+            {
+              label: 'Symbol',
+              value:
+                commonSymbol === symbol
+                  ? symbol
+                  : `${reviewValue(commonSymbol)} → ${symbol}`,
+            },
+            {
+              label: 'On',
+              value: review.map(call => chainName(call.chainId)).join(', '),
+            },
+          ]}
+          steps={review.map(call => ({
+            key: String(call.chainId),
+            title: `${
+              call.functionName === 'deployERC20For'
+                ? 'Deploy the ERC-20'
+                : 'Rename the token'
+            } on ${chainName(call.chainId)}`,
+          }))}
+          activeIndex={busy ? 0 : -1}
+          status={status}
+          error={error}
+          busy={busy}
+          complete={done}
+          action={error ? 'Retry' : 'Confirm & save'}
+          onConfirm={() => void submit()}
+          onClose={invalidate}
+        >
+          <p className="text-xs leading-relaxed text-smoke-700">
+            Existing balances are unchanged.
+            {review.some(call => call.functionName === 'deployERC20For')
+              ? ' Every deploy uses the same salt, so the ERC-20 lands on one address across the chains you sign from this account.'
+              : ''}
+          </p>
+        </TxConfirmDialog>
+      ) : null}
     </div>
   )
 }

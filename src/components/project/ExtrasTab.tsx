@@ -1,12 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import {
-  buildDeployProjectPayerTx,
-  projectPayerFromDeployLogs,
-} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { isAddress, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
@@ -14,8 +9,8 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField } from '@/components/create/AddressField'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
 import { draftFileName } from '@/lib/draft'
@@ -25,9 +20,10 @@ import {
   buildProjectDraftExport,
   type ExportProjectProfile,
 } from '@/lib/project-draft-export'
-import { chainName, toUrn } from '@/lib/urn'
+import { chainName } from '@/lib/urn'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
+import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentScope, runPayerDeployments, type PayerDeploymentSession } from '@/lib/payer-relayr'
 
 /**
  * Extras tab: export a verified create-flow draft, plus the payer-address
@@ -161,393 +157,193 @@ function ProjectDraftExportCard({
   )
 }
 
-/** A reviewed, ready-to-send deploy: the exact args are frozen here so what
- *  the user confirms is what's sent. */
-type ReviewedDeploy = {
-  request: ReturnType<typeof buildDeployProjectPayerTx>
-  beneficiary: Address
-  owner: Address
-  addToBalance: boolean
-  memo: string
-  /** The account the review was made for. */
-  account: Address
-}
-
-/**
- * "Payer address" (tx #32): deploy a JBProjectPayer so plain ETH transfers
- * to a dedicated address pay the project. Website parity: default behavior
- * is Pay, default beneficiary is the zero address (the original payer
- * receives the tokens), default owner is the zero address (immutable) with
- * an opt-in editable mode owned by the connected wallet, and metadata is
- * always 0x. Deploys are permissionless.
- */
-function PayerAddressCard({
-  chainId,
-  projectId,
-  chains,
-}: {
+/** Permissionless payer deployments share frozen settings across explicitly selected project chains. */
+function PayerAddressCard({ chainId, projectId, chains }: {
   chainId: JBChainId
   projectId: number
-  /** Per-chain deployments: [chainId, projectId] — sibling ids can differ. */
   chains: [number, number][]
 }) {
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
   const { data: ownToken } = useProjectTokenSymbol(chainId, projectId)
-  // Name the field after what the beneficiary actually receives.
   const beneficiaryLabel = `${ownToken?.symbol || 'Token'} beneficiary`
-
+  const projects = useMemo(() => [
+    [chainId, projectId] as [number, number],
+    ...chains.filter(([id]) => id !== chainId),
+  ], [chains, chainId, projectId])
+  const scope = payerDeploymentScope(projects)
+  const [selectedChains, setSelectedChains] = useState<number[]>([chainId])
   const [addToBalance, setAddToBalance] = useState(false)
   const [beneficiary, setBeneficiary] = useState('')
   const [memo, setMemo] = useState('')
   const [editable, setEditable] = useState(false)
   const [adminInput, setAdminInput] = useState('')
   const [flowError, setFlowError] = useState<string | null>(null)
-  const [review, setReview] = useState<ReviewedDeploy | null>(null)
+  const [review, setReview] = useState<PayerDeploymentSession | null>(null)
+  const [session, setSession] = useState<PayerDeploymentSession | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const {
-    data: payerRows = [],
-    isLoading: payersLoading,
-    isError: payersError,
-    isFetching: payersFetching,
-    refetch: refetchPayers,
-  } = useQuery({
-    queryKey: ['projectPayers', ...chains.flat()],
-    queryFn: () => getProjectPayers(chains),
-    enabled: chains.length > 0,
-    staleTime: 30_000,
-    retry: 1,
+  const { data: payerRows = [], isLoading: payersLoading, isError: payersError,
+    isFetching: payersFetching, refetch: refetchPayers } = useQuery({
+    queryKey: ['projectPayers', ...projects.flat()],
+    queryFn: () => getProjectPayers(projects), enabled: projects.length > 0, staleTime: 30_000, retry: 1,
   })
 
-  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
-
-  const busy = tx.busy
-
   useEffect(() => {
-    if (!tx.receipt) return
-    void refetchPayers()
-  }, [tx.receipt, refetchPayers])
-
-  // Editing any input invalidates the reviewed args.
-  const invalidate = () => {
     setReview(null)
-    setFlowError(null)
-  }
+    setSelectedChains([chainId])
+    try { setSession(loadPayerDeployment(scope)) }
+    catch (error) { setFlowError(error instanceof Error ? error.message : 'The saved payer deployment could not be read.') }
+  }, [scope, chainId])
 
-  // The deployed payer address comes from the deployer's DeployProjectPayer
-  // event in the receipt (the function's return value isn't available from
-  // a transaction) — projectPayer is the indexed first arg.
-  const deployedPayer = useMemo(() => {
-    if (!tx.receipt) return null
-    return projectPayerFromDeployLogs(tx.receipt.logs)
-  }, [tx.receipt])
-
-  const otherChains = chains.filter(([id]) => id !== chainId)
-
+  const invalidate = () => { setReview(null); setFlowError(null) }
   const handleReview = () => {
-    if (busy) return
-    if (!isConnected || !address) {
-      openSignIn()
+    if (busy || session) return
+    if (!isConnected || !address) { openSignIn(); return }
+    setFlowError(null)
+    const beneficiaryAddress = beneficiary.trim() ? resolvedAddress(beneficiary.trim()) : zeroAddress
+    if (!beneficiaryAddress) {
+      setFlowError('Enter a valid beneficiary address or ENS name, or leave it empty.')
       return
     }
-    setFlowError(null)
-    // Empty beneficiary = the zero address: the payer contract mints to
-    // whoever sent the ETH.
-    let beneficiaryAddress: Address = zeroAddress
-    const raw = beneficiary.trim()
-    if (raw) {
-      const resolved = resolvedAddress(raw)
-      if (!resolved) {
-        setFlowError(
-          'Enter a valid beneficiary address or ENS name, or leave it empty.',
-        )
-        return
-      }
-      beneficiaryAddress = resolved
-    }
-    // Owner defaults to the zero address — nobody can ever change the payer.
-    // Editable mode names an admin explicitly, defaulting to the connected
-    // wallet but not assuming it: whoever deploys is often not who should
-    // administer the address afterwards.
-    let owner: Address = zeroAddress
-    if (editable) {
-      const rawAdmin = adminInput.trim()
-      if (rawAdmin) {
-        const resolvedAdmin = resolvedAddress(rawAdmin)
-        if (!resolvedAdmin) {
-          setFlowError('Enter a valid admin address or ENS name.')
-          return
-        }
-        owner = resolvedAdmin
-      } else {
-        owner = address
-      }
-    }
-    setReview({
-      request: buildDeployProjectPayerTx({
-        chainId,
-        projectId: BigInt(projectId),
-        beneficiary: beneficiaryAddress,
-        memo: memo.trim(),
-        addToBalance,
-        owner,
-      }),
-      beneficiary: beneficiaryAddress,
-      owner,
-      addToBalance,
-      memo: memo.trim(),
-      account: address,
-    })
+    const owner = editable ? (adminInput.trim() ? resolvedAddress(adminInput.trim()) : address) : zeroAddress
+    if (!owner) { setFlowError('Enter a valid admin address or ENS name.'); return }
+    try {
+      setReview(buildPayerDeploymentReview({ projects, selectedChainIds: selectedChains, account: address,
+        beneficiary: beneficiaryAddress, owner, memo: memo.trim(), addToBalance }))
+    } catch (error) { setFlowError(error instanceof Error ? error.message : 'Could not review the payer addresses.') }
   }
-
-  const handleConfirm = () => {
-    if (!review || busy) return
-    // Account-unchanged recheck: the reviewed args embed the owner.
-    if (address?.toLowerCase() !== review.account.toLowerCase()) {
+  const run = async (frozen: PayerDeploymentSession) => {
+    if (busy) return
+    if (!address || address.toLowerCase() !== frozen.account.toLowerCase()) {
       setReview(null)
       setFlowError('Your connected account changed — review the deploy again.')
       return
     }
-    tx.send(review.request)
-  }
-
-  const resetAll = () => {
-    setReview(null)
+    setBusy(true)
     setFlowError(null)
-    tx.reset()
+    try {
+      const result = await runPayerDeployments(frozen, update => { setSession(update); setReview(null) })
+      setSession(result)
+      setReview(null)
+      await refetchPayers()
+    } catch (error) {
+      setFlowError(error instanceof Error ? error.message : 'The payer deployments remain unresolved.')
+      try { setSession(loadPayerDeployment(scope)) } catch { /* Keep the last in-memory recovery view. */ }
+    } finally { setBusy(false) }
   }
+  const resetAll = async () => {
+    try {
+      if (session) await finishPayerDeployment(session.scope, session.id)
+      setSession(null)
+      setReview(null)
+      setFlowError(null)
+    } catch (error) { setFlowError(error instanceof Error ? error.message : 'Resolve the existing deployments first.') }
+  }
+  const complete = session?.phase === 'complete'
 
   return (
     <div className="card p-5">
       <h2 className="font-agrandir text-lg font-medium">Payer address</h2>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Get a dedicated address that pays this project whenever someone sends
-        ETH to it — no app needed. Sending other tokens to it directly
-        doesn&apos;t work. Anyone can create any number of payer addresses.
+        Get a dedicated address that pays this project whenever someone sends ETH to it — no app needed.
+        Sending other tokens to it directly doesn&apos;t work. Anyone can create any number of payer addresses.
       </p>
-      <button
-        type="button"
-        onClick={() => setDialogOpen(true)}
-        className="btn-secondary mt-4 min-h-[40px] px-4 text-sm"
-      >
-        Create payer address
+      <button type="button" onClick={() => setDialogOpen(true)} className="btn-secondary mt-4 min-h-[40px] px-4 text-sm">
+        {session && !complete ? 'Resume payer deployment' : 'Create payer address'}
       </button>
-
+      {session && !complete ? <p className="mt-3 text-sm text-smoke-700">A saved deployment is {session.phase.replaceAll('-', ' ')}. Resume it to check the original addresses.</p> : null}
+      {!dialogOpen && flowError ? <TxError error={flowError} className="mt-3 text-sm text-red-700" /> : null}
       {dialogOpen ? (
-        <ModalShell
-          title="Create payer address"
-          subtitle={`Deploy a dedicated address for ${chainName(chainId)}.`}
-          onClose={() => setDialogOpen(false)}
-          busy={busy}
-        >
+        <ModalShell title="Create payer address" subtitle="Choose the project chains that need a payer address." onClose={() => setDialogOpen(false)} busy={busy}>
           <div className="max-h-[min(72vh,46rem)] overflow-y-auto px-5 py-5 sm:px-6">
-            {tx.phase !== 'success' ? (
-          <>
-            <label className="block max-w-sm">
-              <span className="field-label">Behavior</span>
-              <select
-                value={addToBalance ? 'balance' : 'pay'}
-                disabled={busy}
-                onChange={e => {
-                  setAddToBalance(e.target.value === 'balance')
-                  invalidate()
-                }}
-                className="input-well select-caret mt-1.5 min-h-[40px] w-full px-3 pr-9 text-sm"
-              >
-                <option value="pay">Pay</option>
-                <option value="balance">Add to balance</option>
-              </select>
-            </label>
-            <p className="mt-1.5 text-xs text-smoke-700">
-              {addToBalance
-                ? 'Adds funds to the project without minting any tokens.'
-                : 'Pays the project and mints its tokens to the beneficiary.'}
-            </p>
-          </>
-            ) : null}
-      {tx.phase === 'success' ? (
-        <PayerDeployedPanel
-          payer={deployedPayer}
-          chainId={chainId}
-          txUrl={txUrl}
-          onReset={resetAll}
-        />
-      ) : (
-        <>
-          {!addToBalance ? (
-            <div className="mt-4">
-              <span className="field-label">{beneficiaryLabel}</span>
-              <AddressField
-                value={beneficiary}
-                onChange={value => {
-                  setBeneficiary(value)
-                  invalidate()
-                }}
-                disabled={busy}
-                placeholder="0x… or name.eth (optional)"
-                ariaLabel={beneficiaryLabel}
-                className="mt-1.5"
-                compact
-              />
-              <p className="mt-1.5 text-xs text-smoke-700">
-                Leave empty and whoever sends the ETH gets the tokens.
-              </p>
-            </div>
-          ) : null}
-
-          <label className="mt-4 block">
-            <span className="field-label">Memo</span>
-            <input
-              type="text"
-              value={memo}
-              onChange={e => {
-                setMemo(e.target.value.slice(0, 256))
-                invalidate()
-              }}
-              disabled={busy}
-              placeholder="Optional note attached to every payment"
-              aria-label="Memo"
-              className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm disabled:opacity-60"
-            />
-          </label>
-
-          <label className="mt-4 flex items-start gap-2.5 text-sm text-ink">
-            <input
-              type="checkbox"
-              checked={editable}
-              disabled={busy}
-              onChange={e => {
-                setEditable(e.target.checked)
-                invalidate()
-              }}
-              className="mt-0.5"
-            />
-            <span>
-              Let me edit this later
-              <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                {editable
-                  ? 'The admin can later change the destination project, behavior, beneficiary, and memo. It never receives the payments.'
-                  : 'Off by default: the settings above are permanent once deployed.'}
-              </span>
-            </span>
-          </label>
-
-          {editable ? (
-            <div className="mt-3">
-              <span className="field-label">Address admin</span>
-              <AddressField
-                value={adminInput}
-                onChange={value => {
-                  setAdminInput(value)
-                  invalidate()
-                }}
-                disabled={busy}
-                placeholder="0x… or name.eth"
-                ariaLabel="Address admin"
-                className="mt-1.5"
-                compact
-              />
-              <p className="mt-1.5 text-xs text-smoke-700">
-                Leave empty to use your connected wallet.
-              </p>
-            </div>
-          ) : null}
-
-          {review ? (
-            <div className="callout callout-info mt-4 text-xs">
-              <p>
-                Deploys a payer address on {chainName(chainId)} that{' '}
-                {review.addToBalance
-                  ? 'adds every ETH transfer to the project balance without minting tokens'
-                  : 'pays the project with every ETH transfer'}
-                .
-              </p>
-              {!review.addToBalance ? (
-                <p className="mt-1">
-                  Tokens go to{' '}
-                  {review.beneficiary === zeroAddress
-                    ? 'whoever sends the ETH'
-                    : truncateAddress(review.beneficiary)}
-                  .
-                </p>
-              ) : null}
-              {review.memo ? (
-                <p className="mt-1">Memo: {review.memo}</p>
-              ) : null}
-              <p className="mt-1 text-smoke-700">
-                {review.owner === zeroAddress
-                  ? 'These settings can never be changed.'
-                  : `${truncateAddress(review.owner)} can change these settings later.`}
-              </p>
-            </div>
-          ) : null}
-
-          <button
-            onClick={review ? handleConfirm : handleReview}
-            disabled={busy}
-            className="btn-primary mt-4 min-h-[44px] px-5 text-sm"
-          >
-            {txPhaseLabel(tx.phase, {
-              pending: 'Deploying…',
-              idle: !isConnected
-                ? 'Sign in to continue'
-                : review
-                  ? 'Confirm deploy'
-                  : 'Review deploy',
-            })}
-          </button>
-
-          {tx.phase === 'pending' && txUrl ? (
-            <p className="mt-2 text-center text-xs text-smoke-700">
-              Waiting for confirmation —{' '}
-              <a
-                href={txUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2"
-              >
-                view transaction
-              </a>
-            </p>
-          ) : null}
-
-          <TxError
-            error={flowError ?? tx.error}
-            className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-          />
-        </>
-      )}
-
-      {otherChains.length > 0 ? (
-        <p className="mt-4 text-xs leading-relaxed text-smoke-700">
-          Payer addresses deploy per chain. For other chains:{' '}
-          {otherChains.map(([id, pid], i) => (
-            <span key={id}>
-              <Link
-                href={`/${toUrn(id, pid)}#extras`}
-                className="underline underline-offset-2 hover:text-ink"
-              >
-                {chainName(id)}
-              </Link>
-              {i < otherChains.length - 1 ? ', ' : ''}
-            </span>
-          ))}
-          .
-        </p>
-      ) : null}
+            {session ? (
+              <>
+                <p className="text-sm text-smoke-700">Saved payer settings: {session.calls[0].addToBalance ? 'Add to balance' : 'Pay'}.
+                  {' '}Admin: {session.calls[0].owner === zeroAddress ? 'None (immutable)' : session.calls[0].owner}.
+                  {' '}Beneficiary: {session.calls[0].beneficiary === zeroAddress ? 'Whoever sends the ETH' : session.calls[0].beneficiary}.</p>
+                {session.outcomes.map((outcome, index) => (
+                  <div key={outcome.chainId} className="mt-4 rounded-xl border border-smoke-200 p-3">
+                    <p className="text-sm font-medium">{chainName(outcome.chainId)} · project #{session.calls[index].projectId} · {outcome.state}</p>
+                    {outcome.state === 'verified' && outcome.payer ? (
+                      <PayerDeployedPanel payer={outcome.payer} chainId={outcome.chainId}
+                        txUrl={outcome.hash ? explorerTxUrl(outcome.chainId, outcome.hash) : null}
+                        onReset={complete ? resetAll : undefined} />
+                    ) : outcome.hash && explorerTxUrl(outcome.chainId, outcome.hash) ? (
+                      <a href={explorerTxUrl(outcome.chainId, outcome.hash)!} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs underline">View original transaction</a>
+                    ) : <p className="mt-1 text-xs text-smoke-700">{outcome.safeProposalHash ? `Safe proposal ${outcome.safeProposalHash}` : outcome.state === 'sending' ? 'The wallet may have submitted this deployment. Its hash is unavailable.' : 'This address has not been verified yet.'}</p>}
+                    {outcome.error ? <p className="mt-1 text-xs text-red-700">{outcome.error}</p> : null}
+                  </div>
+                ))}
+                {session.quote ? <p className="mt-3 break-all text-xs text-smoke-700">Relayr bundle {session.quote.bundle_uuid}</p> : null}
+                {!complete ? <button type="button" disabled={busy} onClick={() => void run(session)} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">
+                  {busy ? 'Checking deployments…' : session.phase === 'quoted' || session.phase === 'reviewed' ? 'Continue saved deployment' : 'Check deployment status'}
+                </button> : null}
+              </>
+            ) : (
+              <>
+                <label className="block max-w-sm"><span className="field-label">Behavior</span>
+                  <select value={addToBalance ? 'balance' : 'pay'} disabled={busy} onChange={e => { setAddToBalance(e.target.value === 'balance'); invalidate() }} className="input-well select-caret mt-1.5 min-h-[40px] w-full px-3 pr-9 text-sm">
+                    <option value="pay">Pay</option><option value="balance">Add to balance</option>
+                  </select>
+                </label>
+                <p className="mt-1.5 text-xs text-smoke-700">{addToBalance ? 'Adds funds to the project without minting any tokens.' : 'Pays the project and mints its tokens to the beneficiary.'}</p>
+                {!addToBalance ? <div className="mt-4"><span className="field-label">{beneficiaryLabel}</span>
+                  <AddressField value={beneficiary} onChange={value => { setBeneficiary(value); invalidate() }} disabled={busy}
+                    placeholder="0x… or name.eth (optional)" ariaLabel={beneficiaryLabel} className="mt-1.5" compact />
+                  <p className="mt-1.5 text-xs text-smoke-700">Leave empty and whoever sends the ETH gets the tokens.</p>
+                </div> : null}
+                <label className="mt-4 block"><span className="field-label">Memo</span>
+                  <input type="text" value={memo} onChange={e => { setMemo(e.target.value.slice(0, 256)); invalidate() }} disabled={busy}
+                    placeholder="Optional note attached to every payment" aria-label="Memo" className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm" />
+                </label>
+                <label className="mt-4 flex items-start gap-2.5 text-sm text-ink">
+                  <input type="checkbox" checked={editable} disabled={busy} onChange={e => { setEditable(e.target.checked); invalidate() }} className="mt-0.5" />
+                  <span>Let me edit this later<span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                    {editable ? 'The admin can later change the destination project, behavior, beneficiary, and memo. It never receives the payments.' : 'Off by default: the settings above are permanent once deployed.'}
+                  </span></span>
+                </label>
+                {editable ? <div className="mt-3"><span className="field-label">Address admin</span>
+                  <AddressField value={adminInput} onChange={value => { setAdminInput(value); invalidate() }} disabled={busy} placeholder="0x… or name.eth" ariaLabel="Address admin" className="mt-1.5" compact />
+                  <p className="mt-1.5 text-xs text-smoke-700">Leave empty to use your connected wallet.</p>
+                </div> : null}
+                <fieldset className="mt-4"><legend className="field-label">Deploy on</legend>
+                  {projects.map(([id, pid]) => <label key={id} className="mt-2 flex items-center gap-2 text-sm">
+                    <input type="checkbox" aria-label={`Deploy on ${chainName(id)} project #${pid}`} checked={selectedChains.includes(id)} disabled={busy}
+                      onChange={e => { setSelectedChains(current => e.target.checked ? [...current, id] : current.filter(value => value !== id)); invalidate() }} />
+                    <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)} · project #{pid}
+                  </label>)}
+                </fieldset>
+                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one Relayr payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
+                <button onClick={handleReview} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
+              </>
+            )}
+            <TxError error={flowError} className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700" />
           </div>
         </ModalShell>
       ) : null}
-
-      <PayerAddressList
-        rows={payerRows}
-        isLoading={payersLoading}
-        isError={payersError}
-        isFetching={payersFetching}
-      />
+      {review ? <TxConfirmDialog open title="Confirm deploy" rows={payerReviewRows(review)}
+        steps={[{ title: `Deploy ${review.calls.length} payer address${review.calls.length === 1 ? '' : 'es'}` }]}
+        activeIndex={busy ? 0 : -1} action="Confirm deploy" onConfirm={() => void run(review)} busy={busy} complete={false}
+        error={flowError} onClose={() => { if (!busy) setReview(null) }}>
+        <p className="text-xs text-smoke-700">{review.calls[0].owner === zeroAddress ? 'These settings can never be changed.' : `${truncateAddress(review.calls[0].owner)} can change these settings later.`}</p>
+      </TxConfirmDialog> : null}
+      <PayerAddressList rows={payerRows} isLoading={payersLoading} isError={payersError} isFetching={payersFetching} />
     </div>
   )
+}
+
+function payerReviewRows(review: PayerDeploymentSession): TxConfirmRow[] {
+  const settings = review.calls[0]
+  const rows: TxConfirmRow[] = [
+    { label: 'Behavior', value: settings.addToBalance ? 'Add to balance' : 'Pay', strong: true },
+    ...review.calls.map(call => ({ label: chainName(call.chainId), value: `Project #${call.projectId}` })),
+    { label: 'Execution', value: review.transport === 'relayr' ? 'One Relayr payment; choose its funding chain next' : 'Confirm each chain in sequence' },
+  ]
+  if (!settings.addToBalance) rows.push({ label: 'Tokens go to', value: settings.beneficiary === zeroAddress ? 'Whoever sends the ETH' : settings.beneficiary })
+  if (settings.memo) rows.push({ label: 'Memo', value: settings.memo })
+  rows.push({ label: 'Admin', value: settings.owner === zeroAddress ? 'None' : settings.owner })
+  return rows
 }
 
 function payerUsd(value: string): string {
@@ -655,7 +451,7 @@ function PayerDeployedPanel({
   payer: Address | null
   chainId: JBChainId
   txUrl: string | null
-  onReset: () => void
+  onReset?: () => void
 }) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
@@ -713,9 +509,9 @@ function PayerDeployedPanel({
             View transaction
           </a>
         ) : null}
-        <button onClick={onReset} className="text-smoke-700 hover:text-ink">
+        {onReset ? <button onClick={onReset} className="text-smoke-700 hover:text-ink">
           Deploy another
-        </button>
+        </button> : null}
       </div>
     </div>
   )
