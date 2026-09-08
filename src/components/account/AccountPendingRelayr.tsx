@@ -33,6 +33,7 @@ function requiresProjectSafeProof(
 ): boolean {
   return (
     scope.startsWith('safe-queue:') ||
+    scope.startsWith('project-batch:') ||
     !!session.expectedEntries ||
     !!session.expectedSafeExecutions
   )
@@ -118,24 +119,14 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 Cross-chain action in flight
                 <span className="ml-2 text-xs font-normal text-smoke-500">
                   {formatDate(Math.floor(session.createdAt / 1000))} —{' '}
-                  {projectSafeProof
-                    ? `${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`
-                    : `${progress.confirmed}/${progress.total} chains done`}
+                  {`${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`}
                 </span>
               </div>
-              {relayrSessionExpired(session) ? (
-                // The signed ForwardRequests are past their 47-hour deadline, so the
-                // forwarder will reject them — offering Resume here promised a retry that
-                // cannot succeed, on a bundle the user has already paid for.
+              {projectSafeProof ? (
                 <span className="text-xs text-smoke-600">
-                  Signatures expired{' '}
-                  {formatDate(Math.floor(relayrSessionExpiresAt(session) / 1000))} — this
-                  bundle can no longer be executed.
-                </span>
-              ) : projectSafeProof ? (
-                <span className="text-xs text-smoke-600">
-                  Verify this paid bundle from the relevant project&apos;s
-                  Owner/Operator tab.
+                  {scope.startsWith('project-batch:')
+                    ? 'Resume this bundle from the original project action to verify and save every completed call.'
+                    : <>Verify this paid bundle from the relevant project&apos;s Owner/Operator tab.</>}
                 </span>
               ) : (
                 <button
@@ -143,15 +134,22 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                   disabled={busyScope !== null}
                   className="btn-secondary min-h-[36px] px-4 text-sm"
                 >
-                  {busyScope === scope ? 'Resuming…' : 'Resume'}
+                  {busyScope === scope ? 'Checking…' : 'Check original bundle'}
                 </button>
               )}
             </div>
+            {relayrSessionExpired(session) && !projectSafeProof ? (
+              <p className="mt-2 text-xs text-smoke-600">
+                Authorization deadline passed{' '}
+                {formatDate(Math.floor(relayrSessionExpiresAt(session) / 1000))}.
+                Check the original receipts to establish what executed.
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
               {sessionLegs(session).map(({ chainId, record }, index) => {
                 const reportedState = legStateOf(record)
                 const state =
-                  projectSafeProof && reportedState === 'confirmed'
+                  reportedState === 'confirmed'
                     ? 'pending'
                     : reportedState
                 const hash = record ? relayrDestinationHash(record) : null
@@ -162,8 +160,8 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                   >
                     <ChainIcon chainId={chainId} size={14} />
                     {chainName(chainId)} —{' '}
-                    {projectSafeProof && reportedState === 'confirmed'
-                      ? 'Relayr-reported; verify in Owner/Operator'
+                    {reportedState === 'confirmed'
+                      ? 'Relayr-reported; verification pending'
                       : state}
                   </span>
                 )

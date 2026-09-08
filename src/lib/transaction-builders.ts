@@ -20,6 +20,7 @@ import {
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
 import {
+  decodeAbiParameters,
   encodeAbiParameters,
   encodeFunctionData,
   erc20Abi,
@@ -688,6 +689,170 @@ export function buildRemoveLiquidityUnlockData({
   return encodeAbiParameters(
     [{ type: 'bytes' }, { type: 'bytes[]' }],
     [`0x${ACTION_BURN_POSITION}${ACTION_TAKE_PAIR}`, [burnParams, takeParams]],
+  )
+}
+
+const ACTION_MINT_POSITION = '02'
+const ACTION_CLOSE_CURRENCY = '12'
+const ACTION_SWEEP = '14'
+const ACTION_INCREASE_LIQUIDITY = '00'
+const ACTION_DECREASE_LIQUIDITY = '01'
+
+const MODIFY_LIQUIDITY_PARAMS = [
+  { type: 'uint256' },
+  { type: 'uint256' },
+  { type: 'uint128' },
+  { type: 'uint128' },
+  { type: 'bytes' },
+] as const
+
+/**
+ * Top up an existing position in place: INCREASE_LIQUIDITY(tokenId) +
+ * CLOSE_CURRENCY(c0) + CLOSE_CURRENCY(c1) [+ SWEEP(native, recipient)]. The
+ * closes settle what the added liquidity needs from the caller (Permit2 for
+ * ERC-20s, msg.value for native) net of the position's unclaimed fees, and
+ * the sweep refunds unused native value. The maxima cap the principal pulled.
+ */
+export function buildIncreaseLiquidityUnlockData({
+  tokenId,
+  liquidity,
+  currency0,
+  currency1,
+  amount0Max,
+  amount1Max,
+  sweep,
+}: {
+  tokenId: bigint
+  liquidity: bigint
+  currency0: Address
+  currency1: Address
+  amount0Max: bigint
+  amount1Max: bigint
+  /** Refund unused native value (sent as msg.value) to this recipient. */
+  sweep?: { currency: Address; recipient: Address }
+}): Hex {
+  const increaseParams = encodeAbiParameters(MODIFY_LIQUIDITY_PARAMS, [
+    tokenId,
+    liquidity,
+    amount0Max,
+    amount1Max,
+    '0x',
+  ])
+  const close0 = encodeAbiParameters([{ type: 'address' }], [currency0])
+  const close1 = encodeAbiParameters([{ type: 'address' }], [currency1])
+  const parts: Hex[] = [increaseParams, close0, close1]
+  let actions = `0x${ACTION_INCREASE_LIQUIDITY}${ACTION_CLOSE_CURRENCY}${ACTION_CLOSE_CURRENCY}`
+  if (sweep) {
+    parts.push(
+      encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }],
+        [sweep.currency, sweep.recipient],
+      ),
+    )
+    actions += ACTION_SWEEP
+  }
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [actions as Hex, parts],
+  )
+}
+
+/**
+ * Free part of a position: DECREASE_LIQUIDITY(tokenId) + TAKE_PAIR(c0, c1,
+ * recipient). The freed principal and the position's unclaimed fees both go
+ * to the recipient; the minimums floor the principal alone.
+ */
+export function buildDecreaseLiquidityUnlockData({
+  tokenId,
+  liquidity,
+  currency0,
+  currency1,
+  recipient,
+  amount0Min,
+  amount1Min,
+}: {
+  tokenId: bigint
+  liquidity: bigint
+  currency0: Address
+  currency1: Address
+  recipient: Address
+  amount0Min: bigint
+  amount1Min: bigint
+}): Hex {
+  const decreaseParams = encodeAbiParameters(MODIFY_LIQUIDITY_PARAMS, [
+    tokenId,
+    liquidity,
+    amount0Min,
+    amount1Min,
+    '0x',
+  ])
+  const takeParams = encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+    [currency0, currency1, recipient],
+  )
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [`0x${ACTION_DECREASE_LIQUIDITY}${ACTION_TAKE_PAIR}`, [decreaseParams, takeParams]],
+  )
+}
+
+/**
+ * One-transaction band move: BURN_POSITION(old) + MINT_POSITION(new) +
+ * CLOSE_CURRENCY(c0) + CLOSE_CURRENCY(c1). The burn's credit funds the mint
+ * inside the same unlock — no Permit2, no msg.value — and the closes return
+ * unclaimed fees plus whatever the new band doesn't consume to the caller.
+ * `mintUnlockData` is a standard add-liquidity unlock whose MINT parameters
+ * are lifted out verbatim; its own closes/sweep are dropped because the
+ * composed closes settle everything at the end. When the new band is sized
+ * beyond the burn's credit, the caller funds the difference (Permit2 for
+ * ERC-20s, msg.value for native) and `sweep` refunds unused native value.
+ */
+export function buildMoveLiquidityUnlockData({
+  tokenId,
+  currency0,
+  currency1,
+  amount0Min,
+  amount1Min,
+  mintUnlockData,
+  sweep,
+}: {
+  tokenId: bigint
+  currency0: Address
+  currency1: Address
+  amount0Min: bigint
+  amount1Min: bigint
+  mintUnlockData: Hex
+  sweep?: { currency: Address; recipient: Address }
+}): Hex {
+  const burnParams = encodeAbiParameters(
+    [
+      { type: 'uint256' },
+      { type: 'uint128' },
+      { type: 'uint128' },
+      { type: 'bytes' },
+    ],
+    [tokenId, amount0Min, amount1Min, '0x'],
+  )
+  const [, mintParts] = decodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    mintUnlockData,
+  )
+  const close0 = encodeAbiParameters([{ type: 'address' }], [currency0])
+  const close1 = encodeAbiParameters([{ type: 'address' }], [currency1])
+  const parts: Hex[] = [burnParams, mintParts[0], close0, close1]
+  let actions = `0x${ACTION_BURN_POSITION}${ACTION_MINT_POSITION}${ACTION_CLOSE_CURRENCY}${ACTION_CLOSE_CURRENCY}`
+  if (sweep) {
+    parts.push(
+      encodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }],
+        [sweep.currency, sweep.recipient],
+      ),
+    )
+    actions += ACTION_SWEEP
+  }
+  return encodeAbiParameters(
+    [{ type: 'bytes' }, { type: 'bytes[]' }],
+    [actions as Hex, parts],
   )
 }
 

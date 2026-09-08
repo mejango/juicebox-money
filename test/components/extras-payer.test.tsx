@@ -1,17 +1,10 @@
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import {
-  encodeAbiParameters,
-  encodeEventTopics,
   zeroAddress,
   type Address,
-  type Log,
 } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  JB_PROJECT_PAYER_DEPLOYER,
-  jbProjectPayerDeployerAbi,
-} from '@bananapus/nana-sdk-core/v6'
 import type { BsProjectPayer } from '@/lib/bendystraw'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -31,8 +24,8 @@ const mocks = vi.hoisted(() => ({
   payersLoading: false,
   payersError: false,
   payersFetching: false,
-  txPhase: 'idle' as string,
-  txReceipt: null as { logs: Log[] } | null,
+  loadPayerDeployment: vi.fn(),
+  runPayerDeployments: vi.fn(),
   writeText: vi.fn(),
 }))
 
@@ -56,8 +49,17 @@ vi.mock('@/components/ui/ModalShell', () => ({
       createElement('button', { onClick: onClose }, 'Close dialog'),
       children,
     ),
+  ModalDialog: ({ children }: { children: ReactNode }) =>
+    createElement('div', null, children),
+  ModalCloseButton: () => null,
+  useEnclosingModalCard: () => null,
 }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
+vi.mock('@/providers/Providers', async () => {
+  const chains = await import('viem/chains')
+  return { wagmiConfig: {}, SUPPORTED_CHAINS: [chains.mainnet, chains.optimism, chains.base, chains.arbitrum,
+    chains.sepolia, chains.optimismSepolia, chains.baseSepolia, chains.arbitrumSepolia] }
+})
 vi.mock('wagmi', () => ({
   usePublicClient: () => ({ readContract: vi.fn() }),
 }))
@@ -91,20 +93,14 @@ vi.mock('@/hooks/useWallet', () => ({
     openSignIn: mocks.openSignIn,
   }),
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({
-    phase: mocks.txPhase,
-    busy: false,
-    hash: mocks.txPhase === 'idle' ? null : '0xdeadbeef',
-    receipt: mocks.txReceipt,
-    error: null,
-    isSafe: false,
-    send: mocks.send,
-    reset: mocks.reset,
-  }),
-  txPhaseLabel: (phase: string, labels: Record<string, string> = {}) =>
-    labels[phase] ?? phase,
-}))
+vi.mock('@/lib/payer-relayr', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/payer-relayr')>()
+  return { ...original,
+    loadPayerDeployment: mocks.loadPayerDeployment,
+    finishPayerDeployment: mocks.reset,
+    runPayerDeployments: mocks.runPayerDeployments,
+  }
+})
 vi.mock('@/lib/project-draft-export', () => ({
   buildProjectDraftExport: mocks.buildProjectDraftExport,
 }))
@@ -114,6 +110,7 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
 })
 
 import { ExtrasTab } from '@/components/project/ExtrasTab'
+import { buildPayerDeploymentReview, payerDeploymentRequest, type PayerDeploymentSession } from '@/lib/payer-relayr'
 
 const props = {
   chainId: 1 as const,
@@ -162,28 +159,6 @@ async function openDialog() {
   return renderer
 }
 
-/** A real DeployProjectPayer log from the canonical deployer. */
-function deployLog(payer: Address): Log {
-  const event = jbProjectPayerDeployerAbi.find(
-    (entry): entry is Extract<
-      (typeof jbProjectPayerDeployerAbi)[number],
-      { type: 'event' }
-    > => entry.type === 'event' && entry.name === 'DeployProjectPayer',
-  )!
-  const topics = encodeEventTopics({
-    abi: jbProjectPayerDeployerAbi,
-    eventName: 'DeployProjectPayer',
-    args: { projectPayer: payer },
-  })
-  // Body params come from the ABI itself, so a signature change fails this
-  // test rather than quietly producing a log the strict decoder rejects.
-  const data = encodeAbiParameters(
-    event.inputs.filter(input => !input.indexed),
-    [42n, zeroAddress, '', '0x', false, ALICE, zeroAddress, ALICE],
-  )
-  return { address: JB_PROJECT_PAYER_DEPLOYER, data, topics } as unknown as Log
-}
-
 function payerRow(overrides: Partial<BsProjectPayer> = {}): BsProjectPayer {
   return {
     chainId: 1,
@@ -210,8 +185,11 @@ beforeEach(() => {
   mocks.payersLoading = false
   mocks.payersError = false
   mocks.payersFetching = false
-  mocks.txPhase = 'idle'
-  mocks.txReceipt = null
+  mocks.loadPayerDeployment.mockReset().mockReturnValue(null)
+  mocks.runPayerDeployments.mockReset().mockImplementation(async (review: PayerDeploymentSession) => {
+    mocks.send(payerDeploymentRequest(review.calls[0]))
+    return review
+  })
   mocks.getProjectPayers.mockResolvedValue([])
   vi.stubGlobal('navigator', { clipboard: { writeText: mocks.writeText } })
 })
@@ -230,7 +208,7 @@ describe('payer deploy input validation', () => {
         target: { value: 'not-an-address' },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       'Enter a valid beneficiary address or ENS name, or leave it empty.',
@@ -254,7 +232,7 @@ describe('payer deploy input validation', () => {
         target: { value: 'nope.not-ens' },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       'Enter a valid admin address or ENS name.',
@@ -281,7 +259,7 @@ describe('payer deploy input validation', () => {
         target: { value: ADMIN },
       }),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       `${ADMIN.slice(0, 6)}…${ADMIN.slice(-4)} can change these settings later.`,
@@ -297,11 +275,11 @@ describe('payer deploy input validation', () => {
 
   it('closes the dialog without sending anything', async () => {
     const renderer = await openDialog()
-    expect(renderedText(renderer.root)).toContain('Review deploy')
+    expect(renderedText(renderer.root)).toContain('Deploy payer address')
 
     await act(async () => buttonWith(renderer, 'Close dialog').props.onClick())
 
-    expect(renderedText(renderer.root)).not.toContain('Review deploy')
+    expect(renderedText(renderer.root)).not.toContain('Deploy payer address')
     expect(mocks.send).not.toHaveBeenCalled()
   })
 })
@@ -350,47 +328,66 @@ describe('indexed payer address list', () => {
   })
 })
 
-describe('payer deploy success panel', () => {
-  beforeEach(() => {
-    mocks.txPhase = 'success'
-    mocks.txReceipt = { logs: [deployLog(PAYER)] }
-  })
+describe('payer deployment recovery', () => {
+  function saved(verified: boolean): PayerDeploymentSession {
+    const review = buildPayerDeploymentReview({ projects: props.chains, selectedChainIds: [1], account: ALICE,
+      beneficiary: zeroAddress, owner: zeroAddress, memo: '', addToBalance: false })
+    return { ...review, phase: verified ? 'complete' : 'executing', outcomes: [{ chainId: 1,
+      state: verified ? 'verified' : 'submitted', hash: `0x${'ab'.repeat(32)}`, ...(verified ? { payer: PAYER } : {}) }] }
+  }
 
-  it('shows the deployed address from the receipt and refreshes the list', async () => {
-    let renderer!: TestRenderer.ReactTestRenderer
-    await act(async () => {
-      renderer = TestRenderer.create(createElement(ExtrasTab, props))
-    })
-    await act(async () =>
-      buttonWith(renderer, 'Create payer address').props.onClick(),
-    )
-
+  it('shows a verified payer from the original journal and archives it before starting another', async () => {
+    mocks.loadPayerDeployment.mockReturnValue(saved(true))
+    const renderer = await openDialog()
     expect(renderedText(renderer.root)).toContain(PAYER)
-    expect(mocks.refetchPayers).toHaveBeenCalled()
-
     await act(async () => buttonWith(renderer, 'Copy').props.onClick())
     expect(mocks.writeText).toHaveBeenCalledWith(PAYER)
     expect(renderedText(renderer.root)).toContain('Copied!')
-
-    await act(async () =>
-      buttonWith(renderer, 'Deploy another').props.onClick(),
-    )
+    await act(async () => buttonWith(renderer, 'Deploy another').props.onClick())
     expect(mocks.reset).toHaveBeenCalledTimes(1)
   })
 
-  it('points at the explorer when the receipt carries no payer deployment', async () => {
-    mocks.txReceipt = { logs: [] }
+  it('keeps an unverified receipt in recovery without offering another deployment', async () => {
+    mocks.loadPayerDeployment.mockReturnValue(saved(false))
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(ExtrasTab, props)) })
+    await act(async () => buttonWith(renderer, 'Resume payer deployment').props.onClick())
+    expect(renderedText(renderer.root)).toContain('View original transaction')
+    expect(renderedText(renderer.root)).toContain('Check deployment status')
+    expect(renderedText(renderer.root)).not.toContain('Deploy another')
+    expect(renderedText(renderer.root)).not.toContain('Copy')
+  })
+
+  it('freezes selected linked-chain project IDs and explicit admin/beneficiary in one review', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
-      renderer = TestRenderer.create(createElement(ExtrasTab, props))
+      renderer = TestRenderer.create(createElement(ExtrasTab, { ...props, chains: [[1, 42], [10, 84]] }))
     })
-    await act(async () =>
-      buttonWith(renderer, 'Create payer address').props.onClick(),
-    )
+    await act(async () => buttonWith(renderer, 'Create payer address').props.onClick())
+    await act(async () => {
+      inputLabelled(renderer, 'Deploy on Optimism project #84').props.onChange({ target: { checked: true } })
+      inputLabelled(renderer, 'Token beneficiary').props.onChange({ target: { value: ADMIN } })
+      renderer.root.findAllByType('input').find(input => input.props.type === 'checkbox')!.props.onChange({ target: { checked: true } })
+    })
+    await act(async () => inputLabelled(renderer, 'Address admin').props.onChange({ target: { value: ADMIN } }))
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
+    expect(renderedText(renderer.root)).toContain('Project #84')
+    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
+    expect(mocks.runPayerDeployments.mock.calls[0][0]).toMatchObject({
+      transport: 'relayr', calls: [
+        { chainId: 1, projectId: 42, owner: ADMIN, beneficiary: ADMIN },
+        { chainId: 10, projectId: 84, owner: ADMIN, beneficiary: ADMIN },
+      ],
+    })
+  })
 
-    expect(renderedText(renderer.root)).toContain(
-      'The new address will show on the transaction',
-    )
-    expect(renderedText(renderer.root)).not.toContain('Copy')
+  it('uses the route project ID when sibling discovery contains a conflicting home-chain row', async () => {
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(ExtrasTab, { ...props, chains: [[1, 999], [10, 84]] })) })
+    await act(async () => buttonWith(renderer, 'Create payer address').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
+    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
+    expect(mocks.runPayerDeployments.mock.calls[0][0].calls[0].projectId).toBe(42)
+    expect(mocks.getProjectPayers).toHaveBeenCalledWith([[1, 42], [10, 84]])
   })
 })

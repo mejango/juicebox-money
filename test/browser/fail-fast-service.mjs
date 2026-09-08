@@ -530,6 +530,7 @@ const graphqlFixtures = [
             { cashOutTokensEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
+            { sendReservedTokensToSplitEvent_not: null }
             { autoIssueEvent_not: null }
             { mintTokensEvent_not: null }
             { borrowLoanEvent_not: null }
@@ -695,6 +696,37 @@ const graphqlFixtures = [
     }`,
     variables: { limit: 1000, offset: 0 },
     data: { addToBalanceEvents: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'newProjects',
+    query: `query($limit: Int!) {
+      projects(
+        where: { version: 6 }
+        orderBy: "createdAt"
+        orderDirection: "desc"
+        limit: $limit
+      ) {
+        items {
+          projectId chainId name logoUri projectTagline createdAt suckerGroupId
+        }
+      }
+    }`,
+    variables: { limit: 64 },
+    data: {
+      projects: {
+        items: [
+          {
+            projectId: project.projectId,
+            chainId: project.chainId,
+            name: project.name,
+            logoUri: project.logoUri,
+            projectTagline: project.projectTagline,
+            createdAt: project.createdAt,
+            suckerGroupId: project.suckerGroupId,
+          },
+        ],
+      },
+    },
   },
   {
     name: 'trending',

@@ -6,12 +6,16 @@
     "scripts/start-production.mjs",
     "scripts/verify-cash-out.ts",
     "scripts/verify-manage.ts",
-    "src/app/modal-proof/page.browsertest.tsx",
+    "src/app/**/page.browsertest.tsx",
     "src/vendor/HeartbeatWorker.js",
     "test/browser/fail-fast-service.mjs"
   ],
   "ignoreDependencies": [
+    "@coinbase/wallet-sdk",
     "@getpara/core-sdk",
+    "@safe-global/safe-apps-provider",
+    "@safe-global/safe-apps-sdk",
+    "@walletconnect/ethereum-provider",
     "tsx"
   ],
   "ignoreUnresolved": [

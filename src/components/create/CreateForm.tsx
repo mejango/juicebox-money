@@ -7,6 +7,7 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
+  canAbandonRelayrLaunch,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -57,6 +59,8 @@ import {
 import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
+  DEADLINE_SECONDS,
+  deriveStartFrom,
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
@@ -80,16 +84,19 @@ import { erc20Abi } from "viem";
 import { splitOk, type DraftSplit } from "./SplitsEditor";
 import { AddressField } from "./AddressField";
 import {
-  StageRulesEditor,
   newDraftStage,
   stageCashOutTax,
+  secondsLabel,
   stageDurationSeconds,
+  stageMustStartAtOrAfter,
   stageOk,
   stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
   type DraftStage,
-} from "./StageRulesEditor";
+} from "./stage-draft";
+import type { ChartStage } from "@/components/project/chartUtils";
+import { IssuanceLadder } from "@/components/project/IssuanceLadder";
 import {
   AddButton,
   CheckIcon,
@@ -103,9 +110,9 @@ import {
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
 import {
-  TransactionProgressImage,
-  usePreloadTransactionAnimation,
-} from "@/components/TransactionInProgress";
+  TxConfirmDialog,
+  type TxConfirmRow,
+} from "@/components/ui/TxConfirmDialog";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -125,11 +132,23 @@ import {
   environmentForChainIds,
   type ChainEnvironment,
 } from "@/lib/chains";
-import { StoreEditor, itemOk, type DraftItem } from "./StoreEditor";
+import { itemOk, type DraftItem } from "./store-draft";
+import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
 } from "@/lib/jbcenter-ipfs";
+
+// Controlled drafts stay in this form. Both editors share one deferred
+// chunk, loaded only when the user opens a rules or shop step.
+const StoreEditor = dynamic(
+  () => import("./CreateEditors").then(module => module.StoreEditor),
+  { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading shop editor…</p> },
+);
+const StageRulesEditor = dynamic(
+  () => import("./CreateEditors").then(module => module.StageRulesEditor),
+  { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading rules editor…</p> },
+);
 
 const PERMANENTLY_DISABLED_AUTHORITY =
   "0xdead000000000000000000000000000000000000";
@@ -262,7 +281,6 @@ function StepBadge({ n }: { n: number }) {
 }
 
 export function CreateForm() {
-  usePreloadTransactionAnimation();
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
   const { switchChainAsync } = useSwitchChain();
@@ -360,6 +378,21 @@ export function CreateForm() {
   );
   const [approvalDeadline, setApprovalDeadline] =
     useState<ApprovalDeadline>("1day");
+  // Pinned at mount so the chart's stage 1 start never drifts past the
+  // ladder's own mount-time "now" and reads as "no issuance".
+  const chartNow = useMemo(() => Math.floor(Date.now() / 1000), []);
+  const addStage = (stageFlavor?: "revnet") => {
+    const next = { ...newDraftStage(false, stageFlavor), expanded: true };
+    setStages((prev) => [
+      ...prev.map((s) => ({ ...s, expanded: false })),
+      next,
+    ]);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(`stage-${next.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
   const setStage = (id: string, next: DraftStage) =>
     setStages((prev) => prev.map((s) => (s.id === id ? next : s)));
   // Step 1's Basics starts open; everything else starts collapsed.
@@ -401,6 +434,8 @@ export function CreateForm() {
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
   // validation throws inside launch()'s try.
@@ -414,6 +449,14 @@ export function CreateForm() {
   // salt/plans MUST be reused verbatim so the remaining chains pair with the
   // already-launched ones instead of minting a duplicate project.
   const restoredSessionRef = useRef<LaunchSession | null>(null);
+
+  // A saved run keeps its transport: an interrupted direct launch must never
+  // become a new Relayr bundle just because the wallet or selection changed.
+  const usesRelayr = restoredSessionRef.current
+    ? restoredSessionRef.current.transport === "relayr"
+    : selected.length > 1 &&
+      relayrSupportsChains(selected) &&
+      !isSafeConnection(config);
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -651,6 +694,58 @@ export function CreateForm() {
       ));
   const tickerOk =
     flavor !== "revnet" || /^[A-Z0-9]{1,11}$/.test(ticker.trim());
+  const lastStage = stages[stages.length - 1];
+  const lastDuration = stageDurationSeconds(lastStage);
+  // "Afterwards" applies only when the last stage is timed (website/ parity).
+  const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
+  // The approval condition is meaningless when rules end in a forever stage.
+  const deadlineApplies =
+    lastDuration !== FOREVER_SECONDS &&
+    !(afterApplies && afterMode === "terminal");
+  /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
+   *  previous stage's next cycle boundary) and the start it lands on, chained
+   *  from stage 1's known start — its scheduled time, the multichain pin, or
+   *  `now` for a single chain whose stage 1 starts at the deploy block. */
+  const projectStageStarts = (
+    deployStart: number,
+    now: number,
+  ): { musts: number[]; starts: number[] } => {
+    const first = stages[0];
+    const firstMust =
+      first.scheduleOn && first.schedule
+        ? Math.floor(new Date(first.schedule).getTime() / 1000)
+        : selected.length > 1
+          ? deployStart
+          : 0;
+    const musts = [firstMust];
+    const starts = [firstMust || now];
+    for (let i = 1; i < stages.length; i++) {
+      const prevStart = starts[i - 1];
+      const prevDuration = stageDurationSeconds(stages[i - 1]);
+      const must = stageMustStartAtOrAfter(stages[i], prevStart, prevDuration);
+      musts.push(must);
+      starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+    }
+    return { musts, starts };
+  };
+  // A stage queued at launch that starts sooner than the notice deadline is
+  // rejected by the hook (JBDeadline → Failed) and silently never takes
+  // effect. Covers the standby/terminal stage "Afterwards" appends too.
+  const noticeSeconds =
+    flavor !== "revnet" && !isSimpleProject && deadlineApplies
+      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
+      : 0;
+  const noticeClash = (() => {
+    if (!noticeSeconds) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const { starts } = projectStageStarts(now + 600, now);
+    const all =
+      afterApplies && afterMode !== "cycle"
+        ? [...starts, starts[starts.length - 1] + lastDuration]
+        : starts;
+    const index = all.findIndex((s, i) => i > 0 && s - now < noticeSeconds);
+    return index === -1 ? null : { index, lead: all[index] - now };
+  })();
   const stagesOk =
     isSimpleProject ||
     stages.every((s, i) => stageOk(s, i === 0, rulesFlavor, multiToken));
@@ -711,6 +806,7 @@ export function CreateForm() {
       selected.length > 0 &&
       stagesOk &&
       badStage === -1 &&
+      noticeClash === null &&
       itemsOk &&
       (phase === "form" || phase === "failed"));
 
@@ -861,7 +957,7 @@ export function CreateForm() {
   const toStageRules = (
     stage: DraftStage,
     index: number,
-    deployStart: number,
+    mustStartAtOrAfter: number,
     chainId: number,
   ): StageRules => {
     const routed =
@@ -892,17 +988,9 @@ export function CreateForm() {
     const reserved = buildReservedSplits(stage.reservedSplits, chainId);
     return {
       duration: stageDurationSeconds(stage),
-      // Stage 1 honors a scheduled start; multichain launches pin a shared
-      // near-future start so every chain begins at the same moment. Later
-      // stages chain automatically (encoded 0 in launch.ts).
-      mustStartAtOrAfter:
-        index === 0
-          ? stage.scheduleOn && stage.schedule
-            ? Math.floor(new Date(stage.schedule).getTime() / 1000)
-            : selected.length > 1
-              ? deployStart
-              : 0
-          : 0,
+      // From projectStageStarts: stage 1's scheduled time / multichain pin /
+      // 0, later stages 0 (next boundary) or an absolute N-cycles/date start.
+      mustStartAtOrAfter,
       // Empty rate on a later stage = keep the previous (cut) rate.
       weight:
         stage.issuanceRate.trim() === "" && index > 0
@@ -1032,6 +1120,57 @@ export function CreateForm() {
     return prevStart + days * 86_400;
   };
 
+  /** The draft schedule as chart input (weights display-grade; the plan
+   *  encoders stay the source of truth for what gets sent). */
+  const chartStages: ChartStage[] = (() => {
+    if (isSimpleProject) return [];
+    const now = chartNow;
+    let starts: number[];
+    if (flavor === "revnet") {
+      starts = [];
+      let start =
+        stages[0].scheduleOn && stages[0].schedule
+          ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
+          : now;
+      stages.forEach((stage, i) => {
+        if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
+        starts.push(start);
+      });
+    } else {
+      starts = projectStageStarts(now, now).starts;
+    }
+    const drafted = stages.map((stage, i) => {
+      const cutOn = flavor !== "revnet" || stage.cutOn;
+      let weight = 0n;
+      try {
+        weight = parseUnits(stage.issuanceRate || "0", 18);
+      } catch {}
+      return {
+        start: starts[i],
+        duration:
+          flavor === "revnet"
+            ? cutOn
+              ? Math.round(Number(stage.cutFreqDays || "0") * 86_400)
+              : 0
+            : stageDurationSeconds(stage),
+        weight,
+        weightCutPercent: cutOn ? Math.round(Number(stage.cutPct || "0") * 1e7) : 0,
+        inheritsWeight: stage.issuanceRate.trim() === "" && i > 0,
+      };
+    });
+    // Mirror launch.ts resolveStages: Afterwards appends the final ruleset.
+    const last = drafted[drafted.length - 1];
+    if (flavor === "revnet" || !afterApplies || afterMode === "cycle")
+      return drafted;
+    const start = last.start + last.duration;
+    return [
+      ...drafted,
+      afterMode === "terminal"
+        ? { ...last, start, duration: FOREVER_SECONDS }
+        : { start, duration: 0, weight: 0n, weightCutPercent: 0 },
+    ];
+  })();
+
   /** Per-chain launch plans (recipients can differ per chain), sharing one
    *  deployStart so multichain first rulesets begin together.
    *
@@ -1049,7 +1188,9 @@ export function CreateForm() {
     // cost is that a launch EXECUTED much later (a Safe collecting signatures over days)
     // begins with stage 1 already in the past. Inherent to the hash requirement, so the
     // review step warns Safe users rather than trying to re-derive it at execution time.
-    const deployStart = Math.floor(Date.now() / 1000) + 600;
+    const now = Math.floor(Date.now() / 1000);
+    const deployStart = now + 600;
+    const { musts: projectMusts } = projectStageStarts(deployStart, now);
     return Object.fromEntries(
       selected.map((chainId) => {
         let planStages: StageRules[];
@@ -1067,7 +1208,7 @@ export function CreateForm() {
           planStages = [createSimpleProjectStage()];
         } else {
           planStages = stages.map((stage, i) =>
-            toStageRules(stage, i, deployStart, chainId),
+            toStageRules(stage, i, projectMusts[i], chainId),
           );
         }
         return [
@@ -1295,7 +1436,7 @@ export function CreateForm() {
    * One wallet transaction per chain, sequentially. Skips chains already
    * done, so a retry resumes exactly where the run stopped.
    */
-  const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
+  const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase("launching");
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
@@ -1450,12 +1591,61 @@ export function CreateForm() {
         return; // Stop here — retry checks a submitted hash before sending.
       }
     }
+    await finishLaunch();
+  };
+
+  const finishLaunch = async () => {
     if (selected.every((id) => statusesRef.current[id]?.phase === "done")) {
       // Nothing left to resume: drop the persisted progress record and the
       // saved draft it was built from.
-      completeLaunchSession();
+      const salt = pinnedRef.current?.salt ?? restoredSessionRef.current?.salt;
+      const clear = () => completeLaunchSession(salt);
+      if (navigator.locks) {
+        await navigator.locks.request("jbm-launch", clear);
+      } else {
+        clear();
+      }
       restoredSessionRef.current = null;
       setPhase("done");
+    }
+  };
+
+  const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
+    const session = loadLaunchSession() ?? restoredSessionRef.current;
+    if (session && session.salt !== pinned.salt) {
+      setLaunchError("Another tab has a different launch in progress. Return to that tab to continue.");
+      setPhase("failed");
+      return;
+    }
+    if (
+      session?.account &&
+      getAccount(config).address?.toLowerCase() !== session.account.toLowerCase()
+    ) {
+      setLaunchError(`Reconnect ${session.account} to continue this launch.`);
+      setPhase("failed");
+      return;
+    }
+    if (session?.transport !== "relayr") {
+      await runDirectChains(pinned);
+      return;
+    }
+    setPhase("launching");
+    setLaunchError(null);
+    try {
+      if (!address) throw new Error("Connect the wallet that started this launch.");
+      const { runRelayrLaunch } = await import("@/lib/launch-relayr");
+      await runRelayrLaunch({
+        session,
+        account: address,
+        onStatus: updateStatus,
+        onProgress: setRelayrProgress,
+      });
+      await finishLaunch();
+    } catch (error) {
+      setLaunchError(friendlyError(error));
+      setPhase("failed");
+    } finally {
+      setRelayrProgress(null);
     }
   };
 
@@ -1499,7 +1689,7 @@ export function CreateForm() {
         // instead of re-launching everything — single-chain included: a
         // refresh mid-confirm would otherwise re-send and mint a duplicate
         // project.
-        saveLaunchSession({
+        const session: LaunchSession = {
           salt: pinned.salt,
           projectUri: pinned.projectUri,
           store: pinned.store,
@@ -1507,12 +1697,32 @@ export function CreateForm() {
           chains: selected,
           statuses: initial,
           createdAt: Date.now(),
-        });
+          account: address,
+          transport: usesRelayr ? "relayr" : "direct",
+        };
+        // The relayed path reserves its journal under the same browser lock
+        // used for submission. Never overwrite another tab's active launch.
+        if (!usesRelayr) {
+          const save = () => {
+            if (!saveLaunchSession(session)) {
+              throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
+            }
+          };
+          if (navigator.locks) {
+            await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
+              if (!lock) throw new Error("Another tab is processing a launch. Return to that tab to continue.");
+              save();
+            });
+          } else {
+            save();
+          }
+        }
+        restoredSessionRef.current = session;
       }
       await runChains(pinned);
     } catch (e) {
       setLaunchError(friendlyError(e));
-      setPhase("form");
+      setPhase(pinnedRef.current ? "failed" : "form");
     }
   };
 
@@ -1529,14 +1739,38 @@ export function CreateForm() {
    * dropped for good: a later launch pins fresh and creates a SEPARATE
    * project, so the affordance's copy warns when chains already succeeded.
    */
-  const abandonLaunch = () => {
-    abandonLaunchSession();
-    restoredSessionRef.current = null;
-    pinnedRef.current = null;
-    statusesRef.current = {};
-    setStatuses({});
-    setLaunchError(null);
-    setPhase("form");
+  const abandonLaunch = async () => {
+    const abandon = () => {
+      const session = loadLaunchSession() ?? restoredSessionRef.current;
+      if (session && session.salt !== pinnedRef.current?.salt &&
+          session.salt !== restoredSessionRef.current?.salt) {
+        throw new Error("Another tab started a different launch. Return to that tab to continue.");
+      }
+      if (session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
+        throw new Error("This launch still has published authorizations. Check the original bundle before starting another launch.");
+      }
+      abandonLaunchSession(session?.salt);
+      restoredSessionRef.current = null;
+      pinnedRef.current = null;
+      statusesRef.current = {};
+      setStatuses({});
+      setLaunchError(null);
+      setRelayrProgress(null);
+      setPhase("form");
+      setConfirmOpen(false);
+    };
+    try {
+      if (navigator.locks) {
+        await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
+          if (!lock) throw new Error("Another tab is processing this launch. Return to that tab to continue.");
+          abandon();
+        });
+      } else {
+        abandon();
+      }
+    } catch (error) {
+      setLaunchError(friendlyError(error));
+    }
   };
 
   // Poll bendystraw for freshly launched projects until they're indexed.
@@ -1710,11 +1944,16 @@ export function CreateForm() {
     setStatuses(session.statuses);
     setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
     if (remainingLaunchChains(session).length === 0) {
-      completeLaunchSession();
+      if (navigator.locks) {
+        void navigator.locks.request("jbm-launch", () => completeLaunchSession(session.salt));
+      } else {
+        completeLaunchSession(session.salt);
+      }
       restoredSessionRef.current = null;
       setPhase("done");
     } else {
       setPhase("failed");
+      setConfirmOpen(true);
       // A chain restored from `signing` has no transaction hash, but a mobile or
       // WalletConnect wallet may have broadcast AFTER the reload — resuming would re-send
       // and mint a DUPLICATE project there. Nothing on-chain can rule that out from here,
@@ -1725,7 +1964,9 @@ export function CreateForm() {
       setLaunchError(
         unverified.length > 0
           ? `This launch was interrupted while your wallet was signing on ${unverified.join(", ")}. Check your wallet's recent activity there BEFORE pressing Try again — if a launch went through, resuming would create a second project. Chains that already launched are kept.`
-          : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
+          : session.transport === "relayr"
+            ? "Resume this launch to check its saved Relayr bundle. Completed chains are kept; an uncertain payment or launch is checked before anything is sent again."
+            : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
       );
     }
   }, []);
@@ -1786,14 +2027,6 @@ export function CreateForm() {
   // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter((v) => v.trim()).length;
   const linksSummary = linkCount > 0 ? `${linkCount} added` : "None";
-  const lastStage = stages[stages.length - 1];
-  const lastDuration = stageDurationSeconds(lastStage);
-  // "Afterwards" applies only when the last stage is timed (website/ parity).
-  const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
-  // The approval condition is meaningless when rules end in a forever stage.
-  const deadlineApplies =
-    lastDuration !== FOREVER_SECONDS &&
-    !(afterApplies && afterMode === "terminal");
 
   // What abandoning a failed run leaves behind, per chain: projects that
   // provably launched are kept, and a chain whose send could not be verified
@@ -1811,10 +2044,222 @@ export function CreateForm() {
     })
     .map((id) => chainName(id));
 
+  // ---- Confirm dialog: review rows, per-chain launch progress, and the run's
+  // progress. Rendered on the success view too so Done reveals it. ----
+  const ownerValue = !authorityEnabled ? (
+    "No retained authority"
+  ) : ownerOverrides.length > 0 ? (
+    "Set per chain"
+  ) : resolvedAddress(owner.trim()) ? (
+    <AddressLabel address={resolvedAddress(owner.trim())!} />
+  ) : owner.trim() ? (
+    owner.trim()
+  ) : address ? (
+    <AddressLabel address={address} />
+  ) : (
+    "Wallet connected at launch"
+  );
+  const launchRows: TxConfirmRow[] = [
+    {
+      label: flavor === "revnet" ? "Revnet operator" : "Project owner",
+      value: ownerValue,
+    },
+    {
+      label: "Launching",
+      value:
+        flavor === "simple"
+          ? "Simple project"
+          : flavor === "revnet"
+            ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ""}`
+            : "Project",
+    },
+    {
+      label: "Chains",
+      value: `${selected.map((id) => chainName(id)).join(", ")}${
+        selected.length > 1 && !linkChains ? " (not linked)" : ""
+      }`,
+    },
+    {
+      label: "Accounting",
+      value: customOn
+        ? `$${customMeta?.symbol ?? "TOKEN"}`
+        : accepts.map((t) => (t === "eth" ? "ETH" : "USDC")).join(" + "),
+    },
+    ...(isSimpleProject
+      ? [
+          {
+            label: "Rules",
+            value: `Issues 10,000 tokens per ${unitLabel} | Unlimited owner withdrawals | Cash outs off`,
+          },
+        ]
+      : stages.map((stage, i) => ({
+          label: `${flavor === "revnet" ? "Stage" : "Ruleset"} #${i + 1}`,
+          value: stageSummary(stage, i, unitLabel, rulesFlavor, multiToken),
+        }))),
+    {
+      label: selected.length > 1 ? "Creation fees" : "Creation fee",
+      value:
+        totalFee !== null
+          ? `${formatTokenAmount(totalFee, 18, 6)} ${
+              selected.length === 1
+                ? (JB_CHAINS[selected[0] as JBChainId]?.nativeTokenSymbol ??
+                  "ETH")
+                : "ETH"
+            }`
+          : "…",
+      strong: true,
+    },
+  ];
+  const launchSteps = selected.map((chainId) => {
+    const s = statuses[chainId];
+    const detail =
+      !s || s.phase === "pending"
+        ? undefined
+        : s.phase === "signing"
+          ? usesRelayr
+            ? "Sign this chain's launch request…"
+            : "Confirm in your wallet…"
+          : s.phase === "confirming"
+            ? s.safeProposalHash
+              ? `Safe proposal ${s.safeProposalHash} — co-sign and execute it in your Safe`
+              : "Confirming onchain…"
+            : s.phase === "uncertain"
+              ? "Submitted; confirmation is unavailable. Do not submit again."
+              : s.phase === "done"
+                ? `Launched — Project #${s.projectId}`
+                : "Failed";
+    return {
+      key: String(chainId),
+      title: `Launch on ${chainName(chainId)}`,
+      detail,
+    };
+  });
+  const launchNext = selected.findIndex(
+    (id) => statuses[id]?.phase !== "done",
+  );
+  const launchActiveIndex =
+    phase === "form" || phase === "pinning"
+      ? -1
+      : launchNext === -1
+        ? selected.length
+        : launchNext;
+  const stalledChain = selected
+    .map((id) => statuses[id])
+    .find((s) => s?.phase === "failed" || s?.phase === "uncertain");
+  // While a Safe proposal is pending, `txHash` holds the safeTxHash — not a
+  // transaction hash — so the explorer link waits for the executing hash.
+  const launchTxLinks = selected.flatMap((id) => {
+    const s = statuses[id];
+    const url =
+      s?.txHash && !s.safeProposalHash ? etherscanTxUrl(id, s.txHash) : null;
+    return url ? [{ chainId: id, txHash: s!.txHash!, url }] : [];
+  });
+  const launchLocked = phase === "pinning" || phase === "launching";
+  const activeLaunchSession = loadLaunchSession() ?? restoredSessionRef.current;
+  const relayrFundingStarted = activeLaunchSession?.relayr &&
+    ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
+  const mayAbandonLaunch = !usesRelayr || !activeLaunchSession ||
+    canAbandonRelayrLaunch(activeLaunchSession);
+  const launchDialog = confirmOpen ? (
+    <TxConfirmDialog
+      open
+      eyebrow="Launch"
+      title={phase === "done" ? `${name.trim()} is live` : "Confirm launch"}
+      rows={launchRows}
+      steps={launchSteps}
+      stepsIntro={
+        usesRelayr
+          ? "Sign each chain's launch request, then review the Relayr quote and pay once."
+          : undefined
+      }
+      activeIndex={launchActiveIndex}
+      status={phase === "pinning" ? "Saving your project details…" : relayrProgress}
+      error={launchError ?? stalledChain?.error ?? null}
+      busy={launchLocked}
+      complete={phase === "done"}
+      action={
+        phase === "failed"
+          ? usesRelayr || stalledChain?.phase === "uncertain"
+            ? "Check again"
+            : "Try again"
+          : "Confirm & launch"
+      }
+      onConfirm={() => (phase === "failed" ? retry() : void launch())}
+      onClose={() => {
+        if (launchLocked) return;
+        setConfirmOpen(false);
+        if (phase === "form") setLaunchError(null);
+      }}
+    >
+      {usesRelayr && phase !== "done" && relayrFundingStarted && activeLaunchSession?.relayr?.paymentChainId ? (
+        <p className="text-sm text-smoke-700">
+          Checking the saved Relayr payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
+        </p>
+      ) : null}
+      {launchTxLinks.length > 0 ? (
+        <ul className="space-y-1">
+          {launchTxLinks.map(({ chainId, txHash, url }) => (
+            <li key={chainId}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate font-mono text-[10px] text-bluebs-600 underline"
+              >
+                View {txHash} on {chainName(chainId)}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {phase === "failed" && !mayAbandonLaunch ? (
+        <p className="text-sm text-smoke-700">
+          This launch has published authorizations that may still execute.
+          Check the saved bundle to continue; starting over could create duplicate projects.
+        </p>
+      ) : null}
+      {phase === "failed" && mayAbandonLaunch ? (
+        <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
+          {usesRelayr && activeLaunchSession?.relayr?.published ? (
+            <p>
+              The remaining launch authorizations can no longer execute.
+              Any relay payment already made is not refunded by abandoning this launch.
+            </p>
+          ) : null}
+          <p>
+            {launchedChainNames.length > 0
+              ? `Abandoning stops this run. The ${
+                  launchedChainNames.length === 1 ? "project" : "projects"
+                } already launched on ${launchedChainNames.join(", ")} ${
+                  launchedChainNames.length === 1 ? "is" : "are"
+                } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
+                  launchedChainNames.length === 1 ? "it" : "them"
+                }.${
+                  maybeLaunchedChainNames.length > 0
+                    ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
+                    : ""
+                }`
+              : maybeLaunchedChainNames.length > 0
+                ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
+                : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
+          </p>
+          <button
+            type="button"
+            onClick={abandonLaunch}
+            className="mt-1 font-medium underline underline-offset-2"
+          >
+            Abandon this launch
+          </button>
+        </div>
+      ) : null}
+    </TxConfirmDialog>
+  ) : null;
+
   // ---- Success view ----
   if (phase === "done") {
     return (
       <div className="relative mx-auto max-w-2xl px-4 py-14 sm:px-6 sm:py-20">
+        {launchDialog}
         <div className="card p-8 text-center sm:p-10">
           <div className="relative mx-auto w-fit" aria-hidden>
             <Image
@@ -2685,7 +3130,8 @@ export function CreateForm() {
           {stages.map((stage, i) => (
             <div
               key={stage.id}
-              className="mt-4 rounded-xl border border-smoke-300 bg-bone first:mt-0"
+              id={`stage-${stage.id}`}
+              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0"
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
@@ -2731,7 +3177,7 @@ export function CreateForm() {
                 ) : null}
                 <Chevron open={stage.expanded} />
               </div>
-              {stage.expanded ? (
+              {!isSimpleProject && step === 2 && stage.expanded ? (
                 <div className="px-4 pb-4">
                   <StageRulesEditor
                     stage={stage}
@@ -2739,6 +3185,9 @@ export function CreateForm() {
                     isFirst={i === 0}
                     isLast={i === stages.length - 1}
                     index={i}
+                    prevDuration={
+                      i > 0 ? stageDurationSeconds(stages[i - 1]) : 0
+                    }
                     unitLabel={unitLabel}
                     unitChoice={
                       !customOn
@@ -2766,12 +3215,7 @@ export function CreateForm() {
           {flavor === "revnet" ? (
             <div className="mt-4">
               <AddButton
-                onClick={() =>
-                  setStages((prev) => [
-                    ...prev.map((s) => ({ ...s, expanded: false })),
-                    { ...newDraftStage(false, "revnet"), expanded: true },
-                  ])
-                }
+                onClick={() => addStage("revnet")}
                 disabled={busy}
               >
                 Add a stage
@@ -2789,10 +3233,7 @@ export function CreateForm() {
                   value={afterMode}
                   onChange={(e) => {
                     if (e.target.value === "custom") {
-                      setStages((prev) => [
-                        ...prev.map((s) => ({ ...s, expanded: false })),
-                        { ...newDraftStage(false), expanded: true },
-                      ]);
+                      addStage();
                       setAfterMode("wait");
                     } else {
                       setAfterMode(e.target.value as typeof afterMode);
@@ -2812,8 +3253,34 @@ export function CreateForm() {
                   ? "The project idles — payments and issuance pause until the project owner queues more rules."
                   : afterMode === "terminal"
                     ? "These terms are locked in forever — they can never be changed again."
-                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes."}
+                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes. To hand off to new rules after a set number of cycles or on a date, pick Custom… and set when it starts."}
               </p>
+            </div>
+          ) : null}
+
+          {chartStages.some((s) => s.weight > 0n || s.inheritsWeight) ? (
+            <div className="mt-5 border-t border-smoke-200 pt-4">
+              <p className="text-xs leading-relaxed text-smoke-700">
+                Preview {tokenLabel === "tokens" ? "token" : tokenLabel}{" "}
+                issuance price over time with the above rules:
+              </p>
+              <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
+                <IssuanceLadder
+                  stages={chartStages}
+                  symbol={tokenLabel}
+                  baseSymbol={unitLabel}
+                  stageLabel={flavor === "revnet" ? "Stage" : "Ruleset"}
+                  stageLabels={chartStages.map((_, i) =>
+                    i < stages.length
+                      ? undefined
+                      : afterMode === "terminal"
+                        ? "Locked in"
+                        : "Idle",
+                  )}
+                  viewHeight={80}
+                  defaultYears={91 / 365}
+                />
+              </div>
             </div>
           ) : null}
 
@@ -2839,6 +3306,17 @@ export function CreateForm() {
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
+              {noticeClash ? (
+                <p className="mt-2 text-xs text-red-600">
+                  {noticeClash.index < stages.length
+                    ? `Ruleset #${noticeClash.index + 1}`
+                    : "The closing ruleset (Afterwards)"}{" "}
+                  would start {secondsLabel(Math.floor(noticeClash.lead / 3600) * 3600)} after launch,
+                  sooner than the {APPROVAL_LABELS[approvalDeadline as keyof typeof APPROVAL_LABELS]} notice, so the
+                  notice would reject it and it would never take effect.
+                  Shorten the notice or make the earlier rules run longer.
+                </p>
+              ) : null}
               {approvalDeadline === "custom" ? (
                 <div className="mt-3">
                   <p className="mb-2 text-xs leading-relaxed text-smoke-700">
@@ -2966,7 +3444,7 @@ export function CreateForm() {
           </p>
         ) : null}
 
-        <StoreEditor
+        {step === storeStep ? <StoreEditor
           items={items}
           onChange={setItems}
           currencyLabel={storeCurrencyLabel}
@@ -2983,7 +3461,7 @@ export function CreateForm() {
           }}
           chainIds={selected}
           isRevnet={flavor === "revnet"}
-        />
+        /> : null}
 
         <div className="mt-5">
           <button
@@ -3139,15 +3617,13 @@ export function CreateForm() {
         </div>
       </section>
 
-      {/* 4 — Review & launch */}
+      {/* 4 — Launch */}
       <section
         className={step === launchStep ? "card mt-6 p-6 sm:p-7" : "hidden"}
       >
         <div className="flex items-center gap-3">
           <StepBadge n={launchStep + 1} />
-          <h2 className="font-agrandir text-xl font-medium">
-            Review &amp; launch
-          </h2>
+          <h2 className="font-agrandir text-xl font-medium">Ready to launch?</h2>
         </div>
 
         <dl className="mt-5 space-y-2.5 text-sm">
@@ -3317,12 +3793,6 @@ export function CreateForm() {
           />
         </div>
 
-        <p className="mt-5 text-sm leading-relaxed text-smoke-700">
-          {selected.length > 1
-            ? `You’ll confirm one transaction per chain — ${selected.length} transactions total.`
-            : "You’ll confirm one transaction to launch."}
-        </p>
-
         {isSafeConnection(config) ? (
           // The start time is pinned now because every chain must encode the same value —
           // that shared value is what links the chains. A multisig executing days later
@@ -3351,7 +3821,13 @@ export function CreateForm() {
         ) : null}
 
         <button
-          onClick={launch}
+          onClick={() => {
+            if (!connected || !address) {
+              openSignIn();
+              return;
+            }
+            if (canLaunch) setConfirmOpen(true);
+          }}
           disabled={connected && !canLaunch}
           className="btn-primary mt-2 min-h-[56px] w-full text-base"
         >
@@ -3367,127 +3843,6 @@ export function CreateForm() {
                     ? `Launch on ${selected.length} chains`
                     : "Launch project"}
         </button>
-
-        {launchError ? (
-          <p className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {launchError}
-          </p>
-        ) : null}
-
-        {phase === "failed" ? (
-          <div className="mt-3 rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
-            <p>
-              {launchedChainNames.length > 0
-                ? `Abandoning stops this run. The ${
-                    launchedChainNames.length === 1 ? "project" : "projects"
-                  } already launched on ${launchedChainNames.join(", ")} ${
-                    launchedChainNames.length === 1 ? "is" : "are"
-                  } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
-                    launchedChainNames.length === 1 ? "it" : "them"
-                  }.${
-                    maybeLaunchedChainNames.length > 0
-                      ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
-                      : ""
-                  }`
-                : maybeLaunchedChainNames.length > 0
-                  ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
-                  : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
-            </p>
-            <button
-              type="button"
-              onClick={abandonLaunch}
-              className="mt-1 font-medium underline underline-offset-2"
-            >
-              Abandon this launch
-            </button>
-          </div>
-        ) : null}
-
-        {/* Per-chain progress checklist */}
-        {phase === "launching" ||
-        Object.values(statuses).some((s) => s.phase !== "pending") ? (
-          <ul className="mt-5 space-y-2" aria-live="polite">
-            {selected.map((chainId) => {
-              const s = statuses[chainId] ?? { phase: "pending" as const };
-              // While a Safe proposal is pending, `txHash` holds the
-              // safeTxHash — not a transaction hash. Linking an explorer at it
-              // yields a dead page, so suppress the link until the executing
-              // transaction hash replaces it.
-              const txUrl =
-                s.txHash && !s.safeProposalHash
-                  ? etherscanTxUrl(chainId, s.txHash)
-                  : null;
-              const label =
-                s.phase === "pending"
-                  ? "Waiting"
-                  : s.phase === "signing"
-                    ? "Confirm in your wallet…"
-                    : s.phase === "confirming"
-                      ? "Confirming onchain…"
-                      : s.phase === "uncertain"
-                        ? (s.error ??
-                          "Submitted; confirmation is unavailable. Do not submit again.")
-                        : s.phase === "done"
-                          ? `Launched — Project #${s.projectId}`
-                          : (s.error ?? "Failed");
-              return (
-                <li
-                  key={chainId}
-                  className="flex items-center gap-3 rounded-xl border border-smoke-200 bg-white px-4 py-3"
-                >
-                  {s.phase === "done" ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-melon-400">
-                      <CheckIcon className="h-3.5 w-3.5 text-ink" />
-                    </span>
-                  ) : s.phase === "failed" || s.phase === "uncertain" ? (
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-red-500 text-xs font-bold text-red-600">
-                      {s.phase === "uncertain" ? "?" : "!"}
-                    </span>
-                  ) : s.phase === "pending" ? (
-                    <span className="h-6 w-6 shrink-0 rounded-full border-2 border-smoke-300" />
-                  ) : (
-                    <TransactionProgressImage className="h-9 w-9" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-ink">
-                      <ChainIcon chainId={chainId} size={16} />
-                      {chainName(chainId)}
-                    </p>
-                    <p
-                      className={`text-xs ${s.phase === "failed" || s.phase === "uncertain" ? "text-red-600" : "text-smoke-700"}`}
-                    >
-                      {label}
-                    </p>
-                    {txUrl ? (
-                      <a
-                        href={txUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-1 block truncate font-mono text-[10px] text-bluebs-600 underline"
-                      >
-                        View {s.txHash}
-                      </a>
-                    ) : s.safeProposalHash ? (
-                      <p className="mt-1 block truncate font-mono text-[10px] text-smoke-600">
-                        Safe proposal {s.safeProposalHash} — co-sign and execute
-                        it in your Safe
-                      </p>
-                    ) : null}
-                  </div>
-                  {(s.phase === "failed" || s.phase === "uncertain") &&
-                  phase === "failed" ? (
-                    <button
-                      onClick={retry}
-                      className="btn-secondary shrink-0 px-4 py-1.5 text-xs"
-                    >
-                      {s.phase === "uncertain" ? "Check again" : "Retry"}
-                    </button>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
       </section>
 
       {/* Back / Next wizard footer */}
@@ -3512,6 +3867,7 @@ export function CreateForm() {
         ) : null}
       </div>
 
+      {launchDialog}
     </div>
   );
 }

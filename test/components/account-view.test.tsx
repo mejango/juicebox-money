@@ -54,7 +54,7 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
 vi.mock('@/lib/relayr', () => ({
   fetchRelayrBundlesByAccount: mocks.fetchRelayrBundlesByAccount,
   resumeRelayrSession: mocks.resumeRelayrSession,
-  // Signed ForwardRequests expire after 47h; the card hides Resume past that.
+  // Expiry does not establish whether a destination already executed.
   relayrSessionExpired: (session: { createdAt: number }, nowMs = Date.now()) =>
     nowMs >= session.createdAt + 47 * 60 * 60 * 1000,
   relayrSessionExpiresAt: (session: { createdAt: number }) =>
@@ -213,8 +213,7 @@ function pendingSession(
     records: [{ chain: 1, status: { state: 'success' } }],
     itemCount: 2,
     account: ALICE,
-    // A LIVE session by default: signed ForwardRequests expire 47h after creation, and an
-    // expired one deliberately offers no Resume (see the expiry test below).
+    // Use a live signature deadline unless the test explicitly exercises expiry.
     createdAt: Date.now(),
     ...overrides,
   }
@@ -383,10 +382,8 @@ describe('AccountPendingRelayr', () => {
     expect(mocks.fetchRelayrBundlesByAccount).not.toHaveBeenCalled()
   })
 
-  it('offers no resume once the signed requests have expired', async () => {
-    // The ForwardRequest deadline is signed at creation + 47h; past it the forwarder rejects
-    // the bundle, so a Resume button promised a retry that could never succeed — on a bundle
-    // the user has already paid for.
+  it('still reconciles the original receipts after signature expiry', async () => {
+    // Wall-clock expiry is not proof of non-execution; the original receipt path remains available.
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
       {
@@ -403,8 +400,9 @@ describe('AccountPendingRelayr', () => {
     })
 
     const text = renderedText(renderer.root)
-    expect(text).toContain('Signatures expired')
-    expect(buttonWith(renderer, 'Resume')).toBeUndefined()
+    expect(text).toContain('Authorization deadline passed')
+    await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
+    expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({ scope: 'authority:0xaaa', account: ALICE })
   })
 
   it('shows the account its in-flight legs and resumes by session', async () => {
@@ -427,11 +425,11 @@ describe('AccountPendingRelayr', () => {
 
     const text = renderedText(renderer.root)
     expect(text).toContain('Cross-chain action in flight')
-    expect(text).toContain('1/2 chains done')
-    expect(text).toContain('Ethereum — confirmed')
+    expect(text).toContain('1/2 Relayr-reported; onchain proof pending')
+    expect(text).toContain('Ethereum — Relayr-reported; verification pending')
     expect(text).toContain('Optimism — pending')
 
-    await act(async () => buttonWith(renderer, 'Resume').props.onClick())
+    await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({
       scope: 'authority:0xaaa',
       account: ALICE,
@@ -464,9 +462,9 @@ describe('AccountPendingRelayr', () => {
 
     const text = renderedText(renderer.root)
     expect(text).toContain('Relayr-reported; onchain proof pending')
-    expect(text).toContain('verify in Owner/Operator')
+    expect(text).toContain('Owner/Operator tab')
     expect(text).not.toContain('Ethereum — confirmed')
-    expect(buttonWith(renderer, 'Resume')).toBeUndefined()
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
   })
 
   it('pairs chain legs with bundle records in order', () => {

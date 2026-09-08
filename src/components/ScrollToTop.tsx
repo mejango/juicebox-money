@@ -36,6 +36,8 @@ export function ScrollToTop() {
       cameFromHistory.current = false
       return
     }
+    // Let the router/browser land on a guide section when a link names one.
+    if (window.location.hash) return
     // Jump, never glide: an animated scroll on every navigation reads as lag.
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   }, [pathname])

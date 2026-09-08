@@ -1,13 +1,6 @@
 'use client'
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  type ButtonHTMLAttributes,
-  type ReactNode,
-} from 'react'
+import { createContext, type ButtonHTMLAttributes, type ReactNode, useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
 
 /**
  * Body scroll lock, reference counted.
@@ -37,6 +30,19 @@ function lockBodyScroll(): () => void {
       document.body.style.overflow = overflowBeforeFirstLock
     }
   }
+}
+
+/**
+ * Dialogs replace rather than stack: the dialog below a newly opened one stays
+ * open in the top layer but paints nothing (see `[data-covered]` in
+ * globals.css) until the newer one closes. Returns the uncover.
+ */
+function coverDialogsBelow(dialog: HTMLDialogElement) {
+  const covered = Array.from(
+    document.querySelectorAll<HTMLDialogElement>('dialog[open]:not([data-covered])'),
+  ).filter(other => other !== dialog)
+  covered.forEach(other => other.setAttribute('data-covered', ''))
+  return () => covered.forEach(other => other.removeAttribute('data-covered'))
 }
 
 /**
@@ -77,8 +83,13 @@ export function ModalDialog({
     if (!dialog) return
     // showModal() throws InvalidStateError on an already open dialog.
     if (!dialog.open) dialog.showModal()
+    // showModal() hands focus to the first focusable descendant, which is the close button in every
+    // shell here, so its focus ring lit up on every open. Start on the dialog itself instead.
+    dialog.focus({ preventScroll: true })
+    const uncover = coverDialogsBelow(dialog)
     const releaseScroll = lockBodyScroll()
     return () => {
+      uncover()
       releaseScroll()
       if (dialog.open) dialog.close()
     }
@@ -93,7 +104,8 @@ export function ModalDialog({
       ref={dialogRef}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      className={`modal-dialog ${className}`}
+      className={`modal-dialog focus:outline-none ${className}`}
+      tabIndex={-1}
       onCancel={event => {
         // React owns the open state: unmounting the element is what closes the
         // dialog. Always stop the UA from closing it itself, so an owner that
@@ -143,6 +155,17 @@ export function ModalCloseButton({
  * Escape, ×) while transactions are in flight; `onClose` may layer its own
  * guards (e.g. a discard-confirm) on top.
  */
+const ModalCardContext = createContext<HTMLDivElement | null>(null)
+
+/**
+ * The card of the ModalShell this component is rendered inside, or null when
+ * it is not inside one. A confirm view uses it to replace the card's content
+ * in place rather than open a second dialog over the first.
+ */
+export function useEnclosingModalCard(): HTMLDivElement | null {
+  return useContext(ModalCardContext)
+}
+
 export function ModalShell({
   title,
   subtitle,
@@ -162,6 +185,7 @@ export function ModalShell({
   children: ReactNode
 }) {
   const titleId = useId()
+  const [card, setCard] = useState<HTMLDivElement | null>(null)
 
   const close = useCallback(() => {
     if (!busy) onClose()
@@ -175,6 +199,7 @@ export function ModalShell({
       className="items-start justify-center px-3 py-5 sm:px-6 sm:py-10"
     >
       <div
+        ref={setCard}
         data-modal-card
         className={`card w-full ${maxWidth} overflow-hidden shadow-[0_24px_72px_rgba(19,17,25,0.28)] ${
           footer
@@ -207,7 +232,7 @@ export function ModalShell({
             footer ? 'min-h-0 flex-1' : 'max-h-[calc(100vh-10rem)]'
           }`}
         >
-          {children}
+          <ModalCardContext.Provider value={card}>{children}</ModalCardContext.Provider>
         </div>
         {footer ? (
           <div

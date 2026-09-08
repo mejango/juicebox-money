@@ -10,10 +10,10 @@ import {
 
 /** Public routes must never fan out an attacker-sized Safe owner list. */
 export const MAX_SAFE_OWNERS = 50
-export const MAX_SAFE_MODULE_PAGE = 64
+const MAX_SAFE_MODULE_PAGE = 64
 export const SAFE_SCALAR_READ_GAS = 100_000n
 export const SAFE_OWNERS_READ_GAS = 400_000n
-export const SAFE_MODULES_READ_GAS = 500_000n
+const SAFE_MODULES_READ_GAS = 500_000n
 
 export const SAFE_READ_ABI = [
   {

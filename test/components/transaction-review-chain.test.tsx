@@ -54,6 +54,7 @@ async function openReviewOn(chainId: number) {
       ],
     }).catch(() => {})
   })
+  await act(async () => { await vi.dynamicImportSettled() })
 }
 
 describe('transaction review chain identity', () => {
@@ -121,6 +122,7 @@ describe('transaction review chain identity', () => {
         ],
       }).catch(() => {})
     })
+    await act(async () => { await vi.dynamicImportSettled() })
 
     expect(document.querySelector('dialog')?.textContent).toContain(
       'Destination | Permit2',

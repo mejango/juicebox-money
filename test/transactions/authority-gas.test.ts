@@ -9,11 +9,15 @@ const mocks = vi.hoisted(() => ({
     estimateGas: vi.fn(),
     readContract: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
+    getTransaction: vi.fn(),
+    getTransactionReceipt: vi.fn(),
+    getBlock: vi.fn(),
   },
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
   requireReview: vi.fn(),
+  chooseFunding: vi.fn(),
   runSafeCalls: vi.fn(),
   findPendingSafeCall: vi.fn(),
   readAuthorityIdentity: vi.fn(),
@@ -39,6 +43,7 @@ vi.mock('@/lib/wallet-core', () => ({
 }))
 vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
+  requireFundingChainSelection: mocks.chooseFunding,
 }))
 vi.mock('@/lib/safe', () => ({
   canonicalSafeTxHash: () => HASH,
@@ -56,6 +61,7 @@ vi.mock('@/lib/safe-connector', () => ({
 }))
 
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x3333333333333333333333333333333333333333' as Address
@@ -81,6 +87,16 @@ function response(body: unknown, status = 200): Response {
 }
 
 beforeEach(() => {
+  for (const scope of listRelayrPendingScopes()) clearRelayrPendingSession(scope)
+  const storage = new Map<string, string>()
+  vi.stubGlobal('window', { localStorage: {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+    key: (index: number) => [...storage.keys()][index] ?? null,
+    get length() { return storage.size },
+  } })
+  vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
   mocks.account = ALICE
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
@@ -91,6 +107,7 @@ beforeEach(() => {
     account: ALICE,
   })
   mocks.requireReview.mockResolvedValue(undefined)
+  mocks.chooseFunding.mockResolvedValue(1)
   mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'eoa' })
   mocks.isSafeConnection.mockReturnValue(false)
   mocks.findPendingSafeCall.mockResolvedValue(null)
@@ -101,9 +118,9 @@ beforeEach(() => {
     matches: true,
   })
   mocks.client.call.mockResolvedValue({ data: '0x' })
-  mocks.client.request.mockImplementation(async ({ method }) => {
+  mocks.client.request.mockImplementation(async ({ method, params }) => {
     if (method === 'eth_getCode') return PAYMENT_RUNTIME
-    if (method === 'eth_call') return '0x'
+    if (method === 'eth_call') return params?.[0]?.data?.startsWith('0x572b6c05') ? `0x${'0'.repeat(63)}1` : '0x'
     throw new Error(`Unexpected RPC method ${method}`)
   })
   mocks.client.readContract.mockImplementation(async input => {
@@ -111,14 +128,23 @@ beforeEach(() => {
       return ['0x0f', 'JBForwarder', '1', 1n, TARGET, '0x00', []]
     }
     if (input.functionName === 'nonces') return 4n
+    if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
   mocks.client.waitForTransactionReceipt.mockResolvedValue({ status: 'success' })
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
+  let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
+  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
+    const entry = entries[hash === DESTINATION_HASH ? 0 : 1]
+    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH }
+  })
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: 'success', blockHash: HASH, blockNumber: 1n }))
+  mocks.client.getBlock.mockResolvedValue({ hash: HASH })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
     if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
+      entries = JSON.parse(String(init.body)).transactions
       return response({
         bundle_uuid: BUNDLE_UUID,
         payment_info: [
@@ -138,8 +164,8 @@ beforeEach(() => {
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
       return response({
         transactions: [
-          { chain: 1, status: { state: 'success', data: { hash: DESTINATION_HASH } } },
-          { chain: 10, status: { state: 'success', data: { hash: DESTINATION_HASH } } },
+          { chain: 1, tx_uuid: TX_UUIDS[0], status: { state: 'success', data: { hash: DESTINATION_HASH } } },
+          { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: HASH } } },
         ],
       })
     }
@@ -148,6 +174,79 @@ beforeEach(() => {
 })
 
 describe('Authority gas estimation reaches the signed Relayr request', () => {
+  it.each([
+    [1, 11155111],
+    [1, 1],
+  ] as const)('rejects direct batches on chains %s and %s before sending their first call', async (first, second) => {
+    await expect(runAuthorityCalls({ calls: [
+      { chainId: first, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: second, authority: ALICE, target: TARGET, data: '0x5678' },
+    ] })).rejects.toThrow(/Select one chain and one action at a time/)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.chooseFunding).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an untrusted-forwarder batch before any direct write can be replayed', async () => {
+    mocks.client.request.mockResolvedValue('0x')
+    await expect(runAuthorityCalls({ calls: [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
+    ] })).rejects.toThrow(/Select one chain and one action at a time/)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('preserves a single direct testnet call from the real authority', async () => {
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    const result = await runAuthorityCalls({ calls: [
+      { chainId: 11155111, authority: ALICE, target: TARGET, data: '0x1234' },
+    ] })
+    expect(result.directResults).toEqual([HASH])
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ account: ALICE }))
+  })
+
+  it('recovers a submitted bundle before callbacks inspect already changed project state', async () => {
+    const reverifyAuthority = vi.fn().mockRejectedValue(new Error('Queue already changed'))
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', reverifyAuthority },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678', reverifyAuthority },
+    ]
+    const scope = relayrCallsScope(calls)
+    saveRelayrPendingSession(scope, { bundleUuid: BUNDLE_UUID, paymentHash: HASH,
+      paymentChainId: 1, paymentStatus: 'submitted', chainIds: [1, 10], expectedCount: 2,
+      records: [], itemCount: 2, account: ALICE, createdAt: Date.now() })
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow(/lacks exact destination proof/)
+      expect(reverifyAuthority).not.toHaveBeenCalled()
+      expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
+  it('rechecks an unpaid saved action after funding review before sending its payment', async () => {
+    let changed = false
+    const reverifyAuthority = vi.fn(async () => {
+      if (changed) throw new Error('The original queue changed during review')
+    })
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', reverifyAuthority },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678', reverifyAuthority },
+    ]
+    const scope = relayrCallsScope(calls)
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow('Selection canceled')
+      mocks.requireReview.mockImplementation(async review => {
+        if (review.title === 'Review Relayr payment') changed = true
+      })
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow('The original queue changed during review')
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
   it('routes a matching delegated EOA project-handle claim as a direct EOA call', async () => {
     const delegated = {
       kind: 'delegated-eoa' as const,
@@ -204,7 +303,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
         ],
       }),
     ).rejects.toThrow(
-      /Safe on OP Mainnet.*not deployed on Ethereum.*Deploy same Safe on Ethereum.*project handle editor/,
+      /Safe on Optimism.*not deployed on Ethereum.*Deploy same Safe on Ethereum.*project handle editor/,
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.client.request).not.toHaveBeenCalled()
@@ -238,7 +337,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
           },
         ],
       }),
-    ).rejects.toThrow(/Safe on OP Mainnet.*occupied by an EIP-7702 delegated EOA/i)
+    ).rejects.toThrow(/Safe on Optimism.*occupied by an EIP-7702 delegated EOA/i)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     expect(mocks.runSafeCalls).not.toHaveBeenCalled()

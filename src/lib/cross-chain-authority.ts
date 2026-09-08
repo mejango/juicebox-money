@@ -72,7 +72,7 @@ export const SAFE_L1_L2_SINGLETON_PAIRS = [
   ],
 ] as const satisfies readonly (readonly [Address, Address])[]
 
-const safeToL2SetupAbi = [
+export const safeToL2SetupAbi = [
   {
     type: 'function',
     name: 'setupToL2',
@@ -83,7 +83,7 @@ const safeToL2SetupAbi = [
 ] as const
 
 /** The SafeL2 singleton `SafeToL2Setup` may install for `singleton`, if any. */
-export function pairedSafeL2Singleton(singleton: Address): Address | null {
+function pairedSafeL2Singleton(singleton: Address): Address | null {
   const pair = SAFE_L1_L2_SINGLETON_PAIRS.find(([l1]) =>
     isAddressEqual(l1, singleton),
   )
@@ -110,7 +110,7 @@ export function safeSingletonsAreEquivalent(
  * Byte-exact `setupToL2(l2Singleton)` naming the SafeL2 counterpart of the
  * initializer's own singleton. Nothing else may be delegatecalled at setup.
  */
-export function isExactSetupToL2Call(data: Hex, singleton: Address): boolean {
+function isExactSetupToL2Call(data: Hex, singleton: Address): boolean {
   const l2Singleton = pairedSafeL2Singleton(singleton)
   if (!l2Singleton) return false
   const expected = encodeFunctionData({
@@ -134,7 +134,7 @@ export function initializerUsesSafeToL2Setup(initializer: Hex): boolean {
   }
 }
 
-const safeSetupAbi = [
+export const safeSetupAbi = [
   {
     type: 'function',
     name: 'setup',
