@@ -20,7 +20,7 @@ export type ReservePoint = {
    *  indexer didn't return. */
   chains?: Array<{ chainId: number; valueUsd: number }>
 }
-export type ChainReserveBreakdown = {
+type ChainReserveBreakdown = {
   chainId: number
   eth: number
   usdc: number

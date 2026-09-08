@@ -97,3 +97,16 @@ is already in PROJECT_FIELDS, currently unused).
 - [ ] Full adversarial audit (agents): custom project + revnet coverage,
       math correctness, gating correctness
 - [ ] Sims/typecheck/build + browser verification on real projects
+
+# Ruleset #2 start control (jango 2026-09-03: "cycle N times / until date, then custom ruleset")
+- [x] launch.ts: deriveStartFrom mirror + DEADLINE_SECONDS; encoder sends stage.mustStartAtOrAfter for every stage (0 = next boundary, unchanged default)
+- [x] DraftStage: startMode cycles|date, startCycles (default 1), startDate; Timing "Starts" control on stage 2+ (project flavor); summaries
+- [x] draft.ts sanitize new fields
+- [x] CreateForm: absolute mustStart chain (scheduled / multichain pin / now), notice-vs-start gate (also covers standby+terminal), Cycle blurb points at Custom…
+- [x] tests: deriveStartFrom + encoder passes later-stage start; vitest 935 green + tsc + eslint; rendered via gstack browse (cycles / date / notice clash)
+
+Review: default N=1 still encodes 0, so existing launches are byte-identical. Single-chain unscheduled
+stage 1 starts at the deploy block, so "N cycles" is exact as long as the tx lands within one
+ruleset-1 duration of clicking Launch (deriveStartFrom snaps up otherwise → one extra cycle).
+The notice gate also catches the pre-existing silent failure where a Wait/Terminate closing ruleset
+started sooner than the deadline hook allowed. Not committed — awaiting go-ahead.

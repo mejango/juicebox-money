@@ -23,7 +23,7 @@ const NOW_COLOR = '#F5A312'
 
 // Plot area gutters inside a 320×180 viewBox.
 const VW = 320
-const VH = 180
+const DEFAULT_VH = 180
 const PL = 0
 const PR = 0
 const PT = 16
@@ -124,6 +124,9 @@ export function StepChartBase({
   showScaleLabel = true,
   scaleMax,
   frameless = false,
+  stageLabel = 'Stage',
+  stageLabels,
+  viewHeight = DEFAULT_VH,
   header,
   footer,
   renderSeries,
@@ -150,6 +153,12 @@ export function StepChartBase({
   scaleMax?: number
   /** Skip the card chrome when the chart already sits inside a card. */
   frameless?: boolean
+  /** Word for the boundary labels ("Stage 2" / "Ruleset 2"). */
+  stageLabel?: string
+  /** Per-stage overrides of the boundary label, by resolved index. */
+  stageLabels?: (string | undefined)[]
+  /** viewBox height; the chart keeps full width, so smaller = shorter. */
+  viewHeight?: number
   /** Rendered inside the card above the svg (summary tiles, range pills). */
   header?: ReactNode
   /** Rendered inside the card below the svg (legend, methodology tips). */
@@ -166,6 +175,7 @@ export function StepChartBase({
   /** PriceChart uses a cursor-following tooltip; issuance-only charts retain the caption below. */
   inspectionPlacement?: 'below' | 'tooltip'
 }) {
+  const VH = viewHeight
   const [hoverT, setHoverT] = useState<number | null>(null)
   const [hoverPosition, setHoverPosition] = useState<{
     x: number
@@ -203,10 +213,14 @@ export function StepChartBase({
   const Y = (v: number) =>
     PT + (VH - PT - PB) * (1 - Math.max(0, Math.min(1, v / scaleTop)))
 
+  // The ladder breaks where there is no issuance (rate 0) instead of drawing
+  // a line at a price that does not exist.
   const path = points
-    // No issuance has an infinite price; pin it to the top of the finite
-    // issuance-price range, matching website/'s chart.
-    .map(([t, v]) => `${X(t).toFixed(1)},${Y(v ?? maxV).toFixed(1)}`)
+    .map(([t, v], i) =>
+      v === null
+        ? ''
+        : `${i === 0 || points[i - 1][1] === null ? 'M' : 'L'}${X(t).toFixed(1)},${Y(v).toFixed(1)}`,
+    )
     .join(' ')
 
   const t = Math.min(t1, Math.max(t0, hoverT ?? Math.min(now, t1)))
@@ -272,9 +286,26 @@ export function StepChartBase({
                 strokeWidth="1"
                 strokeDasharray="3 3"
               />
-              <text x={X(s.start) + 3} y={PT + 8} fontSize="6.5" fill="#9C9580">
-                Stage {i + 1}
-              </text>
+              {(() => {
+                // Sit the label just under the line as it leaves the boundary:
+                // within a stage the ladder only rises, so below is clear of it.
+                // Fall back to above when the line hugs the axis.
+                const r = rateAtTime(resolved, s.start)
+                const lineY = r > 0 ? Y(1 / r) : PT
+                const below = lineY + 9
+                const flip = X(s.start) > VW - PR - 30
+                return (
+                  <text
+                    x={flip ? X(s.start) - 3 : X(s.start) + 3}
+                    y={below <= VH - PB - 2 ? below : lineY - 4}
+                    fontSize="6.5"
+                    fill="#9C9580"
+                    textAnchor={flip ? 'end' : 'start'}
+                  >
+                    {stageLabels?.[i] ?? `${stageLabel} ${i + 1}`}
+                  </text>
+                )
+              })()}
             </g>
           ) : null,
         )}
@@ -304,8 +335,8 @@ export function StepChartBase({
         ) : null}
         {/* The price ladder */}
         {showLadder ? (
-          <polyline
-            points={path}
+          <path
+            d={path}
             fill="none"
             stroke={ISSUANCE_COLOR}
             strokeWidth="2"

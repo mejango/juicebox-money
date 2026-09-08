@@ -30,7 +30,7 @@ import { newDraftSplit, type DraftSplit } from '@/components/create/SplitsEditor
 import {
   newDraftStage,
   type DraftStage,
-} from '@/components/create/StageRulesEditor'
+} from '@/components/create/stage-draft'
 import { parseDraft, type CreateDraft } from '@/lib/draft'
 import type { RawSplit } from '@/lib/splits-types'
 

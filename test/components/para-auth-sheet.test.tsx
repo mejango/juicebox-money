@@ -7,6 +7,7 @@ const para = vi.hoisted(() => ({
   verifyNewAccountAsync: vi.fn(),
   waitForWalletCreation: vi.fn(async () => ({ walletIds: {} })),
   authStateInfo: {} as Record<string, string>,
+  authPhase: 'awaiting_account_verification' as string,
   openedUrls: [] as string[],
 }))
 
@@ -31,7 +32,7 @@ vi.mock('@/providers/para-config', () => ({
   getParaClient: () => ({
     onStatePhaseChange: (listener: (snapshot: unknown) => void) => {
       listener({
-        authPhase: 'awaiting_account_verification',
+        authPhase: para.authPhase,
         corePhase: 'unauthenticated',
         authStateInfo: para.authStateInfo,
       })
@@ -53,6 +54,7 @@ const { default: ParaAuthSheet } = await import('@/providers/ParaAuthSheet')
 describe('ParaAuthSheet verification', () => {
   beforeEach(() => {
     para.authStateInfo = {}
+    para.authPhase = 'awaiting_account_verification'
     para.openedUrls.length = 0
   })
 
@@ -142,6 +144,38 @@ describe('ParaAuthSheet verification', () => {
       'https://app.getpara.com/v2/signup/passkey',
     )
     expect(para.waitForWalletCreation).toHaveBeenCalled()
+    open.mockRestore()
+  })
+
+  it('keeps a user-initiated passkey button when Para\'s first popup is blocked', async () => {
+    para.authPhase = 'waiting_for_session'
+    para.authStateInfo = {
+      passkeyUrl: 'https://app.getpara.com/v2/login/passkey',
+    }
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(ParaAuthSheet, {
+          entry: 'me@example.com',
+          onEntryChange: () => {},
+          onClose: () => {},
+        }),
+      )
+    })
+
+    const passkeyButton = renderer.root
+      .findAllByType('button')
+      .find(button => String(button.children.join('')).includes('Open passkey'))!
+    expect(passkeyButton).toBeTruthy()
+
+    await act(async () => passkeyButton.props.onClick())
+    expect(open).toHaveBeenLastCalledWith(
+      'https://app.getpara.com/v2/login/passkey',
+      'ParaAuth',
+      'popup,width=420,height=560',
+    )
     open.mockRestore()
   })
 })

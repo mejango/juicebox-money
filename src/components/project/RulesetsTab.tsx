@@ -931,6 +931,7 @@ export function RulesetsTab({
           chainId={chainId}
           projectId={projectId}
           isRevnet={false}
+          chains={projectChains}
         />
         {r.id > 0 ? (
           <p className="mb-1 text-center text-[11px] text-smoke-400">
@@ -1084,6 +1085,7 @@ export function RulesetsTab({
                         groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
                         title="reserved recipients"
                         rulesetId={BigInt(rulesetId)}
+                        chains={projectChains}
                       />
                     </div>
                   ) : null}

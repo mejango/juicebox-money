@@ -1,6 +1,6 @@
 "use client";
 
-import { TxSteps } from "@/components/ui/TxSteps"
+import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   bytes32ToCidV0,
   JBCoreContracts,
@@ -31,10 +31,9 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
-import { ModalCloseButton, ModalShell } from "@/components/ui/ModalShell";
+import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  encodeFunctionData,
   erc20Abi,
   formatUnits,
   parseUnits,
@@ -77,15 +76,9 @@ import { preloadParaHost } from "@/providers/preload-para";
 import { resolveMarket } from "@/components/project/MarketSection";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import {
-  buildTransactionReviewPrompt,
-  type TransactionReviewRequest,
-} from "@/lib/transaction-review";
-import {
   addPermit2SignatureToSwap,
   paymentSequenceLocked,
-  PERMIT2_ADDRESS,
   permit2SignatureNeedsOnchainFallback,
-  permit2TypedData,
   shouldUsePermit2Signature,
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";
@@ -328,9 +321,7 @@ export function PayPanel({
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
   const routerApproveTx = useSafeTx(chainId);
-  const { signPermit2Async } = useReviewedPermit2Signature({
-    reviewedInParent: true,
-  });
+  const { signPermit2Async } = useReviewedPermit2Signature();
   // Once an approval is confirmed, every dependent allowance read and final
   // simulation is anchored to that receipt block. Base providers are load
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
@@ -1004,6 +995,8 @@ export function PayPanel({
     isFetching: previewLoading,
     isError: previewError,
     isPlaceholderData: previewIsPrevious,
+    isStale: previewIsStale,
+    refetch: refetchPreview,
   } = useQuery({
     queryKey: [
       "previewPay",
@@ -1056,6 +1049,8 @@ export function PayPanel({
     isFetching: directSwapQuoteLoading,
     isError: directSwapQuoteError,
     isPlaceholderData: directSwapQuoteIsPrevious,
+    isStale: directSwapQuoteIsStale,
+    refetch: refetchDirectSwapQuote,
   } = useQuery({
     queryKey: [
       "directPaySwapQuote",
@@ -1508,6 +1503,15 @@ export function PayPanel({
     // Fail-closed guards: never send to an unlisted terminal, and never try to
     // top up a balance with a router swap (no min-output bound).
     if (terminalBlocked || addBalanceViaRouter) return;
+    // A quote older than the query's staleTime is refetched first; the effect
+    // below re-enters once the refreshed quote is in. A live quote is used as is.
+    const swapQuoteStale = !!activeSwapQuote && directSwapQuoteIsStale;
+    if (mode === "pay" && (previewIsStale || swapQuoteStale)) {
+      setSubmitWhenFresh(true);
+      void refetchPreview();
+      if (swapQuoteStale) void refetchDirectSwapQuote();
+      return;
+    }
     let actions: PaymentSequenceAction[]
     try {
       // `buildDirectPaySwapTx` throws on a zero amount, reachable from credit-only
@@ -1534,6 +1538,19 @@ export function PayPanel({
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
   };
+
+  const [submitWhenFresh, setSubmitWhenFresh] = useState(false);
+  useEffect(() => {
+    if (!submitWhenFresh) return;
+    if (previewError) {
+      setSubmitWhenFresh(false);
+      return;
+    }
+    if (!previewReady || previewIsStale || (activeSwapQuote && directSwapQuoteIsStale)) return;
+    setSubmitWhenFresh(false);
+    submit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
 
   const runPaymentSequence = async () => {
     if (
@@ -1565,7 +1582,7 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedInParent: true },
+          {},
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1661,7 +1678,7 @@ export function PayPanel({
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
           routerApproval.request,
-          { simulationBlockNumber: latestApprovalBlock, reviewedInParent: true },
+          { simulationBlockNumber: latestApprovalBlock },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1700,7 +1717,6 @@ export function PayPanel({
       }
       const paymentHash = await tx.send(paymentRequest, {
         simulationBlockNumber: latestApprovalBlock,
-        reviewedInParent: true,
       });
       if (!paymentHash) throw new Error("Payment was cancelled.");
       if (tx.isSafe) {
@@ -2438,28 +2454,73 @@ export function PayPanel({
         </p>
       ) : null}
       {sequenceOpen ? (
-        <PaymentSequenceDialog
-          mode={mode}
-          chainName={chainName(chainId)}
-          amount={`${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`}
-          tokenReturn={
-            mode === "pay" && sequenceSummary
-              ? `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`
-              : null
+        <TxConfirmDialog
+          open
+          eyebrow="Payment sequence"
+          title={
+            sequenceComplete
+              ? mode === "pay"
+                ? "Payment confirmed"
+                : "Added to the balance"
+              : mode === "pay"
+                ? "Confirm payment"
+                : "Confirm add to balance"
           }
-          projectTokenSymbol={projectTokenLabel}
-          paymentTokenSymbol={symbol}
-          actions={sequenceActions}
-          activeActionIndex={sequenceActionIndex}
-          completedKinds={sequenceCompletedKinds}
-          beneficiary={address ?? null}
-          memo={memo.trim() || null}
+          rows={(() => {
+            const activeAction = sequenceActions[sequenceActionIndex] ?? null;
+            const rows: TxConfirmRow[] = [
+              {
+                label: "Send",
+                value: `${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`,
+                strong: true,
+              },
+              { label: "On", value: chainName(chainId) },
+            ];
+            if (mode === "pay" && sequenceSummary) {
+              rows.push({
+                label: "You get at least",
+                value: `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`,
+                strong: true,
+              });
+            }
+            if (
+              activeAction?.kind === "payment" &&
+              activeAction.swapInputRoute &&
+              activeAction.swapInputRoute.kind !== "single-v4"
+            ) {
+              rows.push({
+                label: "Route",
+                value: `${symbol} → ${activeAction.swapInputRoute.bridgeTokenSymbol} → ${projectTokenLabel}`,
+              });
+            }
+            if (address) rows.push({ label: "Beneficiary", value: address, mono: true });
+            if (memo.trim()) rows.push({ label: "Note", value: memo.trim() });
+            return rows;
+          })()}
+          steps={sequenceActions.map(action => ({
+            key: `${action.kind}:${action.label}`,
+            title: action.label,
+          }))}
+          activeIndex={Math.max(
+            sequenceActionIndex,
+            sequenceActions.filter(action =>
+              sequenceCompletedKinds.includes(action.kind),
+            ).length,
+          )}
           status={sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
-          started={paymentSequenceLocked(sequenceStarted, sequencePending)}
-          waitingForSafe={!!sequenceSafeStage}
+          busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete}
-          onStart={() => void runPaymentSequence()}
+          cancelLabel={sequenceSafeStage ? "Close" : "Cancel"}
+          actionDisabled={!!sequenceSafeStage}
+          action={
+            sequenceSafeStage
+              ? "Waiting for Safe"
+              : mode === "pay"
+                ? "Confirm & Pay"
+                : "Confirm & Add"
+          }
+          onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             setSequenceOpen(false);
@@ -2472,516 +2533,6 @@ export function PayPanel({
         />
       ) : null}
     </div>
-  );
-}
-
-function PaymentSequenceDialog({
-  mode,
-  chainName: paymentChainName,
-  amount,
-  tokenReturn,
-  projectTokenSymbol,
-  paymentTokenSymbol,
-  actions,
-  activeActionIndex,
-  completedKinds,
-  beneficiary,
-  memo,
-  status,
-  error,
-  started,
-  waitingForSafe,
-  complete,
-  onStart,
-  onClose,
-}: {
-  mode: "pay" | "addbalance";
-  chainName: string;
-  amount: string;
-  tokenReturn: string | null;
-  projectTokenSymbol: string;
-  paymentTokenSymbol: string;
-  actions: PaymentSequenceAction[];
-  activeActionIndex: number;
-  completedKinds: PaymentSequenceAction["kind"][];
-  beneficiary: Address | null;
-  memo: string | null;
-  status: string | null;
-  error: string | null;
-  started: boolean;
-  waitingForSafe: boolean;
-  complete: boolean;
-  onStart: () => void;
-  onClose: () => void;
-}) {
-  const activeAction = actions[activeActionIndex] ?? null;
-  return (
-    <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/50 px-3 py-6 sm:items-center">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="payment-sequence-title"
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl"
-      >
-        <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
-              Payment sequence
-            </p>
-            <h2 id="payment-sequence-title" className="mt-1 font-agrandir text-xl font-medium text-ink">
-              {complete
-                ? mode === "pay"
-                  ? "Payment confirmed"
-                  : "Added to the balance"
-                : mode === "pay"
-                  ? "Confirm payment"
-                  : "Confirm add to balance"}
-            </h2>
-          </div>
-          <ModalCloseButton
-            onClick={onClose}
-            disabled={started}
-            aria-label="Close payment"
-            className="-mr-2 -mt-2 transition-transform hover:scale-110 hover:bg-transparent disabled:opacity-40"
-          />
-        </header>
-        <div className="space-y-4 px-5 py-5">
-          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-            <span className="text-smoke-500">Send</span>
-            <span className="text-right font-medium text-ink">{amount}</span>
-            <span className="text-smoke-500">On</span>
-            <span className="text-right text-ink">{paymentChainName}</span>
-            {tokenReturn ? (
-              <>
-                <span className="text-smoke-500">You get at least</span>
-                <span className="text-right font-medium text-ink">{tokenReturn}</span>
-              </>
-            ) : null}
-            {activeAction?.kind === "payment" &&
-            activeAction.swapInputRoute &&
-            activeAction.swapInputRoute.kind !== "single-v4" ? (
-              <>
-                <span className="text-smoke-500">Route</span>
-                <span className="text-right text-ink">
-                  {paymentTokenSymbol} →{" "}
-                  {activeAction.swapInputRoute.bridgeTokenSymbol} →{" "}
-                  {projectTokenSymbol}
-                </span>
-              </>
-            ) : null}
-          </div>
-
-          <TxSteps
-            steps={actions.map(action => ({
-              key: `${action.kind}:${action.label}`,
-              title: action.label,
-            }))}
-            activeIndex={
-              complete
-                ? actions.length
-                : Math.max(
-                    activeActionIndex,
-                    actions.filter(action => completedKinds.includes(action.kind))
-                      .length,
-                  )
-            }
-            intro={`Your wallet will ask for ${actions.length} action${actions.length === 1 ? '' : 's'}. This dialog stays open and advances through each one.`}
-            className="rounded-xl border border-smoke-200 bg-white p-3"
-          />
-
-          <p className="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm leading-relaxed text-error-800">
-            This is the exact wallet action that will be sent to your wallet. Review it before
-            signing.
-          </p>
-
-          {activeAction ? (
-            <PaymentCallReview
-              action={activeAction}
-              chainLabel={paymentChainName}
-              amount={amount}
-              tokenReturn={tokenReturn}
-              beneficiary={beneficiary}
-              memo={memo}
-              projectTokenSymbol={projectTokenSymbol}
-              paymentTokenSymbol={paymentTokenSymbol}
-            />
-          ) : null}
-
-          {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
-        </div>
-        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
-          {complete ? (
-            <button type="button" className="btn-primary min-h-[44px] px-5 text-sm" onClick={onClose}>
-              Done
-            </button>
-          ) : (
-            <>
-              <button type="button" className="btn-secondary min-h-[44px] px-5 text-sm" disabled={started} onClick={onClose}>
-                {waitingForSafe ? "Close" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={started || waitingForSafe}
-                onClick={onStart}
-              >
-                {waitingForSafe
-                  ? "Waiting for Safe"
-                  : mode === "pay"
-                    ? "Confirm & Pay"
-                    : "Confirm & Add"}
-              </button>
-            </>
-          )}
-        </footer>
-      </section>
-    </div>
-  );
-}
-
-function PaymentCallReview({
-  action,
-  chainLabel,
-  amount,
-  tokenReturn,
-  beneficiary,
-  memo,
-  projectTokenSymbol,
-  paymentTokenSymbol,
-}: {
-  action: PaymentSequenceAction;
-  chainLabel: string;
-  amount: string;
-  tokenReturn: string | null;
-  beneficiary: Address | null;
-  memo: string | null;
-  projectTokenSymbol: string;
-  paymentTokenSymbol: string;
-}) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  if (action.kind === "router-signature") {
-    return (
-      <Permit2SignatureReview
-        action={action}
-        chainLabel={chainLabel}
-        amount={amount}
-      />
-    );
-  }
-  const request = action.request;
-  const destination = paymentRequestDestination(request);
-  const actionName = action.label;
-  const reviewRequest: TransactionReviewRequest = {
-    title: actionName,
-    calls: [
-      {
-        chainId: request.chainId,
-        to: request.address,
-        from: beneficiary ?? undefined,
-        value: request.value,
-        data: encodeFunctionData({
-          abi: request.abi,
-          functionName: request.functionName,
-          args: request.args,
-        }),
-        abi: request.abi,
-        functionName: request.functionName,
-        args: request.args,
-        label: actionName,
-        contractName: destination.name,
-      },
-    ],
-  };
-  return (
-    <div className="rounded-xl border border-bluebs-200 bg-white p-4">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
-          {chainLabel}
-        </p>
-        <p className="mt-1 break-all text-xs text-smoke-600">
-          <span className="font-medium">{destination.name}</span> | {request.address}
-        </p>
-        <p className="mt-2 font-medium text-ink">{actionName}</p>
-      </div>
-      <dl className="mt-2 space-y-1 text-xs">
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">
-            {action.kind === "payment" ? "Amount in:" : "Amount authorized:"}
-          </dt>
-          <dd className="min-w-0 text-ink">{amount}</dd>
-        </div>
-        {action.kind === "token-approval" ? (
-          <div className="flex items-start gap-1">
-            <dt className="shrink-0 text-smoke-500">Spender:</dt>
-            <dd className="min-w-0 break-all font-mono text-xs text-ink">
-              {paymentArgumentAddress(request.args[0], request.chainId)}
-            </dd>
-          </div>
-        ) : null}
-        {action.kind === "router-approval" ? (
-          <>
-            <div className="flex items-start gap-1">
-              <dt className="shrink-0 text-smoke-500">Token:</dt>
-              <dd className="min-w-0 break-all font-mono text-xs text-ink">
-                {paymentTokenAddress(request.args[0], request.chainId)}
-              </dd>
-            </div>
-            <div className="flex items-start gap-1">
-              <dt className="shrink-0 text-smoke-500">Spender:</dt>
-              <dd className="min-w-0 break-all font-mono text-xs text-ink">
-                {paymentArgumentAddress(request.args[1], request.chainId)}
-              </dd>
-            </div>
-            <div className="flex items-start gap-1">
-              <dt className="shrink-0 text-smoke-500">Expires:</dt>
-              <dd className="min-w-0 text-ink">
-                {formatApprovalExpiration(request.args[3])}
-              </dd>
-            </div>
-          </>
-        ) : null}
-        {tokenReturn && action.kind === "payment" ? (
-          <>
-            {action.swapInputRoute &&
-            action.swapInputRoute.kind !== "single-v4" ? (
-              <div className="flex items-start gap-1">
-                <dt className="shrink-0 text-smoke-500">Route:</dt>
-                <dd className="min-w-0 text-ink">
-                  {paymentTokenSymbol} →{" "}
-                  {action.swapInputRoute.bridgeTokenSymbol} →{" "}
-                  {projectTokenSymbol}
-                </dd>
-              </div>
-            ) : null}
-            <div className="flex items-start gap-1">
-              <dt className="shrink-0 text-smoke-500">Minimum received:</dt>
-              <dd className="min-w-0 text-ink">{tokenReturn}</dd>
-            </div>
-          </>
-        ) : null}
-        {beneficiary && action.kind === "payment" ? (
-          <div className="flex items-start gap-1">
-            <dt className="shrink-0 text-smoke-500">Beneficiary:</dt>
-            <dd className="min-w-0 break-all font-mono text-xs text-ink">{beneficiary}</dd>
-          </div>
-        ) : null}
-        {memo && action.kind === "payment" ? (
-          <div className="flex items-start gap-1">
-            <dt className="shrink-0 text-smoke-500">Note:</dt>
-            <dd className="min-w-0 break-words text-ink">{memo}</dd>
-          </div>
-        ) : null}
-      </dl>
-      <details className="mt-3 border-t border-smoke-200 pt-3">
-        <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
-        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
-          {paymentRequestJson(request, chainLabel, destination.name)}
-        </pre>
-      </details>
-      <div className="mt-3 flex justify-end">
-        <button
-          type="button"
-          className="btn-link min-h-[36px] text-xs"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(buildTransactionReviewPrompt(reviewRequest));
-              setCopyState("copied");
-            } catch {
-              setCopyState("failed");
-            }
-            window.setTimeout(() => setCopyState("idle"), 2200);
-          }}
-        >
-          {copyState === "copied"
-            ? "Prompt copied — paste into your LLM"
-            : copyState === "failed"
-              ? "Could not copy prompt"
-              : "[copy tx audit prompt]"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Permit2SignatureReview({
-  action,
-  chainLabel,
-  amount,
-}: {
-  action: PaymentSignatureAction;
-  chainLabel: string;
-  amount: string;
-}) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const typedData = permit2TypedData(action.authorization);
-  const reviewRequest: TransactionReviewRequest = {
-    title: action.label,
-    calls: [],
-    kind: "authorization",
-    authorization: typedData,
-  };
-  return (
-    <div className="rounded-xl border border-bluebs-200 bg-white p-4">
-      <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-smoke-500">
-          {chainLabel}
-        </p>
-        <p className="mt-1 break-all text-xs text-smoke-600">
-          <span className="font-medium">Permit2</span> | {PERMIT2_ADDRESS}
-        </p>
-        <p className="mt-2 font-medium text-ink">{action.label}</p>
-      </div>
-      <dl className="mt-2 space-y-1 text-xs">
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">Token:</dt>
-          <dd className="min-w-0 break-all font-mono text-xs text-ink">
-            {paymentTokenAddress(action.authorization.token, action.authorization.chainId)}
-          </dd>
-        </div>
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">Spender:</dt>
-          <dd className="min-w-0 break-all font-mono text-xs text-ink">
-            {paymentArgumentAddress(action.authorization.spender, action.authorization.chainId)}
-          </dd>
-        </div>
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">Amount:</dt>
-          <dd className="min-w-0 text-ink">{amount}</dd>
-        </div>
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">Expires:</dt>
-          <dd className="min-w-0 text-ink">
-            {/* The window is stamped when the signature is requested, not when
-                this card was built — rendering the placeholder verbatim showed
-                "1/1/1970" under an "exact wallet action" banner. */}
-            {action.authorization.expiration === 0
-              ? "30 minutes after you sign"
-              : new Date(action.authorization.expiration * 1000).toLocaleString()}
-          </dd>
-        </div>
-        <div className="flex items-start gap-1">
-          <dt className="shrink-0 text-smoke-500">Gas:</dt>
-          <dd className="min-w-0 text-ink">
-            No transaction fee — this is an EIP-712 signature
-          </dd>
-        </div>
-      </dl>
-      <details className="mt-3 border-t border-smoke-200 pt-3">
-        <summary className="cursor-pointer text-xs text-smoke-600">Show raw data</summary>
-        {action.authorization.expiration === 0 ? (
-          <p className="mt-2 text-xs leading-relaxed text-smoke-600">
-            <span className="font-medium">expiration</span> and{" "}
-            <span className="font-medium">sigDeadline</span> show 0 here — both
-            are stamped 30 minutes ahead at the moment you sign, so the window
-            can&apos;t run out while an earlier approval confirms. Your wallet
-            will display the real values.
-          </p>
-        ) : null}
-        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-all border border-smoke-300 bg-bone p-3 font-mono text-xs leading-relaxed text-ink">
-          {JSON.stringify(
-            typedData,
-            (_, value) => (typeof value === "bigint" ? value.toString() : value),
-            2,
-          )}
-        </pre>
-      </details>
-      <div className="mt-3 flex justify-end">
-        <button
-          type="button"
-          className="btn-link min-h-[36px] text-xs"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(buildTransactionReviewPrompt(reviewRequest));
-              setCopyState("copied");
-            } catch {
-              setCopyState("failed");
-            }
-            window.setTimeout(() => setCopyState("idle"), 2200);
-          }}
-        >
-          {copyState === "copied"
-            ? "Prompt copied — paste into your LLM"
-            : copyState === "failed"
-              ? "Could not copy prompt"
-              : "[copy tx audit prompt]"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function paymentRequestDestination(request: TxRequest): { name: string } {
-  const deployment = uniswapV4Deployment(request.chainId);
-  const knownToken = paymentTokenName(request.address, request.chainId);
-  const name =
-    request.address.toLowerCase() === deployment?.permit2.toLowerCase()
-      ? "Permit2"
-      : deployment?.universalRouter &&
-          request.address.toLowerCase() === deployment.universalRouter.toLowerCase()
-        ? "Uniswap Universal Router"
-        : request.functionName === "approve"
-          ? knownToken
-            ? `${knownToken} token`
-            : "Payment token"
-          : request.functionName === "pay" || request.functionName === "addToBalanceOf"
-            ? "Juicebox payment terminal"
-            : "Contract";
-  return { name };
-}
-
-function paymentTokenName(value: unknown, chainId: number): string | null {
-  const address = typeof value === "string" ? value.toLowerCase() : "";
-  return USDC_ADDRESSES[chainId as JBChainId]?.toLowerCase() === address ? "USDC" : null;
-}
-
-function paymentTokenAddress(value: unknown, chainId: number): string {
-  const address = typeof value === "string" ? value : String(value ?? "");
-  const name = paymentTokenName(address, chainId);
-  return name ? `${name} | ${address}` : address;
-}
-
-function paymentArgumentAddress(value: unknown, chainId: number): string {
-  const address = typeof value === "string" ? value : String(value ?? "");
-  const deployment = uniswapV4Deployment(chainId);
-  if (address.toLowerCase() === deployment?.permit2.toLowerCase()) {
-    return `Permit2 | ${address}`;
-  }
-  if (
-    deployment?.universalRouter &&
-    address.toLowerCase() === deployment.universalRouter.toLowerCase()
-  ) {
-    return `Uniswap Universal Router | ${address}`;
-  }
-  return address;
-}
-
-function formatApprovalExpiration(value: unknown): string {
-  try {
-    return new Date(Number(value) * 1000).toLocaleString();
-  } catch {
-    return String(value ?? "");
-  }
-}
-
-function paymentRequestJson(request: TxRequest, chainLabel: string, contractName: string): string {
-  return JSON.stringify(
-    {
-      chain: chainLabel,
-      chainId: request.chainId,
-      contract: contractName,
-      address: request.address,
-      function: request.functionName,
-      args: request.args,
-      value: request.value ?? 0n,
-      calldata: encodeFunctionData({
-        abi: request.abi,
-        functionName: request.functionName,
-        args: request.args,
-      }),
-    },
-    (_, value) => (typeof value === "bigint" ? value.toString() : value),
-    2,
   );
 }
 

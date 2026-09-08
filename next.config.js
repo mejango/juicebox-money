@@ -4,7 +4,7 @@ const { PHASE_DEVELOPMENT_SERVER } = require('next/constants')
 const securityHeaders = [
   {
     key: 'Content-Security-Policy',
-    value: 'frame-ancestors https://app.safe.global https://app.5afe.dev',
+    value: 'frame-ancestors https://app.safe.global https://app.5afe.dev https://plugin.money https://www.plugin.money',
   },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
@@ -19,6 +19,10 @@ module.exports = phase => ({
   // tracing rooted here because the monorepo parent also has a lockfile.
   output: 'standalone',
   outputFileTracingRoot: __dirname,
+  // The git SHA is set at build and run time by the Dockerfile. Next appends it
+  // to asset URLs and navigation requests, and hard-navigates a tab whose
+  // deployment differs from the server's instead of failing on stale chunks.
+  deploymentId: process.env.NEXT_PUBLIC_VERSION,
   // Keep development and production artifacts separate. Running `next build`
   // while the dev server is active otherwise leaves their webpack chunks
   // mixed together and causes intermittent MODULE_NOT_FOUND errors.

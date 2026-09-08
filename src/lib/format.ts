@@ -6,49 +6,58 @@ export function formatTokenAmount(
   decimals = 18,
   maxDigits = 4,
 ): string {
-  const value = Number(formatUnits(BigInt(wei), decimals))
+  return formatAmount(Number(formatUnits(BigInt(wei), decimals)), maxDigits)
+}
+
+/** A token amount already in whole-token units. */
+export function formatAmount(value: number, maxDigits = 4): string {
   if (value === 0) return '0'
-  if (value < 0.0001) return '<0.0001'
+  // A real amount never reads as nothing: below the digit budget, show its first significant figure.
+  if (value > 0 && value < 0.0001) return value.toFixed(Math.ceil(-Math.log10(value))).replace(/0+$/, '')
   return value.toLocaleString('en-US', { maximumFractionDigits: maxDigits })
 }
 
 /** Compact 18-decimal project-token counts for activity feeds. */
 export function formatCompactTokenAmount(raw: bigint | string): string {
   try {
-    const value = Number(formatUnits(BigInt(raw), 18))
-    if (!Number.isFinite(value)) return '—'
-    if (value >= 1_000_000_000) {
-      return `${(value / 1_000_000_000)
-        .toFixed(value >= 10_000_000_000 ? 0 : 1)
-        .replace(/\.0$/, '')}b`
-    }
-    if (value >= 1_000_000) {
-      return `${(value / 1_000_000)
-        .toFixed(value >= 10_000_000 ? 0 : 1)
-        .replace(/\.0$/, '')}m`
-    }
-    if (value >= 1_000) {
-      return `${(value / 1_000)
-        .toFixed(value >= 10_000 ? 0 : 1)
-        .replace(/\.0$/, '')}k`
-    }
-    if (value >= 1) {
-      if (value === Math.round(value)) {
-        return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
-      }
-      return value.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })
-    }
-    if (value >= 0.0001) {
-      return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
-    }
-    if (value > 0) return value.toPrecision(2)
-    return '0'
+    return formatCompactAmount(Number(formatUnits(BigInt(raw), 18)))
   } catch {
     return '—'
   }
+}
+
+/** Compact project-token counts already in whole-token units. */
+export function formatCompactAmount(value: number): string {
+  if (!Number.isFinite(value)) return '—'
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000)
+      .toFixed(value >= 10_000_000_000 ? 0 : 1)
+      .replace(/\.0$/, '')}b`
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000)
+      .toFixed(value >= 10_000_000 ? 0 : 1)
+      .replace(/\.0$/, '')}m`
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000)
+      .toFixed(value >= 10_000 ? 0 : 1)
+      .replace(/\.0$/, '')}k`
+  }
+  if (value >= 1) {
+    if (value === Math.round(value)) {
+      return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+    }
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  }
+  if (value >= 0.0001) {
+    return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+  }
+  if (value > 0) return value.toPrecision(2)
+  return '0'
 }
 
 export function formatDate(timestamp: number): string {
@@ -245,7 +254,7 @@ export function formatCountdown(
 }
 
 /** One whole unit of 18-decimal fixed-point USD. */
-export const USD_SCALE = 10n ** 18n
+const USD_SCALE = 10n ** 18n
 
 /**
  * USD value of a treasury balance, in 18-decimal fixed point. `null` = not

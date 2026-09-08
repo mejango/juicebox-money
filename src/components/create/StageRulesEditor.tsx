@@ -12,138 +12,29 @@ import {
   SplitsEditor,
   splitOk,
   splitsTotal,
-  type DraftSplit,
 } from "./SplitsEditor";
 import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from "./ui";
 import { AddressField } from "./AddressField";
-import { resolvedAddress } from "@/lib/ens";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
 
-/**
- * One stage = one queued ruleset (website/ parity). Every rule here is
- * per-stage; the approval condition lives at the stages-list level.
- */
-
-export type DraftStage = {
-  id: string;
-  /** Duration select value: '0' Flexible, preset seconds, FOREVER, 'custom'. */
-  durationValue: string;
-  customDuration: string;
-  customUnit: "hours" | "days" | "weeks" | "years";
-  /** Stage 1 only: schedule a start instead of launching right away. */
-  scheduleOn: boolean;
-  schedule: string;
-  /** '' on stage 2+ = keep the previous stage's (cut) rate. */
-  issuanceRate: string;
-  /** Automatic issuance cuts on/off (revnet). */
-  cutOn: boolean;
-  /** Issuance cut per cycle, 0–100 (%). '' = none. */
-  cutPct: string;
-  /** Revnet: days between issuance cuts. */
-  cutFreqDays: string;
-  /** Revnet, stage 2+: starts this many days after the previous stage. */
-  daysAfter: string;
-  reservedPct: string;
-  reservedSplits: DraftSplit[];
-  payouts: "none" | "flexible" | "routed";
-  routedMode: "all" | "amounts";
-  payoutSplits: DraftSplit[];
-  /** Multi-token (ETH+USDC): USDC's own routed config. */
-  routedModeUsdc: "all" | "amounts";
-  payoutSplitsUsdc: DraftSplit[];
-  holdFees: boolean;
-  /** Flexible: cap owner withdrawals; Routed(amounts): optional owner
-   *  surplus access. */
-  surplusCapOn: boolean;
-  surplusAmount: string;
-  routedSurplusOn: boolean;
-  cashOuts: boolean;
-  cashOutTax: number;
-  /** Custom tax %: overrides cashOutTax when on. */
-  taxCustomOn: boolean;
-  taxCustomPct: string;
-  ownerMinting: boolean;
-  acceptPayments: boolean;
-  pauseCreditTransfers: boolean;
-  /** Pause transfers for shop items whose tier opted into pausing. */
-  pause721Transfers: boolean;
-  /** App-specific uint14 metadata; hidden bits survive imported drafts. */
-  metadataExtra: number;
-  /** Revnet: tokens minted to beneficiaries when the stage starts. Each
-   *  row mints once, on ITS chosen chain (null = first selected chain);
-   *  every chain's config encodes the full list byte-identically. */
-  autoIssuances: {
-    id: string;
-    count: string;
-    address: string;
-    /** The ONE chain this row mints on; null defaults to the first
-     *  selected chain at encode. Kept verbatim while unselected so a
-     *  chain toggle doesn't lose the pick. */
-    chainId: number | null;
-    perChain: Record<number, string>;
-  }[];
-  powers: {
-    setTerminals: boolean;
-    setController: boolean;
-    terminalMigration: boolean;
-    setCustomToken: boolean;
-    addAccountingContext: boolean;
-    addPriceFeed: boolean;
-  };
-  expanded: boolean;
-  open: Record<string, boolean>;
-};
-
-export function newDraftStage(
-  first: boolean,
-  flavor: "project" | "revnet" = "project",
-): DraftStage {
-  return {
-    id: crypto.randomUUID(),
-    durationValue: "0",
-    customDuration: "",
-    customUnit: "days",
-    scheduleOn: false,
-    schedule: "",
-    issuanceRate: first ? "10000" : "",
-    cutOn: false,
-    cutPct: "",
-    cutFreqDays: "30",
-    daysAfter: "30",
-    reservedPct: "0",
-    reservedSplits: [],
-    payouts: "none",
-    routedMode: "all",
-    payoutSplits: [],
-    routedModeUsdc: "all",
-    payoutSplitsUsdc: [],
-    holdFees: false,
-    surplusCapOn: false,
-    surplusAmount: "",
-    routedSurplusOn: false,
-    cashOuts: flavor === "revnet",
-    cashOutTax: flavor === "revnet" ? 1000 : 0,
-    taxCustomOn: false,
-    taxCustomPct: "",
-    ownerMinting: false,
-    acceptPayments: true,
-    pauseCreditTransfers: false,
-    pause721Transfers: false,
-    metadataExtra: 0,
-    autoIssuances: [],
-    powers: {
-      setTerminals: false,
-      setController: false,
-      terminalMigration: false,
-      setCustomToken: false,
-      addAccountingContext: false,
-      addPriceFeed: false,
-    },
-    expanded: first,
-    open: {},
-  };
-}
+import {
+  numOk,
+  secondsLabel,
+  stageCashOutTax,
+  stageDurationSeconds,
+  stageIssuanceOk,
+  stageRoutesEverything,
+  stageStartOk,
+  stageTaxOk,
+  type DraftStage,
+} from "./stage-draft";
+export {
+  newDraftStage,
+  stageMustStartAtOrAfter,
+  stageStartOk,
+  type DraftStage,
+} from "./stage-draft";
 
 const DURATION_PRESETS: [number, string][] = [
   [86_400, "1 day"],
@@ -155,215 +46,6 @@ const DURATION_PRESETS: [number, string][] = [
   [90 * 86_400, "90 days"],
   [365 * 86_400, "365 days"],
 ];
-
-const UNIT_SECONDS = {
-  hours: 3_600,
-  days: 86_400,
-  weeks: 604_800,
-  years: 31_536_000,
-} as const;
-
-/** The stage's duration in seconds (0 = flexible). */
-export function stageDurationSeconds(stage: DraftStage): number {
-  if (stage.durationValue === "custom") {
-    const n = Number(stage.customDuration);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return Math.round(n * UNIT_SECONDS[stage.customUnit]);
-  }
-  return Number(stage.durationValue) || 0;
-}
-
-function secondsLabel(seconds: number): string {
-  if (seconds % 31_536_000 === 0 && seconds >= 31_536_000)
-    return `${seconds / 31_536_000} year${seconds === 31_536_000 ? "" : "s"}`;
-  if (seconds % 604_800 === 0 && seconds >= 604_800)
-    return `${seconds / 604_800} week${seconds === 604_800 ? "" : "s"}`;
-  if (seconds % 86_400 === 0 && seconds >= 86_400)
-    return `${seconds / 86_400} day${seconds === 86_400 ? "" : "s"}`;
-  return `${Math.round(seconds / 360) / 10} hours`;
-}
-
-/** Effective cash-out tax out of 10000 (custom % wins when enabled). */
-export function stageCashOutTax(stage: DraftStage): number {
-  if (stage.taxCustomOn) {
-    const n = Number(stage.taxCustomPct);
-    if (Number.isFinite(n) && n >= 0 && n <= 99.99) return Math.round(n * 100);
-    return 0;
-  }
-  return stage.cashOutTax;
-}
-
-function stageTaxOk(stage: DraftStage): boolean {
-  if (!stage.taxCustomOn) return true;
-  const n = Number(stage.taxCustomPct);
-  return Number.isFinite(n) && n >= 0 && n <= 99.99;
-}
-
-const numOk = (value: string, max = Infinity) => {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 && n <= max;
-};
-
-function stageIssuanceOk(stage: DraftStage, isFirst: boolean): boolean {
-  if (stage.issuanceRate.trim() === "") return !isFirst; // later stages inherit
-  return numOk(stage.issuanceRate);
-}
-
-export function stageOk(
-  stage: DraftStage,
-  isFirst: boolean,
-  flavor: "project" | "revnet" = "project",
-  multiToken = false,
-): boolean {
-  const payoutsMode = stage.routedMode === "all" ? "percent" : "amount";
-  const issuanceOk = stageIssuanceOk(stage, isFirst);
-  const splitsValid =
-    stage.reservedSplits.every((s) => splitOk(s, "percent")) &&
-    splitsTotal(stage.reservedSplits, "percent") <= 100;
-  const common =
-    issuanceOk &&
-    (stage.cutPct.trim() === "" || numOk(stage.cutPct, 100)) &&
-    splitsValid;
-  if (flavor === "revnet") {
-    return (
-      issuanceOk &&
-      splitsValid &&
-      (!stage.cutOn ||
-        (Number(stage.cutPct) > 0 &&
-          numOk(stage.cutPct, 100) &&
-          Number(stage.cutFreqDays) >= 1 &&
-          numOk(stage.cutFreqDays))) &&
-      (isFirst || Number(stage.daysAfter) >= 1) &&
-      (!stage.cashOuts || stageTaxOk(stage)) &&
-      stage.autoIssuances.every(
-        (a) =>
-          (a.count.trim() === "" && a.address.trim() === "") ||
-          (Number(a.count) > 0 && resolvedAddress(a.address) !== null),
-      )
-    );
-  }
-  return (
-    common &&
-    (stage.payouts !== "routed" ||
-      (stage.payoutSplits.every((s) => splitOk(s, payoutsMode)) &&
-        (payoutsMode !== "percent" ||
-          splitsTotal(stage.payoutSplits, "percent") <= 100) &&
-        (!multiToken ||
-          (stage.payoutSplitsUsdc.every((s) =>
-            splitOk(s, stage.routedModeUsdc === "all" ? "percent" : "amount"),
-          ) &&
-            (stage.routedModeUsdc !== "all" ||
-              splitsTotal(stage.payoutSplitsUsdc, "percent") <= 100))))) &&
-    (stage.durationValue !== "custom" || stageDurationSeconds(stage) > 0) &&
-    (!stage.cashOuts || stageTaxOk(stage)) &&
-    (!stage.surplusCapOn ||
-      (Number(stage.surplusAmount) > 0 && numOk(stage.surplusAmount)))
-  );
-}
-
-/**
- * Per accepted token: does this stage route EVERYTHING out (no payout limit)?
- * The input to {@link routesAllFunds} on the draft side — `buildRoutedSplits`
- * maps these modes onto the encoded limits one-for-one ("all" ⇒ no limit,
- * "amounts" ⇒ a limit, zero-valued when no amounts are set), so the editor and
- * the encoder read the same configuration.
- */
-export function stageRoutesEverything(
-  stage: DraftStage,
-  multiToken: boolean,
-): boolean[] {
-  return multiToken
-    ? [stage.routedMode === "all", stage.routedModeUsdc === "all"]
-    : [stage.routedMode === "all"];
-}
-
-/** Summary parts for a stage (website/'s stageSummaryRaw). */
-export function stageSummaryParts(
-  stage: DraftStage,
-  index: number,
-  unitLabel: string,
-  flavor: "project" | "revnet" = "project",
-  multiToken = false,
-): string[] {
-  const parts: string[] = [];
-  if (index === 0) {
-    parts.push(
-      stage.scheduleOn && stage.schedule
-        ? "Starts at a set time"
-        : "Starts at launch",
-    );
-  } else if (flavor === "revnet") {
-    parts.push(
-      `Starts ${Number(stage.daysAfter) || "?"} days after Stage #${index}`,
-    );
-  } else {
-    parts.push(`Starts after Ruleset #${index}`);
-  }
-  const duration = stageDurationSeconds(stage);
-  if (flavor !== "revnet")
-    parts.push(
-      duration === 0
-        ? "Lasts until changed"
-        : duration === FOREVER_SECONDS
-          ? "Lasts forever"
-          : `Lasts ${secondsLabel(duration)}`,
-    );
-  const cutClause =
-    Number(stage.cutPct) > 0 && (flavor !== "revnet" || stage.cutOn)
-      ? flavor === "revnet"
-        ? `-${Number(stage.cutPct)}% every ${Number(stage.cutFreqDays) || "?"} days`
-        : `-${Number(stage.cutPct)}% per cycle`
-      : "";
-  if (stage.issuanceRate.trim() === "" && index > 0) {
-    parts.push("Keeps issuance" + (cutClause ? `, ${cutClause}` : ""));
-  } else if (Number(stage.issuanceRate) > 0) {
-    parts.push(
-      `Issues ${Number(stage.issuanceRate).toLocaleString("en-US")} per ${unitLabel}` +
-        (cutClause ? `, ${cutClause}` : ""),
-    );
-  } else {
-    parts.push("No issuance");
-  }
-  const splitsPct = splitsTotal(stage.reservedSplits, "percent");
-  if (splitsPct > 0)
-    parts.push(
-      flavor === "revnet"
-        ? `${splitsPct}% to splits`
-        : `${splitsPct}% reserved`,
-    );
-  // Revnets never encode payout limits. Imported drafts may still carry an
-  // old project payout mode, but it must not leak into a revnet summary and
-  // falsely imply that cash outs are unavailable.
-  const routedAll = flavor === "revnet"
-    ? false
-    : routesAllFunds(
-        stage.payouts,
-        stageRoutesEverything(stage, multiToken),
-      );
-  if (flavor === "revnet") {
-    parts.push(
-      stage.cashOuts
-        ? `${stageCashOutTax(stage) / 100}% cash out tax`
-        : "99.99% cash out tax",
-    );
-  } else if (stage.cashOuts && !routedAll) {
-    parts.push("Cash outs on");
-  }
-  return parts;
-}
-
-/** One-line stage card summary. */
-export function stageSummary(
-  stage: DraftStage,
-  index: number,
-  unitLabel: string,
-  flavor: "project" | "revnet" = "project",
-  multiToken = false,
-): string {
-  return stageSummaryParts(stage, index, unitLabel, flavor, multiToken).join(
-    " | ",
-  );
-}
 
 const CASH_OUT_TAXES = [
   { rate: 0, label: "No tax" },
@@ -483,6 +165,7 @@ export function StageRulesEditor({
   isFirst,
   isLast,
   index,
+  prevDuration = 0,
   unitLabel,
   unitChoice,
   disabled,
@@ -496,6 +179,8 @@ export function StageRulesEditor({
   isFirst: boolean;
   isLast: boolean;
   index: number;
+  /** Previous ruleset's duration in seconds (0 = flexible); reminds the user what a cycle is. */
+  prevDuration?: number;
   unitLabel: string;
   /** When set, the issuance unit is a choice (ETH/USD) picked inline. */
   unitChoice?: {
@@ -539,7 +224,9 @@ export function StageRulesEditor({
           ? stage.scheduleOn && stage.schedule
             ? "Scheduled"
             : "At launch"
-          : `After Ruleset #${index}`
+          : stage.startMode === "date"
+            ? `On a date`
+            : `After ${Number(stage.startCycles) || 1}× Ruleset #${index}`
       } | ${
         duration === 0
           ? "flexible"
@@ -640,6 +327,66 @@ export function StageRulesEditor({
         ) : null}
         {isRevnet ? null : (
           <>
+            {isFirst ? null : (
+              <div className="mb-3">
+                <span className="field-label">Starts</span>
+                <div className="mt-2 flex flex-wrap items-center gap-2.5">
+                  <select
+                    value={stage.startMode}
+                    onChange={(e) =>
+                      set({
+                        startMode: e.target.value as DraftStage["startMode"],
+                      })
+                    }
+                    disabled={disabled}
+                    className="input-well select-caret min-h-[44px] w-36 px-3.5 pr-9 text-sm disabled:opacity-60"
+                  >
+                    <option value="cycles">After</option>
+                    <option value="date">On a date</option>
+                  </select>
+                  {stage.startMode === "cycles" ? (
+                    <>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={stage.startCycles}
+                        onChange={(e) =>
+                          set({ startCycles: e.target.value.slice(0, 5) })
+                        }
+                        disabled={disabled}
+                        className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
+                          stageStartOk(stage) ? "" : "!border-red-400"
+                        }`}
+                      />
+                      <span className="text-sm text-smoke-700">
+                        cycle{Number(stage.startCycles) === 1 ? "" : "s"} of
+                        Ruleset #{index}
+                        {prevDuration > 0
+                          ? ` (${secondsLabel(prevDuration)} each)`
+                          : ""}
+                      </span>
+                    </>
+                  ) : (
+                    <DateTimeField
+                      value={stage.startDate}
+                      onChange={(startDate) => set({ startDate })}
+                      disabled={disabled}
+                      ariaLabel={`Ruleset #${index + 1} start date and time`}
+                      inputClassName="input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                    />
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  {stage.startMode === "cycles"
+                    ? `Ruleset #${index} repeats that many times, then these rules take over${
+                        prevDuration > 0
+                          ? ` — ${secondsLabel((Number(stage.startCycles) || 1) * prevDuration)} after Ruleset #${index} starts`
+                          : ""
+                      }.`
+                    : `Rule changes land on cycle boundaries, so the start snaps to Ruleset #${index}'s first cycle ending at or after this date.`}
+                </p>
+              </div>
+            )}
             <div className="mb-3">
               <CheckRow
                 checked={stage.acceptPayments}

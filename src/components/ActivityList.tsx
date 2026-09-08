@@ -25,6 +25,7 @@ import {
   ActivityOnChain,
   actorPrefix,
   type ActivityAmountToken,
+  type ActivityHeadline,
 } from './ActivityMeta'
 import { ProjectTabIcon } from './project/ProjectTabIcon'
 
@@ -86,6 +87,7 @@ export function activityCategory(event: BsActivityEvent): ActivityCategory | nul
   if (event.mintTokensEvent) return 'tokenMint'
   if (event.sendPayoutsEvent) return 'payout'
   if (event.sendReservedTokensToSplitsEvent) return 'reserved'
+  if (event.sendReservedTokensToSplitEvent) return 'reserved'
   if (event.autoIssueEvent) return 'autoIssue'
   if (event.borrowLoanEvent) return 'borrowLoan'
   if (event.repayLoanEvent) return 'repayLoan'
@@ -222,6 +224,29 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
   )
 }
 
+function sameTxKey(event: BsActivityEvent): string {
+  // Account-history rows span protocol versions; a V4 row must never fold
+  // into a V6 group even when the tx and project id line up.
+  const version = (event as { version?: number }).version ?? ''
+  return `${event.chainId}:${event.projectId}:${version}:${event.txHash}`
+}
+
+/**
+ * The project feed's rows: feed events plus the reserved-split receipts whose
+ * distribution is loaded — they become that row's bullets. A receipt on its
+ * own never makes a row here.
+ */
+export function projectFeedEvents<T extends BsActivityEvent>(events: T[]): T[] {
+  const distributions = new Set(
+    events.filter(event => event.sendReservedTokensToSplitsEvent).map(sameTxKey),
+  )
+  return events.filter(event =>
+    event.sendReservedTokensToSplitEvent
+      ? distributions.has(sameTxKey(event))
+      : isProjectFeedActivity(event),
+  )
+}
+
 /**
  * Reading order for a same-tx group's action fragments — the primary event
  * (first present) also supplies the row's actor, amount, direction, and memo.
@@ -241,9 +266,19 @@ const GROUP_ORDER: ActivityCategory[] = [
 ]
 
 function groupRank(event: BsActivityEvent): number {
+  // Reserved-split receipts follow the distribution they belong to.
+  if (event.sendReservedTokensToSplitEvent) return GROUP_ORDER.length + 1
   const category = activityCategory(event)
   const rank = category ? GROUP_ORDER.indexOf(category) : -1
   return rank === -1 ? GROUP_ORDER.length : rank
+}
+
+function splitTokenCount(event: BsActivityEvent): bigint {
+  try {
+    return BigInt(event.sendReservedTokensToSplitEvent?.tokenCount ?? '0')
+  } catch {
+    return 0n
+  }
 }
 
 /**
@@ -255,10 +290,7 @@ export function groupSameTxEvents<T extends BsActivityEvent>(events: T[]): T[][]
   const groups = new Map<string, T[]>()
   const order: T[][] = []
   for (const event of events) {
-    // Account-history rows span protocol versions; a V4 row must never fold
-    // into a V6 group even when the tx and project id line up.
-    const version = (event as { version?: number }).version ?? ''
-    const key = `${event.chainId}:${event.projectId}:${version}:${event.txHash}`
+    const key = sameTxKey(event)
     const group = groups.get(key)
     if (group) group.push(event)
     else {
@@ -288,6 +320,8 @@ function eventDisplaySignature(event: BsActivityEvent): string {
   if (event.sendPayoutsEvent) return `payouts:${event.sendPayoutsEvent.amountPaidOut}`
   if (event.sendReservedTokensToSplitsEvent)
     return `reserved:${event.sendReservedTokensToSplitsEvent.tokenCount}`
+  if (event.sendReservedTokensToSplitEvent)
+    return `reservedSplit:${event.sendReservedTokensToSplitEvent.tokenCount}:${event.sendReservedTokensToSplitEvent.beneficiary}:${event.sendReservedTokensToSplitEvent.splitProjectId}`
   if (event.autoIssueEvent)
     return `autoIssue:${event.autoIssueEvent.count}:${event.autoIssueEvent.beneficiary}`
   if (event.borrowLoanEvent)
@@ -396,7 +430,14 @@ export function combinedActivityParts(
   group: BsActivityEvent[],
   tokenUnit: string,
 ): ReturnType<typeof activityParts> & { actions: ReactNode[] } {
-  const sorted = [...group].sort((a, b) => groupRank(a) - groupRank(b))
+  const sorted = [...group].sort((a, b) => {
+    const byRank = groupRank(a) - groupRank(b)
+    if (byRank) return byRank
+    // Reserved-split receipts read largest first.
+    const left = splitTokenCount(a)
+    const right = splitTokenCount(b)
+    return left < right ? 1 : left > right ? -1 : 0
+  })
   // An issuance-route pay already reports its tokens ("got X") — the tx's
   // mintTokensEvent is that same issuance's mint record, not a second grant.
   // Only a zero-issuance pay (the buyback shape) keeps its mint: the remint.
@@ -412,34 +453,133 @@ export function combinedActivityParts(
     : sorted
   const parts = ordered.map(event => activityParts(event, tokenUnit))
   const primary = parts[0]
+  // Several pays in one tx (a payer contract fanning out) read as one payment:
+  // the payer's total, then who got what. Its buy swaps carry the payer, not
+  // the payee; the remint each one pairs with names the recipient instead.
+  const pays = ordered.filter(entry => entry.payEvent)
+  const fanOut = pays.length > 1
+  const sumOf = (values: (string | null | undefined)[]): string | undefined => {
+    if (values.some(value => value == null)) return undefined
+    try {
+      return values.reduce((total, value) => total + BigInt(value!), 0n).toString()
+    } catch {
+      return undefined
+    }
+  }
+  const gotNode = (chainId: number, who: string, count: string) => (
+    <>
+      <ActorLink href={addressUrl(chainId, who)} actor={who} /> got{' '}
+      <span className="font-medium">
+        {formatCompactTokenAmount(count)} {tokenUnit}
+      </span>
+    </>
+  )
+  if (fanOut) {
+    ordered.forEach((entry, index) => {
+      const pay = entry.payEvent
+      if (!pay) return
+      let issued = false
+      try {
+        issued = BigInt(pay.newlyIssuedTokenCount) > 0n
+      } catch {
+        issued = false
+      }
+      if (!issued) return
+      parts[index] = {
+        ...parts[index],
+        action: gotNode(entry.chainId, pay.beneficiary, pay.newlyIssuedTokenCount),
+      }
+    })
+  }
 
   // A buyback pay pairs the pool swap (gross output) with the reserved-rate
   // remint (the payer's net). Say what the mint IS instead of a bare "minted X".
-  const swapEvent = ordered.find(
-    entry => entry.swapEvent && entry.swapEvent.direction.toLowerCase() !== 'sell',
-  )?.swapEvent
-  const mints = ordered.filter(entry => entry.mintTokensEvent)
-  if (swapEvent && mints.length === 1) {
-    const mintIndex = ordered.indexOf(mints[0])
-    const mint = mints[0].mintTokensEvent!
-    const reservePercent = reservePercentLabel(
-      swapEvent.projectTokenAmount,
-      mint.beneficiaryTokenCount,
+  // Each buy swap pairs with its own remint: a tx with two buyback pays has
+  // two swaps and two remints, and pairing every mint with one swap (or
+  // refusing to pair at all) mislabels or drops the reserve. The indexer
+  // returns a tx's events in no particular order, so pairing goes by amount
+  // rank (largest swap ↔ largest remint): one reserve rate applies to every
+  // pay in a tx, which keeps the ranks aligned.
+  const descending = (a: string, b: string) => {
+    try {
+      const left = BigInt(a)
+      const right = BigInt(b)
+      return left < right ? 1 : left > right ? -1 : 0
+    } catch {
+      return 0
+    }
+  }
+  // A hook's leftover issuance is combined with its pool output before the
+  // beneficiary's mint. A sale also mints tokens internally. Neither shape
+  // gives us an independent remint to pair with a buy from these fields alone.
+  const canPairRemints = ordered.every(
+    entry => !entry.swapEvent || entry.swapEvent.direction.toLowerCase() === 'buy',
+  )
+  const swaps = ordered
+    .filter(entry => entry.swapEvent?.direction.toLowerCase() === 'buy')
+    .map(entry => entry.swapEvent!)
+    .sort((a, b) => descending(a.projectTokenAmount, b.projectTokenAmount))
+  const mints = ordered
+    .filter(entry => entry.mintTokensEvent)
+    .sort((a, b) =>
+      descending(a.mintTokensEvent!.beneficiaryTokenCount, b.mintTokensEvent!.beneficiaryTokenCount),
     )
-    if (reservePercent) {
-      parts[mintIndex] = {
-        ...parts[mintIndex],
+  mints.forEach((entry, index) => {
+    if (!canPairRemints) return
+    const swapEvent = swaps[index]
+    const mintIndex = ordered.indexOf(entry)
+    const mint = entry.mintTokensEvent!
+    const reservePercent = swapEvent
+      ? reservePercentLabel(swapEvent.projectTokenAmount, mint.beneficiaryTokenCount)
+      : null
+    if (!reservePercent && !fanOut) return
+    const reserve = reservePercent ? <> after the {reservePercent}% reserve</> : null
+    parts[mintIndex] = {
+      ...parts[mintIndex],
+      action: fanOut ? (
+        <>
+          {gotNode(entry.chainId, mint.beneficiary, mint.beneficiaryTokenCount)}
+          {reserve}
+        </>
+      ) : (
+        <>
+          received{' '}
+          <span className="font-medium">
+            {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
+          </span>
+          {reserve}
+        </>
+      ),
+    }
+  })
+  // A reserved distribution's headline carries the total; its per-split
+  // receipts become the bullets, each naming who got what.
+  const distributed = ordered.some(entry => entry.sendReservedTokensToSplitsEvent)
+  const hasReceipts = ordered.some(entry => entry.sendReservedTokensToSplitEvent)
+  if (distributed) {
+    ordered.forEach((entry, index) => {
+      const receipt = entry.sendReservedTokensToSplitEvent
+      if (!receipt) return
+      parts[index] = {
+        ...parts[index],
         action: (
           <>
-            received{' '}
             <span className="font-medium">
-              {formatCompactTokenAmount(mint.beneficiaryTokenCount)} {tokenUnit}
+              {formatCompactTokenAmount(receipt.tokenCount)} {tokenUnit}
             </span>{' '}
-            after the {reservePercent}% reserve
+            to{' '}
+            {receipt.splitProjectId > 0 ? (
+              <>project #{receipt.splitProjectId}</>
+            ) : (
+              <ActorLink
+                href={addressUrl(entry.chainId, receipt.beneficiary)}
+                actor={receipt.beneficiary}
+              />
+            )}
           </>
         ),
       }
-    }
+    })
   }
   // A zero-issuance pay's "paid into the project" adds nothing next to the
   // row's amount and "in" tag — drop its fragment when other actions exist.
@@ -447,6 +587,8 @@ export function combinedActivityParts(
   const withFragments =
     ordered.length > 1
       ? ordered.filter(entry => {
+          if (entry.sendReservedTokensToSplitsEvent) return !hasReceipts
+          if (entry.swapEvent?.direction.toLowerCase() === 'buy' && fanOut) return false
           if (!entry.payEvent) return true
           try {
             return BigInt(entry.payEvent.newlyIssuedTokenCount) > 0n
@@ -460,12 +602,21 @@ export function combinedActivityParts(
   )
   return {
     ...primary,
+    actor: fanOut ? pays[0].from : primary.actor,
     action: joinActionNodes(actions),
     actions,
     memo: parts.find(part => part.memo)?.memo ?? null,
-    amountUsd: parts.find(part => part.amountUsd != null)?.amountUsd,
-    amountRaw: parts.find(part => part.amountRaw != null)?.amountRaw,
-    direction: parts.find(part => part.direction != null)?.direction ?? null,
+    amountUsd: fanOut
+      ? sumOf(pays.map(entry => entry.payEvent!.amountUsd))
+      : parts.find(part => part.amountUsd != null)?.amountUsd,
+    amountRaw: fanOut
+      ? sumOf(pays.map(entry => entry.payEvent!.amount))
+      : parts.find(part => part.amountRaw != null)?.amountRaw,
+    // A distribution is done "by" its caller; its receipts' inbound flow is
+    // theirs, not the row's.
+    direction: distributed
+      ? primary.direction
+      : (parts.find(part => part.direction != null)?.direction ?? null),
     kind: parts.find(part => part.kind)?.kind ?? null,
   }
 }
@@ -517,6 +668,7 @@ const ACTIVITY_KINDS: [string, string][] = [
 ]
 
 function activityKind(event: BsActivityEvent): string | null {
+  if (event.swapEvent?.direction.toLowerCase() === 'mint') return 'Issuance'
   const fields = event as unknown as Record<string, unknown>
   return ACTIVITY_KINDS.find(([field]) => fields[field])?.[1] ?? null
 }
@@ -529,6 +681,7 @@ export function activityParts(
   action: ReactNode
   direction: 'in' | 'out' | null
   kind: string | null
+  headline: ActivityHeadline | null
   memo: string | null
   amountUsd: string | null | undefined
   amountRaw: string | null | undefined
@@ -538,7 +691,9 @@ export function activityParts(
   const mint = event.mintTokensEvent
   const loan = event.borrowLoanEvent
   const swap = event.swapEvent
-  const swapIsSell = swap?.direction.toLowerCase() === 'sell'
+  const swapDirection = swap?.direction.toLowerCase()
+  const swapIsSell = swapDirection === 'sell'
+  const swapIsPurchase = swapDirection === 'buy' || swapDirection === 'mint'
   const actor =
     pay?.beneficiary ??
     cashOut?.beneficiary ??
@@ -597,7 +752,7 @@ export function activityParts(
         ? 'out'
         : event.repayLoanEvent ||
             event.mintNftEvent ||
-          (swap && !swapIsSell) ||
+            swapIsPurchase ||
             event.bridgeClaimEvent ||
             event.sendPayoutToSplitEvent ||
             event.sendReservedTokensToSplitEvent
@@ -695,11 +850,11 @@ export function activityParts(
     <>removed shop item #{event.removeNftTierEvent.tierId}</>
   ) : swap ? (
     <>
-      {swapIsSell ? 'sold' : 'bought'}{' '}
+      {swapIsSell ? 'sold' : swapIsPurchase ? 'bought' : 'swapped'}{' '}
       <span className="font-medium">
         {tokenCount} {tokenUnit}
       </span>{' '}
-      via the buyback pool
+      {swapDirection === 'mint' ? 'from issuance' : 'via the buyback pool'}
     </>
   ) : event.buybackPoolEvent ? (
     <>set up a buyback pool</>
@@ -725,12 +880,19 @@ export function activityParts(
     <>updated the project</>
   )
   const memo = pay?.memo ?? event.addToBalanceEvent?.memo ?? null
+  // A reserved distribution leads with the count the way value flows lead
+  // with the amount: "3.6m ART" tagged "reserved distro".
+  const headline: ActivityHeadline | null =
+    issuedTokens && event.sendReservedTokensToSplitsEvent
+      ? { amount: `${tokenCount} ${tokenUnit}`, tag: 'reserved distro' }
+      : null
 
   return {
     actor,
     action,
     direction,
     kind: activityKind(event),
+    headline,
     memo,
     amountUsd:
       pay?.amountUsd ??
@@ -760,7 +922,7 @@ function Row({
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
   const event = group[0]
-  const { actor, actions, direction, kind, memo, amountUsd, amountRaw } =
+  const { actor, actions, direction, kind, headline, memo, amountUsd, amountRaw } =
     combinedActivityParts(group, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
@@ -786,6 +948,7 @@ function Row({
               amountToken={amountToken}
               direction={direction}
               kind={kind}
+              headline={headline}
             />
           ) : (
             <span className="min-w-0 truncate">{actorNode}</span>
@@ -932,7 +1095,7 @@ export function ActivityList({
     }
   }
 
-  const projectEvents = liveEvents.filter(isProjectFeedActivity)
+  const projectEvents = projectFeedEvents(liveEvents)
   const categories: ActivityCategory[] = []
   projectEvents.forEach(event => {
     const category = activityCategory(event)
@@ -1010,15 +1173,14 @@ export function ActivityList({
         </div>
       )}
       {liveEvents.length < liveTotal ? (
-        <div className="mt-4 flex flex-col items-center gap-2">
+        <div className="mt-3 flex flex-col items-start gap-2">
           <button
             onClick={() => void loadMore()}
             disabled={loadingMore}
-            className="btn-secondary min-h-[40px] px-5 text-sm"
+            title={`${liveEvents.length} of ${liveTotal} loaded`}
+            className="min-h-[32px] text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
           >
-            {loadingMore
-              ? 'Loading…'
-              : `Load more (${liveEvents.length} of ${liveTotal})`}
+            {loadingMore ? 'Loading…' : 'more'}
           </button>
           {loadMoreError ? (
             <p className="text-xs text-crush-600">{loadMoreError}</p>

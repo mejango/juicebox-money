@@ -25,18 +25,6 @@
         }
       ]
     },
-    "src/components/project/AutoIssuanceSection.tsx": {
-      "hooks": 1,
-      "sends": 1,
-      "sendSites": [
-        {
-          "id": "auto-issue-stage-allocation",
-          "actions": [
-            "Auto-issue tokens"
-          ]
-        }
-      ]
-    },
     "src/components/project/BurnTokensFlow.tsx": {
       "hooks": 1,
       "sends": 1,
@@ -79,14 +67,26 @@
         }
       ]
     },
-    "src/components/project/ExtrasTab.tsx": {
+    "src/components/project/EditPositionPanel.tsx": {
       "hooks": 1,
-      "sends": 1,
+      "sends": 3,
       "sendSites": [
         {
-          "id": "deploy-project-payer",
+          "id": "approve-token-for-permit2",
           "actions": [
-            "Deploy a project payer address"
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-position-manager",
+          "actions": [
+            "Authorize the Uniswap position manager"
+          ]
+        },
+        {
+          "id": "edit-liquidity-position",
+          "actions": [
+            "Edit Uniswap V4 liquidity"
           ]
         }
       ]
@@ -96,9 +96,8 @@
       "sends": 1,
       "sendSites": [
         {
-          "id": "send-fund-access-action",
+          "id": "withdraw-surplus-allowance",
           "actions": [
-            "Distribute payouts",
             "Use surplus allowance"
           ]
         }
@@ -182,6 +181,30 @@
         }
       ]
     },
+    "src/components/project/MarketEditPanel.tsx": {
+      "hooks": 1,
+      "sends": 3,
+      "sendSites": [
+        {
+          "id": "approve-token-for-permit2",
+          "actions": [
+            "Approve an ERC-20"
+          ]
+        },
+        {
+          "id": "authorize-position-manager",
+          "actions": [
+            "Authorize the Uniswap position manager"
+          ]
+        },
+        {
+          "id": "edit-market",
+          "actions": [
+            "Make or edit a Uniswap V4 market"
+          ]
+        }
+      ]
+    },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
       "sends": 3,
@@ -202,24 +225,6 @@
           "id": "send-prepared-token-move",
           "actions": [
             "Prepare/move tokens cross-chain"
-          ]
-        }
-      ]
-    },
-    "src/components/project/OwnersTab.tsx": {
-      "hooks": 2,
-      "sends": 2,
-      "sendSites": [
-        {
-          "id": "claim-project-token-credits",
-          "actions": [
-            "Claim project-token credits"
-          ]
-        },
-        {
-          "id": "distribute-reserved-tokens",
-          "actions": [
-            "Distribute reserved tokens"
           ]
         }
       ]
@@ -285,8 +290,9 @@
     "src/components/project/AuthorityEditsCard.tsx": {
       "calls": 2,
       "actions": [
-        "Transfer project ownership",
-        "Change owner/operator powers"
+        "Update project metadata",
+        "Deploy project ERC-20",
+        "Rename project ERC-20"
       ]
     },
     "src/components/project/AuthorityOverview.tsx": {
@@ -299,13 +305,15 @@
     "src/components/project/AuthorityPowersCard.tsx": {
       "calls": 1,
       "actions": [
-        "Change owner/operator powers"
+        "Change owner/operator powers",
+        "Register accounting tokens across chains"
       ]
     },
     "src/components/project/EditSplitsFlow.tsx": {
-      "calls": 1,
+      "calls": 2,
       "actions": [
-        "Edit split groups"
+        "Edit split groups",
+        "Edit reserved recipients across selected mainnets"
       ]
     },
     "src/components/project/MultiChainBuybackRouterCard.tsx": {
@@ -321,9 +329,22 @@
       ]
     },
     "src/components/project/QueueRulesetFlow.tsx": {
+      "calls": 2,
+      "actions": [
+        "Queue rulesets",
+        "Queue rulesets across selected mainnets"
+      ]
+    },
+    "src/lib/project-batch.ts": {
       "calls": 1,
       "actions": [
-        "Queue rulesets"
+        "Add shop tiers",
+        "Replace shop item media",
+        "Claim project-token credits",
+        "Distribute payouts",
+        "Distribute reserved tokens",
+        "Auto-issue tokens",
+        "Resume a reviewed project batch"
       ]
     }
   },
@@ -336,22 +357,10 @@
         "Deploy a revnet"
       ]
     },
-    "src/components/project/AddShopItemsModal.tsx": {
-      "calls": 1,
-      "actions": [
-        "Add shop tiers"
-      ]
-    },
     "src/components/project/MintShopItemModal.tsx": {
       "calls": 1,
       "actions": [
         "Mint shop tiers without payment"
-      ]
-    },
-    "src/components/project/ReplaceTierMediaModal.tsx": {
-      "calls": 1,
-      "actions": [
-        "Replace shop item media"
       ]
     },
     "src/hooks/useSafeTx.ts": {
@@ -364,16 +373,12 @@
   "rawWalletCalls": {
     "useWriteContract": {
       "src/components/create/CreateForm.tsx": 1,
-      "src/components/project/AddShopItemsModal.tsx": 1,
       "src/components/project/MintShopItemModal.tsx": 1,
-      "src/components/project/ReplaceTierMediaModal.tsx": 1,
       "src/hooks/useSafeTx.ts": 1
     },
     "writeContractAsync": {
       "src/components/create/CreateForm.tsx": 1,
-      "src/components/project/AddShopItemsModal.tsx": 1,
       "src/components/project/MintShopItemModal.tsx": 1,
-      "src/components/project/ReplaceTierMediaModal.tsx": 1,
       "src/hooks/useSafeTx.ts": 1
     },
     "writeContract": {
@@ -381,6 +386,7 @@
     },
     "sendTransaction": {
       "src/lib/authority.ts": 2,
+      "src/lib/payer-relayr.ts": 1,
       "src/lib/relayr.ts": 1
     },
     "useSignTypedData": {

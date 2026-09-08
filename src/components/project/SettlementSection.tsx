@@ -37,6 +37,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { MovementGroupsSkeleton } from '@/components/LoadingSkeletons'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { GossipCard } from '@/components/project/GossipCard'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -557,11 +558,23 @@ function MovementGroup({
   const tx = useSafeTx(group.sourceChainId)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
 
   const busy = checking || tx.busy
 
   const pending = group.rows.filter(r => r.status === 'pending')
   const txUrl = tx.hash ? etherscanTxUrl(group.sourceChainId, tx.hash) : null
+
+  const openConfirm = () => {
+    if (busy) return
+    if (!isConnected || !address) {
+      openSignIn()
+      return
+    }
+    setFlowError(null)
+    tx.reset()
+    setOpen(true)
+  }
 
   const execute = async () => {
     if (busy) return
@@ -601,6 +614,25 @@ function MovementGroup({
       setChecking(false)
     }
   }
+
+  const pendingTokens = pending.reduce(
+    (sum, r) => sum + BigInt(r.projectTokenCount),
+    0n,
+  )
+  const beneficiaries = [...new Set(pending.map(r => r.beneficiary.toLowerCase()))]
+  const moves = `${pending.length} queued move${pending.length > 1 ? 's' : ''}`
+  const sendLabel = `Send ${moves} to ${chainName(group.destChainId)}`
+  const rows: TxConfirmRow[] = [
+    { label: 'Send', value: moves, strong: true },
+    { label: 'Tokens', value: formatTokenAmount(pendingTokens) },
+    { label: 'From', value: chainName(group.sourceChainId) },
+    { label: 'To', value: chainName(group.destChainId) },
+    beneficiaries.length === 1
+      ? { label: 'Beneficiary', value: pending[0]?.beneficiary ?? '', mono: true }
+      : { label: 'Beneficiaries', value: `${beneficiaries.length} addresses` },
+    { label: 'On', value: chainName(group.sourceChainId) },
+    { label: 'Bridge', value: group.sucker, mono: true },
+  ]
 
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
@@ -676,16 +708,13 @@ function MovementGroup({
       {pending.length > 0 ? (
         <div className="mt-3">
           <button
-            onClick={execute}
+            onClick={openConfirm}
             disabled={busy}
             className="btn-secondary min-h-[40px] px-4 text-sm"
           >
             {checking
               ? 'Reading bridge fee…'
-              : txPhaseLabel(tx.phase, {
-                  pending: 'Sending…',
-                  idle: `Send ${pending.length} queued move${pending.length > 1 ? 's' : ''} to ${chainName(group.destChainId)}`,
-                })}
+              : txPhaseLabel(tx.phase, { pending: 'Sending…', idle: sendLabel })}
           </button>
           <p className="mt-1.5 text-xs text-smoke-700">
             Anyone can send this — it ships the queued outbox in one bridge
@@ -714,9 +743,54 @@ function MovementGroup({
         </p>
       ) : null}
 
-      <TxError
+      {!open ? (
+        <TxError
+          error={flowError ?? tx.error}
+          className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
+        />
+      ) : null}
+
+      <TxConfirmDialog
+        open={open}
+        onClose={() => {
+          setOpen(false)
+          setFlowError(null)
+        }}
+        title={tx.phase === 'success' ? 'Moves sent' : 'Confirm send'}
+        rows={rows}
+        steps={[
+          {
+            key: 'send',
+            title: `Send to ${chainName(group.destChainId)}`,
+            detail:
+              "Ships the queued outbox in one bridge message. The value is the bridge's messaging fee, not the bridged tokens.",
+          },
+        ]}
+        activeIndex={busy ? 0 : -1}
+        action={
+          checking
+            ? 'Reading bridge fee…'
+            : txPhaseLabel(tx.phase, { pending: 'Sending…', idle: 'Confirm & send' })
+        }
+        onConfirm={() => void execute()}
+        busy={busy}
+        complete={tx.phase === 'success'}
+        status={
+          tx.phase === 'pending' && txUrl ? (
+            <>
+              Waiting for confirmation —{' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                view transaction
+              </a>
+            </>
+          ) : null
+        }
         error={flowError ?? tx.error}
-        className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
       />
     </div>
   )
@@ -742,8 +816,20 @@ function ClaimButton({
   const tx = useSafeTx(m.destChainId)
   const [building, setBuilding] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
   const busy = building || tx.busy
   const txUrl = tx.hash ? etherscanTxUrl(m.destChainId, tx.hash) : null
+
+  const openConfirm = () => {
+    if (busy) return
+    if (!isConnected) {
+      openSignIn()
+      return
+    }
+    setFlowError(null)
+    tx.reset()
+    setOpen(true)
+  }
 
   const claim = async () => {
     if (busy) return
@@ -789,10 +875,22 @@ function ClaimButton({
     }
   }
 
+  const rows: TxConfirmRow[] = [
+    {
+      label: 'Claim',
+      value: `${formatTokenAmount(BigInt(m.projectTokenCount))} tokens`,
+      strong: true,
+    },
+    { label: 'From', value: chainName(m.sourceChainId) },
+    { label: 'To', value: chainName(m.destChainId) },
+    { label: 'Beneficiary', value: m.beneficiary, mono: true },
+    { label: 'On', value: chainName(m.destChainId) },
+  ]
+
   return (
     <span className="inline-flex flex-col items-end">
       <button
-        onClick={claim}
+        onClick={openConfirm}
         disabled={busy}
         className="btn-secondary min-h-[32px] px-3 text-xs"
       >
@@ -821,9 +919,53 @@ function ClaimButton({
           ) : null}
         </span>
       ) : null}
-      <TxError
+      {!open ? (
+        <TxError
+          error={flowError ?? tx.error}
+          className="mt-1 max-w-[220px] text-right text-[11px] text-red-700"
+        />
+      ) : null}
+      <TxConfirmDialog
+        open={open}
+        onClose={() => {
+          setOpen(false)
+          setFlowError(null)
+        }}
+        title={tx.phase === 'success' ? 'Claimed' : 'Confirm claim'}
+        rows={rows}
+        steps={[
+          {
+            key: 'claim',
+            title: `Claim on ${chainName(m.destChainId)}`,
+            detail:
+              'Verifies the bridged leaf against the destination inbox and releases the tokens to the beneficiary. Anyone can claim; the beneficiary is fixed in the leaf.',
+          },
+        ]}
+        activeIndex={busy ? 0 : -1}
+        action={
+          building
+            ? 'Building proof…'
+            : txPhaseLabel(tx.phase, { pending: 'Claiming…', idle: 'Confirm & claim' })
+        }
+        onConfirm={() => void claim()}
+        busy={busy}
+        complete={tx.phase === 'success'}
+        status={
+          tx.phase === 'pending' && txUrl ? (
+            <>
+              Waiting for confirmation —{' '}
+              <a
+                href={txUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                view transaction
+              </a>
+            </>
+          ) : null
+        }
         error={flowError ?? tx.error}
-        className="mt-1 max-w-[220px] text-right text-[11px] text-red-700"
       />
     </span>
   )
