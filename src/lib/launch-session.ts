@@ -1,7 +1,7 @@
 /**
  * Multichain launch progress persisted to localStorage (the Relayr
- * pending-session pattern in relayr.ts). A multichain launch signs one
- * transaction per chain around ONE shared salt — the salt pairs the suckers
+ * pending-session pattern in relayr.ts). A multichain launch prepares one
+ * call per chain around ONE shared salt — the salt pairs the suckers
  * and pins the deterministic token address — so a refresh between chains
  * must resume with the SAME salt and pinned metadata. Re-launching from
  * scratch would mint a duplicate project on the already-launched chains and
@@ -11,10 +11,13 @@
  * byte-compatibly with the already-launched ones: the salt, the pinned
  * project URI and store (item metadata already on IPFS), the exact
  * per-chain launch plans (shared deploy start, resolved recipients), and
- * each chain's progress.
+ * each chain's progress. Relayr launches additionally preserve the original
+ * signer, payment chain, exact authorizations, and funding/recovery journal.
  */
 
 import type { LaunchPlan } from '@/lib/launch'
+import type { Address } from 'viem'
+import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
 import { DRAFT_KEY } from '@/lib/draft'
 
 export const LAUNCH_SESSION_KEY = 'jbm-launch-pending-v1'
@@ -42,6 +45,11 @@ export type LaunchChainStatus = {
 }
 
 export type LaunchSession = {
+  /** Absent on legacy sessions, which always resume through direct transactions. */
+  transport?: 'direct' | 'relayr'
+  account?: Address
+  paymentChainId?: number
+  relayr?: LaunchRelayrJournal
   /** The launch id: the create2/sucker salt shared by every chain. */
   salt: `0x${string}`
   /** The pinned project metadata URI (shared by every chain). */
@@ -72,15 +80,22 @@ function reviver(_key: string, value: unknown): unknown {
     : value
 }
 
-export function saveLaunchSession(session: LaunchSession): void {
-  if (typeof window === 'undefined') return
+export function saveLaunchSession(session: LaunchSession): boolean {
+  if (typeof window === 'undefined') return false
   try {
+    const existing = window.localStorage.getItem(LAUNCH_SESSION_KEY)
+    if (existing) {
+      const salt = (JSON.parse(existing) as { salt?: unknown }).salt
+      if (typeof salt === 'string' && salt !== session.salt) return false
+    }
     window.localStorage.setItem(
       LAUNCH_SESSION_KEY,
       JSON.stringify(session, replacer),
     )
+    return true
   } catch {
     // Storage may be unavailable; the in-memory state still drives the run.
+    return false
   }
 }
 
@@ -90,11 +105,14 @@ export function saveLaunchSession(session: LaunchSession): void {
  * as `pending` so it re-sends; a submitted transaction keeps its hash so
  * the resume waits on it instead of sending again.
  */
-export function loadLaunchSession(): LaunchSession | null {
-  if (typeof window === 'undefined') return null
+export function loadLaunchSession({ strict = false }: { strict?: boolean } = {}): LaunchSession | null {
+  if (typeof window === 'undefined') {
+    if (strict) throw new Error('Saved launch authorizations could not be read. Restore browser storage before signing another action.')
+    return null
+  }
   try {
     const raw = window.localStorage.getItem(LAUNCH_SESSION_KEY)
-    if (!raw) return null
+    if (raw === null) return null
     const value = JSON.parse(raw, reviver) as Partial<LaunchSession>
     if (
       typeof value.salt !== 'string' ||
@@ -123,7 +141,23 @@ export function loadLaunchSession(): LaunchSession | null {
       value.statuses === null ||
       typeof value.createdAt !== 'number'
     ) {
+      if (strict) throw new Error()
       return null
+    }
+    if (strict && value.relayr !== undefined) {
+      const journal = value.relayr
+      const signed = [...(journal.signed ?? []), ...(journal.superseded ?? [])]
+      if (typeof journal !== 'object' || !Array.isArray(journal.signed) ||
+          (journal.superseded !== undefined && !Array.isArray(journal.superseded)) ||
+          !Array.isArray(journal.records) || typeof journal.account !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(journal.account) ||
+          !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing'].includes(journal.phase) ||
+          (journal.phase !== 'signing' && journal.published !== true) ||
+          (journal.published !== undefined && journal.published !== true) ||
+          (journal.abandonable !== undefined && journal.abandonable !== true) ||
+          signed.some(item => !item || !Number.isSafeInteger(item.chainId) || !value.chains!.includes(item.chainId) ||
+            !Number.isSafeInteger(item.deadline) || item.deadline < 1 || typeof item.nonce !== 'string' || !/^\d+$/u.test(item.nonce) ||
+            !item.entry || item.entry.chain !== item.chainId || typeof item.entry.target !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(item.entry.target) ||
+            typeof item.entry.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(item.entry.data) || typeof item.entry.value !== 'string' || !/^\d+$/u.test(item.entry.value))) throw new Error()
     }
     // A pinned plan without `projectName` launched its chains with the store
     // name as the revnet description name; a resume must re-encode
@@ -141,6 +175,10 @@ export function loadLaunchSession(): LaunchSession | null {
       statuses[chainId] = coerceStatus(status)
     }
     return {
+      ...(value.transport === 'relayr' || value.transport === 'direct' ? { transport: value.transport } : {}),
+      ...(value.account ? { account: value.account } : {}),
+      ...(value.paymentChainId ? { paymentChainId: value.paymentChainId } : {}),
+      ...(value.relayr ? { relayr: value.relayr } : {}),
       salt: value.salt as `0x${string}`,
       projectUri: value.projectUri,
       store: value.store,
@@ -150,8 +188,15 @@ export function loadLaunchSession(): LaunchSession | null {
       createdAt: value.createdAt,
     }
   } catch {
+    if (strict) throw new Error('Saved launch authorizations could not be read. Restore browser storage and recover the original launch before signing another action.')
     return null
   }
+}
+
+/** Published signatures can still execute; never discard their recovery journal as an ordinary form reset. */
+export function canAbandonRelayrLaunch(session: LaunchSession): boolean {
+  return !session.relayr || session.relayr.abandonable === true ||
+    (session.relayr.phase === 'signing' && !session.relayr.published && !session.relayr.retryNonces)
 }
 
 function coerceStatus(value: unknown): LaunchChainStatus {
@@ -213,13 +258,16 @@ export function remainingLaunchChains(session: LaunchSession): number[] {
 
 /** A fully-launched session leaves nothing to resume: drop the record and
  *  the saved form draft it was built from. */
-export function completeLaunchSession(): void {
-  if (typeof window === 'undefined') return
+export function completeLaunchSession(expectedSalt?: `0x${string}`): boolean {
+  if (typeof window === 'undefined') return false
   try {
+    if (expectedSalt && loadLaunchSession()?.salt !== expectedSalt) return false
     window.localStorage.removeItem(LAUNCH_SESSION_KEY)
     window.localStorage.removeItem(DRAFT_KEY)
+    return true
   } catch {
     // Storage may be unavailable. There is no sensitive payload to clean up.
+    return false
   }
 }
 
@@ -230,11 +278,14 @@ export function completeLaunchSession(): void {
  * deterministically-reverting config would otherwise loop on Retry forever
  * with no exit short of hand-clearing localStorage.
  */
-export function abandonLaunchSession(): void {
-  if (typeof window === 'undefined') return
+export function abandonLaunchSession(expectedSalt?: `0x${string}`): boolean {
+  if (typeof window === 'undefined') return false
   try {
+    if (expectedSalt && loadLaunchSession()?.salt !== expectedSalt) return false
     window.localStorage.removeItem(LAUNCH_SESSION_KEY)
+    return true
   } catch {
     // Storage may be unavailable. There is no sensitive payload to clean up.
+    return false
   }
 }

@@ -6,7 +6,7 @@ import {
   buildUniswapV4ExactInputSwapTx,
 } from '@bananapus/nana-sdk-core/v6'
 import { describe, expect, it } from 'vitest'
-import { describeUniversalRouterExecute } from '@/components/TransactionReviewProvider'
+import { describeUniversalRouterExecute } from '@/components/TransactionReviewDialog'
 
 const RECIPIENT = '0x1111111111111111111111111111111111111111'
 const TOKEN = '0x4444444444444444444444444444444444444444'

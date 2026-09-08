@@ -12,7 +12,7 @@ const APP = {
   url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://juicebox.money',
 }
 
-export const WALLET_CONNECT_PROJECT_ID =
+const WALLET_CONNECT_PROJECT_ID =
   process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? ''
 
 /**
@@ -25,7 +25,7 @@ export const WALLET_CONNECT_PROJECT_ID =
  * pairing URI as a `display_uri` message, which our sign-in sheet renders as a
  * QR, so no third-party chrome appears.
  */
-export function lazyWalletConnect(): CreateConnectorFn | undefined {
+function lazyWalletConnect(): CreateConnectorFn | undefined {
   if (!WALLET_CONNECT_PROJECT_ID) return undefined
   return lazyConnector({
     id: 'walletConnect',
@@ -49,7 +49,7 @@ export function lazyWalletConnect(): CreateConnectorFn | undefined {
 }
 
 /** Coinbase Wallet, which is not an injected provider outside its extension. */
-export function lazyCoinbaseWallet(): CreateConnectorFn {
+function lazyCoinbaseWallet(): CreateConnectorFn {
   return lazyConnector({
     id: 'coinbaseWalletSDK',
     name: 'Coinbase Wallet',
@@ -72,7 +72,7 @@ export function lazyCoinbaseWallet(): CreateConnectorFn {
  * through the parent frame, so there is no prior click to remember, and the
  * check is exact — outside an iframe this connector can never succeed.
  */
-export function lazySafe(): CreateConnectorFn {
+function lazySafe(): CreateConnectorFn {
   return lazyConnector({
     id: 'safe',
     name: 'Safe',
@@ -93,7 +93,12 @@ export function lazySafe(): CreateConnectorFn {
   })
 }
 
-/** Every non-injected wallet, in the order the sign-in sheet lists them. */
+/**
+ * Every non-injected wallet, in the order the sign-in sheet lists them.
+ * These wagmi modules dynamically import their optional Coinbase, Safe, and
+ * WalletConnect SDK peers. Keep those package dependencies installed; knip's
+ * explicit dependency exceptions cover these imports inside node_modules.
+ */
 export function externalWalletConnectors(): CreateConnectorFn[] {
   return [lazyWalletConnect(), lazyCoinbaseWallet(), lazySafe()].filter(
     (connector): connector is CreateConnectorFn => !!connector,

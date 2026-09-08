@@ -59,7 +59,7 @@ export function replaceProjectTabHash(hash: string): void {
 }
 
 /** Re-enter the server route after any hash mutation on a mutable alias URL. */
-export function reloadMutableProjectAlias(): void {
+function reloadMutableProjectAlias(): void {
   const routeSegment = projectRouteSegmentFromPathname(
     window.location.pathname,
   )
@@ -250,37 +250,41 @@ export function ProjectTabs({
         <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[801px]:order-none min-[801px]:mt-0">
           <div
             data-project-tab-scroll
-            role="tablist"
-            aria-label="Project sections"
             className="scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activityActive}
-              onClick={() => activate(activitySlug)}
-              className={`${buttonClasses(activityActive)} min-[801px]:hidden`}
+            <div
+              role="tablist"
+              aria-label="Project sections"
+              className="flex shrink-0 gap-1"
             >
-              <ProjectTabIcon label="Activity" />
-              Activity
-            </button>
-            {[...visibleTabs, ...(overflowExpanded ? overflowTabs : [])].map(tab => {
-              const slug = tabSlug(tab.label)
-              const selected = !activityActive && normalActiveSlug === slug
-              return (
-                <button
-                  key={tab.label}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => activate(slug)}
-                  className={buttonClasses(selected)}
-                >
-                  <ProjectTabIcon label={tab.label} />
-                  <span>{tab.label}</span>
-                </button>
-              )
-            })}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activityActive}
+                onClick={() => activate(activitySlug)}
+                className={`${buttonClasses(activityActive)} min-[801px]:hidden`}
+              >
+                <ProjectTabIcon label="Activity" />
+                Activity
+              </button>
+              {[...visibleTabs, ...(overflowExpanded ? overflowTabs : [])].map(tab => {
+                const slug = tabSlug(tab.label)
+                const selected = !activityActive && normalActiveSlug === slug
+                return (
+                  <button
+                    key={tab.label}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => activate(slug)}
+                    className={buttonClasses(selected)}
+                  >
+                    <ProjectTabIcon label={tab.label} />
+                    <span>{tab.label}</span>
+                  </button>
+                )
+              })}
+            </div>
             <ProjectOverflowMenu
               tabs={overflowTabs}
               activeSlug={activityActive ? activitySlug : normalActiveSlug}

@@ -3,6 +3,8 @@
 import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
+  USDC_ADDRESSES,
+  NATIVE_TOKEN,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
@@ -41,7 +43,10 @@ import { TxError } from "@/components/ui/TxError";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
-import { runAuthorityCalls, safeOutcomeMessage } from "@/lib/authority";
+import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
+import { readAuthorityIdentity } from "@/lib/cross-chain-authority";
+import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
+import { relayrSupportsChain, relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   billionthsToPct,
   etherscanTxUrl,
@@ -314,9 +319,9 @@ export function queueRulesetAuthority({
  * The current, next queued, and queue-tail rulesets are read live with their
  * approval status. The owner chooses whether to replace a still-replaceable
  * queued configuration or append after its final tail; metadata, fund access,
- * and splits are prefilled from that exact source. Editing builds ONE
- * JBRulesetConfig that carries everything untouched and only changes what the
- * owner edited. A diff of just the changed rows is shown before sending
+ * and splits are prefilled from that exact source. Each selected chain keeps
+ * its own untouched configuration while reviewed edits carry across stages.
+ * Per-chain changes and starts are shown before sending
  * `queueRulesetsOf` to the resolved controller through the simulation-first
  * Safe/Relayr authority router (runAuthorityCalls, like EditSplitsFlow).
  */
@@ -324,10 +329,12 @@ export function QueueRulesetFlow({
   chainId,
   projectId,
   isRevnet,
+  chains = [],
 }: {
   chainId: JBChainId;
   projectId: number;
   isRevnet: boolean;
+  chains?: readonly (readonly [number, number])[];
 }) {
   const [open, setOpen] = useState(false);
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
@@ -413,124 +420,29 @@ export function QueueRulesetFlow({
     enabled: !isRevnet && canEdit && !!publicClient && knownController,
     staleTime: 30_000,
     retry: 1,
-    queryFn: async () => {
-      const pid = BigInt(projectId);
-      const limitsAddr = v6Address("JBFundAccessLimits", chainId);
-      const splitsAddr = v6Address("JBSplits", chainId);
-      const terminal = v6Address("JBMultiTerminal", chainId);
-
-      const [current, upcomingRead, latestRead, contexts] = await Promise.all([
-        getCurrentRuleset(publicClient!, { chainId, projectId: pid }),
-        getUpcomingRuleset(publicClient!, { chainId, projectId: pid }).catch(
-          () => null,
-        ),
-        publicClient!.readContract({
-          address: controller as Address,
-          abi: jbControllerAbi,
-          functionName: "latestQueuedRulesetOf",
-          args: [pid],
-        }),
-        getAccountingContexts(publicClient!, { chainId, projectId: pid }).catch(
-          () => [] as JBAccountingContext[],
-        ),
-      ]);
-      const latest = { ruleset: latestRead[0], metadata: latestRead[1] };
-      const latestApprovalStatus = Number(latestRead[2]);
-      const upcoming =
-        upcomingRead &&
-        BigInt(upcomingRead.ruleset.id) !== 0n &&
-        BigInt(upcomingRead.ruleset.id) !== BigInt(current.ruleset.id)
-          ? upcomingRead
-          : null;
-
-      const plan = planRulesetQueue({
-        current: current.ruleset,
-        upcoming: upcoming?.ruleset ?? null,
-        latest: latest.ruleset,
-        latestApprovalStatus,
-      });
-
-      const entryFor = (option: QueueActionOption) => {
-        const id = BigInt(option.source.id);
-        if (id === BigInt(current.ruleset.id)) return current;
-        if (upcoming && id === BigInt(upcoming.ruleset.id)) return upcoming;
-        if (id === BigInt(latest.ruleset.id)) return latest;
-        throw new Error("The queued ruleset source could not be resolved.");
-      };
-
-      const readSource = async (option: QueueActionOption): Promise<PrefillSource> => {
-        const entry = entryFor(option);
-        const rid = BigInt(entry.ruleset.id);
-        const access: TokenAccess[] = await Promise.all(
-          contexts.map(async (ctx) => {
-            const [payoutLimits, surplusAllowances, symbol] = await Promise.all([
-              publicClient!.readContract({
-                address: limitsAddr,
-                abi: jbFundAccessLimitsAbi,
-                functionName: "payoutLimitsOf",
-                args: [pid, rid, terminal, ctx.token],
-              }) as Promise<readonly CurrencyAmount[]>,
-              publicClient!.readContract({
-                address: limitsAddr,
-                abi: jbFundAccessLimitsAbi,
-                functionName: "surplusAllowancesOf",
-                args: [pid, rid, terminal, ctx.token],
-              }) as Promise<readonly CurrencyAmount[]>,
-              tokenSymbol(publicClient!, ctx.token, { chainId }),
-            ]);
-            return { ctx, symbol, payoutLimits, surplusAllowances };
-          }),
-        );
-        const reservedSplits = (await publicClient!.readContract({
-          address: splitsAddr,
-          abi: jbSplitsAbi,
-          functionName: "splitsOf",
-          args: [pid, rid, RESERVED_TOKEN_SPLIT_GROUP_ID],
-        })) as readonly RawSplit[];
-        const payoutSplits = await Promise.all(
-          contexts.map(
-            (ctx) =>
-              publicClient!.readContract({
-                address: splitsAddr,
-                abi: jbSplitsAbi,
-                functionName: "splitsOf",
-                args: [pid, rid, payoutSplitGroupId(ctx.token)],
-              }) as Promise<readonly RawSplit[]>,
-          ),
-        );
-        return {
-          action: option.action,
-          option,
-          entry,
-          rulesetId: rid,
-          terminal,
-          access,
-          reservedSplits,
-          payoutSplits: contexts.map((ctx, i) => ({
-            token: ctx.token as Address,
-            splits: payoutSplits[i],
-          })),
-        };
-      };
-
-      const sourceEntries = await Promise.all(plan.options.map(readSource));
-      return {
-        current,
-        upcoming,
-        latest,
-        latestApprovalStatus,
-        plan,
-        sources: Object.fromEntries(
-          sourceEntries.map((source) => [source.action, source]),
-        ) as Partial<Record<QueueAction, PrefillSource>>,
-      };
-    },
+    queryFn: () => readQueuePrefill(publicClient!, chainId, projectId, controller as Address),
   });
 
-  if (isRevnet || !canEdit || controller === undefined) return null;
+  const recoveryKey = queueRecoveryKey(chainId, projectId);
+  const { data: pendingScope, refetch: refreshRecovery } = useQuery({
+    queryKey: ["queueRulesetRecovery", chainId, projectId, open],
+    enabled: !isRevnet && !!address,
+    staleTime: 0,
+    queryFn: () => pendingQueueScope(recoveryKey),
+  });
+  const [recovered, setRecovered] = useState(false);
+
+  if (isRevnet || (!pendingScope && (!canEdit || controller === undefined))) return null;
 
   let body: ReactNode;
-  if (!knownController) {
+  if (pendingScope) {
+    body = <QueueRecovery journal={pendingScope} onComplete={() => {
+      setRecovered(true);
+      void refreshRecovery();
+    }} />;
+  } else if (recovered) {
+    body = <p className="text-sm text-smoke-700">The saved ruleset update is confirmed on every destination. Reload the project to see the new queue.</p>;
+  } else if (!knownController) {
     body = (
       <p className="text-sm leading-relaxed text-smoke-700">
         This project queues rules through a wrapper jbm doesn&apos;t drive
@@ -551,10 +463,9 @@ export function QueueRulesetFlow({
       <RulesetEditor
         chainId={chainId}
         projectId={projectId}
-        controller={controller as Address}
-        authority={authority}
         data={data}
-        publicClient={publicClient!}
+        chains={chains}
+        onPending={() => void refreshRecovery()}
       />
     );
   }
@@ -566,7 +477,7 @@ export function QueueRulesetFlow({
         onClick={() => setOpen(true)}
         className="absolute right-5 top-5 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
       >
-        Edit rules
+        {pendingScope ? "Resume rules update" : "Edit rules"}
       </button>
       {open ? (
         <ModalShell title="Edit rules" onClose={() => setOpen(false)}>
@@ -601,22 +512,446 @@ type PrefillData = {
   sources: Partial<Record<QueueAction, PrefillSource>>;
 };
 
-/** A reviewed, ready-to-send queue: the exact config is frozen so what the
- *  owner confirms is what's sent. */
-type Reviewed = {
-  configs: JBRulesetConfig[];
-  account: Address;
-  /** Whether the new config removes all payout limits. */
-  clearsPayouts: boolean;
-};
+async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, projectId: number, controller: Address): Promise<PrefillData> {
+      const pid = BigInt(projectId);
+      const limitsAddr = v6Address("JBFundAccessLimits", chainId);
+      const splitsAddr = v6Address("JBSplits", chainId);
+      const terminal = v6Address("JBMultiTerminal", chainId);
 
-function RulesetEditor(props: {
+      const terminals = await publicClient.readContract({ address: v6Address("JBDirectory", chainId), abi: jbDirectoryAbi, functionName: "terminalsOf", args: [pid] });
+      if (terminals.some(address => address.toLowerCase() !== terminal.toLowerCase())) {
+        throw new Error(`${chainName(chainId)} uses a custom terminal. Use its own ruleset editor to preserve all fund access limits.`);
+      }
+
+      const [current, upcomingRead, latestRead, contexts] = await Promise.all([
+        getCurrentRuleset(publicClient, { chainId, projectId: pid }),
+        getUpcomingRuleset(publicClient, { chainId, projectId: pid }),
+        publicClient.readContract({
+          address: controller as Address,
+          abi: jbControllerAbi,
+          functionName: "latestQueuedRulesetOf",
+          args: [pid],
+        }),
+        getAccountingContexts(publicClient, { chainId, projectId: pid }),
+      ]);
+      const latest = { ruleset: latestRead[0], metadata: latestRead[1] };
+      const latestApprovalStatus = Number(latestRead[2]);
+      const upcoming =
+        upcomingRead &&
+        BigInt(upcomingRead.ruleset.id) !== 0n &&
+        BigInt(upcomingRead.ruleset.id) !== BigInt(current.ruleset.id)
+          ? upcomingRead
+          : null;
+
+      const plan = planRulesetQueue({
+        current: current.ruleset,
+        upcoming: upcoming?.ruleset ?? null,
+        latest: latest.ruleset,
+        latestApprovalStatus,
+      });
+
+      const entryFor = (option: QueueActionOption) => {
+        const id = BigInt(option.source.id);
+        if (id === BigInt(current.ruleset.id)) return current;
+        if (upcoming && id === BigInt(upcoming.ruleset.id)) return upcoming;
+        if (id === BigInt(latest.ruleset.id)) return latest;
+        throw new Error("The queued ruleset source could not be resolved.");
+      };
+
+      const readSource = async (option: QueueActionOption): Promise<PrefillSource> => {
+        const entry = entryFor(option);
+        const rid = BigInt(entry.ruleset.id);
+        const access: TokenAccess[] = await Promise.all(
+          contexts.map(async (ctx) => {
+            const [payoutLimits, surplusAllowances, symbol] = await Promise.all([
+              publicClient.readContract({
+                address: limitsAddr,
+                abi: jbFundAccessLimitsAbi,
+                functionName: "payoutLimitsOf",
+                args: [pid, rid, terminal, ctx.token],
+              }) as Promise<readonly CurrencyAmount[]>,
+              publicClient.readContract({
+                address: limitsAddr,
+                abi: jbFundAccessLimitsAbi,
+                functionName: "surplusAllowancesOf",
+                args: [pid, rid, terminal, ctx.token],
+              }) as Promise<readonly CurrencyAmount[]>,
+              tokenSymbol(publicClient, ctx.token, { chainId }),
+            ]);
+            return { ctx, symbol, payoutLimits, surplusAllowances };
+          }),
+        );
+        const reservedSplits = (await publicClient.readContract({
+          address: splitsAddr,
+          abi: jbSplitsAbi,
+          functionName: "splitsOf",
+          args: [pid, rid, RESERVED_TOKEN_SPLIT_GROUP_ID],
+        })) as readonly RawSplit[];
+        const payoutSplits = await Promise.all(
+          contexts.map(
+            (ctx) =>
+              publicClient.readContract({
+                address: splitsAddr,
+                abi: jbSplitsAbi,
+                functionName: "splitsOf",
+                args: [pid, rid, payoutSplitGroupId(ctx.token)],
+              }) as Promise<readonly RawSplit[]>,
+          ),
+        );
+        return {
+          action: option.action,
+          option,
+          entry,
+          rulesetId: rid,
+          terminal,
+          access,
+          reservedSplits,
+          payoutSplits: contexts.map((ctx, i) => ({
+            token: ctx.token as Address,
+            splits: payoutSplits[i],
+          })),
+        };
+      };
+
+      const sourceEntries = await Promise.all(plan.options.map(readSource));
+      return {
+        current,
+        upcoming,
+        latest,
+        latestApprovalStatus,
+        plan,
+        sources: Object.fromEntries(
+          sourceEntries.map((source) => [source.action, source]),
+        ) as Partial<Record<QueueAction, PrefillSource>>,
+      };
+}
+
+function rulesFromSource(source: PrefillSource): EditorState {
+  const { ruleset: r, metadata: m } = source.entry;
+  const { access } = source;
+  return {
+      duration: r.duration,
+      weight: formatUnits(r.weight, 18),
+      weightCutPct: billionthsToPct(r.weightCutPercent, 7),
+      reservedPct: bpToPct(m.reservedPercent),
+      cashOutTaxPct: bpToPct(m.cashOutTaxRate),
+      pausePay: m.pausePay,
+      pauseCreditTransfers: m.pauseCreditTransfers,
+      pause721Transfers: decode721RulesetMetadata(
+        Number(m.metadata ?? 0),
+      ).pauseTransfers,
+      holdFees: m.holdFees,
+      ownerMustSendPayouts: m.ownerMustSendPayouts,
+      allowOwnerMinting: m.allowOwnerMinting,
+      allowSetTerminals: m.allowSetTerminals,
+      allowSetController: m.allowSetController,
+      allowTerminalMigration: m.allowTerminalMigration,
+      allowSetCustomToken: m.allowSetCustomToken,
+      allowAddAccountingContext: m.allowAddAccountingContext,
+      allowAddPriceFeed: m.allowAddPriceFeed,
+      limits: access.map((a) => limitDraftFrom(a)),
+    };
+}
+
+function queueRecoveryKey(chainId: number, projectId: number): string {
+  return `jbm:queue-rulesets:${chainId}:${projectId}`;
+}
+
+type QueueRecoveryJournal = { scope: string; review: Reviewed; action: QueueAction };
+
+export function readQueueJournal(key: string): QueueRecoveryJournal | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const journal = JSON.parse(raw, (_key, value) => value && typeof value === "object" && Object.keys(value).length === 1 && typeof value.bigint === "string" ? BigInt(value.bigint) : value) as QueueRecoveryJournal;
+    if (!journal.review?.destinations?.length || journal.scope !== relayrCallsScope(reviewedQueueCalls(journal.review, journal.action))) return null;
+    return journal;
+  } catch { return null; }
+}
+
+function pendingQueueScope(key: string): QueueRecoveryJournal | null {
+  const journal = readQueueJournal(key);
+  return journal && loadRelayrPendingSession(journal.scope) ? journal : null;
+}
+
+export function saveQueueJournal(journal: QueueRecoveryJournal): void {
+  const text = JSON.stringify(journal, (_key, value) => typeof value === "bigint" ? { bigint: value.toString() } : value);
+  for (const destination of journal.review.destinations) {
+    const key = queueRecoveryKey(destination.chainId, destination.projectId);
+    const existing = pendingQueueScope(key);
+    if (existing && existing.scope !== journal.scope) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
+    window.localStorage.setItem(key, text);
+    if (window.localStorage.getItem(key) !== text) throw new Error("Allow browser storage before queueing rules on multiple chains.");
+  }
+}
+
+/** Overlapping chain selections share a lock before publishing recovery aliases. */
+async function withQueueDestinationLocks<T>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> {
+  if (typeof navigator === "undefined" || !navigator.locks) {
+    if (destinations.length < 2) return run();
+    throw new Error("Use a browser with Web Locks support to queue rules on multiple chains.");
+  }
+  const keys = destinations.map(destination => queueRecoveryKey(destination.chainId, destination.projectId)).sort();
+  const lock = async (index: number): Promise<T> => index === keys.length ? run() : await navigator.locks.request(keys[index], { ifAvailable: true }, async held => {
+    if (!held) throw new Error("A ruleset update for this project is already running in another tab.");
+    return lock(index + 1);
+  });
+  return lock(0);
+}
+
+function clearQueueJournal(journal: QueueRecoveryJournal): void {
+  for (const destination of journal.review.destinations) {
+    const key = queueRecoveryKey(destination.chainId, destination.projectId);
+    if (readQueueJournal(key)?.scope === journal.scope) window.localStorage.removeItem(key);
+  }
+}
+
+export function QueueRecovery({ journal, onComplete }: { journal: QueueRecoveryJournal; onComplete: () => void }) {
+  const { address } = useWallet();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState("A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules.");
+  return <div className="space-y-3">
+    <p className="text-sm text-smoke-700">{status}</p>
+    <TxError error={error} />
+    <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={async () => {
+      if (!address) return;
+      setBusy(true); setError(null);
+      try {
+        if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
+        const saved = loadRelayrPendingSession(journal.scope);
+        if (saved?.paymentStatus === "unpaid") {
+          await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
+        } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => {
+          if (progress.phase === "executing") setStatus(`Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`);
+          else setStatus("Checking the saved payment and destination transactions…");
+        } });
+        clearQueueJournal(journal);
+        onComplete();
+      } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
+      finally { setBusy(false); }
+    }}>{busy ? "Checking saved update…" : "Resume ruleset update"}</button>
+  </div>;
+}
+
+
+type QueueDestination = {
   chainId: JBChainId;
   projectId: number;
   controller: Address;
   authority: Address;
   data: PrefillData;
-  publicClient: PublicClient;
+};
+
+type ReviewedDestination = QueueDestination & {
+  source: PrefillSource;
+  configs: JBRulesetConfig[];
+  starts: number[];
+  changes: TxConfirmRow[];
+};
+
+async function readQueueDestination(chainId: JBChainId, projectId: number, account: Address): Promise<QueueDestination> {
+  const client = clientFor(chainId);
+  const [owner, controller] = await Promise.all([
+    client.readContract({ address: v6Address("JBProjects", chainId), abi: jbProjectsAbi, functionName: "ownerOf", args: [BigInt(projectId)] }),
+    client.readContract({ address: v6Address("JBDirectory", chainId), abi: jbDirectoryAbi, functionName: "controllerOf", args: [BigInt(projectId)] }),
+  ]);
+  if (controller.toLowerCase() !== v6Address("JBController", chainId).toLowerCase()) {
+    throw new Error("This chain uses a controller this editor cannot drive.");
+  }
+  let authority: Address | null = null;
+  if (owner.toLowerCase() === account.toLowerCase()) authority = owner;
+  else {
+    const identity = await readAuthorityIdentity(client, owner);
+    if (identity?.kind === "safe" && identity.owners.some(signer => signer.toLowerCase() === account.toLowerCase())) authority = owner;
+    else if (await hasPermissions(client, { chainId, operator: account, account: owner, projectId: BigInt(projectId), permissionIds: [JBPermissionIdsV6.QUEUE_RULESETS] })) authority = account;
+  }
+  if (!authority) throw new Error("This wallet cannot queue rules on this chain.");
+  return { chainId, projectId, controller, authority, data: await readQueuePrefill(client, chainId, projectId, controller) };
+}
+
+function limitChanged(a: LimitDraft, b: LimitDraft): boolean {
+  return a.mode !== b.mode || a.amount !== b.amount || a.currency !== b.currency;
+}
+
+/** Carry only reviewed changes to a peer, preserving every untouched chain-specific field. */
+export function rulesForQueueDestination(baseline: EditorState, stage: EditorState, peer: EditorState, sourceChain: JBChainId, destinationChain: JBChainId): EditorState {
+  if (sourceChain === destinationChain) return stage;
+  const result = { ...peer, limits: peer.limits.map(limit => ({ ...limit })) };
+  for (const field of Object.keys(baseline) as (keyof EditorState)[]) {
+    if (field !== "limits" && stage[field] !== baseline[field]) {
+      Object.assign(result, { [field]: stage[field] });
+    }
+  }
+  baseline.limits.forEach((original, index) => {
+    if (!limitChanged(original, stage.limits[index])) return;
+    const originalToken = original.token.toLowerCase();
+    const peerToken = originalToken === NATIVE_TOKEN.toLowerCase()
+      ? NATIVE_TOKEN
+      : originalToken === USDC_ADDRESSES[sourceChain]?.toLowerCase()
+        ? USDC_ADDRESSES[destinationChain]
+        : undefined;
+    if (!peerToken) throw new Error(`Edit ${original.symbol} payout limits separately on each chain; its token mapping cannot be verified.`);
+    const peerIndex = result.limits.findIndex(limit => limit.token.toLowerCase() === peerToken.toLowerCase());
+    if (peerIndex < 0) throw new Error(`${chainName(destinationChain)} does not accept ${original.symbol}. Edit its payout limits separately.`);
+    const target = result.limits[peerIndex];
+    if (target.unrepresentableLimits?.length) throw new Error(`${chainName(destinationChain)} has multiple payout currencies for ${original.symbol}. Edit its limits separately.`);
+    const next = stage.limits[index];
+    if (next.currency !== BASE_ETH && next.currency !== BASE_USD && next.currency !== Number(BigInt(original.token) & 0xffffffffn)) {
+      throw new Error(`Edit ${original.symbol} limits in currency ${next.currency} separately; its cross-chain unit cannot be verified.`);
+    }
+    // Base currency IDs name ETH/USD; a token-denominated currency must use
+    // this destination's token address rather than the route chain's uint32.
+    const currency = next.currency === BASE_ETH || next.currency === BASE_USD
+      ? next.currency
+      : Number(BigInt(peerToken) & 0xffffffffn);
+    result.limits[peerIndex] = { ...target, mode: next.mode, amount: next.amount, currency };
+  });
+  return result;
+}
+
+export function queueDestinationStages(baseline: EditorState, stages: EditorState[], peer: EditorState, sourceChain: JBChainId, destinationChain: JBChainId, afterMode: AfterMode): EditorState[] {
+  let previous = peer;
+  const explicit = stages.map((stage, index) => {
+    const mapped = rulesForQueueDestination(index === 0 ? baseline : stages[index - 1], stage, previous, sourceChain, destinationChain);
+    previous = mapped;
+    return mapped;
+  });
+  const mapped = expandAfterwards(explicit, afterMode);
+  if (mapped.some((stage, index) => index < mapped.length - 1 && (stage.duration === 0 || stage.duration === FOREVER_SECONDS))) {
+    throw new Error(`${chainName(destinationChain)} has a non-final ruleset with no end. Set its cycle length before adding a following ruleset.`);
+  }
+  return mapped;
+}
+
+/** A reviewed, ready-to-send queue: the exact config is frozen so what the
+ *  owner confirms is what's sent. */
+type Reviewed = {
+  configs: JBRulesetConfig[];
+  destinations: ReviewedDestination[];
+  account: Address;
+  /** Whether the new config removes all payout limits. */
+  clearsPayouts: boolean;
+};
+
+export function buildQueueDestinationConfig(
+    rules: EditorState,
+    stageMustStart: number,
+    configSource: PrefillSource,
+  ): JBRulesetConfig {
+    const { terminal, reservedSplits, payoutSplits } = configSource;
+    const { ruleset: r, metadata: m } = configSource.entry;
+    const fundAccessLimitGroups = rules.limits
+      .map((l) => {
+        const original = configSource.access.find(access => access.ctx.token.toLowerCase() === l.token.toLowerCase());
+        return {
+        terminal,
+        token: l.token,
+        payoutLimits: original && !limitChanged(limitDraftFrom(original), l)
+          ? original.payoutLimits.map(limit => ({ ...limit }))
+          : l.mode === "none"
+            ? []
+            : [
+                {
+                  amount:
+                    l.mode === "unlimited"
+                      ? UNLIMITED_PAYOUT
+                      : parseUnits(l.amount.trim() || "0", l.decimals),
+                  currency: l.currency,
+                },
+                ...(l.unrepresentableLimits ?? []),
+              ],
+        surplusAllowances: l.surplusAllowances.map((s) => ({
+          amount: s.amount,
+          currency: s.currency,
+        })),
+      }})
+      // Drop groups that grant nothing — an empty fundAccessLimitGroups means
+      // ZERO payouts, which the diff surfaces loudly.
+      .filter(
+        (g) => g.payoutLimits.length > 0 || g.surplusAllowances.length > 0,
+      );
+
+    const splitGroups = [
+      ...(reservedSplits.length > 0
+        ? [{ groupId: RESERVED_TOKEN_SPLIT_GROUP_ID, splits: reservedSplits }]
+        : []),
+      ...payoutSplits
+        .filter((p) => p.splits.length > 0)
+        .map((p) => ({
+          groupId: payoutSplitGroupId(p.token),
+          splits: p.splits,
+        })),
+    ];
+
+    return {
+      mustStartAtOrAfter: stageMustStart,
+      duration: rules.duration,
+      weight: parseUnits(rules.weight.trim() || "0", 18),
+      weightCutPercent: pctTo1e9(rules.weightCutPct),
+      // Keep the selected source's approval hook so its future rule-change
+      // condition carries forward unchanged.
+      approvalHook: r.approvalHook,
+      metadata: {
+        ...m,
+        reservedPercent: pctToBp(rules.reservedPct),
+        cashOutTaxRate: pctToBp(rules.cashOutTaxPct),
+        pausePay: rules.pausePay,
+        pauseCreditTransfers: rules.pauseCreditTransfers,
+        metadata: build721RulesetMetadata({
+          metadata: Number(m.metadata ?? 0),
+          pauseTransfers: rules.pause721Transfers,
+        }),
+        holdFees: rules.holdFees,
+        ownerMustSendPayouts: rules.ownerMustSendPayouts,
+        allowOwnerMinting: rules.allowOwnerMinting,
+        allowSetTerminals: rules.allowSetTerminals,
+        allowSetController: rules.allowSetController,
+        allowTerminalMigration: rules.allowTerminalMigration,
+        allowSetCustomToken: rules.allowSetCustomToken,
+        allowAddAccountingContext: rules.allowAddAccountingContext,
+        allowAddPriceFeed: rules.allowAddPriceFeed,
+      },
+      splitGroups,
+      fundAccessLimitGroups,
+    } as JBRulesetConfig;
+  }
+
+export function reviewedQueueCalls(review: Reviewed, action: QueueAction): AuthorityCall[] {
+  return review.destinations.map(destination => ({
+        ...buildQueueRulesetsAuthorityCall({
+          chainId: destination.chainId, authority: destination.authority, controller: destination.controller,
+          projectId: BigInt(destination.projectId), rulesetConfigurations: destination.configs, memo: "", label: "Queue new rules",
+        }),
+        reverifyAuthority: async () => {
+          const live = await readQueueDestination(destination.chainId, destination.projectId, review.account);
+          const liveSource = live.data.sources[action];
+          if (live.authority.toLowerCase() !== destination.authority.toLowerCase() || live.controller.toLowerCase() !== destination.controller.toLowerCase() || queueSourceFingerprint(liveSource) !== queueSourceFingerprint(destination.source)) {
+            throw new Error(`The authority, queue, or rules changed on ${chainName(destination.chainId)}. Reload and review before sending.`);
+          }
+          if (review.destinations.length > 1) {
+            if (!relayrSupportsChains(review.destinations.map(item => item.chainId))) throw new Error("Choose supported chains from the same network family: all mainnets or all testnets.");
+            const identity = await readAuthorityIdentity(clientFor(destination.chainId), live.authority);
+            if (live.authority.toLowerCase() !== review.account.toLowerCase() || (identity?.kind !== "eoa" && identity?.kind !== "delegated-eoa")) throw new Error("Queue rules separately for Safe accounts and different authorities.");
+          }
+          const now = Math.floor(Date.now() / 1000);
+          if (destination.source.option.requiresStartDate && destination.configs[0].mustStartAtOrAfter < Math.max(now + 60, Number(liveSource!.entry.ruleset.start) + 1)) {
+            throw new Error("The chosen start is no longer safely in the future. Choose a later time and review again.");
+          }
+          const parent = action === "replace" ? BigInt(destination.source.entry.ruleset.basedOnId) === BigInt(live.data.current.ruleset.id) ? live.data.current.ruleset : null : liveSource!.entry.ruleset;
+          const starts = queueStageStarts({ parent: parent ? { start: Number(parent.start), duration: Number(parent.duration) } : null, firstMust: destination.configs[0].mustStartAtOrAfter,
+            stages: destination.configs.map((config, index) => ({ duration: config.duration, ...(index > 0 ? { startMode: "date" as const, startDate: new Date((config.mustStartAtOrAfter || now) * 1000).toISOString() } : {}) })), now }).starts;
+          assertQueueNotice(destination.chainId, liveSource!, parent?.approvalHook as Address | undefined, starts, now);
+        },
+      }));
+}
+
+function RulesetEditor(props: {
+  chainId: JBChainId;
+  projectId: number;
+  data: PrefillData;
+  chains: readonly (readonly [number, number])[];
+  onPending: () => void;
 }) {
   const [action, setAction] = useState<QueueAction>(
     props.data.plan.defaultAction,
@@ -648,57 +983,47 @@ function RulesetEditor(props: {
 function RulesetEditorForm({
   chainId,
   projectId,
-  controller,
-  authority,
   data,
   action,
   source,
   onActionChange,
-  publicClient,
+  chains,
+  onPending,
 }: {
   chainId: JBChainId;
   projectId: number;
-  controller: Address;
-  /** The account the queue call routes through: the owner (possibly a Safe
-   *  the connected wallet signs for) or a QUEUE_RULESETS operator. */
-  authority: Address;
   data: PrefillData;
   action: QueueAction;
   source: PrefillSource;
   onActionChange: (action: QueueAction) => void;
-  publicClient: PublicClient;
+  chains: readonly (readonly [number, number])[];
+  onPending: () => void;
 }) {
   const { isConnected, address, openSignIn } = useWallet();
 
-  const { terminal, access, reservedSplits, payoutSplits } = source;
+  const { access } = source;
   const r = source.entry.ruleset;
-  const m = source.entry.metadata;
 
-  const baseline: EditorState = useMemo(
-    () => ({
-      duration: r.duration,
-      weight: formatUnits(r.weight, 18),
-      weightCutPct: billionthsToPct(r.weightCutPercent, 4),
-      reservedPct: bpToPct(m.reservedPercent),
-      cashOutTaxPct: bpToPct(m.cashOutTaxRate),
-      pausePay: m.pausePay,
-      pauseCreditTransfers: m.pauseCreditTransfers,
-      pause721Transfers: decode721RulesetMetadata(
-        Number(m.metadata ?? 0),
-      ).pauseTransfers,
-      holdFees: m.holdFees,
-      ownerMustSendPayouts: m.ownerMustSendPayouts,
-      allowOwnerMinting: m.allowOwnerMinting,
-      allowSetTerminals: m.allowSetTerminals,
-      allowSetController: m.allowSetController,
-      allowTerminalMigration: m.allowTerminalMigration,
-      allowSetCustomToken: m.allowSetCustomToken,
-      allowAddAccountingContext: m.allowAddAccountingContext,
-      allowAddPriceFeed: m.allowAddPriceFeed,
-      limits: access.map((a) => limitDraftFrom(a)),
-    }),
-    [r, m, access],
-  );
+  const baseline = useMemo(() => rulesFromSource(source), [source]);
+
+  const projectChains = useMemo(() => Array.from(new Map([[chainId, projectId] as const, ...chains].map(([id, pid]) => [id, [id as JBChainId, pid] as const])).values()), [chainId, projectId, chains]);
+  const [selectedChains, setSelectedChains] = useState<Set<number>>(() => new Set([chainId]));
+  const destinationsQuery = useQuery({
+    queryKey: ["queueRulesetDestinations", projectChains.map(([id, pid]) => `${id}:${pid}`).join("|"), address],
+    enabled: !!address && projectChains.length > 1,
+    staleTime: 30_000,
+    queryFn: () => Promise.all(projectChains.map(async ([id, pid]) => {
+      try {
+        const destination = await readQueueDestination(id, pid, address!);
+        const identity = await readAuthorityIdentity(clientFor(id), destination.authority);
+        const relayable = relayrSupportsChain(id) && destination.authority.toLowerCase() === address!.toLowerCase() && (identity?.kind === "eoa" || identity?.kind === "delegated-eoa");
+        return { chainId: id, destination, relayable, error: null };
+      } catch (err) {
+        return { chainId: id, destination: null, relayable: false, error: err instanceof Error ? err.message : "Could not verify this chain." };
+      }
+    })),
+  });
+  const primaryRelayable = destinationsQuery.data?.find(item => item.chainId === chainId)?.relayable ?? false;
 
   const [state, setState] = useState<EditorState>(baseline);
   const [review, setReview] = useState<Reviewed | null>(null);
@@ -852,198 +1177,109 @@ function RulesetEditorForm({
     return null;
   })();
 
-  const buildConfig = (
-    rules: EditorState,
-    stageMustStart: number,
-  ): JBRulesetConfig => {
-    const fundAccessLimitGroups = rules.limits
-      .map((l) => ({
-        terminal,
-        token: l.token,
-        payoutLimits:
-          l.mode === "none"
-            ? []
-            : [
-                {
-                  amount:
-                    l.mode === "unlimited"
-                      ? UNLIMITED_PAYOUT
-                      : parseUnits(l.amount.trim() || "0", l.decimals),
-                  currency: l.currency,
-                },
-              ],
-        surplusAllowances: l.surplusAllowances.map((s) => ({
-          amount: s.amount,
-          currency: s.currency,
-        })),
-      }))
-      // Drop groups that grant nothing — an empty fundAccessLimitGroups means
-      // ZERO payouts, which the diff surfaces loudly.
-      .filter(
-        (g) => g.payoutLimits.length > 0 || g.surplusAllowances.length > 0,
-      );
 
-    const splitGroups = [
-      ...(reservedSplits.length > 0
-        ? [{ groupId: RESERVED_TOKEN_SPLIT_GROUP_ID, splits: reservedSplits }]
-        : []),
-      ...payoutSplits
-        .filter((p) => p.splits.length > 0)
-        .map((p) => ({
-          groupId: payoutSplitGroupId(p.token),
-          splits: p.splits,
-        })),
-    ];
-
-    return {
-      mustStartAtOrAfter: stageMustStart,
-      duration: rules.duration,
-      weight: parseUnits(rules.weight.trim() || "0", 18),
-      weightCutPercent: pctTo1e9(rules.weightCutPct),
-      // Keep the selected source's approval hook so its future rule-change
-      // condition carries forward unchanged.
-      approvalHook: r.approvalHook,
-      metadata: {
-        ...m,
-        reservedPercent: pctToBp(rules.reservedPct),
-        cashOutTaxRate: pctToBp(rules.cashOutTaxPct),
-        pausePay: rules.pausePay,
-        pauseCreditTransfers: rules.pauseCreditTransfers,
-        metadata: build721RulesetMetadata({
-          metadata: Number(m.metadata ?? 0),
-          pauseTransfers: rules.pause721Transfers,
-        }),
-        holdFees: rules.holdFees,
-        ownerMustSendPayouts: rules.ownerMustSendPayouts,
-        allowOwnerMinting: rules.allowOwnerMinting,
-        allowSetTerminals: rules.allowSetTerminals,
-        allowSetController: rules.allowSetController,
-        allowTerminalMigration: rules.allowTerminalMigration,
-        allowSetCustomToken: rules.allowSetCustomToken,
-        allowAddAccountingContext: rules.allowAddAccountingContext,
-        allowAddPriceFeed: rules.allowAddPriceFeed,
-      },
-      splitGroups,
-      fundAccessLimitGroups,
-    } as JBRulesetConfig;
-  };
-
-  const handleReview = () => {
-    if (!isConnected || !address) {
-      openSignIn();
-      return;
-    }
+  const handleReview = async () => {
+    if (!isConnected || !address) { openSignIn(); return; }
     if (!weightValid || !limitsValid || !startValid || busy) return;
-    if (!followersValid || nonFinalOpenEnded || noticeClash) return;
-    if (limitBlock) {
-      setFlowError(limitBlock);
-      return;
-    }
+    if (!followersValid || nonFinalOpenEnded || (selectedChains.size === 1 && noticeClash)) return;
+    if (limitBlock) { setFlowError(limitBlock); return; }
     if (changes.length === 0 && followers.length === 0) {
-      setFlowError("Nothing changed — edit a rule to queue an update.");
-      return;
+      setFlowError("Nothing changed — edit a rule to queue an update."); return;
     }
-    const { musts } = stageStarts(Math.floor(Date.now() / 1000));
-    const configs = allStages.map((rules, i) => buildConfig(rules, musts[i]));
-    const clearsPayouts =
-      access.some((a) => hasPayoutLimit(a.payoutLimits)) &&
-      configs[0].fundAccessLimitGroups.every((g) => g.payoutLimits.length === 0);
-    setReview({ configs, account: address, clearsPayouts });
-    setFlowError(null);
+    setBusy(true); setFlowError(null);
+    try {
+      for (const [id, pid] of projectChains.filter(([id]) => selectedChains.has(id))) {
+        if (pendingQueueScope(queueRecoveryKey(id, pid))) {
+          onPending(); throw new Error(`Resume the pending ruleset update on ${chainName(id)} first.`);
+        }
+      }
+      const multi = selectedChains.size > 1;
+      if (multi && !relayrSupportsChains(projectChains.filter(([id]) => selectedChains.has(id)).map(([id]) => id))) throw new Error("Choose supported chains from the same network family: all mainnets or all testnets.");
+      const live = await Promise.all(projectChains.filter(([id]) => selectedChains.has(id)).map(([id, pid]) => readQueueDestination(id, pid, address)));
+      const route = live.find(destination => destination.chainId === chainId)!;
+      if (!route || queueSourceFingerprint(route.data.sources[action]) !== queueSourceFingerprint(source)) {
+        throw new Error("The ruleset queue or its settings changed. Reload the editor and review the live rules again.");
+      }
+      if (multi) {
+        for (const destination of live) {
+          const identity = await readAuthorityIdentity(clientFor(destination.chainId), destination.authority);
+          if (!relayrSupportsChain(destination.chainId) || destination.authority.toLowerCase() !== address.toLowerCase() || (identity?.kind !== "eoa" && identity?.kind !== "delegated-eoa")) {
+            throw new Error("Queue rules separately for Safe accounts and different authorities.");
+          }
+        }
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const selectedSources = live.map(destination => {
+        const peerSource = destination.data.sources[action];
+        if (!peerSource) throw new Error(`${chainName(destination.chainId)} cannot use this queue position. Edit its queue separately.`);
+        return { destination, source: peerSource };
+      });
+      if (action === "replace" && selectedSources.some(item => item.source.option.mustStartAtOrAfter !== source.option.mustStartAtOrAfter)) {
+        throw new Error("The queued changes start at different times. Replace them separately on each chain, or choose a following ruleset.");
+      }
+      // A shared lower bound leaves time to sign/pay. Each parent still snaps
+      // that bound to its own calendar, shown for every destination below.
+      const commonMust = multi && action !== "replace" ? Math.max(
+        now + 600,
+        scheduledStartSeconds || 0,
+        ...selectedSources.map(({ destination, source: peer }) => Math.max(peer.option.mustStartAtOrAfter ?? 0, now + (deadlineSecondsForHook(peer.entry.ruleset.approvalHook as Address, destination.chainId) ?? 0) + 600)),
+      ) : mustStartAtOrAfter;
+      const destinations: ReviewedDestination[] = selectedSources.map(({ destination, source: peer }) => {
+        if (peer.option.requiresStartDate && (!commonMust || commonMust < Math.max(now + 60, Number(peer.entry.ruleset.start) + 1))) {
+          throw new Error(`Choose a future start after the queued rules on ${chainName(destination.chainId)}.`);
+        }
+        const peerStages = queueDestinationStages(baseline, stagesRules, rulesFromSource(peer), chainId, destination.chainId, afterMode);
+        const peerParent = action === "replace"
+          ? BigInt(peer.entry.ruleset.basedOnId) === BigInt(destination.data.current.ruleset.id) ? destination.data.current.ruleset : null
+          : peer.entry.ruleset;
+        if (multi && !peerParent) throw new Error(`The replaced ruleset's parent could not be verified on ${chainName(destination.chainId)}. Edit this chain separately.`);
+        const timing = queueStageStarts({
+          parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration) } : null,
+          firstMust: commonMust,
+          stages: peerStages.map((rules, i) => ({ duration: rules.duration, ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
+          now,
+        });
+        assertQueueNotice(destination.chainId, peer, peerParent?.approvalHook as Address | undefined, timing.starts, now);
+        return { ...destination, source: peer, configs: peerStages.map((rules, i) => buildQueueDestinationConfig(rules, timing.musts[i], peer)), starts: timing.starts,
+          changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
+        };
+      });
+      const configs = destinations.find(destination => destination.chainId === chainId)!.configs;
+      const clearsPayouts = access.some(item => hasPayoutLimit(item.payoutLimits)) && configs[0].fundAccessLimitGroups.every(group => group.payoutLimits.length === 0);
+      setReview({ configs, destinations, account: address, clearsPayouts });
+    } catch (err) { setFlowError(err instanceof Error ? err.message : "Could not review the rules."); }
+    finally { setBusy(false); }
   };
 
   const handleConfirm = async () => {
     if (!review || busy) return;
     if (address?.toLowerCase() !== review.account.toLowerCase()) {
-      setReview(null);
-      setFlowError(
-        "Your connected account changed — review the changes again.",
-      );
-      return;
+      setReview(null); setFlowError("Your connected account changed — review the changes again."); return;
     }
-    setBusy(true);
-    setFlowError(null);
-    setStatus("Rechecking the live queue…");
+    setBusy(true); setFlowError(null); setStatus("Rechecking every selected queue…");
+    const recoveryKey = queueRecoveryKey(chainId, projectId);
     try {
-      const [liveCurrent, liveLatest] = await Promise.all([
-        getCurrentRuleset(publicClient, {
-          chainId,
-          projectId: BigInt(projectId),
-        }),
-        publicClient.readContract({
-          address: controller,
-          abi: jbControllerAbi,
-          functionName: "latestQueuedRulesetOf",
-          args: [BigInt(projectId)],
-        }),
-      ]);
-      const livePlan = planRulesetQueue({
-        current: liveCurrent.ruleset,
-        upcoming: null,
-        latest: liveLatest[0],
-        latestApprovalStatus: Number(liveLatest[2]),
-      });
-      const liveOption = livePlan.options.find(
-        (option) => option.action === action,
-      );
-      if (
-        !liveOption ||
-        !sameQueueSource(liveOption.source, source.option.source)
-      ) {
-        setReview(null);
-        throw new Error(
-          "The ruleset queue changed while this form was open. Nothing was sent; reload it and review the live queue again.",
-        );
-      }
-      if (
-        source.option.requiresStartDate &&
-        review.configs[0].mustStartAtOrAfter <
-          Math.max(
-            Math.floor(Date.now() / 1000) + 60,
-            Number(liveOption.source.start) + 1,
-          )
-      ) {
-        setReview(null);
-        throw new Error(
-          "The chosen follow-on time is no longer safely in the future. Nothing was sent; choose a later time and review again.",
-        );
-      }
-
-      // Route by the controlling account: the owner EOA sends directly, an
-      // owner Safe gets the exact call proposed/approved through the Safe, an
-      // operator sends as itself — all simulation-first via runAuthorityCalls.
-      const call = buildQueueRulesetsAuthorityCall({
-        chainId,
-        authority,
-        controller,
-        projectId: BigInt(projectId),
-        rulesetConfigurations: review.configs,
-        memo: "",
-        label: "Queue new rules",
-      });
-      setStatus("Reviewing the queued rules…");
-      const result = await runAuthorityCalls({
-        calls: [call],
-        onProgress: (progress) => setStatus(progress.message),
+      if (pendingQueueScope(recoveryKey)) { onPending(); return; }
+      const calls = reviewedQueueCalls(review, action);
+      const result = await withQueueDestinationLocks(review.destinations, async () => {
+        for (const destination of review.destinations) {
+          if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
+        }
+        if (calls.length > 1) {
+          // Freeze every destination before any signature can be published.
+          saveQueueJournal({ scope: relayrCallsScope(calls), review, action });
+        }
+        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) });
+        clearQueueJournal({ scope: relayrCallsScope(calls), review, action });
+        return result;
       });
       setTxHash(result.directResults[0] ?? null);
-      setStatus(
-        safeOutcomeMessage(
-          result,
-          queueSuccessCopy(action, mustStartAtOrAfter),
-        ),
-      );
+      setStatus(safeOutcomeMessage(result, queueSuccessCopy(action, review.configs[0].mustStartAtOrAfter)));
       setSuccess(true);
-    } catch (submitError) {
-      setStatus(null);
-      setFlowError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Could not queue the rules.",
-      );
-    } finally {
-      setBusy(false);
-    }
+    } catch (err) {
+      setStatus(null); setFlowError(err instanceof Error ? err.message : "Could not queue the rules.");
+      if (pendingQueueScope(recoveryKey)) onPending();
+    } finally { setBusy(false); }
   };
 
   const reviewRows: TxConfirmRow[] = review
@@ -1100,7 +1336,11 @@ function RulesetEditorForm({
               },
             ]
           : []),
-        { label: "On", value: chainName(chainId) },
+        ...review.destinations.flatMap(destination => [
+          { label: chainName(destination.chainId), value: `Project #${destination.projectId}; issuance per ${currencyLabel(destination.source.entry.metadata.baseCurrency, "base currency " + destination.source.entry.metadata.baseCurrency)}` },
+          ...(review.destinations.length > 1 ? destination.changes : []),
+          ...destination.starts.map((start, index) => ({ label: `${chainName(destination.chainId)} ruleset #${index + 1}`, value: `Starts around ${formatRulesetDate(start)}` })),
+        ]),
       ]
     : [];
 
@@ -1132,6 +1372,22 @@ function RulesetEditorForm({
         Anything you don&apos;t touch — including payout recipients and the
         rule-change deadline — carries forward from the ruleset named below.
       </p>
+
+      {projectChains.length > 1 ? <fieldset className="mt-4 space-y-2">
+        <legend className="field-label">Queue on</legend>
+        {projectChains.map(([id]) => {
+          const row = destinationsQuery.data?.find(item => item.chainId === id);
+          const eligible = id === chainId || (primaryRelayable && relayrSupportsChains([chainId, id]) && row?.relayable && !!row.destination?.data.sources[action]);
+          return <label key={id} className="flex items-start gap-2 text-sm text-smoke-700">
+            <input type="checkbox" className="mt-1" checked={selectedChains.has(id)} disabled={busy || review !== null || id === chainId || !eligible} onChange={() => {
+              setSelectedChains(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+              setReview(null); setFlowError(null);
+            }} />
+            <span>{chainName(id)}{id === chainId ? " (shown here)" : !row ? " — checking…" : row.error ? ` — ${row.error}` : !eligible ? " — edit this chain separately" : ""}</span>
+          </label>;
+        })}
+        <p className="text-xs text-smoke-600">Changed rules apply to the selected chains. Choose all mainnets or all testnets; each chain keeps its other settings, recipients, and rule-change notice. Safe accounts are queued separately.</p>
+      </fieldset> : null}
 
       <QueueActionPicker
         data={data}
@@ -1315,7 +1571,7 @@ function RulesetEditorForm({
         </div>
       ) : null}
 
-      {noticeClash ? (
+      {noticeClash && selectedChains.size === 1 ? (
         <p className="mt-4 text-xs font-medium text-red-700">{noticeClash}</p>
       ) : null}
 
@@ -1327,7 +1583,7 @@ function RulesetEditorForm({
 
       <div className="mt-4 flex justify-end">
       <button
-        onClick={handleReview}
+        onClick={() => void handleReview()}
         disabled={
           busy ||
           (isConnected &&
@@ -1336,7 +1592,7 @@ function RulesetEditorForm({
               !startValid ||
               !followersValid ||
               nonFinalOpenEnded ||
-              !!noticeClash ||
+              (selectedChains.size === 1 && !!noticeClash) ||
               !!limitBlock))
         }
         className="btn-primary min-h-[44px] px-5 text-sm"
@@ -1656,16 +1912,15 @@ function formatRulesetDate(seconds: number): string {
   });
 }
 
-function sameQueueSource(
-  a: QueueActionOption["source"],
-  b: QueueActionOption["source"],
-): boolean {
-  return (
-    BigInt(a.id) === BigInt(b.id) &&
-    BigInt(a.cycleNumber) === BigInt(b.cycleNumber) &&
-    BigInt(a.start) === BigInt(b.start) &&
-    BigInt(a.duration) === BigInt(b.duration)
-  );
+export function queueSourceFingerprint(source: PrefillSource | undefined): string {
+  return JSON.stringify(source, (_key, value) => typeof value === "bigint" ? value.toString() : value);
+}
+
+function assertQueueNotice(chainId: JBChainId, source: PrefillSource, parentHook: Address | undefined, starts: number[], now: number) {
+  starts.forEach((start, index) => {
+    const notice = deadlineSecondsForHook(index === 0 ? parentHook : source.entry.ruleset.approvalHook as Address, chainId);
+    if (notice && start - now < notice) throw new Error(`Ruleset #${index + 1} starts too soon for ${chainName(chainId)}'s rule-change notice. Choose a later start.`);
+  });
 }
 
 function queueSuccessCopy(action: QueueAction, start: number): string {

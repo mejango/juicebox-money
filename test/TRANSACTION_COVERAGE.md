@@ -16,10 +16,10 @@ Legend:
 | Launch a project | 721 deployer `launchProjectFor` | **E** | `contracts/launch.test.ts` |
 | Launch linked chains | omnichain deployer `launchProjectFor` | **E** | `contracts/launch.test.ts` |
 | Deploy a revnet | `REVDeployer.deployFor` | **E** | `contracts/launch.test.ts` |
-| Add shop tiers | `JB721TiersHook.adjustTiers` | **E** | `contracts/transaction-builders.test.ts` |
+| Add shop tiers | Per-shop `JB721TiersHook.adjustTiers`, exact prices, local inventory/recipients, frozen tier IDs and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts` |
-| Replace shop item media | `JB721TiersHook.setMetadata` | **E** | `contracts/transaction-builders.test.ts` |
-| Deploy a project payer address | `JBProjectPayerDeployer.deployProjectPayer` | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
+| Replace shop item media | Per-shop `JB721TiersHook.setMetadata`, unchanged original metadata fields, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
+| Deploy a project payer address | Raw `JBProjectPayerDeployer.deployProjectPayer` calls with explicit admin/beneficiary, linked project IDs, chosen funding chain and exact clone verification | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/payer-relayr.test.ts`, `components/extras-payer.test.tsx`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
 | Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts` |
@@ -29,24 +29,27 @@ Legend:
 | Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
 | Burn project tokens | active `JBController.burnTokensOf` | **E** | `contracts/burn-tokens.test.ts` |
 | Redeem shop NFTs | `cashOutTokensOf` + 721 metadata | **E** | `contracts/transaction-backlog.test.ts` |
-| Distribute payouts | `JBMultiTerminal.sendPayoutsOf` | **E** | `contracts/transaction-builders.test.ts` |
+| Distribute payouts | Local terminal/token/decimals/limit/recipient `sendPayoutsOf` calls, frozen minimums and exact distribution event verification | **P/E** | `contracts/transaction-builders.test.ts`, `data/project-distributions.test.ts`, `components/distribution-batch.test.tsx`, `transactions/project-batch.test.ts` |
 | Use surplus allowance | `JBMultiTerminal.useAllowanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Queue rulesets | `JBController.queueRulesetsOf` | **E** | `contracts/transaction-builders.test.ts` |
+| Queue rulesets across selected mainnets | Per-chain controller/project configuration + one Relayr payment | **P/E** | `components/queue-ruleset-multichain.test.tsx`, `transactions/authority-gas.test.ts` |
 | Edit split groups | `JBController.setSplitGroupsOf` | **E** | `contracts/transaction-builders.test.ts` |
-| Claim project-token credits | `JBController.claimTokensFor` | **E** | `contracts/transaction-backlog.test.ts` |
-| Distribute reserved tokens | `sendReservedTokensToSplitsOf` | **E** | `contracts/transaction-backlog.test.ts` |
-| Update project metadata | `JBController.setUriOf` | **E** | `contracts/manage.test.ts` |
+| Edit reserved recipients across selected mainnets | Local ruleset IDs, locked rows, fallback checks, and frozen Relayr recovery | **P/E** | `components/edit-splits-multichain.test.tsx`, `components/edit-splits.test.ts` |
+| Claim project-token credits | Local controller/token/credit balances in `claimTokensFor`, original holder beneficiary, and frozen batch recovery | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/project-token-batch.test.ts`, `components/project-token-batches.test.tsx` |
+| Distribute reserved tokens | Local controller/ruleset/balance/recipient `sendReservedTokensToSplitsOf` calls, exact destination receipts and failed-distribution event checks | **P/E** | `contracts/transaction-backlog.test.ts`, `data/project-distributions.test.ts`, `components/distribution-batch.test.tsx`, `transactions/project-batch.test.ts` |
+| Update project metadata | Per-destination `JBController.setUriOf`, metadata preservation, and frozen recovery | **P/E** | `contracts/manage.test.ts`, `components/metadata-editor.test.tsx` |
 | Deploy project ERC-20 | `JBController.deployERC20For` | **E** | `contracts/manage.test.ts` |
 | Rename project ERC-20 | `setTokenMetadataOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Mint project tokens | active `mintTokensOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Transfer project ownership | `JBProjects.transferFrom` | **E** | `contracts/transaction-backlog.test.ts` |
 | Add or revoke permissions | `JBPermissions.setPermissionsFor` | **E** | `contracts/transaction-builders.test.ts` |
 | Change owner/operator powers | controller/directory/terminal setters + `REVOwner.setOperatorOf` | **E** | `contracts/transaction-backlog.test.ts` |
+| Register accounting tokens across chains | Local token addresses, project IDs, and decimals in `addAccountingContextsFor` | **P/E** | `components/power-accounting-multichain.test.tsx` |
 | Configure buyback/router | registry setter/initializer calls | **E** | `contracts/transaction-backlog.test.ts` |
 | Set project handle | ENS resolver `setText` + mainnet `JBProjectHandles.setEnsNamePartsFor` | **E** | `contracts/project-handles.test.ts` |
 | Deploy same Safe on Ethereum | Safe proxy factory `createProxyWithNonce` after exact-address simulation | **P/E** | `data/cross-chain-authority.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Borrow or repay | `REVLoans.borrowFrom` / `repayLoan` | **E** | `contracts/transaction-builders.test.ts` |
-| Auto-issue tokens | revnet auto-issuance call | **E** | `contracts/transaction-backlog.test.ts`, `components/write-flows.test.tsx` |
+| Auto-issue tokens | Every unlocked `REVOwner.autoIssueFor` stage/beneficiary allocation, with repeated-chain calls in later rounds and single-allocation rows sharing the same recovery aliases | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/project-token-batch.test.ts`, `components/project-token-batches.test.tsx`, `components/write-flows.test.tsx` |
 | Prepare/move tokens cross-chain | terminal + sucker calls | **E** | `contracts/transaction-backlog.test.ts` |
 | Claim bridged funds | sucker claim call | **E** | `contracts/transaction-backlog.test.ts` |
 | Sync sucker accounting | sucker sync call | **E** | `contracts/transaction-backlog.test.ts` |
@@ -61,9 +64,47 @@ Legend:
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |
 | Propose/confirm/execute a Safe tx | EIP-712 + `execTransaction` | **P/E** | `transactions/safe.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts` |
+| Launch across mainnets with one payment | Per-chain launch authorizations + one chosen-chain Relayr funding transaction | **P/E** | `transactions/launch-relayr.test.ts`, `transactions/launch-session.test.ts`, `contracts/launch.test.ts` |
+
+| Resume a reviewed project batch | Frozen destination calls, serialized rounds, original hashes/proposals, and durable completion before clearing Relayr recovery | **P/E** | `transactions/project-batch.test.ts` |
 
 ## Data and recovery invariants
 
+- Shop batches freeze each destination's project, hook, owner, pricing and
+  item configuration. Additions retain exact prices, recipient/project/hook
+  mappings and per-chain inventory; media replacement starts from the full
+  original JSON and rejects changed item URIs. Review, stale-submit rejection,
+  partial reload without files, original-account checks and nonfatal cache
+  refresh failures are covered in `lib/shop-batch.test.ts` and
+  `components/shop-batch-journeys.test.tsx`.
+- Shared project batches save every destination alias before signatures or
+  wallet sends. They preserve every repeated-chain call in later rounds,
+  recover paid bundles without reconstructing changed source state, keep
+  direct/Safe hashes across reload, reject unknown sends and exact-receipt
+  mismatches, and persist application completion before clearing Relayr's
+  journal in `transactions/project-batch.test.ts`.
+- Payout and reserved-token distribution reviews bind local controllers,
+  terminals, accounting tokens/decimals, current rulesets, limits, balances,
+  recipients and quote minimums. Recovery retains original calls when source
+  state drifts. Successful receipts must also prove the intended distribution;
+  recipient fallback failures, partial hook pulls and reserved hook burns
+  remain unresolved in `data/project-distributions.test.ts` and
+  `components/distribution-batch.test.tsx`.
+- Holder claims preserve local ERC-20 availability, controller, full credit
+  amount and holder beneficiary. Aggregate auto-issuance keeps all unlocked
+  stage/beneficiary allocations and revalidates them before funding. Individual
+  allocation rows use the same project aliases as aggregate issuance. Selected
+  chain mappings, paused recovery and account changes are covered in
+  `transactions/project-token-batch.test.ts` and
+  `components/project-token-batches.test.tsx`.
+- Payer deployment uses raw factory calldata because the explicit factory
+  parameters define admin and beneficiary. Frozen mainnet bundles retain
+  canceled funding, lost quote responses and partial results; direct/testnet
+  and Safe execution keep original hashes/proposals. Canonical destination
+  proofs bind the deployment event, clone implementation and intended payer
+  configuration in `transactions/payer-relayr.test.ts`; selection, explicit
+  admin/beneficiary review and saved-result UI are covered in
+  `components/extras-payer.test.tsx`.
 - Cross-chain project IDs and conflict rejection: covered in
   `data/project-identity.test.ts`.
 - Bendystraw HTTP/GraphQL failures, bounded pagination, mismatched shop rows,
@@ -80,9 +121,31 @@ Legend:
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
   `transactions/relayr-orchestration.test.ts`.
+- Funding-chain selection is explicit and quote-bound. Published authorizations
+  survive cancelled funding and unknown quote responses; payment intent is
+  persisted before the wallet sends. Canonical destination verification,
+  ineligible-bundle rejection, single-chain direct execution, and unpaid recovery revalidation are
+  covered in `transactions/relayr-orchestration.test.ts`,
+  `transactions/authority-gas.test.ts`, and the funding-chain-selection suites.
+- Multichain ruleset changes preserve unedited peer settings and revalidate
+  complete source configurations around signing and payment. Frozen unpaid
+  reviews and paid partial bundles recover from every selected project's chain
+  in `components/queue-ruleset-multichain.test.tsx`.
+- Safe queue funding and partial recovery preserve the first executable nonce
+  per chain and require canonical Safe execution proof. Quote replacement,
+  unsupported-chain sequencing, and interrupted payments are covered in
+  `components/safe-queue-relayr.test.tsx` and
+  `components/safe-queue-authority.test.ts`.
 - Relayr is reserved for genuinely multi-chain EOA actions. One-chain
   project-owner/operator calls are reviewed and submitted directly; Safe-owned
   calls remain in the Safe path.
+- Multichain mainnet creation signs one launch request per chain and funds one
+  Relayr quote on the selected payment chain. Frozen launch configuration,
+  estimated deployment gas, current creation fees, canonical destination
+  receipts, original-wallet identity, and saved-bundle recovery are covered in
+  `transactions/launch-relayr.test.ts`. Single-chain, testnet, Safe, and legacy
+  direct launch sessions keep the direct path. These deterministic checks do
+  not establish successful live Relayr execution.
 
 Standalone burns use the project’s freshly read active controller and recheck the
 holder’s total balance immediately before the reviewed write. A selector-only row

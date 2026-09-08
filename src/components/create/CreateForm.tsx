@@ -7,6 +7,7 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
+  canAbandonRelayrLaunch,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -82,7 +84,6 @@ import { erc20Abi } from "viem";
 import { splitOk, type DraftSplit } from "./SplitsEditor";
 import { AddressField } from "./AddressField";
 import {
-  StageRulesEditor,
   newDraftStage,
   stageCashOutTax,
   secondsLabel,
@@ -93,7 +94,7 @@ import {
   stageSummary,
   stageSummaryParts,
   type DraftStage,
-} from "./StageRulesEditor";
+} from "./stage-draft";
 import type { ChartStage } from "@/components/project/chartUtils";
 import { IssuanceLadder } from "@/components/project/IssuanceLadder";
 import {
@@ -131,11 +132,23 @@ import {
   environmentForChainIds,
   type ChainEnvironment,
 } from "@/lib/chains";
-import { StoreEditor, itemOk, type DraftItem } from "./StoreEditor";
+import { itemOk, type DraftItem } from "./store-draft";
+import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
 } from "@/lib/jbcenter-ipfs";
+
+// Controlled drafts stay in this form. Both editors share one deferred
+// chunk, loaded only when the user opens a rules or shop step.
+const StoreEditor = dynamic(
+  () => import("./CreateEditors").then(module => module.StoreEditor),
+  { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading shop editor…</p> },
+);
+const StageRulesEditor = dynamic(
+  () => import("./CreateEditors").then(module => module.StageRulesEditor),
+  { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading rules editor…</p> },
+);
 
 const PERMANENTLY_DISABLED_AUTHORITY =
   "0xdead000000000000000000000000000000000000";
@@ -421,6 +434,7 @@ export function CreateForm() {
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
@@ -435,6 +449,14 @@ export function CreateForm() {
   // salt/plans MUST be reused verbatim so the remaining chains pair with the
   // already-launched ones instead of minting a duplicate project.
   const restoredSessionRef = useRef<LaunchSession | null>(null);
+
+  // A saved run keeps its transport: an interrupted direct launch must never
+  // become a new Relayr bundle just because the wallet or selection changed.
+  const usesRelayr = restoredSessionRef.current
+    ? restoredSessionRef.current.transport === "relayr"
+    : selected.length > 1 &&
+      relayrSupportsChains(selected) &&
+      !isSafeConnection(config);
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -1414,7 +1436,7 @@ export function CreateForm() {
    * One wallet transaction per chain, sequentially. Skips chains already
    * done, so a retry resumes exactly where the run stopped.
    */
-  const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
+  const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase("launching");
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
@@ -1569,12 +1591,61 @@ export function CreateForm() {
         return; // Stop here — retry checks a submitted hash before sending.
       }
     }
+    await finishLaunch();
+  };
+
+  const finishLaunch = async () => {
     if (selected.every((id) => statusesRef.current[id]?.phase === "done")) {
       // Nothing left to resume: drop the persisted progress record and the
       // saved draft it was built from.
-      completeLaunchSession();
+      const salt = pinnedRef.current?.salt ?? restoredSessionRef.current?.salt;
+      const clear = () => completeLaunchSession(salt);
+      if (navigator.locks) {
+        await navigator.locks.request("jbm-launch", clear);
+      } else {
+        clear();
+      }
       restoredSessionRef.current = null;
       setPhase("done");
+    }
+  };
+
+  const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
+    const session = loadLaunchSession() ?? restoredSessionRef.current;
+    if (session && session.salt !== pinned.salt) {
+      setLaunchError("Another tab has a different launch in progress. Return to that tab to continue.");
+      setPhase("failed");
+      return;
+    }
+    if (
+      session?.account &&
+      getAccount(config).address?.toLowerCase() !== session.account.toLowerCase()
+    ) {
+      setLaunchError(`Reconnect ${session.account} to continue this launch.`);
+      setPhase("failed");
+      return;
+    }
+    if (session?.transport !== "relayr") {
+      await runDirectChains(pinned);
+      return;
+    }
+    setPhase("launching");
+    setLaunchError(null);
+    try {
+      if (!address) throw new Error("Connect the wallet that started this launch.");
+      const { runRelayrLaunch } = await import("@/lib/launch-relayr");
+      await runRelayrLaunch({
+        session,
+        account: address,
+        onStatus: updateStatus,
+        onProgress: setRelayrProgress,
+      });
+      await finishLaunch();
+    } catch (error) {
+      setLaunchError(friendlyError(error));
+      setPhase("failed");
+    } finally {
+      setRelayrProgress(null);
     }
   };
 
@@ -1618,7 +1689,7 @@ export function CreateForm() {
         // instead of re-launching everything — single-chain included: a
         // refresh mid-confirm would otherwise re-send and mint a duplicate
         // project.
-        saveLaunchSession({
+        const session: LaunchSession = {
           salt: pinned.salt,
           projectUri: pinned.projectUri,
           store: pinned.store,
@@ -1626,12 +1697,32 @@ export function CreateForm() {
           chains: selected,
           statuses: initial,
           createdAt: Date.now(),
-        });
+          account: address,
+          transport: usesRelayr ? "relayr" : "direct",
+        };
+        // The relayed path reserves its journal under the same browser lock
+        // used for submission. Never overwrite another tab's active launch.
+        if (!usesRelayr) {
+          const save = () => {
+            if (!saveLaunchSession(session)) {
+              throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
+            }
+          };
+          if (navigator.locks) {
+            await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
+              if (!lock) throw new Error("Another tab is processing a launch. Return to that tab to continue.");
+              save();
+            });
+          } else {
+            save();
+          }
+        }
+        restoredSessionRef.current = session;
       }
       await runChains(pinned);
     } catch (e) {
       setLaunchError(friendlyError(e));
-      setPhase("form");
+      setPhase(pinnedRef.current ? "failed" : "form");
     }
   };
 
@@ -1648,15 +1739,38 @@ export function CreateForm() {
    * dropped for good: a later launch pins fresh and creates a SEPARATE
    * project, so the affordance's copy warns when chains already succeeded.
    */
-  const abandonLaunch = () => {
-    abandonLaunchSession();
-    restoredSessionRef.current = null;
-    pinnedRef.current = null;
-    statusesRef.current = {};
-    setStatuses({});
-    setLaunchError(null);
-    setPhase("form");
-    setConfirmOpen(false);
+  const abandonLaunch = async () => {
+    const abandon = () => {
+      const session = loadLaunchSession() ?? restoredSessionRef.current;
+      if (session && session.salt !== pinnedRef.current?.salt &&
+          session.salt !== restoredSessionRef.current?.salt) {
+        throw new Error("Another tab started a different launch. Return to that tab to continue.");
+      }
+      if (session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
+        throw new Error("This launch still has published authorizations. Check the original bundle before starting another launch.");
+      }
+      abandonLaunchSession(session?.salt);
+      restoredSessionRef.current = null;
+      pinnedRef.current = null;
+      statusesRef.current = {};
+      setStatuses({});
+      setLaunchError(null);
+      setRelayrProgress(null);
+      setPhase("form");
+      setConfirmOpen(false);
+    };
+    try {
+      if (navigator.locks) {
+        await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
+          if (!lock) throw new Error("Another tab is processing this launch. Return to that tab to continue.");
+          abandon();
+        });
+      } else {
+        abandon();
+      }
+    } catch (error) {
+      setLaunchError(friendlyError(error));
+    }
   };
 
   // Poll bendystraw for freshly launched projects until they're indexed.
@@ -1830,7 +1944,11 @@ export function CreateForm() {
     setStatuses(session.statuses);
     setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
     if (remainingLaunchChains(session).length === 0) {
-      completeLaunchSession();
+      if (navigator.locks) {
+        void navigator.locks.request("jbm-launch", () => completeLaunchSession(session.salt));
+      } else {
+        completeLaunchSession(session.salt);
+      }
       restoredSessionRef.current = null;
       setPhase("done");
     } else {
@@ -1846,7 +1964,9 @@ export function CreateForm() {
       setLaunchError(
         unverified.length > 0
           ? `This launch was interrupted while your wallet was signing on ${unverified.join(", ")}. Check your wallet's recent activity there BEFORE pressing Try again — if a launch went through, resuming would create a second project. Chains that already launched are kept.`
-          : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
+          : session.transport === "relayr"
+            ? "Resume this launch to check its saved Relayr bundle. Completed chains are kept; an uncertain payment or launch is checked before anything is sent again."
+            : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
       );
     }
   }, []);
@@ -1924,7 +2044,7 @@ export function CreateForm() {
     })
     .map((id) => chainName(id));
 
-  // ---- Confirm dialog: review rows, one wallet step per chain, and the run's
+  // ---- Confirm dialog: review rows, per-chain launch progress, and the run's
   // progress. Rendered on the success view too so Done reveals it. ----
   const ownerValue = !authorityEnabled ? (
     "No retained authority"
@@ -1996,7 +2116,9 @@ export function CreateForm() {
       !s || s.phase === "pending"
         ? undefined
         : s.phase === "signing"
-          ? "Confirm in your wallet…"
+          ? usesRelayr
+            ? "Sign this chain's launch request…"
+            : "Confirm in your wallet…"
           : s.phase === "confirming"
             ? s.safeProposalHash
               ? `Safe proposal ${s.safeProposalHash} — co-sign and execute it in your Safe`
@@ -2033,6 +2155,11 @@ export function CreateForm() {
     return url ? [{ chainId: id, txHash: s!.txHash!, url }] : [];
   });
   const launchLocked = phase === "pinning" || phase === "launching";
+  const activeLaunchSession = loadLaunchSession() ?? restoredSessionRef.current;
+  const relayrFundingStarted = activeLaunchSession?.relayr &&
+    ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
+  const mayAbandonLaunch = !usesRelayr || !activeLaunchSession ||
+    canAbandonRelayrLaunch(activeLaunchSession);
   const launchDialog = confirmOpen ? (
     <TxConfirmDialog
       open
@@ -2040,14 +2167,19 @@ export function CreateForm() {
       title={phase === "done" ? `${name.trim()} is live` : "Confirm launch"}
       rows={launchRows}
       steps={launchSteps}
+      stepsIntro={
+        usesRelayr
+          ? "Sign each chain's launch request, then review the Relayr quote and pay once."
+          : undefined
+      }
       activeIndex={launchActiveIndex}
-      status={phase === "pinning" ? "Saving your project details…" : null}
+      status={phase === "pinning" ? "Saving your project details…" : relayrProgress}
       error={launchError ?? stalledChain?.error ?? null}
       busy={launchLocked}
       complete={phase === "done"}
       action={
         phase === "failed"
-          ? stalledChain?.phase === "uncertain"
+          ? usesRelayr || stalledChain?.phase === "uncertain"
             ? "Check again"
             : "Try again"
           : "Confirm & launch"
@@ -2059,6 +2191,11 @@ export function CreateForm() {
         if (phase === "form") setLaunchError(null);
       }}
     >
+      {usesRelayr && phase !== "done" && relayrFundingStarted && activeLaunchSession?.relayr?.paymentChainId ? (
+        <p className="text-sm text-smoke-700">
+          Checking the saved Relayr payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
+        </p>
+      ) : null}
       {launchTxLinks.length > 0 ? (
         <ul className="space-y-1">
           {launchTxLinks.map(({ chainId, txHash, url }) => (
@@ -2075,8 +2212,20 @@ export function CreateForm() {
           ))}
         </ul>
       ) : null}
-      {phase === "failed" ? (
+      {phase === "failed" && !mayAbandonLaunch ? (
+        <p className="text-sm text-smoke-700">
+          This launch has published authorizations that may still execute.
+          Check the saved bundle to continue; starting over could create duplicate projects.
+        </p>
+      ) : null}
+      {phase === "failed" && mayAbandonLaunch ? (
         <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
+          {usesRelayr && activeLaunchSession?.relayr?.published ? (
+            <p>
+              The remaining launch authorizations can no longer execute.
+              Any relay payment already made is not refunded by abandoning this launch.
+            </p>
+          ) : null}
           <p>
             {launchedChainNames.length > 0
               ? `Abandoning stops this run. The ${
@@ -3028,7 +3177,7 @@ export function CreateForm() {
                 ) : null}
                 <Chevron open={stage.expanded} />
               </div>
-              {stage.expanded ? (
+              {!isSimpleProject && step === 2 && stage.expanded ? (
                 <div className="px-4 pb-4">
                   <StageRulesEditor
                     stage={stage}
@@ -3295,7 +3444,7 @@ export function CreateForm() {
           </p>
         ) : null}
 
-        <StoreEditor
+        {step === storeStep ? <StoreEditor
           items={items}
           onChange={setItems}
           currencyLabel={storeCurrencyLabel}
@@ -3312,7 +3461,7 @@ export function CreateForm() {
           }}
           chainIds={selected}
           isRevnet={flavor === "revnet"}
-        />
+        /> : null}
 
         <div className="mt-5">
           <button

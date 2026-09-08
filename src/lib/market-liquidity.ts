@@ -174,7 +174,7 @@ export interface MarketSides {
   pairSide: UserLpPosition | null
 }
 
-export type MarketSideEditKind = EditLiquidityKind | 'mint' | 'keep'
+type MarketSideEditKind = EditLiquidityKind | 'mint' | 'keep'
 
 export interface MarketSideEdit {
   kind: MarketSideEditKind

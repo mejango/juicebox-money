@@ -254,7 +254,7 @@ export function formatCountdown(
 }
 
 /** One whole unit of 18-decimal fixed-point USD. */
-export const USD_SCALE = 10n ** 18n
+const USD_SCALE = 10n ** 18n
 
 /**
  * USD value of a treasury balance, in 18-decimal fixed point. `null` = not

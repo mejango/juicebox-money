@@ -237,7 +237,7 @@ function PowerRow({
   )
 }
 
-function PowerActionForm({
+export function PowerActionForm({
   power,
   rows,
   onCancel,
@@ -263,10 +263,14 @@ function PowerActionForm({
           field =>
             field.kind !== 'address' &&
             field.kind !== 'addressList' &&
-            field.kind !== 'bool',
+            field.kind !== 'bool' &&
+            field.kind !== 'decimals',
         )
         .map(field => [field.name, field.initial ?? '']),
     ),
+  )
+  const [decimalsByChain, setDecimalsByChain] = useState<Record<number, string>>(
+    () => Object.fromEntries(enabledRows.map(row => [row.chainId, ''])),
   )
   const [bools, setBools] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
@@ -324,12 +328,12 @@ function PowerActionForm({
     setReview(null)
     setAck(false)
     setAckExtreme(false)
-  }, [selected, scalars, bools, addresses])
+  }, [selected, scalars, bools, addresses, decimalsByChain])
 
   const resolveSharedValues = (): ResolvedValues => {
     const values: ResolvedValues = {}
     for (const field of power.fields) {
-      if (field.kind === 'address' || field.kind === 'addressList') continue
+      if (field.kind === 'address' || field.kind === 'addressList' || field.kind === 'decimals') continue
       if (field.kind === 'bool') {
         values[field.name] = bools[field.name] ?? false
         continue
@@ -349,15 +353,6 @@ function PowerActionForm({
           throw new Error(`“${field.label}” must be a whole number.`)
         }
         values[field.name] = BigInt(raw)
-      } else {
-        if (!/^\d+$/.test(raw)) {
-          throw new Error(`“${field.label}” must be a whole number.`)
-        }
-        const decimals = Number(raw)
-        if (decimals < 0 || decimals > 32) {
-          throw new Error('Decimals must be between 0 and 32.')
-        }
-        values[field.name] = decimals
       }
     }
     return values
@@ -376,7 +371,7 @@ function PowerActionForm({
       const calls: AuthorityCall[] = []
       const reviewRows: TxConfirmRow[] = [{ label: 'Power', value: power.label }]
       for (const field of power.fields) {
-        if (field.kind === 'address' || field.kind === 'addressList') continue
+        if (field.kind === 'address' || field.kind === 'addressList' || field.kind === 'decimals') continue
         reviewRows.push({
           label: field.label,
           value:
@@ -394,6 +389,15 @@ function PowerActionForm({
         const values: ResolvedValues = { ...shared }
         const display: string[] = []
         for (const field of power.fields) {
+          if (field.kind === 'decimals') {
+            const rawDecimals = (decimalsByChain[row.chainId] ?? '').trim()
+            if (!/^\d+$/.test(rawDecimals) || Number(rawDecimals) > 32) {
+              throw new Error(`${row.name}: decimals must be a whole number between 0 and 32.`)
+            }
+            values[field.name] = Number(rawDecimals)
+            display.push(`${field.label} ${Number(rawDecimals)}`)
+            continue
+          }
           const raw = addresses[field.name]?.[row.chainId] ?? ''
           if (field.kind === 'addressList') {
             const list = parseAddressList(raw)
@@ -562,6 +566,31 @@ function PowerActionForm({
               placeholder={field.placeholder}
               help={field.help}
             />
+          ) : field.kind === 'decimals' ? (
+            <fieldset key={field.name}>
+              <legend className="field-label">{field.label} per chain</legend>
+              <p className="mt-1 text-xs text-smoke-500">
+                Enter the decimals of the token selected on each chain.
+              </p>
+              {enabledRows.filter(row => selected.has(row.chainId)).map(row => (
+                <label key={row.chainId} className="mt-3 block">
+                  <span className="text-xs text-smoke-700">{row.name}</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label={`${field.label} on ${row.name}`}
+                    value={decimalsByChain[row.chainId] ?? ''}
+                    onChange={event => setDecimalsByChain(current => ({
+                      ...current,
+                      [row.chainId]: event.target.value,
+                    }))}
+                    disabled={busy}
+                    placeholder={field.placeholder}
+                    className="input-well mt-1.5 min-h-[42px] w-full px-3 text-sm disabled:opacity-60"
+                  />
+                </label>
+              ))}
+            </fieldset>
           ) : field.kind === 'bool' ? (
             <label key={field.name} className="flex items-start gap-2.5">
               <input

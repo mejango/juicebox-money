@@ -29,6 +29,7 @@ import {
   clientFor,
   readAuthorityOf,
   runAuthorityCalls,
+  safeOutcomeMessage,
   toggleInSet,
   type AuthorityCall,
 } from "@/lib/authority";
@@ -619,16 +620,11 @@ function TransferAuthorityFlow({
           if (index >= 0) setStep(index);
         },
       });
-      const queued = result.safeResults.filter(
-        (item) => item.status === "queued",
-      ).length;
-      const waiting = result.safeResults.filter(
-        (item) => item.status === "waiting",
-      ).length;
       setStatus(
-        queued || waiting
-          ? `Your Safe action is recorded${queued ? `; ${queued} queued` : ""}${waiting ? `; ${waiting} awaiting more onchain approvals` : ""}.`
-          : `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
+        safeOutcomeMessage(
+          result,
+          `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
+        ),
       );
       setDone(true);
     } catch (submitError) {
@@ -1129,13 +1125,11 @@ function PermissionEditor({
           if (index >= 0) setStep(index);
         },
       });
-      const queued = result.safeResults.filter(
-        (item) => item.status === "queued",
-      ).length;
       setStatus(
-        queued
-          ? `Queued on ${queued} Safe chain${queued === 1 ? "" : "s"}; co-sign and execute above.`
-          : `Permissions updated on ${plan.chosen.length} chain${plan.chosen.length === 1 ? "" : "s"}.`,
+        safeOutcomeMessage(
+          result,
+          `Permissions updated on ${plan.chosen.length} chain${plan.chosen.length === 1 ? "" : "s"}.`,
+        ),
       );
       setDone(true);
     } catch (submitError) {

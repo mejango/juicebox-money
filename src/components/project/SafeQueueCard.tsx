@@ -1,7 +1,6 @@
 "use client";
 
 import { chainName } from '@/lib/urn'
-import { getAccount } from "@wagmi/core";
 import {
   JBCoreContracts,
   RevnetCoreContracts,
@@ -37,10 +36,11 @@ import { useWallet } from "@/hooks/useWallet";
 import {
   clearRelayrPendingSession,
   loadRelayrPendingSession,
-  relayrErrorIsUncertain,
+  relayrErrorIsDefiniteNoSubmission,
   relayrDestinationHash,
   relayrPay,
   relayrPaymentLabel,
+  relayrPaymentOptions,
   relayrPoll,
   relayrPostBundle,
   relayrProgress,
@@ -48,6 +48,8 @@ import {
   relayrStateIsFailed,
   relayrStateIsSuccess,
   saveRelayrPendingSession,
+  saveRelayrPendingSessionDurably,
+  withRelayrScopeLock,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrPendingSession,
@@ -55,6 +57,7 @@ import {
   type RelayrSafeExecutionProof,
   type RelayrTransactionRecord,
 } from "@/lib/relayr";
+import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   confirmSafeTx,
   canonicalSafeTxHash,
@@ -77,7 +80,6 @@ import {
 } from "@/lib/safe";
 import { truncateAddress } from "@/lib/format";
 import { requireTransactionReview } from "@/lib/transaction-review";
-import { wagmiConfig } from "@/providers/Providers";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
 import {
@@ -277,6 +279,12 @@ export async function verifyRelayrSafeBatchLanding(
     if (
       receipt.status !== "success" ||
       receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
+      transaction.hash?.toLowerCase() !== hash.toLowerCase() ||
+      transaction.chainId !== entry.chain ||
+      !receipt.blockHash ||
+      typeof receipt.blockNumber !== "bigint" ||
+      transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase() ||
+      transaction.blockNumber !== receipt.blockNumber ||
       !transaction.to ||
       !isAddressEqual(transaction.to, entry.target) ||
       transaction.value !== expectedValue ||
@@ -295,6 +303,12 @@ export async function verifyRelayrSafeBatchLanding(
     ) {
       throw new Error(
         `Could not prove the exact Safe execution landed successfully on chain ${entry.chain}. Keep the paid bundle pending.`,
+      );
+    }
+    const canonicalBlock = await client.getBlock({ blockNumber: receipt.blockNumber });
+    if (canonicalBlock.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()) {
+      throw new Error(
+        `The Safe execution receipt on chain ${entry.chain} is no longer canonical. Keep the paid bundle pending.`,
       );
     }
     await assertRelayrProjectHandlePostcondition(
@@ -870,10 +884,8 @@ function executionPlan(
   transactions: SafeQueuedTx[],
   /**
    * The Safe's on-chain threshold, for transactions the service returned
-   * without a `confirmationsRequired`. Only the FRONT transaction of a batch
-   * is re-simulated before payment, so a later consecutive-nonce transaction
-   * that falls back to 1 here gets no threshold check anywhere and rides
-   * under-signed into a paid Relayr bundle.
+   * without a `confirmationsRequired`. Each selected transaction is also
+   * rechecked against the live policy immediately before execution.
    */
   threshold: number | undefined,
 ): {
@@ -924,7 +936,7 @@ export function SafeQueueCard({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [batchReview, setBatchReview] = useState<BatchReview | null>(null);
-  const [paymentIndex, setPaymentIndex] = useState(0);
+  const [paymentIndex, setPaymentIndex] = useState(-1);
   const pendingScope = useMemo(
     () => `safe-queue:${safe.toLowerCase()}`,
     [safe],
@@ -1032,18 +1044,21 @@ export function SafeQueueCard({
     const rows: ReadyTx[] = [];
     for (const chain of query.data ?? []) {
       const plan = executionPlan(
-      chain.currentNonce,
-      chain.transactions,
-      chain.info?.threshold,
-    );
+        chain.currentNonce,
+        chain.transactions,
+        chain.info?.threshold,
+      );
       for (const transaction of plan.batch) rows.push({ chain, tx: transaction });
     }
     return rows;
   }, [query.data]);
-  const readyBatchCount = useMemo(() => {
-    const chains = new Set(ready.map((row) => row.chain.chainId));
-    return chains.size === 1 ? ready.length : chains.size;
+  const relayrBatch = useMemo(() => {
+    const destinations = [...new Set(ready.map((row) => row.chain.chainId))];
+    return destinations.length > 1 && relayrSupportsChains(destinations);
   }, [ready]);
+  const readyBatchCount = relayrBatch
+    ? new Set(ready.map((row) => row.chain.chainId)).size
+    : ready.length;
   const refetchQueues = query.refetch;
 
   const verifyReadyTx = async (row: ReadyTx): Promise<VerifiedReadyTx> => {
@@ -1090,7 +1105,7 @@ export function SafeQueueCard({
       setBusy("recover-bundle");
       setError(null);
       setNotice(
-        "Checking an already-paid Relayr bundle. This will not re-sign, re-pay, or resubmit transactions.",
+        "Checking the existing Relayr bundle and its execution outcomes.",
       );
       try {
         const records = await relayrPoll(
@@ -1237,10 +1252,9 @@ export function SafeQueueCard({
     setError(null);
     setNotice(null);
     try {
-      const readyChains = new Set(ready.map((row) => row.chain.chainId));
-      if (readyChains.size === 1) {
+      if (!relayrBatch) {
         const ordered = [...ready].sort(
-          (a, b) => Number(a.tx.nonce) - Number(b.tx.nonce),
+          (a, b) => a.chain.chainId - b.chain.chainId || Number(a.tx.nonce) - Number(b.tx.nonce),
         );
         setBusy("execute-all-direct");
         for (let index = 0; index < ordered.length; index++) {
@@ -1271,7 +1285,7 @@ export function SafeQueueCard({
           );
         }
         setNotice(
-          `Executed ${ordered.length} Safe transactions directly on ${ordered[0].chain.name}.`,
+          `Executed ${ordered.length} Safe transactions directly.`,
         );
         await refetchQueues();
         return;
@@ -1287,9 +1301,8 @@ export function SafeQueueCard({
       for (let index = 0; index < relayrRows.length; index++) {
         const row = relayrRows[index];
         // A later consecutive nonce cannot simulate against today's Safe
-        // nonce until the earlier transaction executes. Verify the front
-        // transaction on each chain; Relayr's virtual nonces preserve the
-        // reviewed order for the remainder.
+        // nonce until the earlier transaction executes. Include only the
+        // current transaction on each chain; later nonces need a new review.
         setNotice(
           `Checking ${index + 1}/${relayrRows.length} on ${row.chain.name}…`,
         );
@@ -1299,17 +1312,8 @@ export function SafeQueueCard({
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
       const quote = await relayrPostBundle(entries);
-      const payments = [...(quote.payment_info ?? [])].sort((a, b) =>
-        BigInt(a.amount) < BigInt(b.amount) ? -1 : 1,
-      );
-      if (!payments.length)
-        throw new Error("Relayr returned no payment option.");
-      const activeChain = getAccount(wagmiConfig).chainId;
-      const preferred = Math.max(
-        0,
-        payments.findIndex((item) => item.chain === activeChain),
-      );
-      setPaymentIndex(preferred);
+      const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
+      setPaymentIndex(-1);
       setBatchReview({ quote, rows: verifiedRows, entries, payments });
       setNotice(null);
     } catch (batchError) {
@@ -1323,11 +1327,11 @@ export function SafeQueueCard({
     }
   };
 
-  const confirmExecuteAll = async () => {
-    if (!address || !batchReview) return;
-    let payment = batchReview.payments[paymentIndex];
+  const confirmExecuteAll = () => withRelayrScopeLock(pendingScope, async () => {
+    if (!address || !batchReview || pendingSession) return;
+    const payment = batchReview.payments[paymentIndex];
     if (!payment) return;
-    let quote = batchReview.quote;
+    const quote = batchReview.quote;
     let paidSession: RelayrPendingSession | null = null;
     setBusy("execute-all");
     setError(null);
@@ -1346,10 +1350,8 @@ export function SafeQueueCard({
       };
       // The review may be minutes old, and a queued transaction executed or
       // replaced through the Safe app meanwhile consumes its nonce — which
-      // would revert EVERY execTransaction in the bundle after Relayr is
-      // paid. Re-verify the front transaction on each chain now, immediately
-      // before payment; Relayr's virtual nonces preserve the order for the
-      // remainder, exactly as at review time.
+      // would revert that chain's execTransaction after Relayr is paid.
+      // Re-verify every included transaction immediately before payment.
       for (let index = 0; index < batchReview.rows.length; index++) {
         const row = batchReview.rows[index];
         const entry = batchReview.entries[index];
@@ -1361,22 +1363,20 @@ export function SafeQueueCard({
       // A quote about to expire would be rejected at payment time anyway —
       // refresh it here so the flow re-reviews a live payment instead of
       // failing after the confirmations above.
-      const numericPaymentDeadline = Number(payment.payment_deadline);
+      const numericPaymentDeadline = /^\d+$/u.test(String(payment.payment_deadline))
+        ? Number(payment.payment_deadline)
+        : Math.floor(Date.parse(String(payment.payment_deadline)) / 1_000);
       const deadlineSoon =
         Number.isSafeInteger(numericPaymentDeadline) &&
         numericPaymentDeadline <= Math.floor(Date.now() / 1000) + 60;
       if (deadlineSoon) {
         setNotice("The Relayr quote is about to expire — requesting a fresh one…");
-        quote = await relayrPostBundle(batchReview.entries);
-        const payments = [...(quote.payment_info ?? [])].sort((a, b) =>
-          BigInt(a.amount) < BigInt(b.amount) ? -1 : 1,
-        );
-        if (!payments.length)
-          throw new Error("Relayr returned no payment option.");
-        payment =
-          payments.find((item) => item.chain === payment.chain) ?? payments[0];
-        setBatchReview({ ...batchReview, quote, payments });
-        setPaymentIndex(payments.indexOf(payment));
+        const refreshedQuote = await relayrPostBundle(batchReview.entries);
+        const payments = relayrPaymentOptions(refreshedQuote, batchReview.entries.map((entry) => entry.chain));
+        setBatchReview({ ...batchReview, quote: refreshedQuote, payments });
+        setPaymentIndex(-1);
+        setNotice("The quote was refreshed. Choose a funding chain and review the new payment.");
+        return;
       }
       await requireTransactionReview({
         kind: "authorization",
@@ -1434,6 +1434,7 @@ export function SafeQueueCard({
         payment,
         address,
         quote.bundle_uuid,
+        batchReview.entries.map((entry) => entry.chain),
         (hash) => {
           submittedSession = saveRelayrPendingSession(pendingScope, {
             bundleUuid: quote.bundle_uuid,
@@ -1456,6 +1457,35 @@ export function SafeQueueCard({
           );
         },
         reverifyBatch,
+        () => {
+          const existingSession = loadRelayrPendingSession(pendingScope);
+          if (existingSession) {
+            setPendingSession(existingSession);
+            throw new Error("This Safe already has an unresolved Relayr bundle. Check its status before paying again.");
+          }
+          submittedSession = saveRelayrPendingSessionDurably(pendingScope, {
+            bundleUuid: quote.bundle_uuid,
+            paymentHash: null,
+            paymentChainId: payment.chain,
+            paymentStatus: "sending",
+            chainIds: batchReview.rows.map((row) => row.chain.chainId),
+            expectedCount: batchReview.rows.length,
+            records: quote.transactions ?? [],
+            itemCount: batchReview.rows.length,
+            account: address,
+            createdAt: Date.now(),
+            expectedEntries,
+            expectedSafeExecutions,
+          });
+          if (
+            submittedSession.expectedEntries?.length !== batchReview.rows.length ||
+            submittedSession.expectedSafeExecutions?.length !== batchReview.rows.length
+          ) {
+            throw new Error("Could not save every exact Safe execution proof. No payment was sent.");
+          }
+          paidSession = submittedSession;
+          setPendingSession(submittedSession);
+        },
       );
       const initialSession = saveRelayrPendingSession(pendingScope, {
         ...(submittedSession ?? {
@@ -1504,13 +1534,12 @@ export function SafeQueueCard({
       setBatchReview(null);
       await refetchQueues();
     } catch (batchError) {
-      // Clear only a payment which failed before confirmation (for example an
-      // explicit onchain revert). Once payment is confirmed, keep every
-      // destination result recoverable even when Relayr reports failures.
+      // Only an explicit wallet rejection before a hash was returned proves
+      // the payment was never submitted. Keep ambiguous and partial outcomes.
       if (
-        paidSession?.paymentStatus !== "confirmed" &&
+        paidSession?.paymentStatus === "sending" &&
         paidSession &&
-        !relayrErrorIsUncertain(batchError)
+        relayrErrorIsDefiniteNoSubmission(batchError)
       ) {
         clearRelayrPendingSession(pendingScope);
         setPendingSession(null);
@@ -1523,7 +1552,9 @@ export function SafeQueueCard({
     } finally {
       setBusy(null);
     }
-  };
+  }).catch((lockError: unknown) => {
+    setError(lockError instanceof Error ? lockError.message : "This Safe has another Relayr payment in progress.");
+  });
 
   return (
     <section className="card p-5">
@@ -1563,7 +1594,9 @@ export function SafeQueueCard({
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                 Bundle{" "}
                 <span className="font-mono">{pendingSession.bundleUuid}</span>{" "}
-                has a submitted payment. Checking its status will not re-sign,
+                {pendingSession.paymentStatus === "sending"
+                  ? "may have a submitted payment whose hash is unavailable."
+                  : "has a submitted payment."} Checking its status will not re-sign,
                 re-pay, or resubmit transactions.
               </p>
               {pendingSession.paymentHash &&
@@ -1598,17 +1631,12 @@ export function SafeQueueCard({
           </div>
           <div className="mt-3 space-y-2 border-t border-smoke-200 pt-3">
             {pendingSession.chainIds.map((chainId, index) => {
-              // Records carry only {chain, status}, so two consecutive-nonce
-              // transactions on ONE chain are told apart by their position
-              // among that chain's rows — matching on chain alone showed the
-              // first record's state and hash for both.
-              const occurrence = pendingSession.chainIds
-                .slice(0, index)
-                .filter((row) => row === chainId).length;
-              const record =
-                pendingSession.records.filter(
-                  (row) => relayrRecordChain(row) === chainId,
-                )[occurrence] ?? pendingSession.records[index];
+              const proof = pendingSession.expectedSafeExecutions?.[index];
+              const matches = pendingSession.records.filter(
+                (row) => relayrRecordChain(row) === chainId &&
+                  !!proof && row.tx_uuid?.toLowerCase() === proof.txUuid.toLowerCase(),
+              );
+              const record = matches.length === 1 ? matches[0] : undefined;
               const state = record?.status?.state;
               const hash = record ? relayrDestinationHash(record) : null;
               const relayrReported = relayrStateIsSuccess(state);
@@ -1664,9 +1692,9 @@ export function SafeQueueCard({
                 Execute {batchReview.rows.length} confirmed Safe transactions
               </p>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Each chain’s front transaction simulated successfully. Later
-                nonces execute strictly in the reviewed order. Choose where to
-                make one Relayr payment for the whole bundle.
+                Each chain’s current transaction simulated successfully. Later
+                nonces need a new review after these transactions land. Choose
+                where to make one Relayr payment for the whole bundle.
               </p>
             </div>
             <button
@@ -1728,7 +1756,7 @@ export function SafeQueueCard({
           <button
             type="button"
             onClick={confirmExecuteAll}
-            disabled={!!busy || !batchReview.payments[paymentIndex]}
+            disabled={!!busy || !!pendingSession || !batchReview.payments[paymentIndex]}
             className="btn-primary mt-4 min-h-[42px] w-full text-sm"
           >
             {busy === "execute-all"
@@ -1749,10 +1777,10 @@ export function SafeQueueCard({
                 (owner) => owner.toLowerCase() === address.toLowerCase(),
               );
             const plan = executionPlan(
-      chain.currentNonce,
-      chain.transactions,
-      chain.info?.threshold,
-    );
+              chain.currentNonce,
+              chain.transactions,
+              chain.info?.threshold,
+            );
             const queueUrl = safeQueueLink(chain.chainId, safe);
             return (
               <div

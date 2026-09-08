@@ -2,25 +2,19 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  buildAutoIssueTx,
   getAllRulesets,
   getAmountToAutoIssue,
   getTokenAddress,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
+import { AutoIssueAcrossChains, AutoIssueAllocation } from '@/components/project/ProjectTokenBatchFlow'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { SkeletonTable } from '@/components/ui/Skeleton'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
-import { useWallet } from '@/hooks/useWallet'
-import { TxError } from '@/components/ui/TxError'
 import type { BsAutoIssuanceEvent } from '@/lib/loans-queries'
 import {
-  etherscanTxUrl,
   formatDate,
   formatTokenAmount,
 } from '@/lib/format'
@@ -154,6 +148,7 @@ export function AutoIssuanceSection({
           started.
         </p>
       </div>
+      <AutoIssueAcrossChains chains={chains} onDone={() => { void refetch() }} />
       {isLoading ? (
         <SkeletonTable rows={4} columns={5} className="mt-5" />
       ) : isError ? (
@@ -187,7 +182,6 @@ export function AutoIssuanceSection({
                 <AutoIssueRow
                   key={`${row.chainId}:${row.stageId}:${row.beneficiary}`}
                   row={row}
-                  tokenSymbol={sym}
                   onDistributed={refetch}
                 />
               ))}
@@ -201,11 +195,9 @@ export function AutoIssuanceSection({
 
 function AutoIssueRow({
   row,
-  tokenSymbol,
   onDistributed,
 }: {
   row: Row
-  tokenSymbol: string
   onDistributed: () => void
 }) {
   const { chainId, projectId } = row
@@ -291,9 +283,7 @@ function AutoIssueRow({
             chainId={chainId}
             projectId={projectId}
             stageId={row.stageId}
-            stageLabel={stageLabel}
             beneficiary={row.beneficiary as Address}
-            tokenSymbol={tokenSymbol}
             onDone={() => {
               refetch()
               onDistributed()
@@ -313,176 +303,13 @@ function AutoIssueRow({
   )
 }
 
-/**
- * Distribute one auto-issuance (REVOwner.autoIssueFor). Permissionless, no
- * user inputs — the on-chain amount is re-read when the review opens and the
- * flow is aborted if nothing is left, so the useSafeTx simulation plus that
- * re-read are the whole safety gate.
- */
-export function DistributeFlow({
-  chainId,
-  projectId,
-  stageId,
-  stageLabel = `#${stageId}`,
-  beneficiary,
-  tokenSymbol = '',
-  onDone,
-}: {
+/** Each row uses the same saved action as aggregate auto issuance. */
+export function DistributeFlow(props: {
   chainId: JBChainId
   projectId: number
   stageId: string
-  stageLabel?: string
   beneficiary: Address
-  tokenSymbol?: string
   onDone: () => void
 }) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { isConnected, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
-
-  const [checking, setChecking] = useState(false)
-  const [flowError, setFlowError] = useState<string | null>(null)
-  const [plan, setPlan] = useState<{
-    request: TxRequest
-    amount: bigint
-  } | null>(null)
-
-  const sending = tx.busy || tx.phase === 'review'
-  const busy = checking || sending
-
-  const txUrl = tx.hash ? etherscanTxUrl(chainId, tx.hash) : null
-
-  const handleReview = async () => {
-    if (busy) return
-    if (!isConnected) {
-      openSignIn()
-      return
-    }
-    if (!publicClient) return
-    setFlowError(null)
-    setChecking(true)
-    try {
-      // Authoritative re-read: only offer the send when the mint is still available.
-      const amount = await getAmountToAutoIssue(publicClient, {
-        chainId,
-        revnetId: BigInt(projectId),
-        stageId: BigInt(stageId),
-        beneficiary,
-      })
-      if (amount <= 0n) {
-        throw new Error('Nothing left to distribute for this stage.')
-      }
-      const request = buildAutoIssueTx({
-        chainId,
-        revnetId: BigInt(projectId),
-        stageId: BigInt(stageId),
-        beneficiary,
-      })
-      setPlan({ request, amount })
-    } catch (e) {
-      setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
-    } finally {
-      setChecking(false)
-    }
-  }
-
-  const handleDistribute = async () => {
-    if (!plan || sending) return
-    setFlowError(null)
-    try {
-      await tx.send(plan.request)
-    } catch (e) {
-      setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
-    }
-  }
-
-  const closeReview = () => {
-    setPlan(null)
-    setFlowError(null)
-    if (tx.phase === 'success') onDone()
-    else tx.reset()
-  }
-
-  const dialog = plan || checking ? (
-    <TxConfirmDialog
-      open
-      preparing={!plan}
-      onClose={closeReview}
-      title={tx.phase === 'success' ? 'Distributed' : 'Confirm distribution'}
-      rows={
-        plan
-          ? [
-              {
-                label: 'Mint',
-                value: `${formatTokenAmount(plan.amount)} ${tokenSymbol}`.trim(),
-                strong: true,
-              },
-              { label: 'Beneficiary', value: beneficiary, mono: true },
-              { label: 'Stage', value: stageLabel },
-              { label: 'On', value: chainName(chainId) },
-            ]
-          : []
-      }
-      steps={[
-        {
-          title: 'Auto-issue tokens',
-          detail: 'Mints the stage allocation to the beneficiary.',
-        },
-      ]}
-      activeIndex={sending ? 0 : -1}
-      complete={tx.phase === 'success'}
-      busy={busy}
-      action={tx.phase === 'error' ? 'Retry' : 'Confirm & distribute'}
-      onConfirm={() => void handleDistribute()}
-      status={
-        !plan ? (
-          'Reading what is left to distribute…'
-        ) : tx.phase === 'pending' ? (
-          <>
-            Waiting for confirmation
-            {txUrl ? (
-              <>
-                {' — '}
-                <a
-                  href={txUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  view transaction
-                </a>
-              </>
-            ) : null}
-          </>
-        ) : undefined
-      }
-      error={flowError ?? tx.error}
-    />
-  ) : null
-
-  if (tx.phase === 'success') {
-    return (
-      <>
-        <span className="text-xs text-emerald-600">Distributed</span>
-        {dialog}
-      </>
-    )
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-0.5">
-      <button
-        onClick={handleReview}
-        disabled={busy}
-        className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-50"
-      >
-        Distribute
-      </button>
-      <TxError
-        error={plan ? null : flowError}
-        className="max-w-[180px] text-[11px] leading-tight text-red-600"
-      />
-      {dialog}
-    </div>
-  )
+  return <AutoIssueAllocation {...props} />
 }

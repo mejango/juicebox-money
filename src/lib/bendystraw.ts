@@ -658,7 +658,7 @@ export async function getRecentActivity(
  * flag after replacement; security-sensitive callers must live-check every
  * candidate rather than trusting the first indexed row.
  */
-export const MAX_INDEXED_REVNET_OPERATOR_CANDIDATES = 50
+const MAX_INDEXED_REVNET_OPERATOR_CANDIDATES = 50
 
 export async function getRevnetOperatorCandidates(
   chainId: number,
