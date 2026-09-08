@@ -1,5 +1,6 @@
 'use client'
 
+import { chainName } from '@/lib/urn'
 import { getAccount, getPublicClient } from '@wagmi/core'
 import {
   isAddress,
@@ -11,7 +12,6 @@ import {
   type PublicClient,
 } from 'viem'
 import {
-  JB_CHAINS,
   JBCoreContracts,
   jbContractAddress,
   jbProjectsAbi,
@@ -25,9 +25,12 @@ import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { gasWithinCap } from '@/lib/gas'
 import { waitForTrackedReceipt } from '@/lib/receipt'
+import { relayrSupportsChains } from '@/lib/relayr-chains'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
+  relayrRecordChain,
+  relayrTargetSupportsForwarder,
   runRelayrCalls,
   type RelayrCall,
   type RelayrProgress,
@@ -38,6 +41,7 @@ import {
   findPendingSafeCall,
   runSafeCalls,
   type SafeCallResult,
+  type SafeQueuedTx,
 } from '@/lib/safe'
 import {
   readAuthorityIdentity,
@@ -72,6 +76,10 @@ export type AuthorityCall = {
   contractName?: string
   /** Re-prove mutable application authority around any open wallet review. */
   reverifyAuthority?: () => Promise<void>
+  /** Persist recovery information before exposing a wallet submission. */
+  onSending?: (kind: 'direct' | 'safe-connector') => Promise<void>
+  onSubmitted?: (hash: Hex, kind: 'direct' | 'safe-connector') => Promise<void>
+  onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
 }
 
 export type AuthorityProgress = {
@@ -258,9 +266,12 @@ function toRelayrCalls(calls: AuthorityCall[]): RelayrCall[] {
 export async function runAuthorityCalls({
   calls,
   onProgress,
+  paymentChainId,
 }: {
   calls: AuthorityCall[]
   onProgress?: (progress: AuthorityProgress) => void
+  /** Omit to ask the user to choose from the authenticated quote options. */
+  paymentChainId?: number
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
@@ -285,6 +296,12 @@ export async function runAuthorityCalls({
   // that the connected wallet cannot authorize a later Safe/EOA group.
   const reviewedGroups: ReviewedGroup[] = []
   for (const group of groups.values()) {
+    const savedScope = relayrCallsScope(toRelayrCalls(group))
+    const saved = loadRelayrPendingSession(savedScope)
+    if (saved && saved.paymentStatus !== 'unpaid') {
+      reviewedGroups.push({ calls: group, mode: 'relayr', pendingScope: savedScope })
+      continue
+    }
     const authority = group[0].authority
     await Promise.all(group.map(call => call.reverifyAuthority?.()))
     onProgress?.({
@@ -300,13 +317,13 @@ export async function runAuthorityCalls({
         }) as PublicClient | undefined
         if (!client) {
           throw new Error(
-            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+            `Could not verify the authority on ${chainName(call.chainId)}.`,
           )
         }
         const identity = await readAuthorityIdentity(client, authority)
         if (!identity) {
           throw new Error(
-            `Could not verify the authority on ${JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`}.`,
+            `Could not verify the authority on ${chainName(call.chainId)}.`,
           )
         }
         return identity
@@ -318,7 +335,7 @@ export async function runAuthorityCalls({
     if (unsupported.length) {
       throw new Error(
         `The project authority is an unsupported contract on ${unsupported
-          .map(call => JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`)
+          .map(call => chainName(call.chainId))
           .join(', ')}. Only an EOA or a canonical Safe is supported.`,
       )
     }
@@ -345,10 +362,9 @@ export async function runAuthorityCalls({
       }
       if (!identities.matches) {
         const sourceName =
-          JB_CHAINS[call.detectionChainId]?.name ??
-          `chain ${call.detectionChainId}`
+          chainName(call.detectionChainId)
         const destinationName =
-          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+          chainName(call.chainId)
         if (
           identities.source.kind === 'safe' &&
           identities.destination.kind === 'eoa'
@@ -385,7 +401,7 @@ export async function runAuthorityCalls({
     if (safeCount > 0 && safeCount !== group.length) {
       const missing = group
         .filter((_, index) => authorityIdentities[index].kind !== 'safe')
-        .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+        .map(call => chainName(call.chainId))
       throw new Error(
         `This Safe is not deployed on ${missing.join(', ')}. Deploy the same Safe there from the Account card, or deselect those chains.`,
       )
@@ -413,7 +429,7 @@ export async function runAuthorityCalls({
       if (unavailable.length) {
         throw new Error(
           `The connected wallet is not a signer of ${authority} on ${unavailable
-            .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+            .map(call => chainName(call.chainId))
             .join(', ')}. Switch to a signer that belongs to every selected Safe.`,
         )
       }
@@ -424,14 +440,28 @@ export async function runAuthorityCalls({
     if (connected.toLowerCase() !== authority.toLowerCase()) {
       throw new Error(
         `The connected wallet is not the authority on ${group
-          .map(call => JB_CHAINS[call.chainId]?.name ?? `${call.chainId}`)
+          .map(call => chainName(call.chainId))
           .join(', ')}. Switch to ${authority}.`,
       )
     }
     // Relaying is decided PER GROUP, so the multi-chain test has to be too:
     // measured across every call, a single-chain EOA group inside a mixed
     // EOA+Safe action would pay Relayr for something it can send itself.
-    if (new Set(group.map(call => call.chainId)).size <= 1) {
+    const uniqueChains = new Set(group.map(call => call.chainId))
+    const pendingScope = relayrCallsScope(toRelayrCalls(group))
+    if (!loadRelayrPendingSession(pendingScope) && (
+      uniqueChains.size <= 1 || uniqueChains.size !== group.length ||
+      !relayrSupportsChains(group.map(call => call.chainId)) ||
+      !(await Promise.all(toRelayrCalls(group).map(relayrTargetSupportsForwarder))).every(Boolean)
+    )) {
+      // Direct writes have no durable per-call recovery journal. Sending more
+      // than one would let a retry replay an earlier confirmed call after a
+      // later destination failed, including repeated calls on one chain.
+      if (group.length !== 1) {
+        throw new Error(
+          'These calls cannot share one Relayr payment. Select one chain and one action at a time, and confirm each result before continuing.',
+        )
+      }
       reviewedGroups.push({ calls: group, mode: 'direct' })
       continue
     }
@@ -439,7 +469,7 @@ export async function runAuthorityCalls({
     reviewedGroups.push({
       calls: group,
       mode: 'relayr',
-      pendingScope: relayrCallsScope(toRelayrCalls(group)),
+      pendingScope,
     })
   }
 
@@ -457,15 +487,15 @@ export async function runAuthorityCalls({
       message = `Relayr payment confirmed | bundle ${progress.bundleUuid}. Waiting for destination chains…`
     } else {
       const states = progress.records.map((record, index) => {
-        const chainId = record.chain
+        const chainId = relayrRecordChain(record)
         const chain =
           typeof chainId === 'number'
-            ? JB_CHAINS[chainId as JBChainId]?.name ?? `Chain ${chainId}`
+            ? chainName(chainId)
             : `Call ${index + 1}`
         const state = record.status?.state || 'Pending'
         return `${chain}: ${state}`
       })
-      message = `Relayr bundle ${progress.bundleUuid} | ${progress.done}/${progress.total} confirmed${
+      message = `Relayr bundle ${progress.bundleUuid} | Relayr reports ${progress.done}/${progress.total} complete; checking onchain${
         states.length ? ` | ${states.join(' | ')}` : ''
       }`
     }
@@ -476,6 +506,25 @@ export async function runAuthorityCalls({
   const directResults: Hex[] = []
   const relayrResults: AuthorityResult['relayrResults'] = []
   const safeResults: SafeCallResult[] = []
+
+  const reverifyRelayrGroup = async (group: AuthorityCall[]) => {
+    for (const call of group) {
+      await call.reverifyAuthority?.()
+      const live = getAccount(wagmiConfig).address
+      if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
+        throw new Error(
+          'Connected account changed. Review this project action again.',
+        )
+      }
+      await simulateStateChangingTransaction(clientFor(call.chainId), {
+        from: call.authority,
+        to: call.target,
+        data: call.data,
+        value: call.value ?? 0n,
+        gas: call.gas,
+      })
+    }
+  }
 
   // Recover an already-paid bundle before simulating current chain state. A
   // reload can happen after payment while Relayr is still executing; in that
@@ -494,6 +543,10 @@ export async function runAuthorityCalls({
       account: connected,
       pendingScope: reviewed.pendingScope,
       onProgress: reportRelayrProgress,
+      paymentChainId,
+      reverify: loadRelayrPendingSession(reviewed.pendingScope)?.paymentStatus === 'unpaid'
+        ? () => reverifyRelayrGroup(reviewed.calls)
+        : undefined,
     })
     relayrResults.push({
       bundleUuid: recovered.quote.bundle_uuid,
@@ -522,7 +575,7 @@ export async function runAuthorityCalls({
     onProgress?.({
       kind: 'checking',
       message: `Checking ${index + 1}/${callsToSimulate.length} on ${
-        JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+        chainName(call.chainId)
       }…`,
     })
     try {
@@ -560,7 +613,7 @@ export async function runAuthorityCalls({
             : 'The call would revert.'
       throw new Error(
         `${call.label ?? 'Action'} cannot run on ${
-          JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+          chainName(call.chainId)
         }: ${detail}`,
       )
     }
@@ -578,6 +631,7 @@ export async function runAuthorityCalls({
         call,
       )
       if (existing) {
+        await call.onSafePrepared?.(existing)
         safeResults.push({
           chainId: call.chainId,
           mode: 'service',
@@ -623,6 +677,7 @@ export async function runAuthorityCalls({
         kind: 'safe',
         message: 'Continue in Safe, then execute the proposal…',
       })
+      await call.onSending?.('safe-connector')
       const safeTxHash = await wallet.sendTransaction({
         account,
         to: call.target,
@@ -630,6 +685,7 @@ export async function runAuthorityCalls({
         value: call.value ?? 0n,
         gas: call.gas,
       })
+      await call.onSubmitted?.(safeTxHash, 'safe-connector')
       const executionHash = await waitForSafeExecutionHash(
         call.chainId,
         safeTxHash,
@@ -662,6 +718,7 @@ export async function runAuthorityCalls({
             args: call.args,
             contractName: call.contractName,
             reverifyAuthority: call.reverifyAuthority,
+            onSafePrepared: call.onSafePrepared,
           })),
           onProgress: message => onProgress?.({ kind: 'safe', message }),
         })),
@@ -673,7 +730,7 @@ export async function runAuthorityCalls({
       await requireTransactionReview({
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
         description:
-          'These calls affect one chain, so they will be sent directly without Relayr.',
+          'Confirm each transaction on its destination chain. Calls are sent in the displayed order.',
         calls: group.map(call => ({
           chainId: call.chainId,
           from: call.authority,
@@ -701,7 +758,7 @@ export async function runAuthorityCalls({
         onProgress?.({
           kind: 'direct',
           message: `Confirming ${index + 1}/${group.length} directly on ${
-            JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+            chainName(call.chainId)
           }…`,
         })
         await simulateStateChangingTransaction(client, {
@@ -718,6 +775,7 @@ export async function runAuthorityCalls({
             'Connected account changed. Review this project action again.',
           )
         }
+        await call.onSending?.('direct')
         const hash = await wallet.sendTransaction({
           account,
           to: call.target,
@@ -725,11 +783,12 @@ export async function runAuthorityCalls({
           value: call.value ?? 0n,
           gas: call.gas,
         })
+        await call.onSubmitted?.(hash, 'direct')
         const receipt = await waitForTrackedReceipt(client, hash)
         if (receipt.status !== 'success') {
           throw new Error(
             `${call.label ?? 'Project action'} reverted on ${
-              JB_CHAINS[call.chainId]?.name ?? `chain ${call.chainId}`
+              chainName(call.chainId)
             }.`,
           )
         }
@@ -742,32 +801,16 @@ export async function runAuthorityCalls({
     if (!pendingScope) {
       throw new Error('Relayr authority review is incomplete.')
     }
-    const reverifyRelayrGroup = async () => {
-      for (const call of reviewed.calls) {
-        await call.reverifyAuthority?.()
-        const live = getAccount(wagmiConfig).address
-        if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
-          throw new Error(
-            'Connected account changed. Review this project action again.',
-          )
-        }
-        await simulateStateChangingTransaction(clientFor(call.chainId), {
-          from: call.authority,
-          to: call.target,
-          data: call.data,
-          value: call.value ?? 0n,
-          gas: call.gas,
-        })
-      }
-    }
+
     // Built AFTER the simulation pass above, so each call carries its
     // measured `gas` into the signed ForwardRequest.
     const relayrResult = await runRelayrCalls({
       calls: toRelayrCalls(reviewed.calls),
       account: connected,
+      paymentChainId,
       pendingScope,
       onProgress: reportRelayrProgress,
-      reverify: reverifyRelayrGroup,
+      reverify: () => reverifyRelayrGroup(reviewed.calls),
     })
     relayrResults.push({
       bundleUuid: relayrResult.quote.bundle_uuid,

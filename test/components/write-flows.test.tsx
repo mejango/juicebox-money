@@ -9,8 +9,9 @@ const mocks = vi.hoisted(() => ({
   openSignIn: vi.fn(),
   send: vi.fn(),
   reset: vi.fn(),
-  amountToAutoIssue: vi.fn(),
-  buildAutoIssue: vi.fn(),
+  readAutoAllocation: vi.fn(),
+  runProjectBatch: vi.fn(),
+  reverifyAutoIssue: vi.fn(),
   prepareCashOut: vi.fn(),
   clientAvailable: true,
   publicClient: { readContract: vi.fn() },
@@ -34,7 +35,15 @@ vi.mock('@/components/ui/ModalShell', () => ({
     createElement('div', null, children),
   ModalDialog: ({ children }: { children: ReactNode }) =>
     createElement('div', null, children),
+  ModalCloseButton: (props: Record<string, unknown>) =>
+    createElement('button', props),
+  useEnclosingModalCard: () => null,
 }))
+vi.mock('@/providers/Providers', async () => {
+  const chains = await import('viem/chains')
+  return { wagmiConfig: {}, SUPPORTED_CHAINS: [chains.mainnet, chains.optimism, chains.base, chains.arbitrum,
+    chains.sepolia, chains.optimismSepolia, chains.baseSepolia, chains.arbitrumSepolia] }
+})
 vi.mock('wagmi', () => ({
   usePublicClient: () =>
     mocks.clientAvailable ? mocks.publicClient : undefined,
@@ -44,6 +53,7 @@ vi.mock('wagmi', () => ({
   }),
 }))
 vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn().mockResolvedValue(undefined) }),
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     switch (queryKey[0]) {
       case 'projectTokenSymbol':
@@ -124,6 +134,15 @@ vi.mock('@/hooks/useWallet', () => ({
     openSignIn: mocks.openSignIn,
   }),
 }))
+vi.mock('@/lib/payer-relayr', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/payer-relayr')>()
+  return { ...original, loadPayerDeployment: () => null,
+    runPayerDeployments: async (review: import('@/lib/payer-relayr').PayerDeploymentSession) => {
+      mocks.send(original.payerDeploymentRequest(review.calls[0]))
+      return review
+    },
+  }
+})
 vi.mock('@/hooks/useSafeTx', () => {
   return {
     useSafeTx: () => {
@@ -157,14 +176,22 @@ vi.mock('@/lib/ens', async importOriginal => {
 vi.mock('@/lib/project-draft-export', () => ({
   buildProjectDraftExport: mocks.buildProjectDraftExport,
 }))
+vi.mock('@/lib/project-batch', () => ({
+  projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}`,
+  loadProjectBatch: () => null,
+  runProjectBatch: mocks.runProjectBatch,
+}))
+vi.mock('@/lib/project-token-batch', () => ({
+  readAutoIssueAllocationCall: mocks.readAutoAllocation,
+  readAutoIssueCalls: vi.fn(), readClaimCalls: vi.fn(),
+  reverifyAutoIssueCall: mocks.reverifyAutoIssue, reverifyClaimCall: vi.fn(),
+}))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   const original = await importOriginal<
     typeof import('@bananapus/nana-sdk-core/v6')
   >()
   return {
     ...original,
-    getAmountToAutoIssue: mocks.amountToAutoIssue,
-    buildAutoIssueTx: mocks.buildAutoIssue,
     prepareHookAwareCashOut: mocks.prepareCashOut,
   }
 })
@@ -174,12 +201,12 @@ import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
-const AUTO_ISSUE_REQUEST = {
-  chainId: 1,
-  address: '0x2222222222222222222222222222222222222222' as Address,
-  abi: [],
-  functionName: 'autoIssueFor',
-  args: [42n, 3n, ALICE],
+const AUTO_ISSUE_CALL = {
+  id: 'auto:1:42:3:alice', chainId: 1, projectId: 42, authority: ALICE,
+  target: '0x2222222222222222222222222222222222222222', data: '0x1234',
+  label: 'Auto-issue stage 3 allocation',
+  context: { kind: 'auto-issuance', amount: '10', stageId: '3', beneficiary: ALICE,
+    token: '0x3333333333333333333333333333333333333333', symbol: 'JBT' },
 }
 
 function renderedText(instance: ReactTestInstance): string {
@@ -231,8 +258,8 @@ beforeEach(() => {
   mocks.txHash = null
   mocks.txError = null
   mocks.safeTxCall = 0
-  mocks.amountToAutoIssue.mockResolvedValue(10n)
-  mocks.buildAutoIssue.mockReturnValue(AUTO_ISSUE_REQUEST)
+  mocks.readAutoAllocation.mockResolvedValue(AUTO_ISSUE_CALL)
+  mocks.runProjectBatch.mockImplementation(async ({ calls }) => ({ id: 'auto-batch', calls, status: 'complete' }))
   mocks.prepareCashOut.mockResolvedValue({
     route: {
       route: 'treasury',
@@ -417,7 +444,7 @@ describe('project payer write flow', () => {
         .find(input => input.props.type === 'checkbox')!
         .props.onChange({ target: { checked: true } })
     })
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain('Confirm deploy')
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
@@ -457,7 +484,7 @@ describe('project payer write flow', () => {
     await act(async () =>
       buttonWith(renderer, 'Create payer address').props.onClick(),
     )
-    await act(async () => buttonWith(renderer, 'Review deploy').props.onClick())
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     mocks.address = '0x3333333333333333333333333333333333333333'
     await act(async () =>
@@ -466,6 +493,7 @@ describe('project payer write flow', () => {
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
     expect(renderedText(renderer.root)).toMatch(/connected account changed/i)
   })
 })
@@ -479,30 +507,30 @@ describe('auto-issuance write flow', () => {
     onDone: vi.fn(),
   }
 
-  it('re-reads availability immediately before sending the reviewed request', async () => {
+  it('prepares the live allocation and submits it through the shared project alias', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
     })
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
-    expect(mocks.amountToAutoIssue).toHaveBeenCalledWith(mocks.publicClient, {
-      chainId: 1,
-      revnetId: 42n,
-      stageId: 3n,
-      beneficiary: ALICE,
-    })
-    expect(mocks.buildAutoIssue).toHaveBeenCalledWith({
-      chainId: 1,
-      revnetId: 42n,
-      stageId: 3n,
-      beneficiary: ALICE,
-    })
-    expect(mocks.send).toHaveBeenCalledWith(AUTO_ISSUE_REQUEST)
+    expect(mocks.readAutoAllocation).toHaveBeenCalledWith(1, 42, '3', ALICE, ALICE)
+    expect(renderedText(renderer.root)).toContain('Confirm distribution')
+    expect(mocks.send).not.toHaveBeenCalled()
+
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & distribute').props.onClick(),
+    )
+
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.runProjectBatch).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'auto-issuance:1:42', action: 'auto-issuance', account: ALICE,
+      calls: [AUTO_ISSUE_CALL], reverify: mocks.reverifyAutoIssue,
+    }))
   })
 
   it('fails closed when the latest on-chain allocation is already empty', async () => {
-    mocks.amountToAutoIssue.mockResolvedValueOnce(0n)
+    mocks.readAutoAllocation.mockRejectedValueOnce(new Error('Nothing left to distribute for this stage.'))
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
@@ -510,11 +538,14 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.runProjectBatch).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm distribution')
     expect(renderedText(renderer.root)).toMatch(/nothing left to distribute/i)
   })
 
   it('requests sign-in before any authoritative read when disconnected', async () => {
     mocks.connected = false
+    mocks.address = undefined
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
@@ -522,20 +553,21 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.openSignIn).toHaveBeenCalledTimes(1)
-    expect(mocks.amountToAutoIssue).not.toHaveBeenCalled()
+    expect(mocks.readAutoAllocation).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
-  it('fails closed before reading or writing when the chain client is unavailable', async () => {
-    mocks.clientAvailable = false
+  it('fails closed when the live chain read is unavailable', async () => {
+    mocks.readAutoAllocation.mockRejectedValueOnce(new Error('The chain could not be read.'))
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
     })
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
-    expect(mocks.amountToAutoIssue).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.runProjectBatch).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('chain could not be read')
   })
 })
 
@@ -565,6 +597,11 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('Confirm cash out')
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
+    )
 
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
@@ -608,8 +645,13 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
 
+    await act(async () =>
+      buttonWith(renderer, 'Sell 2 JBT on the pool').props.onClick(),
+    )
+
     // Both allowances are empty, so the queue is approve → authorize → sell,
     // and the first step is the one awaiting a click.
+    expect(renderedText(renderer.root)).toContain('Confirm pool sale')
     const steps = renderer.root.findAllByType('li').map(step => renderedText(step))
     expect(steps).toEqual([
       expect.stringContaining('Approve JBT for the swap router'),
@@ -689,6 +731,9 @@ describe('cash-out write flow', () => {
       mocks.publicClient,
       expect.objectContaining({ slippageBps: 250n }),
     )
+    await act(async () =>
+      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
+    )
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })
 
@@ -718,6 +763,7 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
 
     expect(mocks.send).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).not.toContain('Confirm cash out')
     expect(renderedText(renderer.root)).toContain(
       'The cash-out quote is no longer available.',
     )

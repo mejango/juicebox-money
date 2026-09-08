@@ -48,7 +48,11 @@ import {
   readLiveProjectAuthorityContext,
   revnetOperatorFromPermissionHistory,
 } from "@/lib/project-fallback";
-import { projectPreviewSlogan } from "@/lib/project-link-preview";
+import {
+  getProjectLinkPreview,
+  previewVersion,
+  projectPreviewSlogan,
+} from "@/lib/project-link-preview";
 import { formatDate, ipfsUrl, projectLogoUrl } from "@/lib/format";
 import {
   lookupProjectHandleTarget,
@@ -378,8 +382,11 @@ export async function generateMetadata({
     ? `/@${encodeURIComponent(canonicalHandle)}`
     : `/${toUrn(urn.chainId, urn.projectId)}`;
   const pageUrl = new URL(pagePath, siteOrigin).href;
+  // Scrapers cache og:image by URL, so bake the numbers into it: the card refreshes
+  // whenever the balance or payment count moves.
+  const preview = await getProjectLinkPreview(urn.chainId, urn.projectId);
   const imageUrl = new URL(
-    `/api/project-og/${urn.chainId}/${urn.projectId}`,
+    `/api/project-og/${urn.chainId}/${urn.projectId}?v=${previewVersion(preview)}`,
     assetOrigin,
   ).href;
   const description =

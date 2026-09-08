@@ -36,6 +36,7 @@ import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { GossipTablesSkeleton } from '@/components/LoadingSkeletons'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
@@ -710,6 +711,7 @@ function GossipRow({
   const tx = useSafeTx(peer.peerChainId)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
 
   const key = `${projectId}:${viewChainId}:${peer.peerChainId}`
 
@@ -750,6 +752,17 @@ function GossipRow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase])
+
+  const openConfirm = () => {
+    if (busy || !peer.syncSucker) return
+    if (!isConnected || !address) {
+      openSignIn()
+      return
+    }
+    setFlowError(null)
+    tx.reset()
+    setOpen(true)
+  }
 
   const sync = async () => {
     if (busy || !peer.syncSucker) return
@@ -797,7 +810,7 @@ function GossipRow({
         .join(' | ')
     : '0'
 
-  const syncLabel = checking
+  const phaseLabel = checking
     ? 'Reading fee…'
     : tx.phase === 'simulating'
       ? 'Double-checking…'
@@ -805,9 +818,20 @@ function GossipRow({
         ? 'Confirm…'
         : tx.phase === 'pending'
           ? 'Syncing…'
-          : pending
-            ? 'Sent'
-            : 'Sync'
+          : null
+  const syncLabel = phaseLabel ?? (pending ? 'Sent' : 'Sync')
+
+  const rows: TxConfirmRow[] = [
+    { label: 'Sync', value: `${chainName(peer.peerChainId)} accounting`, strong: true },
+    { label: 'To', value: chainName(viewChainId) },
+    ...(extras.length
+      ? [{ label: 'Also updates', value: extras.map(chainName).join(', ') }]
+      : []),
+    { label: 'On', value: chainName(peer.peerChainId) },
+    ...(peer.syncSucker
+      ? [{ label: 'Bridge', value: peer.syncSucker, mono: true }]
+      : []),
+  ]
 
   return (
     <tr className="border-t border-smoke-100 align-top">
@@ -833,7 +857,7 @@ function GossipRow({
         {showSync ? (
           <div className="flex flex-col items-start gap-0.5">
             <button
-              onClick={sync}
+              onClick={openConfirm}
               disabled={busy || pending}
               className="text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-50"
               title={
@@ -852,23 +876,45 @@ function GossipRow({
                 also syncs {extras.map(chainName).join(', ')}
               </span>
             ) : null}
-            {tx.phase === 'pending' && txUrl ? (
-              <a
-                href={txUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[11px] text-smoke-500 underline underline-offset-2"
-              >
-                view transaction
-              </a>
-            ) : null}
-            {flowError || tx.error ? (
-              <span className="text-[11px] leading-tight text-red-600">
-                {flowError ?? tx.error}
-              </span>
-            ) : null}
           </div>
         ) : null}
+        <TxConfirmDialog
+          open={open}
+          onClose={() => {
+            setOpen(false)
+            setFlowError(null)
+          }}
+          title={tx.phase === 'success' ? 'Sync sent' : 'Confirm sync'}
+          rows={rows}
+          steps={[
+            {
+              key: 'sync',
+              title: `Sync ${chainName(peer.peerChainId)} accounting`,
+              detail: `Re-pushes its supply and balances to ${chainName(viewChainId)}. The value is the bridge's messaging fee, read right before sending.`,
+            },
+          ]}
+          activeIndex={busy ? 0 : -1}
+          action={phaseLabel ?? 'Confirm & sync'}
+          onConfirm={() => void sync()}
+          busy={busy}
+          complete={tx.phase === 'success'}
+          status={
+            tx.phase === 'pending' && txUrl ? (
+              <>
+                Waiting for confirmation —{' '}
+                <a
+                  href={txUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  view transaction
+                </a>
+              </>
+            ) : null
+          }
+          error={flowError ?? tx.error}
+        />
       </td>
       <td className="whitespace-nowrap py-1.5 text-right tabular-nums">
         {formatTokenAmount(peer.supply)}

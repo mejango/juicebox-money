@@ -1,461 +1,314 @@
 'use client'
 
-import {
-  cidV0ToBytes32,
-  jb721TiersHookAbi,
-  jb721TiersHookStoreAbi,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
-import { hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
+import { cidV0ToBytes32, type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
-import type { Address, Hex, PublicClient } from 'viem'
-import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
-import { getAccount, getPublicClient } from 'wagmi/actions'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Address, Hex } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useWallet } from '@/hooks/useWallet'
-import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { buildSet721TierMediaRequest } from '@/lib/transaction-builders'
+import { clientFor } from '@/lib/authority'
 import { shortError } from '@/lib/errors'
-import { gasWithHeadroom } from '@/lib/gas'
-import {
-  JBCENTER_MAX_IMAGE_BYTES,
-  JBCENTER_MAX_MEDIA_BYTES,
-  jbCenterIpfs,
-} from '@/lib/jbcenter-ipfs'
-import {
-  isTransactionReceiptUnavailableError,
-  waitForTrackedReceipt,
-} from '@/lib/receipt'
-import {
-  isSafeConnection,
-  SAFE_NONCE_GUIDANCE,
-  waitForSafeExecutionHash,
-} from '@/lib/safe-connector'
-import { requireContractTransactionReview } from '@/lib/transaction-review'
+import { JBCENTER_MAX_IMAGE_BYTES, JBCENTER_MAX_MEDIA_BYTES, jbCenterIpfs } from '@/lib/jbcenter-ipfs'
+import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch } from '@/lib/project-batch'
+import { buildShopMediaCalls, distinctShopTargets, pendingShopBatch, readOriginalShopMetadata, readShopSnapshot, readShopTier, replaceShopMetadataMedia, reverifyShopCall, type ShopCallContext, type ShopSnapshot } from '@/lib/shop-batch'
 import { chainName } from '@/lib/urn'
-import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
-type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]['id']
-
-type ChainStatus = {
-  phase: 'pending' | 'signing' | 'confirming' | 'done' | 'failed' | 'uncertain'
-  hash?: `0x${string}`
-  error?: string
-}
-
+type MediaPlan = { account: Address; snapshots: ShopSnapshot[]; metadata: Record<string, unknown>; file: File; itemName: string }
 function mediaAllowed(file: File): boolean {
-  const type = file.type
-  return (
-    type.startsWith('image/') ||
-    type.startsWith('video/') ||
-    type.startsWith('audio/') ||
-    type === 'application/pdf' ||
-    type.startsWith('text/')
-  )
+  return ['image/', 'video/', 'audio/', 'text/'].some(prefix => file.type.startsWith(prefix)) || file.type === 'application/pdf'
 }
 
-/**
- * Re-pins one tier's metadata with new media and points the tier at it via
- * JB721TiersHook.setMetadata on every selected chain. Name, description and
- * category carry over; the other setMetadata arguments use the contract's
- * "leave unchanged" sentinels. A chain is only eligible when its copy of the
- * tier carries the same encodedIPFSUri as this chain's, so a same-numbered but
- * different item is never overwritten.
- */
-export function ReplaceTierMediaModal({
-  chainId,
-  hook,
-  tierId,
-  current,
-  targets,
-  isRevnet,
-  onClose,
-}: {
-  chainId: JBChainId
-  hook: Address
-  tierId: number
+/** Replace only media fields in the original immutable JSON, after proving
+ * the linked shops still contain the same item. Recovery uses frozen calls. */
+export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets, isRevnet, onClose }: {
+  chainId: JBChainId; hook: Address; tierId: number
   current: { name?: string; description?: string; categoryName?: string } | undefined
-  /** Linked shops on every chain; null while resolving. */
   targets: ShopWriteTarget[] | null
   isRevnet: boolean
   onClose: () => void
 }) {
-  const config = useConfig()
   const queryClient = useQueryClient()
-  const { switchChainAsync } = useSwitchChain()
-  const { writeContractAsync } = useWriteContract()
   const { isConnected, address, openSignIn } = useWallet()
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [selected, setSelected] = useState<number[]>([chainId])
   const [eligible, setEligible] = useState<Record<number, string | null> | null>(null)
-  const [statuses, setStatuses] = useState<Record<number, ChainStatus>>({})
-  const statusesRef = useRef<Record<number, ChainStatus>>({})
-  const pinnedRef = useRef<Hex | null>(null)
+  const [batch, setBatch] = useState<ProjectBatch | null>(null)
+  const [freshPlan, setPlan] = useState<MediaPlan | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'pinning' | 'writing' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
-
-  const itemName = current?.name ?? `Item #${tierId}`
+  const pinnedRef = useRef<Hex | null>(null)
   const busy = ['checking', 'pinning', 'writing'].includes(phase)
-  const chainTargets = (targets ?? []).filter(
-    target => target.hook && !target.error,
-  )
+  const chainTargets = useMemo(() => (targets ?? []).filter(target => target.hook && !target.error), [targets])
+  const savedContext = batch?.calls[0]?.context as ShopCallContext | undefined
+  const itemName = savedContext?.items[0]?.name ?? freshPlan?.itemName ?? current?.name ?? `Item #${tierId}`
+  const plan = batch ? { account: batch.account, chainIds: batch.calls.map(call => call.chainId), mediaName: savedContext?.mediaName ?? 'Saved media' } : freshPlan ? { account: freshPlan.account, chainIds: freshPlan.snapshots.map(snapshot => snapshot.target.chainId), mediaName: freshPlan.file.name } : null
+  const statuses = Object.fromEntries((batch?.calls ?? []).map(call => [call.chainId, { phase: batch!.completedIds.includes(call.id) ? 'done' : 'pending', error: undefined }]))
 
-  useEffect(() => () => {
-    if (preview) URL.revokeObjectURL(preview)
-  }, [preview])
-
-  // Which linked chains carry the same item (same tier metadata) — the rest
-  // are listed but not selectable.
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
   useEffect(() => {
-    if (!targets) return
+    if (!targets || batch || freshPlan || busy) return
+    try { const saved = pendingShopBatch('shop-replace-media', targets); if (saved) setBatch(saved) }
+    catch (error) { setMessage(shortError(error, 'Could not read the saved media update.')) }
+  }, [targets, batch, freshPlan, busy])
+  useEffect(() => {
+    if (!targets || batch || freshPlan) return
     let cancelled = false
-    ;(async () => {
-      const home = getPublicClient(config, { chainId: chainId as SupportedChainId }) as PublicClient | undefined
-      if (!home) return
-      const homeUri = await readTierUri(home, hook, tierId).catch(() => null)
-      const result: Record<number, string | null> = {}
-      await Promise.all(
-        chainTargets.map(async target => {
-          if (target.chainId === chainId) {
-            result[target.chainId] = null
-            return
-          }
-          const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient | undefined
-          if (!client || !target.hook) {
-            result[target.chainId] = 'Unavailable'
-            return
-          }
-          const uri = await readTierUri(client, target.hook, tierId).catch(() => undefined)
-          result[target.chainId] =
-            uri === undefined
-              ? 'Could not read this item'
-              : uri === '0x0000000000000000000000000000000000000000000000000000000000000000'
-                ? 'No such item'
-                : homeUri && uri.toLowerCase() === homeUri.toLowerCase()
-                  ? null
-                  : 'A different item has this number here'
-        }),
-      )
-      if (cancelled) return
-      setEligible(result)
-      setSelected(chainTargets.filter(t => result[t.chainId] === null).map(t => t.chainId))
+    void (async () => {
+      try {
+        const unique = distinctShopTargets(chainTargets)
+        const source = unique.find(target => target.chainId === chainId)
+        if (!source?.hook || source.hook.toLowerCase() !== hook.toLowerCase()) throw new Error('The source shop changed. Reopen this item.')
+        const home = await readShopTier(clientFor(chainId), hook, tierId)
+        const rows = await Promise.all(unique.map(async target => {
+          try {
+            const peer = await readShopTier(clientFor(target.chainId), target.hook!, tierId)
+            return [target.chainId, peer.encodedIpfsUri.toLowerCase() === home.encodedIpfsUri.toLowerCase() ? null : 'A different item has this number here'] as const
+          } catch { return [target.chainId, 'Could not verify this item'] as const }
+        }))
+        if (cancelled) return
+        const result = Object.fromEntries(rows)
+        setEligible(result); setSelected(unique.filter(target => result[target.chainId] === null).map(target => target.chainId))
+      } catch (error) { if (!cancelled) { setEligible({}); setSelected([]); setMessage(shortError(error, 'Could not resolve linked shops.')) } }
     })()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targets, chainId, hook, tierId])
-
-  const updateStatus = (id: number, patch: Partial<ChainStatus>) => {
-    statusesRef.current = {
-      ...statusesRef.current,
-      [id]: { ...(statusesRef.current[id] ?? { phase: 'pending' }), ...patch },
-    }
-    setStatuses(statusesRef.current)
-  }
+    return () => { cancelled = true }
+  }, [targets, chainTargets, chainId, hook, tierId, batch, freshPlan])
 
   const pick = (next: File | null) => {
+    if (batch || freshPlan || busy) return
     if (preview) URL.revokeObjectURL(preview)
-    setMessage(null)
-    pinnedRef.current = null
-    if (!next) {
-      setFile(null)
-      setPreview(null)
-      return
-    }
-    if (!mediaAllowed(next)) {
-      setMessage('Images, video, audio, PDF, or text only.')
-      return
-    }
-    if (next.size === 0) {
-      setMessage(
-        `"${next.name}" is empty (0 bytes). If it lives in iCloud or another cloud drive, open it on this device first, then choose it again.`,
-      )
-      return
-    }
-    if (next.size > JBCENTER_MAX_MEDIA_BYTES) {
-      setMessage('That file is larger than the 500 MB limit.')
-      return
-    }
-    setFile(next)
-    setPreview(next.type.startsWith('image/') ? URL.createObjectURL(next) : null)
+    setMessage(null); pinnedRef.current = null
+    if (!next) { setFile(null); setPreview(null); return }
+    if (!mediaAllowed(next)) { setMessage('Images, video, audio, PDF, or text only.'); return }
+    if (!next.size) { setMessage(`“${next.name}” is empty. Download it to this device first.`); return }
+    if (next.size > JBCENTER_MAX_MEDIA_BYTES) { setMessage('That file is larger than the 500 MB limit.'); return }
+    setFile(next); setPreview(next.type.startsWith('image/') ? URL.createObjectURL(next) : null)
   }
-
+  const handleReview = async () => {
+    if (!isConnected || !address) { openSignIn(); return }
+    if (!file || busy || batch) return
+    setMessage(null); setPhase('checking')
+    try {
+      const chosen = distinctShopTargets(chainTargets.filter(target => selected.includes(target.chainId)))
+      if (!chosen.length || chosen.length !== selected.length) throw new Error('Choose the available chains again.')
+      const pending = pendingShopBatch('shop-replace-media', chosen)
+      if (pending) { setBatch(pending); return }
+      const source = distinctShopTargets(chainTargets).find(target => target.chainId === chainId)
+      if (!source?.hook || source.hook.toLowerCase() !== hook.toLowerCase()) throw new Error('The source shop changed. Reopen this item.')
+      const sourceTier = await readShopTier(clientFor(chainId), hook, tierId)
+      const snapshots = await Promise.all(chosen.map(target => readShopSnapshot(target, address, isRevnet, 'shop-replace-media', tierId)))
+      if (snapshots.some(snapshot => snapshot.encodedIpfsUri?.toLowerCase() !== sourceTier.encodedIpfsUri.toLowerCase())) throw new Error('One selected chain now has a different item. Review the chain selection again.')
+      const metadata = await readOriginalShopMetadata(sourceTier.encodedIpfsUri)
+      pinnedRef.current = null
+      setPlan({ account: address, snapshots, metadata, file, itemName: typeof metadata.name === 'string' ? metadata.name : itemName })
+    } catch (error) { setMessage(shortError(error, 'Could not review the media update.')) }
+    finally { setPhase('form') }
+  }
   const handleSubmit = async () => {
-    if (!isConnected || !address) {
-      openSignIn()
-      return
-    }
-    if (!file || busy) return
-    const runTargets = chainTargets.filter(t => selected.includes(t.chainId))
-    if (runTargets.length === 0) {
-      setMessage('Choose at least one chain.')
-      return
-    }
+    if ((!freshPlan && !batch) || !address || busy) return
+    if ((batch?.account ?? freshPlan!.account).toLowerCase() !== address.toLowerCase()) { setMessage('Reconnect the wallet that reviewed this media update.'); return }
+    let scope = batch?.scope
     setMessage(null)
     try {
-      setPhase('checking')
-      for (const target of runTargets) {
-        if (statusesRef.current[target.chainId]?.phase === 'done') continue
-        const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient | undefined
-        if (!client || !target.hook) throw new Error(`${chainName(target.chainId)} is unavailable.`)
-        await assertMetadataReady(client, { chainId: target.chainId, projectId: target.projectId, hook: target.hook, account: address })
-      }
-
-      if (!pinnedRef.current) {
-        setPhase('pinning')
-        const isImage = file.type.startsWith('image/')
-        const mediaPin =
-          isImage && file.size <= JBCENTER_MAX_IMAGE_BYTES
-            ? await jbCenterIpfs.pinImage(file)
-            : await jbCenterIpfs.pinMedia(file)
-        const metadataPin = await jbCenterIpfs.pinJson({
-          name: current?.name ?? itemName,
-          description: current?.description || undefined,
-          image: isImage ? mediaPin.uri : undefined,
-          animation_url: isImage ? undefined : mediaPin.uri,
-          mediaType: file.type || undefined,
-          categoryName: current?.categoryName || undefined,
-        })
-        pinnedRef.current = cidV0ToBytes32(metadataPin.cid)
-      }
-      const encoded = pinnedRef.current
-
-      setPhase('writing')
-      for (const target of runTargets) {
-        if (statusesRef.current[target.chainId]?.phase === 'done') continue
-        const targetChain = target.chainId as JBChainId
-        const targetHook = target.hook as Address
-        const client = getPublicClient(config, { chainId: target.chainId as SupportedChainId }) as PublicClient
-        updateStatus(target.chainId, { phase: 'signing', error: undefined })
-        try {
-          const request = buildSet721TierMediaRequest({
-            chainId: targetChain,
-            hook: targetHook,
-            tierId,
-            encodedIpfsUri: encoded,
-          })
-          let submitted = await submitReviewedContractWrite({
-            request,
-            expectedAccount: address,
-            review: reviewed =>
-              requireContractTransactionReview(
-                { ...reviewed, account: address },
-                {
-                  title: `Review media update on ${chainName(targetChain)}`,
-                  label: `Replace media for ${itemName}`,
-                  contractName: 'JB721TiersHook',
-                  description: isSafeConnection(config)
-                    ? SAFE_NONCE_GUIDANCE
-                    : 'This points the item at newly pinned metadata. Already-minted items update too.',
-                  ...(isSafeConnection(config) ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-                },
-              ),
-            switchChain: reviewedChainId =>
-              switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
-            currentAccount: () => getAccount(config).address,
-            reverify: () =>
-              assertMetadataReady(client, { chainId: targetChain, projectId: target.projectId, hook: targetHook, account: address }),
-            simulate: async reviewed => {
-              const simulationRequest = { ...reviewed, account: address }
-              const [{ request: simulated }, estimate] = await Promise.all([
-                client.simulateContract(simulationRequest),
-                client.estimateContractGas(simulationRequest),
-              ])
-              return { ...simulated, gas: gasWithHeadroom(estimate) }
-            },
-            write: simulated =>
-              writeContractAsync(simulated as Parameters<typeof writeContractAsync>[0]),
-            accountChangedError: 'Connected account changed. Start the media update again.',
-          })
-          updateStatus(target.chainId, { phase: 'confirming', hash: submitted })
-          if (isSafeConnection(config)) {
-            submitted = await waitForSafeExecutionHash(targetChain, submitted)
-            updateStatus(target.chainId, { hash: submitted })
-          }
-          const receipt = await waitForTrackedReceipt(client, submitted)
-          if (receipt.status !== 'success') throw new Error('The update failed.')
-          updateStatus(target.chainId, { phase: 'done' })
-        } catch (error) {
-          updateStatus(target.chainId, {
-            phase: isTransactionReceiptUnavailableError(error) ? 'uncertain' : 'failed',
-            error: shortError(error, 'Could not update this chain.'),
-          })
-          throw error
+      let calls
+      if (!batch) {
+        const frozen = freshPlan!
+        const probe = buildShopMediaCalls(frozen.snapshots, address, `0x${'1'.repeat(64)}`, frozen.file.name, itemName)
+        setPhase('checking'); await Promise.all(probe.map(call => reverifyShopCall(call, address)))
+        if (!pinnedRef.current) {
+          setPhase('pinning')
+          const media = frozen.file.type.startsWith('image/') && frozen.file.size <= JBCENTER_MAX_IMAGE_BYTES ? await jbCenterIpfs.pinImage(frozen.file) : await jbCenterIpfs.pinMedia(frozen.file)
+          const metadata = replaceShopMetadataMedia(frozen.metadata, media.uri, frozen.file.type)
+          pinnedRef.current = cidV0ToBytes32((await jbCenterIpfs.pinJson(metadata)).cid)
         }
+        calls = buildShopMediaCalls(frozen.snapshots, address, pinnedRef.current, frozen.file.name, itemName)
+        scope = projectBatchScope('shop-replace-media', calls[0].chainId, calls[0].projectId)
       }
-
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['shop721'] }),
-        queryClient.invalidateQueries({ queryKey: ['shop721Media'] }),
-      ])
-      setPhase('done')
+      setPhase('writing')
+      const result = await runProjectBatch({ scope: scope!, action: 'shop-replace-media', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Replace item media', reverify: call => reverifyShopCall(call, address), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
+      setBatch(result)
+      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
+      setPhase(result.status === 'complete' ? 'done' : 'form')
+      setMessage(result.status === 'complete' ? null : 'This update is saved. Continue to check its original transactions and any unfinished chains.')
     } catch (error) {
-      setMessage(shortError(error, 'Could not update the media.'))
-      setPhase('form')
+      let detail = shortError(error, 'Could not update the media.')
+      try { if (scope) setBatch(loadProjectBatch(scope)) }
+      catch (recoveryError) { detail = shortError(recoveryError, detail) }
+      setMessage(detail); setPhase('form')
     }
   }
 
-  const started = Object.keys(statuses).length > 0
-  const footer =
-    phase === 'done' ? (
-      <button type="button" onClick={onClose} className="btn-primary min-h-[44px] px-5 text-sm">
-        Done
+  const started = !!batch
+  const footer = (
+    <div className="flex justify-end gap-2">
+      <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
+        {started ? 'Close' : 'Cancel'}
       </button>
-    ) : (
-      <div className="flex justify-end gap-2">
-        <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
-          {started ? 'Close' : 'Cancel'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void handleSubmit()}
-          disabled={busy || !file || !targets}
-          className="btn-primary min-h-[44px] px-5 text-sm"
-        >
-          {!isConnected
-            ? 'Sign in to continue'
-            : phase === 'checking'
+      <button
+        type="button"
+        onClick={() => void handleReview()}
+        disabled={busy || !file || !targets || !!plan}
+        className="btn-primary min-h-[44px] px-5 text-sm"
+      >
+        {!isConnected
+          ? 'Sign in to continue'
+          : started
+            ? 'Continue saved update'
+            : selected.length > 1
+              ? `Replace media on ${selected.length} chains`
+              : 'Replace media'}
+      </button>
+    </div>
+  )
+
+  return (
+    <ModalShell
+      title={`Replace media for ${itemName}`}
+      subtitle="Preserves the original metadata and updates the media on each reviewed chain."
+      footer={footer}
+      onClose={onClose}
+      busy={busy}
+    >
+      <div className="space-y-5">
+        <div className="callout callout-info text-xs">
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. All other original metadata fields carry over. Eligible chains use Relayr with one funding transaction; Safe and unsupported chains proceed in separate rounds.
+        </div>
+        <label className="block">
+          <span className="field-label">New media</span>
+          <input
+            type="file"
+            accept="image/*,video/*,audio/*,application/pdf,text/*"
+            disabled={busy || !!plan}
+            onChange={event => pick(event.target.files?.[0] ?? null)}
+            className="mt-2 block w-full text-sm text-smoke-700 file:mr-3 file:rounded-lg file:border file:border-smoke-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+          />
+          {preview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="" className="mt-3 max-h-48 rounded-lg object-contain" />
+          ) : file ? (
+            <p className="mt-2 text-xs text-smoke-500">{file.name}</p>
+          ) : null}
+        </label>
+        <div>
+          <span className="field-label">Chains</span>
+          {!targets || !eligible ? (
+            <div role="status" aria-label="Resolving linked shops" className="mt-2 h-9 w-full animate-pulse rounded-lg bg-smoke-100" />
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {chainTargets.map(target => {
+                const reason = eligible[target.chainId] === null ? null : eligible[target.chainId] ?? 'Item not verified'
+                const status = statuses[target.chainId]
+                const checked = selected.includes(target.chainId)
+                return (
+                  <li key={target.chainId} className="flex items-center justify-between gap-3 text-sm">
+                    <label className={`flex items-center gap-2 ${reason ? 'text-smoke-400' : 'text-ink'}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!!reason || busy || !!plan}
+                        onChange={event =>
+                          setSelected(prev =>
+                            event.target.checked
+                              ? [...prev, target.chainId]
+                              : prev.filter(id => id !== target.chainId),
+                          )
+                        }
+                        className="h-4 w-4 accent-ink"
+                      />
+                      <ChainIcon chainId={target.chainId} size={16} />
+                      {chainName(target.chainId)}
+                      {reason ? <span className="text-xs">— {reason}</span> : null}
+                    </label>
+                    {status ? (
+                      <span className={`text-xs ${status.phase === 'failed' ? 'text-error-700' : status.phase === 'done' ? 'text-melon-700' : 'text-smoke-500'}`}>
+                        {status.phase === 'signing'
+                          ? 'Awaiting signature…'
+                          : status.phase === 'confirming'
+                            ? 'Confirming…'
+                            : status.phase === 'done'
+                              ? 'Updated'
+                              : status.phase === 'uncertain'
+                                ? 'Submitted, unconfirmed'
+                                : status.phase === 'failed'
+                                  ? status.error
+                                  : 'Pending'}
+                      </span>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+      {message && !plan ? (
+        <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">
+          {message}
+        </p>
+      ) : null}
+      {plan || phase === 'checking' ? (
+        <TxConfirmDialog
+          open
+          preparing={!plan}
+          title={phase === 'done' ? 'Media replaced' : 'Confirm media update'}
+          rows={
+            plan
+              ? [
+                  { label: 'Item', value: itemName },
+                  { label: 'New media', value: plan.mediaName },
+                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshPlan?.snapshots) ?? []).map(snapshot => ({ label: chainName(snapshot.target.chainId), value: `Project #${snapshot.target.projectId} · item #${snapshot.tierId}` })),
+                ]
+              : []
+          }
+          steps={(plan?.chainIds ?? []).map(id => {
+            const status = statuses[id]
+            return {
+              key: String(id),
+              title: `Update ${chainName(id)}`,
+              detail:
+                status?.phase === 'uncertain'
+                  ? 'Submitted, unconfirmed'
+                  : status?.phase === 'failed'
+                    ? status.error
+                    : undefined,
+            }
+          })}
+          activeIndex={
+            plan && (started || phase !== 'form')
+              ? plan.chainIds.filter(id => statuses[id]?.phase === 'done').length
+              : -1
+          }
+          status={
+            phase === 'checking'
+              ? 'Checking your permission on the selected chains…'
+              : phase === 'pinning'
+                ? 'Pinning the media and metadata…'
+                : phase === 'done'
+                  ? `${itemName} now points at the new media. Already-minted items update too. Indexers can take a few minutes to catch up.`
+                  : phase === 'writing' ? message : undefined
+          }
+          error={busy ? undefined : message}
+          busy={busy}
+          complete={phase === 'done'}
+          cancelLabel={started ? 'Close' : 'Cancel'}
+          action={
+            phase === 'checking'
               ? 'Checking permission…'
               : phase === 'pinning'
                 ? 'Uploading…'
                 : phase === 'writing'
                   ? 'Updating…'
                   : started
-                    ? 'Retry remaining chains'
-                    : selected.length > 1
-                      ? `Replace media on ${selected.length} chains`
-                      : 'Replace media'}
-        </button>
-      </div>
-    )
-
-  return (
-    <ModalShell
-      title={`Replace media for ${itemName}`}
-      subtitle="Pins new media and metadata once, then updates the item on each selected chain."
-      footer={footer}
-      onClose={onClose}
-      busy={busy}
-    >
-      {phase === 'done' ? (
-        <div className="py-8 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">✓</span>
-          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">Media replaced</h3>
-          <p className="mt-2 text-sm text-smoke-700">
-            {itemName} now points at the new media on {selected.length === 1 ? chainName(selected[0]) : `${selected.length} chains`}. Indexers can take a few minutes to catch up.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          <div className="callout callout-info text-xs">
-            Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. Name, description and category carry over.
-          </div>
-          <label className="block">
-            <span className="field-label">New media</span>
-            <input
-              type="file"
-              accept="image/*,video/*,audio/*,application/pdf,text/*"
-              disabled={busy || started}
-              onChange={event => pick(event.target.files?.[0] ?? null)}
-              className="mt-2 block w-full text-sm text-smoke-700 file:mr-3 file:rounded-lg file:border file:border-smoke-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-            />
-            {preview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={preview} alt="" className="mt-3 max-h-48 rounded-lg object-contain" />
-            ) : file ? (
-              <p className="mt-2 text-xs text-smoke-500">{file.name}</p>
-            ) : null}
-          </label>
-          <div>
-            <span className="field-label">Chains</span>
-            {!targets || !eligible ? (
-              <div role="status" aria-label="Resolving linked shops" className="mt-2 h-9 w-full animate-pulse rounded-lg bg-smoke-100" />
-            ) : (
-              <ul className="mt-2 space-y-1.5">
-                {chainTargets.map(target => {
-                  const reason = eligible[target.chainId] ?? null
-                  const status = statuses[target.chainId]
-                  const checked = selected.includes(target.chainId)
-                  return (
-                    <li key={target.chainId} className="flex items-center justify-between gap-3 text-sm">
-                      <label className={`flex items-center gap-2 ${reason ? 'text-smoke-400' : 'text-ink'}`}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={!!reason || busy || started}
-                          onChange={event =>
-                            setSelected(prev =>
-                              event.target.checked
-                                ? [...prev, target.chainId]
-                                : prev.filter(id => id !== target.chainId),
-                            )
-                          }
-                          className="h-4 w-4 accent-ink"
-                        />
-                        <ChainIcon chainId={target.chainId} size={16} />
-                        {chainName(target.chainId)}
-                        {reason ? <span className="text-xs">— {reason}</span> : null}
-                      </label>
-                      {status ? (
-                        <span className={`text-xs ${status.phase === 'failed' ? 'text-error-700' : status.phase === 'done' ? 'text-melon-700' : 'text-smoke-500'}`}>
-                          {status.phase === 'signing'
-                            ? 'Awaiting signature…'
-                            : status.phase === 'confirming'
-                              ? 'Confirming…'
-                              : status.phase === 'done'
-                                ? 'Updated'
-                                : status.phase === 'uncertain'
-                                  ? 'Submitted, unconfirmed'
-                                  : status.phase === 'failed'
-                                    ? status.error
-                                    : 'Pending'}
-                        </span>
-                      ) : null}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
-      {message ? (
-        <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">
-          {message}
-        </p>
+                    ? 'Continue saved update'
+                    : 'Confirm & replace media'
+          }
+          onConfirm={() => void handleSubmit()}
+          onClose={batch || phase === 'done' ? onClose : () => setPlan(null)}
+        />
       ) : null}
     </ModalShell>
   )
-}
-
-async function readTierUri(client: PublicClient, hook: Address, tierId: number): Promise<Hex> {
-  const store = await client.readContract({ address: hook, abi: jb721TiersHookAbi, functionName: 'STORE' })
-  const tier = await client.readContract({
-    address: store,
-    abi: jb721TiersHookStoreAbi,
-    functionName: 'tierOf',
-    args: [hook, BigInt(tierId), false],
-  })
-  return Number(tier.id) === tierId ? tier.encodedIpfsUri : ('0x' + '0'.repeat(64)) as Hex
-}
-
-async function assertMetadataReady(
-  client: PublicClient,
-  { chainId, projectId, hook, account }: { chainId: JBChainId; projectId: number; hook: Address; account: Address },
-) {
-  const owner = await client.readContract({ address: hook, abi: jb721TiersHookAbi, functionName: 'owner' })
-  if (owner.toLowerCase() === account.toLowerCase()) return
-  const allowed = await hasPermissions(client, {
-    chainId,
-    operator: account,
-    account: owner,
-    projectId: BigInt(projectId),
-    permissionIds: [JBPermissionIdsV6.SET_721_METADATA],
-  })
-  if (!allowed) throw new Error(`This wallet cannot edit shop metadata on ${chainName(chainId)}.`)
 }

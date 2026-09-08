@@ -21,6 +21,16 @@ import {
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
+/** How long the block-subscription watcher gets before its silence is reported. */
+const RECEIPT_WATCH_TIMEOUT_MS = 120_000
+const RECEIPT_POLL_INTERVAL_MS = 4_000
+/** ~10 minutes of direct lookups, matching the watcher's own retry horizon. */
+const RECEIPT_POLL_ATTEMPTS = 150
+
+type PolledReceipt = NonNullable<
+  Awaited<ReturnType<NonNullable<ReturnType<typeof usePublicClient>>['getTransactionReceipt']>>
+>
+
 export type TxPhase =
   | 'idle'
   | 'review'
@@ -117,8 +127,44 @@ export function useSafeTx(chainId: number) {
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
     chainId,
+    // Bounded: a stalled watcher must surface as "confirmation unavailable",
+    // never as a spinner that outlives the transaction it is watching.
+    timeout: RECEIPT_WATCH_TIMEOUT_MS,
     query: { enabled: !!hash && !safeProposalHash },
   })
+
+  // The watcher subscribes to new blocks and can sit pending forever on some
+  // wallet/RPC pairs even after the transaction mined (it stranded pay flows
+  // at "Confirming onchain…" after a Permit2 approval). A plain receipt lookup
+  // on an interval is the second source of truth; whichever answers first wins.
+  const [polledReceipt, setPolledReceipt] = useState<PolledReceipt | null>(null)
+  useEffect(() => {
+    setPolledReceipt(null)
+    if (!hash || safeProposalHash || !publicClient) return
+    if (typeof publicClient.getTransactionReceipt !== 'function') return
+    let cancelled = false
+    let attempts = 0
+    const timer = setInterval(() => {
+      attempts += 1
+      if (attempts > RECEIPT_POLL_ATTEMPTS) {
+        clearInterval(timer)
+        return
+      }
+      void publicClient
+        .getTransactionReceipt({ hash })
+        .then(found => {
+          if (cancelled || !found) return
+          clearInterval(timer)
+          setPolledReceipt(found)
+        })
+        .catch(() => undefined)
+    }, RECEIPT_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [hash, safeProposalHash, publicClient])
+  const receiptData = receipt.data ?? polledReceipt ?? undefined
 
   useEffect(() => {
     if (!safeProposalHash) return
@@ -143,16 +189,16 @@ export function useSafeTx(chainId: number) {
   // submitted transaction pending/unknown so the UI never invites a duplicate
   // submission merely because confirmation could not be read.
   const receiptReverted =
-    phase === 'pending' && receipt.data?.status === 'reverted'
+    phase === 'pending' && receiptData?.status === 'reverted'
   const effectivePhase: TxPhase =
-    phase === 'pending' && receipt.data?.status === 'success'
+    phase === 'pending' && receiptData?.status === 'success'
       ? 'success'
       : receiptReverted
         ? 'error'
         : phase
   const effectiveError = receiptReverted
     ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-    : phase === 'pending' && receipt.isError
+    : phase === 'pending' && receipt.isError && !receiptData
       ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
     : error
 
@@ -278,9 +324,9 @@ export function useSafeTx(chainId: number) {
     hash,
     safeProposalHash,
     safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
-    receipt: receipt.data ?? null,
+    receipt: receiptData ?? null,
     /** The transaction has a hash, but the current RPC could not confirm it. */
-    confirmationUncertain: phase === 'pending' && receipt.isError,
+    confirmationUncertain: phase === 'pending' && receipt.isError && !receiptData,
     send,
     reset,
   }

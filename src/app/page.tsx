@@ -24,6 +24,8 @@ import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
 import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
+import { ActivityRows } from '@/components/LoadingSkeletons'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { FreshActivity } from '@/components/FreshActivity'
 import { HomepageDiscoveryLayout } from '@/components/HomepageDiscoveryLayout'
 import { ProjectLogo } from '@/components/ProjectLogo'
@@ -31,7 +33,8 @@ import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 import { TopProjectRows } from '@/components/TopProjectRows'
 import { SecuredReserves } from '@/components/SecuredReserves'
-import { formatTokenAmount } from '@/lib/format'
+import { formatTokenAmount, timeAgo } from '@/lib/format'
+import { getNewProjects, type NewProject } from '@/lib/new-projects'
 import { getHomepageReserves } from '@/lib/homepage-reserves'
 
 export const revalidate = 120
@@ -181,57 +184,141 @@ function FruitSeparator() {
   )
 }
 
-async function HomepageDiscovery() {
-  const [cardsResult, activityResult, topResult, reservesResult] = await Promise.allSettled([
-    withTimeout(getTrendingCards(8), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getRecentActivity(9), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getTopBalanceProjects(9), HOMEPAGE_DATA_TIMEOUT_MS),
-    withTimeout(getHomepageReserves(), HOMEPAGE_DATA_TIMEOUT_MS),
-  ])
-  // Data hiccups degrade to empty regions; the page always renders.
-  const cards: TrendingCard[] =
-    cardsResult.status === 'fulfilled' ? cardsResult.value : []
-  const activity: BsFreshActivityEvent[] =
-    activityResult.status === 'fulfilled' ? activityResult.value : []
-  const top: TopBalanceProject[] =
-    topResult.status === 'fulfilled' ? topResult.value : []
-  const reserves = reservesResult.status === 'fulfilled' ? reservesResult.value : null
-
+/**
+ * The fold paints at once — hero, headings, panel frames — and each panel
+ * streams in behind its own Suspense boundary with a ghost of its rows, so a
+ * slow feed never blanks the page or holds the others back.
+ */
+function HomepageDiscovery() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-[1800px] px-4 pb-0 pt-8 sm:px-6 sm:pt-12"
+      className="mx-auto max-w-[1800px] px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
     >
       <HomepageDiscoveryLayout
         hero={<HeroColumn />}
-        summary={reserves ? <SecuredReserves data={reserves} /> : null}
+        summary={
+          <Suspense fallback={<ReservesSkeleton />}>
+            <ReservesPanel />
+          </Suspense>
+        }
         activity={
-          <DashboardColumn title="Latest" headingClassName="hidden sm:flex">
-            <FreshActivity
-              initialEvents={activity.slice(0, 8)}
-              initialHasMore={activity.length > 8}
-            />
+          <DashboardColumn
+            title="Latest"
+            headingClassName="hidden sm:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
+            {/* Ghost rows must outrun the card, which fills the column on wide screens. */}
+            <Suspense fallback={<ActivityRows rows={14} />}>
+              <ActivityPanel />
+            </Suspense>
           </DashboardColumn>
         }
         trending={
           <DashboardColumn
             title="Trending"
             headingClassName="hidden xl:flex"
-            panelClassName="xl:h-auto xl:flex-1"
           >
-            <ProjectRows cards={cards} />
+            <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
+              <TrendingPanel />
+            </Suspense>
           </DashboardColumn>
         }
         top={
-          <DashboardColumn title="Top" headingClassName="hidden xl:flex">
-            <TopProjectRows
-              initialProjects={top.slice(0, 8)}
-              initialHasMore={top.length > 8}
-            />
+          <DashboardColumn
+            title="Top"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
+            <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
+              <TopPanel />
+            </Suspense>
+          </DashboardColumn>
+        }
+        newProjects={
+          <DashboardColumn
+            title="New"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+          >
+            <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
+              <NewPanel />
+            </Suspense>
           </DashboardColumn>
         }
       />
     </section>
+  )
+}
+
+/** Data hiccups degrade to an empty region; the panel always renders. */
+async function settled<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await withTimeout(promise, HOMEPAGE_DATA_TIMEOUT_MS)
+  } catch {
+    return fallback
+  }
+}
+
+async function ReservesPanel() {
+  const reserves = await settled(getHomepageReserves(), null)
+  return reserves ? <SecuredReserves data={reserves} /> : null
+}
+
+async function ActivityPanel() {
+  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(9), [])
+  return (
+    <FreshActivity
+      initialEvents={activity.slice(0, 8)}
+      initialHasMore={activity.length > 8}
+    />
+  )
+}
+
+async function TrendingPanel() {
+  const cards = await settled<TrendingCard[]>(getTrendingCards(8), [])
+  return <ProjectRows cards={cards} />
+}
+
+async function TopPanel() {
+  const top = await settled<TopBalanceProject[]>(getTopBalanceProjects(9), [])
+  return (
+    <TopProjectRows initialProjects={top.slice(0, 8)} initialHasMore={top.length > 8} />
+  )
+}
+
+async function NewPanel() {
+  const projects = await settled<NewProject[]>(getNewProjects(8), [])
+  return <NewProjectRows projects={projects} />
+}
+
+function ReservesSkeleton() {
+  return (
+    <div role="status" aria-label="Loading reserves" className="space-y-3">
+      <span className="sr-only">Loading reserves</span>
+      <Skeleton className="h-10 w-48 rounded" />
+      <Skeleton className="h-3 w-32 rounded" />
+    </div>
+  )
+}
+
+/** Ghost rows matching the project rows' geometry, so the fill is in place. */
+function ProjectRowsSkeleton({ rows }: { rows: number }) {
+  return (
+    <ol className="divide-y divide-smoke-100" role="status" aria-label="Loading projects">
+      <span className="sr-only">Loading projects</span>
+      {Array.from({ length: rows }, (_, index) => (
+        <li key={index} className="flex h-28 items-center gap-3 px-4 py-3" aria-hidden="true">
+          <Skeleton className="h-3 w-3 rounded" />
+          <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className={`h-3 rounded ${index % 2 === 0 ? 'w-36' : 'w-28'}`} />
+            <Skeleton className="h-2.5 w-24 rounded" />
+            <Skeleton className="h-2.5 w-32 rounded" />
+          </div>
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -317,6 +404,50 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
   )
 }
 
+function NewProjectRows({ projects }: { projects: NewProject[] }) {
+  if (!projects.length) return <EmptyProjects />
+  return (
+    <ol className="divide-y divide-smoke-100">
+      {projects.map((project, index) => (
+        <li key={project.key}>
+          <ProjectLink
+            href={project.href}
+            projectHint={{ name: project.name, logoUri: project.logoUri, tagline: project.tagline }}
+            className="group flex h-28 items-center gap-3 px-4 py-3"
+            aria-label={`Open ${project.name}`}
+          >
+            <span className="w-5 shrink-0 text-xs tabular-nums text-smoke-500">
+              {index + 1}
+            </span>
+            <ProjectLogo
+              name={project.name}
+              logoUri={project.logoUri}
+              size={40}
+              eager={index < 4}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
+                {project.name}
+              </span>
+              <span className="mt-0.5 block text-xs text-smoke-600">
+                Launched:{' '}
+                <span className="tabular-nums text-smoke-700">
+                  {formatLaunched(project.createdAt)}
+                </span>
+              </span>
+            </span>
+          </ProjectLink>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function formatLaunched(createdAt: number): string {
+  const ago = timeAgo(createdAt)
+  return ago === 'now' ? 'just now' : `${ago} ago`
+}
+
 function formatRecentVolume(card: TrendingCard): string {
   if (card.decimals === null || card.symbol === null) return '—'
   return `${formatTokenAmount(card.volume, card.decimals)} ${card.symbol.replace(/^\$+/, '')}`
@@ -332,8 +463,10 @@ function EmptyProjects() {
 
 function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden p-6 text-center xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
-      <div className="mb-3 translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
+    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6 xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
+      {/* Phones keep the illustration close under the header; wider screens
+          let it drop toward the headline. */}
+      <div className="mb-3 translate-y-2 sm:translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
           alt=""
@@ -370,9 +503,7 @@ function HeroColumn() {
 export default function HomePage() {
   return (
     <>
-      <Suspense fallback={<div className="mx-auto min-h-[520px] max-w-[1800px] animate-pulse px-4 pt-8 sm:px-6" />}>
-        <HomepageDiscovery />
-      </Suspense>
+      <HomepageDiscovery />
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <FruitSeparator />
       </div>
@@ -381,11 +512,11 @@ export default function HomePage() {
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-20">
           <h2
             id="why-juicebox"
-            className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl"
+            className="text-center font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl md:text-left"
           >
             Why Juicebox?
           </h2>
-          <p className="mt-5 max-w-4xl font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl">
+          <p className="mx-auto mt-5 max-w-4xl text-center font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl md:mx-0 md:text-left">
             What open source businesses, campaigns, and indie projects actually
             want:
           </p>

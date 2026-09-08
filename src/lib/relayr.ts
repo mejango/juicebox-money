@@ -8,6 +8,8 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
+  decodeFunctionData,
+  decodeFunctionResult,
   encodeFunctionData,
   formatEther,
   isAddress,
@@ -19,8 +21,11 @@ import {
   type Hex,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
+import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
+import { relayrSupportsChain, relayrSupportsChains, relayrPaymentChains } from '@/lib/relayr-chains'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -50,7 +55,24 @@ export const RELAYR_PAYMENT_CODE_HASH =
   '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6' as Hex
 export const RELAYR_NATIVE_TOKEN =
   '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
-const RELAYR_PAYMENT_CHAINS = new Set<number>([1, 10, 8453, 42161])
+export const TRUSTED_FORWARDER_ABI = [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
+  inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }] as const
+const activeRelayrScopes = new Set<string>()
+
+/** Serialize payment and recovery for one saved action across tabs as well as components. */
+export async function withRelayrScopeLock<T>(scope: string, execute: () => Promise<T>): Promise<T> {
+  if (activeRelayrScopes.has(scope)) throw new Error('This Relayr action is already being processed.')
+  activeRelayrScopes.add(scope)
+  try {
+    if (typeof navigator !== 'undefined' && navigator.locks) {
+      return await navigator.locks.request(`jb-relayr:${scope}`, { ifAvailable: true }, async lock => {
+        if (!lock) throw new Error('This Relayr action is already being processed in another tab.')
+        return execute()
+      })
+    }
+    return await execute()
+  } finally { activeRelayrScopes.delete(scope) }
+}
 const RELAYR_PAYMENT_GAS = 150_000n
 const RELAYR_PAYMENT_CODE_MAX_BYTES = 2_048
 const RELAYR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
@@ -144,7 +166,7 @@ export type RelayrPendingSession = {
   bundleUuid: string
   paymentHash: Hex | null
   paymentChainId: number | null
-  paymentStatus: 'submitted' | 'confirmed'
+  paymentStatus: 'unpaid' | 'sending' | 'submitted' | 'confirmed'
   chainIds: number[]
   expectedCount: number
   records: RelayrTransactionRecord[]
@@ -155,6 +177,10 @@ export type RelayrPendingSession = {
   expectedEntries?: RelayrEntry[]
   /** Safe postconditions which must be proven before that bundle is cleared. */
   expectedSafeExecutions?: RelayrSafeExecutionProof[]
+  /** Exact signed calls and quote-bound IDs, independent of status API claims. */
+  expectedTransactions?: RelayrQuote['expectedTransactions']
+  /** Preserve published signatures even when the quote response is lost or payment is canceled. */
+  publishedEntries?: RelayrEntry[]
 }
 
 export type RelayrSafeExecutionProof = {
@@ -199,6 +225,29 @@ export class RelayrPaymentSubmittedError extends Error {
       `Relayr payment ${hash} was submitted on chain ${chainId}, but confirmation is not available yet. Do not pay again; resume the saved bundle instead.`,
     )
   }
+}
+
+export class RelayrPaymentSendingError extends Error {
+  readonly name = 'RelayrPaymentSendingError'
+  constructor() {
+    super('Your wallet may have sent the Relayr payment without returning its hash. Check the saved bundle and wallet activity; do not pay again.')
+  }
+}
+
+class RelayrPaymentRevertedError extends Error {
+  readonly name = 'RelayrPaymentRevertedError'
+  constructor() { super('Relayr payment reverted onchain.') }
+}
+
+/** Only an explicit wallet rejection proves that this send did not happen. */
+export function relayrErrorIsDefiniteNoSubmission(error: unknown): boolean {
+  let current = error
+  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
+    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
+    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
+    current = item.cause
+  }
+  return false
 }
 
 export function relayrStateIsSuccess(state?: string): boolean {
@@ -269,7 +318,8 @@ export function relayrSessionExpiresAt(session: { createdAt: number }): number {
 export function relayrErrorIsUncertain(error: unknown): boolean {
   return (
     error instanceof RelayrPaymentSubmittedError ||
-    (error instanceof RelayrExecutionError && error.code === 'RELAYR_TIMEOUT')
+    error instanceof RelayrPaymentSendingError ||
+    (error instanceof RelayrExecutionError && error.code !== 'RELAYR_FAILED')
   )
 }
 
@@ -402,6 +452,15 @@ function exactSnapshots<T>(
     : undefined
 }
 
+function relayrBindingSnapshot(
+  binding: NonNullable<RelayrQuote['expectedTransactions']>[number],
+): NonNullable<RelayrQuote['expectedTransactions']>[number] | null {
+  const entry = binding && relayrEntrySnapshot(binding.entry)
+  if (!entry || binding.chain !== entry.chain ||
+      typeof binding.txUuid !== 'string' || !RELAYR_UUID_RE.test(binding.txUuid.toLowerCase())) return null
+  return { chain: entry.chain, txUuid: binding.txUuid.toLowerCase(), entry }
+}
+
 /** Persist only the receipt/status data needed to resume polling a paid bundle. */
 export function saveRelayrPendingSession(
   scope: string,
@@ -415,6 +474,8 @@ export function saveRelayrPendingSession(
     session.expectedSafeExecutions,
     relayrSafeExecutionSnapshot,
   )
+  const expectedTransactions = exactSnapshots(session.expectedTransactions, relayrBindingSnapshot)
+  const publishedEntries = exactSnapshots(session.publishedEntries, relayrEntrySnapshot)
   const safeSession: RelayrPendingSession = {
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
@@ -435,6 +496,8 @@ export function saveRelayrPendingSession(
     createdAt: session.createdAt,
     ...(expectedEntries ? { expectedEntries } : {}),
     ...(expectedSafeExecutions ? { expectedSafeExecutions } : {}),
+    ...(expectedTransactions ? { expectedTransactions } : {}),
+    ...(publishedEntries ? { publishedEntries } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -453,6 +516,33 @@ export function saveRelayrPendingSession(
     relayrMemoryAuthoritative.add(scope)
   }
   return safeSession
+}
+
+/** Require a durable journal before publishing signatures or opening the payment wallet. */
+export function saveRelayrPendingSessionDurably(scope: string, session: RelayrPendingSession): RelayrPendingSession {
+  const previous = loadRelayrPendingSession(scope)
+  const saved = saveRelayrPendingSession(scope, session)
+  if (typeof window !== 'undefined') {
+    try {
+      if (window.localStorage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`) !== JSON.stringify(saved)) throw new Error()
+    } catch {
+      // No external action has happened yet. Preserve the prior recoverable state
+      // instead of stranding a fake payment attempt when storage is unavailable.
+      if (previous) saveRelayrPendingSession(scope, previous)
+      else clearRelayrPendingSession(scope)
+      throw new Error('Enable browser storage before publishing relay authorizations or sending their payment.')
+    }
+  }
+  return saved
+}
+
+function persistRelayrPublication(scope: string, session: RelayrPendingSession): RelayrPendingSession {
+  const saved = saveRelayrPendingSessionDurably(scope, session)
+  if (saved.publishedEntries?.length !== saved.expectedCount ||
+      (session.expectedTransactions && saved.expectedTransactions?.length !== saved.expectedCount)) {
+    throw new Error('This Relayr action is too large to save its exact recovery information. No further transaction was sent.')
+  }
+  return saved
 }
 
 export function loadRelayrPendingSession(
@@ -480,7 +570,7 @@ export function loadRelayrPendingSession(
     ) {
       return relayrPendingMemory.get(scope) ?? null
     }
-    return saveRelayrPendingSession(scope, {
+    const restored: RelayrPendingSession = {
       bundleUuid: value.bundleUuid,
       paymentHash:
         typeof value.paymentHash === 'string' && /^0x[0-9a-fA-F]+$/.test(value.paymentHash)
@@ -489,7 +579,8 @@ export function loadRelayrPendingSession(
       paymentChainId:
         typeof value.paymentChainId === 'number' ? value.paymentChainId : null,
       paymentStatus:
-        value.paymentStatus === 'submitted' ? 'submitted' : 'confirmed',
+        value.paymentStatus === 'unpaid' ? 'unpaid' : value.paymentStatus === 'sending' ? 'sending' :
+          value.paymentStatus === 'submitted' ? 'submitted' : 'confirmed',
       chainIds: Array.isArray(value.chainIds)
         ? value.chainIds.filter(
             (chainId): chainId is number =>
@@ -511,7 +602,15 @@ export function loadRelayrPendingSession(
       expectedSafeExecutions: Array.isArray(value.expectedSafeExecutions)
         ? (value.expectedSafeExecutions as RelayrSafeExecutionProof[])
         : undefined,
-    })
+      expectedTransactions: Array.isArray(value.expectedTransactions)
+        ? value.expectedTransactions
+        : undefined,
+      publishedEntries: Array.isArray(value.publishedEntries) ? value.publishedEntries : undefined,
+    }
+    // Reading a tolerant UI view must not erase malformed durable evidence before
+    // the authorization path can inspect the original record strictly.
+    relayrPendingMemory.set(scope, restored)
+    return restored
   } catch {
     return relayrPendingMemory.get(scope) ?? null
   }
@@ -531,6 +630,47 @@ export function listRelayrPendingScopes(): string[] {
     return [...scopes].filter(scope => !relayrClearedMemory.has(scope))
   } catch {
     return [...relayrPendingMemory.keys()]
+  }
+}
+
+/** Unlike UI reads, a nonce reservation scan must never interpret unreadable storage as empty. */
+export function readRelayrPendingSessionsForAuthorization(): { scope: string; session: RelayrPendingSession }[] {
+  try {
+    if (typeof window === 'undefined') throw new Error()
+    const storage = window.localStorage
+    const length = storage.length
+    if (!Number.isSafeInteger(length) || length < 0) throw new Error()
+    const scopes = new Set([...relayrPendingMemory.keys()].filter(scope => !relayrClearedMemory.has(scope)))
+    for (let index = 0; index < length; index++) {
+      const key = storage.key(index)
+      if (typeof key !== 'string') throw new Error()
+      if (key.startsWith(RELAYR_PENDING_PREFIX)) scopes.add(key.slice(RELAYR_PENDING_PREFIX.length))
+    }
+    return [...scopes].flatMap(scope => {
+      const raw = storage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`)
+      const value = (raw === null ? relayrPendingMemory.get(scope) : JSON.parse(raw)) as RelayrPendingSession | undefined
+      if (!value) { if (raw !== null) throw new Error(); return [] }
+      if (typeof value !== 'object' || typeof value.bundleUuid !== 'string' || !value.bundleUuid ||
+          !Number.isSafeInteger(value.expectedCount) || value.expectedCount < 1 ||
+          !Number.isSafeInteger(value.itemCount) || value.itemCount < 1 || !Number.isFinite(value.createdAt) ||
+          !Array.isArray(value.records) || !value.records.every(record => record && typeof record === 'object') ||
+          !Array.isArray(value.chainIds) || !value.chainIds.length || !value.chainIds.every(chain => Number.isSafeInteger(chain) && chain > 0) ||
+          (value.account !== null && !isAddress(value.account)) ||
+          !['unpaid', 'sending', 'submitted', 'confirmed'].includes(value.paymentStatus) ||
+          (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
+          (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1))) throw new Error()
+      for (const entries of [value.publishedEntries, value.expectedEntries]) {
+        if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
+            !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
+      }
+      if (value.expectedTransactions !== undefined && (!Array.isArray(value.expectedTransactions) ||
+          value.expectedTransactions.length !== value.expectedCount || !value.expectedTransactions.every(binding => relayrBindingSnapshot(binding) && value.chainIds.includes(binding.chain)))) throw new Error()
+      if (value.expectedSafeExecutions !== undefined && (!Array.isArray(value.expectedSafeExecutions) ||
+          value.expectedSafeExecutions.length !== value.expectedCount || !value.expectedSafeExecutions.every(relayrSafeExecutionSnapshot))) throw new Error()
+      return [{ scope, session: value }]
+    })
+  } catch {
+    throw new Error('Saved Relayr authorization records could not be read completely. Restore browser storage and recover the original actions before signing or paying for another.')
   }
 }
 
@@ -607,10 +747,50 @@ function connectedWallet(chainId: JBChainId) {
   })
 }
 
+/** A relayed call must preserve the real sender through the canonical forwarder. */
+export async function relayrTargetSupportsForwarder(call: RelayrCall): Promise<boolean> {
+  if (!relayrSupportsChain(call.chainId)) return false
+  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId]
+  if (!forwarder) return false
+  try {
+    const data = await simulateStateChangingTransaction(publicClient(call.chainId), {
+      from: forwarder,
+      to: call.target,
+      data: encodeFunctionData({ abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [forwarder] }),
+      gas: 100_000n,
+    })
+    return decodeFunctionResult({ abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', data })
+  } catch { return false }
+}
+
+async function verifyForwardedEntries(entries: RelayrEntry[], account: Address): Promise<void> {
+  for (const entry of entries) {
+    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
+    if (decoded.functionName !== 'execute') throw new Error('Invalid relay authorization.')
+    const request = decoded.args[0]
+    const client = publicClient(entry.chain as JBChainId)
+    if (!isAddressEqual(request.from, account) ||
+        request.value !== BigInt(entry.value) ||
+        request.deadline <= Math.floor(Date.now() / 1000) + 120 ||
+        !await relayrTargetSupportsForwarder({ chainId: entry.chain as JBChainId, target: request.to, data: request.data }) ||
+        !await client.readContract({ address: entry.target, abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] })) {
+      throw new Error('The relay authorization or trusted forwarder changed. Review the original action again.')
+    }
+    await simulateStateChangingTransaction(client, {
+      from: account,
+      to: entry.target,
+      data: entry.data,
+      value: request.value,
+      gas: request.gas + request.gas / 63n + 100_000n,
+    })
+  }
+}
+
 /** Sign one EIP-2771 request for a Relayr destination transaction. */
-async function buildForwardedTx(
+export async function buildForwardedTx(
   call: RelayrCall,
   expectedAccount: Address,
+  expectedNonce?: bigint,
 ): Promise<RelayrEntry> {
   const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -636,6 +816,9 @@ async function buildForwardedTx(
       args: [expectedAccount],
     }),
   ])
+  if (expectedNonce !== undefined && nonce !== expectedNonce) {
+    throw new Error('The previous relay authorization may have executed. Check its original bundle before signing again.')
+  }
 
   const value = call.value ?? 0n
   const request = {
@@ -720,6 +903,9 @@ async function buildForwardedTx(
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
 ): Promise<RelayrQuote> {
+  if (!relayrSupportsChains([...new Set(transactions.map(transaction => transaction.chain))])) {
+    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
+  }
   const nextNonce = new Map<number, number>()
   const ordered = transactions.map(transaction => {
     const nonce = nextNonce.get(transaction.chain) ?? 0
@@ -819,7 +1005,7 @@ export function relayrPaymentDetails(
   const chainId = Number(payment?.chain) as JBChainId
   if (
     !Number.isSafeInteger(chainId) ||
-    !RELAYR_PAYMENT_CHAINS.has(chainId) ||
+    !relayrSupportsChain(chainId) ||
     !SUPPORTED_CHAINS.some(chain => chain.id === chainId)
   ) {
     throw new Error('Relayr returned an unsupported payment chain.')
@@ -940,15 +1126,40 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
   return `${chain?.name ?? `Chain ${payment.chain}`} — ~${amount.toFixed(5)} ETH`
 }
 
+/** Invalid provider options never reach the funding picker or amount sorter. */
+export function relayrPaymentOptions(quote: RelayrQuote, destinationChainIds: readonly number[]): RelayrPayment[] {
+  const allowed = relayrPaymentChains([...new Set(destinationChainIds)])
+  const options = quote.payment_info.filter(payment => {
+    try { return allowed.includes(relayrPaymentDetails(payment, quote.bundle_uuid).chainId) } catch { return false }
+  })
+  const chains = new Set<number>()
+  return options.filter(payment => {
+    if (chains.has(payment.chain)) return false
+    chains.add(payment.chain)
+    return true
+  })
+}
+
 export async function relayrPay(
   payment: RelayrPayment,
   expectedAccount: Address,
   expectedBundleUuid: string,
+  destinationChainIds: readonly number[],
   onSubmitted?: (hash: Hex) => void,
   reverify?: () => Promise<void>,
+  onSending?: () => void,
 ): Promise<Hex> {
   assertNoViewAs()
-  let details = relayrPaymentDetails(payment, expectedBundleUuid)
+  const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])
+  const readBoundPayment = () => {
+    const current = relayrPaymentDetails(payment, expectedBundleUuid)
+    if (!fundingChains.includes(current.chainId)) {
+      throw new Error('Choose a supported Relayr funding chain in the same network family as these destinations.')
+    }
+    return current
+  }
+  let details = readBoundPayment()
+  const reviewed = details
   await reverify?.()
   const chainId = details.chainId
   const client = publicClient(chainId)
@@ -975,7 +1186,10 @@ export async function relayrPay(
     ],
   })
 
-  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  details = readBoundPayment()
+  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
+    throw new Error('The Relayr payment changed. Review the original funding choice again.')
+  }
   await reverify?.()
   const { wallet, account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
@@ -989,15 +1203,25 @@ export async function relayrPay(
   }
   // Review and wallet preparation are open-ended. Re-authenticate the exact
   // quote immediately before the fixed-gas write.
-  details = relayrPaymentDetails(payment, expectedBundleUuid)
+  details = readBoundPayment()
+  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
+    throw new Error('The Relayr payment changed. Review the original funding choice again.')
+  }
   await reverify?.()
-  let hash = await wallet.sendTransaction({
-    account,
-    to: details.target,
-    value: details.amount,
-    data: details.calldata,
-    gas: RELAYR_PAYMENT_GAS,
-  })
+  onSending?.()
+  let hash: Hex
+  try {
+    hash = await wallet.sendTransaction({
+      account,
+      to: details.target,
+      value: details.amount,
+      data: details.calldata,
+      gas: RELAYR_PAYMENT_GAS,
+    })
+  } catch (error) {
+    if (relayrErrorIsDefiniteNoSubmission(error)) throw error
+    throw new RelayrPaymentSendingError()
+  }
   const submittedHash = hash
   try {
     onSubmitted?.(submittedHash)
@@ -1016,7 +1240,7 @@ export async function relayrPay(
   } catch {
     throw new RelayrPaymentSubmittedError(hash, chainId)
   }
-  if (receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.')
+  if (receipt.status !== 'success') throw new RelayrPaymentRevertedError()
   return hash
 }
 
@@ -1048,7 +1272,7 @@ export async function relayrPoll(
         consecutiveNotFound += 1
         if (consecutiveNotFound >= RELAYR_NOT_FOUND_ATTEMPTS) {
           throw new RelayrExecutionError(
-            `Relayr does not recognize bundle ${uuid}. Nothing is pending under it — start the action again.`,
+            `Relayr cannot find bundle ${uuid}. Its payment and destination outcomes remain unresolved. Check the original bundle; do not pay again.`,
             'RELAYR_NOT_FOUND',
             uuid,
             lastRecords,
@@ -1122,97 +1346,104 @@ function relayrSessionFinished(
   )
 }
 
-function relayrSessionFullyFailed(
+/** Prove the exact signed outer transaction on every destination, independent of API labels. */
+async function verifySavedRelayrDestinations(
+  saved: RelayrPendingSession,
   records: RelayrTransactionRecord[],
-  expectedCount: number,
-): boolean {
-  return (
-    records.length === expectedCount &&
-    records.every(record => relayrStateIsFailed(record.status?.state))
-  )
+): Promise<void> {
+  const bindings = saved.expectedTransactions
+  if (!bindings || bindings.length !== saved.expectedCount ||
+      new Set(bindings.map(binding => binding.txUuid)).size !== saved.expectedCount ||
+      new Set(bindings.map(binding => binding.chain)).size !== saved.expectedCount ||
+      records.length !== saved.expectedCount || !saved.account || !isAddress(saved.account)) {
+    throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
+  }
+  for (const binding of bindings) {
+    const { entry } = binding
+    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][binding.chain as JBChainId]
+    if (!forwarder || !isAddressEqual(entry.target, forwarder) || entry.chain !== binding.chain) {
+      throw new Error('The saved Relayr destination is not the canonical forwarder.')
+    }
+    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
+    if (decoded.functionName !== 'execute' ||
+        !isAddressEqual(decoded.args[0].from, saved.account) ||
+        decoded.args[0].value !== BigInt(entry.value)) {
+      throw new Error('The saved relay authorization does not match its account or value.')
+    }
+    const matches = records.filter(record => record.tx_uuid?.toLowerCase() === binding.txUuid)
+    const hash = matches.length === 1 ? relayrDestinationHash(matches[0]) : null
+    if (!hash || !/^0x[0-9a-f]{64}$/iu.test(hash)) {
+      throw new Error('Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.')
+    }
+    const client = publicClient(binding.chain as JBChainId)
+    const [tx, receipt] = await Promise.all([
+      client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
+    ])
+    if (!tx.to || !isAddressEqual(tx.to, entry.target) ||
+        tx.input.toLowerCase() !== entry.data.toLowerCase() || tx.value !== BigInt(entry.value) ||
+        tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== binding.chain ||
+        receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
+        tx.blockHash !== receipt.blockHash || receipt.status !== 'success') {
+      throw new Error('The destination receipt does not prove the signed Relayr call succeeded. Keep the original bundle pending.')
+    }
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber })
+    if (!block.hash || block.hash !== receipt.blockHash) {
+      throw new Error('The destination receipt is no longer canonical. Keep the original bundle pending.')
+    }
+  }
 }
 
-/** Resume a persisted, already-paid bundle: report progress, poll to done. */
+/** Resume a persisted payment attempt using only its original quote and exact receipts. */
 async function resumeSavedRelayrSession(
   pendingScope: string,
   saved: RelayrPendingSession,
   onProgress?: (progress: RelayrProgress) => void,
+  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>,
 ): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
-  if (
-    pendingScope.startsWith('safe-queue:') ||
-    saved.expectedEntries ||
-    saved.expectedSafeExecutions
-  ) {
-    // SafeQueue sessions carry an execution hash/nonce proof which the global
-    // account list cannot re-establish without the queue's exact Safe context.
-    // Never let API-only success/failure clear that paid receipt.
+  if (pendingScope.startsWith('safe-queue:') || saved.expectedEntries || saved.expectedSafeExecutions) {
     throw new Error(
       'Resume this paid Safe bundle from the project Owner/Operator queue so its exact onchain executions can be verified.',
     )
   }
   const reportProgress = (records: RelayrTransactionRecord[]) => {
     const progress = relayrProgress(records, saved.expectedCount)
-    onProgress?.({
-      phase: 'executing',
-      done: progress.confirmed,
-      total: progress.total,
-      records,
-      bundleUuid: saved.bundleUuid,
-      paymentHash: saved.paymentHash,
-    })
+    onProgress?.({ phase: 'executing', done: progress.confirmed, total: progress.total,
+      records, bundleUuid: saved.bundleUuid, paymentHash: saved.paymentHash })
   }
   reportProgress(saved.records)
-
-  if (relayrSessionFinished(saved.records, saved.expectedCount)) {
-    clearRelayrPendingSession(pendingScope)
-    return {
-      quote: {
-        bundle_uuid: saved.bundleUuid,
-        payment_info: [],
-        transactions: saved.records,
-      },
-      paymentHash: saved.paymentHash,
-      records: saved.records,
+  if (saved.paymentStatus === 'unpaid') {
+    throw new Error('The original signatures are saved and no payment was attempted. Reopen the original action to continue with those exact authorizations.')
+  }
+  if (!saved.expectedTransactions) {
+    throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
+  }
+  let records = saved.records
+  let verified = false
+  if (relayrSessionFinished(records, saved.expectedCount)) {
+    try { await verifySavedRelayrDestinations(saved, records); verified = true } catch { /* Refresh stale provider records. */ }
+  }
+  if (!verified) {
+    try {
+      records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
+        records = next
+        saveRelayrPendingSession(pendingScope, { ...saved, records: next })
+        reportProgress(next)
+      }, 2_500, 15_000)
+    } catch (error) {
+      if (error instanceof RelayrExecutionError && error.records.length) records = error.records
+      // A provider failure or missing bundle never proves that signed calls cannot execute.
+      // Receipts can nevertheless prove completion even if the provider's label is wrong.
     }
   }
-  if (relayrSessionFullyFailed(saved.records, saved.expectedCount)) {
-    clearRelayrPendingSession(pendingScope)
-    throw new RelayrExecutionError(
-      'Relayr could not execute this action on any selected chain.',
-      'RELAYR_FAILED',
-      saved.bundleUuid,
-      saved.records,
-      false,
-    )
-  }
-
-  try {
-    const records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
-      saveRelayrPendingSession(pendingScope, { ...saved, records: next })
-      reportProgress(next)
-    }, 2_500, 5 * 60_000)
-    clearRelayrPendingSession(pendingScope)
-    return {
-      quote: {
-        bundle_uuid: saved.bundleUuid,
-        payment_info: [],
-        transactions: records,
-      },
-      paymentHash: saved.paymentHash,
-      records,
-    }
-  } catch (error) {
-    const records =
-      error instanceof RelayrExecutionError ? error.records : saved.records
-    if (relayrSessionFullyFailed(records, saved.expectedCount)) {
-      clearRelayrPendingSession(pendingScope)
-    }
-    throw error
-  }
+  if (!verified) await verifySavedRelayrDestinations(saved, records)
+  await onComplete?.(records)
+  clearRelayrPendingSession(pendingScope)
+  return { quote: { bundle_uuid: saved.bundleUuid, payment_info: [], transactions: records,
+    expectedTransactions: saved.expectedTransactions }, paymentHash: saved.paymentHash, records }
 }
 
 function requireSessionAccount(
@@ -1235,34 +1466,49 @@ export async function resumeRelayrSession({
   scope,
   account,
   onProgress,
+  onComplete,
 }: {
   scope: string
   account: Address
   onProgress?: (progress: RelayrProgress) => void
+  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>
 }): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
-  const saved = loadRelayrPendingSession(scope)
-  if (!saved) {
-    throw new Error('No pending Relayr bundle is saved for this action.')
+  if (scope.startsWith('project-batch:') && !onComplete) {
+    throw new Error('Resume this bundle from its original project action so completed calls are recorded before its payment journal is cleared.')
   }
-  requireSessionAccount(saved, account)
-  return resumeSavedRelayrSession(scope, saved, onProgress)
+  return withRelayrScopeLock(scope, async () => {
+    const saved = loadRelayrPendingSession(scope)
+    if (!saved) throw new Error('No pending Relayr bundle is saved for this action.')
+    requireSessionAccount(saved, account)
+    return resumeSavedRelayrSession(scope, saved, onProgress, onComplete)
+  })
 }
 
 /**
  * Complete EOA authority path: sign every chain, pay once, then wait until
  * every destination transaction has succeeded.
  */
-export async function runRelayrCalls({
+export async function runRelayrCalls(options: Parameters<typeof executeRelayrCalls>[0]) {
+  const pendingScope = options.pendingScope ?? relayrCallsScope(options.calls)
+  return withRelayrScopeLock(pendingScope, () => withForwarderAuthorizationLock({
+    account: options.account, chainIds: options.calls.map(call => call.chainId), owner: `relayr:${pendingScope}`,
+    pendingSessions: readRelayrPendingSessionsForAuthorization,
+    execute: assertAvailable => executeRelayrCalls({ ...options, pendingScope }, assertAvailable),
+  }))
+}
+
+async function executeRelayrCalls({
   calls,
   account,
   paymentChainId,
   pendingScope,
   onProgress,
   reverify,
+  onComplete,
 }: {
   calls: RelayrCall[]
   account: Address
@@ -1271,7 +1517,9 @@ export async function runRelayrCalls({
   onProgress?: (progress: RelayrProgress) => void
   /** Re-prove every mutable project call around signatures and payment. */
   reverify?: () => Promise<void>
-}): Promise<{
+  /** Commit application completion before removing the original payment journal. */
+  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>
+}, assertAuthorizationAvailable: () => void): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
@@ -1282,17 +1530,51 @@ export async function runRelayrCalls({
   const saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
-    return resumeSavedRelayrSession(pendingScope, saved, onProgress)
+    if (saved.paymentStatus !== 'unpaid') return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
   }
 
+  if (isSafeConnection(wagmiConfig) || calls.some(call => !relayrSupportsChain(call.chainId))) {
+    throw new Error('Relayed authority actions require an ordinary wallet and supported destinations.')
+  }
+  if (new Set(calls.map(call => call.chainId)).size !== calls.length) {
+    throw new Error('Relayr can authorize one independent call per destination chain. Complete dependent calls in sequence.')
+  }
+  const destinations = calls.map(call => call.chainId)
+  const fundingChains = relayrPaymentChains(destinations)
+  if (!fundingChains.length) {
+    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
+  }
+  if (paymentChainId !== undefined && !fundingChains.includes(paymentChainId)) {
+    throw new Error('Choose a supported Relayr funding chain in the same network family as these destinations.')
+  }
+  for (const call of calls) {
+    if (!await relayrTargetSupportsForwarder(call)) {
+      throw new Error(`The target on chain ${call.chainId} does not trust the canonical forwarder. Send this action directly.`)
+    }
+  }
+  assertAuthorizationAvailable()
   // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
   // the session when the payment lands would report a bundle as still valid
   // for however long the wallet sat on the signatures, and a "not yet expired"
   // resume would then die at the forwarder. Taken before the first signature,
   // so it can only understate the remaining validity.
-  const signedAt = Date.now()
-  const entries: RelayrEntry[] = []
-  for (let index = 0; index < calls.length; index++) {
+  const signedAt = saved?.createdAt ?? Date.now()
+  const entries: RelayrEntry[] = saved?.publishedEntries ?? []
+  if (saved) {
+    if (entries.length !== calls.length) throw new Error('The saved relay publication is incomplete. Keep the original action pending.')
+    for (let index = 0; index < calls.length; index++) {
+      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entries[index].data })
+      if (decoded.functionName !== 'execute' || entries[index].chain !== calls[index].chainId ||
+          !isAddressEqual(decoded.args[0].from, account) || !isAddressEqual(decoded.args[0].to, calls[index].target) ||
+          decoded.args[0].data !== calls[index].data || decoded.args[0].value !== (calls[index].value ?? 0n)) {
+        throw new Error('The original published Relayr calls changed. Keep the original action pending.')
+      }
+    }
+    await reverify?.()
+    await verifyForwardedEntries(entries, account)
+  }
+  for (let index = entries.length; index < calls.length; index++) {
+    assertAuthorizationAvailable()
     onProgress?.({
       phase: 'signing',
       current: index + 1,
@@ -1303,84 +1585,82 @@ export async function runRelayrCalls({
     entries.push(await buildForwardedTx(calls[index], account))
     await reverify?.()
   }
+  let session: RelayrPendingSession = {
+    bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+    chainIds: calls.map(call => call.chainId), expectedCount: calls.length, records: [], itemCount: calls.length,
+    account, createdAt: signedAt, publishedEntries: entries,
+  }
+  // Posting exposes executable signatures, even when the server's response never arrives.
+  assertAuthorizationAvailable()
+  if (pendingScope) session = persistRelayrPublication(pendingScope, session)
   onProgress?.({ phase: 'quoting' })
   const quote = await relayrPostBundle(entries)
-  const payments = [...(quote.payment_info ?? [])].sort((a, b) =>
-    BigInt(a.amount) < BigInt(b.amount) ? -1 : 1,
+  session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions }
+  if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+  const payments = relayrPaymentOptions(quote, destinations)
+  if (!payments.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
+  const selectedChain = paymentChainId ?? await requireFundingChainSelection(
+    payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })),
   )
-  if (!payments.length) throw new Error('Relayr returned no payment option.')
-  const activeChain = paymentChainId ?? getAccount(wagmiConfig).chainId
-  const payment = payments.find(option => option.chain === activeChain) ?? payments[0]
+  const payment = payments.find(option => option.chain === selectedChain)
+  if (!payment) throw new Error('Relayr returned no payment option on your selected funding chain. Nothing was paid.')
   onProgress?.({ phase: 'paying', payment })
-  let session: RelayrPendingSession | null = null
-  const paymentHash = await relayrPay(payment, account, quote.bundle_uuid, hash => {
-    if (pendingScope) {
-      session = saveRelayrPendingSession(pendingScope, {
-        bundleUuid: quote.bundle_uuid,
-        paymentHash: hash,
-        paymentChainId: payment.chain,
-        paymentStatus: 'submitted',
-        chainIds: calls.map(call => call.chainId),
-        expectedCount: calls.length,
-        records: quote.transactions ?? [],
-        itemCount: calls.length,
-        account,
-        createdAt: signedAt,
-      })
-    }
-    onProgress?.({
-      phase: 'payment-submitted',
-      payment,
-      paymentHash: hash,
-      bundleUuid: quote.bundle_uuid,
-    })
-  }, reverify)
-  if (pendingScope) {
-    session = saveRelayrPendingSession(pendingScope, {
-      bundleUuid: quote.bundle_uuid,
-      paymentHash,
-      paymentChainId: payment.chain,
-      paymentStatus: 'confirmed',
-      chainIds: calls.map(call => call.chainId),
-      expectedCount: calls.length,
-      records: quote.transactions ?? [],
-      itemCount: calls.length,
-      account,
-      createdAt: signedAt,
-    })
-  }
-  onProgress?.({
-    phase: 'payment-confirmed',
-    payment,
-    paymentHash,
+  session = {
+    ...session,
     bundleUuid: quote.bundle_uuid,
-  })
-
+    paymentHash: null,
+    paymentChainId: payment.chain,
+    paymentStatus: 'sending',
+    chainIds: calls.map(call => call.chainId),
+    expectedCount: calls.length,
+    records: [],
+    itemCount: calls.length,
+    account,
+    createdAt: signedAt,
+    expectedTransactions: quote.expectedTransactions,
+  }
+  const verifyBeforePayment = async () => {
+    assertAuthorizationAvailable()
+    await reverify?.()
+    await verifyForwardedEntries(entries, account)
+  }
+  let paymentHash: Hex
   try {
-    const records = await relayrPoll(quote.bundle_uuid, calls.length, next => {
-      if (pendingScope && session) {
-        saveRelayrPendingSession(pendingScope, { ...session, records: next })
+    paymentHash = await relayrPay(payment, account, quote.bundle_uuid, destinations, hash => {
+      session = { ...session, paymentHash: hash, paymentStatus: 'submitted' }
+      if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+      onProgress?.({ phase: 'payment-submitted', payment, paymentHash: hash, bundleUuid: quote.bundle_uuid })
+    }, verifyBeforePayment, () => {
+      const current = pendingScope ? loadRelayrPendingSession(pendingScope) : null
+      if (current && (current.paymentStatus !== 'unpaid' || current.bundleUuid !== quote.bundle_uuid)) {
+        throw new Error('Another payment attempt is saved for this action. Check the original bundle before continuing.')
       }
-      const progress = relayrProgress(next, calls.length)
-      onProgress?.({
-        phase: 'executing',
-        done: progress.confirmed,
-        total: progress.total,
-        records: next,
-        bundleUuid: quote.bundle_uuid,
-        paymentHash,
-      })
-    }, 2_500, 5 * 60_000)
-    if (pendingScope) clearRelayrPendingSession(pendingScope)
-    return { quote, paymentHash, records }
+      if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    })
   } catch (error) {
-    const records =
-      error instanceof RelayrExecutionError
-        ? error.records
-        : (quote.transactions ?? [])
-    if (pendingScope && relayrSessionFullyFailed(records, calls.length)) {
-      clearRelayrPendingSession(pendingScope)
+    if (pendingScope && relayrErrorIsDefiniteNoSubmission(error)) {
+      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: 'unpaid', paymentHash: null })
     }
     throw error
   }
+  session = { ...session, paymentHash, paymentStatus: 'confirmed' }
+  if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+  onProgress?.({ phase: 'payment-confirmed', payment, paymentHash, bundleUuid: quote.bundle_uuid })
+  let records: RelayrTransactionRecord[] = []
+  try {
+    records = await relayrPoll(quote.bundle_uuid, calls.length, next => {
+      records = next
+      session = { ...session, records: next }
+      if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+      const progress = relayrProgress(next, calls.length)
+      onProgress?.({ phase: 'executing', done: progress.confirmed, total: progress.total,
+        records: next, bundleUuid: quote.bundle_uuid, paymentHash })
+    }, 2_500, 5 * 60_000)
+  } catch (error) {
+    if (error instanceof RelayrExecutionError && error.records.length) records = error.records
+  }
+  await verifySavedRelayrDestinations(session, records)
+  await onComplete?.(records)
+  if (pendingScope) clearRelayrPendingSession(pendingScope)
+  return { quote, paymentHash, records }
 }

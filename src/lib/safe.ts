@@ -96,6 +96,7 @@ export type SafeCall = {
   args?: readonly unknown[]
   contractName?: string
   reverifyAuthority?: () => Promise<void>
+  onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
 }
 
 export type SafeCallResult = {
@@ -161,7 +162,7 @@ const SAFE_EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
 )
 
-function receiptHasSafeExecutionSuccess(
+export function receiptHasSafeExecutionSuccess(
   receipt: {
     logs?: readonly {
       address: Address
@@ -262,9 +263,9 @@ const SAFE_PENDING_PAGE_SIZE = 50
 const MAX_PENDING_SAFE_TXS = 250
 const nonceInflight = new Map<string, Promise<number | null>>()
 
-export const SAFE_APPROVAL_WRITE_GAS = 500_000n
+const SAFE_APPROVAL_WRITE_GAS = 500_000n
 export const SAFE_EXECUTION_WRITE_GAS = TRANSACTION_SIMULATION_GAS
-export const SAFE_DEPLOY_WRITE_GAS = 3_000_000n
+const SAFE_DEPLOY_WRITE_GAS = 3_000_000n
 
 type LiveSafeIdentity = Extract<
   NonNullable<Awaited<ReturnType<typeof readAuthorityIdentity>>>,
@@ -758,6 +759,7 @@ async function proposeSafeTx({
   args,
   contractName,
   reverifyAuthority,
+  onSafePrepared,
 }: SafeCall & { signer: Address; nonce?: number }): Promise<SafeQueuedTx> {
   assertNoViewAs()
   const base = txBase(chainId)
@@ -778,6 +780,7 @@ async function proposeSafeTx({
     confirmations: [],
   }
   const safeTxHash = safeTxHashOf(chainId, safe, tx)
+  await onSafePrepared?.({ ...tx, safeTxHash })
   const signature = await signSafeTx(chainId, safe, tx, signer, label, {
     abi,
     functionName,
@@ -1470,6 +1473,7 @@ export async function runSafeCalls({
       if (nextNonce === null) throw new Error('Could not read the Safe nonce.')
       const matching = pending.find(tx => safeCallMatches(tx, call))
       if (matching) {
+        await call.onSafePrepared?.(matching)
         const matchingHash = canonicalSafeTxHash(
           call.chainId,
           call.safe,
@@ -1536,6 +1540,7 @@ export async function runSafeCalls({
       nonce,
     }
     const hash = safeTxHashOf(call.chainId, call.safe, queued)
+    await call.onSafePrepared?.({ ...queued, safeTxHash: hash })
     let approvals = await safeApprovalsOf(
       call.chainId,
       call.safe,
