@@ -2,13 +2,14 @@
 
 import { useState, type ReactNode } from 'react'
 
-type Feed = 'activity' | 'trending' | 'top'
+type Feed = 'activity' | 'trending' | 'top' | 'new'
 type RankingFeed = Exclude<Feed, 'activity'>
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
   { id: 'top', label: 'Top' },
   { id: 'trending', label: 'Trending' },
   { id: 'activity', label: 'Latest' },
+  { id: 'new', label: 'New' },
 ]
 
 const RANKING_FEEDS = FEEDS.filter(
@@ -33,7 +34,7 @@ function FeedTabs({
 }) {
   return (
     <div
-      className={`min-w-0 gap-5 overflow-x-auto border-b border-smoke-200 ${className}`}
+      className={`min-w-0 gap-0 overflow-x-auto border-b border-smoke-200 sm:gap-5 ${className}`}
       role="tablist"
       aria-label={label}
     >
@@ -48,7 +49,9 @@ function FeedTabs({
           onClick={() => onChange(feed.id)}
           // These are section headings that happen to be selectable, so they
           // carry the same type scale as the standalone "Latest" heading.
-          className={`min-h-11 shrink-0 border-b-2 font-agrandir text-xl font-medium transition-colors sm:text-2xl ${
+          // Phones spread the feeds edge to edge in equal thirds; wider screens
+          // keep them as a left-aligned row.
+          className={`min-h-11 flex-1 shrink-0 border-b-2 text-center font-agrandir text-xl font-medium transition-colors sm:flex-none sm:text-left sm:text-2xl ${
             active === feed.id
               ? 'border-bluebs-600 text-bluebs-600'
               : 'border-transparent text-smoke-600 hover:text-ink'
@@ -67,12 +70,14 @@ export function HomepageDiscoveryLayout({
   activity,
   trending,
   top,
+  newProjects,
 }: {
   hero: ReactNode
   summary: ReactNode
   activity: ReactNode
   trending: ReactNode
   top: ReactNode
+  newProjects: ReactNode
 }) {
   const [activeFeed, setActiveFeed] = useState<Feed>('top')
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
@@ -102,9 +107,11 @@ export function HomepageDiscoveryLayout({
         aria-labelledby="home-all-activity-tab"
         className={`${
           activeFeed === 'activity' ? 'block' : 'hidden'
-        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:col-start-3 xl:row-span-2 xl:row-start-1`}
+        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:relative xl:col-start-3 xl:row-span-2 xl:row-start-1`}
       >
-        {activity}
+        {/* Absolute at xl so the feed fills both rows without its own content
+            sizing them; the Top stack and hero set the height. */}
+        <div className='xl:absolute xl:inset-0'>{activity}</div>
       </div>
 
       <div className="order-4 min-w-0 sm:col-start-1 sm:row-start-3 md:row-start-2 xl:contents">
@@ -117,15 +124,30 @@ export function HomepageDiscoveryLayout({
           className="mb-4 hidden sm:flex xl:hidden"
         />
 
-        <div
-          id="home-top-panel"
-          role="tabpanel"
-          aria-labelledby="home-all-top-tab home-ranking-top-tab"
-          className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
-            rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
-          } min-w-0 xl:col-start-1 xl:row-start-2 xl:block`}
-        >
-          {top}
+        {/* Wide screens stack Top over New in one column, Top taking the
+            larger share; the column keeps the height a lone Top panel had. */}
+        <div className="contents xl:col-start-1 xl:row-start-2 xl:flex xl:h-[calc(100svh-8.25rem)] xl:flex-col xl:gap-5">
+          <div
+            id="home-top-panel"
+            role="tabpanel"
+            aria-labelledby="home-all-top-tab home-ranking-top-tab"
+            className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
+              rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
+            } min-w-0 xl:flex xl:min-h-0 xl:flex-[3] xl:flex-col`}
+          >
+            {top}
+          </div>
+
+          <div
+            id="home-new-panel"
+            role="tabpanel"
+            aria-labelledby="home-all-new-tab home-ranking-new-tab"
+            className={`${activeFeed === 'new' ? 'block' : 'hidden'} ${
+              rankingFeed === 'new' ? 'sm:block' : 'sm:hidden'
+            } min-w-0 xl:flex xl:min-h-0 xl:flex-[2] xl:flex-col`}
+          >
+            {newProjects}
+          </div>
         </div>
 
         <div

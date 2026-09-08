@@ -56,8 +56,8 @@ const JB_PERMISSIONS_DEPLOYMENT_BLOCK: Readonly<Record<number, bigint>> = {
 }
 const PERMISSION_LOG_CHUNK_BLOCKS = 50_000n
 export const MAX_PERMISSION_HISTORY_LOGS = 256
-export const MAX_PERMISSION_HISTORY_CANDIDATES = 50
-export const MAX_PERMISSION_HISTORY_RPC_CALLS = 256
+const MAX_PERMISSION_HISTORY_CANDIDATES = 50
+const MAX_PERMISSION_HISTORY_RPC_CALLS = 256
 const PERMISSION_HISTORY_TIME_BUDGET_MS = 8_000
 export const MAX_LIVE_REVNET_OPERATOR_CANDIDATES = 50
 const operatorPermissionsSetEvent = getAbiItem({
@@ -121,32 +121,6 @@ export async function readOnChainProject(
     // ownerOf reverted (no such project) or the RPC is unreachable.
     return null
   }
-}
-
-/**
- * Uncached, fail-closed authority read for a handle trust decision. Custom
- * projects use the live JBProjects owner. Revnets use the indexer only to find
- * a candidate, then require the live REVOwner owner contract to confirm it.
- */
-export async function readLiveProjectAuthority({
-  chainId,
-  projectId,
-  revnetOperatorCandidate,
-  revnetOperatorCandidates,
-}: {
-  chainId: number
-  projectId: number
-  revnetOperatorCandidate?: string | null
-  revnetOperatorCandidates?: readonly string[]
-}): Promise<Address | null> {
-  return (
-    await readLiveProjectAuthorityContext({
-      chainId,
-      projectId,
-      revnetOperatorCandidate,
-      revnetOperatorCandidates,
-    })
-  )?.authority ?? null
 }
 
 export type LiveProjectAuthorityContext = {
@@ -367,7 +341,7 @@ export async function liveProjectAuthorityFrom({
   )?.authority ?? null
 }
 
-export async function liveProjectAuthorityContextFrom({
+async function liveProjectAuthorityContextFrom({
   client,
   projects,
   canonicalRevOwner,

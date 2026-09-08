@@ -60,6 +60,13 @@ const result = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
   env: process.env,
 });
 
+// npm uses exit 1 for vulnerability findings as well as operational failures.
+// Only a complete report can distinguish those; an error JSON is never clean.
+if (result.error || result.signal || (result.status !== 0 && result.status !== 1)) {
+  console.error("Production audit could not run to completion. No audit result was verified.");
+  process.exit(1);
+}
+
 let report;
 try {
   report = JSON.parse(result.stdout);
@@ -70,7 +77,27 @@ try {
   process.exit(1);
 }
 
-const vulnerabilities = report.vulnerabilities ?? {};
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const severities = ["info", "low", "moderate", "high", "critical"];
+const vulnerabilities = report?.vulnerabilities;
+const counts = report?.metadata?.vulnerabilities;
+if (
+  !isRecord(report) || Object.hasOwn(report, "error") || report.auditReportVersion !== 2 ||
+  !isRecord(vulnerabilities) || !isRecord(counts) ||
+  ![...severities, "total"].every((severity) => Number.isInteger(counts[severity]) && counts[severity] >= 0) ||
+  Object.values(vulnerabilities).some((vulnerability) =>
+    !isRecord(vulnerability) || !severities.includes(vulnerability.severity) || !Array.isArray(vulnerability.via) ||
+    vulnerability.via.some((via) => typeof via !== "string" &&
+      (!isRecord(via) || typeof via.url !== "string" || !severities.includes(via.severity)))) ||
+  counts.total !== Object.keys(vulnerabilities).length ||
+  severities.some((severity) => counts[severity] !==
+    Object.values(vulnerabilities).filter((vulnerability) => vulnerability.severity === severity).length) ||
+  (result.status === 1 && counts.total === 0)
+) {
+  console.error("npm audit did not return a complete, consistent vulnerability report. No audit result was verified.");
+  process.exit(1);
+}
+
 const memo = new Map();
 const isScopedEllipticFinding = (name, active = new Set()) => {
   if (memo.has(name)) return memo.get(name);

@@ -150,6 +150,42 @@ async function expectSurface(page: Page, surface: string) {
   await expectAxeClean(page, surface)
 }
 
+async function expectCreateDraftsSurviveEditorNavigation(page: Page) {
+  const steps = page.getByRole('navigation', { name: 'Create steps' })
+  const back = page.getByRole('button', { name: '← Back' })
+  const next = page.getByRole('button', { name: 'Next →' })
+  await steps.getByRole('button').nth(2).click()
+  const issuance = page.getByRole('button', { name: /^Issuance(?: |$)/ })
+  await issuance.click()
+  const rate = page.getByPlaceholder('10000', { exact: true })
+  await rate.fill('12345.6789')
+
+  await next.click()
+  // Inactive editors must unmount so their code is only needed on these steps.
+  await expect(rate).toHaveCount(0)
+  await page.getByRole('button', { name: '+ Add an item', exact: true }).click()
+  const itemName = page.getByPlaceholder('Item name', { exact: true })
+  await itemName.fill('Saved shop draft')
+  await page.getByRole('button', { name: 'Set per chain', exact: true }).click()
+  await page.getByLabel('Quantity on Ethereum', { exact: true }).fill('7')
+  await page.getByLabel('Quantity on Base', { exact: true }).fill('11')
+
+  await back.click()
+  await expect(itemName).toHaveCount(0)
+  await expect(issuance).toHaveAttribute('aria-expanded', 'true')
+  await expect(rate).toHaveValue('12345.6789')
+  await back.click()
+  await expect(rate).toHaveCount(0)
+  await next.click()
+  await expect(rate).toHaveValue('12345.6789')
+  await next.click()
+  await expect(itemName).toHaveValue('Saved shop draft')
+  await expect(page.getByLabel('Quantity on Ethereum', { exact: true })).toHaveValue('7')
+  await expect(page.getByLabel('Quantity on Base', { exact: true })).toHaveValue('11')
+  await next.click()
+  await expect(itemName).toHaveCount(0)
+}
+
 async function exerciseCreateWizard(page: Page, viewport: string) {
   const flavor = page.getByLabel('Project flavor')
   const stepper = page.getByRole('navigation', { name: 'Create steps' })
@@ -190,7 +226,7 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
     { index: 1, heading: 'How should it appear?', label: 'Look & Feel' },
     { index: 2, heading: 'How should it work?', label: 'Stages' },
     { index: 3, heading: 'Stock your shop', label: 'Shop' },
-    { index: 4, heading: 'Review & launch', label: 'Launch' },
+    { index: 4, heading: 'Ready to launch?', label: 'Launch' },
   ] as const
 
   for (const step of steps) {
@@ -202,6 +238,10 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
     ).toBeVisible()
     await expectVisibleFocus(page, button, `${viewport} create ${step.label}`)
     await expectSurface(page, `${viewport} create ${step.label}`)
+  }
+
+  if (viewport === 'desktop-1280') {
+    await expectCreateDraftsSurviveEditorNavigation(page)
   }
 
   await expect(
@@ -272,10 +312,16 @@ async function exerciseProjectSurfaces(
   const inlineMetadata = page.locator('[data-project-metadata-inline]')
   if (viewport.width >= 768) {
     await expect(inlineMetadata).toBeVisible()
-    const metadataRows = await inlineMetadata.locator(':scope > span').evaluateAll(nodes =>
-      new Set(nodes.map(node => Math.round(node.getBoundingClientRect().top))).size,
-    )
-    expect(metadataRows).toBe(1)
+    // The row centers its items, whose heights differ for chain icons and
+    // address links. Compare centers so those metrics cannot look like a wrap.
+    const metadataRowSpread = await inlineMetadata.locator(':scope > span').evaluateAll(nodes => {
+      const centers = nodes.map(node => {
+        const rect = node.getBoundingClientRect()
+        return rect.top + rect.height / 2
+      })
+      return Math.max(...centers) - Math.min(...centers)
+    })
+    expect(metadataRowSpread).toBeLessThanOrEqual(1)
   } else {
     await expect(inlineMetadata).toBeHidden()
   }
@@ -484,7 +530,9 @@ for (const viewport of viewports) {
         } else if ('create' in route) {
           await exerciseCreateWizard(page, viewport.label)
         } else {
-          const fixtureProject = page.getByRole('link', {
+          // Latest and Trending can both show the same project at xl widths.
+          // This assertion exercises the selected Trending feed specifically.
+          const fixtureProject = page.locator('#home-trending-panel').getByRole('link', {
             name: 'Open Browser Fixture Project',
             exact: true,
           })

@@ -97,7 +97,7 @@ export async function GET(
         <div
           style={{
             display: 'flex',
-            fontSize: project.name.length > 28 ? 48 : 58,
+            fontSize: project.name.length > 28 ? 56 : 68,
             fontWeight: 700,
             lineHeight: 1.05,
           }}
@@ -107,9 +107,9 @@ export async function GET(
         {project.tagline ? (
           <div
             style={{
-              color: '#595959',
+              color: '#3a3a3c',
               display: 'flex',
-              fontSize: 27,
+              fontSize: 32,
               lineHeight: 1.3,
               marginTop: 22,
             }}
@@ -118,22 +118,26 @@ export async function GET(
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', gap: 64, marginTop: 'auto' }}>
+        <div style={{ display: 'flex', gap: 48, marginTop: 'auto' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ color: '#77716a', display: 'flex', fontSize: 22 }}>Balance</div>
-            <div style={{ display: 'flex', fontSize: 52, fontWeight: 700, marginTop: 4 }}>
+            <div style={{ color: '#5c5751', display: 'flex', fontSize: 26 }}>Balance</div>
+            <div
+              style={{
+                display: 'flex',
+                fontSize: project.balance.length > 14 ? 48 : 60,
+                fontWeight: 700,
+                marginTop: 6,
+              }}
+            >
               {project.balance}
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ color: '#77716a', display: 'flex', fontSize: 22 }}>Payments</div>
-            <div style={{ display: 'flex', fontSize: 52, fontWeight: 700, marginTop: 4 }}>
+            <div style={{ color: '#5c5751', display: 'flex', fontSize: 26 }}>Payments</div>
+            <div style={{ display: 'flex', fontSize: 60, fontWeight: 700, marginTop: 6 }}>
               {project.paymentsCount.toLocaleString('en-US')}
             </div>
           </div>
-        </div>
-        <div style={{ color: '#77716a', display: 'flex', fontSize: 28, marginTop: 24 }}>
-          Juicebox | fund your thing
         </div>
       </div>
     </div>,

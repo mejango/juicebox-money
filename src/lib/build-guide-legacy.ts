@@ -1,5 +1,5 @@
 // Generated from the Learn/Build DOM renderer's Build tab (juicescan mirror) on 2026-08-28.
-// Verbatim content; the Build page composes these with the new audience sections.
+// Reference sections retained with corrections against the V6 contracts; section IDs stay stable.
 import type { GuideSection } from '@/components/GuideSections'
 
 export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
@@ -22,8 +22,8 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "code",
-        "label": "JBController.launchProjectFor",
-        "code": "launchProjectFor(\n  owner,                    // receives the project NFT\n  projectUri,               // metadata (name, description, logo)\n  rulesetConfigurations[],  // operational parameters\n  terminalConfigurations[], // payment processing setup\n  memo                      // transaction description\n)"
+        "label": "JBController.launchProjectFor (call outline)",
+        "code": "launchProjectFor(\n  owner,                    // receives the project NFT\n  projectUri,               // metadata (name, description, logo)\n  rulesetConfigurations[],  // operational parameters\n  terminalConfigurations[], // payment processing setup\n  memo                      // transaction description\n)\n// Send exactly JBProjects.creationFee() as transaction value."
       },
       {
         "type": "info",
@@ -107,7 +107,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "blocks": [
       {
         "type": "code",
-        "label": "JBMultiTerminal.pay",
+        "label": "JBMultiTerminal.pay (call outline)",
         "code": "pay(\n  projectId,\n  token,              // which token to pay with\n  amount,             // how much\n  beneficiary,        // who receives the minted tokens\n  minReturnedTokens,  // slippage protection\n  memo,               // message attached to the payment\n  metadata            // extra data for hooks\n)\n// Returns: number of tokens minted for the beneficiary"
       },
       {
@@ -189,17 +189,17 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Distribute",
     "paragraphs": [
-      "Projects distribute funds through payouts and reserved tokens. By default anyone can trigger distribution, but the ownerMustSendPayouts ruleset flag can restrict it to the project owner."
+      "Projects distribute funds through payouts and reserved tokens. By default anyone can trigger distribution; the ownerMustSendPayouts ruleset flag restricts payouts to the owner or an operator with SEND_PAYOUTS permission."
     ],
     "blocks": [
       {
         "type": "code",
-        "label": "JBMultiTerminal.sendPayoutsOf",
-        "code": "sendPayoutsOf(\n  projectId,\n  token,\n  amount,              // up to the payout limit\n  currency,\n  minTokensPaidOut     // slippage protection\n)\n// Distributes to splits, leftover to project owner\n// 2.5% protocol fee on payouts, except to other Juicebox projects and feeless addresses"
+        "label": "JBMultiTerminal.sendPayoutsOf (call outline)",
+        "code": "sendPayoutsOf(\n  projectId,\n  token,\n  amount,              // up to the payout limit\n  currency,\n  minTokensPaidOut     // slippage protection\n)\n// Distributes to splits, leftover to project owner\n// 2.5% protocol fee on payouts, except same-terminal project payouts and eligible feeless recipients"
       },
       {
         "type": "code",
-        "label": "JBController.sendReservedTokensToSplitsOf",
+        "label": "JBController.sendReservedTokensToSplitsOf (call outline)",
         "code": "sendReservedTokensToSplitsOf(projectId)\n// Anyone can call this at any time\n// Mints accumulated reserved tokens and distributes to splits"
       },
       {
@@ -222,7 +222,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "sendPayoutsOf() is permissionless by default — anyone can trigger distributions. To restrict it to the project owner, enable the ownerMustSendPayouts flag in the ruleset metadata."
+        "text": "sendPayoutsOf() is permissionless by default. ownerMustSendPayouts restricts it to the owner or a SEND_PAYOUTS operator. A payout to another project through a different, non-feeless terminal still incurs the standard fee."
       }
     ]
   },
@@ -231,30 +231,32 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Cash out",
     "paragraphs": [
-      "Token holders can cash out (redeem) their tokens for a proportional share of the project’s surplus. Surplus = terminal balance minus the remaining (unused) payout limit for the cycle.",
-      "The cash out tax rate controls how much value stays in the project vs. goes to the redeemer. A rate of 0% = full proportional redemption. Higher rates incentivize holding but reduce access to capital."
+      "Token holders can cash out tokens against the project’s current surplus under its tax, hook, and fee settings. In a single accounting context, surplus is the terminal balance above the remaining payout limit. Read a hook-aware quote for the actual transaction.",
+      "At 0% cash out tax the core formula returns a proportional share before fees. Higher rates reduce the amount returned to a holder cashing out part of the supply; at 100% it returns zero. The tax is separate from protocol and hook fees."
     ],
     "blocks": [
       {
         "type": "code",
-        "label": "JBMultiTerminal.cashOutTokensOf",
+        "label": "JBMultiTerminal.cashOutTokensOf (call outline)",
         "code": "cashOutTokensOf(\n  holder,\n  projectId,\n  cashOutCount,         // how many tokens to burn\n  tokenToReclaim,       // which token to receive\n  minTokensReclaimed,   // slippage protection\n  beneficiary,          // who receives the funds\n  metadata\n)"
       },
       {
         "type": "diagram",
         "label": "BONDING CURVE",
         "lines": [
+          "  For taxRate below MAX:",
           "  reclaim = surplus × (cashOutCount / totalSupply)",
           "         × [(MAX - taxRate) + taxRate × (cashOutCount / totalSupply)]",
           "         ÷ MAX",
           "",
           "  taxRate = 0%    → full proportional redemption",
-          "  taxRate = 100%  → value stays in project (early holders protected)"
-        ]
+          "  taxRate = 100%  → returns zero (separate contract branch)"
+        ],
+        "description": "Below 100% tax, multiply surplus by the holder’s supply share, then by the curve adjustment shown. A 0% tax is proportional. At 100% tax the contract returns zero, and protocol or hook fees are separate."
       },
       {
         "type": "info",
-        "text": "Cash outs with tax rate > 0% pay the 2.5% protocol fee on the whole reclaimed amount. At tax rate 0% the fee still applies, on min(reclaimed, feeFreeSurplusOf) — often zero, but not always."
+        "text": "For non-feeless beneficiaries, a nonzero cash out tax normally makes the full direct reclaim eligible for the 2.5% protocol fee. At zero tax, only min(reclaimed, feeFreeSurplusOf) is eligible. Hooks and routing affect the final quote."
       }
     ]
   },
@@ -263,12 +265,12 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Evolve",
     "paragraphs": [
-      "Projects evolve by queuing new rulesets. Changes take effect at the next cycle boundary (or immediately if the current ruleset has no duration)."
+      "Projects evolve by queuing new rulesets. A timed ruleset changes at an eligible cycle boundary. A flexible ruleset can change without a cycle boundary, but any configured start time, notice, or approval still applies."
     ],
     "blocks": [
       {
         "type": "code",
-        "label": "JBController.queueRulesetsOf",
+        "label": "JBController.queueRulesetsOf (call outline)",
         "code": "queueRulesetsOf(\n  projectId,\n  rulesetConfigurations[],  // new parameters\n  memo\n)\n// If an approval hook is configured, it must approve\n// the changes before they can activate."
       },
       {
@@ -292,9 +294,9 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a revnet",
     "title": "What’s a revnet?",
     "paragraphs": [
-      "A revnet is a Juicebox project owned by a special contract (REVOwner) that enforces a fixed set of rules. No one — not even the deployer — can change the rules after launch.",
-      "This creates a revenue-backed token with programmatic capital formation and zero payout mismanagement risk. The token is automatically deployed as an ERC-20 at launch.",
-      "Revnets replace \"rulesets\" with \"stages\" — same underlying mechanism, but the terminology emphasizes the predetermined progression."
+      "A revnet is a Juicebox project owned by REVOwner, which locks its staged economic parameters at launch. Its operator retains specific permissions: review these alongside the stage schedule.",
+      "The token is deployed as an ERC-20 at launch. Revenue can back cash outs under the configured terms. Fixed issuance rules do not guarantee revenue or fix the token’s market price.",
+      "Revnets use stages to describe their predetermined economic progression. Operator controls can still include split recipients, metadata, buyback settings, router selection, and configured NFT features."
     ],
     "blocks": [
       {
@@ -302,7 +304,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "label": "REVNET vs PROJECT",
         "lines": [
           "  PROJECT",
-          "  • owned by EOA/multisig",
+          "  • owned by a wallet or contract",
           "  • owner can change rulesets",
           "  • manual ERC-20 deploy",
           "  • flexible governance",
@@ -312,9 +314,10 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           "  • owned by REVOwner contract",
           "  • stages locked at deploy",
           "  • ERC-20 auto-deployed",
-          "  • trustless, programmatic",
+          "  • fixed staged economics",
           "  • good for: protocols, tokens"
-        ]
+        ],
+        "description": "Projects can be owned by wallets or contracts with ruleset-dependent powers. Revnets use REVOwner, commit the core stage schedule at launch, and deploy their ERC-20 during launch while retaining limited operator controls."
       }
     ]
   },
@@ -328,12 +331,12 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "blocks": [
       {
         "type": "code",
-        "label": "REVDeployer.deployFor",
-        "code": "deployFor(\n  revnetId,                        // project ID (or 0 for auto)\n  configuration,                   // REVConfig with stages\n  accountingContextsToAccept[],    // tokens the terminal should accept\n  suckerDeploymentConfiguration,   // cross-chain setup\n  tiered721HookConfiguration,      // optional NFT tiers\n  allowedPosts[]                   // optional croptop posts\n)"
+        "label": "REVDeployer.deployFor (call outline)",
+        "code": "deployFor(\n  revnetId,                        // project ID (or 0 for auto)\n  configuration,                   // REVConfig with stages\n  accountingContextsToAccept[],    // tokens the terminal should accept\n  suckerDeploymentConfiguration,   // cross-chain setup\n  tiered721HookConfiguration,      // optional NFT tiers\n  allowedPosts[]                   // optional croptop posts\n)\n// New revnet (revnetId == 0): include the current project creation fee.\n// Existing project ID: send no native value."
       },
       {
         "type": "text",
-        "text": "After deployment, interactions are identical to regular projects — pay(), cashOutTokensOf(), and all read functions work the same way. The difference is governance: no one can change the rules."
+        "text": "A revnet uses the same core payment and cash out entrypoints as other projects, with REVOwner applying its revnet terms and fee logic. Quote through the configured hooks and inspect the operator’s retained permissions."
       }
     ]
   },
@@ -356,7 +359,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "JBController.upcomingRulesetOf(projectId)",
-            "Next stage (empty if none is queued)"
+            "Next ruleset, including an automatic cycle of the current stage; empty only when no ruleset follows."
           ],
           [
             "JBController.allRulesetsOf(projectId, startingId, size)",
@@ -371,19 +374,19 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a revnet",
     "title": "Revnet fees",
     "paragraphs": [
-      "Cash outs from revnets with a cash out tax rate > 0% incur two fees:"
+      "Ordinary taxed revnet cash outs can incur both fees below. The revnet fee is skipped for zero-tax cash outs, feeless beneficiaries, or when the fee project has no compatible terminal."
     ],
     "blocks": [
       {
         "type": "steps",
         "items": [
           "2.5% protocol fee — taken from the reclaimed value by JBMultiTerminal, sent to the Juicebox protocol’s project",
-          "2.5% revnet fee — taken from the token count by REVOwner, sent to the revnet fee project"
+          "2.5% revnet fee — REVOwner allocates a share of the token count to the fee calculation and sends its associated reclaim value to the revnet fee project."
         ]
       },
       {
         "type": "text",
-        "text": "The protocol fee is on the value reclaimed (ETH/tokens out). The revnet fee is on the token count burned (project tokens). These are different bases."
+        "text": "The protocol fee is based on reclaimed value. The revnet fee is calculated from a share of the token count; its recipient receives the associated reclaim value, not those project tokens. The rates have different bases, so do not simply subtract 5% from a core quote."
       }
     ]
   },
@@ -397,7 +400,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "blocks": [
       {
         "type": "code",
-        "label": "JBPermissions.setPermissionsFor",
+        "label": "JBPermissions.setPermissionsFor (call outline)",
         "code": "setPermissionsFor(\n  account,         // the address granting permission\n  permissionsData  // { operator, projectId, permissionIds[] }\n)\n// projectId = 0 is the wildcard: every project `account` controls on this chain"
       },
       {
@@ -572,11 +575,11 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "38 - REALLOCATE_LOAN",
-            "Move collateral between loans. Also borrows the full current capacity."
+            "Move collateral into a new loan and borrow its current capacity. The operator chooses where new proceeds go."
           ],
           [
             "39 - REPAY_LOAN",
-            "Repay a loan on a holder’s behalf."
+            "Repay or release collateral on a holder’s behalf. The operator chooses where returned collateral goes."
           ]
         ]
       },
@@ -596,7 +599,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "blocks": [
       {
         "type": "code",
-        "label": "JB721TiersHookProjectDeployer.launchProjectFor",
+        "label": "JB721TiersHookProjectDeployer.launchProjectFor (call outline)",
         "code": "launchProjectFor(\n  owner,\n  deployTiersHookConfig,    // NFT name, symbol, tiers[]\n  launchProjectConfig,      // standard project config\n  controller,\n  salt                      // CREATE2 salt for a deterministic hook address (0 for none)\n)\n// Always use this deployer, even with empty tiers"
       },
       {
@@ -701,7 +704,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "code",
-        "label": "IJBPayHook interface",
+        "label": "IJBPayHook interface (call outline)",
         "code": "function afterPayRecordedWith(\n  JBAfterPayRecordedContext calldata context\n) external payable;\n\n// context includes:\n//   payer, projectId, rulesetId, amount,\n//   forwardedAmount, weight, newlyIssuedTokenCount,\n//   beneficiary, hookMetadata, payerMetadata"
       },
       {
@@ -820,12 +823,12 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "title": "Payer address",
     "paragraphs": [
       "A JBProjectPayer address is deployed as a minimal proxy (clone). The constructor takes only a JBDirectory address. After deployment, defaults are set via initialize() or setDefaultValues().",
-      "The receive path accepts the native token (ETH) only. When defaultAddToBalance is false, incoming native ETH triggers pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. The beneficiary defaults to msg.sender if not configured. ERC-20 payments must call pay() or addToBalanceOf() after approval; direct ERC-20 transfers do not trigger either path."
+      "The receive path accepts the native token (ETH) only. When defaultAddToBalance is false, incoming native ETH triggers pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. With no explicit or default beneficiary, the contract resolves the original payer, including supported upstream payer trackers. ERC-20 payments must call pay() or addToBalanceOf() after approval; direct ERC-20 transfers do not trigger either path."
     ],
     "blocks": [
       {
         "type": "code",
-        "label": "JBProjectPayer defaults",
+        "label": "JBProjectPayer defaults (call outline)",
         "code": "// Set via initialize() after clone deployment:\ndefaultProjectId       // which project to forward to\ndefaultBeneficiary     // who gets the tokens (0 = msg.sender)\ndefaultMemo            // attached to each payment\ndefaultMetadata        // extra data for hooks\ndefaultAddToBalance    // false = pay(), true = addToBalance()\n\n// Anyone sends ETH to the payer address:\n//   → receive() fires\n//   → looks up DIRECTORY.primaryTerminalOf(projectId, token)\n//   → calls pay() or addToBalanceOf() with defaults"
       },
       {
@@ -881,7 +884,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "blocks": [
       {
         "type": "code",
-        "label": "JBBuybackHook configuration",
+        "label": "JBBuybackHook configuration (call outline)",
         "code": "// Set up the buyback hook with a Uniswap V4 pool\nJBBuybackHook.setPoolFor(\n  projectId,\n  fee,              // Uniswap pool fee tier\n  tickSpacing,      // pool tick spacing\n  twapWindow,       // TWAP observation window (seconds)\n  terminalToken     // the terminal token to route\n)\n// The pool key is once-only; the TWAP window stays mutable via setTwapWindowOf\n// Requires SET_BUYBACK_POOL permission"
       },
       {
@@ -935,7 +938,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "code",
-        "label": "A first query",
+        "label": "A first query (call outline)",
         "code": "POST https://bendystraw.up.railway.app/graphql\n{\n  projects(where: { chainId: 8453, version: 6 }, orderBy: \"balance\", orderDirection: \"desc\", limit: 10) {\n    items { projectId chainId name balance suckerGroupId }\n    totalCount\n  }\n}"
       },
       {
@@ -943,7 +946,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "label": "WHAT TO ASK IT FOR",
         "rows": [
           [
-            "projects / project(chainId, projectId)",
+            "projects / project(chainId, projectId, version: 6)",
             "Name, metadata URI, balance, token, owner, and the sucker group that links its chains"
           ],
           [

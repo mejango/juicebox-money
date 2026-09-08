@@ -14,7 +14,6 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
-  buildClaimTokensTx,
   getAccountingContexts,
   getAllRulesets,
   getBorrowableAmount,
@@ -35,9 +34,11 @@ import {
 import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
+import { ClaimCreditsAcrossChains } from '@/components/project/ProjectTokenBatchFlow'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
 import { BurnTokensFlow } from '@/components/project/BurnTokensFlow'
 import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
+import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
 import { GetLoanFlow } from '@/components/project/GetLoanFlow'
 import { LoansSection } from '@/components/project/LoansSection'
 import { MarketSection } from '@/components/project/MarketSection'
@@ -50,16 +51,14 @@ import {
 import { TokenPanel } from '@/components/project/TokenPanel'
 import { SubTabs } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { AddressText } from '@/components/ui/AddressLabel'
+import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { donutSlicePath } from '@/lib/donut'
 import {
   LiquidityPositions,
   useUserLpSummary,
 } from '@/components/project/LiquidityPositions'
-import { TxError } from '@/components/ui/TxError'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import type { BsParticipant } from '@/lib/bendystraw'
@@ -69,13 +68,10 @@ import {
   fmtPct,
   formatTokenAmount,
 } from '@/lib/format'
-import { isKnownController } from '@/lib/manage'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
-import { buildSendReservedTokensRequest } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
-import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 
@@ -209,7 +205,7 @@ export function ownerPageWindow<T>(
  * the connected holder's per-chain position (balance, cash-out value, and — for
  * revnets — max loan), plus every token-holder action in one place: Cash out,
  * Get a loan (revnet), and Move between chains (multichain). Each action opens
- * its flow in a modal. Every write runs through useSafeTx (simulate-first).
+ * its flow in a modal. Claims share a durable batch across the selected chains.
  */
 function YouCard({
   chainId,
@@ -272,7 +268,7 @@ function YouCard({
           : action === 'move'
             ? 'Move between chains'
             : action === 'liquidity'
-              ? 'Add market liquidity'
+              ? 'Add liquidity'
               : null
 
   return (
@@ -326,17 +322,20 @@ function YouCard({
                     holder={address!}
                     isRevnet={isRevnet}
                     tokenSymbol={collateralSymbol}
+                    chains={chains}
                   />
                 ))}
               </tbody>
             </table>
           </div>
 
+          {!isRevnet ? <ClaimCreditsAcrossChains chains={chains} holder={address!} /> : null}
+
           <div className="mt-4 flex flex-wrap gap-2">
             {actionBtn('cashOut', 'Cash out')}
             {isRevnet ? actionBtn('loan', 'Get a loan') : null}
             {multiChain ? actionBtn('move', 'Move between chains') : null}
-            {actionBtn('liquidity', 'Add market liquidity')}
+            {actionBtn('liquidity', 'Add liquidity')}
             {actionBtn('burn', 'Burn')}
           </div>
 
@@ -414,12 +413,15 @@ function YourChainRow({
   holder,
   isRevnet,
   tokenSymbol,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
   isRevnet: boolean
   tokenSymbol: string
+  /** Every (chainId, projectId) pair in the group — the LP modal spans them all. */
+  chains: [number, number][]
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
@@ -427,7 +429,6 @@ function YourChainRow({
     data: position,
     isLoading,
     isError,
-    refetch,
   } = useQuery({
     queryKey: ['yourPosition', chainId, projectId, holder, isRevnet],
     enabled: !!publicClient,
@@ -638,30 +639,20 @@ function YourChainRow({
                 projectId={projectId}
                 holder={holder}
                 sym={tokenSymbol}
+                chains={chains}
               />
             </td>
           </>
         )}
       </tr>
-      {!isRevnet && position?.token && position.credits > 0n ? (
-        <tr className="border-b border-smoke-100 last:border-0">
-          <td colSpan={5} className="px-4 pb-3">
-            <ClaimFlow
-              chainId={chainId}
-              projectId={projectId}
-              holder={holder}
-              onDone={refetch}
-            />
-          </td>
-        </tr>
-      ) : null}
+
     </>
   )
 }
 
 /**
  * The wallet's LP standing on one chain, in the You table: how many positions
- * it owns and what they have earned, opening the full panel to claim or exit.
+ * it owns, opening the full panel to see earned fees, claim, or exit.
  * Renders "—" where the chain has no pool or the wallet has no position.
  */
 function YourLpCell({
@@ -669,11 +660,13 @@ function YourLpCell({
   projectId,
   holder,
   sym,
+  chains,
 }: {
   chainId: JBChainId
   projectId: number
   holder: Address
   sym: string
+  chains: [number, number][]
 }) {
   const [open, setOpen] = useState(false)
   const summary = useUserLpSummary(chainId, projectId, holder)
@@ -690,14 +683,6 @@ function YourLpCell({
   }
   if (!summary.positions.length) return <>—</>
 
-  const owed =
-    summary.tokenFees > 0n || summary.pairFees > 0n
-      ? `${formatTokenAmount(summary.tokenFees, 18)} ${sym} + ${formatTokenAmount(
-          summary.pairFees,
-          summary.pool?.pair.decimals ?? 18,
-        )} ${summary.pool?.pair.symbol ?? ''} fees`
-      : null
-
   return (
     <>
       <button
@@ -707,192 +692,29 @@ function YourLpCell({
       >
         {summary.positions.length}{' '}
         {summary.positions.length === 1 ? 'position' : 'positions'}
-        {owed ? <span className="block text-xs text-smoke-500">{owed}</span> : null}
       </button>
       {open ? (
         <ModalShell
           title="Your liquidity"
-          subtitle="Positions owned by this wallet in the project's market pool."
+          subtitle={
+            <>
+              Positions owned by <AddressLabel address={holder} /> in the project&apos;s market
+              pools.
+            </>
+          }
           onClose={() => setOpen(false)}
-          maxWidth="max-w-xl"
+          maxWidth="max-w-2xl"
         >
-          <LiquidityPositions chainId={chainId} projectId={projectId} sym={sym} />
+          <LiquidityPositions
+            chains={chains.map(([cid, pid]) => ({
+              chainId: cid as JBChainId,
+              projectId: pid,
+            }))}
+            sym={sym}
+          />
         </ModalShell>
       ) : null}
     </>
-  )
-}
-
-// ------------------------------------------------------------ claim flow --
-
-/** The reviewed claim: args frozen at review time so what the user confirms
- *  is what's sent (FundsTab pattern). */
-type ReviewedClaim = {
-  request: {
-    chainId: JBChainId
-    address: Address
-    abi: typeof jbControllerAbi
-    functionName: 'claimTokensFor'
-    args: readonly [Address, bigint, bigint, Address]
-  }
-  /** The credit count being claimed, 18-dec fixed point. */
-  amount: bigint
-  /** The account the review was made for. */
-  account: Address
-}
-
-/**
- * Claim credits as ERC-20 (JBController.claimTokensFor, tx #7): full credit
- * balance, beneficiary = the holder. The project's controller is read from
- * JBDirectory — never assumed — and must be the canonical JBController the
- * SDK builder targets.
- */
-function ClaimFlow({
-  chainId,
-  projectId,
-  holder,
-  onDone,
-}: {
-  chainId: JBChainId
-  projectId: number
-  holder: Address
-  onDone: () => void
-}) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const { address } = useWallet()
-  const tx = useSafeTx(chainId)
-
-  const [checking, setChecking] = useState(false)
-  const [flowError, setFlowError] = useState<string | null>(null)
-  const [review, setReview] = useState<ReviewedClaim | null>(null)
-
-  const busy = checking || tx.busy
-
-  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
-
-  useEffect(() => {
-    if (tx.phase === 'success') onDone()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase])
-
-  /** Re-read live state (credits, controller) and freeze the exact args. */
-  const handleReview = async () => {
-    if (!publicClient || busy) return
-    setFlowError(null)
-    setChecking(true)
-    try {
-      const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
-        chainId
-      ] as Address
-      const [freshCredits, controller] = await Promise.all([
-        getCreditBalance(publicClient, {
-          chainId,
-          projectId: BigInt(projectId),
-          holder,
-        }),
-        publicClient.readContract({
-          abi: jbDirectoryAbi,
-          address: directory,
-          functionName: 'controllerOf',
-          args: [BigInt(projectId)],
-        }),
-      ])
-      if (freshCredits <= 0n) {
-        throw new Error('No credits left to claim.')
-      }
-      // The claim goes through the project's own controller. The SDK builder
-      // targets the canonical JBController — bail out for custom controllers
-      // rather than send a call that would revert (OwnerPanel pattern).
-      if (!isKnownController(chainId, controller)) {
-        throw new Error(
-          'This project uses a custom controller — claiming here is not supported.',
-        )
-      }
-      const request = buildClaimTokensTx({
-        chainId,
-        holder,
-        projectId: BigInt(projectId),
-        tokenCount: freshCredits,
-        beneficiary: holder,
-      })
-      setReview({ request, amount: freshCredits, account: holder })
-    } catch (e) {
-      setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
-    } finally {
-      setChecking(false)
-    }
-  }
-
-  const handleConfirm = () => {
-    if (!review || busy) return
-    // Account-unchanged recheck: the frozen args claim FOR this holder.
-    if (address?.toLowerCase() !== review.account.toLowerCase()) {
-      setReview(null)
-      setFlowError('Your connected account changed — start the claim again.')
-      return
-    }
-    tx.send(review.request)
-  }
-
-  if (tx.phase === 'success') {
-    return (
-      <div className="callout callout-success mt-2 text-xs">
-        Claimed — the tokens are in your wallet as ERC-20.
-        {txUrl ? (
-          <>
-            {' '}
-            <a
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-            >
-              View transaction
-            </a>
-          </>
-        ) : null}
-      </div>
-    )
-  }
-
-  return (
-    <div className="mt-2">
-      {review ? (
-        <div className="callout callout-info text-xs">
-          {formatTokenAmount(review.amount)} credits will become ERC-20 tokens
-          in your wallet. Nothing else changes — same balance, now movable.
-        </div>
-      ) : null}
-      <button
-        onClick={review ? handleConfirm : handleReview}
-        disabled={busy}
-        className="btn-secondary mt-2 min-h-[36px] px-4 text-xs"
-      >
-        {checking
-          ? 'Checking your credits…'
-          : txPhaseLabel(tx.phase, {
-              pending: 'Claiming…',
-              idle: review ? 'Confirm claim' : 'Claim as ERC-20',
-            })}
-      </button>
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
-      <TxError
-        error={flowError ?? tx.error}
-        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
-      />
-    </div>
   )
 }
 
@@ -1490,6 +1312,7 @@ function ReservedCard({
         </div>
       )}
 
+      {isCurrentStage ? <DistributionBatchFlow kind="reserved" chainId={chainId} projectId={projectId} chains={chains} /> : null}
       {isRevnet && isCurrentStage && rulesetId > 0 ? (
         <EditSplitsFlow
           chainId={chainId}
@@ -1497,6 +1320,7 @@ function ReservedCard({
           groupId={RESERVED_TOKEN_SPLIT_GROUP_ID}
           title="Splits"
           rulesetId={BigInt(rulesetId)}
+          chains={chains}
           isRevnet
         />
       ) : null}
@@ -1504,7 +1328,7 @@ function ReservedCard({
   )
 }
 
-/** One inline chain table, with that chain's pending balance and action.
+/** One inline chain table, with that chain's pending balance.
  *  Splits are read from THIS chain's JBSplits under THIS chain's ruleset id
  *  for the stage — ruleset ids differ per chain, and split edits land per
  *  chain, so rendering the route chain's rows here would misreport peers.
@@ -1583,7 +1407,6 @@ function ChainSplitsBlock({
   const {
     data: pending,
     isLoading: pendingLoading,
-    refetch: refetchPending,
   } = useReadContract({
     abi: jbControllerAbi,
     address: controller,
@@ -1674,113 +1497,6 @@ function ChainSplitsBlock({
         })}
       </div>
       )}
-      <div className="flex justify-end">
-        <DistributeFlow
-          chainId={chainId}
-          projectId={projectId}
-          controller={controller}
-          pending={availablePending}
-          onDone={() => void refetchPending()}
-        />
-      </div>
     </section>
-  )
-}
-
-/**
- * "Distribute now" (tx #20): anyone can send it — it just moves the pending
- * reserved tokens to the recipients above. No user inputs, so the useSafeTx
- * simulation is the whole safety gate.
- */
-function DistributeFlow({
-  chainId,
-  projectId,
-  controller,
-  pending,
-  onDone,
-}: {
-  chainId: JBChainId
-  projectId: number
-  controller: Address | undefined
-  pending: bigint | undefined
-  onDone: () => void
-}) {
-  const { isConnected, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
-
-  const busy = tx.busy
-
-  const txUrl = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
-
-  useEffect(() => {
-    if (tx.phase === 'success') onDone()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase])
-
-  const handleDistribute = () => {
-    if (busy || !controller || !pending || pending <= 0n) return
-    if (!isConnected) {
-      openSignIn()
-      return
-    }
-    tx.send(
-      buildSendReservedTokensRequest({
-        chainId,
-        controller,
-        projectId: BigInt(projectId),
-      }),
-    )
-  }
-
-  return (
-    <div className="mt-2 flex flex-col items-end">
-      <button
-        onClick={handleDistribute}
-        disabled={busy || !controller || !pending || pending <= 0n}
-        className="btn-secondary min-h-[40px] px-4 text-sm"
-      >
-        {tx.phase === 'success'
-          ? 'Distributed'
-          : txPhaseLabel(tx.phase, {
-              pending: 'Distributing…',
-              idle: 'Distribute',
-            })}
-      </button>
-      {tx.phase === 'success' ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Pending splits distributed.
-          {txUrl ? (
-            <>
-              {' '}
-              <a
-                href={txUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2"
-              >
-                View transaction
-              </a>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-      {tx.phase === 'pending' && txUrl ? (
-        <p className="mt-1.5 text-xs text-smoke-700">
-          Waiting for confirmation —{' '}
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-2"
-          >
-            view transaction
-          </a>
-        </p>
-      ) : null}
-      <TxError
-        error={tx.error}
-        className="mt-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700"
-      />
-    </div>
   )
 }

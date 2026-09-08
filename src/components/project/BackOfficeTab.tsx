@@ -1,7 +1,6 @@
 'use client'
 
 import { type JBChainId } from '@bananapus/nana-sdk-core'
-import { usePreloadTransactionAnimation } from '@/components/TransactionInProgress'
 import {
   AuthorityOverview,
   type AuthorityDeployment,
@@ -44,7 +43,6 @@ export function BackOfficeTab({
   /** Current pinned profile used to prefill the chain-aware metadata editor. */
   profile: AuthorityEditProfile
 }) {
-  usePreloadTransactionAnimation()
   const currentDeployment = deployments.find(
     deployment =>
       deployment.chainId === chainId && deployment.projectId === projectId,

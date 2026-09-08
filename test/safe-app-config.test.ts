@@ -12,17 +12,21 @@ const createConfig = require('../next.config.js') as () => {
 const publicDirectory = fileURLToPath(new URL('../public/', import.meta.url))
 
 describe('Safe App hosting', () => {
-  it('allows only Safe Wallet to frame the app', async () => {
+  it('lets only the Safe app and plugin.money frame the app', async () => {
     const routes = await createConfig().headers()
     const appHeaders =
       routes.find(({ source }) => source === '/(.*)')?.headers ?? []
     const byName = Object.fromEntries(
       appHeaders.map(({ key, value }) => [key, value]),
     )
+    const policy = byName['Content-Security-Policy']
 
-    expect(byName['Content-Security-Policy']).toBe(
-      'frame-ancestors https://app.safe.global https://app.5afe.dev',
+    expect(policy).toBe(
+      'frame-ancestors https://app.safe.global https://app.5afe.dev https://plugin.money https://www.plugin.money',
     )
+    // The exact match above is the real assertion; these say what it is protecting, so a
+    // future edit that widens the allowlist fails for a legible reason.
+    expect(policy).not.toMatch(/\*|'unsafe|http:\/\//u)
     expect(byName['X-Frame-Options']).toBeUndefined()
   })
 

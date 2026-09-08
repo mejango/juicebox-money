@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   combinedActivityParts,
   groupSameTxEvents,
+  projectFeedEvents,
 } from '@/components/ActivityList'
 import type { BsActivityEvent } from '@/lib/bendystraw'
+
+vi.mock('@/hooks/useEnsName', () => ({
+  useEnsName: () => ({ data: null }),
+}))
 
 function event(overrides: Partial<BsActivityEvent>): BsActivityEvent {
   return {
@@ -52,6 +57,113 @@ const mint = event({
   },
 } as Partial<BsActivityEvent>)
 
+describe('buyback direction across the project, home, and account feeds', () => {
+  const plainAction = (parts: ReturnType<typeof combinedActivityParts>) =>
+    renderToStaticMarkup(<>{parts.action}</>).replace(/<[^>]*>/g, '')
+  const swapOf = (direction: string, overrides: Partial<BsActivityEvent> = {}) =>
+    event({
+      ...swap,
+      swapEvent: {
+        ...swap.swapEvent!,
+        direction,
+        projectTokenAmount: '2340000000000000000',
+        terminalTokenAmount: '23000000000000',
+      },
+      ...overrides,
+    })
+  const cashOut = event({
+    id: 'cash-out',
+    cashOutTokensEvent: {
+      beneficiary: '0xseller',
+      cashOutCount: '2390000000000000000',
+      reclaimAmount: '23000000000000',
+      reclaimAmountUsd: null,
+    },
+  })
+
+  it.each(['sell', 'SELL'])('describes a %s swap as a sale and outward flow', direction => {
+    const parts = combinedActivityParts([swapOf(direction)], 'SBB')
+    expect(plainAction(parts)).toBe('sold 2.34 SBB via the buyback pool')
+    expect(parts.direction).toBe('out')
+    expect(parts.actor).toBe('0xbundler')
+    expect(parts.amountRaw).toBe('23000000000000')
+  })
+
+  it('keeps both cash-out and pool-sale amounts without describing a purchase', () => {
+    const parts = combinedActivityParts([swapOf('sell'), cashOut], 'SBB')
+    expect(plainAction(parts)).toBe(
+      'cashed out 2.39 SBB and sold 2.34 SBB via the buyback pool',
+    )
+    expect(parts.actions).toHaveLength(2)
+    expect(parts.direction).toBe('out')
+    expect(parts.actor).toBe('0xseller')
+  })
+
+  it('keeps a fee project purchase separate from the sale in the same transaction', () => {
+    const groups = groupSameTxEvents([
+      cashOut,
+      swapOf('sell'),
+      swapOf('buy', { id: 'fee-buy', projectId: 1 }),
+    ])
+    expect(groups).toHaveLength(2)
+    const sale = combinedActivityParts(groups[0], 'SBB')
+    const purchase = combinedActivityParts(groups[1], 'JBX')
+    expect(sale.direction).toBe('out')
+    expect(plainAction(sale)).not.toContain('bought')
+    expect(purchase.direction).toBe('in')
+    expect(plainAction(purchase)).toBe('bought 2.34 JBX via the buyback pool')
+  })
+
+  it.each(['mint', 'MINT'])('describes a %s fallback as issuance', direction => {
+    const parts = combinedActivityParts([swapOf(direction)], 'SBB')
+    expect(plainAction(parts)).toBe('bought 2.34 SBB from issuance')
+    expect(parts.direction).toBe('in')
+    expect(parts.kind).toBe('Issuance')
+  })
+
+  it('does not invent a purchase or a reserve percentage for an unknown direction', () => {
+    const unknown = swapOf('unknown')
+    const parts = combinedActivityParts([unknown], 'SBB')
+    expect(plainAction(parts)).toBe('swapped 2.34 SBB via the buyback pool')
+    expect(parts.direction).toBeNull()
+    const withMint = combinedActivityParts([
+      unknown,
+      event({
+        ...mint,
+        mintTokensEvent: { ...mint.mintTokensEvent!, beneficiaryTokenCount: '1000000000000000000' },
+      }),
+    ], 'SBB')
+    expect(plainAction(withMint)).not.toContain('reserve')
+  })
+
+  it('does not infer a reserve from the combined receipt of a pool buy and leftover issuance', () => {
+    const parts = combinedActivityParts([
+      pay,
+      event({ ...swap, swapEvent: { ...swap.swapEvent!, projectTokenAmount: '80000000000000000000' } }),
+      event({
+        ...swap,
+        id: 'leftover',
+        swapEvent: { ...swap.swapEvent!, direction: 'mint', projectTokenAmount: '20000000000000000000' },
+      }),
+      event({
+        ...mint,
+        mintTokensEvent: { ...mint.mintTokensEvent!, beneficiaryTokenCount: '70000000000000000000' },
+      }),
+    ], 'SBB')
+    expect(plainAction(parts)).toContain('bought 80 SBB via the buyback pool')
+    expect(plainAction(parts)).toContain('bought 20 SBB from issuance')
+    expect(plainAction(parts)).toContain('minted 70 SBB')
+    expect(plainAction(parts)).not.toContain('reserve')
+  })
+
+  it('does not pair a sale\'s internal mint with a pool purchase', () => {
+    const parts = combinedActivityParts([swap, swapOf('sell', { id: 'sell' }), mint], 'SBB')
+    expect(plainAction(parts)).toContain('sold 2.34 SBB via the buyback pool')
+    expect(plainAction(parts)).toContain('minted')
+    expect(plainAction(parts)).not.toContain('reserve')
+  })
+})
+
 describe('groupSameTxEvents', () => {
   it('folds events sharing one tx and keeps other txs separate', () => {
     const other = event({ id: 'd', txHash: '0xother', payEvent: pay.payEvent })
@@ -89,6 +201,88 @@ describe('combinedActivityParts', () => {
     )
   })
 
+  it('pairs each remint with its own swap when one tx holds two buyback pays', () => {
+    const swapOf = (id: string, projectTokenAmount: string) =>
+      event({
+        id,
+        from: '0xbundler',
+        swapEvent: { ...swap.swapEvent!, projectTokenAmount },
+      } as Partial<BsActivityEvent>)
+    const mintOf = (id: string, beneficiaryTokenCount: string) =>
+      event({
+        id,
+        mintTokensEvent: { beneficiary: '0xpayer', beneficiaryTokenCount },
+      } as Partial<BsActivityEvent>)
+    // 100 → 62 and 200 → 124 are both a 38% reserve.
+    const parts = combinedActivityParts(
+      [
+        swapOf('s1', '100000000000000000000'),
+        mintOf('m1', '62000000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '124000000000000000000'),
+      ],
+      'ART',
+    )
+    const sentence = renderToStaticMarkup(<>{parts.action}</>)
+    expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(sentence).not.toContain('minted')
+
+    // The indexer returns a tx's events in no particular order: pairing goes
+    // by amount rank, so a shuffled tx labels every remint the same way.
+    const shuffled = combinedActivityParts(
+      [
+        mintOf('m1', '62000000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '124000000000000000000'),
+        swapOf('s1', '100000000000000000000'),
+      ],
+      'ART',
+    )
+    const shuffledSentence = renderToStaticMarkup(<>{shuffled.action}</>)
+    expect(shuffledSentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(shuffledSentence).not.toContain('minted')
+  })
+
+  it("reads a fan-out (two pays in one tx) as the payer's total and who got what", () => {
+    const payOf = (id: string, beneficiary: string, amount: string) =>
+      event({
+        id,
+        from: '0xpayer',
+        payEvent: { ...pay.payEvent!, beneficiary, amount, amountUsd: null, newlyIssuedTokenCount: '0' },
+      })
+    const swapOf = (id: string, projectTokenAmount: string) =>
+      event({
+        id,
+        from: '0xpayer',
+        swapEvent: { ...swap.swapEvent!, from: '0xpayer', projectTokenAmount },
+      } as Partial<BsActivityEvent>)
+    const mintOf = (id: string, beneficiary: string, beneficiaryTokenCount: string) =>
+      event({
+        id,
+        mintTokensEvent: { beneficiary, beneficiaryTokenCount },
+      } as Partial<BsActivityEvent>)
+    const parts = combinedActivityParts(
+      [
+        payOf('p1', '0xalice', '4000000000000000'),
+        swapOf('s1', '100000000000000000000'),
+        mintOf('m1', '0xalice', '62000000000000000000'),
+        payOf('p2', '0xbob', '6000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '0xbob', '124000000000000000000'),
+      ],
+      'ART',
+    )
+    // The row is the payment: the payer and the total, not the first payee and its share.
+    expect(parts.actor).toBe('0xpayer')
+    expect(parts.amountRaw).toBe('10000000000000000')
+    const sentence = renderToStaticMarkup(<>{parts.action}</>)
+    expect(sentence).toContain('0xalice')
+    expect(sentence).toContain('0xbob')
+    expect(sentence.match(/ got /g)).toHaveLength(2)
+    expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
+    expect(sentence).not.toContain('bought')
+  })
+
   it('drops the mint record when the pay itself issued the tokens', () => {
     // An issuance-route pay: its mintTokensEvent is the same issuance
     // double-reported, so only the pay fragment renders — worded like the
@@ -112,6 +306,71 @@ describe('combinedActivityParts', () => {
     const parts = combinedActivityParts([pay], 'ART')
     expect(renderToStaticMarkup(<>{parts.action}</>)).toBe(
       'paid into the project',
+    )
+  })
+})
+
+// A reserved distribution: the total plus one receipt per split, all in one
+// tx. The row leads with the total and lists the recipients, largest first.
+describe('reserved distributions', () => {
+  const distribution = event({
+    id: 'r',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitsEvent: {
+      tokenCount: '3600000000000000000000000',
+      from: '0xfrom',
+    },
+  })
+  const toAddress = event({
+    id: 's1',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitEvent: {
+      tokenCount: '600000000000000000000000',
+      beneficiary: '0xsmall',
+      splitProjectId: 0,
+      from: '0xfrom',
+    },
+  })
+  const toProject = event({
+    id: 's2',
+    txHash: '0xreserved',
+    sendReservedTokensToSplitEvent: {
+      tokenCount: '3000000000000000000000000',
+      beneficiary: '0x0000000000000000000000000000000000000000',
+      splitProjectId: 7,
+      from: '0xfrom',
+    },
+  })
+
+  it('renders one row: the total as headline, a bullet per recipient', () => {
+    const groups = groupSameTxEvents([toAddress, distribution, toProject])
+    expect(groups).toHaveLength(1)
+    const parts = combinedActivityParts(groups[0], 'ART')
+    expect(parts.headline).toEqual({ amount: '3.6m ART', tag: 'reserved distro' })
+    expect(parts.actor).toBe('0xfrom')
+    const bullets = parts.actions.map(action =>
+      renderToStaticMarkup(<>{action}</>),
+    )
+    expect(bullets).toHaveLength(2)
+    expect(bullets[0]).toContain('3m ART')
+    expect(bullets[0]).toContain('to project #7')
+    expect(bullets[1]).toContain('600k ART')
+    expect(bullets[1]).toContain('title="0xsmall"')
+    expect(bullets.join()).not.toContain('distributed reserved')
+  })
+
+  it('admits receipts to the project feed only alongside their distribution', () => {
+    expect(projectFeedEvents([toAddress, toProject])).toEqual([])
+    expect(projectFeedEvents([toAddress, distribution])).toHaveLength(2)
+    const other = event({ ...toAddress, txHash: '0xother' })
+    expect(projectFeedEvents([other, distribution])).toEqual([distribution])
+  })
+
+  it('keeps a receipt without its distribution as a "received" line', () => {
+    const parts = combinedActivityParts([toAddress], 'ART')
+    expect(parts.headline).toBeNull()
+    expect(renderToStaticMarkup(<>{parts.action}</>)).toContain(
+      'from a reserved split',
     )
   })
 })

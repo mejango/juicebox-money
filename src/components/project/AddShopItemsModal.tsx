@@ -1,534 +1,142 @@
 'use client'
 
-import {
-  jb721TiersHookAbi,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
-import {
-  hasPermissions,
-  JBPermissionIdsV6,
-} from '@bananapus/nana-sdk-core/v6'
+import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { type Address, type PublicClient } from 'viem'
-import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
-import {
-  getAccount,
-  getPublicClient,
-  waitForTransactionReceipt,
-} from 'wagmi/actions'
-import { ChainIcon } from '@/components/ChainIcon'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Address } from 'viem'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import {
-  TransactionProgressImage,
-  usePreloadTransactionAnimation,
-} from '@/components/TransactionInProgress'
-import {
-  StoreEditor,
-  itemOk,
-  newDraftItem,
-  type DraftItem,
-  type StoreCategory,
-} from '@/components/create/StoreEditor'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
-import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom } from '@/lib/gas'
-import {
-  isSafeConnection,
-  SAFE_NONCE_GUIDANCE,
-  waitForSafeExecutionHash,
-} from '@/lib/safe-connector'
 import { shortError } from '@/lib/errors'
-import { build721TierConfigs } from '@/lib/launch'
-import {
-  pinStoreItemDrafts,
-  storeItemsForChain,
-  type PinnedStoreItemDraft,
-} from '@/lib/store-items'
+import { pinStoreItemDrafts, type PinnedStoreItemDraft } from '@/lib/store-items'
 import { chainName } from '@/lib/urn'
-import { buildAdjustTiersRequest } from '@/lib/transaction-builders'
-import { requireContractTransactionReview } from '@/lib/transaction-review'
-import { SUPPORTED_CHAINS } from '@/providers/Providers'
+import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch } from '@/lib/project-batch'
+import { buildShopAddCalls, distinctShopTargets, pendingShopBatch, readShopSnapshot, reverifyShopCall, type ShopCallContext, type ShopSnapshot, type ShopWriteTarget } from '@/lib/shop-batch'
 
-type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]['id']
+export type { ShopWriteTarget } from '@/lib/shop-batch'
 
-export type ShopWriteTarget = {
-  chainId: JBChainId
-  projectId: number
-  hook: Address | null
-  pricing: { currency: number; decimals: number; symbol: string } | null
-  error?: string
-}
+type Review = { account: Address; items: DraftItem[]; categories: StoreCategory[]; chainIds: JBChainId[]; snapshots: ShopSnapshot[] }
 
-type ChainStatus = {
-  phase:
-    | 'pending'
-    | 'signing'
-    | 'confirming'
-    | 'uncertain'
-    | 'done'
-    | 'failed'
-  hash?: `0x${string}`
-  safeProposalHash?: `0x${string}`
-  error?: string
-}
-
-type Review = {
-  account: Address
-  items: DraftItem[]
-  categories: StoreCategory[]
-  chainIds: JBChainId[]
-}
-
-export function AddShopItemsModal({
-  targets,
-  activePricing,
-  existingCategories,
-  isRevnet,
-  onClose,
-}: {
+export function AddShopItemsModal({ targets, activePricing, existingCategories, isRevnet, onClose }: {
   targets: ShopWriteTarget[]
   activePricing: { currency: number; decimals: number; symbol: string }
   existingCategories: StoreCategory[]
   isRevnet: boolean
   onClose: () => void
 }) {
-  usePreloadTransactionAnimation()
-  const config = useConfig()
   const queryClient = useQueryClient()
-  const { switchChainAsync } = useSwitchChain()
-  const { writeContractAsync } = useWriteContract()
   const { isConnected, address, openSignIn } = useWallet()
-
-  const compatibleTargets = useMemo(
-    () =>
-      targets.filter(
-        target =>
-          target.hook &&
-          target.pricing &&
-          target.pricing.currency === activePricing.currency &&
-          target.pricing.decimals === activePricing.decimals,
-      ),
-    [targets, activePricing.currency, activePricing.decimals],
-  )
-  const [selected, setSelected] = useState<JBChainId[]>(() =>
-    compatibleTargets.map(target => target.chainId),
-  )
+  const compatibleTargets = useMemo(() => targets.filter(target => target.hook && target.pricing && !target.error && target.pricing.currency === activePricing.currency), [targets, activePricing.currency])
+  const [selected, setSelected] = useState<JBChainId[]>(() => compatibleTargets.map(target => target.chainId))
   const [items, setItems] = useState<DraftItem[]>(() => [newDraftItem()])
-  const [categories, setCategories] = useState<StoreCategory[]>(() =>
-    existingCategories.filter(category => category.id !== 0),
-  )
-  const [review, setReview] = useState<Review | null>(null)
-  const [phase, setPhase] = useState<
-    'form' | 'checking' | 'review' | 'pinning' | 'writing' | 'failed' | 'done'
-  >('form')
+  const [categories, setCategories] = useState<StoreCategory[]>(() => existingCategories.filter(category => category.id !== 0))
+  const [freshReview, setReview] = useState<Review | null>(null)
+  const [batch, setBatch] = useState<ProjectBatch | null>(null)
+  const [phase, setPhase] = useState<'form' | 'checking' | 'review' | 'pinning' | 'writing' | 'failed' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
-  const [statuses, setStatuses] = useState<Record<number, ChainStatus>>({})
-  const statusesRef = useRef<Record<number, ChainStatus>>({})
   const pinnedRef = useRef<PinnedStoreItemDraft[] | null>(null)
+  const busy = phase === 'checking' || phase === 'pinning' || phase === 'writing'
+  const hasSubmittedTransactions = !!batch
+  const hasUncertainTransactions = batch?.status === 'pending'
+  const savedContext = batch?.calls[0]?.context as ShopCallContext | undefined
+  const review = freshReview ?? (batch && savedContext ? { account: batch.account, items: savedContext.items, chainIds: batch.calls.map(call => call.chainId) } : null)
+  const statuses = Object.fromEntries((batch?.calls ?? []).map(call => [call.chainId, { phase: batch!.completedIds.includes(call.id) ? 'done' : 'pending', error: undefined }]))
 
-  const busy =
-    phase === 'checking' || phase === 'pinning' || phase === 'writing'
-  const hasSubmittedTransactions = Object.values(statuses).some(
-    status => status.phase === 'done' || Boolean(status.hash),
-  )
-  const hasUncertainTransactions = Object.values(statuses).some(
-    status => status.phase === 'uncertain',
-  )
+  useEffect(() => {
+    if (freshReview || batch || busy) return
+    try { const saved = pendingShopBatch('shop-add-items', targets); if (saved) setBatch(saved) }
+    catch (error) { setMessage(shortError(error, 'Could not read the saved shop update.')) }
+  }, [targets, freshReview, batch, busy])
 
   const close = useCallback(() => {
     if (busy) return
-    if (
-      phase !== 'done' &&
-      hasSubmittedTransactions &&
-      !window.confirm(
-        'Some transactions are already submitted. Closing now discards the status checklist. Close anyway?',
-      )
-    ) {
-      return
-    }
-    for (const item of items) {
-      if (item.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
-    }
+    for (const item of items) if (item.mediaPreview) URL.revokeObjectURL(item.mediaPreview)
     onClose()
-  }, [busy, hasSubmittedTransactions, items, onClose, phase])
+  }, [busy, items, onClose])
 
-  const updateStatus = (chainId: number, patch: Partial<ChainStatus>) => {
-    const next = {
-      ...statusesRef.current,
-      [chainId]: {
-        ...(statusesRef.current[chainId] ?? { phase: 'pending' as const }),
-        ...patch,
-      },
-    }
-    statusesRef.current = next
-    setStatuses(next)
-  }
-
-  const toggleChain = (chainId: JBChainId) => {
+  const toggleChain = (id: JBChainId) => {
     if (busy || review) return
-    setSelected(current =>
-      current.includes(chainId)
-        ? current.filter(id => id !== chainId)
-        : [...current, chainId].sort((a, b) => a - b),
-    )
+    setSelected(current => current.includes(id) ? current.filter(chain => chain !== id) : [...current, id].sort((a, b) => a - b))
     setMessage(null)
   }
-
   const handleReview = async () => {
-    if (!isConnected || !address) {
-      openSignIn()
-      return
-    }
+    if (!isConnected || !address) { openSignIn(); return }
+    if (busy || batch) return
     setMessage(null)
-    if (selected.length === 0) {
-      setMessage('Select at least one chain.')
-      return
-    }
-    if (items.length === 0) {
-      setMessage('Add at least one item.')
-      return
-    }
-    const invalidIndex = items.findIndex(item => !itemOk(item))
-    if (invalidIndex >= 0) {
-      setMessage(`Finish the required fields for item ${invalidIndex + 1}.`)
-      return
-    }
-    const badReserve = items.findIndex(
-      item =>
-        item.reserveN.trim() !== '' &&
-        selected.some(chainId => {
-          const quantity =
-            item.perChainSupply[chainId]?.trim() || item.supply.trim()
-          return quantity === '1'
-        }),
-    )
-    if (badReserve >= 0) {
-      setMessage(
-        `Item ${badReserve + 1} needs at least 2 items on every chain when inventory is reserved.`,
-      )
-      return
-    }
-
+    if (!selected.length) { setMessage('Select at least one chain.'); return }
+    if (!items.length) { setMessage('Add at least one item.'); return }
+    const invalid = items.findIndex(item => !itemOk(item))
+    if (invalid >= 0) { setMessage(`Finish the required fields for item ${invalid + 1}.`); return }
+    if (items.some(item => item.reserveN.trim() && selected.some(chain => (item.perChainSupply[chain]?.trim() || item.supply.trim()) === '1'))) { setMessage('Reserved inventory needs at least 2 items on every selected chain.'); return }
     setPhase('checking')
     try {
-      const selectedTargets = compatibleTargets.filter(target =>
-        selected.includes(target.chainId),
-      )
-      await assertAuthorityAcrossTargets(
-        config,
-        selectedTargets,
-        address,
-      )
+      const chosen = distinctShopTargets(compatibleTargets.filter(target => selected.includes(target.chainId)))
+      if (chosen.length !== selected.length) throw new Error('The selected shops changed. Select the chains again.')
+      const pending = pendingShopBatch('shop-add-items', chosen)
+      if (pending) { setBatch(pending); setPhase('review'); return }
+      const snapshots = await Promise.all(chosen.map(target => readShopSnapshot(target, address, isRevnet, 'shop-add-items')))
       const frozenItems = items.map(cloneDraftItem)
-      const frozenCategories = categories.map(category => ({ ...category }))
-      const nextStatuses = Object.fromEntries(
-        selected.map(chainId => [chainId, { phase: 'pending' as const }]),
-      )
-      statusesRef.current = nextStatuses
-      setStatuses(nextStatuses)
-      setReview({
-        account: address,
-        items: frozenItems,
-        categories: frozenCategories,
-        chainIds: [...selected],
-      })
+      // Validate exact per-chain prices, supplies and recipient mappings before uploading.
+      buildShopAddCalls(snapshots, address, frozenItems.map(draft => ({ draft, encodedIpfsUri: `0x${'1'.repeat(64)}` })))
+      setReview({ account: address, items: frozenItems, categories: categories.map(category => ({ ...category })), chainIds: chosen.map(target => target.chainId), snapshots })
       setPhase('review')
-    } catch (error) {
-      setMessage(shortError(error, 'Could not add the items.'))
-      setPhase('form')
-    }
+    } catch (error) { setMessage(shortError(error, 'Could not review the items.')); setPhase('form') }
   }
-
   const handleConfirm = async () => {
-    if (!review || !address || busy) return
-    if (review.account.toLowerCase() !== address.toLowerCase()) {
-      setMessage('Your connected account changed — review the items again.')
-      setReview(null)
-      pinnedRef.current = null
-      setPhase('form')
-      return
-    }
-
-    const selectedTargets = compatibleTargets.filter(target =>
-      review.chainIds.includes(target.chainId),
-    )
+    if ((!freshReview && !batch) || !address || busy) return
+    const expectedAccount = batch?.account ?? freshReview!.account
+    if (expectedAccount.toLowerCase() !== address.toLowerCase()) { setMessage('Reconnect the wallet that reviewed this shop update.'); return }
+    let scope = batch?.scope
     setMessage(null)
-    let activeTarget: ShopWriteTarget | undefined
-    let activeHash: `0x${string}` | undefined
-
     try {
-      // Re-check every live role immediately before any irreversible work.
-      setPhase('checking')
-      await assertAuthorityAcrossTargets(
-        config,
-        selectedTargets,
-        address,
-      )
-
-      if (!pinnedRef.current) {
-        setPhase('pinning')
-        pinnedRef.current = await pinStoreItemDrafts(
-          review.items,
-          review.categories,
-          setMessage,
-        )
+      let calls
+      if (!batch) {
+        setPhase('checking')
+        const frozen = freshReview!
+        const probe = buildShopAddCalls(frozen.snapshots, address, frozen.items.map(draft => ({ draft, encodedIpfsUri: `0x${'1'.repeat(64)}` })))
+        await Promise.all(probe.map(call => reverifyShopCall(call, address)))
+        if (!pinnedRef.current) { setPhase('pinning'); pinnedRef.current = await pinStoreItemDrafts(frozen.items, frozen.categories, setMessage) }
+        calls = buildShopAddCalls(frozen.snapshots, address, pinnedRef.current)
+        scope = projectBatchScope('shop-add-items', calls[0].chainId, calls[0].projectId)
       }
-
       setPhase('writing')
-      for (const target of selectedTargets) {
-        if (statusesRef.current[target.chainId]?.phase === 'done') continue
-        activeTarget = target
-        const chainId = target.chainId as SupportedChainId
-        const client = getPublicClient(config, { chainId }) as PublicClient
-        if (!client || !target.hook || !target.pricing) {
-          throw new Error(`${chainName(target.chainId)} is not ready.`)
-        }
-
-        let hash = statusesRef.current[target.chainId]?.hash
-        if (hash) {
-          const safeProposalHash =
-            statusesRef.current[target.chainId]?.safeProposalHash
-          activeHash = hash
-          updateStatus(target.chainId, {
-            phase: 'confirming',
-            error: undefined,
-          })
-          setMessage(
-            `Checking the submitted transaction on ${chainName(target.chainId)}…`,
-          )
-          if (safeProposalHash) {
-            hash = await waitForSafeExecutionHash(chainId, safeProposalHash)
-            activeHash = hash
-            updateStatus(target.chainId, {
-              phase: 'confirming',
-              hash,
-              safeProposalHash: undefined,
-            })
-          }
-        } else {
-          updateStatus(target.chainId, {
-            phase: 'signing',
-            hash: undefined,
-            error: undefined,
-          })
-          setMessage(`Confirm the items on ${chainName(target.chainId)}…`)
-          await assertAuthority(client, target, address)
-
-          const storeItems = storeItemsForChain(
-            pinnedRef.current,
-            target.pricing.decimals,
-            target.chainId,
-          )
-          const tiers = build721TierConfigs(storeItems, target.chainId)
-          const request = buildAdjustTiersRequest({
-            chainId,
-            hook: target.hook,
-            tiers,
-          })
-          hash = await submitReviewedContractWrite({
-            request,
-            expectedAccount: address,
-            review: reviewed =>
-              requireContractTransactionReview(
-                { ...reviewed, account: address },
-                {
-                  title: `Review shop items on ${chainName(target.chainId)}`,
-                  label: 'Add shop items',
-                  contractName: 'JB721TiersHook',
-                  ...(isSafeConnection(config)
-                    ? {
-                        description: SAFE_NONCE_GUIDANCE,
-                        confirmLabel: 'Agree & continue to Safe',
-                      }
-                    : {}),
-                },
-              ),
-            switchChain: reviewedChainId =>
-              switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
-            currentAccount: () => getAccount(config).address,
-            simulate: async reviewed => {
-              const simulationRequest = {
-                ...reviewed,
-                account: address,
-              }
-              const [{ request: simulated }, estimate] = await Promise.all([
-                client.simulateContract(simulationRequest),
-                client.estimateContractGas(simulationRequest),
-              ])
-              return { ...simulated, gas: gasWithHeadroom(estimate) }
-            },
-            // wagmi's generated union cannot retain tuple inference after a
-            // runtime chain switch, but this is the exact simulated request.
-            write: simulated =>
-              writeContractAsync(
-                simulated as Parameters<typeof writeContractAsync>[0],
-              ),
-            accountChangedError:
-              'Connected account changed. Review the shop items again.',
-          })
-          activeHash = hash
-          updateStatus(target.chainId, { phase: 'confirming', hash })
-          if (isSafeConnection(config)) {
-            updateStatus(target.chainId, {
-              phase: 'confirming',
-              hash,
-              safeProposalHash: hash,
-            })
-            hash = await waitForSafeExecutionHash(chainId, hash)
-            activeHash = hash
-            updateStatus(target.chainId, {
-              phase: 'confirming',
-              hash,
-              safeProposalHash: undefined,
-            })
-          }
-        }
-
-        const receipt = await waitForTransactionReceipt(config, {
-          chainId,
-          hash,
-        })
-        if (receipt.status !== 'success') {
-          updateStatus(target.chainId, {
-            phase: 'failed',
-            hash: undefined,
-            error: `The transaction failed on ${chainName(chainId)}.`,
-          })
-          activeHash = undefined
-          throw new Error(`The transaction failed on ${chainName(chainId)}.`)
-        }
-        updateStatus(target.chainId, { phase: 'done', hash })
-        activeHash = undefined
-        activeTarget = undefined
-
-        await Promise.all([
-          queryClient.invalidateQueries({
-            queryKey: [
-              'shop721',
-              target.chainId,
-              target.projectId,
-              isRevnet,
-            ],
-          }),
-          queryClient.invalidateQueries({
-            queryKey: ['shop721Media', target.chainId, target.hook],
-          }),
-        ])
-      }
-
-      setMessage(
-        `${review.items.length} item${review.items.length === 1 ? '' : 's'} added on ${selectedTargets.length} chain${selectedTargets.length === 1 ? '' : 's'}.`,
-      )
-      setPhase('done')
+      const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
+      setBatch(result)
+      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
+      setPhase(result.status === 'complete' ? 'done' : 'failed')
+      setMessage(result.status === 'complete' ? 'Items added on every reviewed chain.' : 'This update is saved. Continue to check its original transactions and any unfinished chains.')
     } catch (error) {
-      const errorMessage = shortError(error, 'Could not add the items.')
-      if (activeTarget) {
-        const current = statusesRef.current[activeTarget.chainId]
-        if (current?.phase !== 'failed') {
-          const submittedHash = current?.hash ?? activeHash
-          if (submittedHash) {
-            updateStatus(activeTarget.chainId, {
-              phase: 'uncertain',
-              hash: submittedHash,
-              error: errorMessage,
-            })
-            setMessage(
-              `The transaction was submitted on ${chainName(activeTarget.chainId)}, but its status could not be confirmed. Checking again will not send another transaction.`,
-            )
-          } else {
-            updateStatus(activeTarget.chainId, {
-              phase: 'failed',
-              error: errorMessage,
-            })
-            setMessage(errorMessage)
-          }
-        } else {
-          setMessage(errorMessage)
-        }
-      } else {
-        setMessage(errorMessage)
-      }
-      setPhase('failed')
+      let detail = shortError(error, 'Could not add the items.')
+      try { if (scope) setBatch(loadProjectBatch(scope)) }
+      catch (recoveryError) { detail = shortError(recoveryError, detail) }
+      setMessage(detail); setPhase('failed')
     }
   }
-
   const backToForm = () => {
-    if (busy || hasSubmittedTransactions) return
-    setReview(null)
-    pinnedRef.current = null
-    statusesRef.current = {}
-    setStatuses({})
-    setMessage(null)
-    setPhase('form')
+    if (busy || batch) { close(); return }
+    setReview(null); pinnedRef.current = null; setMessage(null); setPhase('form')
   }
 
   const footer = (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      {phase === 'done' ? (
-        <button
-          type="button"
-          onClick={close}
-          className="btn-primary min-h-[44px] px-5 text-sm"
-        >
-          Done
-        </button>
-      ) : review ? (
-        <>
-          {!hasSubmittedTransactions ? (
-            <button
-              type="button"
-              onClick={backToForm}
-              disabled={busy}
-              className="btn-secondary min-h-[44px] px-5 text-sm"
-            >
-              Back
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void handleConfirm()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {phase === 'checking'
-              ? 'Checking permissions…'
-              : phase === 'pinning'
-                ? 'Saving items…'
-                : phase === 'writing'
-                  ? 'Adding items…'
-                  : phase === 'failed'
-                    ? hasUncertainTransactions
-                      ? 'Check submitted transactions'
-                      : 'Retry unfinished chains'
-                    : 'Add items for sale'}
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={close}
-            disabled={busy}
-            className="btn-secondary min-h-[44px] px-5 text-sm"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleReview()}
-            disabled={busy}
-            className="btn-primary min-h-[44px] px-5 text-sm"
-          >
-            {!isConnected
-              ? 'Sign in to continue'
-              : phase === 'checking'
-                ? 'Checking permissions…'
-                : 'Review items'}
-          </button>
-        </>
-      )}
+      <button
+        type="button"
+        onClick={close}
+        disabled={busy}
+        className="btn-secondary min-h-[44px] px-5 text-sm"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleReview()}
+        disabled={busy || !!review}
+        className="btn-primary min-h-[44px] px-5 text-sm"
+      >
+        {!isConnected ? 'Sign in to continue' : 'Add items for sale'}
+      </button>
     </div>
   )
 
@@ -540,151 +148,77 @@ export function AddShopItemsModal({
       onClose={close}
       busy={busy}
     >
-      {!review ? (
-        <>
-          <div className="callout callout-info text-xs">
-            {isConnected
-              ? 'Your wallet will be checked as this shop’s owner or authorized manager before anything is pinned or sent.'
-              : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
-          </div>
+      <div className="callout callout-info text-xs">
+        {isConnected
+          ? 'Choose destination chains, then review each shop’s items. Eligible chains use Relayr with one funding transaction; Safe and unsupported chains proceed in separate rounds.'
+          : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
+      </div>
 
-          <StoreEditor
-            items={items}
-            onChange={next => {
-              setItems(next)
-              setMessage(null)
-            }}
-            currencyLabel={activePricing.symbol}
-            disabled={busy}
-            categories={categories}
-            onAddCategory={name => {
-              const id =
-                categories.reduce(
-                  (largest, category) => Math.max(largest, category.id),
-                  0,
-                ) + 1
-              setCategories(current => [
-                ...current,
-                { id, name: name.slice(0, 40) },
-              ])
-              return id
-            }}
-            chainIds={selected}
-            isRevnet={isRevnet}
-          />
+      <StoreEditor
+        items={items}
+        onChange={next => {
+          setItems(next)
+          setMessage(null)
+        }}
+        currencyLabel={activePricing.symbol}
+        disabled={busy || !!review}
+        categories={categories}
+        onAddCategory={name => {
+          const id =
+            categories.reduce(
+              (largest, category) => Math.max(largest, category.id),
+              0,
+            ) + 1
+          setCategories(current => [
+            ...current,
+            { id, name: name.slice(0, 40) },
+          ])
+          return id
+        }}
+        chainIds={selected}
+        isRevnet={isRevnet}
+      />
 
-          <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
-            <span className="field-label">Add on</span>
-            <div
-              role="group"
-              aria-label="Chains to add items on"
-              className="mt-2.5 flex min-w-0 flex-wrap gap-2"
-            >
-              {targets.map(target => {
-                const compatible =
-                  !!target.hook &&
-                  !!target.pricing &&
-                  target.pricing.currency === activePricing.currency &&
-                  target.pricing.decimals === activePricing.decimals
-                const checked = selected.includes(target.chainId)
-                const unavailableReason =
-                  target.error ??
-                  (target.pricing
-                    ? 'Different pricing currency'
-                    : 'Shop unavailable')
-                return (
-                  <ChainPillButton
-                    key={target.chainId}
-                    chainId={target.chainId}
-                    selected={checked}
-                    ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
-                    onClick={() => toggleChain(target.chainId)}
-                    disabled={!compatible || busy}
-                    title={compatible ? undefined : unavailableReason}
-                    size="lg"
-                  >
-                    <span>{chainName(target.chainId)}</span>
-                    {!compatible ? (
-                      <span className="sr-only"> — {unavailableReason}</span>
-                    ) : null}
-                  </ChainPillButton>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      ) : phase === 'done' ? (
-        <div className="py-8 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-melon-100 text-xl text-melon-700">
-            ✓
-          </span>
-          <h3 className="mt-4 font-agrandir text-lg font-medium text-ink">
-            Items added
-          </h3>
-          <p className="mt-2 text-sm text-smoke-700">{message}</p>
+      <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
+        <span className="field-label">Add on</span>
+        <div
+          role="group"
+          aria-label="Chains to add items on"
+          className="mt-2.5 flex min-w-0 flex-wrap gap-2"
+        >
+          {targets.map(target => {
+            const compatible =
+              !!target.hook &&
+              !!target.pricing &&
+              target.pricing.currency === activePricing.currency && !target.error
+            const checked = selected.includes(target.chainId)
+            const unavailableReason =
+              target.error ??
+              (target.pricing
+                ? 'Different pricing currency'
+                : 'Shop unavailable')
+            return (
+              <ChainPillButton
+                key={target.chainId}
+                chainId={target.chainId}
+                selected={checked}
+                ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
+                onClick={() => toggleChain(target.chainId)}
+                disabled={!compatible || busy || !!review}
+                title={compatible ? undefined : unavailableReason}
+                size="lg"
+              >
+                <span>{chainName(target.chainId)}</span>
+                {!compatible ? (
+                  <span className="sr-only"> — {unavailableReason}</span>
+                ) : null}
+              </ChainPillButton>
+            )
+          })}
         </div>
-      ) : (
-        <>
-          <div className="rounded-xl border border-smoke-200 bg-smoke-25 p-4">
-            <span className="field-label">
-              Items to add ({review.items.length})
-            </span>
-            <div className="mt-2 divide-y divide-smoke-200">
-              {review.items.map((item, index) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-3 py-2.5 text-sm"
-                >
-                  <span className="min-w-0 truncate font-medium text-ink">
-                    {index + 1}. {item.name.trim()}
-                  </span>
-                  <span className="shrink-0 text-smoke-700">
-                    {item.price} {activePricing.symbol}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+      </div>
 
-          <div className="mt-4 rounded-xl border border-smoke-200 bg-white p-4">
-            <span className="field-label">Transactions</span>
-            <div className="mt-2 space-y-2">
-              {review.chainIds.map(chainId => {
-                const status = statuses[chainId]?.phase ?? 'pending'
-                return (
-                  <div
-                    key={chainId}
-                    className="flex items-center justify-between gap-3 text-sm"
-                  >
-                    <span className="flex items-center gap-2 font-medium text-ink">
-                      <ChainIcon chainId={chainId} size={24} />
-                      {chainName(chainId)}
-                    </span>
-                    <span
-                      className={`flex items-center gap-2 ${
-                        status === 'done'
-                          ? 'text-melon-700'
-                          : status === 'uncertain'
-                            ? 'text-split-700'
-                          : status === 'failed'
-                            ? 'text-error-600'
-                            : 'text-smoke-700'
-                      }`}
-                    >
-                      {status === 'signing' || status === 'confirming' ? (
-                        <TransactionProgressImage className="h-8 w-8" />
-                      ) : null}
-                      {chainStatusLabel(status)}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </>
-      )}
-
-      {message && phase !== 'done' ? (
+      {message && !review ? (
         <p
           className={`mt-4 rounded-lg px-3.5 py-2.5 text-xs leading-relaxed ${
             phase === 'failed' || phase === 'form'
@@ -697,53 +231,80 @@ export function AddShopItemsModal({
         </p>
       ) : null}
 
+      {review || phase === 'checking' ? (
+        <TxConfirmDialog
+          open
+          preparing={!review}
+          title={phase === 'done' ? 'Items added' : 'Confirm items'}
+          rows={
+            review
+              ? [
+                  { label: 'Items', value: String(review.items.length) },
+                  ...review.items.map((item, index) => ({
+                    label: `Item ${index + 1}`,
+                    value: `${item.name.trim()} — ${item.price} ${savedContext?.snapshot.target.pricing.symbol ?? activePricing.symbol}`,
+                  })),
+                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshReview?.snapshots) ?? []).map(snapshot => ({ label: `${chainName(snapshot.target.chainId)} · project #${snapshot.target.projectId}`, value: `Next item ID at review: ${BigInt(snapshot.maxTierId ?? '0') + 1n}; ${snapshot.target.pricing.decimals} price decimals` })),
+                  ...(batch?.calls.flatMap(call => (call.context as ShopCallContext).items.map(item => ({ label: `${chainName(call.chainId)} · ${item.name}`, value: `Expected item #${item.tierId} · quantity: ${item.supply || 'unlimited'}` }))) ?? freshReview?.snapshots.flatMap(snapshot => [...freshReview.items].sort((a, b) => a.category - b.category).map((item, index) => ({ label: `${chainName(snapshot.target.chainId)} · ${item.name}`, value: `Expected item #${BigInt(snapshot.maxTierId ?? '0') + BigInt(index) + 1n} · quantity: ${item.perChainSupply[snapshot.target.chainId]?.trim() || item.supply || 'unlimited'}` }))) ?? []),
+                  {
+                    label: 'On',
+                    value: review.chainIds.map(chainId => chainName(chainId)).join(', '),
+                  },
+                ]
+              : []
+          }
+          steps={(review?.chainIds ?? []).map(chainId => {
+            const status = statuses[chainId]
+            return {
+              key: String(chainId),
+              title: `Add items on ${chainName(chainId)}`,
+              detail:
+                status?.phase === 'uncertain'
+                  ? 'Submitted — status unknown'
+                  : status?.phase === 'failed'
+                    ? status.error
+                    : undefined,
+            }
+          })}
+          activeIndex={
+            !review || phase === 'review'
+              ? -1
+              : review.chainIds.filter(
+                  chainId => statuses[chainId]?.phase === 'done',
+                ).length
+          }
+          status={
+            !review
+              ? 'Checking your permissions on the selected chains…'
+              : phase === 'failed'
+                ? undefined
+                : message
+          }
+          error={phase === 'failed' ? message : undefined}
+          busy={busy}
+          complete={phase === 'done'}
+          cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
+          action={
+            phase === 'checking'
+              ? 'Checking permissions…'
+              : phase === 'pinning'
+                ? 'Saving items…'
+                : phase === 'writing'
+                  ? 'Adding items…'
+                  : phase === 'failed'
+                    ? hasUncertainTransactions
+                      ? 'Continue saved update'
+                      : 'Continue update'
+                    : hasUncertainTransactions ? 'Continue saved update' : 'Add items for sale'
+          }
+          onConfirm={() => void handleConfirm()}
+          onClose={
+            phase === 'done' || hasSubmittedTransactions ? close : backToForm
+          }
+        />
+      ) : null}
     </ModalShell>
   )
-}
-
-async function assertAuthorityAcrossTargets(
-  config: ReturnType<typeof useConfig>,
-  targets: ShopWriteTarget[],
-  account: Address,
-) {
-  for (const target of targets) {
-    const client = getPublicClient(config, {
-      chainId: target.chainId as SupportedChainId,
-    }) as PublicClient
-    if (!client) throw new Error(`${chainName(target.chainId)} is unavailable.`)
-    await assertAuthority(client, target, account)
-  }
-}
-
-async function assertAuthority(
-  client: PublicClient,
-  target: ShopWriteTarget,
-  account: Address,
-) {
-  if (!target.hook) {
-    throw new Error(`The shop on ${chainName(target.chainId)} is unavailable.`)
-  }
-
-  const owner = await client.readContract({
-    address: target.hook,
-    abi: jb721TiersHookAbi,
-    functionName: 'owner',
-    args: [],
-  })
-  if (owner.toLowerCase() === account.toLowerCase()) return
-
-  const allowed = await hasPermissions(client, {
-    chainId: target.chainId,
-    operator: account,
-    account: owner,
-    projectId: BigInt(target.projectId),
-    permissionIds: [JBPermissionIdsV6.ADJUST_721_TIERS],
-  })
-  if (!allowed) {
-    throw new Error(
-      `This wallet cannot manage the shop on ${chainName(target.chainId)}.`,
-    )
-  }
 }
 
 function cloneDraftItem(item: DraftItem): DraftItem {
@@ -757,13 +318,4 @@ function cloneDraftItem(item: DraftItem): DraftItem {
       perChainAmount: { ...split.perChainAmount },
     })),
   }
-}
-
-function chainStatusLabel(status: ChainStatus['phase']) {
-  if (status === 'signing') return 'Confirm in wallet'
-  if (status === 'confirming') return 'Confirming…'
-  if (status === 'uncertain') return 'Submitted — status unknown'
-  if (status === 'done') return 'Added'
-  if (status === 'failed') return 'Needs retry'
-  return 'Ready'
 }

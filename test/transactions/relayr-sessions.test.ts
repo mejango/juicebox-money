@@ -123,7 +123,7 @@ describe('resume-by-session entry point', () => {
     ).rejects.toThrow('Switch back to')
   })
 
-  it('completes a finished session locally and clears its storage', async () => {
+  it('retains a legacy successful session until exact onchain proof is available', async () => {
     const records = [
       {
         chain: 1,
@@ -137,21 +137,19 @@ describe('resume-by-session entry point', () => {
     seed('authority:0xaaa', session({ records }))
     const progress: number[] = []
 
-    const result = await resumeRelayrSession({
+    await expect(resumeRelayrSession({
       scope: 'authority:0xaaa',
       account: ALICE,
       onProgress: update => {
         if (update.phase === 'executing') progress.push(update.done)
       },
-    })
+    })).rejects.toThrow(/lacks exact destination proof/)
 
-    expect(result.records).toHaveLength(2)
-    expect(result.quote.bundle_uuid).toBe('bundle-1')
     expect(progress).toEqual([2])
-    expect(storage.getItem(`${PREFIX}authority:0xaaa`)).toBeNull()
+    expect(storage.getItem(`${PREFIX}authority:0xaaa`)).not.toBeNull()
   })
 
-  it('surfaces an all-failed saved session as a hard failure and clears it', async () => {
+  it('retains an all-failed saved session because API failure cannot prove non-execution', async () => {
     seed(
       'authority:0xaaa',
       session({
@@ -164,8 +162,8 @@ describe('resume-by-session entry point', () => {
 
     await expect(
       resumeRelayrSession({ scope: 'authority:0xaaa', account: ALICE }),
-    ).rejects.toThrow('could not execute this action on any selected chain')
-    expect(storage.getItem(`${PREFIX}authority:0xaaa`)).toBeNull()
+    ).rejects.toThrow(/lacks exact destination proof/)
+    expect(storage.getItem(`${PREFIX}authority:0xaaa`)).not.toBeNull()
   })
 
   it('never clears a SafeQueue session from API status without onchain proof', async () => {
@@ -195,6 +193,13 @@ describe('resume-by-session entry point', () => {
     await expect(
       resumeRelayrSession({ scope, account: ALICE }),
     ).rejects.toThrow(/Owner\/Operator queue/i)
+    expect(storage.getItem(`${PREFIX}${scope}`)).not.toBeNull()
+  })
+
+  it('requires the project completion checkpoint when recovering a project batch', async () => {
+    const scope = 'project-batch:original-action:0'
+    seed(scope, session())
+    await expect(resumeRelayrSession({ scope, account: ALICE })).rejects.toThrow('original project action')
     expect(storage.getItem(`${PREFIX}${scope}`)).not.toBeNull()
   })
 })
