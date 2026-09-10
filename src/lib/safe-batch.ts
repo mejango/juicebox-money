@@ -269,7 +269,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
       requireAddress(values, 'terminalToken'),
     ],
     describe: values =>
-      `${tokenLabel(String(values.terminalToken))} pool | fee ${String(values.fee)} | spacing ${String(values.tickSpacing)} | TWAP ${String(values.twapWindow)}s`,
+      `${tokenLabel(String(values.terminalToken))} pool, fee ${String(values.fee)}, tick spacing ${String(values.tickSpacing)}, TWAP ${String(values.twapWindow)}s`,
     discriminator: values => String(values.terminalToken).toLowerCase(),
   },
   setTerminalFor: {
@@ -343,7 +343,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
       requireUint(values, 'sqrtPriceX96', 2n ** 160n - 1n),
     ],
     describe: values =>
-      `${tokenLabel(String(values.pairToken))} pool | fee ${String(values.fee)} | spacing ${String(values.tickSpacing)} | TWAP ${String(values.twapWindow)}s | price ${String(values.sqrtPriceX96)}`,
+      `${tokenLabel(String(values.pairToken))} pool, fee ${String(values.fee)}, tick spacing ${String(values.tickSpacing)}, TWAP ${String(values.twapWindow)}s, price ${String(values.sqrtPriceX96)}`,
     discriminator: values => String(values.pairToken).toLowerCase(),
   },
   setOperatorOf: {
@@ -416,7 +416,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
               : String(value)
         return `${field.label} ${text}`
       })
-      return parts.join(' | ')
+      return parts.join(', ')
     },
     discriminator: (_values, functionName) => functionName,
   },
