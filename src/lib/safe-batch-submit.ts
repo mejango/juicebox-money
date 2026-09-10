@@ -1,7 +1,7 @@
 'use client'
 
 import { getAccount } from '@wagmi/core'
-import { getAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
@@ -14,10 +14,13 @@ import {
   MULTI_SEND_CALL_ONLY,
   multiSendAbi,
   packMultiSend,
-  type BatchCall,
   type BatchStep,
 } from '@/lib/safe-batch'
-import { proposeSafeBatch } from '@/lib/safe-batch-connector'
+import {
+  proposeSafeBatch,
+  simulateCallSequence,
+  type SequenceCall,
+} from '@/lib/safe-batch-connector'
 import { isSafeConnection } from '@/lib/safe-connector'
 import {
   buildBuybackHookAuthorityCall,
@@ -28,8 +31,6 @@ import {
   buildSetBuybackPoolAuthorityCall,
   buildSetBuybackTwapAuthorityCall,
 } from '@/lib/transaction-builders'
-import type { TransactionReviewCall } from '@/lib/transaction-review'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { chainName } from '@/lib/urn'
 import { assertNoViewAs } from '@/lib/viewAs'
 
@@ -219,82 +220,19 @@ export function authorityCallForStep(
   return call
 }
 
-function reviewCallsFor(
-  steps: readonly BatchStep[],
-  from: Address,
-): TransactionReviewCall[] {
+/** The batch as the connector reviews and simulates it, dependencies marked. */
+function sequenceOf(steps: readonly BatchStep[]): SequenceCall[] {
   return steps.map(step => ({
-    chainId: step.chainId,
-    from,
     to: step.to,
     data: step.data,
     value: step.value,
     label: step.label,
+    dependsOnPrior: dependsOnPrior(step, steps),
     abi: step.abi,
     functionName: step.functionName,
     args: step.args,
     contractName: step.contractName,
   }))
-}
-
-function revertDetail(error: unknown): string {
-  if (error instanceof Error && 'shortMessage' in error && typeof error.shortMessage === 'string') {
-    return error.shortMessage
-  }
-  return error instanceof Error ? error.message.split('\n')[0] : 'The call would revert.'
-}
-
-/**
- * Prove the whole sequence from the authority before anything is signed:
- * `eth_simulateV1` runs the calls in order against one state; where a node
- * lacks it, each call that does not depend on an earlier step is simulated
- * on its own.
- */
-async function simulateSequence(
-  client: PublicClient,
-  from: Address,
-  steps: readonly BatchStep[],
-  calls: readonly BatchCall[],
-): Promise<void> {
-  let sequence: { status: string; error?: unknown }[] | null = null
-  try {
-    const simulated = await client.simulateCalls({ account: from, calls })
-    sequence = simulated.results.map(result =>
-      result.status === 'failure'
-        ? { status: 'failure', error: result.error }
-        : { status: result.status },
-    )
-  } catch {
-    // The node lacks eth_simulateV1; fall back to independent per-call checks.
-    sequence = null
-  }
-  if (sequence) {
-    const failed = sequence.findIndex(result => result.status !== 'success')
-    if (failed !== -1) {
-      const result = sequence[failed]
-      throw new Error(
-        `${steps[failed].label} cannot run on ${chainName(steps[failed].chainId)}: ${
-          result.status === 'failure' ? revertDetail(result.error) : 'The call would revert.'
-        }`,
-      )
-    }
-    return
-  }
-  for (const step of steps) {
-    if (dependsOnPrior(step, steps)) continue
-    try {
-      await simulateStateChangingTransaction(client, {
-        from,
-        to: step.to,
-        data: step.data,
-        value: step.value,
-      })
-    } catch (error) {
-      throw new Error(
-        `${step.label} cannot run on ${chainName(step.chainId)}: ${revertDetail(error)}`,
-      )
-    }
-  }
 }
 
 export async function submitSafeBatch({
@@ -341,21 +279,24 @@ export async function submitSafeBatch({
     return { kind: 'eoa', hashes }
   }
 
-  onProgress?.(`Simulating ${calls.length} calls from the Safe…`)
-  await simulateSequence(client, authority, steps, calls)
-
+  const sequence = sequenceOf(steps)
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
     const proposal = await proposeSafeBatch({
       chainId,
       safe: authority,
-      calls,
-      reviewCalls: reviewCallsFor(steps, authority),
+      calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
       onProposed,
     })
-    return { kind: 'safe-app', ...proposal }
+    if (!proposal.executionHash) {
+      throw new Error('The batch was proposed but its execution was not tracked.')
+    }
+    return { kind: 'safe-app', safeTxHash: proposal.safeTxHash, executionHash: proposal.executionHash }
   }
+
+  onProgress?.(`Simulating ${calls.length} calls from the Safe…`)
+  await simulateCallSequence(client, authority, chainId, sequence)
 
   const code = await client.getCode({ address: MULTI_SEND_CALL_ONLY })
   if (!code || code === '0x') {

@@ -27,7 +27,10 @@ const budgets = {
   // chunks (separate gzip streams), while initial home/create loads shrink by
   // 13.0/20.3 KiB. Final aggregate is 2407.9 KiB; allow 2.1 KiB of headroom.
   // Route ceilings are unchanged, and the assertions below protect lazy UI.
-  allScripts: 2410 * KIB,
+  // The Safe operator batch (tray, batch and preset dialogs, MultiSend and
+  // sequence simulation, LP flows proposing one batch) measured 2403.6 KiB
+  // before and 2414.6 KiB after on the same toolchain; allow 2.4 KiB of headroom.
+  allScripts: 2417 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

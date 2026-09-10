@@ -47,6 +47,7 @@ Legend:
 | Register accounting tokens across chains | Local token addresses, project IDs, and decimals in `addAccountingContextsFor` | **P/E** | `components/power-accounting-multichain.test.tsx` |
 | Configure buyback/router | registry setter/initializer calls | **E** | `contracts/transaction-backlog.test.ts` |
 | Register buyback pool | `JBBuybackHookRegistry.setPoolFor` with the exact pool tuple and native sentinel | **E** | `contracts/transaction-backlog.test.ts`, `lib/safe-batch.test.ts` |
+| Add Uniswap V4 liquidity as one Safe batch | ERC-20 `approve` → Permit2 `approve` → `modifyLiquidities` (30-day deadline, mint marked dependent) as one Safe-app `wallet_sendCalls` MultiSend proposal from AddLiquidityFlow, EditPositionPanel and MarketEditPanel | **E** | `transactions/liquidity-safe-batch.test.ts`, `transactions/safe-batch-submit.test.ts` |
 | Submit a Safe operator batch | Ordered steps composed into one `MultiSendCallOnly.multiSend` operation-1 SafeTx (owner), one Safe-app `wallet_sendCalls` proposal, or sequential direct writes; sequence simulated first | **E** | `lib/safe-batch.test.ts`, `lib/safe-batch-presets.test.ts`, `transactions/safe-batch-submit.test.ts`, `components/safe-batch-tray.test.tsx` |
 | Set project handle | ENS resolver `setText` + mainnet `JBProjectHandles.setEnsNamePartsFor` | **E** | `contracts/project-handles.test.ts` |
 | Deploy same Safe on Ethereum | Safe proxy factory `createProxyWithNonce` after exact-address simulation | **P/E** | `data/cross-chain-authority.test.ts`, `transactions/safe-orchestration.test.ts` |
@@ -150,7 +151,12 @@ Legend:
   for steps without an in-batch dependency) before review, dependency order
   is never silently fixed, and `MultiSendCallOnly` code is required on the
   chain. Covered in `transactions/safe-batch-submit.test.ts` and
-  `components/safe-batch-tray.test.tsx`.
+  `components/safe-batch-tray.test.tsx`. The LP flows reuse the Safe-app
+  proposal for their approval-then-mint plans under a Safe connection only;
+  every other connection keeps one reviewed `useSafeTx` send per step
+  (`transactions/liquidity-safe-batch.test.ts`). MoveFlow stays sequential
+  because its final call's value is read from the bridge after the prepare
+  receipt.
 - Multichain mainnet creation signs one launch request per chain and funds one
   Relayr quote on the selected payment chain. Frozen launch configuration,
   estimated deployment gas, current creation fees, canonical destination

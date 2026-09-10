@@ -33,6 +33,12 @@ import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
+import {
+  LIQUIDITY_BATCH_PROPOSED,
+  liquidityBatchApplies,
+  liquidityBatchIntro,
+  proposeLiquidityBatch,
+} from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
 import { wagmiConfig } from '@/providers/Providers'
 import {
@@ -463,6 +469,9 @@ function AddLiquidityForm({
   const [done, setDone] = useState(false)
   const queryClient = useQueryClient()
   const [mintHash, setMintHash] = useState<`0x${string}` | null>(null)
+  // The Safe-app batch path: one proposal instead of the step-by-step run.
+  const [batchStatus, setBatchStatus] = useState<string | null>(null)
+  const [batchError, setBatchError] = useState<string | null>(null)
 
   const planRef = useRef<Plan | null>(null)
   const stepIdxRef = useRef(0)
@@ -787,6 +796,34 @@ function AddLiquidityForm({
     }
   }, [tx.phase, tx.hash, tx, sendStep, queryClient])
 
+  // ponytail: Safe app only; other EIP-5792 wallets keep the sequential path.
+  const runBatch = async (p: Plan) => {
+    setBatchError(null)
+    setBatchStatus(null)
+    setDone(false)
+    setMintHash(null)
+    runningRef.current = true
+    setRunning(true)
+    try {
+      await proposeLiquidityBatch({
+        chainId,
+        account: p.account,
+        positionManager: p.posm,
+        steps: p.steps,
+        unlockData: p.mint.unlockData,
+        value: p.mint.value,
+        title: p.market ? 'Make the market' : 'Add liquidity',
+      })
+      setBatchStatus(LIQUIDITY_BATCH_PROPOSED)
+      setDone(true)
+    } catch (e) {
+      setBatchError(e instanceof Error ? shortError(e) : 'Could not propose the batch.')
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+    }
+  }
+
   const startRun = () => {
     if (!plan || runningRef.current) return
     // Account-unchanged recheck: the mint recipient is baked into unlockData.
@@ -794,6 +831,10 @@ function AddLiquidityForm({
       planRef.current = null
       setPlan(null)
       setReviewError('Your connected account changed — review again.')
+      return
+    }
+    if (liquidityBatchApplies(plan.steps)) {
+      void runBatch(plan)
       return
     }
     processedRef.current = null
@@ -824,6 +865,8 @@ function AddLiquidityForm({
     setStepIdx(0)
     planRef.current = null
     setPlan(null)
+    setBatchStatus(null)
+    setBatchError(null)
     tx.reset()
   }
 
@@ -922,9 +965,11 @@ function AddLiquidityForm({
             open
             title={
               done
-                ? plan.market
-                  ? 'Market made'
-                  : 'Liquidity added'
+                ? batchStatus
+                  ? 'Proposed to Safe'
+                  : plan.market
+                    ? 'Market made'
+                    : 'Liquidity added'
                 : plan.market
                   ? 'Make the market'
                   : 'Add liquidity'
@@ -937,26 +982,32 @@ function AddLiquidityForm({
             }))}
             activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
             stepsIntro={
-              plan.steps.length > 1
-                ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
-                : 'One transaction: the mint. It is reviewed and simulated before you sign.'
+              liquidityBatchApplies(plan.steps)
+                ? liquidityBatchIntro(plan.steps.length)
+                : plan.steps.length > 1
+                  ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
+                  : 'One transaction: the mint. It is reviewed and simulated before you sign.'
             }
             action={
               running
-                ? plan.market
-                  ? 'Making the market…'
-                  : 'Adding liquidity…'
+                ? liquidityBatchApplies(plan.steps)
+                  ? 'Proposing to Safe…'
+                  : plan.market
+                    ? 'Making the market…'
+                    : 'Adding liquidity…'
                 : tx.phase === 'error'
                   ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
-                  : plan.market
-                    ? 'Confirm & make the market'
-                    : 'Confirm & add liquidity'
+                  : liquidityBatchApplies(plan.steps)
+                    ? 'Confirm & propose to Safe'
+                    : plan.market
+                      ? 'Confirm & make the market'
+                      : 'Confirm & add liquidity'
             }
             onConfirm={tx.phase === 'error' ? resume : startRun}
             busy={running || tx.busy}
             complete={done}
-            status={tx.safeNonceGuidance}
-            error={tx.error}
+            status={batchStatus ?? tx.safeNonceGuidance}
+            error={batchError ?? tx.error}
             onClose={closePlan}
           >
             {balances && (d.maxTok > balances.tok || d.maxPair > balances.pair) ? (
