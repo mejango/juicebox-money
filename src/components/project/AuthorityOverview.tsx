@@ -17,6 +17,7 @@ import {
   AccountGroupsSkeleton,
   ActionRowsSkeleton,
 } from "@/components/LoadingSkeletons";
+import { useSafeBatch } from "@/components/project/SafeBatchProvider";
 import {
   SafeQueueCard,
   type SafeQueueChain,
@@ -51,6 +52,7 @@ import {
   type SafeInfo,
 } from "@/lib/safe";
 import { readMatchingAuthorityIdentities } from "@/lib/cross-chain-authority";
+import { buildStep } from "@/lib/safe-batch";
 import {
   buildPermissionsAuthorityCall,
   buildProjectOwnershipAuthorityCall,
@@ -558,6 +560,7 @@ function TransferAuthorityFlow({
   isRevnet: boolean;
   onDone: () => void;
 }) {
+  const batch = useSafeBatch();
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState("");
   const [ack, setAck] = useState(false);
@@ -601,6 +604,35 @@ function TransferAuthorityFlow({
         });
       }),
     });
+  };
+
+  // Only the revnet operator transfer is a registered batch step kind.
+  const addToBatch = () => {
+    if (!batch || !isRevnet) return;
+    const to = resolvedAddress(destination);
+    if (!to) {
+      setError("Enter a valid destination address or ENS name.");
+      return;
+    }
+    if (!ack) return;
+    setError(null);
+    try {
+      batch.queue(
+        rows.map((row) =>
+          buildStep({
+            kind: "setOperatorOf",
+            chainId: row.chainId,
+            projectId: row.projectId,
+            values: { operator: to },
+          }),
+        ),
+      );
+      setOpen(false);
+    } catch (batchError) {
+      setError(
+        batchError instanceof Error ? batchError.message : "Could not add to the batch.",
+      );
+    }
   };
 
   const submit = async () => {
@@ -747,14 +779,26 @@ function TransferAuthorityFlow({
             : "I verified the new project owner. Transferring the project NFT hands over every owner-only power."}
         </span>
       </label>
-      <button
-        type="button"
-        onClick={review}
-        disabled={busy || !!plan || !ack || !destination.trim()}
-        className="btn-primary mt-3 min-h-[42px] w-full text-sm"
-      >
-        {title}
-      </button>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={review}
+          disabled={busy || !!plan || !ack || !destination.trim()}
+          className="btn-primary min-h-[42px] flex-1 text-sm"
+        >
+          {title}
+        </button>
+        {batch && isRevnet ? (
+          <button
+            type="button"
+            onClick={addToBatch}
+            disabled={busy || !!plan || !ack || !destination.trim()}
+            className="btn-secondary min-h-[42px] px-4 text-sm"
+          >
+            Add to batch
+          </button>
+        ) : null}
+      </div>
       {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error && !plan ? <ErrorNote message={error} /> : null}
       {dialog}

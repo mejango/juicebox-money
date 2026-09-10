@@ -90,6 +90,8 @@ export type SafeCall = {
   target: Address
   data: Hex
   value?: bigint
+  /** 0 = CALL (default). 1 = DELEGATECALL, used only for a MultiSendCallOnly batch. */
+  operation?: 0 | 1
   label?: string
   abi?: Abi
   functionName?: string
@@ -739,7 +741,7 @@ export async function listPendingSafeTxs(
 export async function findPendingSafeCall(
   chainId: JBChainId,
   safe: Address,
-  call: Pick<SafeCall, 'target' | 'data' | 'value'>,
+  call: Pick<SafeCall, 'target' | 'data' | 'value' | 'operation'>,
 ): Promise<SafeQueuedTx | null> {
   const pending = await listPendingSafeTxs(chainId, safe)
   return pending.find(tx => safeCallMatches(tx, call)) ?? null
@@ -751,6 +753,7 @@ async function proposeSafeTx({
   target,
   data,
   value = 0n,
+  operation = 0,
   signer,
   nonce,
   label,
@@ -770,7 +773,7 @@ async function proposeSafeTx({
     to: target,
     value: value.toString(),
     data,
-    operation: 0,
+    operation,
     safeTxGas: '0',
     baseGas: '0',
     gasPrice: '0',
@@ -796,7 +799,7 @@ async function proposeSafeTx({
         to: getAddress(target),
         value: value.toString(),
         data,
-        operation: 0,
+        operation,
         safeTxGas: '0',
         baseGas: '0',
         gasPrice: '0',
@@ -1531,7 +1534,7 @@ export async function runSafeCalls({
       to: call.target,
       value: (call.value ?? 0n).toString(),
       data: call.data,
-      operation: 0,
+      operation: call.operation ?? 0,
       safeTxGas: '0',
       baseGas: '0',
       gasPrice: '0',
@@ -1599,14 +1602,14 @@ export async function runSafeCalls({
 
 function safeCallMatches(
   tx: SafeQueuedTx,
-  call: Pick<SafeCall, 'target' | 'data' | 'value'>,
+  call: Pick<SafeCall, 'target' | 'data' | 'value' | 'operation'>,
 ): boolean {
   try {
     return (
       getAddress(tx.to) === getAddress(call.target) &&
       BigInt(tx.value ?? 0) === (call.value ?? 0n) &&
       (tx.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
-      Number(tx.operation ?? 0) === 0 &&
+      Number(tx.operation ?? 0) === (call.operation ?? 0) &&
       BigInt(tx.safeTxGas ?? 0) === 0n &&
       BigInt(tx.baseGas ?? 0) === 0n &&
       BigInt(tx.gasPrice ?? 0) === 0n &&

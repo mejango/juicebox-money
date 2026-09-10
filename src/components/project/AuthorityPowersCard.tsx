@@ -14,6 +14,7 @@ import { parseUnits, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
+import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
@@ -37,6 +38,7 @@ import {
 } from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { buildStep, powerStepValues, type BatchStep } from '@/lib/safe-batch'
 import { buildProjectPowerAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
@@ -249,6 +251,7 @@ export function PowerActionForm({
   onDone: () => void
 }) {
   const { address } = useWallet()
+  const batch = useSafeBatch()
   const enabledRows = useMemo(
     () => rows.filter(row => flagState(row, power.flag) && !row.error),
     [power.flag, rows],
@@ -296,6 +299,7 @@ export function PowerActionForm({
   const [review, setReview] = useState<{
     calls: AuthorityCall[]
     rows: TxConfirmRow[]
+    steps: BatchStep[]
   } | null>(null)
   const [done, setDone] = useState(false)
   const [ack, setAck] = useState(false)
@@ -358,17 +362,19 @@ export function PowerActionForm({
     return values
   }
 
-  const buildReview = () => {
+  /** The exact calls the submit would send, or null after reporting why not. */
+  const buildPlan = () => {
     setError(null)
     setStatus(null)
     const chosen = enabledRows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one enabled chain.')
-      return
+      return null
     }
     try {
       const shared = resolveSharedValues()
       const calls: AuthorityCall[] = []
+      const steps: BatchStep[] = []
       const reviewRows: TxConfirmRow[] = [{ label: 'Power', value: power.label }]
       for (const field of power.fields) {
         if (field.kind === 'address' || field.kind === 'addressList' || field.kind === 'decimals') continue
@@ -457,19 +463,41 @@ export function PowerActionForm({
             label: power.actionLabel,
           }),
         )
+        steps.push(
+          buildStep({
+            kind: 'power',
+            chainId: row.chainId,
+            projectId: row.projectId,
+            values: powerStepValues(power.flag, target, values),
+            label: power.actionLabel,
+          }),
+        )
         if (display.length) {
           reviewRows.push({ label: row.name, value: display.join(' | '), mono: true })
         }
       }
       reviewRows.push({ label: 'On', value: chosen.map(row => row.name).join(', ') })
-      setReview({ calls, rows: reviewRows })
+      return { calls, rows: reviewRows, steps }
     } catch (reviewError) {
       setError(
         reviewError instanceof Error
           ? reviewError.message
           : 'Could not review this owner power.',
       )
+      return null
     }
+  }
+
+  const buildReview = () => {
+    const plan = buildPlan()
+    if (plan) setReview(plan)
+  }
+
+  const addToBatch = () => {
+    const plan = buildPlan()
+    if (!plan || !batch) return
+    batch.queue(plan.steps)
+    onCancel()
   }
 
   const submit = async () => {
@@ -637,14 +665,26 @@ export function PowerActionForm({
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={buildReview}
-        disabled={busy || !selected.size}
-        className="btn-primary mt-3 min-h-[44px] w-full text-sm"
-      >
-        {power.actionLabel}
-      </button>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={buildReview}
+          disabled={busy || !selected.size}
+          className="btn-primary min-h-[44px] flex-1 text-sm"
+        >
+          {power.actionLabel}
+        </button>
+        {batch ? (
+          <button
+            type="button"
+            onClick={addToBatch}
+            disabled={busy || !selected.size}
+            className="btn-secondary min-h-[44px] px-4 text-sm"
+          >
+            Add to batch
+          </button>
+        ) : null}
+      </div>
       {status && !review ? (
         <p className="mt-2 text-xs text-smoke-700">{status}</p>
       ) : null}

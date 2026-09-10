@@ -46,6 +46,7 @@ import {
   buildProjectPowerAuthorityCall,
   buildRevnetOperatorAuthorityCall,
   buildRouterTerminalAuthorityCall,
+  buildSetBuybackPoolAuthorityCall,
   buildMoveLiquidityUnlockData,
   buildRemoveLiquidityUnlockData,
   buildSendReservedTokensRequest,
@@ -357,6 +358,36 @@ describe('remaining local transaction builders', () => {
         TOKEN,
         79_228_162_514_264_337_593_543_950_336n,
       ],
+    })
+
+    // setPoolFor registers an existing pool on the project's CURRENT hook; the
+    // native sentinel is written as 0xEEEe even though reads use address(0).
+    const register = buildSetBuybackPoolAuthorityCall({
+      chainId: CHAIN_ID,
+      authority: AUTHORITY,
+      registry: '0x72F55a54CD53410a5Ff175508a5A384227081788',
+      projectId: 2n,
+      fee: 10_000,
+      tickSpacing: 200,
+      twapWindow: 1800n,
+      terminalToken: '0x000000000000000000000000000000000000EEEe',
+    })
+    expect(register).toMatchObject({
+      target: '0x72F55a54CD53410a5Ff175508a5A384227081788',
+      authority: AUTHORITY,
+      functionName: 'setPoolFor',
+      args: [2n, 10_000, 200, 1800n, '0x000000000000000000000000000000000000EEEe'],
+      gas: 300_000n,
+      label: 'Register buyback pool',
+    })
+    expect(register.data).toBe(
+      '0x345c42130000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000271000000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000000708000000000000000000000000000000000000000000000000000000000000eeee',
+    )
+    expect(
+      decodeFunctionData({ abi: register.abi!, data: register.data }),
+    ).toEqual({
+      functionName: 'setPoolFor',
+      args: [2n, 10_000, 200, 1800n, '0x000000000000000000000000000000000000EEEe'],
     })
 
     // setTwapWindowOf targets the HOOK, not the registry — the registry has no

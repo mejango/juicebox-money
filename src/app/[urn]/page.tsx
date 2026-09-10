@@ -19,6 +19,7 @@ import { OverviewTab } from "@/components/project/OverviewTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
 import { ProjectTabs } from "@/components/project/Tabs";
 import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
+import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
 import { ProjectRouteSync } from "@/providers/ProjectRouteContext";
 import {
@@ -681,6 +682,7 @@ export default async function ProjectPage({
 
   return (
     <ShopCartProvider>
+    <SafeBatchProvider deployments={authorityDeployments} isRevnet={isRevnet}>
       <ProjectRouteSync route={urn} />
       <ProjectJsonLd
         name={name}
@@ -1008,6 +1010,7 @@ export default async function ProjectPage({
           ]}
         />
       </div>
+    </SafeBatchProvider>
     </ShopCartProvider>
   );
 }

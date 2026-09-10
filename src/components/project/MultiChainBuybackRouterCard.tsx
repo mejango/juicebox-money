@@ -17,6 +17,7 @@ import { zeroAddress, type Address } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
+import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ModalShell } from '@/components/ui/ModalShell'
@@ -32,6 +33,7 @@ import {
 } from '@/lib/authority'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
+import { buildStep, type BatchStep } from '@/lib/safe-batch'
 import {
   buildBuybackHookAuthorityCall,
   buildInitializeBuybackPoolAuthorityCall,
@@ -66,6 +68,8 @@ const MAX_TWAP_WINDOW = 172_800
 type Review = {
   calls: AuthorityCall[]
   rows: TxConfirmRow[]
+  /** The same actions as tray steps, one per selected chain. */
+  steps: BatchStep[]
 }
 
 const ACTIONS: Record<
@@ -503,6 +507,7 @@ function BuybackActionForm({
   onDone: () => void
 }) {
   const action = ACTIONS[kind]
+  const batch = useSafeBatch()
   const available = useMemo(
     () => rows.filter(row => isKindAvailable(kind, row)),
     [kind, rows],
@@ -552,12 +557,13 @@ function BuybackActionForm({
     if (done) onDone()
   }
 
-  const buildReview = () => {
+  /** The exact calls the submit would send, or null after reporting why not. */
+  const buildPlan = (): Review | null => {
     setError(null)
     const chosen = available.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one available chain.')
-      return
+      return null
     }
     try {
       let poolValues: {
@@ -614,6 +620,7 @@ function BuybackActionForm({
 
       const calls: AuthorityCall[] = []
       const reviewRows: TxConfirmRow[] = []
+      const steps: BatchStep[] = []
       for (const row of chosen) {
         if (!row.authority) throw new Error(`${row.name}: owner/operator is unknown.`)
         const input = addresses[row.chainId] ?? ''
@@ -637,6 +644,14 @@ function BuybackActionForm({
               label: action.title,
             }),
           )
+          steps.push(
+            buildStep({
+              kind: 'setHookFor',
+              chainId: row.chainId,
+              projectId: row.projectId,
+              values: { hook: address },
+            }),
+          )
         } else if (kind === 'terminal') {
           if (!row.routerRegistry) throw new Error(`${row.name}: no router registry.`)
           calls.push(
@@ -648,6 +663,14 @@ function BuybackActionForm({
               terminal: address,
               gas: action.gas,
               label: action.title,
+            }),
+          )
+          steps.push(
+            buildStep({
+              kind: 'setTerminalFor',
+              chainId: row.chainId,
+              projectId: row.projectId,
+              values: { terminal: address },
             }),
           )
         } else if (kind === 'twap') {
@@ -664,6 +687,18 @@ function BuybackActionForm({
               twapWindow: BigInt(newTwapWindow),
               gas: action.gas,
               label: action.title,
+            }),
+          )
+          steps.push(
+            buildStep({
+              kind: 'setTwapWindowOf',
+              chainId: row.chainId,
+              projectId: row.projectId,
+              values: {
+                hook: row.hook,
+                terminalToken: address,
+                twapWindow: BigInt(newTwapWindow),
+              },
             }),
           )
         } else {
@@ -685,6 +720,20 @@ function BuybackActionForm({
               label: action.title,
             }),
           )
+          steps.push(
+            buildStep({
+              kind: 'initializePoolFor',
+              chainId: row.chainId,
+              projectId: row.projectId,
+              values: {
+                fee: poolValues.fee,
+                tickSpacing: poolValues.tickSpacing,
+                twapWindow: BigInt(poolValues.twapWindow),
+                pairToken: address,
+                sqrtPriceX96: poolValues.sqrtPriceX96,
+              },
+            }),
+          )
         }
         reviewRows.push({
           label: row.name,
@@ -703,16 +752,30 @@ function BuybackActionForm({
         })
       }
       reviewRows.push({ label: 'On', value: chosen.map(row => row.name).join(', ') })
-      setStatus(null)
-      setDone(false)
-      setReview({ calls, rows: reviewRows })
+      return { calls, rows: reviewRows, steps }
     } catch (reviewError) {
       setError(
         reviewError instanceof Error
           ? reviewError.message
           : 'Could not review this action.',
       )
+      return null
     }
+  }
+
+  const buildReview = () => {
+    const plan = buildPlan()
+    if (!plan) return
+    setStatus(null)
+    setDone(false)
+    setReview(plan)
+  }
+
+  const addToBatch = () => {
+    const plan = buildPlan()
+    if (!plan || !batch) return
+    batch.queue(plan.steps)
+    onDone()
   }
 
   const submit = async () => {
@@ -835,14 +898,26 @@ function BuybackActionForm({
         </span>
       </label>
 
-      <button
-        type="button"
-        onClick={buildReview}
-        disabled={busy || !selected.size || !ack}
-        className="btn-primary mt-3 min-h-[44px] w-full text-sm"
-      >
-        {action.title}
-      </button>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={buildReview}
+          disabled={busy || !selected.size || !ack}
+          className="btn-primary min-h-[44px] flex-1 text-sm"
+        >
+          {action.title}
+        </button>
+        {batch ? (
+          <button
+            type="button"
+            onClick={addToBatch}
+            disabled={busy || !selected.size || !ack}
+            className="btn-secondary min-h-[44px] px-4 text-sm"
+          >
+            Add to batch
+          </button>
+        ) : null}
+      </div>
       {error && !review ? <ErrorNote message={error} /> : null}
       {review ? (
         <TxConfirmDialog

@@ -587,6 +587,47 @@ export function buildInitializeBuybackPoolAuthorityCall({
 }
 
 /**
+ * Register an already-initialized pool on the project's CURRENT hook. The
+ * hook normalizes the native sentinel to address(0) internally, so writes
+ * pass 0xEEEe while reads use address(0).
+ */
+export function buildSetBuybackPoolAuthorityCall({
+  chainId,
+  authority,
+  registry,
+  projectId,
+  fee,
+  tickSpacing,
+  twapWindow,
+  terminalToken,
+  gas = 300_000n,
+  label = 'Register buyback pool',
+}: {
+  chainId: JBChainId
+  authority: Address
+  registry: Address
+  projectId: bigint
+  fee: number
+  tickSpacing: number
+  twapWindow: bigint
+  terminalToken: Address
+  gas?: bigint
+  label?: string
+}): AuthorityCall {
+  return buildAuthorityCall({
+    chainId,
+    authority,
+    target: registry,
+    abi: jbBuybackHookRegistryAbi,
+    functionName: 'setPoolFor',
+    args: [projectId, fee, tickSpacing, twapWindow, terminalToken],
+    contractName: 'JBBuybackHookRegistry',
+    gas,
+    label,
+  })
+}
+
+/**
  * `setTwapWindowOf` lives on the buyback hook itself — the registry has no
  * forwarder — so this targets the project's resolved hook, not a registry.
  */

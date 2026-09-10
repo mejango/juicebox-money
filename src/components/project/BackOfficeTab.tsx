@@ -12,6 +12,7 @@ import {
 import { MultiChainBuybackRouterCard } from '@/components/project/MultiChainBuybackRouterCard'
 import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
 import { ProjectHandleCard } from '@/components/project/ProjectHandleCard'
+import { SafeBatchTray } from '@/components/project/SafeBatchTray'
 
 /**
  * The back-office cards on the Owner/Operator tab: who controls the project
@@ -49,6 +50,7 @@ export function BackOfficeTab({
   )
   return (
     <div className="space-y-5">
+      <SafeBatchTray chainId={chainId} />
       <AuthorityOverview
         deployments={deployments}
         isRevnet={isRevnet}
