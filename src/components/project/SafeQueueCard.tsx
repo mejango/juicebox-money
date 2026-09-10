@@ -58,6 +58,7 @@ import {
   type RelayrTransactionRecord,
 } from "@/lib/relayr";
 import { relayrSupportsChains } from "@/lib/relayr-chains";
+import { decodeMultiSend, MULTI_SEND_CALL_ONLY } from "@/lib/safe-batch";
 import {
   confirmSafeTx,
   canonicalSafeTxHash,
@@ -872,7 +873,17 @@ function contractName(chainId: JBChainId, address: Address): string | null {
   return null;
 }
 
-function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
+/** The queue row's label: a known action and target, or a decoded operator batch. */
+export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
+  if (
+    Number(tx.operation ?? 0) === 1 &&
+    isAddressEqual(tx.to, MULTI_SEND_CALL_ONLY)
+  ) {
+    const calls = decodeMultiSend(tx.data);
+    if (calls) {
+      return `Batch (${calls.length} call${calls.length === 1 ? "" : "s"}) | MultiSendCallOnly`;
+    }
+  }
   const selector = tx.data?.slice(0, 10) ?? "0x";
   const action = SELECTOR_LABELS.get(selector);
   const target = contractName(chainId, tx.to) ?? truncateAddress(tx.to);

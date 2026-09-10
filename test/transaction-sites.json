@@ -346,6 +346,12 @@
         "Auto-issue tokens",
         "Resume a reviewed project batch"
       ]
+    },
+    "src/lib/safe-batch-submit.ts": {
+      "calls": 1,
+      "actions": [
+        "Submit a Safe operator batch"
+      ]
     }
   },
   "reviewedDirectWrites": {
@@ -398,6 +404,9 @@
     "signTypedData": {
       "src/lib/relayr.ts": 1,
       "src/lib/safe.ts": 1
+    },
+    "sendCalls": {
+      "src/lib/safe-batch-connector.ts": 1
     }
   }
 }

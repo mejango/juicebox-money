@@ -21,6 +21,12 @@ import {
   type MarketSideEdit,
   type MarketSides,
 } from '@/lib/market-liquidity'
+import {
+  LIQUIDITY_BATCH_PROPOSED,
+  liquidityBatchApplies,
+  liquidityBatchIntro,
+  proposeLiquidityBatch,
+} from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
 import {
   buildErc20ApproveRequest,
@@ -144,6 +150,9 @@ export function MarketEditPanel({
   const [running, setRunning] = useState(false)
   const [stepIdx, setStepIdx] = useState(0)
   const [done, setDone] = useState<`0x${string}` | null>(null)
+  // The Safe-app batch path: one proposal instead of the step-by-step run.
+  const [batchProposed, setBatchProposed] = useState(false)
+  const [batchError, setBatchError] = useState<string | null>(null)
 
   const planRef = useRef<Reviewed | null>(null)
   const runningRef = useRef(false)
@@ -344,12 +353,48 @@ export function MarketEditPanel({
     }
   }, [tx.phase, tx.hash, tx, sendStep, queryClient, onDone])
 
+  // ponytail: Safe app only; other EIP-5792 wallets keep the sequential path.
+  const runBatch = async (p: Reviewed) => {
+    setBatchError(null)
+    runningRef.current = true
+    setRunning(true)
+    try {
+      const { market, positions } = await readLive(p.account)
+      const problem = marketEditStillFits(p.plan, {
+        sqrtP: market.sqrtP,
+        liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
+      })
+      if (problem) throw new FlowError(problem)
+      await proposeLiquidityBatch({
+        chainId,
+        account: p.account,
+        positionManager,
+        steps: p.steps,
+        unlockData: p.plan.unlockData,
+        value: p.plan.value,
+        title: 'Edit the market',
+      })
+      setBatchProposed(true)
+    } catch (e) {
+      setBatchError(
+        e instanceof FlowError ? e.message : e instanceof Error ? shortError(e) : 'Could not propose the batch.',
+      )
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+    }
+  }
+
   const startRun = () => {
     if (!reviewed || runningRef.current) return
     if (!connectedAddress || connectedAddress.toLowerCase() !== reviewed.account.toLowerCase()) {
       planRef.current = null
       setReviewed(null)
       setReviewError('Your connected account changed — review again.')
+      return
+    }
+    if (liquidityBatchApplies(reviewed.steps)) {
+      void runBatch(reviewed)
       return
     }
     processedRef.current = null
@@ -374,6 +419,8 @@ export function MarketEditPanel({
     runningRef.current = false
     processedRef.current = null
     stepIdxRef.current = 0
+    setBatchProposed(false)
+    setBatchError(null)
     setRunning(false)
     setStepIdx(0)
     planRef.current = null
@@ -450,10 +497,15 @@ export function MarketEditPanel({
     <TxConfirmDialog
       open
       preparing={!reviewed}
-      title={done ? 'Market updated' : 'Confirm edit'}
+      title={batchProposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
       steps={(reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
       activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+      stepsIntro={
+        reviewed && liquidityBatchApplies(reviewed.steps)
+          ? liquidityBatchIntro(reviewed.steps.length)
+          : undefined
+      }
       action={
         running
           ? 'Editing the market…'
@@ -463,9 +515,9 @@ export function MarketEditPanel({
       }
       onConfirm={tx.phase === 'error' ? resume : startRun}
       busy={busy}
-      complete={done !== null}
-      status={!reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}
-      error={tx.error}
+      complete={done !== null || batchProposed}
+      status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}
+      error={batchError ?? tx.error}
       onClose={back}
     >
       {reviewed &&
