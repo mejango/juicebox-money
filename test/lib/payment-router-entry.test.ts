@@ -19,18 +19,20 @@ function clientWith(readContract: ReturnType<typeof vi.fn>): Pick<PublicClient, 
 }
 
 describe('attached payment router entry', () => {
-  it('keeps the gateway as the preview, approval, and payment target when attached directly', async () => {
+  it.each([1, 10, 8453, 42161, chainId] as const)('keeps the recorded gateway as the preview, approval, and payment target when attached directly on chain %i', async deployedChainId => {
+    const deployedGateway = rolloutAddress('JBRouterTerminalGateway', deployedChainId)!
+    expect(deployedGateway).not.toBeNull()
     const readContract = vi.fn().mockResolvedValue([{ id: 1n }])
-    const terminal = await readPaymentRouterEntry(clientWith(readContract), { ...args, terminals: [gateway] })
-    expect(terminal).toBe(gateway)
+    const terminal = await readPaymentRouterEntry(clientWith(readContract), { ...args, chainId: deployedChainId, terminals: [deployedGateway] })
+    expect(terminal).toBe(deployedGateway)
     expect(readContract).toHaveBeenCalledExactlyOnceWith({
-      address: gateway,
+      address: deployedGateway,
       abi: jbRouterTerminalRegistryAbi,
       functionName: 'previewPayFor',
       args: [3n, NATIVE_TOKEN, 10n ** 18n, '0x0000000000000000000000000000000000000001', '0x'],
     })
-    expect(buildErc20ApproveRequest({ chainId, token: unknown, spender: terminal!, amount: 1n }).args[0]).toBe(gateway)
-    expect(buildPayTx({ chainId, terminal: terminal!, projectId: 3n, token: unknown, amount: 1n, beneficiary: unknown }).address).toBe(gateway)
+    expect(buildErc20ApproveRequest({ chainId: deployedChainId, token: unknown, spender: terminal!, amount: 1n }).args[0]).toBe(deployedGateway)
+    expect(buildPayTx({ chainId: deployedChainId, terminal: terminal!, projectId: 3n, token: unknown, amount: 1n, beneficiary: unknown }).address).toBe(deployedGateway)
   })
 
   it.each([
@@ -49,13 +51,14 @@ describe('attached payment router entry', () => {
     expect(attachedPaymentRouterEntries(chainId, [gateway, registry])).toEqual([registry, gateway])
   })
 
-  it('does not treat an unknown or proposed mainnet gateway as a deployed entry', async () => {
+  it('rejects unknown entries and a gateway whose chain deployment record is missing', async () => {
+    const unrecordedGateway = rolloutAddress('JBRouterTerminalGateway', 1)!
     const recordedAddress = rollout.rolloutAddress
     vi.spyOn(rollout, 'rolloutAddress').mockImplementation((name, id) =>
       id === 1 && name === 'JBRouterTerminalGateway' ? null : recordedAddress(name, id),
     )
     const readContract = vi.fn()
-    expect(await readPaymentRouterEntry(clientWith(readContract), { ...args, chainId: 1, terminals: [gateway, unknown, zeroAddress] })).toBeNull()
+    expect(await readPaymentRouterEntry(clientWith(readContract), { ...args, chainId: 1, terminals: [unrecordedGateway, unknown, zeroAddress] })).toBeNull()
     expect(readContract).not.toHaveBeenCalled()
   })
 

@@ -12,6 +12,7 @@ import { rolloutTargets } from '@/lib/protocol-rollout'
 import * as rollout from '@/lib/protocol-rollout'
 
 const PRESET = SAFE_BATCH_PRESETS[0]
+const MAINNETS = [1, 10, 8453, 42161] as const
 const OLD_HOOK = '0x77bEe1AD2AC0ACe98A9b5b58d75685C8B4d94948' as Address
 const NEW_HOOK = rolloutTargets(11155111)!.hook
 const NEW_TERMINAL = rolloutTargets(11155111)!.terminal
@@ -19,7 +20,7 @@ const OLD_TERMINAL = '0x9999999999999999999999999999999999999999' as Address
 const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const USDC_BASE = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address
 
-function withPendingChains(chainIds: readonly number[]) {
+function withMissingDeploymentRecords(chainIds: readonly number[]) {
   const targets = rollout.rolloutTargets
   vi.spyOn(rollout, 'rolloutTargets').mockImplementation(chainId => chainIds.includes(chainId) ? null : targets(chainId))
 }
@@ -107,8 +108,29 @@ describe('buyback 1.4.0 + gateway preset', () => {
     expect(rolloutTargets(11155111)).toEqual({ hook: NEW_HOOK, terminal: NEW_TERMINAL })
   })
 
-  it('does not activate proposed mainnets even when target bytecode exists', async () => {
-    withPendingChains([1])
+  it.each(MAINNETS)('builds a migration to the executed targets on mainnet chain %i after checking code and registry permissions', async chainId => {
+    const targets = rolloutTargets(chainId)!
+    expect(targets).not.toBeNull()
+    const client = chain({
+      code: [targets.hook, targets.terminal],
+      pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } },
+    })
+    const resolved = await resolvePreset(PRESET, { chainId, projectId: 2, client })
+    expect(resolved.status).toBe('ready')
+    expect(resolved.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
+    expect(resolved.steps.map(step => step.args)).toEqual([
+      [2n, targets.hook],
+      [2n, 3000, 60, 1800n, NATIVE],
+      [2n, targets.terminal],
+    ])
+    expect(client.getCode).toHaveBeenCalledWith({ address: targets.hook })
+    expect(client.getCode).toHaveBeenCalledWith({ address: targets.terminal })
+    expect(client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isHookAllowed', args: [targets.hook] }))
+    expect(client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isTerminalAllowed', args: [targets.terminal] }))
+  })
+
+  it('requires both execution records and target bytecode before enabling migration', async () => {
+    withMissingDeploymentRecords([1])
     const noHook = await resolvePreset(PRESET, {
       chainId: 1,
       projectId: 2,
@@ -207,8 +229,24 @@ describe('buyback 1.4.0 + gateway preset', () => {
 })
 
 describe('mirroring per-chain steps', () => {
-  it('skips the actual migration batch and its dependent pool on unexecuted chains', async () => {
-    withPendingChains([1, 10, 8453, 42161, 11155420])
+  it.each(MAINNETS)('mirrors the full migration to executed mainnet chain %i using its recorded targets', async chainId => {
+    const targets = rolloutTargets(chainId)!
+    expect(targets).not.toBeNull()
+    const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } }
+    const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client: chain({ pools }) })
+    const targetClient = chain({ code: [targets.hook, targets.terminal], pools })
+    const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 6 }, (step, to) => resolveMirrorValues(step, { ...to, client: targetClient }))
+    expect(mirrored.skipped).toEqual([])
+    expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
+    expect(mirrored.steps.map(step => step.args)).toEqual([
+      [6n, targets.hook],
+      [6n, 3000, 60, 1800n, NATIVE],
+      [6n, targets.terminal],
+    ])
+  })
+
+  it('skips the migration batch and its dependent pool when destination execution records are missing', async () => {
+    withMissingDeploymentRecords([1, 10, 8453, 42161, 11155420])
     const client = chain({ pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } } })
     const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })
     expect(source.steps).toHaveLength(3)
@@ -255,7 +293,7 @@ describe('mirroring per-chain steps', () => {
   })
 
   it('refuses chain-specific prices and owner powers', async () => {
-    withPendingChains([10])
+    withMissingDeploymentRecords([10])
     const init = buildStep({
       kind: 'initializePoolFor',
       chainId: 1,

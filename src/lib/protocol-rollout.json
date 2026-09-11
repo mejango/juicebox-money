@@ -1,19 +1,19 @@
 {
   "source": {
     "repository": "deploy-all-v6",
-    "commit": "8522541297557c80f8bc2dd674c3098f8849b527"
+    "commit": "a6ab40c5806b52ff4cb21f9eaefe275e621796f9"
   },
   "chains": {
     "1": {
       "alias": "ethereum",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": null,
-        "JBRatioPriceFeed": null
+        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "JBRatioPriceFeed": "0x3fa39399bbc752418ee7e16addeb0b95d6386943"
       },
       "history": {
         "JBBuybackHook": {
@@ -30,12 +30,12 @@
       "alias": "optimism",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": null,
-        "JBRatioPriceFeed": null
+        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "JBRatioPriceFeed": "0xedb20e9963b22bcd3b0652b246aac2c222510d36"
       },
       "history": {
         "JBBuybackHook": {
@@ -52,12 +52,12 @@
       "alias": "base",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": null,
-        "JBRatioPriceFeed": null
+        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "JBRatioPriceFeed": "0x3c2f3742785b0dec9bbb401de6615b70f740e4ca"
       },
       "history": {
         "JBBuybackHook": {
@@ -74,12 +74,12 @@
       "alias": "arbitrum",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": null,
-        "JBRatioPriceFeed": null
+        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "JBRatioPriceFeed": "0xa588449291852a49962276d75a25d51d8e285469"
       },
       "history": {
         "JBBuybackHook": {
