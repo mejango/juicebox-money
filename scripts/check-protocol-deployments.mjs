@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 
 const fixturePath = resolve('test/fixtures/protocol-deployments.v6.json')
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'))
+const rollout = JSON.parse(readFileSync(resolve('src/lib/protocol-rollout.json'), 'utf8'))
 const addressPattern = /^0x[0-9a-f]{40}$/
 
 if (fixture.format !== 'juicebox-v6-app-deployments-1') {
@@ -13,6 +14,14 @@ if (fixture.format !== 'juicebox-v6-app-deployments-1') {
 for (const [name, address] of Object.entries(fixture.deployments)) {
   if (!addressPattern.test(address)) {
     throw new Error(`Invalid pinned address for ${name}: ${address}`)
+  }
+}
+if (rollout.source.commit !== fixture.source.commit) throw new Error('Rollout and protocol fixtures have different source commits.')
+for (const [chainId, chain] of Object.entries(rollout.chains)) {
+  for (const [name, address] of Object.entries(chain.contracts)) {
+    const overrides = fixture.overrides[chainId] ?? {}
+    const expected = Object.hasOwn(overrides, name) ? overrides[name] : fixture.deployments[name]
+    if (address !== expected) throw new Error(`Rollout address differs from pinned fixture: ${name} on ${chainId}`)
   }
 }
 
@@ -144,3 +153,4 @@ for (const [localChainId, pairs] of Object.entries(
 process.stdout.write(
   `Verified ${checked} app deployment entries against deploy-all-v6 ${commit}.\n`,
 )
+execFileSync(process.execPath, ['scripts/generate-protocol-rollout.mjs', '--check'], { stdio: 'inherit' })

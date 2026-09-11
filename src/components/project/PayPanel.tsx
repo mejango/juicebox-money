@@ -4,14 +4,12 @@ import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDia
 import {
   bytes32ToCidV0,
   JBCoreContracts,
-  JBRouterTerminalContracts,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
   jbContractAddress,
   jb721TiersHookAbi,
   jbDirectoryAbi,
   jbPricesAbi,
-  jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import {
@@ -91,6 +89,7 @@ import {
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -106,9 +105,10 @@ type PayContext = {
   decimals: number;
   currency: number;
   symbol: string;
-  /** True when this token is NOT accepted directly and is paid through the
-   *  JBRouterTerminalRegistry, which swaps it into the project's accounting
-   *  token. False for the project's own directly-accepted accounting tokens. */
+  /** The attached terminal used consistently for preview, authorization, and payment. */
+  terminal: Address;
+  /** True for a registry, gateway, or direct router entry that converts the
+   * token into the project's accounting token. */
   viaRouter: boolean;
 };
 
@@ -141,22 +141,11 @@ type PaySurface = {
 /** Sentinel for the token menu's buy entry; never a token index. */
 const BUY_OPTION = "buy";
 
-const ROUTER_PROBE_BENEFICIARY: Address =
-  "0x0000000000000000000000000000000000000001";
-
 /** A stable identity for a pay token — a token can appear both directly AND
  *  via-router, so the key must include the route. */
-function payTokenKey(t: Pick<PayContext, "token" | "viaRouter">): string {
-  return `${t.token.toLowerCase()}:${t.viaRouter}`;
+function payTokenKey(t: Pick<PayContext, "token" | "viaRouter" | "terminal">): string {
+  return `${t.token.toLowerCase()}:${t.viaRouter}:${t.terminal.toLowerCase()}`;
 }
-
-// Whether the router registry can actually route a pay of `token` into
-// `projectId` right now (direct forward, swap, or cash-out loop). A listed
-// router with no pool/feed path reverts at pay time — offering ETH/USDC there
-// is a trap, not a convenience — so a dead route previews an all-zero ruleset
-// (ruleset.id == 0). Cached (as a promise) per (chain, project, token), exactly
-// like website/ _payRouteCache. Fail-soft: any error resolves false.
-const _payRouteCache = new Map<string, Promise<boolean>>();
 
 async function resolvePayTierMetadata(tier: {
   resolvedUri?: string;
@@ -186,41 +175,6 @@ async function resolvePayTierMetadata(tier: {
     return null;
   }
 }
-function routerPayRouteWorks(
-  client: PublicClient,
-  chainId: number,
-  projectId: number,
-  registry: Address,
-  token: Address,
-  decimals: number,
-): Promise<boolean> {
-  const key = `${chainId}:${projectId}:${token.toLowerCase()}`;
-  let cached = _payRouteCache.get(key);
-  if (!cached) {
-    cached = client
-      .readContract({
-        address: registry,
-        abi: jbRouterTerminalRegistryAbi,
-        functionName: "previewPayFor",
-        args: [
-          BigInt(projectId),
-          token,
-          10n ** BigInt(decimals),
-          ROUTER_PROBE_BENEFICIARY,
-          "0x",
-        ],
-      })
-      .then((out) => {
-        // previewPayFor returns [ruleset, ...]; a dead route yields ruleset.id == 0.
-        const ruleset = (out as readonly [{ id: number }, ...unknown[]])[0];
-        return Number(ruleset?.id ?? 0) !== 0;
-      })
-      .catch(() => false);
-    _payRouteCache.set(key, cached);
-  }
-  return cached;
-}
-
 type ShopInfo = {
   /** Whether `tiers` is the shop's FULL inventory. The cart prunes rows against it, so a
    *  truncated list would silently delete items the shopper added from the Shop tab. */
@@ -386,7 +340,7 @@ export function PayPanel({
   // Direct tokens = the project's accounting contexts (viaRouter:false). When
   // the project also lists the router terminal, native ETH and/or USDC that
   // it does NOT accept directly are offered as swap-via-router options — but
-  // ONLY when `routerPayRouteWorks` confirms the router can route them (else a
+  // ONLY when a preview through the attached entry confirms it can route them (else a
   // dead route reverts at pay time). Built atomically so the token list is
   // never a partial/desynced snapshot.
   const { data: surface, isError: surfaceError } = useQuery<PaySurface>({
@@ -402,25 +356,16 @@ export function PayPanel({
         jbContractAddress["6"][JBCoreContracts.JBDirectory][chainId];
       const multiTerminal =
         jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
-      const routerRegistry = jbContractAddress["6"][
-        JBRouterTerminalContracts.JBRouterTerminalRegistry
-      ]?.[chainId] as Address | undefined;
-      const directRouter = (
-        jbContractAddress["6"][JBRouterTerminalContracts.JBRouterTerminal] as
-          Record<number, Address> | undefined
-      )?.[chainId];
-
       const [contexts, ruleset, terminalsRaw] = await Promise.all([
         getAccountingContexts(client, args),
-        getCurrentRuleset(client, args).catch(() => null),
+        getCurrentRuleset(client, args),
         client
           .readContract({
             address: directory,
             abi: jbDirectoryAbi,
             functionName: "terminalsOf",
             args: [pid],
-          })
-          .catch(() => [] as readonly Address[]),
+          }),
       ]);
 
       const direct: PayContext[] = await Promise.all(
@@ -428,19 +373,15 @@ export function PayPanel({
           token: ctx.token,
           decimals: ctx.decimals,
           currency: ctx.currency,
+          terminal: multiTerminal,
           viaRouter: false,
           symbol: await tokenSymbol(client, ctx.token, { nativeSymbol }),
         })),
       );
 
       const terminals = (terminalsRaw ?? []).filter(Boolean) as Address[];
-      const sameAddr = (a?: Address, b?: Address) =>
-        !!a && !!b && a.toLowerCase() === b.toLowerCase();
-      const hasRouter = terminals.some(
-        (t) => sameAddr(t, routerRegistry) || sameAddr(t, directRouter),
-      );
       const known = new Set(
-        [multiTerminal, routerRegistry, directRouter]
+        [multiTerminal, ...knownPaymentRouterEntries(chainId)]
           .filter(Boolean)
           .map((a) => (a as Address).toLowerCase()),
       );
@@ -451,8 +392,8 @@ export function PayPanel({
       const has = (a: Address) =>
         direct.some((t) => t.token.toLowerCase() === a.toLowerCase());
       let routable: PayContext[] = [];
-      if (hasRouter && routerRegistry) {
-        const candidates: PayContext[] = [];
+      if (terminals.length) {
+        const candidates: Omit<PayContext, "terminal">[] = [];
         if (!has(NATIVE_TOKEN)) {
           candidates.push({
             token: NATIVE_TOKEN,
@@ -473,18 +414,16 @@ export function PayPanel({
           });
         }
         const gated = await Promise.all(
-          candidates.map(async (c) =>
-            (await routerPayRouteWorks(
-              client,
+          candidates.map(async (c): Promise<PayContext | null> => {
+            const terminal = await readPaymentRouterEntry(client, {
               chainId,
-              projectId,
-              routerRegistry,
-              c.token,
-              c.decimals,
-            ))
-              ? c
-              : null,
-          ),
+              projectId: pid,
+              terminals,
+              token: c.token,
+              decimals: c.decimals,
+            });
+            return terminal ? { ...c, terminal } : null;
+          }),
         );
         routable = gated.filter((c): c is PayContext => c !== null);
       }
@@ -976,19 +915,9 @@ export function PayPanel({
       : undefined;
 
   // ---- Terminal + preview ----
-  // viaRouter tokens are paid through the JBRouterTerminalRegistry (which swaps
-  // them into the project's accounting token); direct tokens go to the
-  // JBMultiTerminal. Preview, allowance, approval, and pay all target this.
-  const multiTerminal =
-    jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
-  const routerRegistry = jbContractAddress["6"][
-    JBRouterTerminalContracts.JBRouterTerminalRegistry
-  ]?.[chainId] as Address | undefined;
-  const terminalAddress = !context
-    ? undefined
-    : context.viaRouter
-      ? routerRegistry
-      : multiTerminal;
+  // Preview, allowance, approval, and pay target the exact attached entry that
+  // supplied this token's route, including a directly attached gateway.
+  const terminalAddress = context?.terminal;
 
   const {
     data: preview,
@@ -1148,12 +1077,9 @@ export function PayPanel({
     : ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n;
 
   // ---- ERC-20 allowance ----
-  // Direct pays approve the JBMultiTerminal; swap-via-router ERC-20 pays approve
-  // the JBRouterTerminalRegistry. The registry's _transferFrom checks a plain
-  // ERC-20 allowance FIRST (JBRouterTerminalRegistry.sol) and pulls via
-  // safeTransferFrom when it covers the amount — so a single simulated
-  // approve(terminal, amount), identical to the direct path, satisfies it. No
-  // Permit2 signature is needed, so nothing bypasses useSafeTx.
+  // ERC-20 pays approve the attached entry that received the preview: the
+  // multi terminal, registry, gateway, or direct router. Each accepts a direct
+  // ERC-20 allowance, so approve(entry, amount) also preserves gateway custody.
   const swapDeployment = directSwapRoute
     ? uniswapV4Deployment(chainId)
     : undefined;

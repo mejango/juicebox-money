@@ -25,6 +25,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { parseDraft } from '@/lib/draft'
 import { buildProjectDraftExport } from '@/lib/project-draft-export'
+import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
 
 const CHAIN = 1 as JBChainId
 const OWNER = `0x${'11'.repeat(20)}` as Address
@@ -245,6 +246,23 @@ describe('launch-shape levers round trip', () => {
 
     expect(draft.allowAnyToken).toBe(false)
     expect(parseDraft(JSON.stringify(draft)).allowAnyToken).toBe(false)
+  })
+
+  it('rejects a failed terminal read instead of exporting routing as disabled', async () => {
+    const failing = client()
+    vi.mocked(failing.readContract).mockRejectedValueOnce(new Error('Directory RPC unavailable'))
+    await expect(exportDraft({ client: failing })).rejects.toThrow('Directory RPC unavailable')
+  })
+
+  it.each([
+    ['gateway', rolloutAddress('JBRouterTerminalGateway', 11155111)!],
+    ['current router', rolloutAddress('JBRouterTerminal', 11155111)!],
+    ...Object.entries(rolloutChain(11155111)!.history.JBRouterTerminal),
+  ])('refuses to silently drop a directly attached %s from a recreated project', async (_label, terminal) => {
+    await expect(exportDraft({
+      chainId: 11155111,
+      client: client({}, [terminal!]),
+    })).rejects.toThrow('cannot preserve that terminal selection')
   })
 
   it('carries the linked-chain flag from the sucker group', async () => {

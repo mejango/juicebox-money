@@ -683,7 +683,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "The router is reached through JBRouterTerminalRegistry, which is what a project adds to JBDirectory alongside JBMultiTerminal; the registry resolves to JBRouterTerminal. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration."
+        "text": "Projects attach JBRouterTerminalRegistry to JBDirectory alongside JBMultiTerminal. Read terminalOf(projectId) to find the selected route: current deployments use JBRouterTerminalGateway → ROUTER(), while unmigrated projects can still select the previous router. The gateway takes custody before routing. Eligible failed fee routes remain pending for retry instead of being settled or forgiven; finalization can refund the source project after qualified failures. Use canonical deployment records per chain: a proposed mainnet deployment is not a live gateway."
       }
     ]
   },
@@ -693,7 +693,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "title": "Buy existing tokens when they offer more",
     "paragraphs": [
       "A payment can create new tokens or buy existing ones from a market. JBBuybackHook compares both and uses the configured Uniswap V4 pool when it gives the payer more tokens. It can also route cash outs.",
-      "To limit price changes during a swap, the hook uses an average price over time, called TWAP, to calculate its default minimum. A payer can supply a quote and minimum instead through payment metadata."
+      "To limit price changes during a swap, the hook uses an average price over time, called TWAP, to calculate its default minimum. Buyback 1.4.0 falls back to minting when the swap cannot meet that floor. Pay metadata under getId(\"pay\", hook) must encode (amountToSwapWith, minimumSwapAmountOut, skipSplits); the third word is a bool, and a two-word quote reverts."
     ],
     "blocks": [
       {

@@ -43,6 +43,7 @@ import {
 import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
+import { readRouterPath, RETAINED_FEE_NOTE, rolloutContractName, type RouterPath } from '@/lib/protocol-rollout'
 
 type BuybackChainState = AuthorityDeployment & {
   name: string
@@ -53,6 +54,9 @@ type BuybackChainState = AuthorityDeployment & {
   routerAvailable: boolean
   hook: Address | null
   terminal: Address | null
+  defaultHook?: Address | null
+  defaultTerminal?: Address | null
+  routerPath?: RouterPath | null
   /** Pair tokens with an initialized pool on this chain, and their TWAP window. */
   pools: { label: string; token: Address; twap: number }[]
   poolSummary: string
@@ -95,7 +99,7 @@ const ACTIONS: Record<
   terminal: {
     title: 'Set router terminal',
     description:
-      'Sets the terminal the swap router forwards into after swapping USDC or another payment token.',
+      'Sets the project’s entry in the router registry. The current entry is a gateway that calls the swap router and retains eligible failed fee routes for retry.',
     danger:
       'This changes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
     fieldLabel: 'Router terminal',
@@ -115,7 +119,7 @@ const ACTIONS: Record<
     description:
       'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. Written straight to the project’s hook.',
     danger:
-      'A window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate. 300–172800 seconds.',
+      'The current hook falls back to minting when a swap cannot meet its TWAP floor; previous hooks can revert. A very short window is easier to manipulate. Allowed range: 300–172800 seconds.',
     fieldLabel: 'Pair token',
     gas: 150_000n,
   },
@@ -202,6 +206,7 @@ async function readChainState(
     !!routerRegistry &&
     !!defaultTerminal &&
     (defaultTerminal as Address) !== zeroAddress
+  const routerPath = await readRouterPath(client, deployment.chainId, BigInt(deployment.projectId)).catch(() => null)
 
   let poolSummary = resolvedHook ? 'Not initialized' : 'Set the hook first'
   let pools: BuybackChainState['pools'] = []
@@ -235,9 +240,9 @@ async function readChainState(
   const shouldHaveBuyback = !!buybackRegistry
   const shouldHaveRouter = !!routerRegistry
   const readError =
-    (shouldHaveBuyback && defaultHook === null) ||
-    (shouldHaveRouter && defaultTerminal === null)
-      ? 'Could not verify registry availability.'
+    (shouldHaveBuyback && (defaultHook === null || hook === null)) ||
+    (shouldHaveRouter && (defaultTerminal === null || terminal === null))
+      ? 'Could not verify registry availability or the project’s current selection.'
       : null
 
   return {
@@ -250,6 +255,9 @@ async function readChainState(
     routerAvailable,
     hook: resolvedHook,
     terminal: resolvedTerminal,
+    defaultHook: defaultHook as Address | null,
+    defaultTerminal: defaultTerminal as Address | null,
+    routerPath,
     pools,
     poolSummary,
     readError,
@@ -343,6 +351,20 @@ export function MultiChainBuybackRouterCard({
             current={row => row.terminal}
             onDone={() => query.refetch()}
           />
+          {rows.some(row => row.routerPath) ? (
+            <div className="py-3 text-xs text-smoke-700">
+              {rows.filter(row => row.routerPath).map(row => (
+                <p key={row.chainId} className="mt-1">
+                  {row.name}: registry → {row.routerPath!.gateway ? 'gateway → ' : ''}
+                  {row.routerPath!.router ? (
+                    <AddressLink address={row.routerPath!.router} chainId={row.chainId} title={rolloutContractName(row.chainId, row.routerPath!.router) ?? 'Router'} />
+                  ) : 'router unavailable'}
+                  {!row.routerPath!.gateway && row.routerPath!.router ? ' (previous route)' : ''}
+                </p>
+              ))}
+              {rows.some(row => row.routerPath?.gateway) ? <p className="mt-2">{RETAINED_FEE_NOTE}</p> : null}
+            </div>
+          ) : null}
           <ActionRow
             kind="pool"
             rows={rows}
@@ -520,9 +542,9 @@ function BuybackActionForm({
       available.map(row => [
         row.chainId,
         kind === 'hook'
-          ? row.hook ?? ''
+          ? row.defaultHook ?? ''
           : kind === 'terminal'
-            ? row.terminal ?? ''
+            ? row.defaultTerminal ?? ''
             : // Pre-select the pool the chain already has, so a TWAP edit targets
               // an initialized pair instead of a native pool a USDC revnet never
               // had. Native pools read back as address(0); show the sentinel.

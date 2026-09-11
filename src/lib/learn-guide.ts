@@ -525,7 +525,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "An owner can hold eligible payout and allowance fees for 28 days by enabling holdFees. Returning funds with the return-held-fees option can recover a matching part. After the delay, someone must process the remaining fees; time alone does not send them. Revnet tokens arrive when the fee payment is processed. Cash-out fees are never held."
+        "text": "An owner can hold eligible payout and allowance fees for 28 days by enabling holdFees. Returning funds with the return-held-fees option can recover a matching part. After the delay, someone must process the remaining fees; time alone does not send them. Revnet tokens arrive when the fee payment settles. Cash-out fees do not use this 28-day mechanism. Failed routes retained by a router gateway are a separate retry process."
       },
       {
         "type": "text",
@@ -533,7 +533,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "The recipient must be set for a fee payment to return tokens. A zero recipient means no token reward; a failed core fee payment can credit the funds back to the source project. Read the completed payment to see the actual token result."
+        "text": "The recipient must be set for a fee payment to return tokens. A zero recipient means no token reward. A failed direct core fee payment can credit funds back to the source project. Where the gateway retains an eligible failed route, funds stay unsettled for retry until routing succeeds or a qualified refund returns them to the source project. A successful transaction receipt alone does not mean the retained fee settled."
       },
       {
         "type": "links",
@@ -736,7 +736,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "Swap terminal",
-            "A router terminal converts a supported incoming token into one the project accepts. Available routes depend on configured tokens, pools, and liquidity."
+            "A router converts a supported incoming token into one the project accepts. Where the gateway is selected, eligible failed fee routes are held for retry; they remain unsettled until routing succeeds or a qualified refund returns funds to the source project. Available routes depend on configured tokens, pools, and liquidity."
           ],
           [
             "Project handles",
@@ -763,7 +763,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "The pool needs enough tokens and a usable price history. The hook checks its supported route, not every market. Money left after the purchase can follow the normal token-creation path."
+        "text": "The pool needs enough tokens and a usable price history. The current buyback hook falls back to creating tokens when the pool cannot meet its average-price floor. The hook checks its supported route, not every market. Money left after the purchase can follow the normal token-creation path."
       },
       {
         "type": "text",
@@ -835,6 +835,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "paragraphs": [
       "A project can price its terms in dollars while accepting ETH. It needs an exchange rate to make that conversion. A price feed supplies this rate.",
       "The JBPrices contract looks for a usable project-specific or default feed. A registered feed cannot be replaced; projects may add their own feeds where the rules allow it. A rate in one direction can also be used in reverse.",
+      "Where deployed, the default USDC-to-native and USDC-to-ETH ratio feeds allow USDC payments into ETH-priced projects and mixed-asset cash outs. Feed availability is checked per chain.",
       "If no feed provides a usable rate, the action cannot complete. A failed lookup is not a price of zero.",
       "Some networks use a service called a sequencer to order transactions. Feeds that monitor it can pause price-dependent actions during an outage and for a recovery period afterwards."
     ],
