@@ -34,7 +34,7 @@ export default function LearnPage() {
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Understand what happens when you fund a project, what its tokens can do, and which
           rules control the money. Start with the basics, check a project’s terms, or explore
-          the protocol in depth. No wallet connection is needed to read this guide.
+          the protocol in depth.
         </p>
         <nav className="mt-6 grid gap-3 sm:grid-cols-3" aria-label="Choose where to start learning">
           {[
