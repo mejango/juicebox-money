@@ -14,8 +14,7 @@ export function AgentSkillsNote({ className = '' }: { className?: string }) {
         >
           Juicebox V6 skills
         </a>{' '}
-        to help it explain contract addresses, interfaces, and fee calculations. Ask it to cite
-        the current contracts so you can check its answers.
+        to help it explain anything Juicebox.
       </p>
     </details>
   )
