@@ -4,6 +4,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 const routes = [
   { path: '/learn', heading: /Learn Juicebox/, contents: 'Learn Juicebox contents' },
   { path: '/build', heading: /Build on Juicebox/, contents: 'Build with Juicebox contents' },
+  { path: '/build/first-payment', heading: /Your first Juicebox payment/, contents: 'First payment contents' },
 ] as const
 
 async function openGuide(page: Page, route: (typeof routes)[number]) {

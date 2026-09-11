@@ -30,6 +30,9 @@ identifier, description and logo.
 - [Home](${siteOrigin}/): projects ranked by treasury balance.
 - [Learn](${siteOrigin}/learn): what the protocol does and the vocabulary it uses.
 - [Build](${siteOrigin}/build): integration guide, contract addresses, SDK pointers.
+- [First payment](${siteOrigin}/build/first-payment): read Base Sepolia project 1 without a wallet, simulate a payment, then use the app and inspect execution.
+- [Read example](${siteOrigin}/examples/read-project.mjs): complete executable read-only V6 example with pinned dependencies.
+- [Simulation example](${siteOrigin}/examples/preview-payment.mjs): prepare, decode, and simulate a test payment using a public address. Never signs or broadcasts.
 - [Create](${siteOrigin}/create): the project launch flow.
 - [Audit](${siteOrigin}/audit): audits and security posture.
 
@@ -51,7 +54,8 @@ Read-only, no key required, cached at the edge.
 
 - Protocol contracts: https://github.com/Bananapus/version-6
 - This client: https://github.com/mejango/juicebox-money
-- Contract explorer: https://juicescan.io
+- Contract explorer: https://juicebox.center/#apps/juicescan
+- Inspect the example: https://juicebox.center/inspect/basesep/1
 `
 
 export const revalidate = 3600

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { AgentSkillsNote } from '@/components/AgentSkillsNote'
 import { ProtocolGuide } from '@/components/ProtocolGuide'
 
@@ -47,6 +48,9 @@ export default function LearnPage() {
             </a>
           ))}
         </nav>
+        <p className="mt-6 text-sm text-smoke-700">
+          Try it step by step: <Link className="underline underline-offset-4" href="/build/first-payment">understand, build, and inspect your first test payment</Link>.
+        </p>
         <AgentSkillsNote className="mt-6 text-sm text-smoke-700" />
       </div>
       <ProtocolGuide guide="learn" />

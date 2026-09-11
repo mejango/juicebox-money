@@ -39,7 +39,7 @@ export default function BuildPage() {
         <nav className="mt-6 grid gap-3 sm:grid-cols-3" aria-label="Choose your Juicebox building path">
           {[
             { href: '#founders-launch-from-the-wizard', title: 'Launch a project', text: 'Use the wizard, configure terms, and manage funds.' },
-            { href: '#apps-set-up-the-sdk', title: 'Build an app', text: 'Install the SDK and read your first testnet project.' },
+            { href: '/build/first-payment', title: 'Build an app', text: 'Read a test project, simulate a payment, and inspect the result.' },
             { href: '#contracts-install-and-launch', title: 'Write contracts', text: 'Use V6 interfaces, hooks, and integration references.' },
           ].map(item => (
             <a key={item.href} href={item.href} className="rounded-xl border border-smoke-300 p-4 text-ink transition-colors hover:border-bluebs-600 hover:bg-bluebs-25 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bluebs-600">

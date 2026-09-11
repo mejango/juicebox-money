@@ -7,7 +7,7 @@ import { toUrn } from '@/lib/urn'
 export const revalidate = 3600
 
 const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
-const STATIC_PATHS = ['/', '/learn', '/build', '/create', '/audit']
+const STATIC_PATHS = ['/', '/learn', '/build', '/build/first-payment', '/create', '/audit']
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const entries: MetadataRoute.Sitemap = STATIC_PATHS.map(path => ({
