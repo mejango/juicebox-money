@@ -38,7 +38,8 @@ const outputs = {
 }
 const fixturePath = 'test/fixtures/protocol-deployments.v6.json'
 if (existsSync(fixturePath)) {
-  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'))
+  let fixtureText = readFileSync(fixturePath, 'utf8')
+  const fixture = JSON.parse(fixtureText)
   fixture.source = source
   fixture.overrides = {}
   for (const name of new Set([...Object.keys(fixture.deployments), ...names])) {
@@ -52,7 +53,16 @@ if (existsSync(fixturePath)) {
       fixture.overrides[id][name] = address
     }
   }
-  outputs[fixturePath] = `${JSON.stringify(fixture, null, 2)}\n`
+  // Only these sections are generated here. Preserve chain ordering and the
+  // independently maintained sucker-deployer rows exactly as written.
+  for (const name of ['source', 'deployments', 'overrides']) {
+    const section = new RegExp(`^  "${name}": (?:\\{\\}|\\{\\n[\\s\\S]*?^  \\})`, 'gm')
+    if ([...fixtureText.matchAll(section)].length !== 1) throw new Error(`Expected one fixture section: ${name}`)
+    const value = JSON.stringify(fixture[name], null, 2).replaceAll('\n', '\n  ')
+    fixtureText = fixtureText.replace(section, () => `  "${name}": ${value}`)
+  }
+  if (JSON.stringify(JSON.parse(fixtureText)) !== JSON.stringify(fixture)) throw new Error('Fixture serialization changed deployment data.')
+  outputs[fixturePath] = fixtureText
 }
 for (const [path, data] of Object.entries(outputs)) {
   if (process.argv.includes('--check')) {
