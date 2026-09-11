@@ -47,6 +47,7 @@ import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
 import { chainName } from '@/lib/urn'
+import Link from 'next/link'
 
 /** Max-slippage presets in basis points; 1% is the cross-client default. */
 const SLIPPAGE_PRESETS_BPS = [50, 100, 300]
@@ -406,12 +407,12 @@ export function CashOutPanel({
         ? {
             key: 'token',
             title: `Approve ${holdingsSymbol} for the swap router`,
-            detail: 'Permit2 cannot move your tokens without this allowance.',
+            detail: 'Let Permit2, the token approval contract, move this amount for the sale.',
           }
         : {
             key: 'router',
             title: 'Authorize the swap router',
-            detail: 'A capped allowance that expires in 30 days.',
+            detail: 'Let the trading contract spend up to this amount for 30 days.',
           },
     ),
     {
@@ -647,9 +648,9 @@ export function CashOutPanel({
           label: 'Route',
           value:
             plan.kind === 'pool'
-              ? 'Direct pool sale'
+              ? 'Sell on the market'
               : plan.venue === 'amm'
-                ? 'Buyback pool via the terminal'
+                ? 'Market trade through the payment contract'
                 : 'Project treasury',
         })
         return rows
@@ -658,7 +659,7 @@ export function CashOutPanel({
       activeIndex={cashOutActiveIndex}
       action={
         needsTokenApproval
-          ? 'Approve tokens for best execution'
+          ? 'Approve tokens for this sale'
           : needsRouterApproval
             ? 'Authorize the swap router'
             : plan.kind === 'pool'
@@ -724,8 +725,8 @@ export function CashOutPanel({
         </h3>
         <p className="mt-1 text-sm text-smoke-700">
           {usedDirectSell
-            ? `Your claimed ${holdingsSymbol} were sold through the better direct pool route.`
-            : `Your share of ${projectName ?? 'the project'}'s treasury is on its way.`}
+            ? `Your ${holdingsSymbol} were sold on the market.`
+            : `Your cash out from ${projectName ?? 'the project'} is confirmed.`}
         </p>
         <div className="mt-5 flex gap-3 text-sm font-semibold">
           {txUrl ? (
@@ -815,12 +816,12 @@ export function CashOutPanel({
         {exceedsBalance ? (
           <span className="text-red-600">That&apos;s more than you hold.</span>
         ) : nothingToReclaim ? (
-          'This project currently has nothing to reclaim for cash-outs.'
+          'The current cash-out quote returns no funds.'
         ) : cashOutCount > 0n && quoteFailed ? (
           'Couldn’t get a quote right now — try again shortly.'
         ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (
           directSellWins
-            ? `You'll receive ~${formatTokenAmount(directSellQuote!, receiveDecimals)} ${receiveSymbol} via a direct pool sale, which beats ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol} from cashing out`
+            ? `Selling on the market estimates ~${formatTokenAmount(directSellQuote!, receiveDecimals)} ${receiveSymbol}, compared with ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol} from cashing out`
             : `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}`
         ) : cashOutCount > 0n && quoteLoading ? (
           'Getting your quote…'
@@ -828,7 +829,7 @@ export function CashOutPanel({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="shrink-0 text-xs font-medium text-smoke-700">Max slippage</span>
+        <span className="shrink-0 text-xs font-medium text-smoke-700">Allowed decrease</span>
         {SLIPPAGE_PRESETS_BPS.map(bps => (
           <button
             key={bps}
@@ -844,7 +845,7 @@ export function CashOutPanel({
           </button>
         ))}
         <label className="input-well !flex !h-7 !w-[76px] shrink-0 items-center px-2 text-[11px] text-smoke-700">
-          <span className="sr-only">Custom max slippage percent</span>
+          <span className="sr-only">Custom allowed decrease percent</span>
           <input
             type="number"
             min="0"
@@ -864,12 +865,20 @@ export function CashOutPanel({
         </label>
       </div>
 
+      <p className="mt-2 text-xs text-smoke-700">
+        How far the return can fall from the quote before this transaction fails.
+        This is called slippage.{' '}
+        <Link href="/learn#learn-glossary" className="underline underline-offset-2">
+          Glossary
+        </Link>
+      </p>
+
       {!directSellWins && poolBufferBps !== null ? (
         <p className="mt-2 text-xs text-smoke-700">
           This pool&apos;s preview already allows about{' '}
           {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for its fee
-          and price impact. Your {slippageBps / 100}% setting additionally
-          covers movement before the transaction lands.
+          and the price change caused by the trade. Your {slippageBps / 100}% setting
+          allows for further changes before confirmation.
         </p>
       ) : null}
 
@@ -909,7 +918,7 @@ export function CashOutPanel({
             bestRoute?.minimumReturn ?? route.minimumReturn,
             receiveDecimals,
           )}{' '}
-          {receiveSymbol}, or the transaction reverts.
+          {receiveSymbol}, or the transaction fails without exchanging your tokens.
         </p>
       ) : null}
 

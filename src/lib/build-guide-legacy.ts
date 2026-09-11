@@ -1,118 +1,24 @@
-// Generated from the Learn/Build DOM renderer's Build tab (juicescan mirror) on 2026-08-28.
-// Reference sections retained with corrections against the V6 contracts; section IDs stay stable.
+// Contract operation references retained from the original Build guide.
+// Overlapping introductions now live in build-guide.ts; old links use its aliases.
 import type { GuideSection } from '@/components/GuideSections'
 
 export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
-  {
-    "id": "build-launch",
-    "part": "Life of a project",
-    "title": "Launch",
-    "paragraphs": [
-      "Everything starts with JBController.launchProjectFor(). This single call:"
-    ],
-    "blocks": [
-      {
-        "type": "steps",
-        "items": [
-          "Mints an ERC-721 project NFT to the owner address",
-          "Configures initial rulesets (payout limits, token weights, reserved percents, etc.)",
-          "Sets up terminal configurations (which tokens the project accepts)",
-          "Registers the project in JBDirectory"
-        ]
-      },
-      {
-        "type": "code",
-        "label": "JBController.launchProjectFor (call outline)",
-        "code": "launchProjectFor(\n  owner,                    // receives the project NFT\n  projectUri,               // metadata (name, description, logo)\n  rulesetConfigurations[],  // operational parameters\n  terminalConfigurations[], // payment processing setup\n  memo                      // transaction description\n)\n// Send exactly JBProjects.creationFee() as transaction value."
-      },
-      {
-        "type": "info",
-        "text": "For omnichain projects, use JBOmnichainDeployer.launchProjectFor() instead — it launches the project and its local suckers in one transaction. Run it on each chain the project should live on."
-      }
-    ]
-  },
-  {
-    "id": "build-configure",
-    "part": "Life of a project",
-    "title": "Configure",
-    "paragraphs": [
-      "After launch, inspect and understand your project’s configuration:"
-    ],
-    "blocks": [
-      {
-        "type": "table",
-        "label": "READING PROJECT STATE",
-        "rows": [
-          [
-            "JBProjects.ownerOf(projectId)",
-            "Who owns the project NFT"
-          ],
-          [
-            "JBController.uriOf(projectId)",
-            "Metadata link (name, description, logo)"
-          ],
-          [
-            "JBController.currentRulesetOf(projectId)",
-            "Active ruleset and its metadata"
-          ],
-          [
-            "JBController.upcomingRulesetOf(projectId)",
-            "What comes next (auto-cycled with weight decay)"
-          ],
-          [
-            "JBDirectory.terminalsOf(projectId)",
-            "All active terminals"
-          ],
-          [
-            "JBDirectory.primaryTerminalOf(projectId, token)",
-            "Default terminal for a specific token"
-          ],
-          [
-            "JBMultiTerminal.accountingContextsOf(projectId)",
-            "Which tokens/currencies are accepted"
-          ],
-          [
-            "JBSplits.splitsOf(projectId, rulesetId, groupId)",
-            "Payout and reserved token distribution rules"
-          ]
-        ]
-      },
-      {
-        "type": "table",
-        "label": "FUND ACCESS LIMITS",
-        "rows": [
-          [
-            "JBFundAccessLimits.payoutLimitOf(...)",
-            "Maximum distributable per cycle per token"
-          ],
-          [
-            "JBFundAccessLimits.surplusAllowanceOf(...)",
-            "How much surplus the owner can withdraw"
-          ]
-        ]
-      },
-      {
-        "type": "info",
-        "text": "Empty fundAccessLimitGroups = zero payouts (NOT unlimited). Use uint224.max for unlimited payouts."
-      }
-    ]
-  },
   {
     "id": "build-fund",
     "part": "Life of a project",
     "title": "Get funded",
     "paragraphs": [
-      "Once launched, anyone can contribute to the project through its configured terminals."
+      "A project receives payments through its payment contracts, called terminals. Use the current terms and a fresh quote to show the tokens the payer will receive."
     ],
     "blocks": [
       {
         "type": "code",
         "label": "JBMultiTerminal.pay (call outline)",
-        "code": "pay(\n  projectId,\n  token,              // which token to pay with\n  amount,             // how much\n  beneficiary,        // who receives the minted tokens\n  minReturnedTokens,  // slippage protection\n  memo,               // message attached to the payment\n  metadata            // extra data for hooks\n)\n// Returns: number of tokens minted for the beneficiary"
+        "code": "pay(\n  projectId,\n  token,              // which token to pay with\n  amount,             // how much\n  beneficiary,        // who receives the minted tokens\n  minReturnedTokens,  // minimum amount the recipient must receive\n  memo,               // message attached to the payment\n  metadata            // extra data for hooks\n)\n// Returns: number of tokens minted for the beneficiary"
       },
       {
         "type": "table",
-        "label": "CHECKING BALANCES",
+        "label": "Checking balances",
         "rows": [
           [
             "JBTerminalStore.balanceOf(terminal, projectId, token)",
@@ -130,7 +36,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "Anyone can also inject capital without receiving tokens via addToBalanceOf(). This is useful for grants, donations, or returning funds."
+        "text": "Use addToBalanceOf() to add funds without receiving tokens, such as a grant, donation, or returned funds."
       }
     ]
   },
@@ -139,12 +45,12 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Manage tokens",
     "paragraphs": [
-      "Tokens start as internal credits. Deploy an ERC-20 whenever you’re ready."
+      "Juicebox can track token balances itself; these balances are called credits. A project can also create a separate token contract using the ERC-20 standard. Holders can then move credits into that contract. Count both forms when showing a holder’s total balance."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "TOKEN OPERATIONS",
+        "label": "Token operations",
         "rows": [
           [
             "JBController.deployERC20For(projectId, name, symbol, salt)",
@@ -170,7 +76,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "MINTING & BURNING",
+        "label": "Minting & burning",
         "rows": [
           [
             "JBController.mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent)",
@@ -187,15 +93,15 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
     "id": "build-distribute",
     "part": "Life of a project",
-    "title": "Distribute",
+    "title": "Send funds and reserved tokens",
     "paragraphs": [
-      "Projects distribute funds through payouts and reserved tokens. By default anyone can trigger distribution; the ownerMustSendPayouts ruleset flag restricts payouts to the owner or an operator with SEND_PAYOUTS permission."
+      "Payouts send funds to the project’s chosen recipients. Reserved tokens are new tokens set aside for other recipients. Anyone can normally trigger these distributions, but the ownerMustSendPayouts setting can restrict payouts to the owner or an operator with SEND_PAYOUTS permission."
     ],
     "blocks": [
       {
         "type": "code",
         "label": "JBMultiTerminal.sendPayoutsOf (call outline)",
-        "code": "sendPayoutsOf(\n  projectId,\n  token,\n  amount,              // up to the payout limit\n  currency,\n  minTokensPaidOut     // slippage protection\n)\n// Distributes to splits, leftover to project owner\n// 2.5% protocol fee on payouts, except same-terminal project payouts and eligible feeless recipients"
+        "code": "sendPayoutsOf(\n  projectId,\n  token,\n  amount,              // up to the payout limit\n  currency,\n  minTokensPaidOut     // minimum amount the recipient must receive\n)\n// Distributes to splits, leftover to project owner\n// Review the final amount each recipient will receive"
       },
       {
         "type": "code",
@@ -204,7 +110,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "TRACKING USAGE",
+        "label": "Tracking usage",
         "rows": [
           [
             "JBTerminalStore.usedPayoutLimitOf(...)",
@@ -222,7 +128,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "sendPayoutsOf() is permissionless by default. ownerMustSendPayouts restricts it to the owner or a SEND_PAYOUTS operator. A payout to another project through a different, non-feeless terminal still incurs the standard fee."
+        "text": "Recipients and their shares are stored as splits. Calling sendPayoutsOf() sends funds to those recipients; any leftover goes to the project owner."
       }
     ]
   },
@@ -231,93 +137,27 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Cash out",
     "paragraphs": [
-      "Token holders can cash out tokens against the project’s current surplus under its tax, hook, and fee settings. In a single accounting context, surplus is the terminal balance above the remaining payout limit. Read a hook-aware quote for the actual transaction.",
-      "At 0% cash out tax the core formula returns a proportional share before fees. Higher rates reduce the amount returned to a holder cashing out part of the supply; at 100% it returns zero. The tax is separate from protocol and hook fees."
+      "Holders can exchange tokens for available project funds, called surplus. With one asset in one terminal, surplus is the balance above the remaining payout limit. A cash out removes the exchanged tokens from supply.",
+      "The cash out tax controls how much stays for remaining holders. At 0%, the base formula returns a proportional share. Higher rates return less when only part of the supply is exchanged; 100% returns zero. Use a quote that includes the project’s extensions to find the final amount."
     ],
     "blocks": [
       {
         "type": "code",
         "label": "JBMultiTerminal.cashOutTokensOf (call outline)",
-        "code": "cashOutTokensOf(\n  holder,\n  projectId,\n  cashOutCount,         // how many tokens to burn\n  tokenToReclaim,       // which token to receive\n  minTokensReclaimed,   // slippage protection\n  beneficiary,          // who receives the funds\n  metadata\n)"
-      },
-      {
-        "type": "diagram",
-        "label": "BONDING CURVE",
-        "lines": [
-          "  For taxRate below MAX:",
-          "  reclaim = surplus × (cashOutCount / totalSupply)",
-          "         × [(MAX - taxRate) + taxRate × (cashOutCount / totalSupply)]",
-          "         ÷ MAX",
-          "",
-          "  taxRate = 0%    → full proportional redemption",
-          "  taxRate = 100%  → returns zero (separate contract branch)"
-        ],
-        "description": "Below 100% tax, multiply surplus by the holder’s supply share, then by the curve adjustment shown. A 0% tax is proportional. At 100% tax the contract returns zero, and protocol or hook fees are separate."
+        "code": "cashOutTokensOf(\n  holder,\n  projectId,\n  cashOutCount,         // how many tokens to burn\n  tokenToReclaim,       // which token to receive\n  minTokensReclaimed,   // minimum amount the recipient must receive\n  beneficiary,          // who receives the funds\n  metadata\n)"
       },
       {
         "type": "info",
-        "text": "For non-feeless beneficiaries, a nonzero cash out tax normally makes the full direct reclaim eligible for the 2.5% protocol fee. At zero tax, only min(reclaimed, feeFreeSurplusOf) is eligible. Hooks and routing affect the final quote."
-      }
-    ]
-  },
-  {
-    "id": "build-evolve",
-    "part": "Life of a project",
-    "title": "Evolve",
-    "paragraphs": [
-      "Projects evolve by queuing new rulesets. A timed ruleset changes at an eligible cycle boundary. A flexible ruleset can change without a cycle boundary, but any configured start time, notice, or approval still applies."
-    ],
-    "blocks": [
-      {
-        "type": "code",
-        "label": "JBController.queueRulesetsOf (call outline)",
-        "code": "queueRulesetsOf(\n  projectId,\n  rulesetConfigurations[],  // new parameters\n  memo\n)\n// If an approval hook is configured, it must approve\n// the changes before they can activate."
+        "text": "Set minTokensReclaimed to the minimum the recipient accepts. The contract must enforce the same minimum shown in the review."
       },
       {
-        "type": "table",
-        "label": "INSPECTING QUEUED CHANGES",
-        "rows": [
-          [
-            "JBController.latestQueuedRulesetOf(projectId)",
-            "Latest ruleset in the queue and its approval status (may already be the active one)"
-          ],
-          [
-            "JBController.allRulesetsOf(projectId, startingId, size)",
-            "Complete ruleset history"
-          ]
+        "type": "links",
+        "items": [
+          {
+            "href": "/learn#learn-cash-outs",
+            "label": "Cash out formula and worked example"
+          }
         ]
-      }
-    ]
-  },
-  {
-    "id": "build-revnet-what",
-    "part": "Life of a revnet",
-    "title": "What’s a revnet?",
-    "paragraphs": [
-      "A revnet is a Juicebox project owned by REVOwner, which locks its staged economic parameters at launch. Its operator retains specific permissions: review these alongside the stage schedule.",
-      "The token is deployed as an ERC-20 at launch. Revenue can back cash outs under the configured terms. Fixed issuance rules do not guarantee revenue or fix the token’s market price.",
-      "Revnets use stages to describe their predetermined economic progression. Operator controls can still include split recipients, metadata, buyback settings, router selection, and configured NFT features."
-    ],
-    "blocks": [
-      {
-        "type": "diagram",
-        "label": "REVNET vs PROJECT",
-        "lines": [
-          "  PROJECT",
-          "  • owned by a wallet or contract",
-          "  • owner can change rulesets",
-          "  • manual ERC-20 deploy",
-          "  • flexible governance",
-          "  • good for: DAOs, collectives",
-          "",
-          "  REVNET",
-          "  • owned by REVOwner contract",
-          "  • stages locked at deploy",
-          "  • ERC-20 auto-deployed",
-          "  • fixed staged economics",
-          "  • good for: protocols, tokens"
-        ],
-        "description": "Projects can be owned by wallets or contracts with ruleset-dependent powers. Revnets use REVOwner, commit the core stage schedule at launch, and deploy their ERC-20 during launch while retaining limited operator controls."
       }
     ]
   },
@@ -326,7 +166,9 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a revnet",
     "title": "Deploy a revnet",
     "paragraphs": [
-      "Deploy with REVDeployer.deployFor():"
+      "Create a revnet and its stage schedule with REVDeployer.deployFor().",
+      "Stages set how a revnet’s terms change over time. For example, an early stage can create more tokens per payment, followed by stages that gradually create fewer.",
+      "Each stage sets the new-token rate, scheduled cuts, reserved share, and cash out tax. Stages begin automatically at their scheduled times."
     ],
     "blocks": [
       {
@@ -336,22 +178,11 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "A revnet uses the same core payment and cash out entrypoints as other projects, with REVOwner applying its revnet terms and fee logic. Quote through the configured hooks and inspect the operator’s retained permissions."
-      }
-    ]
-  },
-  {
-    "id": "build-revnet-stages",
-    "part": "Life of a revnet",
-    "title": "Stages",
-    "paragraphs": [
-      "Stages are pre-programmed rulesets. A revnet might start with high token issuance (bootstrapping), then reduce over time (scarcity), and eventually reach a steady state.",
-      "Each stage can configure: token weight, weight decay, reserved splits, cash out tax rate, and more. Once deployed, stages progress automatically at their configured boundaries."
-    ],
-    "blocks": [
+        "text": "A revnet uses the same payment and cash out calls as other projects. REVOwner applies its terms through an extension. Include that extension when requesting a quote, and check the operator’s remaining permissions."
+      },
       {
         "type": "table",
-        "label": "READING STAGE STATE",
+        "label": "Reading stage state",
         "rows": [
           [
             "JBController.currentRulesetOf(projectId)",
@@ -367,27 +198,9 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ]
         ]
       }
-    ]
-  },
-  {
-    "id": "build-revnet-fees",
-    "part": "Life of a revnet",
-    "title": "Revnet fees",
-    "paragraphs": [
-      "Ordinary taxed revnet cash outs can incur both fees below. The revnet fee is skipped for zero-tax cash outs, feeless beneficiaries, or when the fee project has no compatible terminal."
     ],
-    "blocks": [
-      {
-        "type": "steps",
-        "items": [
-          "2.5% protocol fee — taken from the reclaimed value by JBMultiTerminal, sent to the Juicebox protocol’s project",
-          "2.5% revnet fee — REVOwner allocates a share of the token count to the fee calculation and sends its associated reclaim value to the revnet fee project."
-        ]
-      },
-      {
-        "type": "text",
-        "text": "The protocol fee is based on reclaimed value. The revnet fee is calculated from a share of the token count; its recipient receives the associated reclaim value, not those project tokens. The rates have different bases, so do not simply subtract 5% from a core quote."
-      }
+    "aliases": [
+      "build-revnet-stages"
     ]
   },
   {
@@ -395,7 +208,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Permissions",
     "paragraphs": [
-      "Grant fine-grained access to other addresses with JBPermissions. Each permission is a bit in a 256-bit field."
+      "Give another address permission for a specific action with JBPermissions. Choose only the permissions it needs and the project they apply to. The contract stores each permission as one bit in a 256-bit field."
     ],
     "blocks": [
       {
@@ -405,7 +218,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "CHECKING PERMISSIONS",
+        "label": "Checking permissions",
         "rows": [
           [
             "JBPermissions.hasPermission(operator, account, projectId, permissionId, includeRoot, includeWildcard)",
@@ -423,11 +236,11 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "PERMISSION IDS",
+        "label": "Permission ids",
         "rows": [
           [
             "1 - ROOT",
-            "Grants all permissions. Use with extreme care."
+            "Grants every permission. Prefer the specific actions needed."
           ],
           [
             "2 - QUEUE_RULESETS",
@@ -463,7 +276,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "10 - MINT_TOKENS",
-            "Mint tokens on-demand."
+            "Create tokens without a payment."
           ],
           [
             "11 - BURN_TOKENS",
@@ -535,7 +348,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "28 - SET_BUYBACK_TWAP",
-            "Set the buyback hook’s TWAP window."
+            "Set the period used to calculate the buyback market’s average price (TWAP)."
           ],
           [
             "29 - SET_BUYBACK_POOL",
@@ -551,11 +364,11 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "32 - MAP_SUCKER_TOKEN",
-            "Map a token across a sucker pair."
+            "Link matching assets across a pair of bridge contracts (suckers)."
           ],
           [
             "33 - DEPLOY_SUCKERS",
-            "Deploy cross-chain suckers for the project."
+            "Create bridge contracts between the project’s chains."
           ],
           [
             "34 - SET_SUCKER_PEER",
@@ -592,9 +405,9 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
     "id": "build-nfts",
     "part": "Ecosystem tools",
-    "title": "NFT tiers",
+    "title": "Sell collectibles and memberships",
     "paragraphs": [
-      "Deploy tiered NFTs as pay hooks using JB721TiersHook. Payers pick tiers in the pay metadata and receive the NFTs their payment covers."
+      "A project shop can sell uniquely identified tokens, called NFTs. Items are grouped into tiers with a price and supply. The JB721TiersHook extension delivers the selected items when a payment covers their price."
     ],
     "blocks": [
       {
@@ -604,7 +417,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "TIER CONFIGURATION",
+        "label": "Tier configuration",
         "rows": [
           [
             "price",
@@ -628,7 +441,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "votingUnits",
-            "Governance weight (via JB721Checkpoints). Applies only when the tier’s flags.useVotingUnits is set — otherwise voting power tracks the tier price."
+            "Voting weight through JB721Checkpoints. Used only when flags.useVotingUnits is set; otherwise the tier’s price sets its voting weight."
           ],
           [
             "encodedIpfsUri",
@@ -642,7 +455,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "READING NFT STATE",
+        "label": "Reading nft state",
         "rows": [
           [
             "JB721TiersHookStore.tiersOf(hook, categories[], includeResolvedUri, startId, size)",
@@ -664,41 +477,41 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "Tiers are sorted by CATEGORY, not price. The contract reverts with InvalidCategorySortOrder if submitted out of order."
+        "text": "Sort tiers by category. An out-of-order list fails with InvalidCategorySortOrder."
       }
     ]
   },
   {
     "id": "build-hooks",
     "part": "Ecosystem tools",
-    "title": "Custom hooks",
+    "title": "Add custom behavior with hooks",
     "paragraphs": [
-      "Build custom logic that executes at key moments in the payment lifecycle. Hooks are the primary extension mechanism."
+      "An extension can change a payment’s token output, send rewards, or check a rule change. These extensions are called hooks. Choose the interface for the moment when your code needs to run."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "HOOK INTERFACES",
+        "label": "Hook interfaces",
         "rows": [
           [
             "IJBRulesetDataHook",
-            "Intercepts pay and cash out BEFORE state changes. Can override the weight (pay) or the cash out tax rate / effective counts (cash out), and specify pay and cash out hook specifications."
+            "Runs before a payment or cash out is recorded. Can change the new-token rate, cash out inputs, and which later hooks run."
           ],
           [
             "IJBPayHook",
-            "Called AFTER payment recorded and tokens minted. Use for rewards, notifications, side effects."
+            "Runs after a payment is recorded and tokens are created. Can deliver rewards or trigger other actions."
           ],
           [
             "IJBCashOutHook",
-            "Called AFTER tokens burned and funds transferred. Use for cleanup, analytics, conditional logic."
+            "Runs after a cash out is recorded. Can receive funds and run additional actions."
           ],
           [
             "IJBSplitHook",
-            "Called when a split routes funds to a hook address. Use for auto-investing, compounding, forwarding."
+            "Runs when a recipient’s share is sent to an extension. Can forward or use the funds."
           ],
           [
             "IJBRulesetApprovalHook",
-            "Gates queued rulesets. Must return APPROVED before a queued ruleset can activate."
+            "Approves new project terms before they can take effect. Must return APPROVED."
           ]
         ]
       },
@@ -709,22 +522,22 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "Data hooks run BEFORE state changes and can override values. Pay and cash out hooks run AFTER and are for side effects only."
+        "text": "Use a data hook to change the values recorded by the payment or cash out. Use later hooks to receive funds or trigger additional actions."
       }
     ]
   },
   {
     "id": "build-distributor",
     "part": "Ecosystem tools",
-    "title": "Distributor",
+    "title": "Share rewards over time",
     "paragraphs": [
-      "JBDistributor is an optional, project-deployed add-on (not part of the core protocol deployment). It distributes ERC-20 rewards to stakers in time-based rounds with linear vesting. Two implementations exist: JBTokenDistributor (for IJBActiveVotes token holders, e.g. a Juicebox JBERC20) and JB721Distributor (for NFT holders).",
-      "The distributor is funded via split hooks or direct deposits. Each round, a snapshot captures the distributable balance. Stakers claim their pro-rata share, which vests linearly over a configured number of rounds."
+      "A distributor shares reward tokens with eligible holders over time. Rewards unlock gradually, called vesting. Deploy this optional extension for your project; it is separate from the shared core contracts.",
+      "JBTokenDistributor supports tokens with IJBActiveVotes, such as Juicebox JBERC20. JB721Distributor supports NFT holders. Fund either through project distributions or direct deposits. Each round records the available rewards and holders’ eligible balances, then unlocks their shares evenly over the configured rounds."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "CORE FUNCTIONS",
+        "label": "Core functions",
         "rows": [
           [
             "fund(hook, token, amount)",
@@ -750,7 +563,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "READ STATE",
+        "label": "Read state",
         "rows": [
           [
             "balanceOf(hook, token)",
@@ -776,22 +589,22 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "A holder’s stake comes from IVotes.getPastVotes() (token distributors) or tier voting units (721 distributors). The TOTAL-stake denominator uses IJBActiveVotes.getPastTotalActiveVotes — which excludes undelegated balances (e.g. AMM-held tokens), so holders must delegate (even to themselves) to count. Rewards are proportional to active stake at the snapshot block."
+        "text": "Reward shares use voting weight at a recorded block. Token distributors read IVotes.getPastVotes(); NFT distributors use tier voting units. Token holders must assign their votes, even to themselves, to count. IJBActiveVotes.getPastTotalActiveVotes excludes balances whose votes are unassigned."
       }
     ]
   },
   {
     "id": "build-handles",
     "part": "Ecosystem tools",
-    "title": "Project handles",
+    "title": "Give a project a name",
     "paragraphs": [
-      "JBProjectHandles maps ENS names to Juicebox project IDs using bidirectional verification. Anyone can propose a handle, but only verified ones (where the ENS text record matches) are returned by handleOf().",
-      "All functions take a chainId parameter — handles are chain-aware. Storage is keyed by the setter address, so multiple addresses can propose different handles for the same project."
+      "A project can use a readable Ethereum Name Service (ENS) name. JBProjectHandles checks that the name’s record also points back to the project before returning it from handleOf().",
+      "Anyone can propose a name. The registry stores each proposal by its setter, chain ID, and project ID. Apps should also check that the project’s current owner or operator claimed the name."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "HANDLE FUNCTIONS",
+        "label": "Handle functions",
         "rows": [
           [
             "setEnsNamePartsFor(chainId, projectId, parts[])",
@@ -820,10 +633,10 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
     "id": "build-payer",
     "part": "Ecosystem tools",
-    "title": "Payer address",
+    "title": "Create an address that forwards payments",
     "paragraphs": [
-      "A JBProjectPayer address is deployed as a minimal proxy (clone). The constructor takes only a JBDirectory address. After deployment, defaults are set via initialize() or setDefaultValues().",
-      "The receive path accepts the native token (ETH) only. When defaultAddToBalance is false, incoming native ETH triggers pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. With no explicit or default beneficiary, the contract resolves the original payer, including supported upstream payer trackers. ERC-20 payments must call pay() or addToBalanceOf() after approval; direct ERC-20 transfers do not trigger either path."
+      "A payer address forwards incoming ETH to a project. Deploy JBProjectPayer as a small copy of a shared implementation, called a clone. Its constructor takes JBDirectory; set defaults through initialize() or setDefaultValues().",
+      "When defaultAddToBalance is false, incoming ETH calls pay() and delivers project tokens to the beneficiary. When true, it adds funds without creating tokens. With no chosen beneficiary, the contract finds the original payer, including through supported forwarding contracts. ERC-20 payments need an explicit pay() or addToBalanceOf() call after approval; sending those tokens directly will not trigger a payment."
     ],
     "blocks": [
       {
@@ -833,22 +646,22 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "Terminal lookup happens at payment time via JBDirectory, so the payer address automatically follows terminal migrations without reconfiguration."
+        "text": "The payer address looks up the project’s current payment contract through JBDirectory each time it receives a payment."
       }
     ]
   },
   {
     "id": "build-swap-terminal",
     "part": "Ecosystem tools",
-    "title": "Router terminal",
+    "title": "Accept payments in other assets",
     "paragraphs": [
-      "JBRouterTerminal is a universal payment terminal: it accepts any token and automatically converts it into whatever token the destination project accepts, then forwards the result to that project’s primary terminal. It’s a pass-through — it never holds a balance.",
-      "There is no fixed output token. For each payment, a JBPayRouteResolver evaluates every token the destination project accepts and picks the route that yields the most project tokens for the payer — choosing among direct forwarding, a Uniswap V3 or V4 swap, a recursive cash out of JB tokens, or a combination. Pools and routes are discovered automatically, not configured per project."
+      "A router can convert a payment into an asset the project accepts. JBRouterTerminal finds a supported route, makes the conversion, and forwards the result to the project’s payment contract. It does not keep a project balance.",
+      "JBPayRouteResolver compares available routes by the tokens the payer would receive. A route may forward an accepted asset, swap through Uniswap V3 or V4, cash out other Juicebox tokens, or combine these steps. Availability depends on the project, asset, and market; check previewPayFor before offering the route."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "ROUTER TERMINAL FUNCTIONS",
+        "label": "Router terminal functions",
         "rows": [
           [
             "pay(...)",
@@ -877,9 +690,10 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
     "id": "build-buyback",
     "part": "Ecosystem tools",
-    "title": "Buyback hook",
+    "title": "Buy existing tokens when they offer more",
     "paragraphs": [
-      "JBBuybackHook compares the mint price against a Uniswap V4 pool price and routes payments (and cash outs) to whichever gives better value. Slippage tolerance defaults to a TWAP-based sigmoid; a payer can override it with a quote and minimum in the pay metadata."
+      "A payment can create new tokens or buy existing ones from a market. JBBuybackHook compares both and uses the configured Uniswap V4 pool when it gives the payer more tokens. It can also route cash outs.",
+      "To limit price changes during a swap, the hook uses an average price over time, called TWAP, to calculate its default minimum. A payer can supply a quote and minimum instead through payment metadata."
     ],
     "blocks": [
       {
@@ -889,7 +703,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "diagram",
-        "label": "BUYBACK DECISION FLOW",
+        "label": "Buyback decision flow",
         "lines": [
           "  payment arrives",
           "     │",
@@ -905,22 +719,22 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "The hook also handles cash outs: if the pool offers more than the bonding curve reclaim (after fees), it routes the sell through the pool instead. Payers can bypass the TWAP by providing their own quote in payment metadata."
+        "text": "For cash outs, the hook can sell tokens through the pool when that returns more than the project’s cash out quote. Callers can supply their own quote and minimum in the transaction metadata."
       }
     ]
   },
   {
     "id": "build-bendystraw",
     "part": "Build your own",
-    "title": "Indexed data (Bendystraw)",
+    "title": "Search project data with Bendystraw",
     "paragraphs": [
-      "Bendystraw is the Juicebox indexer: a Ponder service that watches every V6 contract on every supported chain and serves the results over GraphQL. It is how this site lists projects, draws activity feeds and price charts, ranks trending projects, and reads LP positions — none of which are practical to assemble from RPC calls at page-load speed.",
-      "Use it for anything a person reads. Use the chain for anything a wallet signs: re-read balances, rulesets, allowances, and quotes onchain right before building a transaction. The index can lag the chain by a few blocks, and a lagging index looks like empty data, not an error."
+      "Bendystraw gathers Juicebox chain records into a searchable database. This service, called an indexer, supplies project lists, activity, charts, and market positions through GraphQL queries.",
+      "Use it for fast browsing. Before signing, read balances, terms, spending approvals, and quotes directly from the chain again. The index can be a few blocks behind, so missing activity does not prove that a transaction failed."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "ENDPOINTS",
+        "label": "Endpoints",
         "rows": [
           [
             "https://bendystraw.up.railway.app/graphql",
@@ -943,7 +757,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "table",
-        "label": "WHAT TO ASK IT FOR",
+        "label": "What to ask it for",
         "rows": [
           [
             "projects / project(chainId, projectId, version: 6)",
@@ -959,7 +773,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "buybackPools, swapEvents, buybackPoolPositions",
-            "The AMM: pool identity, every trade’s post-trade price, and every LP range"
+            "Market pools, prices after trades, and the price ranges funded by liquidity providers"
           ],
           [
             "loans, borrowLoanEvents",
@@ -987,26 +801,26 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "info",
-        "text": "Building with an agent? The /jb-bendystraw skill in the Juicebox V6 skills library carries the schema, the query patterns above, and the gotchas — hand it over before asking for a feed, chart, or holder table. Source: github.com/peripheralist/bendystraw."
+        "text": "Give your assistant the /jb-bendystraw skill for help with queries, charts, and holder lists. It is part of the Juicebox V6 skills library. Bendystraw source: github.com/peripheralist/bendystraw."
       }
     ]
   },
   {
     "id": "build-clients",
     "part": "Build your own",
-    "title": "Build from this client",
+    "title": "Use this app as a reference",
     "paragraphs": [
-      "Juicebox Money is a production V6 client you can study, fork, or use as a reference for your own product. Its Next.js interface combines server-assisted indexing and IPFS services with wallet flows that build and verify Juicebox transactions from the current V6 contracts.",
-      "Treat each working flow as an implementation example, not a black box. The project, account, shop, and create surfaces show how product interactions map to indexed reads, fresh onchain checks, transaction builders, ABI round trips, and clear signing previews. Give the relevant source and tests to your coding agent when you want to reuse one of those patterns."
+      "Use Juicebox Money’s source to build your own product. Its Next.js app shows how to find projects, load details and media, and prepare transactions against the current V6 contracts.",
+      "Start with a flow close to yours, such as Pay, Cash Out, Create, or Shop. Read its source and tests to see how it checks current data, prepares a request, and shows what the user will sign."
     ],
     "blocks": [
       {
         "type": "steps",
         "items": [
           "Start from the product flow closest to yours — such as Pay, Cash Out, project creation, ruleset editing, or the Shop — and identify its component, supporting reads, and transaction builder.",
-          "Give your coding agent that source, its tests, this guide’s deep link, the current V6 contract repository below, and the Juicebox V6 skills library (github.com/mejango/juicebox-skills) — a Claude Code plugin whose skills carry the addresses, ABIs, fee math, and transaction-safety rules so the agent does not reconstruct them from memory.",
-          "Keep indexed data for fast discovery and display, but re-read signing-critical state onchain immediately before building and submitting a transaction.",
-          "Reuse the pure transaction-builder and ABI round-trip pattern, then add product-specific invariants and browser tests before asking a wallet to sign."
+          "Give your assistant the relevant source, tests, guide link, V6 contracts, and Juicebox V6 skills library (github.com/mejango/juicebox-skills) to help it explain anything Juicebox.",
+          "Use indexed data for browsing. Refresh the chain data the transaction depends on just before building and sending it.",
+          "Prepare one request and check that encoding and decoding preserves its fields. Test the behavior your product depends on before asking a wallet to sign."
         ]
       },
       {
@@ -1024,7 +838,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "Use the app as a product reference and the repository as the implementation reference. Server routes improve indexing, search, media, and transaction preparation; signing remains explicit, and each wallet-bound action is decoded and checked against the V6 ABI before submission."
+        "text": "Use the app to study the experience and its source to see how it works. The server helps with search, media, and request preparation. The wallet signs only after the action is shown and checked against the V6 contract format."
       }
     ]
   }

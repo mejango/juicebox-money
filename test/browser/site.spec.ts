@@ -155,7 +155,7 @@ async function expectCreateDraftsSurviveEditorNavigation(page: Page) {
   const back = page.getByRole('button', { name: '← Back' })
   const next = page.getByRole('button', { name: 'Next →' })
   await steps.getByRole('button').nth(2).click()
-  const issuance = page.getByRole('button', { name: /^Issuance(?: |$)/ })
+  const issuance = page.getByRole('button', { name: /^New tokens(?: |$)/ })
   await issuance.click()
   const rate = page.getByPlaceholder('10000', { exact: true })
   await rate.fill('12345.6789')

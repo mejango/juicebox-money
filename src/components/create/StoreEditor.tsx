@@ -430,15 +430,15 @@ export function StoreEditor({
                   [
                     [
                       "allowOwnerMint",
-                      "Project owner can mint for free",
-                      "The project owner (or revnet operator) can mint this item without paying.",
+                      "Owner can create this item for free",
+                      "The project owner or revnet operator can create this item without paying.",
                     ],
                     [
                       "transfersPausable",
                       isRevnet ? "Non-transferable" : "Allow rulesets to pause transfers",
                       isRevnet
-                        ? "This item can be minted and burned, but never moved between wallets. Leave this off to keep it transferable."
-                        : "The active ruleset can pause transfers of this item. Minting and burning stay available.",
+                        ? "This item can be created or destroyed, but cannot move between wallets."
+                        : "The current rules can stop holders from sending this item to another wallet. Creating and destroying it stay allowed.",
                     ],
                     [
                       "cantBeRemoved",

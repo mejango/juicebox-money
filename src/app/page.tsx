@@ -51,25 +51,20 @@ const FRUIT_SEPARATOR = [
 ]
 
 const WHY_JUICEBOX_POINTS = [
-  'Accept money instantly from anyone around the world.',
-  'Easily issue unified, programmable incentives to your community, customers, and investors in real time.',
-  'Make promises to supporters that are guaranteed to hold.',
-  'Build your own website or app to access your pay and cash-out functions. No platform lock-in.',
-  'Start with flexible rules, evolve them as your project changes, then lock the promises that should become permanent.',
-  'Make every rule and transaction inspectable so community trust compounds over time.',
-  'Keep control of your funds when you want, give up control to other mechanisms when you want.',
-  'Pay a fixed fee that sustains a healthy public payment network instead of having fees change over time.',
-  'Be treated as both a customer and a participating investor, sharing in the growth your usage helps create.',
-  'Use AI and open-source tooling to build faster and more securely without becoming dependent on private tools.',
-  'Audit the whole money system yourself. Track all transactions. Ensure integrity without permission.',
-  'Fund, earn, and grow on your own terms.',
+  'Accept payments from around the world.',
+  'Give project tokens to supporters, customers, and contributors.',
+  'Set rules for the money that anyone can check.',
+  'Start with flexible terms and lock the parts you want to make permanent.',
+  'Share funds and tokens with recipients you choose.',
+  'Build your own payment experience with open-source tools.',
+  'Follow payments, payouts, and changes to the rules in the public record.',
 ]
 
 const JUICEBOX_FEATURES = [
   {
     title: 'Rules you can trust',
     description:
-      'Keep rules flexible while you learn, then lock the promises supporters need to rely on.',
+      'Choose which terms can change and which stay fixed.',
     illustration: termsIllustration,
     art: 'tall',
     wide: true,
@@ -77,66 +72,66 @@ const JUICEBOX_FEATURES = [
   {
     title: 'One community, everywhere',
     description:
-      'Issue a unified project token and understand participation across every supported network.',
+      'Use your project token across supported networks.',
     illustration: accountsIllustration,
     art: 'tall',
   },
   {
-    title: 'Automatic splits',
+    title: 'Share with your team',
     description:
-      'Route programmed splits of new tokens to contributors, partners, and communities.',
+      'Set aside part of each new token issue for contributors, partners, and communities.',
     illustration: splitsIllustration,
     art: 'wide',
   },
   {
-    title: 'A market with guardrails',
+    title: 'Clear terms for supporters',
     description:
-      'Give supporters a transparent path to buy and cash out within the rules you publish.',
+      'Show what a payment receives and when tokens can be exchanged for project funds.',
     illustration: marketIllustration,
     art: 'tall',
     wide: true,
     reverse: true,
   },
   {
-    title: 'Linked across chains',
+    title: 'Move between networks',
     description:
-      'Coordinate balances and token supply across deployments without hiding how value moves.',
+      'Let holders move tokens and their backing funds between supported networks.',
     illustration: settlementIllustration,
     art: 'wide',
   },
   {
     title: 'A Shop built into your project',
     description:
-      'Use your shop to offer digital items and let every purchase flow directly into your project.',
+      'Sell digital items through your project’s shop.',
     illustration: shopIllustration,
     art: 'square',
   },
   {
-    title: 'Incentives on schedule',
+    title: 'Rewards on schedule',
     description:
-      'Program token rewards to become available at the right stage, with anyone able to trigger distribution.',
+      'Choose when token rewards become available. Anyone can then send them to the set recipients.',
     illustration: autoIssuanceIllustration,
     art: 'wide',
     wide: true,
   },
   {
-    title: 'Liquidity without selling',
+    title: 'Borrow against tokens',
     description:
-      'When enabled, let supporters borrow against project tokens instead of giving up their position.',
+      'Eligible holders can borrow funds and recover their tokens by repaying before the deadline.',
     illustration: loansIllustration,
     art: 'tall',
   },
   {
     title: 'Payments that fit anywhere',
     description:
-      'Create dedicated payer addresses and connect Juicebox payments to the experiences you build.',
+      'Give your project a payment address or add payments to your own app.',
     illustration: extrasIllustration,
     art: 'wide',
   },
   {
     title: 'Control on your terms',
     description:
-      'Operate from a wallet or Safe, delegate permissions, and pass responsibility on when you choose.',
+      'Manage the project yourself or give others specific tasks. Use a shared wallet when decisions need several approvals.',
     illustration: operatorIllustration,
     art: 'tall',
     wide: true,

@@ -5,7 +5,7 @@ import { ProtocolGuide } from '@/components/ProtocolGuide'
 
 const title = 'Learn Juicebox: payments, tokens, and project rules'
 const description =
-  'Start with your first payment, understand project tokens and cash outs, and explore Juicebox rules, fees, ownership, and extensions with worked examples.'
+  'Learn how payments, project tokens, and cash outs work. Follow examples, check a project’s terms, and look up unfamiliar words.'
 
 export const metadata: Metadata = {
   title: { absolute: title },
@@ -26,20 +26,18 @@ export default function LearnPage() {
     <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
       <div className="mb-10 max-w-3xl">
         <p className="font-agrandir text-sm font-medium uppercase tracking-[0.16em] text-bluebs-600">
-          Protocol guide
+          How it works
         </p>
         <h1 className="mt-2 font-agrandir-wide text-4xl font-bold sm:text-6xl">
           Learn Juicebox<span className="text-split-500">.</span>
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
-          Understand what happens when you fund a project, what its tokens can do, and which
-          rules control the money. Start with the basics, check a project’s terms, or explore
-          the protocol in depth.
+          Learn where your money goes, what project tokens let you do, and who can change the rules.
         </p>
         <nav className="mt-6 grid gap-3 sm:grid-cols-3" aria-label="Choose where to start learning">
           {[
             { href: '#learn-what', title: 'New to Juicebox', text: 'Learn the basics in plain language.' },
-            { href: '#learn-before-you-pay', title: 'Ready to participate', text: 'Check terms, tokens, and fees before paying.' },
+            { href: '#learn-before-you-pay', title: 'Ready to pay', text: 'Check what you’ll receive and how the project works.' },
             { href: '/build', title: 'Ready to build', text: 'Launch a project or connect your app.' },
           ].map(item => (
             <a key={item.href} href={item.href} className="rounded-xl border border-smoke-300 p-4 text-ink transition-colors hover:border-bluebs-600 hover:bg-bluebs-25 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bluebs-600">
@@ -49,7 +47,7 @@ export default function LearnPage() {
           ))}
         </nav>
         <p className="mt-6 text-sm text-smoke-700">
-          Try it step by step: <Link className="underline underline-offset-4" href="/build/first-payment">understand, build, and inspect your first test payment</Link>.
+          Try <Link className="underline underline-offset-4" href="/build/first-payment">your first test payment</Link>, or look up a word in the <a className="underline underline-offset-4" href="#learn-glossary">glossary</a>.
         </p>
         <AgentSkillsNote className="mt-6 text-sm text-smoke-700" />
       </div>

@@ -27,7 +27,7 @@ const SHARED_CONCEPT_KEYS = [
 ] as const
 
 /** Must match revnet-money and juicescan. Update all three together, never one. */
-const SHARED_CONCEPT_HASH = '41c5c9369e51e09e'
+const SHARED_CONCEPT_HASH = 'eb1e73ad0ef88b37'
 
 export function hashSharedConcepts(
   concepts: Record<string, string>,

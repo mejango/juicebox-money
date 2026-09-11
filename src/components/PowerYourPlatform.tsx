@@ -38,16 +38,12 @@ export function PowerYourPlatform() {
               Power your platform<span className="text-split-500">.</span>
             </h2>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
-              Build your own interface, marketplace, community, game, or financial product. The
-              Juicebox protocol supplies the &apos;pay&apos; and &apos;cash out&apos; functions
-              underneath, and everything in between. Your users get your experience; your product
-              gets programmable payments, tokens, treasuries, and cash outs with a public financial
-              backend.
+              Build your own marketplace, community, game, or payment app. Juicebox handles
+              payments, project tokens, and rules for the funds. You design the experience.
             </p>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
-              Juicebox is the protocol, not one prescribed product. Platforms can give the same
-              open contracts completely different interfaces, communities, and business models.
-              They can use owner-managed projects, permanently precommitted revnets, or both.
+              Use projects with terms their owners can change, revnets with financial schedules
+              fixed at launch, or both. The same public contracts can support different products.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link href="/build" className="btn-primary min-h-11 px-5 text-sm">
@@ -59,7 +55,7 @@ export function PowerYourPlatform() {
                 rel="noopener noreferrer"
                 className="btn-secondary min-h-11 px-5 text-sm"
               >
-                Inspect the protocol
+                Read the source
               </a>
             </div>
           </div>
@@ -83,8 +79,7 @@ export function PowerYourPlatform() {
                     </span>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-                    This website is itself a platform built on the Juicebox protocol: a broad
-                    interface for creating, funding, operating, and exploring projects.
+                    Create, fund, manage, and explore projects through this website.
                   </p>
                 </article>
 
@@ -99,19 +94,17 @@ export function PowerYourPlatform() {
                       Revnet
                     </a>
                     <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-smoke-500">
-                      Precommitted networks
+                      Terms fixed at launch
                     </span>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-                    Revnet is a platform built on Juicebox for launching investible networks whose
-                    issuance, token splits, backing, and cash-out terms unfold through transparent,
-                    permanent stages instead of owner-rewritable rules.
+                    Launch a project with a fixed schedule for creating tokens and exchanging them
+                    for available funds. Its operator keeps a limited set of controls.
                   </p>
                 </article>
               </div>
               <p className="mt-5 text-xs leading-relaxed text-smoke-600">
-                This is a living list. As more platforms emerge and prove useful, safe, and
-                legitimate in practice, we&apos;ll add them here. Want to build yours?{' '}
+                Start your own:{' '}
                 <button
                   type="button"
                   onClick={copyPrompt}

@@ -13,50 +13,50 @@
 export const PROTOCOL_CONCEPTS = {
   /** tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175). */
   issuance:
-    'How many tokens you get for each unit you put in. The project sets this in its rules, so unlike a market price it does not move with trading.',
+    'How many new tokens a payment creates per unit paid, before any are set aside for other recipients. The rules set this rate; trading does not.',
 
   /** JBRuleset.weightCutPercent — the issuance weight is reduced by this each cycle. */
   issuanceCut:
-    'How much that rate drops each cycle. Where there is a cut, the same payment gets you fewer tokens later on — so paying earlier gets you more.',
+    'How much the token creation rate falls each time the rules repeat. A lower rate means the same payment creates fewer tokens.',
 
   /** JBRulesetMetadataResolver.reservedPercent — the share of newly minted tokens routed to
    *  the reserved split list instead of the payer. */
   reservedShare:
-    'The share of newly created tokens that goes to people the project chose in advance, instead of to whoever paid. Whoever paid gets the rest.',
+    'The share of new tokens set aside for chosen recipients. The payer gets the rest.',
 
-  /** REVOwner / JBController auto-issuance: minted to named beneficiaries at stage start. */
+  /** REVOwner.autoIssueFor: named beneficiaries can receive their allocation after stage start. */
   autoIssuance:
-    'Tokens created for specific people the moment this stage begins, without anyone paying for them.',
+    'Tokens set aside for named recipients without a payment. They can be created once their stage starts.',
 
   /** JBCashOuts.cashOutFrom — 0 returns the exact proportional share of surplus; a higher rate
    *  returns less than proportional; MAX returns nothing. */
   cashOutTax:
-    'What the project keeps when someone cashes their tokens back in. At 0% you get your full share of the money in the treasury. Higher settings pay you less than your full share and leave the difference to everyone still holding.',
+    'A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0%, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; 100% returns nothing.',
 
   /** JBFundAccessLimitGroup.payoutLimits — "maximum amounts distributable to splits per ruleset
    *  cycle". Resets every cycle. */
   payoutLimit:
-    'The most the project can send to the people it pays, in one cycle. It refills at the start of every cycle. Anything above it stays in the treasury, where it backs what token holders can cash out.',
+    'The most the project can pay to its recipients each time the rules repeat. This budget resets each cycle. Funds above the unused budget can back cash outs, subject to the other rules.',
 
   /** JBFundAccessLimitGroup.surplusAllowances — "maximum amounts withdrawable from surplus per
    *  ruleset". JBTerminalStore.sol:140-144 is explicit that usage is keyed by `ruleset.id`, NOT
    *  cycle number, so cycles rolling over do NOT refill it. That is the whole difference from
    *  the payout limit and the thing an owner is most likely to get wrong. */
   surplusAllowance:
-    'The most the project’s owner can take out of the treasury on top of the payouts, to spend however they choose. Unlike the payout limit this does not refill each cycle — it is a single budget that lasts as long as the current rules do.',
+    'An extra withdrawal budget for funds not set aside for payouts. The owner or an account they authorize can spend it. It does not reset when the same rules repeat.',
 
   /** REVLoans header (:42-46): an upfront fee, part of which the borrower chooses; it sets the
    *  prepaid duration, after which the repay cost ramps to liquidation at 10 years. */
   prepaidFee:
-    'Paid upfront when the loan opens, and it buys time: paying more extends the stretch where paying the loan back costs you nothing extra. Once that runs out, the cost to get your collateral back climbs steadily, until after 10 years the collateral is gone for good.',
+    'Paid when the loan opens. Paying more gives you longer before repayment costs start growing. Repay to recover the tokens locked for the loan. After 10 years, those tokens are lost.',
 
   /** JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days. */
   twapWindow:
-    'How far back to average the trading price when checking that a swap is a fair deal. A longer window is harder for someone to manipulate, but slower to notice a real change in price. A shorter one is the opposite. Anything from 300 to 172800 seconds.',
+    'How much trading history to use for an average price. This helps check a trade before it goes through. A longer window is harder to manipulate but slower to reflect price changes. Allowed range: 5 minutes to 2 days.',
 
   /** JB721 tier flag `transfersPausable` — only tiers that opted in are affected. */
   itemTransfers:
-    'Whether this stage stops shop items from being passed on to someone else. It only affects items whose creator agreed to let the project’s rules control that.',
+    'Whether holders can send shop items to someone else during this stage. A pause affects only items created with this control enabled.',
 } as const
 
 /**
@@ -74,10 +74,10 @@ export const PROTOCOL_CONCEPTS = {
 export const OPERATOR_POWERS = [
   "Change the revnet's name, logo, and description",
   "Change the token's name and symbol",
-  "Point the precommitted split limit at different recipients — never enlarge it",
-  "Add, remove, and re-price shop items, mint them for free, and change their discounts",
-  "Pick the market pool used for buybacks, and how far back its price is averaged",
-  "Change which of the allowed terminals accepts payments, including the one that lets payers pay in any token",
+  "Change who receives the share of new tokens set at launch, without increasing that share",
+  "Add, remove, and re-price shop items, create them for free, and change their discounts",
+  "Choose where tokens are bought back and how the reference trading price is averaged",
+  "Choose among approved payment contracts, including one that can convert payment tokens",
   "Extend the revnet to new approved chains, and pause a bridge that looks unsafe",
   "Sign messages on behalf of the revnet's token",
   "Hand the operator role to another address",
@@ -85,4 +85,4 @@ export const OPERATOR_POWERS = [
 
 /** The other half of the sentence: what the role can never reach. */
 export const OPERATOR_LIMITS =
-  "It cannot rewrite issuance, cash out rules, or the stage schedule, and it cannot withdraw the revnet's funds."
+  "It cannot change how new tokens are created, the cash out rules, or the stage schedule. It cannot withdraw the revnet's funds."

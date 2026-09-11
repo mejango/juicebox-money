@@ -12,6 +12,11 @@ async function openGuide(page: Page, route: (typeof routes)[number]) {
   expect(response?.status()).toBe(200)
   await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
+  if (route.path === '/build') {
+    await expect(page.getByRole('heading', { level: 1, name: route.heading })
+      .locator('..').getByRole('link', { name: 'Your first test payment', exact: true }))
+      .toHaveAttribute('href', '/build/first-payment')
+  }
   await page.evaluate(() => document.fonts.ready)
   const skip = page.getByRole('link', { name: 'Skip to content', exact: true })
   await page.keyboard.press('Tab')
@@ -214,6 +219,20 @@ for (const viewport of [
             ).toBe(true)
           }
           await expectContained(page)
+          const retiredSections = route.path === '/learn'
+            ? ['learn-permissions', 'learn-migration', 'learn-buyback', 'learn-croptop', 'learn-handles']
+            : route.path === '/build'
+              ? ['build-launch', 'build-configure', 'build-evolve', 'build-revnet-what', 'build-revnet-stages', 'founders-fees', 'build-revnet-fees']
+              : []
+          const missing = await page.evaluate(ids => ids.filter(id => {
+            const matches = Array.from(document.querySelectorAll('[id]')).filter(node => node.id === id)
+            return matches.length !== 1 || !matches[0].closest('section')?.querySelector('h2')
+          }), retiredSections)
+          expect(missing, 'Old section links must reach a surviving section').toEqual([])
+          if (retiredSections.length) {
+            await page.goto(`${route.path}#${retiredSections[0]}`)
+            await expect(page.locator(`#${retiredSections[0]}`).locator('..').getByRole('heading', { level: 2 })).toBeInViewport()
+          }
         })
       }
     })

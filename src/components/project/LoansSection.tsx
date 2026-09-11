@@ -531,7 +531,7 @@ function RepayFlow({
               {
                 key: 'approve',
                 title: `Approve ${meta.symbol} for REVLoans`,
-                detail: 'Covers the principal plus the current fee.',
+                detail: 'Covers the amount borrowed plus the current repayment cost.',
               },
             ]
           : []),
@@ -562,8 +562,8 @@ function RepayFlow({
       onClose={closeDialog}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
-        The cap covers the principal plus the current fee in {meta.symbol},
-        with a small buffer for fee drift. Anything unused is refunded.
+        The limit covers the amount borrowed plus the current repayment cost in {meta.symbol},
+        with room for changes before confirmation. Anything unused is refunded.
       </p>
     </TxConfirmDialog>
   ) : null

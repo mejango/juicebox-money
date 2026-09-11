@@ -12,6 +12,7 @@ import { useReadContract, useReadContracts } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { TokenPanelSkeleton } from '@/components/LoadingSkeletons'
 import { AddressLink } from '@/components/ui/AddressLink'
+import { ConceptTerm } from '@/components/project/ConceptTerm'
 
 /**
  * The project's own token, as a card (website/ parity: renderTokenPanel).
@@ -88,7 +89,16 @@ export function TokenPanel({
             </dd>
           ),
         },
-        { label: 'Type', dd: <dd className="text-ink">ERC-20</dd> },
+        {
+          label: 'Type',
+          dd: (
+            <dd className="text-ink">
+              <ConceptTerm note="A token format that wallets and trading apps can recognize.">
+                ERC-20
+              </ConceptTerm>
+            </dd>
+          ),
+        },
         {
           label: 'Address',
           centerFull: true,
@@ -153,8 +163,8 @@ export function TokenPanel({
         </dl>
       ) : (
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          No ERC-20 yet — supporters hold token credits that can claim the
-          ERC-20 if it&apos;s deployed.
+          Balances are recorded within Juicebox as credits. If the project creates
+          a wallet token (ERC-20), holders can claim it in exchange for those credits.
         </p>
       )}
     </div>

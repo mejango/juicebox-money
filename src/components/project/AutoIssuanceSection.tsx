@@ -141,11 +141,10 @@ export function AutoIssuanceSection({
   return (
     <div className="card p-5">
       <div>
-        <span className="field-label">Auto issuance</span>
+        <span className="field-label">Tokens without payment</span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          When a stage begins, this revnet mints preset token amounts to the
-          beneficiaries below. Anyone can trigger a mint once its stage has
-          started.
+          These recipients have tokens set aside at launch. Once their stage
+          starts, anyone can create the tokens for them. This is called auto-issuance.
         </p>
       </div>
       <AutoIssueAcrossChains chains={chains} onDone={() => { void refetch() }} />
@@ -153,11 +152,11 @@ export function AutoIssuanceSection({
         <SkeletonTable rows={4} columns={5} className="mt-5" />
       ) : isError ? (
         <p className="mt-3 text-sm text-smoke-700">
-          Auto-issuance data is unavailable right now.
+          Could not load the token allocations right now.
         </p>
       ) : rows.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          This revnet has no auto-issuances configured.
+          This revnet has no tokens set aside this way.
         </p>
       ) : (
         <div

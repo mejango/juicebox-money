@@ -1035,7 +1035,7 @@ function FundsTxFlow({
             label: 'At least',
             value: `${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol}`,
           },
-          { label: 'Beneficiary', value: review.account, mono: true },
+          { label: 'Recipient', value: review.account, mono: true },
           { label: 'On', value: chainName(chainId) },
         )
         return rows
@@ -1045,7 +1045,7 @@ function FundsTxFlow({
           ? [
               {
                 title: label,
-                detail: `Reverts unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} reaches you.`,
+                detail: `Fails without withdrawing unless at least ${formatTokenAmount(review.min, ctx.decimals)} ${tokenSymbol} reaches you.`,
               },
             ]
           : []
@@ -1082,7 +1082,7 @@ function FundsTxFlow({
       error={tx.error}
     >
       <p className="text-xs text-smoke-700">
-        A 2.5% protocol fee applies.
+        The amount you receive is shown after the 2.5% withdrawal fee.
       </p>
     </TxConfirmDialog>
   ) : null

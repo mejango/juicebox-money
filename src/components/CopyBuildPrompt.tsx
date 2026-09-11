@@ -31,8 +31,7 @@ export function CopyBuildPrompt({ className = '' }: { className?: string }) {
         >
           Juicebox V6 skills
         </a>{' '}
-        for contract addresses, interfaces, and fee calculations. Review its proposed transactions
-        against the current contracts before signing.
+        to help it build with Juicebox. Review what each transaction will do before signing.
       </p>
       <button
         type="button"

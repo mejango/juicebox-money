@@ -2462,8 +2462,8 @@ export function CreateForm() {
             {flavor === "simple"
               ? "Launch with flexible defaults the project owner can adjust at any time."
               : flavor === "revnet"
-                ? "Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability."
-                : "The project owner sets the rules — payouts, cash outs, stages — and can change or lock them over time. The most flexible way to fund anything."}
+                ? "A revnet commits to its token rules and stages at launch. Money it receives backs token cash outs and loans. Returns depend on available funds and the rules."
+                : "The project owner sets how funds are paid out and tokens are created or cashed out. They can change the rules or lock them."}
           </p>
         </div>
 
@@ -2644,9 +2644,8 @@ export function CreateForm() {
               ) : null}
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 Must be deployed at the same address on every selected chain.
-                Everything — issuance, payouts, store prices — is denominated in
-                this token itself, so no price feed is needed. The project
-                owner can add a feed later to price in ETH or USD instead.
+                Token rates, payouts, and shop prices use this token as their unit.
+                The project owner can add a price source later to use ETH or USD.
               </p>
             </div>
           ) : feedBlock ? (
@@ -2688,7 +2687,7 @@ export function CreateForm() {
                     onToggle={() => !busy && setAllowAnyToken((on) => !on)}
                     disabled={busy}
                     title="Accept any token"
-                    blurb="Adds the router terminal, which swaps whatever a payer sends into your accounting token(s). Without it, payers can only pay in the tokens above."
+                    blurb="Adds a payment contract that can convert other tokens into the tokens selected above. Payments need an available trade route."
                   />
                 </div>
               ) : null}
@@ -3122,8 +3121,8 @@ export function CreateForm() {
         </div>
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           {flavor === "revnet"
-            ? "Revnet stages are locked in at launch and can never be changed — supporters know exactly what they get, forever."
-            : "The defaults make a simple, flexible project. Rules live in rulesets — give one a duration and the project owner can queue what comes next."}
+            ? "Each stage sets the rules for a period of time. Revnet stages are fixed at launch. Token returns still depend on payments and available funds."
+            : "Each group of rules is a ruleset. Give it a duration to set when the owner can introduce the next ruleset."}
         </p>
 
         <div className="mt-5">
@@ -3568,8 +3567,8 @@ export function CreateForm() {
                 ))}
                 {anyCashOuts ? (
                   <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                    Items can&apos;t cash out for surplus while token cash outs
-                    are on — tokens and items can&apos;t both redeem.
+                    Items and tokens cannot both cash out for project funds.
+                    Turn token cash outs off to let items cash out.
                   </p>
                 ) : (
                   <CheckRow
@@ -3581,8 +3580,8 @@ export function CreateForm() {
                       }))
                     }
                     disabled={busy}
-                    title="Give items cash out access to surplus"
-                    blurb="Item holders can redeem their items for a share of the project's surplus."
+                    title="Let holders cash out their items"
+                    blurb="Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules."
                   />
                 )}
               </div>

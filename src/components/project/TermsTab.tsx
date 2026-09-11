@@ -29,6 +29,7 @@ import { IssuanceLadder } from './IssuanceLadder'
 import { PERSIST } from '@/lib/query-persist'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
+import Link from 'next/link'
 
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
@@ -153,7 +154,7 @@ export function TermsTab({
   return (
     <div className="space-y-5">
       <div className="card p-6">
-        <span className="field-label">Token issuance</span>
+        <span className="field-label">New tokens per payment</span>
         <p className="mt-2 font-agrandir text-2xl font-medium">
           {rate > 0n ? (
             <>
@@ -163,7 +164,7 @@ export function TermsTab({
               </span>
             </>
           ) : (
-            'No issuance'
+            'No new tokens'
           )}
         </p>
         <div className="mt-2 space-y-1 text-sm text-smoke-700">
@@ -182,8 +183,8 @@ export function TermsTab({
           ) : null}
           <p>
             {reserved > 0
-              ? `${basisPoints(reserved)} of new tokens go to splits.`
-              : 'All new tokens go to supporters — nothing is split off.'}
+              ? `${basisPoints(reserved)} of new tokens go to chosen recipients; payers get the rest.`
+              : 'All new tokens from payments go to the payer.'}
           </p>
           {!firstStageStarted ? (
             <p>Stage 1 starts {formatDate(stages[0].ruleset.start)}.</p>
@@ -203,6 +204,12 @@ export function TermsTab({
 
       <div className="card p-5">
         <span className="field-label">Stages</span>
+        <p className="mt-2 text-sm text-smoke-700">
+          Each stage sets the rules for a period of time.{' '}
+          <Link href="/learn#learn-glossary" className="underline underline-offset-2">
+            Glossary
+          </Link>
+        </p>
         <div
           className="mt-3 overflow-x-auto"
           role="region"
@@ -215,13 +222,13 @@ export function TermsTab({
                 <th className="pb-2 pl-3 pr-4 font-medium">Stage</th>
                 <th className="pb-2 pr-4 font-medium">Period</th>
                 <th className="pb-2 pr-4 font-medium">
-                  <ConceptTerm note={PROTOCOL_CONCEPTS.issuance}>Issuance</ConceptTerm>
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.issuance}>New tokens</ConceptTerm>
                   <span className="block whitespace-nowrap">
                     ({sym} per {base})
                   </span>
                 </th>
                 <th className="pb-2 pr-4 font-medium">
-                  <ConceptTerm note={PROTOCOL_CONCEPTS.reservedShare}>Split limit</ConceptTerm>
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.reservedShare}>Set aside</ConceptTerm>
                 </th>
                 <th className="pb-2 font-medium">
                   <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash out tax</ConceptTerm>

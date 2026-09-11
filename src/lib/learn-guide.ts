@@ -6,9 +6,9 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-what",
     "title": "What is Juicebox?",
     "paragraphs": [
-      "Juicebox lets people collect and manage funds together. A project accepts blockchain payments, can issue its own tokens, and sends funds to recipients under rules that anyone can inspect.",
-      "A project token records participation. It can let its holder exchange tokens for part of the project’s available funds, called a cash out. Voting, membership, and other benefits depend on what the project has actually set up; receiving a token does not automatically give you those benefits or ownership of the project.",
-      "You can explore projects and read their terms without connecting a wallet. To pay or launch, connect a wallet on a supported network and keep enough of that network’s native token, such as ETH, to pay the transaction fee (gas). The payment form shows which tokens and routes that project currently accepts."
+      "Juicebox lets people fund a project together and set rules for the money. Those rules run as public programs on a blockchain, called smart contracts. Anyone can check them.",
+      "A project can give tokens to people who pay. Depending on its rules, holders can exchange those tokens for part of the project’s available funds. This is called a cash out. Other benefits, such as voting or membership, depend on what the project offers. Tokens do not automatically give ownership of the project.",
+      "Start with a project’s description and terms. They explain what your payment supports, what you receive, and who can change the rules."
     ],
     "blocks": [
       {
@@ -28,7 +28,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           },
           {
             "href": "https://github.com/Bananapus/nana-core-v6/blob/main/USER_JOURNEYS.md",
-            "label": "Protocol user journeys"
+            "label": "More ways to use Juicebox"
+          },
+          {
+            "href": "#learn-glossary",
+            "label": "Look up a word"
           }
         ]
       }
@@ -39,7 +43,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-how",
     "title": "How it works",
     "paragraphs": [
-      "A payment adds funds and may issue project tokens. Payouts send project funds to configured recipients. A cash out exchanges project tokens for funds under the current rules. These actions happen when someone submits a transaction; a payout schedule does not send money by itself."
+      "People pay a project and may receive project tokens. The project sends funds to its chosen recipients through payouts. Token holders can cash out when the rules allow it. Each action needs a transaction; a schedule alone does not send money."
     ],
     "blocks": [
       {
@@ -53,24 +57,24 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           "     └─▶ To team members, partners, other projects",
           "",
           "  3. Token holders can CASH OUT",
-          "     └─▶ Burn tokens, reclaim a share of what’s left",
+          "     └─▶ Give up tokens for available project funds",
           "",
-          "  surplus = balance above the remaining payout limit",
-          "  cash out = a share of surplus, adjusted by the rules and fees"
+          "  the rules decide how much stays available for cash outs",
+          "  check the current quote before cashing out"
         ],
-        "description": "A payment can issue tokens. Payouts send funds to configured recipients. Token holders can then cash out against surplus under the active terms."
+        "description": "Payments can create tokens, payouts send project funds, and cash outs exchange tokens for available funds under the rules."
       },
       {
         "type": "text",
-        "text": "The project owner configures payout limits, token issuance, and cash out terms. A ruleset is a scheduled set of these terms. Owners may queue later rulesets, subject to the current duration, permissions, and any required notice or approval."
+        "text": "The owner sets how much can be paid out, how many tokens payments create, and how cash outs work. These terms and their schedule form a ruleset. The current rules decide which changes the owner can make and when."
       },
       {
         "type": "text",
-        "text": "Optional extensions, called hooks, can change how a payment or cash out works. For example, a shop can issue an NFT, and a buyback hook can buy existing project tokens from a trading pool."
+        "text": "Projects can add features, such as a shop or a way to buy existing tokens from a market. These extensions can change what a payment or cash out does."
       },
       {
         "type": "text",
-        "text": "Paying a project and adding to its balance are different actions. A payment may issue project tokens or shop rewards; adding to balance funds the project without issuing project tokens. Transaction fees paid to the network are separate from Juicebox’s protocol fees."
+        "text": "Choose Pay to receive any tokens or items offered. Add to balance puts money into the project without creating project tokens."
       }
     ],
     "part": "The basics"
@@ -86,11 +90,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       {
         "type": "steps",
         "items": [
-          "Confirm the project, network, and payment token. A multichain project has different balances on each network; verify that the route and destination match your intent.",
-          "Open Rulesets (or Terms for a revnet). Check current and upcoming issuance, the reserved-token share, payout limits, surplus allowance, cash out tax, and any delay before cash outs are available.",
-          "Check who owns or operates the project and which controls remain. Read its description, payment notice, and any shop item terms to understand what the tokens or NFTs provide.",
-          "Enter an amount and review the tokens or items you will receive, the minimum output, any swap, and network fees. Keep enough native currency for gas. An ERC-20 payment may first require an approval transaction.",
-          "Review the wallet request, submit it, and wait for confirmation. If it fails or remains pending, check the transaction status before submitting again. Your activity and balance should update after confirmation."
+          "Confirm the project, network, and currency. A project on several networks keeps a separate balance on each one.",
+          "Open Rulesets, or Terms for a revnet. Check how many tokens you receive, how the money can be spent, when you can cash out, and which terms can change.",
+          "Read the project description and any item terms. Check who manages the project and what your tokens or purchase provide.",
+          "Enter an amount and review the result. Keep enough of the network’s currency, such as ETH, to process the transaction. This network cost is called gas. Some payment currencies need a separate spending approval first.",
+          "Review the request in your wallet, submit it, and wait for confirmation. If it fails or stays pending, check its status before trying again."
         ]
       },
       {
@@ -103,6 +107,14 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           {
             "href": "#learn-cash-outs",
             "label": "Understand cash out value"
+          },
+          {
+            "href": "#learn-tokens",
+            "label": "How payment tokens are shared"
+          },
+          {
+            "href": "#learn-rulesets",
+            "label": "Which terms can change"
           }
         ]
       }
@@ -112,9 +124,9 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-projects",
     "title": "Projects",
     "paragraphs": [
-      "A Juicebox project has an onchain balance and programmable rules. It also has a project NFT: the wallet or contract holding that NFT is the owner. This ownership NFT is separate from the project tokens that supporters receive.",
-      "The owner’s powers depend on the current ruleset and permissions. They may include queuing new terms, choosing payout recipients, minting more tokens, or changing extensions. Read both the active and upcoming terms to see what the owner can change and when.",
-      "Projects can hold ETH and configured ERC-20 tokens, such as stablecoins. A router can convert other supported payment tokens. Multichain projects have a separate project ID and balance on each network, linked by bridge contracts."
+      "A project has a balance, payment terms, and an owner. Ownership is recorded by a unique token called the project NFT. The wallet or contract holding it owns the project. Supporters’ project tokens are separate.",
+      "The current rules decide the owner’s powers. These may include scheduling new terms, choosing recipients, creating more tokens, or changing extensions. Check upcoming terms too: they show what can change next.",
+      "Projects can accept ETH and other supported currencies, including stablecoins. A payment may exchange your currency for one the project accepts. A project on several networks has a separate ID and balance on each, with bridges connecting them."
     ],
     "blocks": [
       {
@@ -126,9 +138,9 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           "  │                                                │",
           "  │  accepts payments ──▶ issues tokens            │",
           "  │  holds funds      ──▶ distributes payouts      │",
-          "  │  tracks surplus   ──▶ enables cash outs        │",
+          "  │  sets aside funds ──▶ allows cash outs         │",
           "  │                                                │",
-          "  │  rules set by owner, enforced by protocol      │",
+          "  │  public contracts enforce the rules            │",
           "  └───────────────────────────────────────────────┘"
         ],
         "description": "A project accepts payments, issues tokens, holds funds, distributes payouts, and calculates surplus. Its rules determine which actions are available."
@@ -142,11 +154,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           },
           {
             "href": "#learn-permissions",
-            "label": "Owners and delegated permissions"
+            "label": "Who can manage a project"
           },
           {
             "href": "https://github.com/Bananapus/nana-core-v6/blob/main/ADMINISTRATION.md",
-            "label": "Protocol ownership and administration"
+            "label": "Who controls the underlying contracts"
           }
         ]
       }
@@ -157,9 +169,9 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-revnets",
     "title": "Revnets",
     "paragraphs": [
-      "A revnet (revenue network) is a Juicebox project whose core economic schedule is committed at launch. Its stages define token issuance, issuance cuts, cash out tax rates, and stage timing. A contract called REVOwner holds the project NFT and restricts changes to that schedule.",
-      "A stage can reduce how many tokens a payment receives over time. This fixes the issuance schedule; it does not fix a market price, guarantee future revenue, or guarantee what a token will return in a cash out.",
-      "Revnets still have an operator with limited powers, such as updating metadata, directing reserved-token recipients, and managing permitted extensions. The revnet’s terms and enabled extensions show which controls remain."
+      "A revnet, short for revenue network, is a Juicebox project that fixes its main financial terms at launch. It commits to a schedule for how many tokens payments create and how cash outs work. Each period in that schedule is a stage.",
+      "Later stages can give fewer tokens for the same payment. That fixes the creation rate, not what tokens trade for or what future cash outs will return.",
+      "A revnet still has a manager, called its operator, with limited powers. These can include editing its description, choosing recipients for the tokens set aside, and managing allowed extensions. Check its terms to see which controls remain."
     ],
     "blocks": [
       {
@@ -167,15 +179,15 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "label": "PROJECT vs REVNET",
         "lines": [
           "  PROJECT                         REVNET",
-          "  owner may queue new terms       core stage schedule committed at launch",
+          "  owner can schedule new terms    main financial schedule fixed at launch",
           "  powers depend on rules          limited operator powers remain",
-          "  flexible project management     predictable issuance and cash out rules"
+          "  flexible project management     fixed token and cash out schedule"
         ],
         "description": "Project owners can change permitted terms. A revnet commits its core stage schedule at launch while retaining limited operator powers."
       },
       {
         "type": "text",
-        "text": "Projects and revnets share Juicebox’s payment and cash out infrastructure. A revnet also supports loans against project tokens. Read the dedicated guide for stages, fees, operator controls, and loan repayment."
+        "text": "Revnets use Juicebox payments and cash outs. They can also let holders borrow against their tokens. The revnet guide explains its stages, loans, and remaining controls."
       },
       {
         "type": "links",
@@ -194,12 +206,55 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "part": "The basics"
   },
   {
+    "id": "learn-tokens",
+    "title": "Tokens",
+    "paragraphs": [
+      "Creating new project tokens is called issuance, or minting. At a rate of 500 tokens per ETH, a 2 ETH payment creates 1,000 tokens. A zero rate creates none. A market purchase may give you existing tokens instead.",
+      "A project can set aside some new tokens for chosen recipients. This is its reserved share. With a 20% share, a payment that creates 1,000 tokens gives 800 to the payer and sets aside 200. Sending those 200 may need a later transaction.",
+      "Juicebox can track your tokens directly as credits, or through a transferable token contract using the ERC-20 standard. Both count toward your balance. Once that contract exists, claiming credits converts them to ERC-20 tokens; it does not double your holding."
+    ],
+    "blocks": [
+      {
+        "type": "diagram",
+        "label": "TOKEN FLOW EXAMPLE",
+        "lines": [
+          "  payment: 2 ETH",
+          "  rate:    500 tokens per ETH",
+          "  reserved: 20%",
+          "",
+          "  tokens created = 1,000",
+          "       │",
+          "  ┌────┴─────────────────┐",
+          "  │                      │",
+          "  ▼                      ▼",
+          "  800 tokens          200 tokens",
+          "  (to payer)          (set aside for recipients)"
+        ],
+        "description": "At 500 tokens per ETH, paying 2 ETH creates 1,000 tokens. A 20% reserve allocates 800 to the payer and 200 to reserved recipients."
+      },
+      {
+        "type": "links",
+        "items": [
+          {
+            "href": "#learn-cash-outs",
+            "label": "Cash out value and a worked example"
+          },
+          {
+            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBTokens.sol",
+            "label": "Credits and ERC-20 accounting"
+          }
+        ]
+      }
+    ],
+    "part": "Going deeper"
+  },
+  {
     "id": "learn-rulesets",
     "title": "Rulesets",
     "paragraphs": [
-      "A ruleset defines a project’s terms: token issuance, payout limits, cash out tax, and owner powers. The Rulesets tab shows the active ruleset and what is scheduled next.",
-      "A ruleset with a nonzero duration repeats until an eligible replacement takes over. An optional issuance cut reduces the tokens issued per unit paid on each repeat. A duration of zero is flexible: it has no repeating cycle and continues until replaced.",
-      "For a timed ruleset, replacements start at an eligible cycle boundary. A flexible ruleset can be replaced without waiting for a cycle boundary, but any configured notice or approval still applies. Queuing a ruleset does not mean it is active yet."
+      "A project’s payment, payout, token, and cash out terms are grouped into a ruleset. Open the Rulesets tab to see the terms in use and what comes next.",
+      "A ruleset can repeat in timed cycles. It can give fewer tokens per payment on each repeat. A duration of zero means no repeating cycle: the terms continue until an allowed replacement starts.",
+      "New terms wait for any required notice or approval. Timed rulesets also wait for an eligible cycle boundary. Scheduling a change does not make it active."
     ],
     "blocks": [
       {
@@ -207,27 +262,27 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "label": "KEY PARAMETERS",
         "rows": [
           [
-            "duration",
+            "Cycle length (duration)",
             "Length of each cycle in seconds. 0 = flexible, continuing until an eligible replacement starts."
           ],
           [
-            "weight",
+            "Tokens per payment (weight)",
             "Tokens issued per unit of the base currency, before the reserved share. It is an issuance rate, not a market-price promise."
           ],
           [
-            "weightCutPercent",
-            "How much the weight decreases each cycle (the decay rate)."
+            "Reduction each cycle (weightCutPercent)",
+            "How much the token creation rate decreases each cycle."
           ],
           [
-            "reservedPercent",
-            "Share of minted tokens set aside for the team/splits."
+            "Share set aside (reservedPercent)",
+            "Share of new tokens set aside for the chosen recipients."
           ],
           [
-            "cashOutTaxRate",
-            "Shapes the cash out curve: 0% is proportional; 100% returns no surplus. Separate protocol or extension fees can also apply."
+            "Cash out adjustment (cashOutTaxRate)",
+            "Controls how much stays for other holders when someone cashes out. At 0%, the calculation is proportional; at 100%, it returns nothing. See the cash out example below."
           ],
           [
-            "baseCurrency",
+            "Pricing currency (baseCurrency)",
             "Currency used to price issuance, commonly ETH or USD. It can differ from the payment token."
           ]
         ]
@@ -257,65 +312,55 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
             "label": "Ruleset scheduling source"
           }
         ]
-      }
-    ],
-    "part": "Going deeper"
-  },
-  {
-    "id": "learn-tokens",
-    "title": "Tokens",
-    "paragraphs": [
-      "A payment can issue project tokens according to the ruleset’s issuance rate. For example, a rate of 500 tokens per ETH creates 1,000 tokens for a 2 ETH payment before the reserved share. A zero issuance rate creates no tokens; a buyback route may deliver existing tokens instead.",
-      "The reserved percentage sends part of a new issuance to designated recipients. With a 20% reserve, the payer receives 80% and the reserved recipients are allocated 20%. Reserved balances may need a later transaction to distribute them.",
-      "Tokens can be held as internal credits or as an ERC-20 token, a standard wallet-transferable token. Both count toward Juicebox balances and supply. Once the project has an ERC-20, a holder can claim their credits as that token without creating an additional economic balance."
-    ],
-    "blocks": [
+      },
       {
-        "type": "diagram",
-        "label": "TOKEN FLOW EXAMPLE",
-        "lines": [
-          "  payment: 2 ETH",
-          "  weight:  500 tokens per ETH",
-          "  reserved: 20%",
-          "",
-          "  total minted = 1,000 tokens",
-          "       │",
-          "  ┌────┴─────────────────┐",
-          "  │                      │",
-          "  ▼                      ▼",
-          "  800 tokens          200 tokens",
-          "  (to payer)          (to team splits)"
-        ],
-        "description": "At 500 tokens per ETH, paying 2 ETH creates 1,000 tokens. A 20% reserve allocates 800 to the payer and 200 to reserved recipients."
+        "type": "text",
+        "text": "An owner can let another account do a specific task without giving it ownership. That grant is a permission, and the account receiving it is an operator. Some actions, such as sending payouts when the rules allow it, are already open to anyone."
+      },
+      {
+        "type": "text",
+        "text": "Permissions have exact names and numbered IDs. For example, SEND_PAYOUTS is #5. ROOT is #1 and grants every Juicebox permission within its scope, but still cannot bypass the project’s rules."
+      },
+      {
+        "type": "text",
+        "text": "A grant usually applies to one project. Project ID 0 instead covers every project that the granting account controls on that network. It does not grant power over other owners’ projects."
+      },
+      {
+        "type": "info",
+        "text": "Grants belong to the owner who made them. When project ownership changes, the previous owner’s grants no longer give access to that project."
       },
       {
         "type": "links",
         "items": [
           {
-            "href": "#learn-cash-outs",
-            "label": "Cash out value and a worked example"
+            "href": "/build#build-permissions",
+            "label": "Grant a specific permission"
           },
           {
-            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBTokens.sol",
-            "label": "Credits and ERC-20 accounting"
+            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBPermissions.sol",
+            "label": "Permission checks"
           }
         ]
       }
     ],
-    "part": "Going deeper"
+    "part": "Going deeper",
+    "aliases": [
+      "learn-permissions"
+    ]
   },
   {
     "id": "learn-cash-outs",
     "part": "Going deeper",
     "title": "Cash outs: what you can receive",
     "paragraphs": [
-      "Cashing out burns project tokens in exchange for the currently available surplus under the project’s rules. It is not a refund of the original payment. No surplus, a disabled cash out, or an unfinished delay can mean there is nothing available to receive.",
-      "For the standard core calculation, let S be surplus, x your fraction of the total token supply, and t the cash out tax written as a fraction. The amount before protocol fees is S × x × (1 − t + t × x). At a 100% tax, the contract returns zero. A data hook can change the inputs or route."
+      "A cash out gives up project tokens for available project funds. Giving up the tokens removes them from the supply; this is called burning. The result depends on today’s balance and terms, so it may differ from what you originally paid.",
+      "The funds above the project’s remaining payout limit are its surplus. Cash outs draw from that amount. The rules can leave some of your proportional share for the remaining holders, using a setting called the cash out tax. This amount stays in the project.",
+      "For the standard calculation, let S be surplus, x the share of all tokens you are cashing out, and t the tax rate as a fraction. The gross amount is S × x × (1 − t + t × x). At a 100% tax, the contract returns zero. An extension can change the calculation or use a market sale. Use the final quote to see what reaches you."
     ],
     "blocks": [
       {
         "type": "table",
-        "label": "Example: 10 ETH surplus, 1,000 total tokens, cash out 100 tokens",
+        "label": "Gross calculation: 10 ETH surplus, 1,000 tokens, cash out 100",
         "rows": [
           [
             "Your share",
@@ -323,28 +368,24 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "At 0% cash out tax",
-            "10 × 0.10 = 1 ETH before any applicable protocol fee."
+            "10 × 0.10 = 1 ETH gross."
           ],
           [
             "At 30% cash out tax",
-            "10 × 0.10 × (0.70 + 0.30 × 0.10) = 0.73 ETH before fees."
-          ],
-          [
-            "After a standard 2.5% protocol fee",
-            "0.73 × 0.975 = 0.71175 ETH. This example has no additional hook or revnet fee."
+            "10 × 0.10 × (0.70 + 0.30 × 0.10) = 0.73 ETH gross."
           ]
         ]
       },
       {
         "type": "text",
-        "text": "The cash out tax leaves more funds for the remaining token supply. It is a curve parameter, so a 30% setting is not simply a flat 30% deduction from every holder’s proportional share. Payouts, new payments, minting, other cash outs, and changing terms can all change your next quote."
+        "text": "A 30% cash out tax is not a flat 30% deduction: the share of tokens being given up also matters. New payments, payouts, token creation, cash outs, and changed terms can all change the next quote. Cash outs may be delayed or disabled, and need available funds."
       },
       {
         "type": "steps",
         "items": [
-          "Open the project’s cash out action on the network where you hold tokens.",
-          "Enter the token amount and check the available surplus, tax, fees, recipient, and minimum output. Credits and ERC-20 balances may both count toward your holding.",
-          "Submit the reviewed transaction and wait for confirmation. A market-sale route and a protocol cash out can produce different settlement and fee behavior."
+          "Open Cash out on the network where you hold the tokens.",
+          "Enter an amount. Check what you give up, what reaches you, the recipient, and the minimum you will accept. Your holding can include both credits and ERC-20 tokens.",
+          "Review the request, submit it, and wait for confirmation. Check whether it exchanges tokens with the project or sells them on a market."
         ]
       },
       {
@@ -356,7 +397,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           },
           {
             "href": "#learn-fees",
-            "label": "Understand protocol and extension fees"
+            "label": "How the gross amount becomes the final amount"
           },
           {
             "href": "/build#build-cashout",
@@ -368,11 +409,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
   },
   {
     "id": "learn-splits",
-    "title": "Splits & payouts",
+    "title": "Sharing funds: splits and payouts",
     "paragraphs": [
-      "Splits direct percentages of payouts or reserved project tokens to a wallet, another project, or a custom contract. A recipient list describes where a distribution goes; someone must still submit the transaction that sends it.",
-      "A payout limit caps distributions per ruleset cycle, accounting token, terminal, and chain. Surplus is the balance above the unused payout limit, after currency conversion where needed. Cash outs draw on that surplus. An enabled surplus allowance can also let the owner withdraw from it.",
-      "A split locked until a future date must be preserved until its lock expires. Owners can extend its lock and add other splits within the remaining percentage. Inspect locked recipients, payout limits, and allowances together to understand how much money can leave a project."
+      "A project can share payouts or reserved tokens among chosen recipients. Each recipient’s share is a split. It can go to a wallet, another project, or a contract that takes a further action. Someone must submit the transaction to send it.",
+      "A payout limit caps how much can leave through payouts. Limits apply separately to each cycle, currency, payment contract, and network. Funds above the unused limit are surplus. The owner may also have permission to withdraw from surplus, called a surplus allowance.",
+      "A recipient’s share can be locked until a date. The owner must preserve it until then, but can extend the lock or add shares within the remaining percentage. Read locked shares, payout limits, and owner allowances together."
     ],
     "blocks": [
       {
@@ -411,41 +452,111 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
   },
   {
     "id": "learn-fees",
-    "title": "Fees",
+    "title": "Fees: where they go and what comes back",
     "paragraphs": [
-      "A normal payment into a project has no core Juicebox protocol fee. Network gas, token swaps, shops, or other extensions may add costs. Launching a project also has a configurable creation fee, at most 0.001 ETH per chain, plus gas.",
-      "The core protocol generally charges 2.5% on payouts and surplus-allowance withdrawals. Transfers within the same terminal and eligible fee-exempt recipients are exceptions. Fees fund the Juicebox fee project; token rewards go to the operation’s designated beneficiary when the fee is processed as a payment.",
-      "Cash outs with a tax rate above 0% generally incur a 2.5% protocol fee on the reclaimed amount. With a 0% tax, the fee applies only to the portion that arrived through certain fee-exempt project transfers, tracked as feeFreeSurplusOf. A zero cash out tax therefore does not always mean a zero protocol fee. Revnet or other extension fees are additional.",
-      "With holdFees enabled, eligible payout and allowance fees are held for 28 days. Adding funds back with the return-held-fees option can return a matching portion. Once the holding period ends, a transaction must process the fees; the passage of time alone does not send them. Cash out fees are never held."
+      "Juicebox and Revnet fees are payments to revnets that share their tokens with the people and projects paying them. These tokens can be held or cashed out under the receiving revnet’s terms. The amount depends on its rules and payment route.",
+      "The Juicebox fee revnet is project 1, called Juicebox Protocol V6 (JBP6). Revnet’s additional fees support the Revnet Network (REV). The contracts choose who receives tokens for each kind of payment, as shown below.",
+      "A normal direct payment has no core Juicebox charge. Network gas and outside exchange costs are separate; they do not automatically pay these revnets. A shop or other extension may add its own costs."
     ],
     "blocks": [
       {
-        "type": "diagram",
-        "label": "FEE EXAMPLE",
-        "lines": [
-          "  100 ETH payout",
-          "     └─▶ 2.5 ETH fee",
-          "     └─▶ 97.5 ETH distributed to splits",
-          "",
-          "  if holdFees is on:  fee held 28 days, refundable",
-          "  if holdFees is off: fee processed immediately"
-        ],
-        "description": "For a fully fee-bearing 100 ETH payout, 2.5 ETH is the fee and 97.5 ETH reaches recipients. Eligible held fees can be returned when funds are added back."
+        "type": "table",
+        "label": "The charge and who receives its revnet tokens",
+        "rows": [
+          [
+            "Create a project",
+            "The current creation charge, up to 0.001 ETH per network, pays the Juicebox fee revnet. Its tokens go to the account paying that charge. Read the current amount before launching."
+          ],
+          [
+            "Send payouts",
+            "Usually 2.5% of the amount subject to a fee pays the Juicebox fee revnet. Its tokens go to the project owner."
+          ],
+          [
+            "Use an owner’s surplus allowance",
+            "Usually 2.5% of the amount subject to a fee pays the Juicebox fee revnet. Its tokens go to the chosen fee recipient."
+          ],
+          [
+            "Cash out",
+            "Usually 2.5% of the amount subject to a fee pays the Juicebox fee revnet. Its tokens go to the cash-out recipient, which can differ from the holder."
+          ],
+          [
+            "Cash out from a revnet",
+            "When its cash out tax is above zero, an additional amount pays REV. This is calculated from 2.5% of the tokens cashed out. REV tokens go to the holder."
+          ],
+          [
+            "Borrow from a revnet",
+            "The quote includes the core withdrawal charge, a 1% REV charge when applicable, and a chosen prepayment of 2.5–50% to the lending revnet. Resulting tokens go to the chosen loan recipient."
+          ],
+          [
+            "Post through Croptop",
+            "Except when posting to CPN itself, posting adds 5% of the items’ total price, paid to the Croptop Publishing Network (CPN) revnet. Its tokens go to the chosen fee recipient. Ordinary later shop purchases do not use this posting charge."
+          ],
+          [
+            "Move funds to another payment terminal",
+            "The move can incur the core 2.5% charge unless an exemption applies. Check the receiving terminal and quoted result."
+          ]
+        ]
+      },
+      {
+        "type": "text",
+        "text": "The cash out tax is different: it determines how much stays in the original project for remaining holders. A protocol fee pays another revnet. The extra Revnet cash-out fee uses a token amount, while the core fee uses outgoing funds, so they are not a flat 5% combined."
+      },
+      {
+        "type": "table",
+        "label": "Worked examples",
+        "rows": [
+          [
+            "A 100 ETH payout, all subject to the core fee",
+            "2.5 ETH pays the Juicebox fee revnet and 97.5 ETH goes to payout recipients. The fee payment can return JBP6 tokens to the project owner."
+          ],
+          [
+            "A core cash out quoted at 0.73 ETH gross",
+            "If the full amount has a 2.5% charge, 0.01825 ETH pays the fee revnet and 0.71175 ETH reaches the cash-out recipient. This example has no additional extension charge. The earlier cash out section explains the gross calculation."
+          ]
+        ]
+      },
+      {
+        "type": "text",
+        "text": "A fee payment may create revnet tokens or buy existing ones. Some newly created tokens can be set aside for other recipients under that revnet’s rules. Receiving tokens is not a refund or a promise that their value equals the fee."
+      },
+      {
+        "type": "text",
+        "text": "Some transfers are exempt, including eligible payments between projects using the same terminal and approved addresses. A transfer immediately forwarded to a non-exempt extension can still be charged. A zero cash out tax can also incur a core charge on funds that arrived through earlier fee-free project payouts. The contract tracks those funds as feeFreeSurplusOf; JBFeelessAddresses records address exemptions."
+      },
+      {
+        "type": "text",
+        "text": "An owner can hold eligible payout and allowance fees for 28 days by enabling holdFees. Returning funds with the return-held-fees option can recover a matching part. After the delay, someone must process the remaining fees; time alone does not send them. Revnet tokens arrive when the fee payment is processed. Cash-out fees are never held."
+      },
+      {
+        "type": "text",
+        "text": "For a loan, the minimum 2.5% is included in the chosen prepayment, not added again. A larger prepayment buys more time before further time-based charges begin. Repayment costs rise after that period. Check the amount received, total repayment, and 10-year deadline together."
+      },
+      {
+        "type": "text",
+        "text": "The recipient must be set for a fee payment to return tokens. A zero recipient means no token reward; a failed core fee payment can credit the funds back to the source project. Read the completed payment to see the actual token result."
       },
       {
         "type": "links",
         "items": [
           {
-            "href": "/build#founders-fees",
-            "label": "Fee details for project builders"
+            "href": "#learn-cash-outs",
+            "label": "How the gross cash out amount is calculated"
+          },
+          {
+            "href": "https://revnet.money/learn#fees",
+            "label": "Revnet cash out and loan examples"
           },
           {
             "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBMultiTerminal.sol",
-            "label": "Fee charging and exceptions"
+            "label": "Core fee rules and recipients"
           },
           {
             "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBProjects.sol",
-            "label": "Creation fee cap"
+            "label": "Creation charge and cap"
+          },
+          {
+            "href": "https://github.com/Bananapus/deploy-all-v6/blob/main/script/Deploy.s.sol",
+            "label": "Fee revnet configuration"
           }
         ]
       }
@@ -456,8 +567,8 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-architecture",
     "title": "Architecture",
     "paragraphs": [
-      "Everything you’ve read about so far — projects, rulesets, tokens, splits, fees — each lives in its own smart contract. These contracts are organized in layers.",
-      "Surface contracts are what users interact with: the controller orchestrates project operations, and the terminal handles money in and out. Core contracts store the underlying data: who owns what, what the rules are, where funds go. Omnichain contracts move tokens and funds across blockchains."
+      "Juicebox is a set of public programs, called smart contracts. Different contracts keep track of project ownership, rules, tokens, and money.",
+      "The controller manages project rules and tokens. A terminal accepts and manages payments. Other contracts store records, check permissions, or move funds between networks. Their exact names matter when you build an integration."
     ],
     "blocks": [
       {
@@ -485,7 +596,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "rows": [
           [
             "JBController",
-            "The orchestrator. Deploys projects, queues rulesets, mints and burns tokens."
+            "Launches projects, schedules rules, and creates or removes tokens."
           ],
           [
             "JBMultiTerminal",
@@ -505,7 +616,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "JBPermissions",
-            "Fine-grained access control. Grant specific abilities to other addresses."
+            "Records which accounts can perform each task."
           ],
           [
             "JBTokens",
@@ -513,7 +624,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "JBRulesets",
-            "Stores and schedules rulesets. Handles cycling, decay, and approval hooks."
+            "Stores rules, repeat cycles, token-rate reductions, and required approvals."
           ],
           [
             "JBSplits",
@@ -526,10 +637,6 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           [
             "JBFundAccessLimits",
             "Enforces payout limits and surplus allowances."
-          ],
-          [
-            "JBFeelessAddresses",
-            "Registry of addresses exempt from protocol fees."
           ]
         ]
       },
@@ -545,16 +652,48 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
             "label": "Contract roles and deployment addresses"
           }
         ]
+      },
+      {
+        "type": "text",
+        "text": "A project may move to new contracts when its rules allow it. This is migration. It can replace the controller that manages rules and tokens, or move funds to a different payment terminal."
+      },
+      {
+        "type": "text",
+        "text": "The old and new controllers run checks before a handoff completes. A terminal move sends the balance to a contract that accepts the same currency. These checks do not prove the new contract is trustworthy or preserve every old setting."
+      },
+      {
+        "type": "text",
+        "text": "The owner or an account with permission starts the move. Check the receiving contract, its settings, and the quoted amount before approving it. Developers use JBDirectory.setControllerOf for a controller and JBMultiTerminal.migrateBalanceOf for a balance."
+      },
+      {
+        "type": "links",
+        "items": [
+          {
+            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBDirectory.sol",
+            "label": "Controller handoff"
+          },
+          {
+            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBMultiTerminal.sol",
+            "label": "Terminal balance migration"
+          },
+          {
+            "href": "#learn-fees",
+            "label": "Costs of moving a balance"
+          }
+        ]
       }
     ],
-    "part": "Under the hood"
+    "part": "Under the hood",
+    "aliases": [
+      "learn-migration"
+    ]
   },
   {
     "id": "learn-hooks",
-    "title": "Hooks & extensions",
+    "title": "Extra features: hooks and extensions",
     "paragraphs": [
-      "A \"hook\" is a custom contract that plugs into the protocol at a specific moment — like a callback. When a payment comes in, when tokens are cashed out, or when a ruleset changes, the protocol can call your hook to run custom logic.",
-      "Projects can add features like NFT rewards, automatic market buybacks, content publishing, and approval gates without modifying the core protocol. Hooks are optional and composable."
+      "An extension can add a shop, buy tokens from a market, or require approval before rules change. The contract that runs an extension at one of these points is called a hook.",
+      "Hooks run within the same transaction as the action they extend. Their powers depend on the hook type and the project’s settings. Check what an enabled hook can change before using the project."
     ],
     "blocks": [
       {
@@ -563,7 +702,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "rows": [
           [
             "Data hook",
-            "Intercepts payments or cash outs BEFORE they happen. Can modify amounts, redirect funds, or override behavior."
+            "Helps calculate a payment or cash out before it is recorded. Can change allowed inputs and allocate funds to other hooks."
           ],
           [
             "Pay hook",
@@ -575,11 +714,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "Split hook",
-            "Runs when a payout split sends funds to a contract instead of a wallet. Good for auto-investing."
+            "Receives a recipient’s share and can use it in another action."
           ],
           [
             "Approval hook",
-            "Gates queued rulesets — the hook must approve changes before they can activate."
+            "Checks whether scheduled terms may take effect."
           ]
         ]
       },
@@ -589,11 +728,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "rows": [
           [
             "Buyback hook",
-            "Automatically buys tokens from a DEX when the market price is better than the mint price."
+            "Can buy existing tokens from a supported trading pool when its quote beats creating new tokens."
           ],
           [
             "721 tiers hook",
-            "Distributes tiered NFTs to contributors based on payment amount."
+            "Creates collectible shop items when a payment meets their terms."
           ],
           [
             "Swap terminal",
@@ -617,18 +756,50 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
             "label": "Data hook interface"
           }
         ]
+      },
+      {
+        "type": "text",
+        "text": "A payment can buy existing project tokens when that gives you more than creating new ones. The buyback hook compares the normal payment with a supported Uniswap V4 trading pool, where people supply tokens for others to trade."
+      },
+      {
+        "type": "text",
+        "text": "The pool needs enough tokens and a usable price history. The hook checks its supported route, not every market. Money left after the purchase can follow the normal token-creation path."
+      },
+      {
+        "type": "text",
+        "text": "A cash out can also sell tokens through the supported pool when that gives a better result. The form should show which path it uses and the minimum amount you agree to receive."
+      },
+      {
+        "type": "text",
+        "text": "The price can move between your quote and the completed trade. This difference is called slippage. A minimum output sets the least you will accept; the transaction fails if it cannot meet that minimum. A quote alone does not enforce it."
+      },
+      {
+        "type": "links",
+        "items": [
+          {
+            "href": "https://github.com/Bananapus/nana-buyback-hook-v6#integration-traps",
+            "label": "Buyback routing and minimum outputs"
+          },
+          {
+            "href": "/build#build-buyback",
+            "label": "Integrate the buyback hook"
+          }
+        ]
       }
     ],
-    "part": "Under the hood"
+    "part": "Under the hood",
+    "aliases": [
+      "learn-buyback"
+    ]
   },
   {
     "id": "learn-omnichain",
     "title": "Projects across chains",
     "paragraphs": [
-      "A project can run on multiple blockchains, such as Ethereum, Optimism, Base, and Arbitrum. Each chain has its own project ID, token contract, and balances. A linked project does not give every address or balance the same meaning on every chain.",
-      "Bridge contracts called suckers move project tokens together with a proportional share of backing funds. Native bridges and Chainlink CCIP provide different supported routes. A transfer involves preparation, bridge delivery, and a claim on the receiving chain; it is not instant.",
-      "Once a token mapping has been used for a bridge transfer, it cannot be remapped to a different remote token. It can be disabled. Available local liquidity, token mappings, bridge delivery, and the project’s configuration all affect whether a transfer can complete.",
-      "If a bridge is deprecated, a configured delay and emergency-exit process can let eligible holders reclaim funds locally. Recovery depends on the bridge’s state and the required transactions. Before moving tokens, check the route, destination, expected delay, and where you will claim them."
+      "A project can run on Ethereum, Optimism, Base, Arbitrum, or several of them. Each network has its own project ID, token contract, and balance. Always check which network a record belongs to.",
+      "To connect networks, bridge contracts move project tokens together with a matching share of the funds backing them. Juicebox calls these contracts suckers. Transfers take separate preparation, delivery, and claim steps.",
+      "A transfer needs a supported route and enough available funds. The route fixes which currency on one network matches which currency on the other. Once used, that pairing can be disabled but cannot be changed to a different currency.",
+      "Some disabled bridges allow eligible holders to recover funds locally after a delay. Check the route, expected wait, destination claim, and available recovery steps before transferring."
     ],
     "blocks": [
       {
@@ -662,10 +833,10 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-prices",
     "title": "Price feeds",
     "paragraphs": [
-      "Price feeds translate between the currency used to price a project’s terms and the token being paid or withdrawn. For example, a USD issuance rate can be used with an ETH payment if a usable ETH/USD feed is available.",
-      "A JBPrices feed registration cannot be overwritten once set. Projects can add project-specific feeds that take priority over protocol defaults, subject to the project’s rules and permissions. Inverse prices allow a feed in one direction to serve the other direction too.",
-      "JBPrices tries applicable project and default feeds and fails the dependent transaction when none provides a usable price. A reverted or zero-valued feed may fall through to another configured feed; it should not be displayed as a zero price.",
-      "Sequencer-aware feeds on supported L2 deployments also check whether the network’s sequencer is down or still within its recovery grace period. During those periods, transactions requiring that price can be unavailable."
+      "A project can price its terms in dollars while accepting ETH. It needs an exchange rate to make that conversion. A price feed supplies this rate.",
+      "The JBPrices contract looks for a usable project-specific or default feed. A registered feed cannot be replaced; projects may add their own feeds where the rules allow it. A rate in one direction can also be used in reverse.",
+      "If no feed provides a usable rate, the action cannot complete. A failed lookup is not a price of zero.",
+      "Some networks use a service called a sequencer to order transactions. Feeds that monitor it can pause price-dependent actions during an outage and for a recovery period afterwards."
     ],
     "blocks": [
       {
@@ -681,75 +852,12 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "part": "Under the hood"
   },
   {
-    "id": "learn-permissions",
-    "title": "Permissions",
-    "paragraphs": [
-      "Owners can grant specific abilities to other addresses, such as queuing new rulesets or updating metadata, without transferring the project NFT. Some operations, including payouts when the rules permit it, can already be called by anyone.",
-      "Each ability has a permission ID. SEND_PAYOUTS is #5 and is required when the ownerMustSendPayouts ruleset flag restricts distributions. ROOT (#1) grants all Juicebox permissions in its scope; it still does not bypass the project’s rules.",
-      "Permissions are per-project. Granting someone access to project #5 doesn’t give them any access to project #6. Granting with project ID 0 is the wildcard: it applies to every project the GRANTING account controls on that chain — not to every project the operator touches."
-    ],
-    "blocks": [
-      {
-        "type": "table",
-        "label": "COMMON PERMISSIONS",
-        "rows": [
-          [
-            "ROOT",
-            "All Juicebox permission IDs for the granting account and project scope. It does not transfer the ownership NFT or bypass ruleset restrictions."
-          ],
-          [
-            "QUEUE_RULESETS",
-            "Can schedule new rulesets for the project."
-          ],
-          [
-            "MINT_TOKENS",
-            "Can mint tokens on-demand (if the ruleset allows it)."
-          ],
-          [
-            "SET_SPLIT_GROUPS",
-            "Can change how payouts and reserved tokens are distributed."
-          ],
-          [
-            "SET_PROJECT_URI",
-            "Can update the project’s name, description, and logo."
-          ],
-          [
-            "SEND_PAYOUTS",
-            "Can trigger payout distributions."
-          ],
-          [
-            "SET_TERMINALS",
-            "Can replace the project’s terminal list (ADD_TERMINALS only appends)."
-          ]
-        ]
-      },
-      {
-        "type": "info",
-        "text": "Permissions are granted by a specific account, and every check asks whether the CURRENT owner granted them. If the project NFT moves to a new owner, operators the old owner granted lose their power over the project; the old grants only linger under the old owner’s account."
-      },
-      {
-        "type": "links",
-        "items": [
-          {
-            "href": "/build#build-permissions",
-            "label": "Grant a specific permission"
-          },
-          {
-            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBPermissions.sol",
-            "label": "Permission checks"
-          }
-        ]
-      }
-    ],
-    "part": "The ecosystem"
-  },
-  {
     "id": "learn-nfts",
     "title": "NFT rewards",
     "paragraphs": [
-      "A project’s shop can offer NFTs organized into tiers. Each tier has a price, supply, and category. Selecting an item adds tier-selection metadata to the payment; whether a payment mints an NFT also depends on that tier’s availability and the hook’s settings.",
-      "Tiers are grouped by category, and categories must be defined in ascending order. Each tier can also have governance weight (voting power per NFT), reserved NFTs that accrue to a reserve beneficiary as others are minted, and, if the tier allows it, owner minting without payment.",
-      "The NFT artwork and metadata can live on IPFS (a decentralized file system) or onchain. This system is powered by a pay hook called JB721TiersHook that automatically mints NFTs when payments come in."
+      "A shop can offer unique digital tokens called NFTs. An NFT can record a collectible or access to something the project offers. Read the item’s description to understand what it includes.",
+      "Items with the same price, supply, and terms form a tier. A payment creates an item only when its tier is available and the shop’s rules allow it. Some tiers also set aside copies for chosen recipients or carry voting power in a separate voting system.",
+      "Artwork and descriptions can be stored on the blockchain or on a shared file network called IPFS. The shop contract, JB721TiersHook, creates the NFTs as part of the payment."
     ],
     "blocks": [
       {
@@ -778,7 +886,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "metadata",
-            "A link to the NFT’s artwork and description (usually an IPFS content hash)."
+            "A link to the artwork and description, often stored on IPFS."
           ]
         ]
       },
@@ -798,36 +906,14 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
             "label": "Configure NFT tiers"
           }
         ]
-      }
-    ],
-    "part": "The ecosystem"
-  },
-  {
-    "id": "learn-croptop",
-    "title": "Croptop",
-    "paragraphs": [
-      "Croptop adds content publishing to a project configured with its posting permissions. Posts become NFT tiers that supporters can collect; availability depends on the project’s posting rules.",
-      "The project owner sets rules for what can be posted: minimum price, supply limits, and optionally an allowlist of who can post. Within those rules, posting is open to everyone. Each post creates a new NFT tier, and supporters mint copies by paying into the project.",
-      "The publisher takes a 5% fee from the posting payment; the remainder is paid to the project. When an existing tier matches the post’s reuse conditions, it can be reused rather than creating a duplicate. Ordinary later purchases of a tier follow the shop’s payment path."
-    ],
-    "blocks": [
-      {
-        "type": "diagram",
-        "label": "HOW CROPTOP WORKS",
-        "lines": [
-          "  someone publishes content + pays the mint price",
-          "     │",
-          "     ├─▶ content validated against project’s posting rules",
-          "     ├─▶ new NFT tier created for this content",
-          "     ├─▶ 5% fee to Croptop protocol",
-          "     └─▶ remaining payment → project funds",
-          "         └─▶ poster receives the first NFT"
-        ],
-        "description": "A posting payment is checked against publishing rules, creates or reuses a tier, pays the publisher fee, and sends the remainder to the project. The poster receives the initial NFT."
       },
       {
         "type": "text",
-        "text": "Croptop can be combined with projects or revnets. The configured posting rules decide who may publish and what price and supply limits their posts must follow."
+        "text": "Croptop lets people post content to a project’s shop for supporters to collect as NFTs."
+      },
+      {
+        "type": "text",
+        "text": "The project sets who can post, the minimum price, and how many copies can be collected. A post creates a shop tier, or reuses one when its settings match. The poster pays for the first copy; later purchases use the shop’s payment flow."
       },
       {
         "type": "links",
@@ -835,64 +921,27 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           {
             "href": "https://github.com/mejango/croptop-core-v6",
             "label": "Croptop source"
-          }
-        ]
-      }
-    ],
-    "part": "The ecosystem"
-  },
-  {
-    "id": "learn-buyback",
-    "title": "Buyback hook",
-    "paragraphs": [
-      "A buyback hook can route a payment through a configured Uniswap V4 pool to buy existing project tokens when its quote is better than issuing new ones. Any unspent portion can follow the normal issuance path.",
-      "A usable pool, liquidity, price observations, and the supplied transaction limits determine which route is available. The hook compares supported routes; it does not search every market or guarantee the best price everywhere.",
-      "The hook can also route a cash out through a market sale when the supported pool offers a better result than the protocol cash out. An app should show the expected route and enforce the minimum amount the holder agreed to receive."
-    ],
-    "blocks": [
-      {
-        "type": "diagram",
-        "label": "BUYBACK DECISION",
-        "lines": [
-          "  incoming payment",
-          "     │",
-          "     ├─ market gives more tokens than minting?",
-          "     │  └─▶ swap on the trading pool",
-          "     │      └─▶ any leftover amount still minted normally",
-          "     │",
-          "     └─ minting gives equal or more tokens?",
-          "        └─▶ normal mint (no swap needed)"
-        ],
-        "description": "The hook compares its supported market route with token issuance. It can buy existing tokens when the configured pool gives a better quote and issue tokens with any remaining payment."
-      },
-      {
-        "type": "text",
-        "text": "Slippage is the difference between a quote and the price when a transaction executes. The hook has automatic price bounds, and apps can supply explicit minimum outputs. Review the minimum you will receive: a quote is an estimate, while an enforced minimum can make the transaction revert if the result is too low."
-      },
-      {
-        "type": "links",
-        "items": [
-          {
-            "href": "https://github.com/Bananapus/nana-buyback-hook-v6#integration-traps",
-            "label": "Buyback routing and minimum outputs"
           },
           {
-            "href": "/build#build-buyback",
-            "label": "Integrate the buyback hook"
+            "href": "#learn-fees",
+            "label": "How posting payments are shared"
           }
         ]
       }
     ],
-    "part": "The ecosystem"
+    "part": "The ecosystem",
+    "aliases": [
+      "learn-croptop"
+    ]
   },
   {
     "id": "learn-loans",
     "title": "Loans",
     "paragraphs": [
-      "Eligible revnet token holders can borrow from the revnet using project tokens as collateral. While the loan is open, those tokens are burned. Repayment can restore them; they are not a spendable token balance during the loan.",
-      "The loan is represented by a transferable NFT that tracks the debt and collateral. The available amount depends on the revnet’s current cash out terms, available funds, source token, and any cash out delay.",
-      "Borrowing deducts the core protocol fee, a 1% REV fee when applicable, and a source-revnet prepaid fee selected between 2.5% and 50%. The minimum 2.5% is part of that selected prepaid fee, not an additional fee on top. A larger prepayment buys a longer period without an additional time-based source fee.",
-      "After the prepaid period, the repayment fee grows with time. Repay before the 10-year expiry to recover the applicable collateral. After expiry, anyone can clean up the expired loan and the collateral remains burned. Compare net proceeds, total repayment, and expiry with the cash out quote before choosing either action."
+      "Eligible revnet holders can borrow funds using their project tokens as security, called collateral. Borrowing removes those tokens from the supply. Repaying before the deadline can restore them.",
+      "The loan has its own transferable NFT, which records the debt and the right to recover tokens. The amount you can borrow depends on the revnet’s cash out terms, available funds, currency, and any waiting period.",
+      "The quote shows what you receive now and what repayment will cost. Part of the cost is paid up front; choosing a longer prepaid period delays further time-based charges. See the fee section for the calculation and where each part goes.",
+      "Repay before the 10-year deadline to recover the applicable tokens. After that, the loan can be closed and those tokens remain removed. Compare the amount you receive, repayment cost, and deadline with a cash out before choosing."
     ],
     "blocks": [
       {
@@ -901,14 +950,14 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "lines": [
           "  borrow",
           "     └─▶ your tokens are burned as collateral",
-          "     └─▶ funds sent to you from the project (minus fees)",
+          "     └─▶ quoted amount sent to you",
           "     └─▶ you receive a loan NFT as your receipt",
           "",
           "  repay (before 10-year expiry)",
           "     └─▶ return the funds + any time-based fee",
-          "     └─▶ your collateral tokens are re-minted back to you",
+          "     └─▶ the applicable project tokens are restored",
           "",
-          "  liquidation (after 10 years)",
+          "  expiry (after 10 years)",
           "     └─▶ loan written off — collateral stays burned",
           "     └─▶ the borrowed funds are not automatically returned"
         ],
@@ -916,7 +965,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "A loan preserves the possibility of recovering tokens through repayment. It does not guarantee a better result than a cash out: fees, the repayment date, and the revnet’s current terms determine the comparison."
+        "text": "A loan lets you recover tokens through repayment. Whether it suits you better than a cash out depends on the quote, the terms, and when you plan to repay."
       },
       {
         "type": "links",
@@ -928,52 +977,10 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           {
             "href": "https://github.com/rev-net/revnet-core-v6/blob/main/src/REVLoans.sol",
             "label": "Loan fee and repayment source"
-          }
-        ]
-      }
-    ],
-    "part": "The ecosystem"
-  },
-  {
-    "id": "learn-migration",
-    "title": "Migration",
-    "paragraphs": [
-      "A project can move to compatible controllers or terminals when its current rules and permissions allow it. A controller manages project rules and tokens; a terminal manages accepted funds and payments.",
-      "A controller migration runs a handoff between the old and new contracts. A terminal migration moves a balance to a terminal accepting the same token. Compatibility checks are part of the process, but they do not make an arbitrary replacement contract trustworthy or preserve every old accounting setting.",
-      "The owner or an authorized operator initiates migration. Changing controllers uses JBDirectory.setControllerOf; moving funds uses JBMultiTerminal.migrateBalanceOf. Check the destination contracts, accounting configuration, and any fee before authorizing the move."
-    ],
-    "blocks": [
-      {
-        "type": "diagram",
-        "label": "MIGRATION FLOW",
-        "lines": [
-          "  CONTROLLER",
-          "  1. JBDirectory.setControllerOf(newController)",
-          "  2. new controller runs its \"before receive\" check",
-          "  3. old controller hands its state over (migrate)",
-          "  4. new controller runs its \"after receive\" check",
-          "",
-          "  TERMINAL",
-          "  1. JBMultiTerminal.migrateBalanceOf(to)",
-          "  2. balance moves to a terminal that accepts the same token",
-          "     (2.5% fee unless the new terminal is feeless)"
-        ],
-        "description": "Controller migration performs compatibility handoff calls. Terminal migration moves the balance to a compatible terminal and may incur a protocol fee."
-      },
-      {
-        "type": "text",
-        "text": "The new controller checks the handoff on both sides, so a controller migration only completes if the receiver accepts it. Terminal migration is a plain balance move."
-      },
-      {
-        "type": "links",
-        "items": [
-          {
-            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBDirectory.sol",
-            "label": "Controller handoff"
           },
           {
-            "href": "https://github.com/Bananapus/nana-core-v6/blob/main/src/JBMultiTerminal.sol",
-            "label": "Terminal balance migration"
+            "href": "#learn-fees",
+            "label": "Loan costs and where they go"
           }
         ]
       }
@@ -982,11 +989,11 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
   },
   {
     "id": "learn-distributor",
-    "title": "Distributor",
+    "title": "Sharing rewards: distributors",
     "paragraphs": [
-      "A distributor is an optional extension for sharing funded rewards among eligible participants. It must be deployed, funded, and configured separately; holding a project token alone does not automatically create a reward stream.",
-      "Distributions run in rounds with snapshots and gradual vesting. Eligibility depends on the distributor: the ERC-20 version uses delegated voting-power checkpoints, while the NFT version uses qualifying NFT tiers. Check delegation and snapshot requirements before assuming a wallet is eligible.",
-      "Rewards unlock over configured rounds, and participants submit a claim to collect them. Check the distributor’s address, funded reward token, round schedule, vesting, and claim expiry."
+      "A project can set up a separate contract to share funded rewards with eligible participants. This is a distributor. Holding project tokens alone does not create rewards.",
+      "Each round records who qualifies at a set time, called a snapshot. Rewards then unlock gradually, called vesting. Token-based distributors use records of delegated voting power; NFT-based ones use eligible shop tiers. Check those requirements before assuming you qualify.",
+      "You claim unlocked rewards with a transaction. Check the reward currency, available funding, schedule, and claim deadline."
     ],
     "blocks": [
       {
@@ -996,17 +1003,17 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           "  funds deposited into the distributor",
           "     │",
           "     ▼",
-          "  round starts → snapshot of eligible checkpoints",
+          "  round starts → records who qualifies",
           "     │",
           "     ▼",
-          "  participants begin vesting their share",
+          "  each participant’s share begins to unlock",
           "     └─▶ share = your eligible weight / total eligible weight",
           "     └─▶ rewards unlock gradually over time",
           "     │",
           "     ▼",
           "  collect unlocked rewards as rounds pass"
         ],
-        "description": "Funds are assigned to reward rounds. Eligible checkpointed participants vest a share over time, then claim before expiry."
+        "description": "Each round records who qualifies. Their shares unlock over time and must be claimed before expiry."
       },
       {
         "type": "text",
@@ -1029,53 +1036,12 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "part": "The ecosystem"
   },
   {
-    "id": "learn-handles",
-    "title": "Project handles",
-    "paragraphs": [
-      "Instead of referring to projects by number (\"project #47\"), you can give yours a human-readable name like \"myproject.eth\" using ENS — the Ethereum Name Service, which works like a phonebook for blockchain addresses.",
-      "To set up a handle, you need two things: an ENS name you own, and a text record on that name pointing to your project. This two-way link proves that the name owner actually wants the association — anyone can propose a name for a project, but it only counts if the ENS name confirms it.",
-      "Multiple people can propose different names for the same project. Frontends (apps and websites) decide which proposer to trust. This open design means no single gatekeeper controls naming."
-    ],
-    "blocks": [
-      {
-        "type": "diagram",
-        "label": "SETTING UP A HANDLE",
-        "lines": [
-          "  1. own an ENS name (e.g. \"myproject.eth\")",
-          "  2. add a \"juicebox\" text record: \"1:42\"  (chain:project)",
-          "  3. register the name onchain for your project",
-          "  4. apps verify the ENS record matches",
-          "  5. your project now shows as \"myproject.eth\""
-        ],
-        "description": "An ENS name’s juicebox text record identifies a chain and project. A registered handle is verified against that record before an app trusts it."
-      },
-      {
-        "type": "text",
-        "text": "Subdomains work too, stored innermost-last: \"sub.myproject.eth\" is stored as [\"myproject\", \"sub\"] — the contract joins the parts in reverse and appends .eth, then verifies the result against the ENS registry."
-      },
-      {
-        "type": "links",
-        "items": [
-          {
-            "href": "https://github.com/Bananapus/nana-project-handles-v6",
-            "label": "ENS handle registration"
-          },
-          {
-            "href": "/build#build-handles",
-            "label": "Set a project handle"
-          }
-        ]
-      }
-    ],
-    "part": "The ecosystem"
-  },
-  {
     "id": "learn-payer",
-    "title": "Payer address",
+    "title": "Project names and payment addresses",
     "paragraphs": [
-      "A payer address is a dedicated native-token (ETH) deposit address for your project. Native ETH sent directly to it is automatically forwarded into your project — no extra steps for the sender. ERC-20 tokens sent directly to the address do not trigger a payment.",
-      "In payment mode, project tokens go to the configured beneficiary, or to the original payer when no beneficiary is set. In add-to-balance mode, funds enter the project without issuing project tokens. The payer address’s owner can change these defaults, including the destination project: verify its current settings before sending.",
-      "The payer address resolves the project’s current terminal, so compatible terminal migrations do not require a new deposit address. Direct ERC-20 transfers do not call its payment logic; integrations must use its explicit pay or addToBalanceOf function for those tokens."
+      "A project can have a dedicated address that forwards ETH sent to it. This is a payer address. Sending other tokens directly to it does not trigger a payment.",
+      "The address can pay the project and send project tokens to the chosen recipient, or to the original payer if none is chosen. It can instead add funds without creating tokens. Its owner can change these settings and the destination project, so check them before sending.",
+      "The address looks up the project’s current payment terminal. Developers accepting ERC-20 tokens must use its pay or addToBalanceOf function rather than send those tokens directly."
     ],
     "blocks": [
       {
@@ -1111,9 +1077,53 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
             "label": "Deploy a payer address"
           }
         ]
+      },
+      {
+        "type": "text",
+        "text": "A project can use a name such as myproject.eth instead of only a number. These names come from the Ethereum Name Service, or ENS."
+      },
+      {
+        "type": "text",
+        "text": "Use a name you own and add a text record pointing to the project. Then register the link. Anyone can suggest a name, but the name’s record must confirm it."
+      },
+      {
+        "type": "text",
+        "text": "Several people can suggest names for the same project. Each app chooses which suggestions to trust."
+      },
+      {
+        "type": "diagram",
+        "label": "SETTING UP A HANDLE",
+        "lines": [
+          "  1. own an ENS name (e.g. \"myproject.eth\")",
+          "  2. add a \"juicebox\" text record: \"1:42\"  (chain:project)",
+          "  3. register the name onchain for your project",
+          "  4. apps verify the ENS record matches",
+          "  5. your project now shows as \"myproject.eth\""
+        ],
+        "description": "An ENS name’s juicebox text record identifies a chain and project. A registered handle is verified against that record before an app trusts it."
+      },
+      {
+        "type": "text",
+        "text": "Subdomains work too, stored innermost-last: \"sub.myproject.eth\" is stored as [\"myproject\", \"sub\"] — the contract joins the parts in reverse and appends .eth, then verifies the result against the ENS registry."
+      },
+      {
+        "type": "links",
+        "items": [
+          {
+            "href": "https://github.com/Bananapus/nana-project-handles-v6",
+            "label": "ENS handle registration"
+          },
+          {
+            "href": "/build#build-handles",
+            "label": "Set a project handle"
+          }
+        ]
       }
     ],
-    "part": "The ecosystem"
+    "part": "The ecosystem",
+    "aliases": [
+      "learn-handles"
+    ]
   },
   {
     "id": "learn-glossary",
@@ -1128,44 +1138,152 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "label": "Common terms",
         "rows": [
           [
-            "Wallet",
-            "An app or account used to hold assets and authorize transactions. Connecting it lets the site read your address; signing authorizes a specific action."
+            "ABI",
+            "The format software uses to encode contract calls and read their results."
           ],
           [
-            "Network / chain",
-            "A blockchain with its own transactions, balances, and gas. Chain ID plus project ID identifies a Juicebox project deployment."
+            "Beneficiary",
+            "The address chosen to receive funds, tokens, or another result. It can differ from the payer."
+          ],
+          [
+            "Bridge",
+            "A way to move tokens or funds between networks. Delivery and claiming can take separate steps."
+          ],
+          [
+            "Burn",
+            "Remove tokens from the supply. Cashing out burns tokens; some loans can restore them after repayment."
+          ],
+          [
+            "Cash out",
+            "Give up project tokens for available project funds under the current rules."
+          ],
+          [
+            "Cash out tax",
+            "A setting that leaves more funds for remaining holders. It stays in the project; it is not a government tax."
+          ],
+          [
+            "Collateral",
+            "Tokens committed to a loan that can be recovered by repaying under its terms."
+          ],
+          [
+            "Controller",
+            "The contract that manages a project’s rules and tokens."
+          ],
+          [
+            "Credits",
+            "Project tokens tracked directly by Juicebox. They can be transferred within Juicebox when the rules allow, or claimed as ERC-20 tokens once that token contract exists."
+          ],
+          [
+            "ERC-20",
+            "A common standard for transferable tokens that wallets and apps can use."
           ],
           [
             "Gas",
-            "The network fee for processing a transaction, normally paid in the chain’s native token."
+            "The network cost of processing a transaction, usually paid in its native currency such as ETH."
           ],
           [
-            "Ruleset / stage",
-            "A set of project terms and its timing. Revnet stages commit an economic schedule at launch."
+            "Hook",
+            "An extension contract that runs during an action, such as a payment or cash out."
           ],
           [
-            "Issuance / reserved share",
-            "New project tokens created by an action, and the part allocated to designated recipients."
+            "Indexer",
+            "A service that organizes blockchain records so apps can search and display them."
           ],
           [
-            "Surplus / cash out",
-            "Funds above remaining payout limits, and the action that exchanges project tokens for available funds under the rules."
+            "IPFS",
+            "A shared file network where files are identified by their content."
           ],
           [
-            "Credit / ERC-20",
-            "Two forms of a project-token balance: internal protocol accounting and a standard token contract."
+            "Issuance / minting",
+            "Creating new tokens. The issuance rate sets how many a payment creates before any reserved share."
           ],
           [
-            "Hook / terminal",
-            "An extension contract that adds behavior, and a contract that accepts and manages payments."
+            "Liquidity / pool",
+            "Funds available to trade or withdraw. A trading pool holds tokens for people to exchange."
           ],
           [
-            "Indexer / RPC / SDK",
-            "An indexer organizes blockchain data for browsing. An RPC endpoint reads or submits to a chain. An SDK is a software library for building integrations."
+            "Metadata",
+            "Descriptive information, such as a project’s name, artwork, and links."
           ],
           [
-            "Slippage / minimum output",
-            "How execution can differ from a quote, and the minimum result a transaction must deliver to succeed."
+            "Minimum output",
+            "The least a transaction must return to succeed. A quote is only an estimate until this limit is enforced."
+          ],
+          [
+            "Network / chain",
+            "A blockchain with its own records and balances. A chain ID plus project ID identifies a Juicebox project on it."
+          ],
+          [
+            "NFT",
+            "A unique token that can record an item, project ownership, or a loan. Its rights depend on what created it."
+          ],
+          [
+            "Onchain",
+            "Recorded or run on a blockchain."
+          ],
+          [
+            "Operator / permission",
+            "An account allowed to perform a task, and the grant that allows it."
+          ],
+          [
+            "Payout / split",
+            "Funds sent from a project, and the share assigned to each recipient."
+          ],
+          [
+            "Protocol",
+            "The shared contracts and rules that apps use to work with Juicebox."
+          ],
+          [
+            "Reserved share",
+            "The part of new project tokens set aside for chosen recipients."
+          ],
+          [
+            "Revnet / stage",
+            "A project with its main financial schedule fixed at launch, and a period within that schedule."
+          ],
+          [
+            "RPC",
+            "A connection that software uses to read a network or submit a transaction."
+          ],
+          [
+            "Ruleset",
+            "A project’s terms and the schedule for when they apply."
+          ],
+          [
+            "Safe",
+            "A shared wallet that can require several approvals. A proposal must be executed before it changes balances."
+          ],
+          [
+            "SDK",
+            "A software library with helpers for building an app."
+          ],
+          [
+            "Slippage",
+            "The difference between a quote and the result when a trade completes."
+          ],
+          [
+            "Smart contract",
+            "A public program on a blockchain that applies rules to transactions."
+          ],
+          [
+            "Snapshot / vesting",
+            "A record of who qualifies at a set time, and a schedule that gradually unlocks rewards."
+          ],
+          [
+            "Surplus",
+            "Project funds above the remaining payout limit. Cash outs and any owner surplus allowance draw from it."
+          ],
+          [
+            "Terminal",
+            "A contract that accepts and manages a project’s payments and funds."
+          ],
+          [
+            "Testnet",
+            "A network for trying transactions with test funds."
+          ],
+          [
+            "Wallet",
+            "An app or account used to manage assets and approve requests. Connecting shows your address; a signature approves a particular message or transaction."
           ]
         ]
       },

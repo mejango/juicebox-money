@@ -1,11 +1,11 @@
 # First payment examples
 
-These files are served directly and displayed verbatim in `/build/first-payment`.
-Edit them here so the tutorial and downloads stay in sync.
+The tutorial at `/build/first-payment` displays these exact downloadable files.
+Edit them here to keep both copies in sync.
 
 The read example uses Base Sepolia project 1 by default. The simulation example
-uses the same project, native test ETH, a public payer address, and a 1% minimum
-output tolerance. Neither script signs or broadcasts. Do not add private-key
+uses the same project, test ETH, and a public payer address. It sets a minimum of
+99% of the quoted tokens. Neither script signs or sends a payment. Do not add private-key
 handling or a write command to these examples.
 
 ## Check the example
@@ -19,14 +19,14 @@ JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 ```
 
 Set `BASE_SEPOLIA_RPC_URL` to override the public read gateway. `JB_PROJECT_ID`
-can select another project on that network. A failed read is not evidence of an
-empty project; keep it as a failed observation.
+can select another project on that network. Show a failed read as a failure;
+do not treat it as an empty project.
 
-Before changing dependency versions or the sample identity, run both scripts and
+Before changing package versions or the example project, run both scripts and
 check the chain, controller, ruleset, terminal, minimum output, and decoded call.
 Update the tutorial's verification note with the package versions and observed
-block. Never turn a simulation into a claim of signed execution. The guided app
-payment must refresh and review its own request.
+block. A successful trial does not mean a payment was sent. The app must refresh
+and review its own request before signing.
 
 The app's guide browser tests cover the tutorial at narrow and desktop widths,
 including keyboard navigation and reading without JavaScript. Center's inspection

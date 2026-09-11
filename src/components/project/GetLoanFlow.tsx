@@ -345,7 +345,7 @@ export function GetLoanFlow({
       title={borrowTx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
       rows={review ? [
         {
-          label: 'Collateral',
+          label: 'Tokens locked for the loan',
           value: `${formatTokenAmount(review.collateral)} ${collateralSymbol}`,
         },
         {
@@ -373,7 +373,7 @@ export function GetLoanFlow({
                 key: 'permission',
                 title: `Let REVLoans burn your ${collateralSymbol}`,
                 detail:
-                  'A one-off permission so the loan can hold your tokens as collateral.',
+                  'Let the loan contract remove these tokens from circulation and record them against your loan.',
               },
             ]
           : []),
@@ -406,8 +406,8 @@ export function GetLoanFlow({
     >
       <p className="text-xs leading-relaxed text-smoke-700">
         At least 99% of the live quote must be borrowed or the transaction
-        reverts. Your {collateralSymbol} is held as collateral and returned when
-        you repay. Unrepaid loans are liquidated after 10 years.
+        fails. Repaying restores your {collateralSymbol}. After 10 years,
+        any tokens backing an unpaid loan are lost.
       </p>
     </TxConfirmDialog>
   ) : null
@@ -420,8 +420,7 @@ export function GetLoanFlow({
     return (
       <div className="rounded-xl border border-smoke-200 p-4">
         <p className="text-sm font-medium text-ink">
-          Loan opened — the funds are in your wallet, and your collateral is
-          held until you repay.
+          Loan opened. The funds are in your wallet. Repay to recover your tokens.
         </p>
         <div className="mt-2 flex gap-3 text-sm font-semibold">
           {borrowTxUrl ? (
@@ -454,8 +453,9 @@ export function GetLoanFlow({
   return (
     <div>
       <p className="text-sm leading-relaxed text-smoke-700">
-        Borrow against your {collateralSymbol} without selling. Your tokens are
-        held as collateral and returned when you repay.
+        Borrow using your {collateralSymbol}. They are removed from circulation
+        and recorded against the loan as collateral. Repaying restores them.
+        After 10 years, any tokens backing an unpaid loan are lost.
       </p>
 
       {contextsLoading ? (
@@ -564,8 +564,8 @@ export function GetLoanFlow({
               ))}
             </select>
             <span className="mt-1 block text-xs text-smoke-700">
-              Paid upfront when the loan opens. Prepaying more buys more fee-free
-              time before the repayment cost starts to grow.
+              Paid when the loan opens. Paying more gives you longer before
+              repayment costs start growing.
             </span>
           </label>
 

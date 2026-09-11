@@ -112,13 +112,13 @@ export function CashOutCurve({ rate }: { rate: number }) {
           fill="#575344"
           transform={`rotate(-90 8 ${Y0 - H / 2})`}
         >
-          Surplus received
+          Available funds received
         </text>
       </svg>
       <p className="mt-2 text-xs leading-relaxed text-smoke-700" aria-live="polite">
         Cashing out <span className="font-medium text-ink">{xPct}%</span> of
         the tokens gets <span className="font-medium text-ink">{yPct}%</span>{' '}
-        of the surplus
+        of funds available for cash outs
         {rate > 0 ? ' — the rest stays for holders who stay.' : '.'}
       </p>
     </div>

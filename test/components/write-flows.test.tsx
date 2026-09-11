@@ -663,7 +663,7 @@ describe('cash-out write flow', () => {
       .filter(step => step.props['aria-current'] === 'step')
     expect(current).toHaveLength(1)
     expect(renderedText(current[0])).toContain('Approve JBT for the swap router')
-    expect(buttonWith(renderer, 'Approve tokens for best execution')).toBeDefined()
+    expect(buttonWith(renderer, 'Approve tokens for this sale')).toBeDefined()
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
@@ -835,7 +835,7 @@ describe('cash-out write flow', () => {
 
     expect(renderedText(renderer.root)).toContain('Cashed out!')
     expect(renderedText(renderer.root)).toContain(
-      "Your share of the project's treasury is on its way.",
+      "Your cash out from the project is confirmed.",
     )
     const receipt = renderer.root.findByType('a')
     expect(receipt.props.href).toContain(mocks.txHash)
@@ -851,7 +851,7 @@ describe('cash-out write flow', () => {
       )
     })
     expect(renderedText(renderer.root)).toContain(
-      "Your share of Safe Project's treasury is on its way.",
+      "Your cash out from Safe Project is confirmed.",
     )
 
     await act(async () => buttonWith(renderer, 'Cash out again').props.onClick())

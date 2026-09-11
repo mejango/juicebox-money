@@ -10,8 +10,8 @@
  * words; a person looking at a price chart wants to know what the number costs them.
  *
  * Still checkable: issuance is 1/weight in the ruleset's base currency and moves only when the
- * ruleset says so; the pool price is Uniswap spot, held between the other two by traders
- * taking the cheaper route; the cash-out floor derives from treasury balance, token supply and
+ * ruleset says so; the pool price is Uniswap spot and can move outside the other two prices;
+ * the cash-out floor derives from treasury balance, token supply and
  * the cash-out tax, and is quoted BEFORE fees (a nonzero tax means a fee on every cash out, so
  * naming a single percentage here would be wrong).
  */
@@ -25,10 +25,10 @@ export function priceConcept(
   const symbol = tokenSymbol || "token";
   switch (kind) {
     case "issuance":
-      return `What it costs, in ${baseSymbol}, to get one ${symbol} by paying the project directly right now. The project sets this in its own rules rather than the market, so it only changes when the project's schedule says it should.`;
+      return `The reference cost in ${baseSymbol} to create one new ${symbol} under the current rules. A payment may set aside some new tokens for other recipients, so this is not always the payer's cost per token.`;
     case "pool":
-      return `What one ${symbol} costs to buy from the trading pool right now. Traders keep it between the other two prices: if it climbs above what paying the project costs, people pay the project instead; if it drops below what cashing out returns, people cash out instead.`;
+      return `The current trading price of one ${symbol}. Buyers and sellers can move it. Creating new tokens or cashing out can offer a better deal, but neither sets a guaranteed market price.`;
     case "cashOut":
-      return `What you would get back for one ${symbol} by cashing it in to the project's treasury right now, before fees. It moves with how much is in the treasury, how many tokens exist, and the project's cash out tax.`;
+      return `A reference value for cashing out one ${symbol}. It depends on available project funds, token supply, and the cash out rules. Check a quote for the amount you want to cash out.`;
   }
 }

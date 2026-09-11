@@ -1032,7 +1032,7 @@ export function MarketSection({
               className="rounded-full bg-bluebs-50 px-2 py-0.5 text-[11px] font-medium text-bluebs-700"
               title="Uniswap V4 buyback pool"
             >
-              AMM
+              Uniswap V4
             </span>
             {pm ? (
               <AddressLink

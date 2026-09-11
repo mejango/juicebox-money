@@ -414,7 +414,7 @@ export function RedeemShopItemsModal({
   return (
     <ModalShell
       title="Redeem items"
-      subtitle="Burn selected items for their share of project surplus. A cash-out tax and protocol fee may apply."
+      subtitle="Give up selected items for project funds under the cash out rules. Review the amount you will receive."
       onClose={onClose}
       busy={busy}
       maxWidth="max-w-lg"

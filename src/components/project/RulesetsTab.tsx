@@ -47,6 +47,7 @@ import { wagmiConfig } from "@/providers/Providers";
 import { PERSIST } from '@/lib/query-persist';
 import { ConceptTerm } from "@/components/project/ConceptTerm";
 import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
+import Link from "next/link";
 
 /** Fund-access amounts at/above this are stored as "no limit". */
 const UNLIMITED_FLOOR = 2n ** 200n;
@@ -156,7 +157,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "weightCutPercent",
-      label: "Issuance cut",
+      label: "Token rate decrease",
       raw: String(r.weightCutPercent),
       value:
         r.weightCutPercent > 0
@@ -165,7 +166,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "reservedPercent",
-      label: "Reserved tokens",
+      label: "Tokens set aside",
       raw: String(m.reservedPercent),
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
     },
@@ -210,25 +211,25 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "allowOwnerMinting",
-      label: "Project owner minting",
+      label: "Owner creates tokens without payment",
       raw: String(m.allowOwnerMinting),
       value: m.allowOwnerMinting ? "Allowed" : "Not allowed",
     },
     {
       key: "allowSetTerminals",
-      label: "Change payment terminals",
+      label: "Change payment contracts",
       raw: String(m.allowSetTerminals),
       value: m.allowSetTerminals ? "Allowed" : "Not allowed",
     },
     {
       key: "allowSetController",
-      label: "Change controller",
+      label: "Change the contract that manages rules",
       raw: String(m.allowSetController),
       value: m.allowSetController ? "Allowed" : "Not allowed",
     },
     {
       key: "allowTerminalMigration",
-      label: "Migrate terminals",
+      label: "Move funds to a new payment contract",
       raw: String(m.allowTerminalMigration),
       value: m.allowTerminalMigration ? "Allowed" : "Not allowed",
     },
@@ -409,7 +410,7 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Issuance",
+      label: "New tokens per payment",
       value:
         r.weight > 0n
           ? `${formatTokenAmount(r.weight, 18, 2)} ${tokenSymbol} per ${base}`
@@ -417,7 +418,7 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Issuance cut",
+      label: "Token rate decrease",
       value:
         r.weightCutPercent > 0
           ? `Rate drops ${billionthsToPct(r.weightCutPercent)} each cycle`
@@ -425,11 +426,11 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Reserved issuance",
+      label: "Tokens set aside",
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
       hint:
         m.reservedPercent > 0
-          ? "This share of the issuance rate above is set aside for the recipients below — payers receive the rest."
+          ? "This share of new tokens goes to the recipients below. Payers receive the rest."
           : undefined,
     },
     {
@@ -453,16 +454,16 @@ function ruleRows(
       value: decode721RulesetMetadata(Number(m.metadata ?? 0)).pauseTransfers
         ? "Paused"
         : "Allowed",
-      hint: "Only tiers created with ruleset-controlled transfers are affected. Minting and burning remain available.",
+      hint: "Only items created with this control enabled are affected. Creating and burning items remain allowed.",
     },
     {
       section: "Token",
-      label: "Project owner minting",
+      label: "Owner creates tokens without payment",
       value: m.allowOwnerMinting ? "Allowed" : "Not allowed",
     },
     {
       section: "Other rules",
-      label: "Payout authority",
+      label: "Who can send payouts",
       value: m.ownerMustSendPayouts ? "Project owner only" : "Anyone",
     },
     {
@@ -472,17 +473,17 @@ function ruleRows(
     },
     {
       section: "Other rules",
-      label: "Change payment terminals",
+      label: "Change payment contracts",
       value: m.allowSetTerminals ? "Allowed" : "Not allowed",
     },
     {
       section: "Other rules",
-      label: "Change controller",
+      label: "Change the contract that manages rules",
       value: m.allowSetController ? "Allowed" : "Not allowed",
     },
     {
       section: "Other rules",
-      label: "Migrate terminals",
+      label: "Move funds to a new payment contract",
       value: m.allowTerminalMigration ? "Allowed" : "Not allowed",
     },
     {
@@ -492,12 +493,12 @@ function ruleRows(
     },
     {
       section: "Other rules",
-      label: "Add accounting tokens",
+      label: "Accept more treasury tokens",
       value: m.allowAddAccountingContext ? "Allowed" : "Not allowed",
     },
     {
       section: "Other rules",
-      label: "Add price feeds",
+      label: "Add price sources",
       value: m.allowAddPriceFeed ? "Allowed" : "Not allowed",
     },
   ];
@@ -923,6 +924,12 @@ export function RulesetsTab({
 
   return (
     <div className="space-y-5">
+      <p className="text-sm text-smoke-700">
+        A ruleset groups the project&apos;s rules. Each time it runs is a cycle.{' '}
+        <Link href="/learn#learn-glossary" className="underline underline-offset-2">
+          Glossary
+        </Link>
+      </p>
       {/* Constant, and not dead: this tab is only mounted for non-revnets (revnets get Terms
           instead), and the flag is the flow's own assertion that it must never offer to queue
           a ruleset for a revnet, whose stages are immutable. */}
@@ -1028,7 +1035,7 @@ export function RulesetsTab({
             {rows
               .filter(
                 (row) =>
-                  row.section === "Token" && row.label !== "Reserved issuance",
+                  row.section === "Token" && row.label !== "Tokens set aside",
               )
               .map((row) => (
                 <StackedRule
@@ -1046,7 +1053,7 @@ export function RulesetsTab({
                   .filter(
                     (row) =>
                       row.section === "Token" &&
-                      row.label === "Reserved issuance",
+                      row.label === "Tokens set aside",
                   )
                   .map((row) => (
                     <StackedRule
@@ -1126,7 +1133,7 @@ export function RulesetsTab({
                         }
                       />
                       <StackedRule
-                        label="Surplus allowance"
+                        label="Extra withdrawal budget"
                         note={PROTOCOL_CONCEPTS.surplusAllowance}
                         value={
                           fa

@@ -2171,7 +2171,7 @@ export function PayPanel({
             <p className="text-sm leading-relaxed text-smoke-700">
               {/* One string, not JSX text around an expression: a line break after `{asset}`
                   swallows the space that follows it, which is how this shipped as "USDCin". */}
-              {`Payments to this project take ${buyableLabel} in order to settle instantly, stick to automated rules, and send out incentives on schedule. You'll use your card or bank to buy some first, then come back here to pay.`}
+              {`This project accepts ${buyableLabel}. Buy some with your card or bank, then return here to pay.`}
             </p>
             <div className="mt-5 flex justify-end">
               <button
@@ -2204,7 +2204,7 @@ export function PayPanel({
         !previewError &&
         (previewLoading || (bestRoute && bestRoute.beneficiaryTokenCount > 0n)) ? (
           <div className="mt-3">
-            <p className="text-xs text-smoke-500">You get at least</p>
+            <p className="text-xs text-smoke-500">Estimated tokens</p>
             {bestRoute && bestRoute.beneficiaryTokenCount > 0n ? (
               <p
                 aria-live="polite"
@@ -2221,7 +2221,7 @@ export function PayPanel({
                   aria-expanded={showRouteComparison}
                   className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-wide text-bluebs-700 hover:bg-bluebs-25"
                 >
-                  {bestRoute.settlement === "swap" ? "Swap" : "Issuance"}
+                  {bestRoute.settlement === "swap" ? "Buy tokens" : "Create tokens"}
                 </button>
               </p>
             ) : (
@@ -2235,24 +2235,24 @@ export function PayPanel({
               directSwapRoute ? (
                 <div className="mt-2 grid grid-cols-2 gap-2 border-t border-smoke-200 pt-2 text-xs">
                   <div>
-                    <p className="text-smoke-500">Swap</p>
+                    <p className="text-smoke-500">Buy existing tokens</p>
                     <p className="font-medium text-ink">
                       {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)} {projectTokenLabel}
                     </p>
                   </div>
                   <div>
-                    <p className="text-smoke-500">Issuance</p>
+                    <p className="text-smoke-500">Create new tokens</p>
                     <p className="font-medium text-ink">
                       {formatTokenAmount(preview?.beneficiaryTokenCount ?? 0n, 18)} {projectTokenLabel}
                     </p>
                   </div>
                   <p className="col-span-2 text-smoke-500">
-                    The better guaranteed return is selected automatically.
+                    The route with the higher minimum is selected automatically.
                   </p>
                 </div>
               ) : (
                 <p className="mt-2 border-t border-smoke-200 pt-2 text-xs text-smoke-500">
-                  This payment settles through the project&apos;s configured swap route.
+                  The project converts your payment using its chosen trade route.
                 </p>
               )
             ) : null}
@@ -2384,7 +2384,7 @@ export function PayPanel({
 
           {bestRoute && bestRoute.reservedTokenCount > 0n ? (
             <p className="mt-1.5 text-xs text-smoke-500">
-              Splits get {formatTokenAmount(bestRoute.reservedTokenCount, 18)}{" "}
+              Other recipients get {formatTokenAmount(bestRoute.reservedTokenCount, 18)}{" "}
               {projectTokenLabel}
             </p>
           ) : null}
@@ -2428,24 +2428,22 @@ export function PayPanel({
       {addBalanceViaRouter ? (
         <p className="mt-3 text-sm text-smoke-700">
           Add to balance only supports tokens the project accepts directly —
-          switch to a direct token, or use Pay to route this one.
+          choose one of those tokens, or use Pay to convert this one.
         </p>
       ) : null}
       {terminalBlocked ? (
         <p className="mt-3 text-sm text-red-600">
-          This project doesn&apos;t list the{" "}
-          {context?.viaRouter ? "router" : "direct"} payment terminal on{" "}
+          This project hasn&apos;t approved the selected payment contract on{" "}
           {chainName(chainId)}. Review the project contracts before paying.
         </p>
       ) : null}
       {!terminalBlocked && surface?.unknown && surface.unknown.length > 0 ? (
         <p className="mt-3 text-xs leading-relaxed text-smoke-700">
-          This project also lists unknown payment terminal
-          {surface.unknown.length > 1 ? "s" : ""}:{" "}
+          This project also lists payment contracts this app doesn&apos;t recognize:{" "}
           {surface.unknown
             .map((a) => `${a.slice(0, 6)}…${a.slice(-4)}`)
             .join(", ")}
-          . This form only sends to a recognized Juicebox terminal.
+          . This form only sends to a recognized Juicebox payment contract.
         </p>
       ) : null}
       {(approveTx.error ?? tx.error) ? (

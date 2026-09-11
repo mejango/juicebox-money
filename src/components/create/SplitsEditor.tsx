@@ -298,7 +298,7 @@ export function SplitsEditor({
                 ) : split.hookKind === 'fundmarket' && allowFundMarket ? (
                   <div className="mt-2">
                     <p className="rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
-                      Pools split tokens into a Uniswap V4 buyback position.
+                      Makes these tokens available to trade on Uniswap V4.
                       Trading fees route back to your project.
                     </p>
                     {lpGapChains.length > 0 ? (
@@ -333,7 +333,7 @@ export function SplitsEditor({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="shrink-0 text-xs text-smoke-700">
-                        and beneficiary (optional):
+                        and recipient (optional):
                       </span>
                       <AddressField
                         value={split.beneficiary}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ProjectLink } from "@/components/ProjectLink";
+import Link from "next/link";
 import {
   CASH_OUTS_OFF_REVNET,
   FOREVER_SECONDS,
@@ -95,6 +95,10 @@ function TaxPicker({
       )}
       {cashOutsOn ? (
         <>
+          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+            A cash out tax leaves part of a partial cash out for holders who stay.
+            It sets a curve, so a 10% setting does not simply subtract 10%.
+          </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {CASH_OUT_TAXES.map((tax) => (
               <ChipButton
@@ -147,9 +151,6 @@ function TaxPicker({
               </span>
             </div>
           ) : null}
-          <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            A tax leaves part of each cash out behind for holders who stay.
-          </p>
           <CashOutCurve
             rate={stage.cashOuts ? stageCashOutTax(stage) : CASH_OUTS_OFF_REVNET}
           />
@@ -466,18 +467,16 @@ export function StageRulesEditor({
 
       {/* Issuance */}
       <SubSection
-        label="Issuance"
+        label="New tokens"
         summary={tokensSummary}
         open={!!stage.open.tokens}
         onToggle={() => toggleOpen("tokens")}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Every {isRevnet ? "revnet" : "project"} has its own token — when
-          people pay, they receive newly issued {tokenLabel}. Depending on the
-          rules below, {tokenLabel} can be cashed out to reclaim funds from the{" "}
-          {isRevnet ? "revnet" : "project"} (useful for refunds or sharing), and
-          can power things like governance or community access. You can also
-          reserve a cut of new {tokenLabel} for recipients you choose.
+          Set how many new {tokenLabel} each payment creates. This is the
+          issuance rate. You can set aside a share for chosen recipients;
+          payers receive the rest. The cash out rules below decide whether
+          holders can exchange {tokenLabel} for project funds.
           {!isFirst
             ? " Leave the rate empty to keep the previous ruleset’s rate."
             : ""}
@@ -523,7 +522,7 @@ export function StageRulesEditor({
               onToggle={() => set({ cutOn: !stage.cutOn })}
               disabled={disabled}
               title="Automatic cuts"
-              blurb="The issuance rate drops by a set amount on a schedule — rewarding earlier supporters."
+              blurb="Lower the rate by a set percentage on a schedule. The same payment then creates fewer tokens."
             />
             {stage.cutOn ? (
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -574,7 +573,7 @@ export function StageRulesEditor({
               }`}
             />
             <span className="text-sm text-smoke-700">
-              % issuance cut each time the rules cycle
+              % fewer new tokens each time the rules repeat
             </span>
           </div>
         ) : null}
@@ -582,7 +581,7 @@ export function StageRulesEditor({
           <div className="mt-4">
             {stage.reservedSplits.length > 0 ? (
               <p className="text-xs leading-relaxed text-smoke-700">
-                Each split takes a share of newly issued {tokenLabel}; the rest
+                Each recipient gets a share of new {tokenLabel}; the rest
                 go to the payer.
               </p>
             ) : null}
@@ -593,16 +592,17 @@ export function StageRulesEditor({
               bucketLabel={`new ${tokenLabel}`}
               remainderNote="go to payers"
               chainIds={chainIds}
-              addLabel="Add split"
-              allocatedLabel="split limit"
+              addLabel="Add recipient"
+              allocatedLabel="set aside"
               allowHook
               allowFundMarket
             />
             <div className="mt-5 border-t border-smoke-200 pt-4">
-              <span className="field-label">Auto-issuance</span>
+              <span className="field-label">Tokens without payment</span>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Mint {tokenLabel} to specific wallets the moment this stage
-                starts — no payment involved. Visible to everyone up front.
+                Set aside {tokenLabel} for named wallets, without a payment.
+                Anyone can create these tokens for the recipients once the stage
+                starts. This is called auto-issuance.
                 {chainIds.length > 1
                   ? " Each mint happens once for the whole launch, on the chain you pick per row."
                   : ""}
@@ -723,8 +723,8 @@ export function StageRulesEditor({
           <div className="mt-4">
             {reservedOn ? (
               <p className="text-xs leading-relaxed text-smoke-700">
-                Each split reserves its percentage of newly issued {tokenLabel}.
-                The reserved total is the sum of these splits.
+                Each recipient gets a percentage of new {tokenLabel}.
+                These percentages add up to the total set aside.
               </p>
             ) : null}
             <SplitsEditor
@@ -739,8 +739,8 @@ export function StageRulesEditor({
               bucketLabel={`new ${tokenLabel}`}
               remainderNote="go to payers"
               chainIds={chainIds}
-              addLabel="Add split"
-              allocatedLabel="reserved"
+              addLabel="Add recipient"
+              allocatedLabel="set aside"
               allowHook
               allowFundMarket
               allowLock={duration > 0 && duration !== FOREVER_SECONDS}
@@ -758,10 +758,9 @@ export function StageRulesEditor({
           onToggle={() => toggleOpen("payouts")}
         >
           <p className="text-xs leading-relaxed text-smoke-700">
-            Anyone can pay your project. Payouts route incoming funds to wallets
-            or other Juicebox projects — whatever isn&apos;t paid out stays in
-            the project, backing cash outs and available under future rules.
-            Payout amounts reset each ruleset.
+            Set who can receive project funds. These transfers are payouts.
+            Funds beyond the unused payout budget can back cash outs.
+            The payout budget resets each time the rules repeat.
           </p>
           <div className="mt-3 space-y-2">
             <OptionRow
@@ -769,21 +768,21 @@ export function StageRulesEditor({
               onSelect={() => set({ payouts: "none" })}
               disabled={disabled}
               title="Keep funds in the project"
-              blurb="Nothing can be paid out until the rules change. The clearest promise to supporters."
+              blurb="No payouts or owner withdrawals until the rules change."
             />
             <OptionRow
               checked={stage.payouts === "flexible"}
               onSelect={() => set({ payouts: "flexible" })}
               disabled={disabled}
               title="Flexible withdrawals"
-              blurb="The project owner can withdraw any amount from the project's surplus, any time."
+              blurb="Let the owner withdraw project funds, up to any limit you set below."
             />
             <OptionRow
               checked={stage.payouts === "routed"}
               onSelect={() => set({ payouts: "routed" })}
               disabled={disabled}
-              title="Routed payouts"
-              blurb="Incoming funds route automatically to recipients the project owner sets — anyone can trigger the payout."
+              title="Pay chosen recipients"
+              blurb="Set who receives payouts. Anyone can send the transaction that pays them."
             />
           </div>
           {stage.payouts === "routed" ? (
@@ -809,8 +808,8 @@ export function StageRulesEditor({
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {stage.routedMode === "all"
-                  ? "Every incoming payment is split among the recipients by percentage."
-                  : `Each recipient gets up to their ${unitLabel} amount — anything beyond stays in the project as surplus.`}
+                  ? "All funds are available for payouts, divided by these percentages."
+                  : `Each recipient gets up to their ${unitLabel} amount. Funds beyond the unused budget stay available for cash outs.`}
               </p>
               <SplitsEditor
                 splits={stage.payoutSplits}
@@ -885,8 +884,8 @@ export function StageRulesEditor({
                     set({ routedSurplusOn: !stage.routedSurplusOn })
                   }
                   disabled={disabled}
-                  title="Project owner can also withdraw surplus"
-                  blurb="Beyond the routed amounts, the project owner can withdraw whatever surplus remains."
+                  title="Let the owner withdraw remaining funds"
+                  blurb="The owner can withdraw funds not set aside for payouts, up to the limit below."
                 />
               ) : null}
               {stage.payouts === "flexible" || stage.routedSurplusOn ? (
@@ -940,23 +939,17 @@ export function StageRulesEditor({
                 aria-expanded={!!stage.open.fees}
                 className="text-xs font-medium text-smoke-700 hover:text-ink disabled:opacity-60"
               >
-                Read about fees {stage.open.fees ? "▾" : "▸"}
+                Fee payment timing {stage.open.fees ? "▾" : "▸"}
               </button>
               {stage.open.fees ? (
                 <>
                   <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                    Funds leaving the project — payouts and withdrawals — pay a
-                    small fee to{" "}
-                    <ProjectLink
-                      href="/eth:1"
-                      projectHint={{ name: "Juicebox", logoUri: null }}
+                    <Link
+                      href="/learn#learn-fees"
                       className="underline underline-offset-2 hover:text-ink"
                     >
-                      this
-                    </ProjectLink>{" "}
-                    Juicebox project. Paying it makes you a part-owner of
-                    Juicebox itself, earning a cut of everyone else&apos;s fees.
-                    Money moving between Juicebox projects never pays a fee.
+                      How fees work and what the payer receives
+                    </Link>
                   </p>
                   <div className="mt-2.5">
                     <CheckRow
@@ -964,7 +957,7 @@ export function StageRulesEditor({
                       onToggle={() => set({ holdFees: !stage.holdFees })}
                       disabled={disabled}
                       title="Hold fees in the project"
-                      blurb="Keep the fee amount in your project instead of paying it right away. Useful if you might put funds back into your Juicebox later — issuing refunds, say — since returned funds unlock the held fee."
+                      blurb="Delay paying the fee. Eligible funds returned before it is processed release the matching held amount back to the project."
                     />
                   </div>
                 </>
@@ -989,7 +982,7 @@ export function StageRulesEditor({
               disabled={disabled}
               required
               offBlurb="Tokens are for support and standing — cashing out returns almost nothing."
-              onBlurb={`Holders can cash out ${tokenLabel} any time for their share of the treasury.`}
+              onBlurb={`Holders can exchange ${tokenLabel} for available project funds under the rules below, after any cash out delay.`}
             />
             {!stage.cashOuts ? (
               <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
@@ -1011,7 +1004,7 @@ export function StageRulesEditor({
             set={set}
             disabled={disabled}
             offBlurb="Tokens are for support and standing — holders can't pull funds out."
-            onBlurb={`Holders can cash out ${tokenLabel} any time for their share of the surplus.`}
+            onBlurb={`Holders can exchange ${tokenLabel} for funds not set aside for payouts. This remaining balance is called surplus.`}
           />
         )}
       </SubSection>
@@ -1022,8 +1015,8 @@ export function StageRulesEditor({
           label="Project owner powers"
           summary={
             [
-              stage.ownerMinting ? "mints tokens" : "",
-              Object.values(stage.powers).some(Boolean) ? "superpowers" : "",
+              stage.ownerMinting ? "creates tokens" : "",
+              Object.values(stage.powers).some(Boolean) ? "contract controls" : "",
             ]
               .filter(Boolean)
               .join(" | ") || "Standard"
@@ -1035,33 +1028,32 @@ export function StageRulesEditor({
             checked={stage.ownerMinting}
             onToggle={() => set({ ownerMinting: !stage.ownerMinting })}
             disabled={disabled}
-            title={`Project owner can mint ${tokenLabel} any time`}
-            blurb="The project owner can mint any amount without payment. Supporters can see this power, so leave it off unless it is needed."
+            title={`Owner can create ${tokenLabel} without payment`}
+            blurb="The owner can create any amount of new tokens. This reduces existing holders' share of the total supply."
           />
           <div className="mt-5 border-t border-smoke-200 pt-4">
-            <span className="field-label">Superpowers</span>
+            <span className="field-label">Contract controls</span>
             <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Deep controls most projects never need. Each one gives the project
-              owner real power over supporter funds — leave them off unless you
-              know why you need them.
+              Choose which contracts and assets the owner can change. These
+              powers can affect how supporter funds are used.
             </p>
             <div className="mt-2.5 space-y-2">
               {(
                 [
                   [
                     "setTerminals",
-                    "Change payment terminals",
+                    "Change payment contracts",
                     "Add or remove the contracts that receive funds, at any time.",
                   ],
                   [
                     "setController",
-                    "Change the controller",
+                    "Change the contract that manages rules",
                     "Swap the contract that enforces the project's rules.",
                   ],
                   [
                     "terminalMigration",
-                    "Migrate terminals",
-                    "Move funds to a new version of a terminal.",
+                    "Move funds to a new payment contract",
+                    "Move funds from the current payment contract to a new one.",
                   ],
                   [
                     "setCustomToken",
@@ -1070,13 +1062,13 @@ export function StageRulesEditor({
                   ],
                   [
                     "addAccountingContext",
-                    "Add accounting tokens",
+                    "Accept more treasury tokens",
                     "Accept and account for new tokens in the treasury.",
                   ],
                   [
                     "addPriceFeed",
-                    "Add price feeds",
-                    "Register new price feeds the project prices against.",
+                    "Add price sources",
+                    "Choose additional sources for currency conversions.",
                   ],
                 ] as const
               ).map(([key, title, blurb]) => (
@@ -1121,7 +1113,7 @@ export function StageRulesEditor({
               }
               disabled={disabled}
               title="Pause credit transfers"
-              blurb="Supporters' internal credits can't be moved between wallets. Claimed ERC-20 tokens stay transferable."
+              blurb="Balances recorded within Juicebox, called credits, cannot move between wallets. Tokens already claimed to a wallet can still be transferred."
             />
             <CheckRow
               checked={stage.pause721Transfers}
