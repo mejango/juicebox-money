@@ -302,6 +302,16 @@ const contractFixtures = [
     result: [MULTI_TERMINAL],
   },
   {
+    name: 'JBDirectory.isTerminalOf',
+    address: DIRECTORY,
+    abi: jbDirectoryAbi,
+    functionName: 'isTerminalOf',
+    args: [1n, ROUTER_REGISTRY],
+    // The fixture project lists only MULTI_TERMINAL above. Registry defaults
+    // therefore cannot imply that it has a router or gateway attached.
+    result: false,
+  },
+  {
     name: 'JBDirectory.controllerOf',
     address: DIRECTORY,
     abi: jbDirectoryAbi,

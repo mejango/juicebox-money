@@ -41,6 +41,7 @@ export default async function globalTeardown() {
     'JBController.totalTokenSupplyWithReservedTokensOf',
     'JBController.uriOf',
     'JBDirectory.terminalsOf',
+    'JBDirectory.isTerminalOf',
     'JBDirectory.controllerOf',
     'JBTokens.tokenOf',
     'JBTerminalStore.balanceOf',

@@ -30,7 +30,12 @@ const budgets = {
   // The Safe operator batch (tray, batch and preset dialogs, MultiSend and
   // sequence simulation, LP flows proposing one batch) measured 2403.6 KiB
   // before and 2414.6 KiB after on the same toolchain; allow 2.4 KiB of headroom.
-  allScripts: 2417 * KIB,
+  // Executed rollout records/history, gateway route discovery and Safe migration
+  // checks measure 2422.8 KiB in the current deterministic CI build (+5.8 KiB
+  // over the prior cap). The snapshot and gateway ABI each emit once; retain
+  // their complete history/decoding surface and round up to the next KiB.
+  // Initial-route, largest-chunk and lazy-wallet/review constraints stay fixed.
+  allScripts: 2423 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
