@@ -6,6 +6,8 @@ import { encodeFunctionData, zeroAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { SELECTOR_LABELS, transactionLabel } from '@/components/project/SafeQueueCard'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@/lib/safe-batch'
+import { routerGatewayAbi } from '@/lib/router-gateway-abi'
+import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
 
 /**
  * The queue labels co-signers read must resolve from calldata the app itself
@@ -14,7 +16,7 @@ import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@/lib/safe-batch'
  */
 describe('Safe queue selector labels', () => {
   it('labels every call it claims to know', () => {
-    expect(SELECTOR_LABELS.size).toBe(9)
+    expect(SELECTOR_LABELS.size).toBe(15)
   })
 
   it('resolves buyback-pool initialization from real calldata', () => {
@@ -62,5 +64,16 @@ describe('Safe queue selector labels', () => {
       args: [1n, 'Name', 'TICK', `0x${'00'.repeat(32)}`],
     })
     expect(SELECTOR_LABELS.get(data.slice(0, 10))).toBe('Deploy ERC-20')
+  })
+
+  it('decodes retained-call retries and preserves retired target labels', () => {
+    const data = encodeFunctionData({
+      abi: routerGatewayAbi,
+      functionName: 'processPendingCall',
+      args: [`0x${'ab'.repeat(32)}`, { amount: 1n, preferAddToBalance: false, shouldReturnHeldFees: false, beneficiary: zeroAddress, projectId: 1n, refundTo: zeroAddress, sourceProjectId: 2n, token: zeroAddress }, '', '0x'],
+    })
+    const row = { to: rolloutAddress('JBRouterTerminalGateway', 11155111)!, value: '0', data, operation: 0, safeTxGas: '0', baseGas: '0', gasPrice: '0', gasToken: zeroAddress, refundReceiver: zeroAddress, nonce: 1 }
+    expect(transactionLabel(11155111, row)).toBe('Retry retained router call | JBRouterTerminalGateway (current)')
+    expect(transactionLabel(11155111, { ...row, data: '0x', to: rolloutChain(11155111)!.history.JBRouterTerminal.previous as `0x${string}` })).toBe('0x | JBRouterTerminal (previous)')
   })
 })

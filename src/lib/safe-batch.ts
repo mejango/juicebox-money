@@ -232,6 +232,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
     kind: 'setHookFor',
     label: 'Set buyback hook',
     contract: 'JBBuybackHookRegistry',
+    perChain: true,
     parse: values => ({ hook: requireAddress(values, 'hook') }),
     target: (_values, chainId) =>
       registryTarget(
@@ -276,6 +277,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
     kind: 'setTerminalFor',
     label: 'Set router terminal',
     contract: 'JBRouterTerminalRegistry',
+    perChain: true,
     parse: values => ({ terminal: requireAddress(values, 'terminal') }),
     target: (_values, chainId) =>
       registryTarget(
@@ -623,14 +625,27 @@ export async function mirrorBatch(
   steps: BatchStep[]
   skipped: { step: BatchStep; reason: string }[]
 }> {
+  const order = checkBatchOrder(steps)
+  if (!order.ok) {
+    return {
+      steps: [],
+      skipped: steps.map(step => ({ step, reason: order.problems.map(problem => problem.message).join(' ') })),
+    }
+  }
   const mirrored: BatchStep[] = []
   const skipped: { step: BatchStep; reason: string }[] = []
+  let hookSelectionSkipped = false
   for (const step of steps) {
+    if (hookSelectionSkipped && ['setPoolFor', 'initializePoolFor', 'setTwapWindowOf'].includes(step.kind)) {
+      skipped.push({ step, reason: 'The preceding buyback hook selection could not be mirrored.' })
+      continue
+    }
     const spec = STEP_KINDS[step.kind]
     let values = step.values
     if (spec.perChain) {
       const resolution = await resolve(step, to)
       if ('skip' in resolution) {
+        if (step.kind === 'setHookFor') hookSelectionSkipped = true
         skipped.push({ step, reason: resolution.skip })
         continue
       }
@@ -647,7 +662,9 @@ export async function mirrorBatch(
           label: step.label,
         }),
       )
+      if (step.kind === 'setHookFor') hookSelectionSkipped = false
     } catch (error) {
+      if (step.kind === 'setHookFor') hookSelectionSkipped = true
       skipped.push({
         step,
         reason: error instanceof Error ? error.message : 'Could not rebuild the step.',

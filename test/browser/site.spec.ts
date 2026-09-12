@@ -213,13 +213,20 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
     page.getByRole('heading', { level: 2, name: 'What are you launching?' }),
   ).toBeVisible()
   await flavor.selectOption('project')
+  await expect(flavor).toHaveValue('project')
   await expect(stepper.getByRole('button')).toHaveCount(5)
+  await expect(stepper.getByRole('button', { name: 'Rules', exact: true })).toBeVisible()
   await expect(
-    page.getByText('The project owner sets the rules', { exact: false }),
-  ).toBeVisible()
+    page.getByText('The project owner sets how funds are paid out', { exact: false }),
+  ).toContainText('They can change the rules or lock them.')
   await flavor.selectOption('revnet')
+  await expect(flavor).toHaveValue('revnet')
   await expect(stepper.getByRole('button')).toHaveCount(5)
-  await expect(page.getByText('Fixed rules that run forever', { exact: false })).toBeVisible()
+  await expect(stepper.getByRole('button', { name: 'Stages', exact: true })).toBeVisible()
+  await expect(stepper.getByRole('button', { name: 'Rules', exact: true })).toHaveCount(0)
+  await expect(
+    page.getByText('A revnet commits to its token rules and stages at launch.', { exact: false }),
+  ).toBeVisible()
 
   const steps = [
     { index: 0, heading: 'What are you launching?', label: 'Flavor' },
@@ -413,7 +420,7 @@ async function exerciseProjectSurfaces(
     {
       label: 'Terms',
       icon: 'stages',
-      ready: () => page.getByText('Token issuance', { exact: true }),
+      ready: () => page.getByText('New tokens per payment', { exact: true }),
     },
     {
       label: 'Owners',

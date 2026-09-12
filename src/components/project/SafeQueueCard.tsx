@@ -4,6 +4,7 @@ import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
   RevnetCoreContracts,
+  jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
   jbContractAddress,
   jbControllerAbi,
@@ -103,6 +104,8 @@ import {
 import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { readBoundedSafeNonce } from '@/lib/safe-reads'
+import { rolloutContractName } from '@/lib/protocol-rollout'
+import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 
 export type SafeQueueChain = {
   chainId: JBChainId;
@@ -850,6 +853,12 @@ const LABELLED_CALLS: [Abi, string, string][] = [
   [jbBuybackHookRegistryAbi, "setHookFor", "Set buyback hook"],
   [jbRouterTerminalRegistryAbi, "setTerminalFor", "Set router terminal"],
   [jbBuybackHookRegistryAbi, "initializePoolFor", "Initialize buyback pool"],
+  [jbBuybackHookRegistryAbi, "setPoolFor", "Register buyback pool"],
+  [jbBuybackHookAbi, "setTwapWindowOf", "Set buyback TWAP window"],
+  [routerGatewayAbi, "processPendingCall", "Retry retained router call"],
+  [routerGatewayAbi, "processPendingCallWithGas", "Retry retained router call with gas"],
+  [routerGatewayAbi, "finalizePendingCall", "Finalize retained router call"],
+  [routerGatewayAbi, "finalizePendingCallWithGas", "Finalize retained router call with gas"],
 ];
 
 export const SELECTOR_LABELS = new Map<string, string>(
@@ -862,6 +871,8 @@ export const SELECTOR_LABELS = new Map<string, string>(
 );
 
 function contractName(chainId: JBChainId, address: Address): string | null {
+  const rolloutName = rolloutContractName(chainId, address)
+  if (rolloutName) return rolloutName
   const contracts = jbContractAddress["6"] as unknown as Record<
     string,
     Partial<Record<JBChainId, Address>>

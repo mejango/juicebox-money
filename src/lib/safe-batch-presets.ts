@@ -23,6 +23,7 @@ import {
   type MirrorResolution,
 } from '@/lib/safe-batch'
 import { chainName } from '@/lib/urn'
+import { rolloutTargets } from '@/lib/protocol-rollout'
 
 /**
  * Presets are data: a target hook/terminal pair and the step kinds that move
@@ -33,7 +34,6 @@ export type SafeBatchPreset = {
   id: string
   title: string
   description: string
-  targets: { hook: Address; terminal: Address }
   steps: readonly BatchStepKind[]
 }
 
@@ -43,10 +43,6 @@ export const SAFE_BATCH_PRESETS: readonly SafeBatchPreset[] = [
     title: 'Move to buyback 1.4.0 + gateway',
     description:
       'Points the project at the current buyback hook and router gateway, carrying its live pool onto the new hook.',
-    targets: {
-      hook: '0xB222Da5A71e8FB89a5A38b7c920EaB5DfbC74B91',
-      terminal: '0x4a56AEf5b6A5b9742AbB02cA67C5a85ba183D901',
-    },
     steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
   },
 ]
@@ -87,6 +83,15 @@ export function presetInfraAvailable(chainId: JBChainId): boolean {
 async function hasCode(client: PublicClient, address: Address): Promise<boolean> {
   const code = await client.getCode({ address })
   return !!code && code !== '0x'
+}
+
+async function selectionAllowed(client: PublicClient, chainId: JBChainId, kind: 'hook' | 'terminal', target: Address): Promise<boolean> {
+  const registry = registryAddress(kind === 'hook' ? JBBuybackHookContracts.JBBuybackHookRegistry : JBRouterTerminalContracts.JBRouterTerminalRegistry, chainId)
+  if (!registry) return false
+  // Read errors remain unknown and abort resolution instead of becoming permission.
+  return kind === 'hook'
+    ? client.readContract({ address: registry, abi: jbBuybackHookRegistryAbi, functionName: 'isHookAllowed', args: [target] })
+    : client.readContract({ address: registry, abi: jbRouterTerminalRegistryAbi, functionName: 'isTerminalAllowed', args: [target] })
 }
 
 /** Pools the hook reads under address(0) for native and the USDC address otherwise. */
@@ -159,6 +164,7 @@ export async function resolvePreset(
   }: { chainId: JBChainId; projectId: number; client: PublicClient },
 ): Promise<PresetChainResolution> {
   const name = chainName(chainId)
+  const targets = rolloutTargets(chainId)
   const buybackRegistry = registryAddress(
     JBBuybackHookContracts.JBBuybackHookRegistry,
     chainId,
@@ -167,7 +173,7 @@ export async function resolvePreset(
     JBRouterTerminalContracts.JBRouterTerminalRegistry,
     chainId,
   )
-  if (!buybackRegistry || !routerRegistry) {
+  if (!targets || !buybackRegistry || !routerRegistry) {
     return {
       status: 'unavailable',
       message: `Not deployed on ${name} yet.`,
@@ -175,8 +181,8 @@ export async function resolvePreset(
     }
   }
   const [hookDeployed, terminalDeployed] = await Promise.all([
-    hasCode(client, preset.targets.hook),
-    hasCode(client, preset.targets.terminal),
+    hasCode(client, targets.hook),
+    hasCode(client, targets.terminal),
   ])
   if (!hookDeployed || !terminalDeployed) {
     return {
@@ -184,6 +190,13 @@ export async function resolvePreset(
       message: `Not deployed on ${name} yet.`,
       steps: [],
     }
+  }
+  const allowed = await Promise.all([
+    selectionAllowed(client, chainId, 'hook', targets.hook),
+    selectionAllowed(client, chainId, 'terminal', targets.terminal),
+  ])
+  if (allowed.some(value => !value)) {
+    return { status: 'unavailable', message: `The current hook or gateway is not allowed by the registries on ${name}.`, steps: [] }
   }
   const pid = BigInt(projectId)
   const [currentHookRaw, currentTerminalRaw] = await Promise.all([
@@ -206,14 +219,14 @@ export async function resolvePreset(
 
   if (
     preset.steps.includes('setHookFor') &&
-    !isAddressEqual(currentHook, preset.targets.hook)
+    !isAddressEqual(currentHook, targets.hook)
   ) {
     steps.push(
       buildStep({
         kind: 'setHookFor',
         chainId,
         projectId,
-        values: { hook: preset.targets.hook },
+        values: { hook: targets.hook },
       }),
     )
   }
@@ -223,7 +236,7 @@ export async function resolvePreset(
       const pool = await readPool(client, currentHook, pid, probe)
       if (!pool) continue
       const carried = await client.readContract({
-        address: preset.targets.hook,
+        address: targets.hook,
         abi: jbBuybackHookAbi,
         functionName: 'twapWindowOf',
         args: [pid, probe.read],
@@ -237,14 +250,14 @@ export async function resolvePreset(
 
   if (
     preset.steps.includes('setTerminalFor') &&
-    !isAddressEqual(currentTerminal, preset.targets.terminal)
+    !isAddressEqual(currentTerminal, targets.terminal)
   ) {
     steps.push(
       buildStep({
         kind: 'setTerminalFor',
         chainId,
         projectId,
-        values: { terminal: preset.targets.terminal },
+        values: { terminal: targets.terminal },
       }),
     )
   }
@@ -285,6 +298,18 @@ export async function resolveMirrorValues(
 ): Promise<MirrorResolution> {
   const name = chainName(to.chainId)
   const pid = BigInt(to.projectId)
+  const sourceTargets = rolloutTargets(step.chainId)
+  const targetTargets = rolloutTargets(to.chainId)
+  if (step.kind === 'setHookFor' || step.kind === 'setTerminalFor') {
+    const key = step.kind === 'setHookFor' ? 'hook' : 'terminal'
+    if (sourceTargets && String(step.values[key]).toLowerCase() === sourceTargets[key].toLowerCase()) {
+      if (!targetTargets) return { skip: `The buyback and gateway rollout is not deployed on ${name} yet.` }
+      if (!await hasCode(to.client, targetTargets[key])) return { skip: `The selected ${key} is not deployed on ${name} yet.` }
+      if (!await selectionAllowed(to.client, to.chainId, key, targetTargets[key])) return { skip: `The selected ${key} is not allowed by the registry on ${name}.` }
+      return { values: { ...step.values, [key]: targetTargets[key] } }
+    }
+    return { skip: `Choose the ${key} on ${name} directly; this selection has no verified counterpart.` }
+  }
   if (step.kind === 'setPoolFor' || step.kind === 'setTwapWindowOf') {
     const token = mirroredToken(String(step.values.terminalToken), step.chainId, to.chainId)
     if (!token) return { skip: `The pool token has no counterpart on ${name}.` }

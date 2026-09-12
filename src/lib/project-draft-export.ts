@@ -33,6 +33,8 @@ import {
 } from '@/components/create/stage-draft'
 import { parseDraft, type CreateDraft } from '@/lib/draft'
 import type { RawSplit } from '@/lib/splits-types'
+import { attachedPaymentRouterEntries } from '@/lib/payment-router-entry'
+import { rolloutAddress } from '@/lib/protocol-rollout'
 
 /**
  * The project's own ERC-20 ticker, or '' when it has not deployed one. A read failure is
@@ -254,38 +256,31 @@ async function readContext(
 }
 
 /**
- * Reconstruct the current onchain ruleset into the native create-flow schema.
- * Any unavoidable gaps are returned as warnings for confirmation before save.
- */
-/**
- * Is the any-token router-registry terminal in this project's terminal list?
- *
- * Chains without a registry deployment can't have one, and a directory read
- * that fails leaves the answer unknown — both report `false`, matching what a
- * redeploy could actually reproduce there.
+ * Read whether the create editor can reproduce the project's router entry.
+ * Direct gateway/router selections cannot be encoded by its allowAnyToken flag.
  */
 async function routerTerminalAttached(
   client: PublicClient,
   chainId: JBChainId,
   projectId: bigint,
 ): Promise<boolean> {
-  let registry: string
-  try {
-    registry = v6Address('JBRouterTerminalRegistry', chainId)
-  } catch {
-    return false
+  const registry = rolloutAddress('JBRouterTerminalRegistry', chainId)
+  const terminals = await client.readContract({
+    address: v6Address('JBDirectory', chainId),
+    abi: jbDirectoryAbi,
+    functionName: 'terminalsOf',
+    args: [projectId],
+  })
+  if (attachedPaymentRouterEntries(chainId, terminals)
+    .some(terminal => !registry || !sameAddress(terminal, registry))) {
+    throw new Error(
+      'This project directly lists a router or gateway. The create editor cannot preserve that terminal selection; recreate it through the contract configuration.',
+    )
   }
-  const terminals = (await client
-    .readContract({
-      address: v6Address('JBDirectory', chainId),
-      abi: jbDirectoryAbi,
-      functionName: 'terminalsOf',
-      args: [projectId],
-    })
-    .catch(() => [])) as readonly string[]
-  return terminals.some((terminal) => sameAddress(terminal, registry))
+  return !!registry && terminals.some((terminal) => sameAddress(terminal, registry))
 }
 
+/** Reconstruct the current onchain ruleset, reporting gaps before the draft is saved. */
 export async function buildProjectDraftExport({
   client,
   chainId,

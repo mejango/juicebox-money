@@ -170,9 +170,12 @@ describe('ParaModalHost', () => {
     render(<Host />)
 
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('Use your passkey, or receive a code')
+    const dialog = host()!
+    expect(dialog.querySelector('h2')?.textContent).toBe('Sign in')
+    expect(dialog.querySelector('input[aria-label="Email address or phone number"]')).not.toBeNull()
+    expect(dialog.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true)
     // Our sheet is what puts the host in the top layer for an auth request.
-    expect(host()!.open).toBe(true)
+    expect(dialog.open).toBe(true)
   })
 
   it('holds the sheet’s silhouette open while Para is still starting up', () => {
@@ -319,7 +322,8 @@ describe('ParaModalHost', () => {
 
     expect(para.initiateOnRampTransaction).not.toHaveBeenCalled()
     expect(para.openModal).not.toHaveBeenCalled()
-    expect(host()!.textContent).toContain('Use your passkey, or receive a code')
+    expect(host()!.open).toBe(true)
+    expect(host()!.querySelector('input[aria-label="Email address or phone number"]')).not.toBeNull()
   })
 
   it('does not reopen the sheet when sign-in for the on-ramp is cancelled', async () => {

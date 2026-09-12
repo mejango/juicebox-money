@@ -295,7 +295,7 @@ describe('Safe batch mirroring', () => {
       { chainId: 8453, projectId: 6 },
       resolve,
     )
-    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(resolve).toHaveBeenCalledTimes(3)
     expect(result.skipped).toEqual([])
     expect(result.steps.map(step => [step.chainId, step.projectId, step.kind])).toEqual([
       [8453, 6, 'setHookFor'],
@@ -311,7 +311,7 @@ describe('Safe batch mirroring', () => {
     const result = await mirrorBatch(
       [poolStep(), terminalStep()],
       { chainId: 8453, projectId: 6 },
-      async () => ({ skip: 'No matching pool on Base.' }),
+      async step => step.kind === 'setPoolFor' ? { skip: 'No matching pool on Base.' } : { values: step.values },
     )
     expect(result.steps.map(step => step.kind)).toEqual(['setTerminalFor'])
     expect(result.skipped).toEqual([

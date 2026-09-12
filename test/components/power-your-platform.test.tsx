@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
+import { PLATFORM_BUILD_PROMPT } from '@/lib/build-prompt'
 
 vi.mock('next/link', () => ({ default: 'a' }))
 
@@ -22,10 +23,17 @@ describe('PowerYourPlatform', () => {
     })
 
     const text = renderedText(renderer.root)
-    expect(text).toContain('Juicebox Money')
-    expect(text).toContain('Revnet')
-    expect(text).toContain('living list')
-    expect(text).not.toContain('Deliver: (1)')
+    const links = renderer.root.findAllByType('a').map(link => ({
+      text: renderedText(link),
+      href: link.props.href,
+    }))
+    expect(links).toEqual(expect.arrayContaining([
+      { text: 'Juicebox Money', href: '/' },
+      { text: 'Revnet', href: 'https://revnet.money' },
+      { text: 'Read the build guide', href: '/build' },
+    ]))
+    expect(text).not.toContain(PLATFORM_BUILD_PROMPT)
+    expect(writeText).not.toHaveBeenCalled()
 
     const copyButton = renderer.root.findAllByType('button').find(button =>
       renderedText(button).includes('Copy the build prompt'),
@@ -33,7 +41,7 @@ describe('PowerYourPlatform', () => {
     expect(copyButton).toBeDefined()
     await act(async () => copyButton!.props.onClick())
 
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Deliver: (1)'))
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(PLATFORM_BUILD_PROMPT)
     expect(renderedText(renderer.root)).toContain('Build prompt copied')
   })
 })

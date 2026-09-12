@@ -57,11 +57,11 @@ not part of the published runtime graph.
 `protocol:check` validates the committed deployment fixture schema. Set
 `PROTOCOL_DEPLOYMENTS_DIR=/path/to/deploy-all-v6` to additionally compare every
 app-used deployment artifact against deploy-all-v6 commit
-`316e9d4d3f9e1c5b41a5df7c0ad6183abbeccc7f`. The fixture was read from that
+`a6ab40c5806b52ff4cb21f9eaefe275e621796f9`. The fixture was read from that
 commit's `deployments/<chain-alias>/<contract>.json` artifacts, independently
-of the SDK. The gate covers 25 canonical contracts on all eight chains plus 36
+of the SDK. The gate covers 27 canonical contracts on all eight chains plus 36
 pair-specific CCIP/native sucker-deployer artifacts across the 24 directed
-pairs in the production and testnet four-chain families (236 checked entries in
+pairs in the production and testnet four-chain families (252 checked entries in
 all). Unit tests compare the SDK address books, `addrOf`, and
 `parseSuckerDeployerConfig` output against those artifacts, including explicit
 native-bridge and OP Sepolia deployment absences.
