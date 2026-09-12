@@ -70,6 +70,7 @@ Legend:
 | Launch across mainnets with one payment | Per-chain launch authorizations + one chosen-chain Relayr funding transaction | **P/E** | `transactions/launch-relayr.test.ts`, `transactions/launch-session.test.ts`, `contracts/launch.test.ts` |
 
 | Resume a reviewed project batch | Frozen destination calls, serialized rounds, original hashes/proposals, and durable completion before clearing Relayr recovery | **P/E** | `transactions/project-batch.test.ts` |
+| Retry or finalize pending gateway payments | Original tuple/memo/metadata commitment, live cooldown and failure state, exact gateway outcome events, zero-value calls and durable batches | **P/E** | `data/pending-payments.test.ts`, `transactions/project-batch.test.ts` |
 
 ## Data and recovery invariants
 
