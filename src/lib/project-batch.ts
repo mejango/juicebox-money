@@ -20,6 +20,8 @@ import { relayrPaymentChains, relayrSupportsChain } from '@/lib/relayr-chains'
 export type ProjectBatchCall = AuthorityCall & {
   id: string
   projectId: number
+  /** Calls near the per-transaction gas ceiling cannot fit a forwarding wrapper. */
+  relayr?: false
   /** Immutable, serializable application preconditions and review details. */
   context?: unknown
 }
@@ -136,14 +138,14 @@ async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Pr
   return withRelayrScopeLock(`project-batch:${scopes[index]}`, () => locked(scopes, run, index + 1))
 }
 
-async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex): Promise<TransactionReceipt> {
+async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, acceptReverted = false): Promise<TransactionReceipt> {
   const client = clientFor(call.chainId)
   const [tx, receipt] = await Promise.all([
     client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
   ])
   if (tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== call.chainId ||
       receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
-      tx.blockHash !== receipt.blockHash || receipt.status !== 'success') {
+      tx.blockHash !== receipt.blockHash || (receipt.status !== 'success' && !(acceptReverted && !safeHash && receipt.status === 'reverted'))) {
     throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
   }
   if (safeHash) {
@@ -177,7 +179,7 @@ async function safeExecution(call: ProjectBatchCall, submission: CallSubmission)
 }
 
 export async function runProjectBatch({
-  scope, action, account, calls, expectedBatchId, title = 'Review project actions', reverify, verifyCompletion, onProgress,
+  scope, action, account, calls, expectedBatchId, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress,
 }: {
   scope: string
   action: string
@@ -187,6 +189,12 @@ export async function runProjectBatch({
   expectedBatchId?: string
   title?: string
   reverify?: (call: ProjectBatchCall) => Promise<void>
+  /** Permissionless actions may change elsewhere. Never applies to a submitted call. */
+  reconcileUnsubmitted?: (call: ProjectBatchCall) => Promise<boolean>
+  /** Retain the authenticated proposal while marking an irrevocably resolved payment obsolete. */
+  reconcileObsoleteSafe?: (call: ProjectBatchCall, proposal: SafeQueuedTx) => Promise<boolean>
+  /** Finish canonical, exact direct attempts that reverted; callers must display that outcome. */
+  acceptRevertedTransactions?: boolean
   /** Application events may report a failed distribution despite a successful outer receipt. */
   verifyCompletion?: (call: ProjectBatchCall, receipt: TransactionReceipt) => Promise<void>
   onProgress?: (progress: { message: string; completed: number; total: number; round: number; rounds: number }) => void
@@ -258,7 +266,7 @@ export async function runProjectBatch({
       if (!boundRelayIds && !journal.relayrRounds.includes(round) && !savedRelay && !isSafeConnection(wagmiConfig)) {
         const relayrChainIds = journal.relayrChainIds ?? [1, 10, 8453, 42161]
         const eligibility = await Promise.all(pending.map(async call => {
-          if (!relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
+          if (call.relayr === false || !relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
           const identity = await readAuthorityIdentity(clientFor(call.chainId), call.authority)
           return (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa') && await relayrTargetSupportsForwarder(call)
         }))
@@ -311,18 +319,33 @@ export async function runProjectBatch({
             catch { report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round); return journal }
           }
           if (execution) {
-            const receipt = await verifyReceipt(call, execution, saved.kind === 'direct' ? undefined : saved.hash)
+            const receipt = await verifyReceipt(call, execution, saved.kind === 'direct' ? undefined : saved.hash, acceptRevertedTransactions)
             await verifyCompletion?.(call, receipt)
+            complete([call.id])
+            continue
+          }
+          const proposal = saved.safeTx
+          if (saved.kind === 'safe' && proposal && reconcileObsoleteSafe &&
+            isAddressEqual(proposal.to, call.target) && (proposal.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
+            BigInt(proposal.value) === (call.value ?? 0n) && proposal.operation === 0 &&
+            canonicalSafeTxHash(call.chainId, call.authority, proposal).toLowerCase() === saved.hash.toLowerCase() &&
+            await reconcileObsoleteSafe(call, { ...proposal, safeTxHash: saved.hash })) {
             complete([call.id])
             continue
           }
           if (saved.kind !== 'safe') return journal
         }
+        if (!saved && await reconcileUnsubmitted?.(call)) {
+          complete([call.id])
+          continue
+        }
         await reverify?.(call)
         // Capture the scan floor before looking up an existing Safe proposal: it
         // can execute between that lookup and the prepared callback.
         const fromBlock = saved?.fromBlock ?? await clientFor(call.chainId).getBlockNumber()
-        const result = await runAuthorityCalls({ calls: [{ ...call,
+        let result
+        try {
+          result = await runAuthorityCalls({ calls: [{ ...call,
           reverifyAuthority: async () => { checkAccount(); await reverify?.(call) },
           onSending: async kind => { journal.submissions[call.id] = { kind, fromBlock }; persist(journal) },
           onSubmitted: async (hash, kind) => { journal.submissions[call.id] = { kind, hash, fromBlock }; persist(journal) },
@@ -335,12 +358,22 @@ export async function runProjectBatch({
               fromBlock }
             persist(journal)
           },
-        }], onProgress: progress => report(progress.message, round) })
+          }], onProgress: progress => report(progress.message, round) })
+        } catch (error) {
+          const submission = journal.submissions[call.id]
+          const receipt = acceptRevertedTransactions && submission?.kind === 'direct' && submission.hash
+            ? await verifyReceipt(call, submission.hash, undefined, true).catch(() => null)
+            : null
+          if (receipt?.status !== 'reverted') throw error
+          await verifyCompletion?.(call, receipt)
+          complete([call.id])
+          continue
+        }
         const submission = journal.submissions[call.id]
         const safeResult = result.safeResults[0]
         const execution = result.directResults[0] ?? (safeResult?.status === 'executed' ? safeResult.transactionHash : undefined)
         if (execution) {
-          const receipt = await verifyReceipt(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined)
+          const receipt = await verifyReceipt(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined, acceptRevertedTransactions)
           await verifyCompletion?.(call, receipt)
           complete([call.id])
         } else {

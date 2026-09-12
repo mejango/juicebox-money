@@ -37,7 +37,9 @@ const budgets = {
   // Initial-route, largest-chunk and lazy-wallet/review constraints stay fixed.
   // SDK 2.5.0 adds ~0.6 KiB gzip: aggregate 2423.5 KiB. Round up to 2424 KiB;
   // all route, largest-chunk and lazy-loading checks still pass.
-  allScripts: 2424 * KIB,
+  // Pending-payment inventory, authenticated retries and the resumable review
+  // panel add 5.7 KiB gzip (2429.2 total). Existing route/lazy-load caps stay fixed.
+  allScripts: 2430 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

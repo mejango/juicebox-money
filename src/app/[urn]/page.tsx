@@ -10,6 +10,7 @@ import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { isAddressEqual, type Address } from "viem";
 import { ActivityList } from "@/components/ActivityList";
+import { PendingPayments } from "@/components/project/PendingPayments";
 import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
@@ -864,6 +865,7 @@ export default async function ProjectPage({
           }
           activity={
             <section className="min-[801px]:mt-8">
+              <PendingPayments key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
               <ActivityList
                 events={activity}
                 total={activityResult.total}

@@ -101,6 +101,56 @@ describe('durable project batches', () => {
     expect(mocks.authority).not.toHaveBeenCalled()
   })
 
+  it('keeps Relayr-opted-out cross-chain calls direct across durable rounds and receipt recovery', async () => {
+    const calls = [call(1, 'a'), call(1, 'b'), call(10, 'a'), call(10, 'b')].map(item => ({ ...item, relayr: false as const }))
+    mocks.client.getTransaction.mockImplementation(async () => {
+      const submitted = mocks.authority.mock.calls.at(-1)![0].calls[0] as ProjectBatchCall
+      return { hash: HASH, chainId: submitted.chainId, from: ACCOUNT, to: TARGET,
+        input: submitted.data, value: 3n, blockHash: BLOCK }
+    })
+    mocks.client.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt timeout'))
+    await expect(run(calls)).rejects.toThrow('receipt timeout')
+    expect(loadProjectBatch(scope)).toMatchObject({ rounds: [['1:a', '10:a'], ['1:b', '10:b']], completedIds: [] })
+    expect(loadProjectBatch(scope)?.calls.every(item => item.relayr === false)).toBe(true)
+    const completed = await run()
+    expect(completed.status).toBe('complete')
+    expect(completed.completedIds).toEqual(['1:a', '10:a', '1:b', '10:b'])
+    expect(mocks.relayr).not.toHaveBeenCalled()
+    expect(mocks.authority.mock.calls.map(([options]) => options.calls[0].id)).toEqual(['1:a', '10:a', '1:b', '10:b'])
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect(loadProjectBatch(projectBatchScope(action, 10, 7))).toBeNull()
+  })
+
+  it('finishes an unsent later attempt that changed externally after the first receipt', async () => {
+    const calls = [call(1, 'first'), call(1, 'changed')].map(item => ({ ...item, relayr: false as const }))
+    let changedExternally = false
+    const reconcileUnsubmitted = vi.fn(async (item: ProjectBatchCall) => item.id === '1:changed' && changedExternally)
+    const verifyCompletion = vi.fn(async () => { changedExternally = true })
+    const result = await run(calls, { reconcileUnsubmitted, verifyCompletion })
+    expect(result.status).toBe('complete')
+    expect(result.completedIds).toEqual(['1:first', '1:changed'])
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    expect(verifyCompletion).toHaveBeenCalledTimes(1)
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it('never reconciles an already submitted later attempt instead of verifying its original receipt', async () => {
+    const calls = [call(1, 'first'), call(1, 'submitted')].map(item => ({ ...item, relayr: false as const }))
+    mocks.client.getTransactionReceipt.mockResolvedValueOnce({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [] }).mockRejectedValueOnce(new Error('receipt timeout'))
+    await expect(run(calls)).rejects.toThrow('receipt timeout')
+    expect(loadProjectBatch(scope)?.completedIds).toEqual(['1:first'])
+    expect(loadProjectBatch(scope)?.submissions['1:submitted'].hash).toBe(HASH)
+    const reconcileUnsubmitted = vi.fn().mockResolvedValue(true)
+    const verifyCompletion = vi.fn()
+    const result = await run(undefined, { reconcileUnsubmitted, verifyCompletion })
+    expect(result.status).toBe('complete')
+    expect(reconcileUnsubmitted).not.toHaveBeenCalled()
+    expect(verifyCompletion).toHaveBeenCalledTimes(1)
+    expect(verifyCompletion.mock.calls[0][0].id).toBe('1:submitted')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
   it('never combines mainnet and testnet calls into the same paid round', async () => {
     mocks.client.getTransaction.mockImplementation(async () => {
       const submitted = mocks.authority.mock.calls.at(-1)![0].calls[0] as ProjectBatchCall
@@ -112,6 +162,50 @@ describe('durable project batches', () => {
     expect(mocks.relayr).toHaveBeenCalledTimes(1)
     expect(mocks.relayr.mock.calls[0][0].calls.map((item: ProjectBatchCall) => item.chainId)).toEqual([1, 10])
     expect(mocks.authority.mock.calls.map(([options]) => options.calls[0].chainId)).toEqual([11155111, 84532])
+  })
+
+  it('finishes an opted-in canonical reverted attempt without replaying it', async () => {
+    const verifyCompletion = vi.fn()
+    mocks.authority.mockImplementationOnce(async ({ calls }: { calls: ProjectBatchCall[] }) => {
+      await calls[0].onSending?.('direct')
+      await calls[0].onSubmitted?.(HASH, 'direct')
+      throw new Error('Transaction reverted')
+    })
+    mocks.client.getTransactionReceipt.mockResolvedValueOnce({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    const result = await run([call(1, 'failed'), call(1, 'next')], { acceptRevertedTransactions: true, verifyCompletion })
+    expect(result.status).toBe('complete')
+    expect(verifyCompletion.mock.calls[0][1].status).toBe('reverted')
+    expect(verifyCompletion.mock.calls[1][1].status).toBe('success')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it('recovers a saved canonical revert only when explicitly opted in', async () => {
+    mocks.client.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt timeout'))
+    await expect(run([call()])).rejects.toThrow('receipt timeout')
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    await expect(run()).rejects.toThrow('not proven successful')
+    const verifyCompletion = vi.fn()
+    expect((await run(undefined, { acceptRevertedTransactions: true, verifyCompletion })).status).toBe('complete')
+    expect(verifyCompletion.mock.calls[0][1].status).toBe('reverted')
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['identity', 'canonical block', 'unknown receipt'])('keeps reverted recovery when %s is unproven', async failure => {
+    mocks.client.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt timeout'))
+    await expect(run([call()])).rejects.toThrow('receipt timeout')
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    if (failure === 'identity') mocks.client.getTransaction.mockResolvedValue({ hash: HASH, chainId: 1, from: TARGET, to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK })
+    if (failure === 'canonical block') mocks.client.getBlock.mockResolvedValue({ hash: HASH })
+    if (failure === 'unknown receipt') mocks.client.getTransactionReceipt.mockRejectedValue(new Error('receipt timeout'))
+    const verifyCompletion = vi.fn()
+    await expect(run(undefined, { acceptRevertedTransactions: true, verifyCompletion })).rejects.toThrow()
+    expect(verifyCompletion).not.toHaveBeenCalled()
+    expect(loadProjectBatch(scope)?.status).toBe('pending')
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
   it('preserves legacy direct testnet recovery after Relayr support is enabled', async () => {
@@ -270,6 +364,44 @@ describe('durable project batches', () => {
     })
     await expect(run()).rejects.toThrow('Safe nonce changed')
     expect(loadProjectBatch(scope)?.submissions[call().id].hash).toBe(HASH)
+  })
+
+  it('marks a proven obsolete Safe proposal without claiming execution or discarding its nonce/hash', async () => {
+    const safeTx = { safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3', operation: 0 }
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSafePrepared(safeTx)
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: HASH }], relayrGroups: 0, relayrResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
+    const verifyCompletion = vi.fn()
+    const result = await run(undefined, { reconcileObsoleteSafe, verifyCompletion })
+    expect(result.status).toBe('complete')
+    expect(result.submissions['1:']).toMatchObject({ hash: HASH, safeTx: { nonce: 3, safeTxHash: HASH } })
+    expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(1)
+    expect(verifyCompletion).not.toHaveBeenCalled()
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['still pending', 'different proposal', 'different hash'])('keeps a Safe proposal when %s', async condition => {
+    const safeTx = { safeTxHash: HASH, nonce: 3, to: TARGET, data: condition === 'different proposal' ? '0xabcd' : '0x1234', value: '3', operation: 0 }
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSafePrepared(safeTx)
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: HASH }], relayrGroups: 0, relayrResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    if (condition === 'different hash') {
+      const saved = loadProjectBatch(scope)!
+      const key = `jb-project-batch:v1:journal:${saved.id}`
+      const journal = JSON.parse(window.localStorage.getItem(key)!)
+      journal.submissions['1:'].safeTx.safeTxHash = BLOCK
+      window.localStorage.setItem(key, JSON.stringify(journal))
+    }
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(condition !== 'still pending')
+    await expect(run(undefined, { reconcileObsoleteSafe, reverify: vi.fn().mockRejectedValue(new Error('payment changed')) })).rejects.toThrow('payment changed')
+    expect(loadProjectBatch(scope)?.status).toBe('pending')
+    expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(condition === 'still pending' ? 1 : 0)
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
   it('finds a connector execution from canonical Safe logs without a hosted service', async () => {
