@@ -35,7 +35,9 @@ const budgets = {
   // over the prior cap). The snapshot and gateway ABI each emit once; retain
   // their complete history/decoding surface and round up to the next KiB.
   // Initial-route, largest-chunk and lazy-wallet/review constraints stay fixed.
-  allScripts: 2423 * KIB,
+  // SDK 2.5.0 adds ~0.6 KiB gzip: aggregate 2423.5 KiB. Round up to 2424 KiB;
+  // all route, largest-chunk and lazy-loading checks still pass.
+  allScripts: 2424 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
