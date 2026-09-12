@@ -19,6 +19,7 @@ import {
   type Abi,
   type Address,
   type Hex,
+  type TransactionReceipt,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
@@ -141,6 +142,11 @@ export type RelayrTransactionRecord = {
   tx_uuid?: string
   request?: RelayrEntry
   status?: RelayrTransactionStatus
+}
+
+export type RelayrVerifiedDestination = {
+  chainId: number
+  receipt: TransactionReceipt
 }
 
 export type RelayrQuote = {
@@ -1350,7 +1356,7 @@ function relayrSessionFinished(
 async function verifySavedRelayrDestinations(
   saved: RelayrPendingSession,
   records: RelayrTransactionRecord[],
-): Promise<void> {
+): Promise<RelayrVerifiedDestination[]> {
   const bindings = saved.expectedTransactions
   if (!bindings || bindings.length !== saved.expectedCount ||
       new Set(bindings.map(binding => binding.txUuid)).size !== saved.expectedCount ||
@@ -1358,6 +1364,7 @@ async function verifySavedRelayrDestinations(
       records.length !== saved.expectedCount || !saved.account || !isAddress(saved.account)) {
     throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
   }
+  const verified: RelayrVerifiedDestination[] = []
   for (const binding of bindings) {
     const { entry } = binding
     const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][binding.chain as JBChainId]
@@ -1390,7 +1397,9 @@ async function verifySavedRelayrDestinations(
     if (!block.hash || block.hash !== receipt.blockHash) {
       throw new Error('The destination receipt is no longer canonical. Keep the original bundle pending.')
     }
+    verified.push({ chainId: binding.chain, receipt })
   }
+  return verified
 }
 
 /** Resume a persisted payment attempt using only its original quote and exact receipts. */
@@ -1398,7 +1407,7 @@ async function resumeSavedRelayrSession(
   pendingScope: string,
   saved: RelayrPendingSession,
   onProgress?: (progress: RelayrProgress) => void,
-  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>,
+  onComplete?: (records: RelayrTransactionRecord[], destinations: RelayrVerifiedDestination[]) => Promise<void>,
 ): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -1422,9 +1431,9 @@ async function resumeSavedRelayrSession(
     throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
   }
   let records = saved.records
-  let verified = false
+  let verified: RelayrVerifiedDestination[] | null = null
   if (relayrSessionFinished(records, saved.expectedCount)) {
-    try { await verifySavedRelayrDestinations(saved, records); verified = true } catch { /* Refresh stale provider records. */ }
+    try { verified = await verifySavedRelayrDestinations(saved, records) } catch { /* Refresh stale provider records. */ }
   }
   if (!verified) {
     try {
@@ -1439,8 +1448,8 @@ async function resumeSavedRelayrSession(
       // Receipts can nevertheless prove completion even if the provider's label is wrong.
     }
   }
-  if (!verified) await verifySavedRelayrDestinations(saved, records)
-  await onComplete?.(records)
+  if (!verified) verified = await verifySavedRelayrDestinations(saved, records)
+  await onComplete?.(records, verified)
   clearRelayrPendingSession(pendingScope)
   return { quote: { bundle_uuid: saved.bundleUuid, payment_info: [], transactions: records,
     expectedTransactions: saved.expectedTransactions }, paymentHash: saved.paymentHash, records }
@@ -1471,7 +1480,7 @@ export async function resumeRelayrSession({
   scope: string
   account: Address
   onProgress?: (progress: RelayrProgress) => void
-  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>
+  onComplete?: (records: RelayrTransactionRecord[], destinations: RelayrVerifiedDestination[]) => Promise<void>
 }): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -1517,8 +1526,8 @@ async function executeRelayrCalls({
   onProgress?: (progress: RelayrProgress) => void
   /** Re-prove every mutable project call around signatures and payment. */
   reverify?: () => Promise<void>
-  /** Commit application completion before removing the original payment journal. */
-  onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>
+  /** Commit completion using the exact verified receipts before removing the payment journal. */
+  onComplete?: (records: RelayrTransactionRecord[], destinations: RelayrVerifiedDestination[]) => Promise<void>
 }, assertAuthorizationAvailable: () => void): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -1659,8 +1668,8 @@ async function executeRelayrCalls({
   } catch (error) {
     if (error instanceof RelayrExecutionError && error.records.length) records = error.records
   }
-  await verifySavedRelayrDestinations(session, records)
-  await onComplete?.(records)
+  const verified = await verifySavedRelayrDestinations(session, records)
+  await onComplete?.(records, verified)
   if (pendingScope) clearRelayrPendingSession(pendingScope)
   return { quote, paymentHash, records }
 }

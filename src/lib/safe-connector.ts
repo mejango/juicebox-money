@@ -126,15 +126,31 @@ export async function waitForSafeExecutionHash(
     if (options.signal?.aborted) {
       throw new DOMException('Safe execution wait aborted', 'AbortError')
     }
+    let onRequestAbort: (() => void) | undefined
     try {
-      const response = await fetch(endpoint)
-      if (response.ok) {
-        consecutiveNotFound = 0
-        const transaction = (await response.json()) as {
+      const request = (async () => {
+        const response = options.signal
+          ? await fetch(endpoint, { signal: options.signal })
+          : await fetch(endpoint)
+        if (response.ok) consecutiveNotFound = 0
+        const transaction = response.ok ? (await response.json()) as {
           isExecuted?: boolean
           isSuccessful?: boolean | null
           transactionHash?: Hex | null
-        }
+        } : null
+        return { response, transaction }
+      })()
+      // Bound both fetch and body consumption, including transports that ignore
+      // cancellation, so saved-proposal recovery can continue after its deadline.
+      const { response, transaction } = options.signal ? await Promise.race([
+        request,
+        new Promise<never>((_resolve, reject) => {
+          onRequestAbort = () => reject(new DOMException('Safe execution wait aborted', 'AbortError'))
+          options.signal!.addEventListener('abort', onRequestAbort, { once: true })
+          if (options.signal!.aborted) onRequestAbort()
+        }),
+      ]) : await request
+      if (response.ok && transaction) {
         if (transaction.isExecuted && transaction.isSuccessful === false) {
           throw new Error('Safe executed the proposal, but the onchain transaction failed.')
         }
@@ -150,6 +166,9 @@ export async function waitForSafeExecutionHash(
         }
       }
     } catch (error) {
+      if (options.signal?.aborted) {
+        throw new DOMException('Safe execution wait aborted', 'AbortError')
+      }
       if (
         error instanceof Error &&
         /executed the proposal.*failed|no record of this proposal/i.test(
@@ -160,6 +179,8 @@ export async function waitForSafeExecutionHash(
       }
       // Other service/network failures are transient. Keep the already-created
       // proposal pending instead of inviting a duplicate submission.
+    } finally {
+      if (onRequestAbort) options.signal?.removeEventListener('abort', onRequestAbort)
     }
     await new Promise<void>((resolve, reject) => {
       function onAbort() {

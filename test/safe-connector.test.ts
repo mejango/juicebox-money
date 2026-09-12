@@ -67,6 +67,78 @@ describe('Safe connector transaction boundaries', () => {
     )
   })
 
+  it.each(['fetch', 'body'])('aborts a stalled %s so saved-proposal reconciliation can continue', async phase => {
+    const controller = new AbortController()
+    let entered: () => void = () => {}
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const fetchMock = vi.fn(async () => {
+      if (phase === 'fetch') {
+        entered()
+        // Some providers ignore AbortSignal; recovery must still settle.
+        return new Promise<Response>(() => {})
+      }
+      return {
+        ok: true,
+        json: () => {
+          entered()
+          return new Promise(() => {})
+        },
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+    const result = waitForSafeExecutionHash(8453, PROPOSAL, { signal: controller.signal })
+    const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+
+    await started
+    controller.abort()
+    await rejected
+
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      `https://api.safe.global/tx-service/base/api/v1/multisig-transactions/${PROPOSAL}/`,
+      { signal: controller.signal },
+    )
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  it('does not fetch when recovery was already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(waitForSafeExecutionHash(8453, PROPOSAL, {
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('continues polling transient network failures while the caller remains active', async () => {
+    vi.stubGlobal('window', {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    })
+    const controller = new AbortController()
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('Network unavailable'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ isExecuted: true, transactionHash: EXECUTION }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const addListener = vi.spyOn(controller.signal, 'addEventListener')
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+
+    await expect(waitForSafeExecutionHash(8453, PROPOSAL, {
+      signal: controller.signal, pollingIntervalMs: 1,
+    })).resolves.toBe(EXECUTION)
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    for (const [event, listener] of addListener.mock.calls) {
+      expect(removeListener).toHaveBeenCalledWith(event, listener)
+    }
+  })
+
   it('keeps the app-URL map wider than the hosted-service map (deliberate split)', () => {
     // Unifying these maps is what previously made service calls fire at
     // chains with none. The connector supports Safe links on all eight

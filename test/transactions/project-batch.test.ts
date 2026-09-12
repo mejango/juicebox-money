@@ -3,7 +3,7 @@ import type { Address, Hex } from 'viem'
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
-  relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), safeSuccess: vi.fn(),
+  relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), safeSuccess: vi.fn(), waitSafe: vi.fn(), readSafe: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -15,8 +15,9 @@ vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.ide
 vi.mock('@/lib/safe', () => ({
   canonicalSafeTxHash: (_chain: number, _safe: string, tx: { safeTxHash: string }) => tx.safeTxHash,
   receiptHasSafeExecutionSuccess: mocks.safeSuccess,
+  readSafeTransaction: mocks.readSafe,
 }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: mocks.waitSafe }))
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
 vi.mock('@/lib/relayr', () => ({
@@ -56,6 +57,7 @@ beforeEach(() => {
   vi.stubGlobal('navigator', { locks: {} })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
   mocks.safeSuccess.mockReturnValue(false)
+  mocks.readSafe.mockResolvedValue({ safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3', operation: 0 })
   mocks.client.getBlock.mockResolvedValue({ hash: BLOCK })
   mocks.client.getBlockNumber.mockResolvedValue(10n)
   mocks.client.getLogs.mockResolvedValue([])
@@ -73,12 +75,148 @@ beforeEach(() => {
     const saved = mocks.pending.get(options.pendingScope) as { paid?: boolean } | undefined
     if (!saved?.paid) await options.reverify()
     mocks.pending.set(options.pendingScope, { paid: true })
-    await options.onComplete(options.calls.map((item: ProjectBatchCall) => ({ chain: item.chainId, hash: HASH })))
+    await options.onComplete(options.calls.map((item: ProjectBatchCall) => ({ chain: item.chainId, hash: HASH })),
+      options.calls.map((item: ProjectBatchCall) => ({ chainId: item.chainId,
+        receipt: { transactionHash: HASH, blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [] } })))
     mocks.pending.delete(options.pendingScope)
   })
 })
 
 describe('durable project batches', () => {
+  it('adversarial: rechecks a completed receipt after interruption before finishing the batch', async () => {
+    const calls = [call(1, 'first'), call(1, 'second')]
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('direct')
+      await calls[0].onSubmitted(HASH, 'direct')
+      return { directResults: [HASH], safeResults: [] }
+    }).mockRejectedValueOnce(new Error('interrupted before second submission'))
+    await expect(run(calls)).rejects.toThrow('interrupted before second submission')
+    expect(loadProjectBatch(scope)?.completedIds).toEqual(['1:first'])
+    // The first receipt's old block was replaced while the page was closed.
+    mocks.client.getBlock.mockResolvedValue({ hash: HASH })
+    const resumed = await run(undefined, { reconcileUnsubmitted: async () => true }).then(
+      value => ({ value, error: null }), error => ({ value: null, error }),
+    )
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+    expect(resumed.error, 'must not return complete using an orphaned first receipt').toBeTruthy()
+    expect(loadProjectBatch(scope)?.status).toBe('pending')
+  })
+
+  it('adversarial: lets a resolved connector proposal reach obsolete-Safe reconciliation', async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('safe-connector')
+      await calls[0].onSubmitted(HASH, 'safe-connector')
+      throw new Error('connector response interrupted')
+    })
+    await expect(run([call()])).rejects.toThrow('connector response interrupted')
+    mocks.waitSafe.mockRejectedValue(new Error('No execution for the obsolete proposal'))
+    // No ExecutionSuccess: a keeper resolved the payment instead. Connector and
+    // signer proposals must use the same authenticated policy, including final revalidation.
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
+    const result = await run(undefined, { reconcileObsoleteSafe })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(2)
+    expect(mocks.readSafe).toHaveBeenCalledWith(1, ACCOUNT, HASH)
+    expect(result.status).toBe('complete')
+    expect(result.submissions['1:']).toMatchObject({ kind: 'safe', hash: HASH, safeTx: { nonce: 3 } })
+  })
+
+  it.each(['receipt missing', 'receipt re-mined', 'outcome changed'])('retains the exact original submission when completed evidence has %s', async condition => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSubmitted(HASH, 'direct')
+      return { directResults: [HASH], safeResults: [] }
+    }).mockRejectedValueOnce(new Error('second review interrupted'))
+    await expect(run([call(1, 'first'), call(1, 'second')])).rejects.toThrow('second review interrupted')
+    if (condition === 'receipt missing') mocks.client.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt missing'))
+    else mocks.client.getTransactionReceipt.mockResolvedValueOnce({ transactionHash: HASH,
+      blockHash: condition === 'receipt re-mined' ? HASH : BLOCK,
+      blockNumber: 10n, status: condition === 'outcome changed' ? 'reverted' : 'success', logs: [] })
+    await expect(run()).rejects.toThrow()
+    expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: [],
+      submissions: { '1:first': { kind: 'direct', hash: HASH } } })
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+    // Once the exact original receipt is canonical again, recovery verifies it
+    // and only the unsigned second call receives a new wallet request.
+    expect((await run()).status).toBe('complete')
+    expect(mocks.authority.mock.calls.map(([options]) => options.calls[0].id)).toEqual(['1:first', '1:second', '1:second'])
+  })
+
+  it('rechecks earlier receipt blocks before declaring a freshly sent batch complete', async () => {
+    mocks.client.getBlock.mockResolvedValueOnce({ hash: BLOCK }).mockResolvedValueOnce({ hash: BLOCK })
+      .mockResolvedValueOnce({ hash: HASH })
+    await expect(run([call(1, 'first'), call(1, 'second')])).rejects.toThrow('no longer canonical')
+    expect(loadProjectBatch(scope)?.status).toBe('pending')
+    expect(loadProjectBatch(scope)?.submissions['1:first'].hash).toBe(HASH)
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not checkpoint a reverted receipt fetched after Relayr authenticated an earlier fork', async () => {
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    await expect(run([call(), call(10)])).rejects.toThrow('no longer canonical')
+    expect(loadProjectBatch(scope)?.status).toBe('pending')
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+    await expect(run()).rejects.toThrow('no longer canonical')
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers re-mined completed Relayr hashes without publishing another bundle', async () => {
+    mocks.authority.mockRejectedValueOnce(new Error('later review interrupted'))
+    await expect(run([call(1, 'first'), call(10, 'peer'), call(1, 'later')])).rejects.toThrow('later review interrupted')
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+      blockHash: HASH, blockNumber: 11n, status: 'success', logs: [] })
+    mocks.client.getBlock.mockResolvedValue({ hash: HASH })
+    mocks.client.getTransaction.mockResolvedValueOnce({ hash: HASH, chainId: 1, blockHash: HASH })
+      .mockResolvedValueOnce({ hash: HASH, chainId: 10, blockHash: HASH })
+    const result = await run(undefined, { reconcileUnsubmitted: async () => true })
+    expect(result.status).toBe('complete')
+    expect(result.completionEvidence?.['1:first']).toMatchObject({ blockNumber: 11n, blockHash: HASH })
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('rechecks keeper skips on resume without treating restored custody as completed', async () => {
+    const reconcileUnsubmitted = vi.fn(async (item: ProjectBatchCall) => item.id === '1:first')
+    mocks.authority.mockRejectedValueOnce(new Error('second review interrupted'))
+    await expect(run([call(1, 'first'), call(1, 'second')], { reconcileUnsubmitted })).rejects.toThrow('second review interrupted')
+    reconcileUnsubmitted.mockResolvedValue(false)
+    await expect(run(undefined, { reconcileUnsubmitted })).rejects.toThrow('previously resolved payment changed')
+    // No wallet request was exposed, so a fresh review can replace this draft.
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['different call', 'different hash', 'unavailable'])('keeps a connector proposal pending when authentication yields %s', async condition => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSubmitted(HASH, 'safe-connector')
+      return { directResults: [], safeResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    mocks.waitSafe.mockRejectedValue(new Error('No execution'))
+    if (condition === 'unavailable') mocks.readSafe.mockRejectedValue(new Error('Service unavailable'))
+    else mocks.readSafe.mockResolvedValue({ safeTxHash: condition === 'different hash' ? BLOCK : HASH,
+      nonce: 3, to: TARGET, data: condition === 'different call' ? '0xabcd' : '0x1234', value: '3', operation: 0 })
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
+    if (condition === 'unavailable') await expect(run(undefined, { reconcileObsoleteSafe })).rejects.toThrow('Service unavailable')
+    else expect((await run(undefined, { reconcileObsoleteSafe })).status).toBe('pending')
+    expect(reconcileObsoleteSafe).not.toHaveBeenCalled()
+    expect(loadProjectBatch(scope)?.submissions['1:'].hash).toBe(HASH)
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('revokes connector obsolescence if custody reappears before final completion', async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSubmitted(HASH, 'safe-connector')
+      return { directResults: [], safeResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false)
+    await expect(run(undefined, { reconcileObsoleteSafe })).rejects.toThrow('previously resolved payment changed')
+    expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: [],
+      submissions: { '1:': { kind: 'safe', hash: HASH, safeTx: { nonce: 3 } } } })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps every allocation and orders repeated chain calls in later rounds', async () => {
     const calls = [call(1, 'a'), call(1, 'b'), call(10, 'a'), call(10, 'b')]
     expect(projectBatchRounds(calls)).toEqual([['1:a', '10:a'], ['1:b', '10:b']])
@@ -146,8 +284,7 @@ describe('durable project batches', () => {
     const result = await run(undefined, { reconcileUnsubmitted, verifyCompletion })
     expect(result.status).toBe('complete')
     expect(reconcileUnsubmitted).not.toHaveBeenCalled()
-    expect(verifyCompletion).toHaveBeenCalledTimes(1)
-    expect(verifyCompletion.mock.calls[0][0].id).toBe('1:submitted')
+    expect(verifyCompletion.mock.calls.map(([item]) => item.id)).toEqual(['1:first', '1:submitted'])
     expect(mocks.authority).toHaveBeenCalledTimes(2)
   })
 
@@ -171,8 +308,16 @@ describe('durable project batches', () => {
       await calls[0].onSubmitted?.(HASH, 'direct')
       throw new Error('Transaction reverted')
     })
-    mocks.client.getTransactionReceipt.mockResolvedValueOnce({ transactionHash: HASH,
-      blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    const nextHash = `0x${'ef'.repeat(32)}` as Hex
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('direct')
+      await calls[0].onSubmitted(nextHash, 'direct')
+      return { directResults: [nextHash], safeResults: [] }
+    })
+    mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
+      blockHash: BLOCK, blockNumber: 10n, status: hash === HASH ? 'reverted' : 'success', logs: [] }))
+    mocks.client.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 1,
+      from: ACCOUNT, to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK }))
     const result = await run([call(1, 'failed'), call(1, 'next')], { acceptRevertedTransactions: true, verifyCompletion })
     expect(result.status).toBe('complete')
     expect(verifyCompletion.mock.calls[0][1].status).toBe('reverted')
@@ -362,8 +507,9 @@ describe('durable project batches', () => {
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
       await calls[0].onSafePrepared({ ...safeTx, safeTxHash: BLOCK, nonce: 4 })
     })
-    await expect(run()).rejects.toThrow('Safe nonce changed')
+    expect((await run()).status).toBe('pending')
     expect(loadProjectBatch(scope)?.submissions[call().id].hash).toBe(HASH)
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
   it('marks a proven obsolete Safe proposal without claiming execution or discarding its nonce/hash', async () => {
@@ -378,7 +524,7 @@ describe('durable project batches', () => {
     const result = await run(undefined, { reconcileObsoleteSafe, verifyCompletion })
     expect(result.status).toBe('complete')
     expect(result.submissions['1:']).toMatchObject({ hash: HASH, safeTx: { nonce: 3, safeTxHash: HASH } })
-    expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(1)
+    expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(2)
     expect(verifyCompletion).not.toHaveBeenCalled()
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
@@ -398,7 +544,9 @@ describe('durable project batches', () => {
       window.localStorage.setItem(key, JSON.stringify(journal))
     }
     const reconcileObsoleteSafe = vi.fn().mockResolvedValue(condition !== 'still pending')
-    await expect(run(undefined, { reconcileObsoleteSafe, reverify: vi.fn().mockRejectedValue(new Error('payment changed')) })).rejects.toThrow('payment changed')
+    const reverify = vi.fn().mockRejectedValue(new Error('payment changed'))
+    expect((await run(undefined, { reconcileObsoleteSafe, reverify })).status).toBe('pending')
+    expect(reverify).not.toHaveBeenCalled()
     expect(loadProjectBatch(scope)?.status).toBe('pending')
     expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(condition === 'still pending' ? 1 : 0)
     expect(mocks.authority).toHaveBeenCalledTimes(1)
@@ -418,6 +566,89 @@ describe('durable project batches', () => {
     expect((await run()).status).toBe('complete')
     expect(mocks.client.getLogs).toHaveBeenCalledWith({ address: ACCOUNT, fromBlock: 10n, toBlock: 11n })
     expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['signer', 'connector', 'legacy connector'])('uses the same pending and executed recovery for %s proposals', async transport => {
+    const proposal = { safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3', operation: 0 }
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      if (transport === 'signer') await calls[0].onSafePrepared(proposal)
+      else await calls[0].onSubmitted(HASH, 'safe-connector')
+      return { directResults: [], safeResults: [] }
+    })
+    const initial = await run([call()])
+    const key = `jb-project-batch:v1:journal:${initial.id}`
+    if (transport === 'legacy connector') {
+      const raw = JSON.parse(window.localStorage.getItem(key)!)
+      raw.submissions['1:'].kind = 'safe-connector'
+      window.localStorage.setItem(key, JSON.stringify(raw))
+    }
+    const reverify = vi.fn().mockRejectedValue(new Error('Recovery must not prepare another call'))
+    mocks.waitSafe.mockRejectedValue(new Error('Execution pending'))
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await run(undefined, { reverify })).status).toBe('pending')
+    }
+    expect(loadProjectBatch(scope)?.submissions['1:']).toMatchObject({ kind: 'safe', hash: HASH, fromBlock: 10n })
+    expect(JSON.parse(window.localStorage.getItem(key)!).submissions['1:'].kind).toBe('safe')
+    mocks.waitSafe.mockResolvedValue(HASH)
+    mocks.safeSuccess.mockReturnValue(true)
+    expect((await run(undefined, { reverify })).status).toBe('complete')
+    expect(mocks.waitSafe).toHaveBeenLastCalledWith(1, HASH, { signal: expect.any(AbortSignal) })
+    expect(reverify).not.toHaveBeenCalled()
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('migrates an interrupted legacy connector marker without clearing its unknown submission', async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('safe-connector')
+      throw new Error('Wallet response lost')
+    })
+    await expect(run([call()])).rejects.toThrow('Wallet response lost')
+    const saved = loadProjectBatch(scope)!
+    const key = `jb-project-batch:v1:journal:${saved.id}`
+    const raw = JSON.parse(window.localStorage.getItem(key)!)
+    raw.submissions['1:'].kind = 'safe-connector'
+    window.localStorage.setItem(key, JSON.stringify(raw))
+    await expect(run()).rejects.toThrow('wallet submission may still be pending')
+    expect(loadProjectBatch(scope)?.submissions['1:']).toEqual({ kind: 'safe', fromBlock: 10n })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    expect(mocks.waitSafe).not.toHaveBeenCalled()
+    expect(mocks.readSafe).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('authenticates a service execution candidate after log lookup fails: %s', async authentic => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSafePrepared({ safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3', operation: 0 })
+      return { directResults: [], safeResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    mocks.client.getLogs.mockRejectedValue(new Error('Log lookup unavailable'))
+    mocks.waitSafe.mockResolvedValue(HASH)
+    mocks.safeSuccess.mockReturnValue(authentic)
+    if (authentic) expect((await run()).status).toBe('complete')
+    else {
+      await expect(run()).rejects.toThrow('exact saved Safe proposal')
+      expect(loadProjectBatch(scope)?.submissions['1:'].hash).toBe(HASH)
+    }
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves legacy connector completion evidence and migrates it without replay', async () => {
+    mocks.safeSuccess.mockReturnValue(true)
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSubmitted(HASH, 'safe-connector')
+      return { directResults: [HASH], safeResults: [] }
+    }).mockRejectedValueOnce(new Error('Later review closed'))
+    await expect(run([call(1, 'first'), call(1, 'next')])).rejects.toThrow('Later review closed')
+    const saved = loadProjectBatch(scope)!
+    const key = `jb-project-batch:v1:journal:${saved.id}`
+    const raw = JSON.parse(window.localStorage.getItem(key)!)
+    raw.submissions['1:first'].kind = 'safe-connector'
+    window.localStorage.setItem(key, JSON.stringify(raw))
+    expect(loadProjectBatch(scope)?.completionEvidence).toEqual(saved.completionEvidence)
+    const result = await run(undefined, { reconcileUnsubmitted: async () => true })
+    expect(result.status).toBe('complete')
+    expect(result.submissions['1:first']).toMatchObject({ kind: 'safe', hash: HASH, fromBlock: 10n })
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
   })
 
   it('fails before wallet review when browser locking or durable storage is unavailable', async () => {

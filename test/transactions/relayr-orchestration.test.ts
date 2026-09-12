@@ -815,6 +815,55 @@ describe('Relayr polling and resume semantics', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['fresh', 'saved', 'refreshed'])(
+    'passes the original authenticated receipt to the %s completion checkpoint before clearing payment',
+    async mode => {
+      const storage = localStorageWindow()
+      vi.stubGlobal('window', storage.window)
+      const scope = `verified-receipt-${mode}`
+      if (mode === 'fresh') {
+        installSuccessfulBundle()
+      } else {
+        const entry = signedEntry()
+        installDestinationProof(() => [entry])
+        saveRelayrPendingSession(scope, {
+          bundleUuid: BUNDLE_UUID, paymentHash: HASH, paymentChainId: 1,
+          paymentStatus: 'confirmed', chainIds: [1], expectedCount: 1,
+          records: mode === 'saved' ? successfulRecords([entry]) : [],
+          expectedTransactions: [{ txUuid: OTHER_UUID, chain: 1, entry }],
+          itemCount: 1, account: ALICE, createdAt: 1,
+        })
+        vi.mocked(fetch).mockResolvedValue(response({ transactions: successfulRecords([entry]) }))
+      }
+      const receipt = {
+        transactionHash: DESTINATION_HASH, status: 'success', blockHash: BLOCK_HASH,
+        blockNumber: 100n,
+      }
+      // A subsequent RPC read could observe this transaction in another fork.
+      mocks.client.getTransactionReceipt
+        .mockResolvedValue({ ...receipt, blockHash: HASH, blockNumber: 101n })
+        .mockResolvedValueOnce(receipt)
+      const checkpoint = vi.fn<NonNullable<Parameters<typeof runRelayrCalls>[0]['onComplete']>>()
+        .mockImplementation(async (records, destinations) => {
+          expect(records).toHaveLength(1)
+          expect(destinations).toEqual([{ chainId: 1, receipt }])
+          expect(destinations[0].receipt).toBe(receipt)
+          expect(mocks.client.getTransactionReceipt).toHaveBeenCalledTimes(1)
+          expect(mocks.client.getBlock).toHaveBeenCalledWith({ blockNumber: 100n })
+          expect(loadRelayrPendingSession(scope)?.paymentHash).toBe(HASH)
+        })
+
+      await runRelayrCalls({
+        calls: [{ chainId: 1, target: TARGET, data: '0x1234' }],
+        account: ALICE, pendingScope: scope, onComplete: checkpoint,
+      })
+
+      expect(checkpoint).toHaveBeenCalledTimes(1)
+      expect(loadRelayrPendingSession(scope)).toBeNull()
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(mode === 'fresh' ? 1 : 0)
+    },
+  )
+
   it('blocks another project action while this account has a published forwarder authorization', async () => {
     const storage = localStorageWindow()
     vi.stubGlobal('window', storage.window)
@@ -1077,9 +1126,11 @@ describe('Relayr funding choice and exact execution proof', () => {
 
   it('proves each independently signed destination after one funding payment', async () => {
     const posts = installSuccessfulBundle()
+    const checkpoint = vi.fn()
     await expect(runRelayrCalls({
       calls: [...calls, { chainId: 10, target: BOB, data: '0x5678', value: 2n }],
       account: ALICE, pendingScope: 'two-destination-proof', paymentChainId: 1,
+      onComplete: checkpoint,
     })).resolves.toMatchObject({
       paymentHash: HASH,
       records: [{ tx_uuid: OTHER_UUID }, { tx_uuid: THIRD_UUID }],
@@ -1091,6 +1142,10 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: SECOND_DESTINATION_HASH })
     expect(mocks.client.getBlock).toHaveBeenCalledTimes(2)
+    expect(checkpoint).toHaveBeenCalledWith(expect.any(Array), [
+      { chainId: 1, receipt: expect.objectContaining({ transactionHash: DESTINATION_HASH, blockHash: BLOCK_HASH }) },
+      { chainId: 10, receipt: expect.objectContaining({ transactionHash: SECOND_DESTINATION_HASH, blockHash: BLOCK_HASH }) },
+    ])
     expect(loadRelayrPendingSession('two-destination-proof')).toBeNull()
   })
 

@@ -263,6 +263,7 @@ const safeWaiters: (() => void)[] = []
 const SAFE_MAX_CONCURRENT = 3
 const SAFE_PENDING_PAGE_SIZE = 50
 const MAX_PENDING_SAFE_TXS = 250
+const SAFE_TRANSACTION_READ_TIMEOUT_MS = 10_000
 const nonceInflight = new Map<string, Promise<number | null>>()
 
 const SAFE_APPROVAL_WRITE_GAS = 500_000n
@@ -679,6 +680,67 @@ export function getSafeNextNonce(
   nonceInflight.set(key, request)
   request.finally(() => nonceInflight.delete(key))
   return request
+}
+
+/** Recover the exact saved proposal, including proposals whose nonce was consumed. */
+export async function readSafeTransaction(
+  chainId: JBChainId,
+  safe: Address,
+  hash: Hex,
+): Promise<SafeQueuedTx> {
+  const base = txBase(chainId)
+  if (!base) throw new Error('No hosted Safe service is configured for this chain.')
+  if (!/^0x[0-9a-f]{64}$/iu.test(hash)) {
+    throw new Error('The saved Safe transaction hash is invalid.')
+  }
+  const expectedSafe = getAddress(safe)
+  const expectedHash = hash.toLowerCase()
+  const path = `/api/v1/multisig-transactions/${expectedHash}/`
+  const bases = [...new Set([base, legacyBase(chainId)].filter(Boolean))] as string[]
+  let lastError: Error | null = null
+  for (const candidate of bases) {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const tx = await Promise.race([
+        (async () => {
+          const response = await safeFetch(`${candidate}${path}`, {
+            headers: requestHeaders(),
+            signal: controller.signal,
+          })
+          if (!response.ok) throw new Error(`Safe service ${response.status}`)
+          return (await response.json()) as SafeQueuedTx & { safe?: Address }
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error('Safe transaction lookup timed out.'))
+            controller.abort()
+          }, SAFE_TRANSACTION_READ_TIMEOUT_MS)
+        }),
+      ])
+      if (
+        !tx ||
+        typeof tx.safe !== 'string' ||
+        !isAddressEqual(getAddress(tx.safe), expectedSafe)
+      ) {
+        throw new Error('The Safe service returned a different Safe transaction.')
+      }
+      if (
+        typeof tx.safeTxHash !== 'string' ||
+        tx.safeTxHash.toLowerCase() !== expectedHash ||
+        canonicalSafeTxHash(chainId, expectedSafe, tx).toLowerCase() !== expectedHash
+      ) {
+        throw new Error('The Safe service returned a different Safe transaction hash.')
+      }
+      return tx
+    } catch (error) {
+      lastError =
+        error instanceof Error ? error : new Error('Safe service unavailable')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  throw lastError ?? new Error('Safe service unavailable')
 }
 
 export async function listPendingSafeTxs(
