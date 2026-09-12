@@ -39,7 +39,10 @@ const budgets = {
   // all route, largest-chunk and lazy-loading checks still pass.
   // Pending-payment inventory, authenticated retries and the resumable review
   // panel add 5.7 KiB gzip (2429.2 total). Existing route/lazy-load caps stay fixed.
-  allScripts: 2430 * KIB,
+  // Live fee-buyback review with SDK 2.5.1 measures 2431.7 KiB in Linux CI
+  // (2426.4 KiB locally). Round the measured CI aggregate up to 2432 KiB;
+  // route, largest-chunk and lazy-loading limits stay fixed.
+  allScripts: 2432 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
