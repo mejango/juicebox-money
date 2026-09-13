@@ -686,6 +686,9 @@ export function CreateForm() {
     setOwnerPerChainOpen(false);
   };
   const createsAuthoritySafe = authorityEnabled && authorityMode === "create";
+  const authorityDescription = flavor === "revnet"
+    ? "The operator handles the revnet's day-to-day operations with the limited controls listed above."
+    : "The owner holds the project and manages its rules and funds.";
   const ownerOk = !authorityEnabled || (createsAuthoritySafe
     ? validateAuthorityPolicy(authoritySigners, authorityThreshold)
     : (owner.trim() === "" || resolvedAddress(owner) !== null) &&
@@ -2870,14 +2873,14 @@ export function CreateForm() {
               <span className="field-label">
                 {flavor === "revnet" ? "Revnet operator" : "Project owner"}
               </span>
-              <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-smoke-700">
-                <li>{flavor === "revnet"
-                  ? "The operator handles the revnet's day-to-day operations with the limited controls listed above."
-                  : "The owner holds the project and manages its rules and funds."}</li>
-                {createsAuthoritySafe ? (
+              {createsAuthoritySafe ? (
+                <ul className="mb-4 mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-smoke-700">
+                  <li>{authorityDescription}</li>
                   <li>{flavor === "revnet" ? "The operator" : "The owner"} is made up of addresses that need to agree on decisions.</li>
-                ) : null}
-              </ul>
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
+              )}
               {authorityMode === "create" ? (
                 <AuthoritySafeEditor
                   role={flavor === "revnet" ? "operator" : "owner"}

@@ -2,6 +2,7 @@
 
 import { useId } from 'react'
 import { getAddress, zeroAddress } from 'viem'
+import { ModalCloseButton } from '@/components/ui/ModalShell'
 
 const MIN_SIGNERS = 2
 const MAX_SIGNERS = 20
@@ -68,8 +69,7 @@ export function AuthoritySafeEditor({
                 aria-describedby={error ? errorId : undefined}
                 className={`input-well min-h-[44px] min-w-0 flex-1 px-3 font-mono text-xs disabled:opacity-60 ${error ? '!border-red-400' : ''}`}
               />
-              <button
-                type="button"
+              <ModalCloseButton
                 onClick={() => {
                   if (disabled || owners.length <= MIN_SIGNERS) return
                   const next = owners.filter((_, ownerIndex) => ownerIndex !== index)
@@ -78,10 +78,8 @@ export function AuthoritySafeEditor({
                 }}
                 disabled={disabled || owners.length <= MIN_SIGNERS}
                 aria-label={`Remove ${roleLabel.toLowerCase()} signer ${index + 1}`}
-                className="min-h-[44px] shrink-0 px-1 text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-40"
-              >
-                Remove
-              </button>
+                className="text-smoke-700 hover:bg-smoke-75 hover:text-ink disabled:opacity-40"
+              />
             </div>
             {error ? <p id={errorId} className="field-error pl-1">{error}</p> : null}
           </div>
