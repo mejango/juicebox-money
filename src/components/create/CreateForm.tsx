@@ -1830,7 +1830,9 @@ export function CreateForm() {
       if (session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
         throw new Error("This launch still has published authorizations. Check the original bundle before starting another launch.");
       }
-      abandonLaunchSession(session?.salt);
+      if (!abandonLaunchSession(session?.salt)) {
+        throw new Error("Could not cancel this deployment. Restore browser storage and try again.");
+      }
       restoredSessionRef.current = null;
       pinnedRef.current = null;
       statusesRef.current = {};
@@ -1850,7 +1852,9 @@ export function CreateForm() {
         abandon();
       }
     } catch (error) {
-      setLaunchError(friendlyError(error));
+      // Keep local recovery errors intact, including the word "cancel".
+      setLaunchError(error instanceof Error ? error.message : "Could not cancel this deployment. Please try again.");
+      setConfirmOpen(true);
     }
   };
 
@@ -2271,6 +2275,50 @@ export function CreateForm() {
     ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
   const mayAbandonLaunch = !usesRelayr || !activeLaunchSession ||
     canAbandonRelayrLaunch(activeLaunchSession);
+  const launchCancellation = (
+    <>
+      {phase === "failed" && !mayAbandonLaunch ? (
+        <p className="text-sm text-smoke-700">
+          This launch has published authorizations that may still execute.
+          Check the saved bundle to continue; starting over could create duplicate projects.
+        </p>
+      ) : null}
+      {phase === "failed" && mayAbandonLaunch ? (
+        <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
+          {usesRelayr && activeLaunchSession?.relayr?.published ? (
+            <p>
+              The remaining launch authorizations can no longer execute.
+              Any relay payment already made is not refunded by cancelling this deployment.
+            </p>
+          ) : null}
+          <p>
+            {launchedChainNames.length > 0
+              ? `Cancelling stops this run. The ${
+                  launchedChainNames.length === 1 ? "project" : "projects"
+                } already launched on ${launchedChainNames.join(", ")} ${
+                  launchedChainNames.length === 1 ? "is" : "are"
+                } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
+                  launchedChainNames.length === 1 ? "it" : "them"
+                }.${
+                  maybeLaunchedChainNames.length > 0
+                    ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
+                    : ""
+                }`
+              : maybeLaunchedChainNames.length > 0
+                ? `Cancelling stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
+                : "Cancel this deployment to edit the fields and start over. Your draft will be kept."}
+          </p>
+          <button
+            type="button"
+            onClick={abandonLaunch}
+            className="mt-1 font-medium underline underline-offset-2"
+          >
+            Cancel deployment
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
   const launchDialog = confirmOpen ? (
     <TxConfirmDialog
       open
@@ -2341,46 +2389,7 @@ export function CreateForm() {
           ))}
         </ul>
       ) : null}
-      {phase === "failed" && !mayAbandonLaunch ? (
-        <p className="text-sm text-smoke-700">
-          This launch has published authorizations that may still execute.
-          Check the saved bundle to continue; starting over could create duplicate projects.
-        </p>
-      ) : null}
-      {phase === "failed" && mayAbandonLaunch ? (
-        <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
-          {usesRelayr && activeLaunchSession?.relayr?.published ? (
-            <p>
-              The remaining launch authorizations can no longer execute.
-              Any relay payment already made is not refunded by abandoning this launch.
-            </p>
-          ) : null}
-          <p>
-            {launchedChainNames.length > 0
-              ? `Abandoning stops this run. The ${
-                  launchedChainNames.length === 1 ? "project" : "projects"
-                } already launched on ${launchedChainNames.join(", ")} ${
-                  launchedChainNames.length === 1 ? "is" : "are"
-                } kept, but a new launch afterwards creates a SEPARATE project — it will not be linked to ${
-                  launchedChainNames.length === 1 ? "it" : "them"
-                }.${
-                  maybeLaunchedChainNames.length > 0
-                    ? ` A launch on ${maybeLaunchedChainNames.join(", ")} may also still confirm — if it does, launching again would create a duplicate project there.`
-                    : ""
-                }`
-              : maybeLaunchedChainNames.length > 0
-                ? `Abandoning stops this run, but a launch on ${maybeLaunchedChainNames.join(", ")} may still confirm. Check your wallet's recent activity there first — if a launch went through, launching again would create a duplicate project.`
-                : "Nothing has launched. Abandoning unlocks the form so you can change the setup and start over."}
-          </p>
-          <button
-            type="button"
-            onClick={abandonLaunch}
-            className="mt-1 font-medium underline underline-offset-2"
-          >
-            Abandon this launch
-          </button>
-        </div>
-      ) : null}
+      {launchCancellation}
     </TxConfirmDialog>
   ) : null;
 
@@ -3974,7 +3983,7 @@ export function CreateForm() {
             if (canLaunch) setConfirmOpen(true);
           }}
           disabled={connected && !canLaunch}
-          className="btn-primary mt-2 min-h-[56px] w-full text-base"
+          className="btn-primary mt-3 min-h-[56px] max-w-full px-6 text-base"
         >
           {phase === "pinning"
             ? "Saving your project details…"
@@ -3988,6 +3997,7 @@ export function CreateForm() {
                     ? `Launch on ${selected.length} chains`
                     : "Launch project"}
         </button>
+        {phase === "failed" ? <div className="mt-3">{launchCancellation}</div> : null}
       </section>
 
       {/* Back / Next wizard footer */}
