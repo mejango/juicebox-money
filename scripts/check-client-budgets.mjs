@@ -42,7 +42,12 @@ const budgets = {
   // Live fee-buyback review with SDK 2.5.1 measures 2431.7 KiB in Linux CI
   // (2426.4 KiB locally). Round the measured CI aggregate up to 2432 KiB;
   // route, largest-chunk and lazy-loading limits stay fixed.
-  allScripts: 2432 * KIB,
+  // Inline Owner/Operator Safe creation, exact policy verification and setup
+  // recovery measure 2443.1 KiB versus 2432.0 KiB on unchanged main with the
+  // same Node/npm toolchain. Allow 1.9 KiB headroom for this new capability.
+  // Deferred Safe/review/chart UI keeps create at 482.9 KiB within its 485 KiB
+  // route limit; existing route, largest-chunk and wallet-load caps stay fixed.
+  allScripts: 2445 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

@@ -29,6 +29,7 @@ import {
   type JBFeedPair,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
+import type { SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { chainName } from '@/lib/urn'
 
 /** 10,000 tokens per ETH/USD paid (18-decimal fixed point). */
@@ -353,6 +354,8 @@ export type AccountingConfig = {
 }
 
 export type LaunchPlan = {
+  /** Exact inline Safe deployment for this chain, frozen with the launch authority. */
+  multisigs?: SafeDeploymentPlan[]
   accounting: AccountingConfig
   /** Issuance denomination when accounting is standard tokens: null =
    *  follow accounting (ETH when present, else USD). Custom-token

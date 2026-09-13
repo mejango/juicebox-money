@@ -19,6 +19,7 @@ import type { LaunchPlan } from '@/lib/launch'
 import type { Address } from 'viem'
 import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
 import { DRAFT_KEY } from '@/lib/draft'
+import { validateLaunchMultisigs } from '@/lib/launch-multisig'
 
 export const LAUNCH_SESSION_KEY = 'jbm-launch-pending-v1'
 
@@ -42,6 +43,14 @@ export type LaunchChainStatus = {
    * mint a duplicate — surface a check-your-wallet warning before retrying.
    */
   unverifiedSend?: true
+  /** Safe setup is resumable independently of the non-idempotent project launch. */
+  multisigSetup?: {
+    phase: 'signing' | 'confirming' | 'done' | 'failed'
+    /** The interrupted wallet action was a Safe proposal, not a direct send. */
+    safe?: true
+    txHash?: `0x${string}`
+    safeProposalHash?: `0x${string}`
+  }
 }
 
 export type LaunchSession = {
@@ -103,7 +112,8 @@ export function saveLaunchSession(session: LaunchSession): boolean {
  * The persisted session, shape-checked and coerced to a resume-safe view: a
  * chain interrupted mid-signature (no transaction hash to wait on) resumes
  * as `pending` so it re-sends; a submitted transaction keeps its hash so
- * the resume waits on it instead of sending again.
+ * the resume waits on it instead of sending again. Safe setup retains its
+ * own exact phase and hashes for its separate recovery path.
  */
 export function loadLaunchSession({ strict = false }: { strict?: boolean } = {}): LaunchSession | null {
   if (typeof window === 'undefined') {
@@ -165,6 +175,9 @@ export function loadLaunchSession({ strict = false }: { strict?: boolean } = {})
     // field undefined.
     for (const chainId of value.chains) {
       const plan = (value.plans as Record<number, Partial<LaunchPlan>>)[chainId]
+      // A saved Safe policy is part of the exact launch request. Never resume
+      // an altered policy, deterministic address, or authority recipient.
+      validateLaunchMultisigs(plan as LaunchPlan)
       if (typeof plan.projectName !== 'string') {
         plan.projectName = plan.store?.name ?? ''
       }
@@ -173,6 +186,9 @@ export function loadLaunchSession({ strict = false }: { strict?: boolean } = {})
     for (const chainId of value.chains) {
       const status = (value.statuses as Record<number, unknown>)[chainId]
       statuses[chainId] = coerceStatus(status)
+      if (statuses[chainId].multisigSetup && !value.plans[chainId].multisigs?.length) {
+        throw new Error('Saved Safe setup has no pinned deployment plan.')
+      }
     }
     return {
       ...(value.transport === 'relayr' || value.transport === 'direct' ? { transport: value.transport } : {}),
@@ -202,6 +218,9 @@ export function canAbandonRelayrLaunch(session: LaunchSession): boolean {
 function coerceStatus(value: unknown): LaunchChainStatus {
   if (typeof value !== 'object' || value === null) return { phase: 'pending' }
   const status = value as Partial<LaunchChainStatus>
+  const multisigSetup = status.multisigSetup === undefined
+    ? undefined
+    : readMultisigSetup(status.multisigSetup)
   const txHash =
     typeof status.txHash === 'string' && /^0x[0-9a-fA-F]+$/.test(status.txHash)
       ? (status.txHash as `0x${string}`)
@@ -226,6 +245,7 @@ function coerceStatus(value: unknown): LaunchChainStatus {
   }
   return {
     phase,
+    ...(multisigSetup ? { multisigSetup } : {}),
     ...(wasSigning ? { unverifiedSend: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
@@ -233,6 +253,25 @@ function coerceStatus(value: unknown): LaunchChainStatus {
       ? { projectId: status.projectId }
       : {}),
   }
+}
+
+function readMultisigSetup(value: unknown): NonNullable<LaunchChainStatus['multisigSetup']> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Invalid saved Safe setup.')
+  }
+  const setup = value as NonNullable<LaunchChainStatus['multisigSetup']>
+  if (
+    Object.keys(setup).some(key => !['phase', 'safe', 'txHash', 'safeProposalHash'].includes(key)) ||
+    !['signing', 'confirming', 'done', 'failed'].includes(setup.phase) ||
+    (setup.safe !== undefined && setup.safe !== true) ||
+    [setup.txHash, setup.safeProposalHash].some(hash =>
+      hash !== undefined && (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(hash)),
+    ) ||
+    (setup.phase === 'confirming' && !setup.txHash && !setup.safeProposalHash)
+  ) {
+    throw new Error('Invalid saved Safe setup.')
+  }
+  return setup
 }
 
 /** Fold one chain's progress into the persisted session (no-op when no
@@ -243,9 +282,13 @@ export function recordLaunchChainStatus(
 ): void {
   const session = loadLaunchSession()
   if (!session || !session.chains.includes(chainId)) return
+  const multisigSetup = status.multisigSetup ?? session.statuses[chainId]?.multisigSetup
   saveLaunchSession({
     ...session,
-    statuses: { ...session.statuses, [chainId]: status },
+    statuses: {
+      ...session.statuses,
+      [chainId]: { ...status, ...(multisigSetup ? { multisigSetup } : {}) },
+    },
   })
 }
 

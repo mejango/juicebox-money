@@ -1,6 +1,7 @@
 "use client";
 
 import { JB_CHAINS, type JBChainId } from "@bananapus/nana-sdk-core";
+import type { SafeDeploymentPlan } from "@bananapus/nana-sdk-core/safe";
 import {
   getProjectCreationFee,
   RULESET_WEIGHT_INHERIT,
@@ -54,6 +55,7 @@ import {
   recordLaunchChainStatus,
   remainingLaunchChains,
   saveLaunchSession,
+  type LaunchChainStatus,
   type LaunchSession,
 } from "@/lib/launch-session";
 import {
@@ -83,6 +85,7 @@ import {
 import { erc20Abi } from "viem";
 import { splitOk, type DraftSplit } from "./SplitsEditor";
 import { AddressField } from "./AddressField";
+import { validateAuthorityPolicy } from "@/lib/launch-multisig";
 import {
   newDraftStage,
   stageCashOutTax,
@@ -96,7 +99,6 @@ import {
   type DraftStage,
 } from "./stage-draft";
 import type { ChartStage } from "@/components/project/chartUtils";
-import { IssuanceLadder } from "@/components/project/IssuanceLadder";
 import {
   AddButton,
   CheckIcon,
@@ -109,10 +111,7 @@ import {
 } from "./ui";
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
-import {
-  TxConfirmDialog,
-  type TxConfirmRow,
-} from "@/components/ui/TxConfirmDialog";
+import type { TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -138,6 +137,18 @@ import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
 } from "@/lib/jbcenter-ipfs";
+
+const AuthoritySafeEditor = dynamic(
+  () => import("./AuthoritySafeEditor").then(module => module.AuthoritySafeEditor),
+  { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading Safe editor…</p> },
+);
+const TxConfirmDialog = dynamic(
+  () => import("@/components/ui/TxConfirmDialog").then(module => module.TxConfirmDialog),
+);
+const IssuanceLadder = dynamic(
+  () => import("@/components/project/IssuanceLadder").then(module => module.IssuanceLadder),
+  { loading: () => <p role="status" className="text-sm text-smoke-600">Loading issuance preview…</p> },
+);
 
 // Controlled drafts stay in this form. Both editors share one deferred
 // chunk, loaded only when the user opens a rules or shop step.
@@ -192,11 +203,7 @@ const makeImageHandler =
     setPreview(URL.createObjectURL(file));
   };
 
-type ChainStatus = {
-  phase: "pending" | "signing" | "confirming" | "uncertain" | "done" | "failed";
-  txHash?: `0x${string}`;
-  safeProposalHash?: `0x${string}`;
-  projectId?: number;
+type ChainStatus = LaunchChainStatus & {
   error?: string;
   indexed?: boolean;
 };
@@ -369,6 +376,9 @@ export function CreateForm() {
   /** Project owner (or revnet operator). The dead address permanently disables
    *  retained authority; an empty enabled field uses the connected wallet. */
   const [owner, setOwner] = useState(PERMANENTLY_DISABLED_AUTHORITY);
+  const [authorityMode, setAuthorityMode] = useState<"create" | "existing">("create");
+  const [authoritySigners, setAuthoritySigners] = useState<string[]>(["", "", ""]);
+  const [authorityThreshold, setAuthorityThreshold] = useState(2);
   const [ticker, setTicker] = useState("");
 
   // --- 2: Rules (one entry per queued ruleset/stage) ---
@@ -435,6 +445,7 @@ export function CreateForm() {
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
+  const [setupRecoveryHashes, setSetupRecoveryHashes] = useState<Record<number, string>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
@@ -449,14 +460,6 @@ export function CreateForm() {
   // salt/plans MUST be reused verbatim so the remaining chains pair with the
   // already-launched ones instead of minting a duplicate project.
   const restoredSessionRef = useRef<LaunchSession | null>(null);
-
-  // A saved run keeps its transport: an interrupted direct launch must never
-  // become a new Relayr bundle just because the wallet or selection changed.
-  const usesRelayr = restoredSessionRef.current
-    ? restoredSessionRef.current.transport === "relayr"
-    : selected.length > 1 &&
-      relayrSupportsChains(selected) &&
-      !isSafeConnection(config);
 
   const busy = phase !== "form";
   const customActive = customOn && customMeta !== null;
@@ -682,9 +685,18 @@ export function CreateForm() {
     setOwnerPerChain({});
     setOwnerPerChainOpen(false);
   };
-  const ownerOk =
-    (owner.trim() === "" || resolvedAddress(owner) !== null) &&
-    ownerOverrides.every((v) => resolvedAddress(v) !== null);
+  const createsAuthoritySafe = authorityEnabled && authorityMode === "create";
+  const ownerOk = !authorityEnabled || (createsAuthoritySafe
+    ? validateAuthorityPolicy(authoritySigners, authorityThreshold)
+    : (owner.trim() === "" || resolvedAddress(owner) !== null) &&
+      ownerOverrides.every((v) => resolvedAddress(v) !== null));
+  // A saved run keeps its transport. Relayr can combine Safe deployment and
+  // the authenticated launch even when only one chain is selected.
+  const usesRelayr = restoredSessionRef.current
+    ? restoredSessionRef.current.transport === "relayr"
+    : (selected.length > 1 || createsAuthoritySafe) &&
+      relayrSupportsChains(selected) &&
+      !isSafeConnection(config);
   const approvalOk =
     isSimpleProject ||
     approvalDeadline !== "custom" ||
@@ -1182,6 +1194,7 @@ export function CreateForm() {
   const buildPlans = (
     store: LaunchPlan["store"],
     launchAccount: Address,
+    multisig?: SafeDeploymentPlan,
   ): Record<number, LaunchPlan> => {
     // FROZEN deliberately: every chain must encode the SAME start or the cross-chain
     // configuration hash — and the deterministic addresses derived from it — diverge. The
@@ -1220,6 +1233,7 @@ export function CreateForm() {
             issuanceBase,
             allowAnyToken: anyTokenAccepted,
             owner:
+              (flavor !== "revnet" ? multisig?.address : undefined) ??
               resolvedAddress(ownerPerChain[chainId]?.trim() || owner) ??
               launchAccount,
             approvalCustomAddress:
@@ -1241,8 +1255,10 @@ export function CreateForm() {
             flavor: flavor === "revnet" ? "revnet" : "project",
             projectName: name.trim(),
             operator:
+              (flavor === "revnet" ? multisig?.address : undefined) ??
               resolvedAddress(ownerPerChain[chainId]?.trim() || owner) ??
               launchAccount,
+            ...(multisig ? { multisigs: [multisig] } : {}),
             ticker: ticker.trim(),
             stages: planStages,
             afterMode: isSimpleProject ? "wait" : afterMode,
@@ -1466,6 +1482,19 @@ export function CreateForm() {
             });
           }
         } else {
+          if (pinned.plans[chainId].multisigs?.length) {
+            const { prepareLaunchMultisigs } = await import("@/lib/launch-multisig-direct");
+            await prepareLaunchMultisigs({
+              chainId,
+              salt: pinned.salt,
+              plan: pinned.plans[chainId],
+              account: address!,
+              switchChain: reviewedChainId => switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
+              writeContract: request => writeContractAsync(request as unknown as Parameters<typeof writeContractAsync>[0]),
+              onProgress: setRelayrProgress,
+              onSetup: multisigSetup => updateStatus(chainId, { multisigSetup }),
+            });
+          }
           updateStatus(chainId, { phase: "signing", error: undefined });
           // Fees are dynamic and must match msg.value EXACTLY — re-read right
           // before sending, never reuse across chains.
@@ -1561,6 +1590,10 @@ export function CreateForm() {
           });
           throw new Error(`Transaction failed on ${chainName(chainId)}.`);
         }
+        if (pinned.plans[chainId].multisigs?.length) {
+          const { verifyCreatedLaunchMultisigs } = await import("@/lib/launch-multisig");
+          await verifyCreatedLaunchMultisigs(client, pinned.plans[chainId], receipt.blockNumber);
+        }
         const projectId = projectIdFromReceipt(receipt, chainId as JBChainId);
         if (!projectId) {
           updateStatus(chainId, {
@@ -1589,6 +1622,8 @@ export function CreateForm() {
         );
         setPhase("failed");
         return; // Stop here — retry checks a submitted hash before sending.
+      } finally {
+        setRelayrProgress(null);
       }
     }
     await finishLaunch();
@@ -1683,7 +1718,31 @@ export function CreateForm() {
         statusesRef.current = initial;
         setStatuses(initial);
         const result = await pinAll();
-        pinned = { ...result, plans: buildPlans(result.store, address) };
+        let transport: NonNullable<LaunchSession["transport"]> = usesRelayr ? "relayr" : "direct";
+        let multisig: SafeDeploymentPlan | undefined;
+        if (createsAuthoritySafe) {
+          const clients = selected.map(chainId => {
+            const client = getPublicClient(config, {
+              chainId: chainId as SupportedChainId,
+            }) as PublicClient | undefined;
+            if (!client) throw new Error(`Could not connect to ${chainName(chainId)}.`);
+            return client;
+          });
+          const { canRelayrCreateFromAccount, resolveLaunchMultisig } = await import("@/lib/launch-multisig");
+          // Ordinary connectors can also expose contract wallets or delegated
+          // accounts. Decide the transport before freezing a new launch session.
+          if (transport === "relayr" && !await canRelayrCreateFromAccount(address, clients)) {
+            transport = "direct";
+          }
+          multisig = await resolveLaunchMultisig({
+            owners: authoritySigners,
+            threshold: authorityThreshold,
+            role: flavor === "revnet" ? "operator" : "owner",
+            salt: result.salt,
+            clients,
+          });
+        }
+        pinned = { ...result, plans: buildPlans(result.store, address, multisig) };
         pinnedRef.current = pinned;
         // Persist progress up front so a refresh resumes with the SAME salt
         // instead of re-launching everything — single-chain included: a
@@ -1698,11 +1757,11 @@ export function CreateForm() {
           statuses: initial,
           createdAt: Date.now(),
           account: address,
-          transport: usesRelayr ? "relayr" : "direct",
+          transport,
         };
         // The relayed path reserves its journal under the same browser lock
         // used for submission. Never overwrite another tab's active launch.
-        if (!usesRelayr) {
+        if (transport === "direct") {
           const save = () => {
             if (!saveLaunchSession(session)) {
               throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
@@ -1729,6 +1788,28 @@ export function CreateForm() {
   const retry = () => {
     const pinned = resumablePinned();
     if (pinned) void runChains(pinned);
+  };
+
+  const recoverSafeSetup = async (chainId: number, cancelled = false) => {
+    const pinned = resumablePinned();
+    if (!pinned) return;
+    try {
+      const hash = setupRecoveryHashes[chainId]?.trim();
+      if (!cancelled && !/^0x[0-9a-fA-F]{64}$/.test(hash ?? "")) {
+        throw new Error("Enter the transaction hash or Safe proposal hash from your wallet.");
+      }
+      const { recoverLaunchMultisigSetup } = await import("@/lib/launch-multisig-direct");
+      await recoverLaunchMultisigSetup(chainId, pinned.salt, cancelled ? undefined : hash as `0x${string}`);
+      setLaunchError(null);
+      const session = loadLaunchSession();
+      if (session) {
+        statusesRef.current = session.statuses;
+        setStatuses(session.statuses);
+      }
+      await runChains(pinned);
+    } catch (error) {
+      setLaunchError(friendlyError(error));
+    }
   };
 
   /**
@@ -1814,6 +1895,9 @@ export function CreateForm() {
     links,
     owner,
     ownerPerChain,
+    authorityMode,
+    authoritySigners,
+    authorityThreshold,
     allowAnyToken: anyTokenAccepted,
     approvalCustom,
     approvalPerChain,
@@ -1850,6 +1934,9 @@ export function CreateForm() {
     });
     setOwner(draft.owner);
     setOwnerPerChain(draft.ownerPerChain);
+    setAuthorityMode(draft.authorityMode ?? "existing");
+    setAuthoritySigners(draft.authoritySigners ?? ["", "", ""]);
+    setAuthorityThreshold(draft.authorityThreshold ?? 2);
     setApprovalCustom(draft.approvalCustom);
     setApprovalPerChain(draft.approvalPerChain);
     setAccepts(draft.accepts);
@@ -1994,6 +2081,9 @@ export function CreateForm() {
     links,
     owner,
     ownerPerChain,
+    authorityMode,
+    authoritySigners,
+    authorityThreshold,
     approvalCustom,
     approvalPerChain,
     accepts,
@@ -2046,7 +2136,14 @@ export function CreateForm() {
 
   // ---- Confirm dialog: review rows, per-chain launch progress, and the run's
   // progress. Rendered on the success view too so Done reveals it. ----
-  const ownerValue = !authorityEnabled ? (
+  const resolvedAuthoritySafe = Object.values(pinnedRef.current?.plans ?? restoredSessionRef.current?.plans ?? {})
+    .flatMap(plan => plan.multisigs ?? [])[0];
+  const ownerValue = resolvedAuthoritySafe || createsAuthoritySafe ? (
+    <span className="inline-flex min-w-0 flex-col items-start gap-1">
+      <span>{resolvedAuthoritySafe?.threshold ?? authorityThreshold} of {resolvedAuthoritySafe?.owners.length ?? authoritySigners.length} Safe</span>
+      {resolvedAuthoritySafe ? <AddressLabel address={resolvedAuthoritySafe.address} /> : null}
+    </span>
+  ) : !authorityEnabled ? (
     "No retained authority"
   ) : ownerOverrides.length > 0 ? (
     "Set per chain"
@@ -2064,6 +2161,14 @@ export function CreateForm() {
       label: flavor === "revnet" ? "Revnet operator" : "Project owner",
       value: ownerValue,
     },
+    ...(resolvedAuthoritySafe || createsAuthoritySafe ? [{
+      label: "Multisig signers",
+      value: <span className="flex min-w-0 flex-col gap-1 font-mono text-xs">
+        {(resolvedAuthoritySafe?.owners ?? authoritySigners).map((signer, index) => (
+          <span className="break-all" key={index}>{signer || "Address needed"}</span>
+        ))}
+      </span>,
+    }] : []),
     {
       label: "Launching",
       value:
@@ -2156,6 +2261,12 @@ export function CreateForm() {
   });
   const launchLocked = phase === "pinning" || phase === "launching";
   const activeLaunchSession = loadLaunchSession() ?? restoredSessionRef.current;
+  const interruptedSetups = !usesRelayr && phase === "failed"
+    ? selected.filter(chainId => {
+        const setup = activeLaunchSession?.statuses[chainId]?.multisigSetup;
+        return setup?.phase === "signing" && !setup.txHash && !setup.safeProposalHash;
+      })
+    : [];
   const relayrFundingStarted = activeLaunchSession?.relayr &&
     ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
   const mayAbandonLaunch = !usesRelayr || !activeLaunchSession ||
@@ -2191,6 +2302,24 @@ export function CreateForm() {
         if (phase === "form") setLaunchError(null);
       }}
     >
+      {interruptedSetups.map(chainId => (
+        <div key={chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3 text-xs text-smoke-700">
+          <p>Safe creation was interrupted on {chainName(chainId)}. Check your wallet&apos;s activity before continuing.</p>
+          <input
+            value={setupRecoveryHashes[chainId] ?? ""}
+            onChange={event => setSetupRecoveryHashes(hashes => ({ ...hashes, [chainId]: event.target.value.slice(0, 66) }))}
+            aria-label={`Safe creation transaction hash on ${chainName(chainId)}`}
+            placeholder="Transaction or Safe proposal hash"
+            className="input-well min-h-[44px] w-full px-3 font-mono text-xs"
+          />
+          <button type="button" onClick={() => void recoverSafeSetup(chainId)} className="block font-medium text-bluebs-600">
+            Check this transaction
+          </button>
+          <button type="button" onClick={() => void recoverSafeSetup(chainId, true)} className="block font-medium text-bluebs-600">
+            I cancelled Safe creation without submitting
+          </button>
+        </div>
+      ))}
       {usesRelayr && phase !== "done" && relayrFundingStarted && activeLaunchSession?.relayr?.paymentChainId ? (
         <p className="text-sm text-smoke-700">
           Checking the saved Relayr payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
@@ -2732,6 +2861,25 @@ export function CreateForm() {
               <span className="field-label">
                 {flavor === "revnet" ? "Revnet operator" : "Project owner"}
               </span>
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-smoke-700">
+                <li>{flavor === "revnet"
+                  ? "The operator handles the revnet's day-to-day operations with the limited controls listed above."
+                  : "The owner holds the project and manages its rules and funds."}</li>
+                {createsAuthoritySafe ? (
+                  <li>{flavor === "revnet" ? "The operator" : "The owner"} is made up of addresses that need to agree on decisions.</li>
+                ) : null}
+              </ul>
+              {authorityMode === "create" ? (
+                <AuthoritySafeEditor
+                  role={flavor === "revnet" ? "operator" : "owner"}
+                  owners={authoritySigners}
+                  threshold={authorityThreshold}
+                  onOwnersChange={setAuthoritySigners}
+                  onThresholdChange={setAuthorityThreshold}
+                  disabled={busy}
+                />
+              ) : (
+                <>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                 Leave empty to use your connected wallet.
               </p>
@@ -2799,6 +2947,16 @@ export function CreateForm() {
                   ) : null}
                 </div>
               ) : null}
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setAuthorityMode(mode => mode === "create" ? "existing" : "create")}
+                disabled={busy}
+                className="mt-3 text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+              >
+                {authorityMode === "create" ? "Already have a multisig?" : "Create a new multisig"}
+              </button>
             </div>
           ) : (
             <p className="mt-3 pl-1 text-xs leading-relaxed text-smoke-600">
@@ -3630,20 +3788,8 @@ export function CreateForm() {
             <dt className="text-smoke-700">
               {flavor === "revnet" ? "Revnet operator" : "Project owner"}
             </dt>
-            <dd className="font-medium text-ink">
-              {!authorityEnabled ? (
-                "No retained authority"
-              ) : ownerOverrides.length > 0 ? (
-                "Set per chain"
-              ) : resolvedAddress(owner.trim()) ? (
-                <AddressLabel address={resolvedAddress(owner.trim())!} />
-              ) : owner.trim() ? (
-                owner.trim()
-              ) : connected ? (
-                <AddressLabel address={address!} />
-              ) : (
-                <span className="text-smoke-700">Wallet connected at launch</span>
-              )}
+            <dd className="min-w-0 font-medium text-ink">
+              {ownerValue}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-3">

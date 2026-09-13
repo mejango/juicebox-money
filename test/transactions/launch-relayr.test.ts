@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { CREATE_BATCH_ABI, MULTICALL3, SAFE_FACTORY, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import type { LaunchPlan } from '@/lib/launch'
 import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
+import safeArtifacts from '../fixtures/safe-1.4.1.json'
 
 const m = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
@@ -17,6 +19,15 @@ const m = vi.hoisted(() => ({
   poll: vi.fn(),
   client: vi.fn(),
   pending: vi.fn(),
+  multisigPreflight: vi.fn(),
+  multisigReceipt: vi.fn(),
+  multisigSimulation: vi.fn(),
+}))
+vi.mock('@/lib/launch-multisig', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/launch-multisig')>()),
+  checkLaunchMultisigs: m.multisigPreflight,
+  verifyCreatedLaunchMultisigs: m.multisigReceipt,
+  verifyLaunchMultisigSimulation: m.multisigSimulation,
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
@@ -52,6 +63,11 @@ const ABI = parseAbi(['function deploy(address owner, bytes32 salt) payable'])
 const NOW = 1_900_000_000
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
+const SAFE_INPUT: Omit<SafeDeploymentPlan, 'address'> = {
+  owners: [ACCOUNT, TARGET], threshold: 2, saltNonce: `0x${'ef'.repeat(32)}`,
+  proxyCreationCode: safeArtifacts.contracts.proxy.creationCode as Hex,
+}
+const SAFE_PLAN: SafeDeploymentPlan = { ...SAFE_INPUT, address: predictSafeAddress(SAFE_INPUT) }
 let storage: Map<string, string>
 let quote: RelayrQuote
 let entries: RelayrEntry[]
@@ -94,6 +110,16 @@ function session(chains = [1, 10], paymentChainId = 8453): LaunchSession {
 }
 function run(value = loadLaunchSession() ?? session()) {
   return runRelayrLaunch({ session: value, account: m.account, onStatus: vi.fn(), onProgress: vi.fn() })
+}
+function multisigSession(flavor: LaunchPlan['flavor'] = 'project', chains = [1]): LaunchSession {
+  const value = session(chains)
+  value.plans = Object.fromEntries(chains.map(chain => [chain, {
+    flavor, owner: flavor === 'project' ? SAFE_PLAN.address : ACCOUNT,
+    operator: flavor === 'revnet' ? SAFE_PLAN.address : null,
+    multisigs: [SAFE_PLAN],
+  } as LaunchPlan]))
+  saveLaunchSession(value)
+  return value
 }
 
 beforeEach(() => {
@@ -151,6 +177,127 @@ beforeEach(() => {
 })
 
 describe('relayed launch execution and recovery', () => {
+  it.each(['project', 'revnet'] as const)('bundles a single-chain %s Safe with the exact signed launch and one payment', async flavor => {
+    const value = multisigSession(flavor)
+    expect(canRelayrLaunch(value)).toBe(true)
+    await run(value)
+    expect(m.forward).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]
+    expect(entry).toMatchObject({ target: MULTICALL3, value: '17', chain: 1 })
+    const batch = decodeFunctionData({ abi: CREATE_BATCH_ABI, data: entry.data })
+    expect(batch.functionName).toBe('aggregate3Value')
+    const [deployment, forwarded] = batch.args[0]
+    expect(batch.args[0]).toHaveLength(2)
+    expect(deployment).toMatchObject({ target: SAFE_FACTORY, allowFailure: true, value: 0n })
+    expect(forwarded).toMatchObject({ target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1],
+      allowFailure: false, value: 17n })
+    const launch = decodeFunctionData({ abi: erc2771ForwarderAbi, data: forwarded.callData })
+    expect(launch.functionName).toBe('execute')
+    if (launch.functionName !== 'execute') throw new Error('Missing launch request')
+    expect(launch.args[0]).toMatchObject({ from: ACCOUNT, to: TARGET, value: 17n, gas: 4_400_000n })
+    expect(m.forward.mock.calls[0][3]).toMatchObject({
+      calls: [{ to: SAFE_FACTORY, functionName: 'createProxyWithNonce' }],
+    })
+    expect(m.forward.mock.calls[0][3].description).toContain(SAFE_PLAN.address)
+    const client = clients.get(1)!
+    expect(client.call).toHaveBeenCalledWith(expect.objectContaining({ to: MULTICALL3, data: entry.data,
+      value: 17n, gas: 4_400_000n + 4_400_000n / 63n + 2_100_000n }))
+    for (const [request] of client.readContract.mock.calls) {
+      expect(request).not.toMatchObject({ address: MULTICALL3 })
+    }
+    expect(m.multisigPreflight).toHaveBeenCalledWith(client, expect.objectContaining({ multisigs: [SAFE_PLAN] }))
+    expect(m.multisigSimulation).toHaveBeenCalledWith(client, expect.objectContaining({ multisigs: [SAFE_PLAN] }), '0x')
+    expect(m.multisigReceipt).toHaveBeenCalledWith(client, expect.objectContaining({ multisigs: [SAFE_PLAN] }), 123n)
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'done', projectId: 101 })
+  })
+
+  it('blocks signing when a requested Safe has a conflicting deployed policy', async () => {
+    const value = multisigSession()
+    m.multisigPreflight.mockRejectedValue(new Error('Safe policy mismatch'))
+    await expect(run(value)).rejects.toThrow('Safe policy mismatch')
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('refuses to fund a batch whose simulated Safe deployment failed', async () => {
+    const value = multisigSession()
+    m.multisigSimulation.mockRejectedValue(new Error('Safe deployment failed'))
+    await expect(run(value)).rejects.toThrow('Safe deployment failed')
+    expect(m.forward).toHaveBeenCalledTimes(1)
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('rechecks Safe prerequisites after choosing payment and before the wallet sends', async () => {
+    const value = multisigSession()
+    m.funding.mockImplementation(async () => {
+      m.multisigPreflight.mockRejectedValue(new Error('Safe changed before payment'))
+      return 8453
+    })
+    await expect(run(value)).rejects.toThrow('Safe changed before payment')
+    expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
+    expect(loadLaunchSession()?.relayr?.paymentHash).toBeUndefined()
+  })
+
+  it('keeps a successful launch unresolved when receipt-block Safe policy cannot be verified and resumes without paying twice', async () => {
+    const value = multisigSession()
+    m.multisigReceipt.mockRejectedValueOnce(new Error('Safe owners changed'))
+    await expect(run(value)).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'uncertain', txHash: hashFor(1) })
+    expect(loadLaunchSession()?.statuses[1].projectId).toBeUndefined()
+    await run()
+    expect(m.forward).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.multisigReceipt).toHaveBeenLastCalledWith(clients.get(1), expect.objectContaining({ multisigs: [SAFE_PLAN] }), 123n)
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'done', projectId: 101 })
+  })
+
+  it('retries a reverted Safe batch with its original inner forwarder nonce', async () => {
+    const value = multisigSession()
+    failed.add(1)
+    await expect(run(value)).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.relayr?.retryNonces).toEqual({ 1: '0' })
+    failed.clear()
+    await run()
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.pay).toHaveBeenCalledTimes(2)
+    expect(m.forward.mock.calls.map(call => call[2])).toEqual([0n, 0n])
+    for (const [request] of clients.get(1)!.readContract.mock.calls) {
+      expect(request).not.toMatchObject({ address: MULTICALL3 })
+    }
+    expect(loadLaunchSession()?.statuses[1].phase).toBe('done')
+  })
+
+  it('rejects a tampered saved factory call before reusing its launch signature', async () => {
+    const value = multisigSession()
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run(value)).rejects.toThrow('Funding selection cancelled')
+    const saved = loadLaunchSession()!
+    const entry = saved.relayr!.signed[0].entry
+    const batch = decodeFunctionData({ abi: CREATE_BATCH_ABI, data: entry.data })
+    entry.data = encodeFunctionData({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value',
+      args: [[{ ...batch.args[0][0], allowFailure: false }, batch.args[0][1]]] })
+    saveLaunchSession(saved)
+    await expect(run()).rejects.toThrow()
+    expect(m.forward).toHaveBeenCalledTimes(1)
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('binds receipt evidence to the outer batch even when an inner launch receipt has a project ID', async () => {
+    const value = multisigSession()
+    const client = clients.get(1)!
+    client.getTransaction.mockImplementation(async ({ hash }) => ({ hash,
+      to: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1], input: entries[0].data,
+      value: 17n, chainId: 1, blockHash: BLOCK }))
+    await expect(run(value)).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.statuses[1].phase).toBe('uncertain')
+    expect(m.multisigReceipt).not.toHaveBeenCalled()
+    expect(m.projectId).not.toHaveBeenCalled()
+  })
+
   it('waits for the quote before showing any funding choices or persisting a preferred chain', async () => {
     const makeQuote = m.quote.getMockImplementation()!
     let release!: () => void

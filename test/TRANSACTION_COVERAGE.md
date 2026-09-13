@@ -16,6 +16,7 @@ Legend:
 | Launch a project | 721 deployer `launchProjectFor` | **E** | `contracts/launch.test.ts` |
 | Launch linked chains | omnichain deployer `launchProjectFor` | **E** | `contracts/launch.test.ts` |
 | Deploy a revnet | `REVDeployer.deployFor` | **E** | `contracts/launch.test.ts` |
+| Create an Owner or Operator Safe during launch | Safe 1.4.1 factory `createProxyWithNonce`, exact signer/threshold/address binding, `aggregate3Value` with the authenticated launch, and independent direct-setup recovery | **P/E** | `contracts/launch-multisig.test.ts`, `transactions/launch-multisig-direct.test.ts`, `transactions/launch-relayr.test.ts`, `transactions/launch-session.test.ts` |
 | Add shop tiers | Per-shop `JB721TiersHook.adjustTiers`, exact prices, local inventory/recipients, frozen tier IDs and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts` |
 | Replace shop item media | Per-shop `JB721TiersHook.setMetadata`, unchanged original metadata fields, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
@@ -74,6 +75,15 @@ Legend:
 
 ## Data and recovery invariants
 
+- Inline Safe creation freezes one signer policy and predicted address across
+  the selected launch chains. Existing drafts retain their address-based
+  authority, and disabled controls do not create a Safe. Relayr batches setup
+  before the authenticated launch, including on one supported chain. Its
+  quote and receipt bind the exact outer batch; nonce checks use the inner
+  forwarder. Deployment simulation and receipt-block Safe state must match
+  the saved policy before creation is accepted. Direct launches keep setup
+  hashes and Safe proposals separate from project-launch progress, preserving
+  an interrupted setup until its original transaction is recovered.
 - Shop batches freeze each destination's project, hook, owner, pricing and
   item configuration. Additions retain exact prices, recipient/project/hook
   mappings and per-chain inventory; media replacement starts from the full
@@ -140,9 +150,9 @@ Legend:
   unsupported-chain sequencing, and interrupted payments are covered in
   `components/safe-queue-relayr.test.tsx` and
   `components/safe-queue-authority.test.ts`.
-- Relayr is reserved for genuinely multi-chain EOA actions. One-chain
-  project-owner/operator calls are reviewed and submitted directly; Safe-owned
-  calls remain in the Safe path.
+- One-chain project-owner/operator management calls are reviewed and submitted
+  directly; Safe-owned calls remain in the Safe path. Creation also uses Relayr
+  on one supported chain when it can combine a new Safe with the launch.
 - Safe operator batches are per-chain trays of builder-backed steps. A Safe
   owner signs ONE operation-1 `MultiSendCallOnly` SafeTx whose hash, POST body
   and pending-queue match carry `operation: 1`; the Safe app receives one
@@ -162,9 +172,10 @@ Legend:
   Relayr quote on the selected payment chain. Frozen launch configuration,
   estimated deployment gas, current creation fees, canonical destination
   receipts, original-wallet identity, and saved-bundle recovery are covered in
-  `transactions/launch-relayr.test.ts`. Single-chain, testnet, Safe, and legacy
-  direct launch sessions keep the direct path. These deterministic checks do
-  not establish successful live Relayr execution.
+  `transactions/launch-relayr.test.ts`. Supported mainnet and testnet families
+  can use Relayr; single-chain launches without a new Safe, Safe-wallet
+  launches, and saved direct sessions retain the direct path. These
+  deterministic checks do not establish successful live Relayr execution.
 
 Standalone burns use the project’s freshly read active controller and recheck the
 holder’s total balance immediately before the reviewed write. A selector-only row

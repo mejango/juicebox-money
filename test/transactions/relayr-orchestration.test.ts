@@ -55,6 +55,7 @@ import {
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_CODE_HASH,
   RELAYR_PAYMENT_SELECTOR,
+  buildForwardedTx,
   relayrPay,
   relayrPaymentDetails,
   relayrPoll,
@@ -232,6 +233,28 @@ beforeEach(() => {
 })
 
 describe('Relayr quote and payment boundaries', () => {
+  it('reviews prerequisite deployment calls alongside the exact forwarded authorization without adding a wallet prompt', async () => {
+    const prerequisite = { chainId: 1, to: BOB, data: '0xabcd' as Hex, value: 0n,
+      label: 'Create owner multisig' }
+    const call = { chainId: 1 as JBChainId, target: TARGET, data: '0x1234' as Hex, value: 5n,
+      gas: 700_000n, label: 'Launch project' }
+    await buildForwardedTx(call, ALICE, 4n, {
+      description: 'Create the owner Safe with 2 of 3 approvals.', calls: [prerequisite],
+    })
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+      description: expect.stringContaining('Create the owner Safe with 2 of 3 approvals.'),
+      calls: [prerequisite, expect.objectContaining({ from: ALICE, to: TARGET, data: call.data, value: 5n })],
+      authorization: expect.objectContaining({ message: expect.objectContaining({ from: ALICE, to: TARGET,
+        data: call.data, value: 5n, gas: 700_000n, nonce: 4n }) }),
+    }))
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      message: mocks.requireReview.mock.calls[0][0].authorization.message,
+    }))
+    expect(mocks.requireReview.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[0])
+  })
+
   it.each(TESTNETS)('authenticates and pays the canonical contract on testnet %s', async chain => {
     const testnetPayment = paymentFor({ chain })
     await expect(relayrPay(testnetPayment, ALICE, BUNDLE_UUID, TESTNETS)).resolves.toBe(HASH)

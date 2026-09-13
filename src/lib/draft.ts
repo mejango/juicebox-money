@@ -24,6 +24,10 @@ export type CreateDraft = {
   links: Record<string, string>
   owner: string
   ownerPerChain: Record<number, string>
+  /** Omitted by legacy drafts, which retain their existing address behavior. */
+  authorityMode?: 'create' | 'existing'
+  authoritySigners?: string[]
+  authorityThreshold?: number
   /** Attach the any-token router terminal. Revnets always do. */
   allowAnyToken: boolean
   approvalCustom: string
@@ -287,6 +291,19 @@ export function parseDraft(text: string): CreateDraft {
     links,
     owner: str(d.owner, 64),
     ownerPerChain: sanitizeChainMap(d.ownerPerChain),
+    authorityMode: d.authorityMode === 'create' ? 'create' : 'existing',
+    // Preserve invalid policies as invalid form input. Never truncate a signer
+    // set into a different, launchable Safe or silently change its threshold.
+    authoritySigners: Array.isArray(d.authoritySigners) &&
+      d.authoritySigners.length >= 2 && d.authoritySigners.length <= 20
+      ? d.authoritySigners.map(owner => str(owner, 64))
+      : ['', '', ''],
+    authorityThreshold: d.authorityThreshold === undefined ? 2 :
+      typeof d.authorityThreshold === 'number' &&
+      Number.isInteger(d.authorityThreshold) && d.authorityThreshold >= 1 &&
+      d.authorityThreshold <= 20
+      ? d.authorityThreshold
+      : 0,
     // Both launch-shape levers default ON when a file omits them: that's the
     // wizard's own default, so a hand-written or truncated .jb lands on the
     // configuration the create flow describes rather than a quieter one.

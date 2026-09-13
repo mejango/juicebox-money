@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
+import type { Hex } from 'viem'
+import safeFixture from '../fixtures/safe-1.4.1.json'
 import {
   DEFAULT_STORE_FLAGS,
   createSimpleProjectStage,
@@ -13,6 +16,7 @@ import {
   recordLaunchChainStatus,
   remainingLaunchChains,
   saveLaunchSession,
+  type LaunchChainStatus,
   type LaunchSession,
 } from '@/lib/launch-session'
 
@@ -123,6 +127,34 @@ function session(overrides: Partial<LaunchSession> = {}): LaunchSession {
     createdAt: 1_700_000_000_000,
     ...overrides,
   }
+}
+
+function safeSession(flavor: LaunchPlan['flavor'] = 'project'): LaunchSession {
+  const policy = {
+    owners: [
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+      '0x3333333333333333333333333333333333333333',
+    ],
+    threshold: 2,
+    saltNonce: `0x${'cd'.repeat(32)}`,
+    proxyCreationCode: safeFixture.contracts.proxy.creationCode,
+  } as Omit<SafeDeploymentPlan, 'address'>
+  const safe = { ...policy, address: predictSafeAddress(policy) }
+  const original = session()
+  original.plans = Object.fromEntries(original.chains.map(chainId => [chainId, {
+    ...original.plans[chainId],
+    flavor,
+    ...(flavor === 'revnet' ? { operator: safe.address } : { owner: safe.address }),
+    multisigs: [safe],
+  }]))
+  return original
+}
+
+function mutateSavedSession(mutate: (value: Record<string, unknown>) => void) {
+  const saved = JSON.parse(storage.getItem(LAUNCH_SESSION_KEY)!) as Record<string, unknown>
+  mutate(saved)
+  storage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(saved))
 }
 
 let storage: ReturnType<typeof localStorageStub>
@@ -346,5 +378,141 @@ describe('multichain launch session persistence', () => {
   it('ignores status updates when no launch session is active', () => {
     recordLaunchChainStatus(1, { phase: 'done' })
     expect(storage.getItem(LAUNCH_SESSION_KEY)).toBeNull()
+  })
+})
+
+describe('inline Safe launch recovery', () => {
+  const setupHash = `0x${'55'.repeat(32)}` as Hex
+  const proposalHash = `0x${'66'.repeat(32)}` as Hex
+  const launchHash = `0x${'77'.repeat(32)}` as Hex
+
+  it.each(['project', 'revnet'] as const)('preserves the exact pinned %s authority policy across every chain', flavor => {
+    const original = safeSession(flavor)
+    expect(saveLaunchSession(original)).toBe(true)
+    expect(loadLaunchSession({ strict: true })).toEqual(original)
+    expect(loadLaunchSession()).toEqual(original)
+  })
+
+  it.each([
+    { phase: 'signing' },
+    { phase: 'signing', safe: true },
+    { phase: 'confirming', txHash: setupHash },
+    { phase: 'confirming', safe: true, safeProposalHash: proposalHash },
+    { phase: 'confirming', txHash: setupHash, safeProposalHash: proposalHash },
+    { phase: 'done' },
+    { phase: 'done', txHash: setupHash },
+    { phase: 'failed', txHash: setupHash },
+  ] satisfies NonNullable<LaunchChainStatus['multisigSetup']>[])('preserves Safe setup $phase without marking the project launched', multisigSetup => {
+    const original = safeSession()
+    original.statuses[1] = { phase: 'pending', multisigSetup }
+    expect(saveLaunchSession(original)).toBe(true)
+    const restored = loadLaunchSession({ strict: true })!
+    expect(restored.statuses[1]).toEqual({ phase: 'pending', multisigSetup })
+    expect(restored.statuses[1].txHash).toBeUndefined()
+    expect(restored.statuses[1].unverifiedSend).toBeUndefined()
+    expect(remainingLaunchChains(restored)).toEqual([1, 10, 8453])
+  })
+
+  it('retains the setup transaction independently through subsequent project progress', () => {
+    const original = safeSession()
+    original.statuses[1] = { phase: 'pending', multisigSetup: { phase: 'signing' } }
+    saveLaunchSession(original)
+
+    recordLaunchChainStatus(1, {
+      phase: 'pending',
+      multisigSetup: { phase: 'done', txHash: setupHash, safeProposalHash: proposalHash },
+    })
+    recordLaunchChainStatus(1, { phase: 'confirming', txHash: launchHash })
+    expect(loadLaunchSession({ strict: true })?.statuses[1]).toEqual({
+      phase: 'confirming',
+      txHash: launchHash,
+      multisigSetup: { phase: 'done', txHash: setupHash, safeProposalHash: proposalHash },
+    })
+    recordLaunchChainStatus(1, { phase: 'done', txHash: launchHash, projectId: 91 })
+    const restored = loadLaunchSession({ strict: true })!
+    expect(restored.statuses[1].multisigSetup?.txHash).toBe(setupHash)
+    expect(restored.statuses[1].txHash).toBe(launchHash)
+    expect(restored.statuses[1].projectId).toBe(91)
+    expect(remainingLaunchChains(restored)).toEqual([10, 8453])
+  })
+
+  it.each([
+    ['threshold', 3],
+    ['threshold', 0],
+    ['owners', ['0x1111111111111111111111111111111111111111']],
+    ['owners', ['0x2222222222222222222222222222222222222222', '0x1111111111111111111111111111111111111111', '0x3333333333333333333333333333333333333333']],
+    ['saltNonce', `0x${'ef'.repeat(32)}`],
+    ['proxyCreationCode', '0x1234'],
+    ['address', '0x4444444444444444444444444444444444444444'],
+  ])('rejects a modified pinned Safe %s before recovery', (field, replacement) => {
+    saveLaunchSession(safeSession())
+    mutateSavedSession(value => {
+      const plans = value.plans as Record<number, { multisigs: Record<string, unknown>[] }>
+      plans[1].multisigs[0][field as string] = replacement
+    })
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+  })
+
+  it.each(['project', 'revnet'] as const)('rejects a %s Safe assigned to a different launch authority', flavor => {
+    saveLaunchSession(safeSession(flavor))
+    mutateSavedSession(value => {
+      const plans = value.plans as Record<number, Record<string, unknown>>
+      plans[1][flavor === 'revnet' ? 'operator' : 'owner'] = '0x4444444444444444444444444444444444444444'
+    })
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+  })
+
+  it.each([null, {}, [null], 'invalid', [1, 2]])('rejects malformed pinned Safe collections: %j', replacement => {
+    saveLaunchSession(safeSession())
+    mutateSavedSession(value => {
+      const plans = value.plans as Record<number, Record<string, unknown>>
+      plans[1].multisigs = replacement
+    })
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+  })
+
+  it.each([
+    null,
+    [],
+    {},
+    { phase: 'pending' },
+    { phase: 'signing', safe: false },
+    { phase: 'signing', safe: 'true' },
+    { phase: 'confirming' },
+    { phase: 'confirming', txHash: '0x11' },
+    { phase: 'done', txHash: 12 },
+    { phase: 'done', safeProposalHash: 'invalid' },
+    { phase: 'done', safeProposalHash: null },
+    { phase: 'done', txHash: setupHash, transactionHash: launchHash },
+  ])('rejects malformed Safe setup without discarding a potentially submitted hash: %j', replacement => {
+    saveLaunchSession(safeSession())
+    mutateSavedSession(value => {
+      const statuses = value.statuses as Record<number, Record<string, unknown>>
+      statuses[1].multisigSetup = replacement
+    })
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+  })
+
+  it('rejects a Safe setup journal whose deployment plan is missing', () => {
+    const original = session()
+    original.statuses[1].multisigSetup = { phase: 'confirming', txHash: setupHash }
+    saveLaunchSession(original)
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+  })
+
+  it('does not add Safe fields to legacy sessions', () => {
+    const original = session()
+    saveLaunchSession(original)
+    const restored = loadLaunchSession({ strict: true })!
+    expect(restored).toEqual(original)
+    for (const chainId of restored.chains) {
+      expect(Object.hasOwn(restored.plans[chainId], 'multisigs')).toBe(false)
+      expect(Object.hasOwn(restored.statuses[chainId], 'multisigSetup')).toBe(false)
+    }
   })
 })

@@ -21,7 +21,7 @@ import {
   type Hex,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
-import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
+import { requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
@@ -791,6 +791,7 @@ export async function buildForwardedTx(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
+  context?: { description: string; calls: readonly TransactionReviewCall[] },
 ): Promise<RelayrEntry> {
   const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -839,8 +840,10 @@ export async function buildForwardedTx(
   await requireTransactionReview({
     kind: 'authorization',
     title: 'Review relayed transaction',
-    description:
+    description: [
+      context?.description,
       'Your signature authorizes Relayr to submit this exact destination call onchain. The Raw view includes the full ERC-2771 request. The separate Relayr payment is reviewed before it is sent.',
+    ].filter(Boolean).join('\n\n'),
     confirmLabel: 'Agree & sign relay request',
     authorization: {
       type: 'EIP-712 ForwardRequest',
@@ -849,6 +852,7 @@ export async function buildForwardedTx(
       message: request,
     },
     calls: [
+      ...(context?.calls ?? []),
       {
         chainId: call.chainId,
         from: expectedAccount,

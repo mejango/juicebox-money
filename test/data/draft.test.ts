@@ -23,6 +23,40 @@ function jbDraft(fields: Record<string, unknown>): string {
 const HOOK = '0x' + 'ab'.repeat(20)
 const TOKEN = '0x' + 'cd'.repeat(20)
 
+describe('.jb draft authority Safe policy', () => {
+  it('keeps legacy address and per-chain authority in existing mode', () => {
+    const draft = parseDraft(jbDraft({ owner: HOOK, ownerPerChain: { 10: TOKEN } }))
+    expect(draft).toMatchObject({
+      authorityMode: 'existing', owner: HOOK, ownerPerChain: { 10: TOKEN },
+    })
+  })
+
+  it('round-trips a new Safe without reordering signers or losing inactive addresses', () => {
+    const fields = {
+      authorityMode: 'create', authoritySigners: [TOKEN, HOOK], authorityThreshold: 2,
+      owner: HOOK, ownerPerChain: { 8453: TOKEN },
+    }
+    expect(parseDraft(JSON.stringify(parseDraft(jbDraft(fields))))).toMatchObject(fields)
+  })
+
+  it('bounds untrusted signer input without silently producing a different valid Safe', () => {
+    for (const authoritySigners of [null, [HOOK], Array(21).fill(HOOK)]) {
+      expect(parseDraft(jbDraft({ authorityMode: 'create', authoritySigners })).authoritySigners)
+        .toEqual(['', '', ''])
+    }
+    expect(parseDraft(jbDraft({ authoritySigners: [42, 'a'.repeat(500)] })).authoritySigners)
+      .toEqual(['', 'a'.repeat(64)])
+  })
+
+  it('keeps malformed or impossible approval policies invalid until explicitly corrected', () => {
+    for (const authorityThreshold of [-1, 0, 1.5, 21, '2', null]) {
+      expect(parseDraft(jbDraft({ authorityThreshold })).authorityThreshold).toBe(0)
+    }
+    expect(parseDraft(jbDraft({ authoritySigners: [HOOK, TOKEN], authorityThreshold: 3 })))
+      .toMatchObject({ authoritySigners: [HOOK, TOKEN], authorityThreshold: 3 })
+  })
+})
+
 describe('.jb draft approval deadline', () => {
   it('round-trips a custom approval hook — deadline AND address', () => {
     // 'custom' is a legal ApprovalDeadline the wizard and the project exporter
