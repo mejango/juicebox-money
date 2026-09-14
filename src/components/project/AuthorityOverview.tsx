@@ -328,6 +328,7 @@ export function AuthorityOverview({
                     <dd>
                       {group.authority ? (
                         <AddressLink
+                          showSafe
                           address={group.authority}
                           chainId={group.rows[0].chainId}
                           className="font-mono text-sm text-ink"
@@ -876,6 +877,7 @@ function PermissionsAcrossChains({
           {owners.map((owner) => (
             <div key={owner.address} className="flex flex-wrap items-center gap-2">
               <AddressLink
+                showSafe
                 address={owner.address}
                 chainId={owner.chains[0]}
                 className="font-mono text-sm text-ink"
@@ -915,6 +917,7 @@ function PermissionsAcrossChains({
             >
               <div className="flex flex-wrap items-center gap-2">
                 <AddressLink
+                  showSafe
                   address={grant.operator}
                   chainId={chainIds[0]}
                   className="font-mono text-sm text-ink"
