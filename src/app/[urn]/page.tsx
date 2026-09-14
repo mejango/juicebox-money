@@ -483,6 +483,7 @@ async function DegradedProjectShell({
                 <span>
                   <span className="text-smoke-500">{roleLabel}:</span>{" "}
                   <AddressLink
+                    showSafe
                     address={authority}
                     chainId={route.chainId}
                     className="text-smoke-700"
@@ -764,6 +765,7 @@ export default async function ProjectPage({
                           {isRevnet ? "Operator:" : "Owner:"}
                         </span>{" "}
                         <AddressLink
+                          showSafe
                           address={authority}
                           chainId={urn.chainId}
                           className="text-smoke-700"
@@ -816,6 +818,7 @@ export default async function ProjectPage({
                         {isRevnet ? "Operator:" : "Owner:"}
                       </span>{" "}
                       <AddressLink
+                        showSafe
                         address={authority}
                         chainId={urn.chainId}
                         className="text-smoke-700"
