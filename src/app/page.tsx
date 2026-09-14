@@ -470,18 +470,17 @@ function HeroColumn() {
           className="mx-auto mb-2 h-auto w-full max-w-[330px] xl:mb-0 xl:max-h-[390px] xl:max-w-[390px] xl:object-contain"
         />
       </div>
-      <div className="mx-auto w-full">
+      <div className="mx-auto w-full shrink-0 [container-type:inline-size]">
         {/* Nowrap segments set the only allowed break points, so a narrow
             column reads "Fund your / thing." — never one word per line. */}
-        <h1 className="font-agrandir-wide text-4xl font-bold leading-[1.05] sm:text-5xl xl:text-[clamp(2.5rem,5.5svh,3.75rem)]">
+        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
           <span className="whitespace-nowrap">Fund your</span>{' '}
           <span className="whitespace-nowrap">
             thing<span className="text-split-500">.</span>
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-smoke-700 xl:mt-2">
-          <span className="whitespace-nowrap">Raise money from anyone, anywhere,</span>{' '}
-          <span className="whitespace-nowrap">transparently on your terms.</span>
+        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
+          Raise money from anyone, anywhere, transparently on your terms.
         </p>
         <Link
           href="/create"
