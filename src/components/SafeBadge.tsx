@@ -89,7 +89,7 @@ export function SafeBadge({ address, chainId }: { address: string; chainId: numb
           }}
           className="fixed z-[100] overflow-y-auto border border-smoke-200 bg-white p-3 text-left text-xs font-normal leading-relaxed text-ink shadow-lg"
         >
-          <div className="font-semibold">Safe · {info.threshold} of {info.owners.length} signatures</div>
+          <div className="font-semibold">Safe: {info.threshold} of {info.owners.length} signatures</div>
           <div className="mt-2 text-smoke-500">Signers</div>
           {info.owners.map((owner) => (
             <div key={owner} className="break-all whitespace-normal font-mono">{owner}</div>
