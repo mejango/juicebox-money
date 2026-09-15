@@ -1,4 +1,7 @@
-const WALLET_SAFE_GATEWAY = 'https://ipfs.io'
+// ipfs.io 302s page loads to the inbrowser.link service worker (sunset 2026-09-21) and path gateways either
+// send a default-src 'self' CSP (Filebase) or download HTML (JB Center), so wallet browsers get the eth.sucks
+// subdomain gateway, which serves the site without a service worker.
+const WALLET_SAFE_GATEWAY_HOST = 'eth.sucks'
 const SUBDOMAIN_IPFS_SUFFIXES = [
   '.ipfs.inbrowser.link',
   '.ipfs.dweb.link',
@@ -11,10 +14,10 @@ function ipfsPathUrl(
   search: string,
   hash: string,
 ) {
-  return `${WALLET_SAFE_GATEWAY}/ipfs/${cid}${pathname || '/'}${search}${hash}`
+  return `https://${cid}.${WALLET_SAFE_GATEWAY_HOST}${pathname || '/'}${search}${hash}`
 }
 
-/** Use a path gateway in wallet browsers, which may not support IPFS gateway service workers. */
+/** Use a non-service-worker gateway in wallet browsers, which may not support IPFS gateway service workers. */
 export function walletDappUrl(href: string) {
   let url: URL
   try {

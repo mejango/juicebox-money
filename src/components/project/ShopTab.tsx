@@ -145,17 +145,25 @@ type ShopTier = {
  */
 const flagDescriptions = (
   isRevnet: boolean,
+  pausedEveryStage = false,
 ): [keyof ShopTierFlags, string, string][] => [
   [
     'allowOwnerMint',
     `${isRevnet ? 'Revnet operator' : 'Project owner'} can mint`,
     `The ${isRevnet ? 'revnet operator' : 'project owner'}, or an address with the MINT_721 permission, can mint this item for free, without a payment.`,
   ],
-  [
-    'transfersPausable',
-    'Ruleset-controlled transfers',
-    'The active ruleset can pause transfers of this item. Minting and burning remain available.',
-  ],
+  // Revnets launched here pause transfers in every stage, so the flag is the item's fixed policy.
+  pausedEveryStage
+    ? [
+        'transfersPausable',
+        'Non-transferable',
+        'Every stage of this revnet pauses transfers, so this item can never move between wallets. Minting and burning remain available.',
+      ]
+    : [
+        'transfersPausable',
+        'Ruleset-controlled transfers',
+        'The active ruleset can pause transfers of this item. Minting and burning remain available.',
+      ],
   [
     'cantBeRemoved',
     'Cannot be removed',
@@ -1611,8 +1619,12 @@ function TierDetailModal({
     effective,
     item,
   } = useTierCartItem(tier, media)
+  const pausedEveryStage =
+    isRevnet &&
+    !!transferPauseByStage?.length &&
+    transferPauseByStage.every(entry => entry.paused)
   const setFlags = tier.flags
-    ? flagDescriptions(isRevnet).filter(([flag]) => tier.flags![flag])
+    ? flagDescriptions(isRevnet, pausedEveryStage).filter(([flag]) => tier.flags![flag])
     : []
 
   useEffect(() => {
@@ -1810,21 +1822,22 @@ function TierDetailModal({
 
             <dl className="mt-5 space-y-2 border-t border-smoke-200 pt-4 text-xs">
               <DetailFact label="Item ID" value={`#${tier.id}`} />
-              {tier.flags?.transfersPausable ? (
-                <DetailFact
-                  label="Transfers"
-                  value={
-                    // A revnet's stages are fixed at launch, so state the whole
-                    // schedule rather than whichever stage happens to be running.
-                    describeTransferSchedule(transferPauseByStage) ??
-                    (transfersPaused == null
-                      ? 'Current ruleset unavailable'
-                      : transfersPaused
-                        ? 'Paused now'
-                        : 'Allowed now; ruleset-pausable')
-                  }
-                />
-              ) : null}
+              <DetailFact
+                label="Transfers"
+                value={
+                  // An item without the pausable flag ignores every ruleset pause. Otherwise a revnet's
+                  // stages are fixed at launch, so state the whole schedule rather than whichever
+                  // stage happens to be running.
+                  !tier.flags?.transfersPausable
+                    ? 'Always allowed'
+                    : (describeTransferSchedule(transferPauseByStage) ??
+                      (transfersPaused == null
+                        ? 'Current ruleset unavailable'
+                        : transfersPaused
+                          ? 'Paused now'
+                          : 'Allowed now; ruleset-pausable'))
+                }
+              />
               <DetailFact
                 label="Category"
                 value={media?.categoryName ?? String(tier.category)}

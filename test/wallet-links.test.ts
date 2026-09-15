@@ -11,7 +11,7 @@ describe('mobile wallet links', () => {
   it('rewrites every deployed IPFS subdomain gateway for a wallet browser', () => {
     for (const gateway of ['inbrowser.link', 'dweb.link', 'w3s.link']) {
       expect(walletDappUrl(`https://${CID}.ipfs.${gateway}/project#pay`)).toBe(
-        `https://ipfs.io/ipfs/${CID}/project#pay`,
+        `https://${CID}.eth.sucks/project#pay`,
       )
     }
   })
