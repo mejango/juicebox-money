@@ -37,13 +37,13 @@ import { buildStep, type BatchStep } from '@/lib/safe-batch'
 import {
   buildBuybackHookAuthorityCall,
   buildInitializeBuybackPoolAuthorityCall,
+  buildSetBuybackPoolAuthorityCall,
   buildRouterTerminalAuthorityCall,
   buildSetBuybackTwapAuthorityCall,
 } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
-import { readRouterPath, RETAINED_FEE_NOTE, rolloutContractName, type RouterPath } from '@/lib/protocol-rollout'
 
 type BuybackChainState = AuthorityDeployment & {
   name: string
@@ -56,14 +56,13 @@ type BuybackChainState = AuthorityDeployment & {
   terminal: Address | null
   defaultHook?: Address | null
   defaultTerminal?: Address | null
-  routerPath?: RouterPath | null
   /** Pair tokens with an initialized pool on this chain, and their TWAP window. */
   pools: { label: string; token: Address; twap: number }[]
   poolSummary: string
   readError: string | null
 }
 
-type ActionKind = 'hook' | 'terminal' | 'pool' | 'twap'
+type ActionKind = 'hook' | 'terminal' | 'pool' | 'setPool' | 'twap'
 
 /** `JBBuybackHook._requireValidTwapWindow`: 5 minutes to 2 days. */
 const MIN_TWAP_WINDOW = 300
@@ -99,7 +98,7 @@ const ACTIONS: Record<
   terminal: {
     title: 'Set router terminal',
     description:
-      'Sets the project’s entry in the router registry. The current entry is a gateway that calls the swap router and retains eligible failed fee routes for retry.',
+      'Sets the project’s entry in the router registry: the terminal router-swapped funds are deposited to.',
     danger:
       'This changes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
     fieldLabel: 'Router terminal',
@@ -113,6 +112,15 @@ const ACTIONS: Record<
       'A wrong initial price lets arbitrageurs extract value. Verify the price, fee, tick spacing, pair token, and every selected chain.',
     fieldLabel: 'Pair token',
     gas: 500_000n,
+  },
+  setPool: {
+    title: 'Set buyback pool',
+    description:
+      'Points the project’s hook at an existing Uniswap v4 pool for a pair token, without creating or pricing one.',
+    danger:
+      'Every payment can swap through this pool. A wrong or illiquid pool lets arbitrageurs extract value. Verify the fee, tick spacing, pair token, and every selected chain.',
+    fieldLabel: 'Pair token',
+    gas: 200_000n,
   },
   twap: {
     title: 'Set TWAP window',
@@ -206,7 +214,6 @@ async function readChainState(
     !!routerRegistry &&
     !!defaultTerminal &&
     (defaultTerminal as Address) !== zeroAddress
-  const routerPath = await readRouterPath(client, deployment.chainId, BigInt(deployment.projectId)).catch(() => null)
 
   let poolSummary = resolvedHook ? 'Not initialized' : 'Set the hook first'
   let pools: BuybackChainState['pools'] = []
@@ -257,7 +264,6 @@ async function readChainState(
     terminal: resolvedTerminal,
     defaultHook: defaultHook as Address | null,
     defaultTerminal: defaultTerminal as Address | null,
-    routerPath,
     pools,
     poolSummary,
     readError,
@@ -269,6 +275,8 @@ function isKindAvailable(kind: ActionKind, row: BuybackChainState): boolean {
   if (kind === 'terminal') return row.routerAvailable
   // The TWAP window lives on the hook itself, and only for an initialized pool.
   if (kind === 'twap') return row.buybackAvailable && !!row.hook && row.pools.length > 0
+  // The registry forwards setPoolFor to the project's resolved hook.
+  if (kind === 'setPool') return row.buybackAvailable && !!row.hook
   return row.buybackAvailable
 }
 
@@ -319,69 +327,52 @@ export function MultiChainBuybackRouterCard({
   const terminalDiffers = stateDiffers(rows, row => row.terminal)
   const poolDiffers = stateDiffers(rows, row => row.poolSummary)
 
-  return (
-    <section className="card p-5">
-      <span className="field-label">Buyback &amp; swap router</span>
-      <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Wire up the project’s buyback hook and swap router, initialize its
-        Uniswap pool, and tune the pool’s TWAP window. Select every intended
-        chain; EOA actions use one Relayr payment, while Safe actions are
-        proposed to each chain’s multisig.
-      </p>
+  const body = (kinds: ActionKind[], label: string) =>
+    query.isLoading ? (
+      <ActionRowsSkeleton rows={kinds.length} label={label} />
+    ) : query.isError ? (
+      <p className="mt-4 text-sm text-red-700">Could not read the {label.toLowerCase()} registry.</p>
+    ) : (
+      <div className="mt-4 divide-y divide-smoke-100">
+        {kinds.map(kind => (
+          <ActionRow
+            key={kind}
+            kind={kind}
+            rows={rows}
+            differs={
+              kind === 'hook' ? hookDiffers : kind === 'terminal' ? terminalDiffers : poolDiffers
+            }
+            current={row =>
+              kind === 'hook' ? row.hook : kind === 'terminal' ? row.terminal : row.poolSummary
+            }
+            onDone={() => query.refetch()}
+          />
+        ))}
+      </div>
+    )
 
-      {query.isLoading ? (
-        <ActionRowsSkeleton rows={3} label="Loading buyback router" />
-      ) : query.isError ? (
-        <p className="mt-4 text-sm text-red-700">
-          Could not read the buyback registries.
+  return (
+    <>
+      <section className="card p-5">
+        <span className="field-label">Buyback hook</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          Choose the hook that decides, on every payment, whether to issue
+          tokens or buy them on the AMM, then point it at a Uniswap v4 pool
+          and tune the pool’s TWAP window. Select every intended chain; EOA
+          actions use one Relayr payment, while Safe actions are proposed to
+          each chain’s multisig.
         </p>
-      ) : (
-        <div className="mt-4 divide-y divide-smoke-100">
-          <ActionRow
-            kind="hook"
-            rows={rows}
-            differs={hookDiffers}
-            current={row => row.hook}
-            onDone={() => query.refetch()}
-          />
-          <ActionRow
-            kind="terminal"
-            rows={rows}
-            differs={terminalDiffers}
-            current={row => row.terminal}
-            onDone={() => query.refetch()}
-          />
-          {rows.some(row => row.routerPath) ? (
-            <div className="py-3 text-xs text-smoke-700">
-              {rows.filter(row => row.routerPath).map(row => (
-                <p key={row.chainId} className="mt-1">
-                  {row.name}: registry → {row.routerPath!.gateway ? 'gateway → ' : ''}
-                  {row.routerPath!.router ? (
-                    <AddressLink address={row.routerPath!.router} chainId={row.chainId} title={rolloutContractName(row.chainId, row.routerPath!.router) ?? 'Router'} />
-                  ) : 'router unavailable'}
-                  {!row.routerPath!.gateway && row.routerPath!.router ? ' (previous route)' : ''}
-                </p>
-              ))}
-              {rows.some(row => row.routerPath?.gateway) ? <p className="mt-2">{RETAINED_FEE_NOTE}</p> : null}
-            </div>
-          ) : null}
-          <ActionRow
-            kind="pool"
-            rows={rows}
-            differs={poolDiffers}
-            current={row => row.poolSummary}
-            onDone={() => query.refetch()}
-          />
-          <ActionRow
-            kind="twap"
-            rows={rows}
-            differs={poolDiffers}
-            current={row => row.poolSummary}
-            onDone={() => query.refetch()}
-          />
-        </div>
-      )}
-    </section>
+        {body(['hook', 'pool', 'setPool', 'twap'], 'Buyback hook')}
+      </section>
+      <section className="card p-5">
+        <span className="field-label">Swap router</span>
+        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+          Choose the terminal the router registry deposits router-swapped
+          funds to.
+        </p>
+        {body(['terminal'], 'Swap router')}
+      </section>
+    </>
   )
 }
 
@@ -453,7 +444,7 @@ function ActionRow({
                     </p>
                   ) : row.readError ? (
                     <p className="text-xs text-red-700">{row.readError}</p>
-                  ) : kind === 'pool' || kind === 'twap' ? (
+                  ) : kind === 'pool' || kind === 'setPool' || kind === 'twap' ? (
                     <p className="text-xs text-smoke-700">{value ?? 'Unknown'}</p>
                   ) : value &&
                     typeof value === 'string' &&
@@ -476,6 +467,7 @@ function ActionRow({
         <p className="mt-3 text-xs text-smoke-700">
           <span className="text-smoke-500">Current:</span>{' '}
           {kind !== 'pool' &&
+          kind !== 'setPool' &&
           kind !== 'twap' &&
           uniformValue &&
           typeof uniformValue === 'string' &&
@@ -594,15 +586,16 @@ function BuybackActionForm({
         twapWindow: number
         sqrtPriceX96: bigint
       } | null = null
-      if (kind === 'pool') {
-        if (![fee, tickSpacing, twapWindow, sqrtPriceX96].every(v => /^\d+$/.test(v))) {
+      if (kind === 'pool' || kind === 'setPool') {
+        const numbers = kind === 'pool' ? [fee, tickSpacing, twapWindow, sqrtPriceX96] : [fee, tickSpacing, twapWindow]
+        if (!numbers.every(v => /^\d+$/.test(v))) {
           throw new Error('Fee, tick spacing, TWAP window, and price must be whole numbers.')
         }
         const parsed = {
           fee: Number(fee),
           tickSpacing: Number(tickSpacing),
           twapWindow: Number(twapWindow),
-          sqrtPriceX96: BigInt(sqrtPriceX96),
+          sqrtPriceX96: kind === 'pool' ? BigInt(sqrtPriceX96) : 0n,
         }
         if (parsed.fee < 0 || parsed.fee > 0xffffff) {
           throw new Error('Fee must fit uint24.')
@@ -622,7 +615,7 @@ function BuybackActionForm({
             `The hook only accepts a TWAP window between ${MIN_TWAP_WINDOW} and ${MAX_TWAP_WINDOW} seconds.`,
           )
         }
-        if (parsed.sqrtPriceX96 <= 0n || parsed.sqrtPriceX96 >= 2n ** 160n) {
+        if (kind === 'pool' && (parsed.sqrtPriceX96 <= 0n || parsed.sqrtPriceX96 >= 2n ** 160n)) {
           throw new Error('Initial price must be a positive uint160 value.')
         }
         poolValues = parsed
@@ -723,6 +716,37 @@ function BuybackActionForm({
               },
             }),
           )
+        } else if (kind === 'setPool') {
+          if (!row.buybackRegistry || !poolValues) {
+            throw new Error(`${row.name}: no buyback registry.`)
+          }
+          calls.push(
+            buildSetBuybackPoolAuthorityCall({
+              chainId: row.chainId,
+              authority: row.authority,
+              registry: row.buybackRegistry,
+              projectId: BigInt(row.projectId),
+              fee: poolValues.fee,
+              tickSpacing: poolValues.tickSpacing,
+              twapWindow: BigInt(poolValues.twapWindow),
+              terminalToken: address,
+              gas: action.gas,
+              label: action.title,
+            }),
+          )
+          steps.push(
+            buildStep({
+              kind: 'setPoolFor',
+              chainId: row.chainId,
+              projectId: row.projectId,
+              values: {
+                fee: poolValues.fee,
+                tickSpacing: poolValues.tickSpacing,
+                twapWindow: BigInt(poolValues.twapWindow),
+                terminalToken: address,
+              },
+            }),
+          )
         } else {
           if (!row.buybackRegistry || !poolValues) {
             throw new Error(`${row.name}: no buyback registry.`)
@@ -763,6 +787,8 @@ function BuybackActionForm({
           value: `${truncateAddress(address)}${
             kind === 'pool'
               ? ` | fee ${fee} | spacing ${tickSpacing} | TWAP ${twapWindow}s | price ${sqrtPriceX96}`
+              : kind === 'setPool'
+                ? ` | fee ${fee} | spacing ${tickSpacing} | TWAP ${twapWindow}s`
               : kind === 'twap'
                 ? ` | TWAP ${
                     row.pools.find(
@@ -852,7 +878,7 @@ function BuybackActionForm({
         onChange={setAddresses}
         disabled={busy}
       >
-        {kind === 'pool' || kind === 'twap' ? (
+        {kind === 'pool' || kind === 'setPool' || kind === 'twap' ? (
           <p className="mt-2 text-xs leading-relaxed text-smoke-500">
             Use the native-token sentinel for native ETH pools. USDC and other
             pair-token addresses may differ by chain.
@@ -873,7 +899,7 @@ function BuybackActionForm({
         </div>
       ) : null}
 
-      {kind === 'pool' ? (
+      {kind === 'pool' || kind === 'setPool' ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <NumberField
             label="Fee (hundredths of a bip)"
@@ -897,13 +923,15 @@ function BuybackActionForm({
             disabled={busy}
             placeholder="1800"
           />
-          <NumberField
-            label="Initial price (sqrtPriceX96)"
-            value={sqrtPriceX96}
-            onChange={setSqrtPriceX96}
-            disabled={busy}
-            placeholder="positive uint160"
-          />
+          {kind === 'pool' ? (
+            <NumberField
+              label="Initial price (sqrtPriceX96)"
+              value={sqrtPriceX96}
+              onChange={setSqrtPriceX96}
+              disabled={busy}
+              placeholder="positive uint160"
+            />
+          ) : null}
         </div>
       ) : null}
 

@@ -380,13 +380,8 @@ export function SearchBox({
                       {r.ticker ? (
                         <span>{r.ticker.replace(/^\$+/, '')}</span>
                       ) : null}
-                      {r.chainIds.map((id, i) => (
-                        <span key={id} className="flex items-center gap-1">
-                          <ChainIcon chainId={id} size={14} />
-                          {i < r.chainIds.length - 1
-                            ? `${chainName(id)},`
-                            : chainName(id)}
-                        </span>
+                      {r.chainIds.map((id) => (
+                        <ChainIcon key={id} chainId={id} size={14} standalone />
                       ))}
                     </span>
                   </span>

@@ -294,11 +294,14 @@ describe('SearchBox chain marks', () => {
     await type(renderer, 'juice')
     await settle()
 
-    // The names stay visible; the marks are added beside them, never instead.
+    // Icons only: the chain name lives in the mark's alt text, not beside it.
     const text = renderedText(renderer.root)
-    expect(text).toContain('Ethereum')
-    expect(text).toContain('Base')
-    expect(chainMarkCount(renderer)).toBe(2)
+    expect(text).not.toContain('Ethereum')
+    expect(text).not.toContain('Base')
+    const alts = renderer.root
+      .findAll(node => node.type === 'img', { deep: true })
+      .map(node => node.props.alt)
+    expect(alts).toEqual(['Ethereum', 'Base'])
   })
 
   it('marks the chain on a direct urn row', async () => {
