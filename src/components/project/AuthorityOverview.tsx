@@ -222,11 +222,14 @@ export function aggregateGrants(
 export function AuthorityOverview({
   deployments,
   isRevnet,
+  afterAccount,
   beforePermissions,
 }: {
   deployments: AuthorityDeployment[];
   isRevnet: boolean;
   /** Website-order cards rendered after the Safe queue and before permissions. */
+  /** Rendered right under the Account card, ahead of the Safe queues. */
+  afterAccount?: React.ReactNode;
   beforePermissions?: React.ReactNode;
 }) {
   const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
@@ -406,6 +409,8 @@ export function AuthorityOverview({
           </div>
         )}
       </section>
+
+      {afterAccount}
 
       {safeGroups.map((group) => (
         <SafeQueueCard

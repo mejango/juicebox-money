@@ -50,10 +50,10 @@ export function BackOfficeTab({
   )
   return (
     <div className="space-y-5">
-      <SafeBatchTray chainId={chainId} />
       <AuthorityOverview
         deployments={deployments}
         isRevnet={isRevnet}
+        afterAccount={<SafeBatchTray chainId={chainId} />}
         beforePermissions={
           <>
             {currentDeployment ? (
