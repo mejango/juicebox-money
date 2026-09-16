@@ -127,26 +127,28 @@ function click(element: HTMLElement) {
 }
 
 describe('Safe batch tray', () => {
-  it('shows one chip per chain from storage and only Presets when nothing is queued', async () => {
+  it('shows one tab per chain from storage and only the preset button when nothing is queued', async () => {
     render()
     await settle()
     expect(container.textContent).toContain('Nothing queued')
-    expect(button('Presets')).toBeTruthy()
-    expect(container.textContent).not.toContain('queued ·')
+    expect(button('Start from a preset')).toBeTruthy()
+    expect(container.querySelector('[role="tablist"]')).toBeNull()
 
     seed()
     await settle()
-    expect(button(/2 queued · Ethereum/)).toBeTruthy()
+    expect(button('Ethereum (2)').getAttribute('role')).toBe('tab')
+    expect(container.querySelector('table')?.textContent).toContain('Register buyback pool')
+    expect(container.querySelector('table')?.textContent).toContain('Set buyback hook')
     expect(container.textContent).not.toContain('Base')
-    expect(button('Clear')).toBeTruthy()
-    expect(button('Same on every chain')).toBeTruthy()
+    expect(button('Clear all')).toBeTruthy()
+    expect(button('Copy the Ethereum batch to every chain')).toBeTruthy()
   })
 
   it('opens the batch dialog with the steps, disables submit on a dependency problem, and fixes it by moving', async () => {
     seed()
     render()
     await settle()
-    click(button(/2 queued · Ethereum/))
+    click(button('Review and propose on Ethereum'))
     await settle()
 
     const dialog = document.querySelector('dialog')
@@ -218,7 +220,7 @@ describe('Safe batch tray', () => {
     )
     render()
     await settle()
-    click(button('Presets'))
+    click(button('Start from a preset'))
     await settle()
     const dialog = document.querySelector('dialog')
     expect(dialog?.textContent).toContain('Move to buyback 1.4.0 + gateway')
@@ -241,7 +243,7 @@ describe('Safe batch tray', () => {
       'setTerminalFor',
     ])
     expect(readSafeBatch(1, 2)[0].args).toEqual([2n, 3000, 60, 1800n, NATIVE])
-    expect(button(/3 queued · Ethereum/)).toBeTruthy()
+    expect(button('Ethereum (3)')).toBeTruthy()
     expect(container.textContent).toContain('Added to the batch for Ethereum.')
     expect(mocks.submit).not.toHaveBeenCalled()
   })
@@ -253,8 +255,8 @@ describe('Safe batch tray', () => {
     ])
     render()
     await settle()
-    expect(button(/1 queued · Base/)).toBeTruthy()
-    click(button('Clear'))
+    expect(button('Base (1)')).toBeTruthy()
+    click(button('Clear all'))
     await settle()
     expect(readSafeBatch(1, 2)).toEqual([])
     expect(readSafeBatch(8453, 6)).toEqual([])
