@@ -57,7 +57,7 @@ type BuybackChainState = AuthorityDeployment & {
   defaultHook?: Address | null
   defaultTerminal?: Address | null
   /** Pair tokens with an initialized pool on this chain, and their TWAP window. */
-  pools: { label: string; token: Address; twap: number }[]
+  pools: { label: string; token: Address; twap: number; fee: number; tickSpacing: number }[]
   poolSummary: string
   readError: string | null
 }
@@ -224,19 +224,23 @@ async function readChainState(
     const usdc = USDC_ADDRESSES[deployment.chainId]
     if (usdc) probes.push({ label: 'USDC', token: usdc })
     const windows = await Promise.all(
-      probes.map(async probe => ({
-        ...probe,
-        twap: Number(
-          await client
-            .readContract({
-              address: resolvedHook,
-              abi: jbBuybackHookAbi,
-              functionName: 'twapWindowOf',
-              args: [BigInt(deployment.projectId), probe.token],
-            })
+      probes.map(async probe => {
+        const args = [BigInt(deployment.projectId), probe.token] as const
+        const [twap, key] = await Promise.all([
+          client
+            .readContract({ address: resolvedHook, abi: jbBuybackHookAbi, functionName: 'twapWindowOf', args })
             .catch(() => 0n),
-        ),
-      })),
+          client
+            .readContract({ address: resolvedHook, abi: jbBuybackHookAbi, functionName: 'poolKeyOf', args })
+            .catch(() => null),
+        ])
+        return {
+          ...probe,
+          twap: Number(twap),
+          fee: Number(key?.fee ?? 3000),
+          tickSpacing: Number(key?.tickSpacing ?? 60),
+        }
+      }),
     )
     pools = windows.filter(row => row.twap > 0)
     poolSummary = pools.length
@@ -540,17 +544,17 @@ function BuybackActionForm({
             : // Pre-select the pool the chain already has, so a TWAP edit targets
               // an initialized pair instead of a native pool a USDC revnet never
               // had. Native pools read back as address(0); show the sentinel.
-              kind === 'twap' && row.pools[0] && row.pools[0].token !== zeroAddress
+              (kind === 'twap' || kind === 'setPool') && row.pools[0] && row.pools[0].token !== zeroAddress
               ? row.pools[0].token
               : NATIVE_TOKEN,
       ]),
     ),
   )
-  const [fee, setFee] = useState('3000')
-  const [tickSpacing, setTickSpacing] = useState('60')
-  const [twapWindow, setTwapWindow] = useState(() =>
-    kind === 'twap' ? String(available[0]?.pools[0]?.twap ?? 1800) : '1800',
-  )
+  // Set pool and TWAP edits start from the pool the first chain already has.
+  const livePool = kind === 'twap' || kind === 'setPool' ? available[0]?.pools[0] : undefined
+  const [fee, setFee] = useState(String(livePool?.fee ?? 3000))
+  const [tickSpacing, setTickSpacing] = useState(String(livePool?.tickSpacing ?? 60))
+  const [twapWindow, setTwapWindow] = useState(String(livePool?.twap ?? 1800))
   const [sqrtPriceX96, setSqrtPriceX96] = useState('')
   const [ack, setAck] = useState(false)
   const [review, setReview] = useState<Review | null>(null)
