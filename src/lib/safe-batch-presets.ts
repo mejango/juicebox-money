@@ -55,6 +55,11 @@ export const MAX_TWAP_WINDOW = 172_800n
 const DEFAULT_TWAP_WINDOW = 1_800n
 export const DEPLOYER_DEFAULT_TWAP_NOTE =
   'The old window was the deployer default (48h); 30 minutes will be stored.'
+/** Windows a project keeps identical on every chain, used instead of the carried value. */
+export const PROJECT_TWAP_WINDOWS: Readonly<Record<number, bigint>> = { 7: 3600n }
+export function projectTwapNote(window: bigint): string {
+  return `This project uses a ${window}s window on every chain.`
+}
 
 export type PresetChainResolution = {
   status: 'unavailable' | 'nothing' | 'ready'
@@ -142,16 +147,13 @@ async function readPool(
 }
 
 /** The pool-registration values carried from an old hook; the max window is stored as 30 minutes. */
-function carriedPoolValues(pool: PoolRead) {
+function carriedPoolValues(pool: PoolRead, projectId: number) {
+  const fixed = PROJECT_TWAP_WINDOWS[projectId]
   const defaulted = pool.twapWindow === MAX_TWAP_WINDOW
+  const twapWindow = fixed ?? (defaulted ? DEFAULT_TWAP_WINDOW : pool.twapWindow)
   return {
-    values: {
-      fee: pool.fee,
-      tickSpacing: pool.tickSpacing,
-      twapWindow: defaulted ? DEFAULT_TWAP_WINDOW : pool.twapWindow,
-      terminalToken: pool.write,
-    },
-    note: defaulted ? DEPLOYER_DEFAULT_TWAP_NOTE : undefined,
+    values: { fee: pool.fee, tickSpacing: pool.tickSpacing, twapWindow, terminalToken: pool.write },
+    note: fixed !== undefined ? projectTwapNote(fixed) : defaulted ? DEPLOYER_DEFAULT_TWAP_NOTE : undefined,
   }
 }
 
@@ -243,7 +245,7 @@ export async function resolvePreset(
       })
       // A second registration reverts with PoolAlreadySet.
       if (carried > 0n) continue
-      const { values, note } = carriedPoolValues(pool)
+      const { values, note } = carriedPoolValues(pool, projectId)
       steps.push(buildStep({ kind: 'setPoolFor', chainId, projectId, values, note }))
     }
   }
@@ -334,7 +336,7 @@ export async function resolveMirrorValues(
         values: { hook, terminalToken: token, twapWindow: step.values.twapWindow },
       }
     }
-    const { values } = carriedPoolValues(pool)
+    const { values } = carriedPoolValues(pool, to.projectId)
     return { values: { ...values, twapWindow: step.values.twapWindow } }
   }
   if (step.kind === 'initializePoolFor') {

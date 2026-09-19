@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DEPLOYER_DEFAULT_TWAP_NOTE,
   presetInfraAvailable,
+  projectTwapNote,
   resolveMirrorValues,
   resolvePreset,
   SAFE_BATCH_PRESETS,
@@ -184,6 +185,15 @@ describe('buyback 1.4.0 + gateway preset', () => {
     const pool = resolved.steps.find(step => step.kind === 'setPoolFor')!
     expect(pool.args).toEqual([2n, 3000, 60, 1800n, NATIVE])
     expect(pool.note).toBe(DEPLOYER_DEFAULT_TWAP_NOTE)
+  })
+
+  it('uses the fixed 3600s window for project 7 on every chain, whatever the old window', async () => {
+    for (const [chainId, twap] of [[1, 172_800n], [8453, 3600n], [11155111, 900n]] as const) {
+      const client = chain({ pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap } } })
+      const pool = (await resolvePreset(PRESET, { chainId, projectId: 7, client })).steps.find(step => step.kind === 'setPoolFor')!
+      expect(pool.args).toEqual([7n, 10_000, 200, 3600n, NATIVE])
+      expect(pool.note).toBe(projectTwapNote(3600n))
+    }
   })
 
   it('carries a USDC pool with the chain USDC address and skips pools the new hook already has', async () => {
