@@ -6,7 +6,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
-import { runSafeCalls, type SafeCallResult } from '@/lib/safe'
+import { hasSafeService, runSafeCalls, type SafeCallResult } from '@/lib/safe'
 import {
   composeBatch,
   dependsOnPrior,
@@ -105,11 +105,14 @@ export async function resolveSafeBatchRoute({
   }
 }
 
-export function batchActionLabel(route: SafeBatchRoute, count: number): string {
+export function batchActionLabel(route: SafeBatchRoute, count: number, chainId?: JBChainId): string {
   if (route.kind === 'eoa') {
     return `Send ${count} transaction${count === 1 ? '' : 's'}`
   }
   if (route.kind === 'unavailable') return 'Submit batch'
+  if (route.kind === 'safe-owner' && chainId !== undefined && !hasSafeService(chainId)) {
+    return 'Approve batch onchain'
+  }
   return 'Propose batch to Safe'
 }
 

@@ -20,11 +20,17 @@ import {
   submitSafeBatch,
   type SafeBatchRoute,
 } from '@/lib/safe-batch-submit'
+import { hasSafeService } from '@/lib/safe'
 import { chainName } from '@/lib/urn'
 
-function routeDescription(route: SafeBatchRoute, count: number): string {
+function routeDescription(route: SafeBatchRoute, count: number, chainId: JBChainId): string {
   if (route.kind === 'safe-app') return 'One MultiSend proposal from the Safe app'
-  if (route.kind === 'safe-owner') return 'One MultiSend proposal signed by a Safe owner'
+  if (route.kind === 'safe-owner') {
+    // No hosted Safe service on this chain: each signer approves the SafeTx hash onchain.
+    return hasSafeService(chainId)
+      ? 'One MultiSend proposal signed by a Safe owner'
+      : 'One MultiSend batch approved onchain by each Safe owner'
+  }
   if (route.kind === 'eoa') {
     return `${count} direct transaction${count === 1 ? '' : 's'} in order`
   }
@@ -146,14 +152,17 @@ export function SafeBatchDialog({
     },
     {
       label: 'Route',
-      value: route ? routeDescription(route, count) : routeQuery.isError ? 'Unavailable' : '…',
+      value: route ? routeDescription(route, count, chainId) : routeQuery.isError ? 'Unavailable' : '…',
     },
   ]
 
+  const onchainApproval = route?.kind === 'safe-owner' && !hasSafeService(chainId)
   const walletSteps =
     route?.kind === 'eoa'
       ? steps.map(step => ({ key: step.id, title: `${step.label} on ${chainName(chainId)}` }))
-      : [{ key: 'proposal', title: `Propose batch of ${count} call${count === 1 ? '' : 's'} to Safe` }]
+      : onchainApproval
+        ? [{ key: 'proposal', title: `Approve batch of ${count} call${count === 1 ? '' : 's'} onchain` }]
+        : [{ key: 'proposal', title: `Propose batch of ${count} call${count === 1 ? '' : 's'} to Safe` }]
 
   const update = (next: BatchStep[]) => {
     if (!batch || busy || complete) return
@@ -231,14 +240,16 @@ export function SafeBatchDialog({
       stepsIntro={
         route?.kind === 'eoa'
           ? undefined
-          : 'Your wallet will ask for one action: the whole batch is one Safe proposal.'
+          : onchainApproval
+            ? `${chainName(chainId)} has no Safe transaction service, so your wallet will send one transaction: an onchain approval of the whole batch as one Safe transaction. It executes once enough owners have approved.`
+            : 'Your wallet will ask for one action: the whole batch is one Safe proposal.'
       }
       preparing={preparing}
       status={preparing ? 'Checking the authority and route…' : status}
       error={error ?? (routeQuery.isError ? 'Could not verify the authority on this chain.' : null)}
       busy={locked}
       complete={complete}
-      action={route ? batchActionLabel(route, count) : 'Submit batch'}
+      action={route ? batchActionLabel(route, count, chainId) : 'Submit batch'}
       actionDisabled={!route || route.kind === 'unavailable' || !order.ok || !count}
       onConfirm={() => void submit()}
       onClose={close}
