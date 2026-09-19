@@ -601,7 +601,7 @@ export function buildSetBuybackPoolAuthorityCall({
   twapWindow,
   terminalToken,
   gas = 300_000n,
-  label = 'Register buyback pool',
+  label = 'Set buyback pool',
 }: {
   chainId: JBChainId
   authority: Address

@@ -246,7 +246,7 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
   },
   setPoolFor: {
     kind: 'setPoolFor',
-    label: 'Register buyback pool',
+    label: 'Set buyback pool',
     contract: 'JBBuybackHookRegistry',
     perChain: true,
     parse: values => ({

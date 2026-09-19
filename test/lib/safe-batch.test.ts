@@ -77,7 +77,7 @@ describe('Safe batch steps', () => {
       functionName: 'setPoolFor',
       data: SET_POOL_DATA,
       args: [2n, 10_000, 200, 1800n, NATIVE],
-      label: 'Register buyback pool',
+      label: 'Set buyback pool',
     })
     expect(terminal).toMatchObject({
       to: ROUTER_REGISTRY,

@@ -853,7 +853,7 @@ const LABELLED_CALLS: [Abi, string, string][] = [
   [jbBuybackHookRegistryAbi, "setHookFor", "Set buyback hook"],
   [jbRouterTerminalRegistryAbi, "setTerminalFor", "Set router terminal"],
   [jbBuybackHookRegistryAbi, "initializePoolFor", "Initialize buyback pool"],
-  [jbBuybackHookRegistryAbi, "setPoolFor", "Register buyback pool"],
+  [jbBuybackHookRegistryAbi, "setPoolFor", "Set buyback pool"],
   [jbBuybackHookAbi, "setTwapWindowOf", "Set buyback TWAP window"],
   [routerGatewayAbi, "processPendingCall", "Retry retained router call"],
   [routerGatewayAbi, "processPendingCallWithGas", "Retry retained router call with gas"],

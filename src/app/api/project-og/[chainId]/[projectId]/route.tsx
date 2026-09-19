@@ -41,7 +41,7 @@ export async function GET(
         color: '#1d1d1f',
         display: 'flex',
         height: '100%',
-        padding: '64px 72px',
+        padding: '56px 64px',
         width: '100%',
       }}
     >
@@ -97,7 +97,7 @@ export async function GET(
         <div
           style={{
             display: 'flex',
-            fontSize: project.name.length > 28 ? 56 : 68,
+            fontSize: project.name.length > 28 ? 64 : 84,
             fontWeight: 700,
             lineHeight: 1.05,
           }}
@@ -109,32 +109,33 @@ export async function GET(
             style={{
               color: '#3a3a3c',
               display: 'flex',
-              fontSize: 32,
+              fontSize: 40,
               lineHeight: 1.3,
-              marginTop: 22,
+              marginTop: 20,
             }}
           >
             {project.tagline}
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', gap: 48, marginTop: 'auto' }}>
+        <div style={{ display: 'flex', gap: 72, marginTop: 'auto' }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ color: '#5c5751', display: 'flex', fontSize: 26 }}>Balance</div>
+            <div style={{ color: '#5c5751', display: 'flex', fontSize: 36 }}>Balance</div>
             <div
               style={{
                 display: 'flex',
-                fontSize: project.balance.length > 14 ? 48 : 60,
+                fontSize: project.balance.length > 14 ? 72 : 96,
                 fontWeight: 700,
-                marginTop: 6,
+                lineHeight: 1,
+                marginTop: 8,
               }}
             >
               {project.balance}
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ color: '#5c5751', display: 'flex', fontSize: 26 }}>Payments</div>
-            <div style={{ display: 'flex', fontSize: 60, fontWeight: 700, marginTop: 6 }}>
+            <div style={{ color: '#5c5751', display: 'flex', fontSize: 36 }}>Payments</div>
+            <div style={{ display: 'flex', fontSize: 96, fontWeight: 700, lineHeight: 1, marginTop: 8 }}>
               {project.paymentsCount.toLocaleString('en-US')}
             </div>
           </div>

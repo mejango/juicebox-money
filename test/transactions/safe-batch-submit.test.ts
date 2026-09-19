@@ -315,7 +315,7 @@ describe('Safe owner batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-owner', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow(/Register buyback pool cannot run on Ethereum: PoolAlreadySet/)
+    ).rejects.toThrow(/Set buyback pool cannot run on Ethereum: PoolAlreadySet/)
     expect(mocks.requireReview).not.toHaveBeenCalled()
   })
 
