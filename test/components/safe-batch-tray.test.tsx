@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   resolveRoute: vi.fn(),
   submit: vi.fn(),
   resolvePreset: vi.fn(),
+  listPendingSafeTxs: vi.fn(),
 }))
 
 vi.mock('next/image', () => ({
@@ -26,6 +27,10 @@ vi.mock('@/lib/authority', () => ({
   runAuthorityCalls: mocks.runAuthorityCalls,
   safeOutcomeMessage: (_result: unknown, message: string) => message,
 }))
+vi.mock('@/lib/safe', async original => ({
+  ...(await original<typeof import('@/lib/safe')>()),
+  listPendingSafeTxs: mocks.listPendingSafeTxs,
+}))
 vi.mock('@/lib/safe-batch-submit', async original => ({
   ...(await original<typeof import('@/lib/safe-batch-submit')>()),
   resolveSafeBatchRoute: mocks.resolveRoute,
@@ -38,7 +43,7 @@ vi.mock('@/lib/safe-batch-presets', async original => ({
 
 import { SafeBatchProvider } from '@/components/project/SafeBatchProvider'
 import { SafeBatchTray } from '@/components/project/SafeBatchTray'
-import { buildStep, readSafeBatch, safeBatchStorageKey, writeSafeBatch } from '@/lib/safe-batch'
+import { buildStep, composeBatch, encodeMultiSend, MULTI_SEND_CALL_ONLY, readSafeBatch, safeBatchStorageKey, writeSafeBatch } from '@/lib/safe-batch'
 import '../dialog-shim'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -65,6 +70,7 @@ beforeEach(() => {
     result: { chainId: 1, mode: 'service', status: 'queued', nonce: 7, safeTxHash: `0x${'ab'.repeat(32)}` },
   })
   mocks.resolvePreset.mockResolvedValue({ status: 'nothing', message: 'Nothing to do.', steps: [] })
+  mocks.listPendingSafeTxs.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -142,6 +148,38 @@ describe('Safe batch tray', () => {
     expect(container.textContent).not.toContain('Base')
     expect(button('Clear all')).toBeTruthy()
     expect(button('Copy the Ethereum batch to every chain')).toBeTruthy()
+  })
+
+  it('shows a queued proposal in place of the review button, whatever order the tray holds', async () => {
+    seed()
+    const { calls } = composeBatch([...readSafeBatch(1, 2)].reverse())
+    mocks.listPendingSafeTxs.mockResolvedValue([
+      {
+        to: MULTI_SEND_CALL_ONLY,
+        value: '0',
+        data: encodeMultiSend(calls),
+        operation: 1,
+        safeTxGas: 0,
+        baseGas: 0,
+        gasPrice: 0,
+        gasToken: '0x0000000000000000000000000000000000000000',
+        refundReceiver: '0x0000000000000000000000000000000000000000',
+        nonce: 10,
+        safeTxHash: `0x${'cd'.repeat(32)}`,
+        confirmationsRequired: 2,
+        confirmations: [{ owner: mocks.wallet.address, signature: `0x${'ab'.repeat(65)}` }],
+      },
+    ])
+    render()
+    await settle()
+    expect(container.textContent).toContain('Already proposed on Ethereum as Safe transaction #10 (1/2 signatures)')
+    expect(container.querySelector('a[href*="multisig_"]')).toBeTruthy()
+    expect([...document.querySelectorAll('button')].some(b => /Review and propose/.test(b.textContent ?? ''))).toBe(false)
+
+    click(button('Remove from the batch'))
+    await settle()
+    expect(readSafeBatch(1, 2)).toEqual([])
+    expect(container.textContent).toContain('Nothing queued')
   })
 
   it('opens the batch dialog with the steps, disables submit on a dependency problem, and fixes it by moving', async () => {

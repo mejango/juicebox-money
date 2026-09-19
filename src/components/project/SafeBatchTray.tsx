@@ -1,15 +1,117 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import type { Address } from 'viem'
 import { SafeBatchDialog } from '@/components/project/SafeBatchDialog'
 import { SafeBatchPresetDialog } from '@/components/project/SafeBatchPresetDialog'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
-import { mirrorBatch, upsertStep } from '@/lib/safe-batch'
+import { listPendingSafeTxs, safeTxLink, safeUsableConfirmationCount, type SafeQueuedTx } from '@/lib/safe'
+import { composeBatch, decodeMultiSend, mirrorBatch, MULTI_SEND_CALL_ONLY, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
 import { presetInfraAvailable, resolveMirrorValues } from '@/lib/safe-batch-presets'
 import { chainName } from '@/lib/urn'
+
+/** The calls as an order-free key, so a reordered tray still matches its proposal. */
+function callsKey(calls: readonly BatchCall[]): string {
+  return calls
+    .map(call => `${call.to.toLowerCase()}:${call.data.toLowerCase()}:${call.value}`)
+    .sort()
+    .join('|')
+}
+
+/** The pending Safe proposal whose MultiSend holds exactly these queued calls, if one is already queued. */
+function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: BatchStep[]) {
+  const key = steps.length ? callsKey(composeBatch(steps).calls) : null
+  return useQuery({
+    queryKey: ['safeBatchProposed', chainId, authority, key],
+    enabled: !!authority && !!key,
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+    queryFn: async (): Promise<SafeQueuedTx | null> => {
+      const pending = await listPendingSafeTxs(chainId, authority!)
+      return (
+        pending.find(tx => {
+          if (tx.to.toLowerCase() !== MULTI_SEND_CALL_ONLY.toLowerCase() || Number(tx.operation) !== 1) return false
+          const calls = decodeMultiSend(tx.data)
+          return !!calls && callsKey(calls) === key
+        }) ?? null
+      )
+    },
+  }).data ?? null
+}
+
+function QueuedChainPanel({
+  chainId,
+  authority,
+  steps,
+  onReview,
+  onRemove,
+}: {
+  chainId: JBChainId
+  authority: Address | null
+  steps: BatchStep[]
+  onReview: () => void
+  onRemove: () => void
+}) {
+  const proposed = useProposedBatch(chainId, authority, steps)
+  const link = proposed && authority && proposed.safeTxHash
+    ? safeTxLink(chainId, authority, proposed.safeTxHash)
+    : null
+  return (
+    <>
+      <div className="overflow-x-auto rounded-xl border border-smoke-200">
+        <table className="w-full text-sm">
+          <thead className="bg-smoke-50">
+            <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
+              <th className="w-8 px-4 py-3 font-normal">#</th>
+              <th className="whitespace-nowrap px-4 py-3 font-normal">Action</th>
+              <th className="px-4 py-3 font-normal">Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((step, index) => (
+              <tr key={step.id} className="border-b border-smoke-100 last:border-b-0">
+                <td className="px-4 py-3 text-smoke-500">{index + 1}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-ink">{step.label}</td>
+                <td className="px-4 py-3 text-smoke-700">{step.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {proposed ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" role="status">
+          <span className="text-bluebs-700">
+            Already proposed on {chainName(chainId)} as Safe transaction #{proposed.nonce}
+            {proposed.confirmationsRequired
+              ? ` (${safeUsableConfirmationCount(proposed)}/${proposed.confirmationsRequired} signatures)`
+              : ''}
+            . Sign or execute it under Pending multisig transactions.
+          </span>
+          {link ? (
+            <a href={link} target="_blank" rel="noreferrer" className="text-bluebs-700 underline">
+              Open in Safe ↗
+            </a>
+          ) : null}
+          <button type="button" onClick={onRemove} className="text-smoke-700 underline">
+            Remove from the batch
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onReview}
+          className="btn-primary mt-3 min-h-[36px] px-4 text-sm"
+        >
+          Review and propose on {chainName(chainId)}
+        </button>
+      )}
+    </>
+  )
+}
 
 /**
  * The batch card at the top of the Owner/Operator tab: one tab per chain with
@@ -100,35 +202,13 @@ export function SafeBatchTray({ chainId }: { chainId: JBChainId }) {
               return {
                 label: `${chainName(deployment.chainId)} (${steps.length})`,
                 content: (
-                  <>
-                    <div className="overflow-x-auto rounded-xl border border-smoke-200">
-                      <table className="w-full text-sm">
-                        <thead className="bg-smoke-50">
-                          <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
-                            <th className="w-8 px-4 py-3 font-normal">#</th>
-                            <th className="whitespace-nowrap px-4 py-3 font-normal">Action</th>
-                            <th className="px-4 py-3 font-normal">Detail</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {steps.map((step, index) => (
-                            <tr key={step.id} className="border-b border-smoke-100 last:border-b-0">
-                              <td className="px-4 py-3 text-smoke-500">{index + 1}</td>
-                              <td className="whitespace-nowrap px-4 py-3 text-ink">{step.label}</td>
-                              <td className="px-4 py-3 text-smoke-700">{step.detail}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setOpenChain(deployment.chainId)}
-                      className="btn-primary mt-3 min-h-[36px] px-4 text-sm"
-                    >
-                      Review and propose on {chainName(deployment.chainId)}
-                    </button>
-                  </>
+                  <QueuedChainPanel
+                    chainId={deployment.chainId}
+                    authority={deployment.indexedAuthority}
+                    steps={steps}
+                    onReview={() => setOpenChain(deployment.chainId)}
+                    onRemove={() => batch.clear(deployment.chainId)}
+                  />
                 ),
               }
             })}
