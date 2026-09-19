@@ -12,6 +12,21 @@ export function contractReverted(error: unknown): boolean {
   )
 }
 
+/** viem's generic labels for errors it cannot classify; the transport's own text sits in `details`. */
+const GENERIC_RPC_LABEL =
+  /unknown RPC error|Missing or invalid parameters|RPC Request failed|HTTP request failed/i
+
+/** The one-line message of a viem error, preferring the node's or gateway's text over viem's generic label. */
+function viemMessage(error: Error): string {
+  const short =
+    'shortMessage' in error && typeof error.shortMessage === 'string'
+      ? error.shortMessage
+      : error.message
+  const details =
+    'details' in error && typeof error.details === 'string' ? error.details : ''
+  return (GENERIC_RPC_LABEL.test(short) && details ? details : short).split('\n')[0]
+}
+
 /**
  * Trim a raw simulation/wallet error down to its useful first line, with the
  * denied/rejected cases mapped to friendly copy. `fallback` covers non-Error
@@ -22,12 +37,9 @@ export function shortError(
   fallback = 'Something went wrong.',
 ): string {
   if (error instanceof Error) {
-    const message =
-      'shortMessage' in error && typeof error.shortMessage === 'string'
-        ? error.shortMessage
-        : error.message
+    const message = viemMessage(error)
     if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
-    return message.split('\n')[0]
+    return message
   }
   return fallback
 }
@@ -36,7 +48,7 @@ export function shortError(
 export function friendlyError(e: unknown): string {
   const message =
     e instanceof BaseError
-      ? e.shortMessage
+      ? viemMessage(e)
       : e instanceof Error
         ? e.message
         : 'Something went wrong.'

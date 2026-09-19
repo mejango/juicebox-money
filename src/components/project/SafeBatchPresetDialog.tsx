@@ -17,6 +17,7 @@ import {
   type PresetChainResolution,
   type SafeBatchPreset,
 } from '@/lib/safe-batch-presets'
+import { shortError } from '@/lib/errors'
 import { chainName } from '@/lib/urn'
 
 type ChainPlan = PresetChainResolution & { chainId: JBChainId; projectId: number }
@@ -92,9 +93,7 @@ function PresetPlan({
             return {
               ...deployment,
               status: 'unavailable',
-              message: `Could not read ${chainName(deployment.chainId)}: ${
-                error instanceof Error ? error.message.split('\n')[0] : 'unknown error'
-              }`,
+              message: `Could not read ${chainName(deployment.chainId)}: ${shortError(error, 'unknown error')}`,
               steps: [],
             }
           }
