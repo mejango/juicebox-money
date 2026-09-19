@@ -52,7 +52,7 @@ export async function resolveSafeBatchRoute({
   chainId: JBChainId
   authority: Address
 }): Promise<SafeBatchRoute> {
-  const connected = getAccount(wagmiConfig).address
+  const { address: connected, chainId: connectedChainId } = getAccount(wagmiConfig)
   const identity = await readAuthorityIdentity(clientFor(chainId), authority)
   if (!identity) {
     return {
@@ -78,6 +78,14 @@ export async function resolveSafeBatchRoute({
   const same = connected.toLowerCase() === authority.toLowerCase()
   if (identity.kind === 'safe') {
     if (isSafeConnection(wagmiConfig) && same) {
+      // A Safe app cannot switch chains; the Safe has to be opened on the batch's chain.
+      if (connectedChainId !== chainId) {
+        return {
+          kind: 'unavailable',
+          authorityKind: 'safe',
+          reason: `Open this Safe on ${chainName(chainId)} in Safe to propose this batch.`,
+        }
+      }
       return { kind: 'safe-app', authorityKind: 'safe' }
     }
     if (identity.owners.some(owner => owner.toLowerCase() === connected.toLowerCase())) {

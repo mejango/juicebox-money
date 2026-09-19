@@ -94,6 +94,7 @@ function safeIdentity(owners = [ALICE], threshold = 1) {
     threshold,
     ownersAreEoas: true,
     hasModules: false,
+    modules: [],
     proxyCodeHash: PROPOSAL,
     singleton: BOB,
     singletonCodeHash: PROPOSAL,
@@ -152,6 +153,14 @@ describe('batch route', () => {
     const route = await resolveSafeBatchRoute({ chainId: 1, authority: SAFE })
     expect(route).toEqual({ kind: 'safe-app', authorityKind: 'safe' })
     expect(batchActionLabel(route, 3)).toBe('Propose batch to Safe')
+  })
+
+  it('refuses a Safe app opened on another chain instead of trying to switch', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    const route = await resolveSafeBatchRoute({ chainId: 10, authority: SAFE })
+    expect(route).toMatchObject({ kind: 'unavailable', authorityKind: 'safe' })
+    expect(route.kind === 'unavailable' && route.reason).toMatch(/Open this Safe on/)
   })
 
   it('routes a Safe owner to an operation-1 SafeTx and refuses strangers', async () => {

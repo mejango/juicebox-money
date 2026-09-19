@@ -240,6 +240,7 @@ function safeIdentity(
     threshold: 2,
     ownersAreEoas: true,
     hasModules: false,
+    modules: [],
     proxyCodeHash: keccak256(SAFE_PROXY_RUNTIME),
     singleton: SINGLETON,
     singletonCodeHash: keccak256(SINGLETON_CODE),

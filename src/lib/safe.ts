@@ -416,12 +416,10 @@ async function readLiveSafeState(
     throw new Error('Could not verify this Safe onchain.')
   }
   // Module transactions can mutate Safe policy without advancing its nonce.
-  // Until the action path snapshots every module address, support only the
-  // canonical empty module set and fail closed if one is enabled.
-  if (identity.hasModules) {
-    throw new Error(
-      'Safe actions with enabled modules are not supported. Disable the modules or use the Safe app directly.',
-    )
+  // The policy fingerprint snapshots every module address, so only a module
+  // set too large to read in one page is left unverifiable.
+  if (!identity.modules) {
+    throw new Error('Could not verify this Safe onchain.')
   }
   return { identity, nonce }
 }
@@ -431,7 +429,7 @@ function safePolicyFingerprint(identity: LiveSafeIdentity): string {
     owners: identity.owners.map(owner => owner.toLowerCase()).sort(),
     threshold: identity.threshold,
     ownersAreEoas: identity.ownersAreEoas,
-    hasModules: identity.hasModules,
+    modules: identity.modules?.map(module => module.toLowerCase()).sort(),
     proxyCodeHash: identity.proxyCodeHash.toLowerCase(),
     singleton: identity.singleton.toLowerCase(),
     singletonCodeHash: identity.singletonCodeHash.toLowerCase(),

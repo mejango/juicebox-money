@@ -101,6 +101,7 @@ function safeIdentity(owners = [ALICE], threshold = 1) {
     threshold,
     ownersAreEoas: true,
     hasModules: false,
+    modules: [],
     proxyCodeHash: HASH,
     singleton: SINGLETON,
     singletonCodeHash: HASH,
@@ -224,14 +225,34 @@ describe('Safe execution boundary', () => {
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
 
-  it('rejects module-enabled Safes instead of trusting a boolean fingerprint', async () => {
+  it('signs for module-enabled Safes and rejects a module set that changes mid-flow', async () => {
     mocks.readAuthorityIdentity.mockResolvedValue({
       ...safeIdentity(),
       hasModules: true,
+      modules: [BOB],
+    })
+    await expect(executeSafeTx(1, SAFE, queued())).resolves.toBeDefined()
+
+    let reads = 0
+    mocks.readAuthorityIdentity.mockImplementation(async () => ({
+      ...safeIdentity(),
+      hasModules: true,
+      modules: ++reads === 1 ? [BOB] : [BOB, FACTORY],
+    }))
+    await expect(simulateSafeExecution(1, SAFE, queued())).rejects.toThrow(
+      /policy or nonce changed/i,
+    )
+  })
+
+  it('fails closed when the module set is too large to snapshot', async () => {
+    mocks.readAuthorityIdentity.mockResolvedValue({
+      ...safeIdentity(),
+      hasModules: true,
+      modules: null,
     })
 
     await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
-      /enabled modules are not supported/i,
+      /Could not verify this Safe onchain/,
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()

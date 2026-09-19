@@ -168,6 +168,8 @@ type SafeAuthorityIdentity = {
   threshold: number
   ownersAreEoas: boolean
   hasModules: boolean
+  /** Enabled modules, or null when there are too many to snapshot. */
+  modules: Address[] | null
   proxyCodeHash: Hex
   singleton: Address
   singletonCodeHash: Hex
@@ -496,6 +498,9 @@ export async function readAuthorityIdentity(
     ownersAreEoas,
     hasModules:
       modules.length > 0 || !isAddressEqual(next, SAFE_MODULES_SENTINEL),
+    modules: isAddressEqual(next, SAFE_MODULES_SENTINEL)
+      ? modules.map(getAddress)
+      : null,
     proxyCodeHash,
     singleton,
     singletonCodeHash: keccak256(singletonCode),
