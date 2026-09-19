@@ -4,7 +4,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { encodeFunctionData, zeroAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { SELECTOR_LABELS, transactionLabel } from '@/components/project/SafeQueueCard'
+import { batchCallLabels, SELECTOR_LABELS, transactionLabel } from '@/components/project/SafeQueueCard'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@/lib/safe-batch'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
@@ -53,6 +53,8 @@ describe('Safe queue selector labels', () => {
       nonce: 3,
     }
     expect(transactionLabel(1, row)).toBe('Batch (2 calls) | MultiSendCallOnly')
+    expect(batchCallLabels(1, row)).toEqual(['Set buyback hook | JBBuybackHookRegistry (current)', 'Set buyback hook | JBBuybackHookRegistry (current)'])
+    expect(batchCallLabels(1, { ...row, operation: 0 })).toBeNull()
     // A plain CALL to the same address is not a batch and keeps the selector label.
     expect(transactionLabel(1, { ...row, operation: 0 })).toMatch(/^0x8d80ff0a \|/)
   })

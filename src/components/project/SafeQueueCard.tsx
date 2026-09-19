@@ -884,21 +884,25 @@ function contractName(chainId: JBChainId, address: Address): string | null {
   return null;
 }
 
+function callLabel(chainId: JBChainId, to: Address, data: Hex | null | undefined): string {
+  const selector = data?.slice(0, 10) ?? "0x";
+  const action = SELECTOR_LABELS.get(selector);
+  const target = contractName(chainId, to) ?? truncateAddress(to);
+  return action ? `${action} | ${target}` : `${selector} | ${target}`;
+}
+
+/** The labelled inner calls of a queued operator batch, or null for any other row. */
+export function batchCallLabels(chainId: JBChainId, tx: SafeQueuedTx): string[] | null {
+  if (Number(tx.operation ?? 0) !== 1 || !isAddressEqual(tx.to, MULTI_SEND_CALL_ONLY)) return null;
+  const calls = decodeMultiSend(tx.data);
+  return calls ? calls.map(call => callLabel(chainId, call.to, call.data)) : null;
+}
+
 /** The queue row's label: a known action and target, or a decoded operator batch. */
 export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
-  if (
-    Number(tx.operation ?? 0) === 1 &&
-    isAddressEqual(tx.to, MULTI_SEND_CALL_ONLY)
-  ) {
-    const calls = decodeMultiSend(tx.data);
-    if (calls) {
-      return `Batch (${calls.length} call${calls.length === 1 ? "" : "s"}) | MultiSendCallOnly`;
-    }
-  }
-  const selector = tx.data?.slice(0, 10) ?? "0x";
-  const action = SELECTOR_LABELS.get(selector);
-  const target = contractName(chainId, tx.to) ?? truncateAddress(tx.to);
-  return action ? `${action} | ${target}` : `${selector} | ${target}`;
+  const batch = batchCallLabels(chainId, tx);
+  if (batch) return `Batch (${batch.length} call${batch.length === 1 ? "" : "s"}) | MultiSendCallOnly`;
+  return callLabel(chainId, tx.to, tx.data);
 }
 
 function executionPlan(
@@ -1902,6 +1906,13 @@ export function SafeQueueCard({
                                     ? ` | sends ${tx.value} wei`
                                     : ""}
                                 </p>
+                                {batchCallLabels(chain.chainId, tx)?.length ? (
+                                  <ol className="mt-1 list-decimal pl-5 text-xs text-smoke-700">
+                                    {batchCallLabels(chain.chainId, tx)!.map((label, index) => (
+                                      <li key={index}>{label}</li>
+                                    ))}
+                                  </ol>
+                                ) : null}
                                 <p className="mt-1 text-xs text-smoke-500">
                                   Signed:{" "}
                                   {tx.confirmations?.length

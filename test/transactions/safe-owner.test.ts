@@ -40,6 +40,26 @@ describe('safesForOwner', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('retries a 429 after the Retry-After delay before giving up', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('{"error_msg":"Too many requests per second"}', { status: 429, headers: { 'retry-after': '2' } }),
+        )
+        .mockResolvedValueOnce(jsonResponse({ safes: [SAFE_A] }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const pending = safesForOwner(OWNER, 1)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(await pending).toEqual([getAddress(SAFE_A)])
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('degrades service errors and non-OK responses to an empty list', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({}, 503))
     vi.stubGlobal('fetch', fetchMock)

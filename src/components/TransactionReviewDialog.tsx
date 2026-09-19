@@ -1315,6 +1315,15 @@ function specialArgumentView(
     const steps = describeSplitGroups(call.chainId, value)
     if (steps) return <UrPlanView steps={steps} />
   }
+  if (fn.name === 'multiSend' && inputName === 'transactions' && call.calls?.length) {
+    return (
+      <div className="mt-2 space-y-3">
+        {call.calls.map((inner, index) => (
+          <PrettyCall key={index} call={inner} index={index} total={call.calls!.length} nested />
+        ))}
+      </div>
+    )
+  }
   return null
 }
 
@@ -1339,10 +1348,13 @@ function PrettyCall({
   call,
   index,
   total,
+  nested = false,
 }: {
   call: TransactionReviewCall
   index: number
   total: number
+  /** One call inside a batch: numbered as a call, no chain chip of its own. */
+  nested?: boolean
 }) {
   const fn = functionFromCall(call)
   const args = call.args ?? []
@@ -1352,18 +1364,20 @@ function PrettyCall({
     <section className="rounded-xl border border-smoke-200 bg-white p-4 sm:p-5">
       {total > 1 ? (
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
-          Transaction {index + 1} of {total}
+          {nested ? 'Call' : 'Transaction'} {index + 1} of {total}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
-          <ChainIcon chainId={call.chainId} size={16} />
-          {chainName(call.chainId)}
-        </span>
-        <span className="font-mono text-[11px] text-smoke-500">
-          chain {call.chainId}
-        </span>
-      </div>
+      {nested ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
+            <ChainIcon chainId={call.chainId} size={16} />
+            {chainName(call.chainId)}
+          </span>
+          <span className="font-mono text-[11px] text-smoke-500">
+            chain {call.chainId}
+          </span>
+        </div>
+      )}
 
       {call.label ? (
         <h3 className="mt-3 font-agrandir text-base font-medium text-ink">

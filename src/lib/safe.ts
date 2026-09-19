@@ -46,6 +46,7 @@ import {
 import {
   requireContractTransactionReview,
   requireTransactionReview,
+  type TransactionReviewCall,
   type TransactionReviewRequest,
 } from '@/lib/transaction-review'
 import {
@@ -97,6 +98,8 @@ export type SafeCall = {
   functionName?: string
   args?: readonly unknown[]
   contractName?: string
+  /** The inner calls of a MultiSend batch, for the review. */
+  calls?: readonly TransactionReviewCall[]
   reverifyAuthority?: () => Promise<void>
   onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
 }
@@ -297,7 +300,19 @@ function requestHeaders(json = false): Record<string, string> {
   return headers
 }
 
-function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+/** One Safe service request; a 429 (rejected before processing, so safe to repeat) waits and tries again. */
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await safeFetchOnce(url, init)
+    if (response.status !== 429 || attempt >= 3) return response
+    const retryAfter = Number(response.headers.get('retry-after'))
+    await new Promise(resolve =>
+      setTimeout(resolve, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * (attempt + 1)),
+    )
+  }
+}
+
+function safeFetchOnce(url: string, init?: RequestInit): Promise<Response> {
   return new Promise((resolve, reject) => {
     const release = () => {
       safeActive -= 1
@@ -567,7 +582,7 @@ async function signSafeTx(
   label?: string,
   reviewCall?: Pick<
     SafeCall,
-    'abi' | 'functionName' | 'args' | 'contractName'
+    'abi' | 'functionName' | 'args' | 'contractName' | 'calls'
   >,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<Hex> {
@@ -606,6 +621,7 @@ async function signSafeTx(
         functionName: reviewCall?.functionName,
         args: reviewCall?.args,
         contractName: reviewCall?.contractName,
+        calls: reviewCall?.calls,
       },
     ],
   })
@@ -759,6 +775,7 @@ async function proposeSafeTx({
   functionName,
   args,
   contractName,
+  calls,
   reverifyAuthority,
   onSafePrepared,
 }: SafeCall & { signer: Address; nonce?: number }): Promise<SafeQueuedTx> {
@@ -787,6 +804,7 @@ async function proposeSafeTx({
     functionName,
     args,
     contractName,
+    calls,
   }, reverifyAuthority)
   const response = await safeFetch(
     `${base}/api/v1/safes/${getAddress(safe)}/multisig-transactions/`,
@@ -832,7 +850,7 @@ export async function confirmSafeTx(
   signer: Address,
   reviewCall?: Pick<
     SafeCall,
-    'label' | 'abi' | 'functionName' | 'args' | 'contractName'
+    'label' | 'abi' | 'functionName' | 'args' | 'contractName' | 'calls'
   >,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<void> {

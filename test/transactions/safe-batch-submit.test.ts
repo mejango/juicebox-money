@@ -272,6 +272,10 @@ describe('Safe owner batch', () => {
             functionName: 'multiSend',
             args: [packMultiSend(calls)],
             label: 'Batch (3 calls)',
+            // The review expands the packed bytes into the decoded steps.
+            calls: steps.map(step =>
+              expect.objectContaining({ to: step.to, data: step.data, functionName: step.functionName, label: step.label }),
+            ),
           }),
         ],
       }),
