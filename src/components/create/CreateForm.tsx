@@ -2873,14 +2873,21 @@ export function CreateForm() {
               <span className="field-label">
                 {flavor === "revnet" ? "Revnet operator" : "Project owner"}
               </span>
-              {createsAuthoritySafe ? (
-                <ul className="mb-4 mt-2 list-disc space-y-1 pl-4 text-xs leading-relaxed text-smoke-700">
-                  <li>{authorityDescription}</li>
-                  <li>{flavor === "revnet" ? "The operator" : "The owner"} is made up of addresses that need to agree on decisions.</li>
-                </ul>
-              ) : (
-                <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
-              )}
+              <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
+              <p className="mb-3 mt-2 text-xs leading-relaxed text-smoke-700">
+                {flavor === "revnet" ? "The operator" : "The owner"}
+                {authorityMode === "create"
+                  ? " is made up of addresses that need to agree on decisions. "
+                  : " is an address you already control. "}
+                <button
+                  type="button"
+                  onClick={() => setAuthorityMode(mode => mode === "create" ? "existing" : "create")}
+                  disabled={busy}
+                  className="font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
+                >
+                  {authorityMode === "create" ? "Already have a multisig?" : "Create a new multisig?"}
+                </button>
+              </p>
               {authorityMode === "create" ? (
                 <AuthoritySafeEditor
                   role={flavor === "revnet" ? "operator" : "owner"}
@@ -2961,14 +2968,6 @@ export function CreateForm() {
               ) : null}
                 </>
               )}
-              <button
-                type="button"
-                onClick={() => setAuthorityMode(mode => mode === "create" ? "existing" : "create")}
-                disabled={busy}
-                className="mt-3 text-xs font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
-              >
-                {authorityMode === "create" ? "Already have a multisig?" : "Create a new multisig"}
-              </button>
             </div>
           ) : (
             <p className="mt-3 pl-1 text-xs leading-relaxed text-smoke-600">
