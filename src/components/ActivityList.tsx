@@ -1,7 +1,15 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import {
+  cloneElement,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react'
 import { formatUnits } from 'viem'
 import { SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
 import { useShop721, useShop721Media } from '@/components/project/ShopTab'
@@ -639,9 +647,12 @@ const ItemMintShopContext = createContext<{ isRevnet: boolean } | null>(null)
 function ItemMintAction({
   event,
   mint,
+  bulletClassName,
 }: {
   event: BsActivityEvent
   mint: NonNullable<BsActivityEvent['mintNftEvent']>
+  /** Set by the project feed's bullet list: render one `<li>` per line instead of inline text. */
+  bulletClassName?: string
 }) {
   const shopContext = useContext(ItemMintShopContext)
   const tierId = Number(mint.tierId)
@@ -671,20 +682,28 @@ function ItemMintAction({
           percent: `${tier.splitPercent / 1e7}%`,
         }
       : null
-  return (
+  const minted = (
     <>
       minted shop item #{tierId}
       {name ? ` (${name})` : ''}
+    </>
+  )
+  if (bulletClassName === undefined) return minted
+  return (
+    <>
+      <li className={bulletClassName}>{minted}</li>
       {split ? (
-        <>
-          {' · '}
+        <li className={bulletClassName}>
           <span className="font-medium">{split.amount}</span>
           {` (${split.percent}) sent to item recipients`}
-        </>
+        </li>
       ) : null}
     </>
   )
 }
+
+const ACTION_BULLET_CLASS =
+  "relative break-words pl-3.5 before:absolute before:left-0 before:top-[5px] before:h-1.5 before:w-1.5 before:rounded-full before:bg-smoke-300 before:content-['']"
 
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
@@ -1055,14 +1074,17 @@ function Row({
         <ul className={`${memo ? 'mt-1' : 'mt-3'} space-y-0.5 text-xs text-smoke-500`}>
           {/* Hand-rolled markers: the dot sits flush left while wrapped
               lines keep hanging-indent alignment with the first line's text. */}
-          {actions.map((action, index) => (
-            <li
-              key={index}
-              className="relative break-words pl-3.5 before:absolute before:left-0 before:top-[5px] before:h-1.5 before:w-1.5 before:rounded-full before:bg-smoke-300 before:content-['']"
-            >
-              {action}
-            </li>
-          ))}
+          {actions.map((action, index) =>
+            isValidElement<{ bulletClassName?: string }>(action) &&
+            action.type === ItemMintAction ? (
+              // An item mint lays out its own bullets (the item, then its split share).
+              cloneElement(action, { key: index, bulletClassName: ACTION_BULLET_CLASS })
+            ) : (
+              <li key={index} className={ACTION_BULLET_CLASS}>
+                {action}
+              </li>
+            ),
+          )}
         </ul>
       </div>
     </li>
