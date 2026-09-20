@@ -1,7 +1,10 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { formatUnits } from 'viem'
+import { SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
+import { useShop721, useShop721Media } from '@/components/project/ShopTab'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
@@ -13,6 +16,7 @@ import {
 } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import {
+  formatCompactAmount,
   formatCompactTokenAmount,
   formatDate,
   timeAgo,
@@ -621,6 +625,67 @@ export function combinedActivityParts(
   }
 }
 
+/**
+ * Set by the project page's feed so an item mint can read the shop it came
+ * from; absent on the home and account feeds, where the bare item id stands.
+ */
+const ItemMintShopContext = createContext<{ isRevnet: boolean } | null>(null)
+
+/**
+ * "minted shop item #2" grows into the item's name and, when the tier splits
+ * its sales, the share of this payment that went to the split recipients —
+ * the part of the price the buyer's token count does not account for.
+ */
+function ItemMintAction({
+  event,
+  mint,
+}: {
+  event: BsActivityEvent
+  mint: NonNullable<BsActivityEvent['mintNftEvent']>
+}) {
+  const shopContext = useContext(ItemMintShopContext)
+  const tierId = Number(mint.tierId)
+  const { data: shop } = useShop721(
+    event.chainId as JBChainId,
+    event.projectId,
+    shopContext?.isRevnet ?? false,
+  )
+  const { data: mediaById } = useShop721Media(
+    event.chainId as JBChainId,
+    shopContext ? shop : null,
+  )
+  const tier = shopContext ? shop?.tiers.find(entry => entry.id === tierId) : undefined
+  const name = mediaById?.[tierId]?.name
+  const split =
+    tier && shop && tier.splitPercent > 0
+      ? {
+          amount: `${formatCompactAmount(
+            Number(
+              formatUnits(
+                (BigInt(mint.totalAmountPaid) * BigInt(tier.splitPercent)) /
+                  BigInt(SPLITS_TOTAL_PERCENT),
+                shop.pricing.decimals,
+              ),
+            ),
+          )} ${shop.pricing.symbol}`,
+          percent: `${tier.splitPercent / 1e7}%`,
+        }
+      : null
+  return (
+    <>
+      minted shop item #{tierId}
+      {name ? ` (${name})` : ''}
+      {split ? (
+        <>
+          {' · '}
+          <span className="font-medium">{split.amount}</span>
+          {` (${split.percent}) sent to item recipients`}
+        </>
+      ) : null}
+    </>
+  )
+}
+
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${txHash}` : null
@@ -825,7 +890,7 @@ export function activityParts(
   ) : event.liquidateLoanEvent ? (
     <>liquidated a loan</>
   ) : event.mintNftEvent ? (
-    <>minted shop item #{event.mintNftEvent.tierId}</>
+    <ItemMintAction event={event} mint={event.mintNftEvent} />
   ) : event.setUriEvent ? (
     <>updated project info</>
   ) : event.projectTransferEvent ? (
@@ -1010,6 +1075,7 @@ export function ActivityList({
   projectId,
   suckerGroupId,
   accountingToken,
+  isRevnet,
   error = false,
   total,
 }: {
@@ -1022,6 +1088,8 @@ export function ActivityList({
    * kind — rows then show raw token amounts instead of indexed USD.
    */
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
+  /** Set on the project page so item mints can name the item and its split share. */
+  isRevnet?: boolean
   error?: boolean
   /** Rows matching the feed's filter, of which `events` is the newest page. Category filters
    *  apply only to what is LOADED, so without this a populated category renders as empty. */
@@ -1151,6 +1219,7 @@ export function ActivityList({
   }
 
   return (
+    <ItemMintShopContext.Provider value={isRevnet === undefined ? null : { isRevnet }}>
     <div>
       {header}
       {visible.length ? (
@@ -1188,5 +1257,6 @@ export function ActivityList({
         </div>
       ) : null}
     </div>
+    </ItemMintShopContext.Provider>
   )
 }

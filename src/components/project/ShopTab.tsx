@@ -214,6 +214,49 @@ type TierMedia = {
   categoryName?: string
 }
 
+/** The project's 721 shop, shared by the tab, the pay box, and activity rows (one query key). */
+export function useShop721(chainId: JBChainId, projectId: number, isRevnet: boolean) {
+  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
+  return useQuery({
+    queryKey: ['shop721', chainId, projectId, isRevnet],
+    meta: PERSIST,
+    enabled: !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () =>
+      readShop(publicClient!, chainId, projectId, isRevnet, nativeSymbol),
+  })
+}
+
+/**
+ * Tier display metadata (name/image/category name), resolved from the
+ * onchain resolver's data URI or the tier's IPFS JSON. Best-effort — cards
+ * render immediately and hydrate as this lands.
+ * The tier set the media was resolved FROM is part of the identity: keyed on
+ * the hook alone, an infinite-staleTime persisted entry survives reloads, so
+ * tiers added from anywhere but this browser rendered as "Item #N" forever.
+ */
+export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefined) {
+  const mediaTierKey = (shop?.tiers ?? [])
+    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
+    .join(',')
+  return useQuery({
+    queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
+    meta: PERSIST,
+    enabled: !!shop && shop.tiers.length > 0,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        shop!.tiers.map(
+          async tier => [tier.id, await resolveTierMedia(tier)] as const,
+        ),
+      )
+      return Object.fromEntries(entries) as Record<number, TierMedia>
+    },
+  })
+}
+
 export function ShopTab({
   chainId,
   projectId,
@@ -231,28 +274,13 @@ export function ShopTab({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useViewedAccount()
   const { quantities: cart, count: cartCount } = useShopCart()
-  const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
-
   const [category, setCategory] = useState<number | null>(null)
   const [addItemsOpen, setAddItemsOpen] = useState(false)
   const [detailTierId, setDetailTierId] = useState<number | null>(null)
   const [mintTierId, setMintTierId] = useState<number | null>(null)
   const [replaceTierId, setReplaceTierId] = useState<number | null>(null)
 
-  const {
-    data: shop,
-    isLoading,
-    isError,
-  } = useQuery({
-    queryKey: ['shop721', chainId, projectId, isRevnet],
-    meta: PERSIST,
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      readShop(publicClient!, chainId, projectId, isRevnet, nativeSymbol),
-  })
+  const { data: shop, isLoading, isError } = useShop721(chainId, projectId, isRevnet)
 
   // Collection name/symbol — the 721 hook is itself the collection contract.
   const { data: collectionMeta } = useReadContracts({
@@ -283,29 +311,7 @@ export function ShopTab({
     query: { enabled: !!shop && !!address, staleTime: 30_000 },
   })
 
-  // Tier display metadata (name/image/category name), resolved from the
-  // onchain resolver's data URI or the tier's IPFS JSON. Best-effort — cards
-  // render immediately and hydrate as this lands.
-  // The tier set the media was resolved FROM is part of the identity: keyed on
-  // the hook alone, an infinite-staleTime persisted entry survives reloads, so
-  // tiers added from anywhere but this browser rendered as "Item #N" forever.
-  const mediaTierKey = (shop?.tiers ?? [])
-    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
-    .join(',')
-  const { data: mediaById } = useQuery({
-    queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
-    meta: PERSIST,
-    enabled: !!shop && shop.tiers.length > 0,
-    staleTime: Infinity,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        shop!.tiers.map(
-          async tier => [tier.id, await resolveTierMedia(tier)] as const,
-        ),
-      )
-      return Object.fromEntries(entries) as Record<number, TierMedia>
-    },
-  })
+  const { data: mediaById } = useShop721Media(chainId, shop)
 
   const categories = useMemo(() => {
     if (!shop) return []

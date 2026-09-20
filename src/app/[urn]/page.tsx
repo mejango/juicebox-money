@@ -877,6 +877,7 @@ export default async function ProjectPage({
                 projectId={project.projectId}
                 suckerGroupId={project.suckerGroupId}
                 accountingToken={accountingToken}
+                isRevnet={isRevnet}
               />
             </section>
           }
