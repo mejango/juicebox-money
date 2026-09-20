@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 import { bendystraw, type BsProject } from './bendystraw'
 import { toUrn } from './urn'
 
@@ -22,7 +23,7 @@ const cachedNewProjects = unstable_cache(
           limit: $limit
         ) {
           items {
-            projectId chainId name logoUri projectTagline createdAt suckerGroupId
+            projectId chainId name logoUri metadataUri projectTagline createdAt suckerGroupId
           }
         }
       }`,
@@ -32,7 +33,8 @@ const cachedNewProjects = unstable_cache(
       { policy: 'stable' },
     )
     const seen = new Set<string>()
-    return data.projects.items.flatMap<NewProject>(project => {
+    const projects = await fillIndexedMetadata(data.projects.items)
+    return projects.flatMap<NewProject>(project => {
       const group = project.suckerGroupId ?? `${project.chainId}-${project.projectId}`
       if (seen.has(group)) return []
       seen.add(group)
@@ -46,7 +48,7 @@ const cachedNewProjects = unstable_cache(
       }]
     })
   },
-  ['juicebox-home-new-projects-v1'],
+  ['juicebox-home-new-projects-v2'],
   { revalidate: 120 },
 )
 

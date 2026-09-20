@@ -3,6 +3,7 @@ import {
   suckerGroupAccountingToken,
   BsProject,
 } from './bendystraw'
+import { fillIndexedMetadata } from './project-metadata-fill'
 import { legacyProjectHref, toUrn } from './urn'
 
 /**
@@ -52,7 +53,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
           id version volume trendingScore paymentsCount
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
-              projectId chainId name logoUri projectTagline tokenSymbol
+              projectId chainId name logoUri metadataUri projectTagline tokenSymbol
               decimals suckerGroupId volume paymentsCount
             }
           }
@@ -63,7 +64,13 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     { policy: 'stable' },
   )
 
-  return data.suckerGroups.items.flatMap(group => {
+  const groups = await Promise.all(
+    data.suckerGroups.items.map(async group => ({
+      ...group,
+      projects: { items: await fillIndexedMetadata(group.projects.items) },
+    })),
+  )
+  return groups.flatMap(group => {
     const members = group.projects.items
     const representative =
       members.find(m => m.name && m.logoUri) ??

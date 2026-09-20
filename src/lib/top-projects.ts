@@ -1,4 +1,5 @@
 import { unstable_cache } from 'next/cache'
+import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 import { formatUnits } from 'viem'
 import { bendystraw, type BsProject } from './bendystraw'
 import { readEthUsdPrice } from './eth-price'
@@ -65,9 +66,14 @@ const cachedBalanceGroups = unstable_cache(
       items.push(...page)
       if (!page.length) break
     } while (items.length < totalCount)
-    return items
+    return Promise.all(
+      items.map(async group => ({
+        ...group,
+        projects: { items: await fillIndexedMetadata(group.projects.items) },
+      })),
+    )
   },
-  ['juicebox-home-balance-groups-v2'],
+  ['juicebox-home-balance-groups-v3'],
   { revalidate: 600 },
 )
 

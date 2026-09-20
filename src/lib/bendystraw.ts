@@ -21,6 +21,7 @@ import {
   type BendystrawProjectRef,
 } from '@bananapus/nana-sdk-core'
 import { compileBendystrawOperation } from '@/lib/bendystraw-operation'
+import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 
 type VersionedProjectRef = Required<BendystrawProjectRef>
 
@@ -605,6 +606,7 @@ export type BsFreshActivityEvent = BsActivityEvent & {
   project: {
     name: string | null
     logoUri: string | null
+    metadataUri: string | null
     tokenSymbol: string | null
     decimals: number | null
   } | null
@@ -642,14 +644,20 @@ export async function getRecentActivity(
       ) {
         items {
           ${ACTIVITY_EVENT_FIELDS}
-          project { name logoUri tokenSymbol decimals }
+          project { name logoUri metadataUri tokenSymbol decimals }
         }
       }
     }`,
     { limit, offset },
     { policy: 'live' },
   )
-  return data.activityEvents.items
+  const projects = await fillIndexedMetadata(
+    data.activityEvents.items.flatMap(event => (event.project ? [event.project] : [])),
+  )
+  return data.activityEvents.items.map(event => ({
+    ...event,
+    project: event.project ? projects.shift()! : event.project,
+  }))
 }
 
 /**

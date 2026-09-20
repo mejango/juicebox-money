@@ -2,11 +2,14 @@
 
 import {
   JB_CHAINS,
+  JBCoreContracts,
   JBOmnichainDeployerContracts,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
   jbContractAddress,
   jbOmnichainDeployerAbi,
+  jbSplitsAbi,
+  SPLITS_TOTAL_PERCENT,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -129,6 +132,8 @@ type ShopTier = {
   discountPercent: number
   reserveFrequency: number
   votingUnits: bigint
+  /** Share of each sale paid out to the tier's split group, out of SPLITS_TOTAL_PERCENT. */
+  splitPercent: number
   encodedIpfsUri: `0x${string}`
   /** tokenUriResolver output (tiersOf includeResolvedUri=true); '' if none. */
   resolvedUri: string
@@ -553,6 +558,9 @@ export function ShopTab({
         <TierDetailModal
           isRevnet={isRevnet}
           chainId={chainId}
+          projectId={projectId}
+          hook={shop.hook}
+          issueTokensForSplits={shop.configFlags?.issueTokensForSplits ?? false}
           chains={chains}
           tier={detailTier}
           media={mediaById?.[detailTier.id]}
@@ -1586,6 +1594,9 @@ function TierCard({
 function TierDetailModal({
   isRevnet,
   chainId,
+  projectId,
+  hook,
+  issueTokensForSplits,
   chains,
   tier,
   media,
@@ -1599,6 +1610,9 @@ function TierDetailModal({
   isRevnet: boolean
   /** The chain the page (and this modal's stepper inventory) is on. */
   chainId: JBChainId
+  projectId: number
+  hook: Address
+  issueTokensForSplits: boolean
   chains: [number, number][]
   tier: ShopTier
   media: TierMedia | undefined
@@ -1862,6 +1876,16 @@ function TierDetailModal({
               ) : null}
             </dl>
 
+            {tier.splitPercent > 0 ? (
+              <TierSaleRouting
+                chainId={chainId}
+                projectId={projectId}
+                hook={hook}
+                tier={tier}
+                issueTokensForSplits={issueTokensForSplits}
+              />
+            ) : null}
+
             {setFlags.length > 0 ? (
               <div className="mt-5 border-t border-smoke-200 pt-4">
                 <p className="field-label">Flags</p>
@@ -1889,6 +1913,105 @@ function TierDetailModal({
         </div>
       </div>
     </ModalDialog>
+  )
+}
+
+/**
+ * Each split recipient's cut of a whole tier sale, in hundredths of a percent,
+ * and what is left for the project: everything outside the tier's split share
+ * plus whatever the split group leaves unclaimed (JB721TiersHookLib routes
+ * that leftover to the project's balance).
+ */
+export function tierSaleShares<T extends { percent: number | bigint }>(
+  splitPercent: number,
+  splits: readonly T[],
+) {
+  const total = BigInt(SPLITS_TOTAL_PERCENT)
+  const share = BigInt(splitPercent)
+  const rows = splits.map(split => ({
+    split,
+    bps: (share * BigInt(split.percent)) / ((total * total) / 10_000n),
+  }))
+  const treasuryBps = 10_000n - rows.reduce((sum, row) => sum + row.bps, 0n)
+  return { rows, treasuryBps }
+}
+
+function formatBps(bps: bigint) {
+  return `${(Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%`
+}
+
+/**
+ * Where each sale of this tier goes. The tier's split share is paid out to
+ * its split group (`groupId = hook | tierId << 160`, ruleset 0); whatever the
+ * group leaves unclaimed, and everything outside the share, lands in the
+ * project's balance.
+ */
+function TierSaleRouting({
+  chainId,
+  projectId,
+  hook,
+  tier,
+  issueTokensForSplits,
+}: {
+  chainId: JBChainId
+  projectId: number
+  hook: Address
+  tier: ShopTier
+  issueTokensForSplits: boolean
+}) {
+  const splits = useReadContract({
+    chainId,
+    address: jbContractAddress['6'][JBCoreContracts.JBSplits][chainId] as Address,
+    abi: jbSplitsAbi,
+    functionName: 'splitsOf',
+    args: [BigInt(projectId), 0n, BigInt(hook) | (BigInt(tier.id) << 160n)],
+    query: { staleTime: 60_000 },
+  })
+  const { rows, treasuryBps } = tierSaleShares(tier.splitPercent, splits.data ?? [])
+
+  return (
+    <div className="mt-5 border-t border-smoke-200 pt-4">
+      <p className="field-label">Where each sale goes</p>
+      {splits.isPending ? (
+        <Skeleton className="mt-2 h-8 w-full" />
+      ) : splits.isError ? (
+        <p className="mt-2 text-xs text-smoke-500">
+          {formatBps(BigInt(tier.splitPercent) / 100_000n)} of each sale is split with
+          recipients that could not be read; the rest goes to the project.
+        </p>
+      ) : (
+        <dl className="mt-2 space-y-1.5 text-xs">
+          {rows.map(({ split, bps }, index) => {
+            const toHook = split.hook.toLowerCase() !== zeroAddress
+            return (
+              <div key={index} className="flex items-start justify-between gap-4">
+                <dt className="min-w-0 text-ink">
+                  {split.projectId > 0n ? (
+                    `Project ${split.projectId.toString()}`
+                  ) : (
+                    <AddressLink
+                      address={toHook ? split.hook : split.beneficiary}
+                      chainId={chainId}
+                    />
+                  )}
+                </dt>
+                <dd className="tabular-nums text-ink">{formatBps(bps)}</dd>
+              </div>
+            )
+          })}
+          <div className="flex items-start justify-between gap-4">
+            <dt className="text-smoke-500">This project</dt>
+            <dd className="tabular-nums text-ink">{formatBps(treasuryBps)}</dd>
+          </div>
+        </dl>
+      )}
+      {!issueTokensForSplits ? (
+        <p className="mt-2 text-xs text-smoke-500">
+          Tokens are issued on the {formatBps(10_000n - BigInt(tier.splitPercent) / 100_000n)}{' '}
+          the project keeps, not the full price.
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -2080,6 +2203,7 @@ async function readShop(
     discountPercent: tier.discountPercent,
     reserveFrequency: tier.reserveFrequency,
     votingUnits: tier.votingUnits,
+    splitPercent: Number(tier.splitPercent),
     encodedIpfsUri: tier.encodedIpfsUri,
     resolvedUri: resolvedUriById.get(tier.id) ?? '',
     flags: { ...tier.flags },
