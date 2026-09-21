@@ -506,16 +506,16 @@ export default function HomePage() {
         <div className="mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-24 sm:pt-20">
           <h2
             id="why-juicebox"
-            className="text-center font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl md:text-left"
+            className="text-center font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl"
           >
             Why Juicebox?
           </h2>
-          <p className="mx-auto mt-5 max-w-4xl text-center font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl md:mx-0 md:text-left">
+          <p className="mx-auto mt-5 max-w-4xl text-center font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl">
             What open source businesses, campaigns, and indie projects actually
             want:
           </p>
 
-          <ol className="mt-10 max-w-5xl list-decimal space-y-5 pl-8 marker:font-agrandir marker:text-lg marker:font-medium marker:text-bluebs-600">
+          <ol className="mx-auto mt-10 w-fit max-w-5xl list-decimal space-y-5 pl-8 marker:font-agrandir marker:text-lg marker:font-medium marker:text-bluebs-600">
             {WHY_JUICEBOX_POINTS.map(point => (
               <li key={point} className="pl-2 text-sm leading-relaxed text-smoke-800 sm:text-base">
                 {point}
