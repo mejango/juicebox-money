@@ -1348,6 +1348,30 @@ type Band = {
 }
 
 /**
+ * Centered x for each marker label, in ascending-price order. A left-to-right
+ * pass nudges each label clear of the previous one; a right-to-left pass then
+ * pulls labels back from any that the right edge pinned, so "price" at the
+ * ceiling reads "price  ceiling" instead of one printing over the other.
+ */
+export function layoutMarkerLabels(
+  markers: readonly { x: number; label: string }[],
+  width: number,
+): number[] {
+  const halves = markers.map(marker => Math.max(12, (marker.label.length * 5) / 2))
+  const xs: number[] = []
+  markers.forEach((marker, i) => {
+    const half = halves[i]
+    const leftEdge = i === 0 ? -Infinity : xs[i - 1] + halves[i - 1] + 4
+    xs.push(Math.max(half + 1, Math.min(width - half - 1, Math.max(marker.x, leftEdge + half))))
+  })
+  for (let i = xs.length - 2; i >= 0; i -= 1) {
+    const rightEdge = xs[i + 1] - halves[i + 1] - 4
+    xs[i] = Math.max(halves[i] + 1, Math.min(xs[i], rightEdge - halves[i]))
+  }
+  return xs
+}
+
+/**
  * Liquidity-by-price depth histogram. Port of website renderLpDepthChart:
  * log-scaled price axis, per-band active liquidity (bar height) + the pair/
  * project-token amounts each band holds at the current price (hover). Bars are
@@ -1488,27 +1512,7 @@ function DepthChart({
   const side =
     shown && shown.mid < amm ? ' | buy-side' : shown ? ' | sell-side' : ''
 
-  // ponytail: markers arrive in ascending price, so one left-to-right pass that
-  // nudges each label clear of the previous one keeps "price" from printing
-  // over "ceiling" when the pool sits at the issuance price.
-  const labelHalf = (label: string) => Math.max(12, (label.length * 5) / 2)
-  const labelX = markers.reduce<{ positions: number[]; right: number }>(
-    (layout, marker) => {
-      const half = labelHalf(marker.label)
-      const x = Math.max(
-        half + 1,
-        Math.min(
-          DVW - half - 1,
-          Math.max(marker.x, layout.right + half + 4),
-        ),
-      )
-      return {
-        positions: [...layout.positions, x],
-        right: x + half,
-      }
-    },
-    { positions: [], right: -Infinity },
-  ).positions
+  const labelX = layoutMarkerLabels(markers, DVW)
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
