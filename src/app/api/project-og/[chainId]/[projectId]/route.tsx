@@ -1,9 +1,70 @@
 import { ImageResponse } from 'next/og'
 import type { NextRequest } from 'next/server'
+import sharp from 'sharp'
 import { projectLogoUrl } from '@/lib/format'
 import { getProjectLinkPreview } from '@/lib/project-link-preview'
 
 export const runtime = 'nodejs'
+
+const LOGO_MAX_BYTES = 8 * 1024 * 1024
+const LOGO_FETCH_TIMEOUT_MS = 6_000
+
+/**
+ * The logo as a 360px PNG data URI, or null. Satori only draws PNG, JPEG, GIF
+ * and SVG, so a webp/avif logo (what most project logos are) rendered as a
+ * blank square; a fetch it cannot complete rendered the same. Converting here
+ * covers every format sharp reads and keeps the card independent of the
+ * renderer's own network reach.
+ */
+async function logoDataUri(source: string | null): Promise<string | null> {
+  if (!source) return null
+  try {
+    let bytes: Buffer
+    if (source.startsWith('data:')) {
+      const comma = source.indexOf(',')
+      const header = source.slice(0, comma)
+      const payload = source.slice(comma + 1)
+      bytes = header.endsWith(';base64')
+        ? Buffer.from(payload, 'base64')
+        : Buffer.from(decodeURIComponent(payload), 'utf8')
+    } else {
+      const response = await fetch(source, {
+        signal: AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS),
+        next: { revalidate: 60 * 60 * 24 },
+      })
+      if (!response.ok) return null
+      const length = Number(response.headers.get('content-length') ?? 0)
+      if (length > LOGO_MAX_BYTES) return null
+      const buffer = await response.arrayBuffer()
+      if (buffer.byteLength > LOGO_MAX_BYTES) return null
+      bytes = Buffer.from(buffer)
+    }
+    const png = await sharp(bytes, { animated: false })
+      .resize(360, 360, { fit: 'inside', withoutEnlargement: true })
+      .png()
+      .toBuffer()
+    return `data:image/png;base64,${png.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One size for both stat values so the pair fits the 648px column on one
+ * line: bold digits run about 0.66em wide, and the gap between them is 72px.
+ */
+function statFontSize(balance: string, payments: string): number {
+  const fitted = Math.floor((648 - 72) / (0.66 * (balance.length + payments.length)))
+  return Math.max(40, Math.min(96, fitted))
+}
+
+/** A headline size the 648px column fits in two lines at 700 weight. */
+function nameFontSize(name: string): number {
+  if (name.length > 44) return 44
+  if (name.length > 30) return 52
+  if (name.length > 18) return 64
+  return 84
+}
 
 export async function GET(
   request: NextRequest,
@@ -29,10 +90,12 @@ export async function GET(
   // address (https://0.0.0.0:8080/...), which this renderer cannot fetch, and the card
   // silently loses its logo.
   const origin = process.env.NEXT_PUBLIC_SITE_URL ?? request.nextUrl.origin
-  const logoUrl = resolvedLogo?.startsWith('/')
-    ? new URL(resolvedLogo, origin).href
-    : resolvedLogo
+  const logoUrl = await logoDataUri(
+    resolvedLogo?.startsWith('/') ? new URL(resolvedLogo, origin).href : resolvedLogo,
+  )
   const initial = project.name.charAt(0).toUpperCase() || 'J'
+  const payments = project.paymentsCount.toLocaleString('en-US')
+  const statSize = statFontSize(project.balance, payments)
 
   return new ImageResponse(
     <div
@@ -94,11 +157,15 @@ export async function GET(
           minWidth: 0,
         }}
       >
+        {/* Satori does not clip overflow: an unclamped name or tagline runs
+            straight through the stats below, so both are held to two lines and
+            the stats refuse to shrink. */}
         <div
           style={{
-            display: 'flex',
-            fontSize: project.name.length > 28 ? 64 : 84,
+            display: 'block',
+            fontSize: nameFontSize(project.name),
             fontWeight: 700,
+            lineClamp: 2,
             lineHeight: 1.05,
           }}
         >
@@ -108,8 +175,9 @@ export async function GET(
           <div
             style={{
               color: '#3a3a3c',
-              display: 'flex',
-              fontSize: 40,
+              display: 'block',
+              fontSize: 36,
+              lineClamp: 2,
               lineHeight: 1.3,
               marginTop: 20,
             }}
@@ -118,13 +186,13 @@ export async function GET(
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', gap: 72, marginTop: 'auto' }}>
+        <div style={{ display: 'flex', flexShrink: 0, gap: 72, marginTop: 'auto', paddingTop: 24 }}>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: '#5c5751', display: 'flex', fontSize: 36 }}>Balance</div>
             <div
               style={{
                 display: 'flex',
-                fontSize: project.balance.length > 14 ? 72 : 96,
+                fontSize: statSize,
                 fontWeight: 700,
                 lineHeight: 1,
                 marginTop: 8,
@@ -135,8 +203,8 @@ export async function GET(
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: '#5c5751', display: 'flex', fontSize: 36 }}>Payments</div>
-            <div style={{ display: 'flex', fontSize: 96, fontWeight: 700, lineHeight: 1, marginTop: 8 }}>
-              {project.paymentsCount.toLocaleString('en-US')}
+            <div style={{ display: 'flex', fontSize: statSize, fontWeight: 700, lineHeight: 1, marginTop: 8 }}>
+              {payments}
             </div>
           </div>
         </div>
