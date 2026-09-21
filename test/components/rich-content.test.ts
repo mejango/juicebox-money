@@ -23,6 +23,12 @@ describe('sanitizeRichContent', () => {
     )
   })
 
+  it('drops legacy <p><br></p> spacer paragraphs', () => {
+    expect(sanitizeRichContent('<p>One</p><p><br></p><p>Two</p><p></p>')).toBe(
+      '<p>One</p><p>Two</p>',
+    )
+  })
+
   it('removes executable elements, embedded content, styles, and attributes', () => {
     const clean = sanitizeRichContent(
       '<script>globalThis.pwned = true</script>' +

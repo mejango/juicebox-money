@@ -126,6 +126,12 @@ export function sanitizeRichContent(value: string): string {
     image.setAttribute('loading', 'lazy')
   }
 
+  // Legacy editors saved paragraph breaks as `<p><br></p>` spacers; they
+  // would render as empty lines on top of the paragraph margin.
+  for (const block of fragment.querySelectorAll('p')) {
+    if (!block.textContent?.trim() && !block.querySelector('img')) block.remove()
+  }
+
   const container = document.createElement('div')
   container.append(fragment)
   // marked terminates blocks with newlines; drop the insignificant tail.
