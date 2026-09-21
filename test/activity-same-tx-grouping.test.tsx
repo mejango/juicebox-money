@@ -156,6 +156,24 @@ describe('buyback direction across the project, home, and account feeds', () => 
     expect(plainAction(parts)).not.toContain('reserve')
   })
 
+  it("hides the hook's own remint when a cash out sells through the pool", () => {
+    // The terminal burns the holder's tokens, then the hook remints the same
+    // count to itself and sells it. That mint is plumbing, not a receipt.
+    const hookRemint = event({
+      ...mint,
+      mintTokensEvent: {
+        ...mint.mintTokensEvent!,
+        beneficiary: '0xhook',
+        beneficiaryTokenCount: '2340000000000000000',
+      },
+    })
+    const parts = combinedActivityParts([cashOut, swapOf('sell'), hookRemint], 'SBB')
+    expect(plainAction(parts)).toBe(
+      'cashed out 2.39 SBB and sold 2.34 SBB via the buyback pool',
+    )
+    expect(parts.actions).toHaveLength(2)
+  })
+
   it('does not pair a sale\'s internal mint with a pool purchase', () => {
     const parts = combinedActivityParts([swap, swapOf('sell', { id: 'sell' }), mint], 'SBB')
     expect(plainAction(parts)).toContain('sold 2.34 SBB via the buyback pool')

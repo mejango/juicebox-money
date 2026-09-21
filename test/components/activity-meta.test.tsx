@@ -9,6 +9,7 @@ vi.mock('next/image', () => ({
 vi.mock('wagmi', () => ({
   useReadContract: () => ({ data: undefined }),
 }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {}, SUPPORTED_CHAINS: [] }))
 vi.mock('@/hooks/useEnsName', () => ({
   useEnsName: () => ({ data: null }),
 }))

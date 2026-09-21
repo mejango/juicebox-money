@@ -460,9 +460,14 @@ export function combinedActivityParts(
       return false
     }
   })
-  const ordered = payIssuedTokens
-    ? sorted.filter(entry => !entry.mintTokensEvent)
-    : sorted
+  // A cash out that sells through the buyback pool: the terminal burns the
+  // holder's tokens, the hook remints them to itself and sells. That mint is
+  // plumbing, not anyone's receipt.
+  const hookRemint =
+    sorted.some(entry => entry.cashOutTokensEvent) &&
+    sorted.some(entry => entry.swapEvent?.direction.toLowerCase() === 'sell')
+  const ordered =
+    payIssuedTokens || hookRemint ? sorted.filter(entry => !entry.mintTokensEvent) : sorted
   const parts = ordered.map(event => activityParts(event, tokenUnit))
   const primary = parts[0]
   // Several pays in one tx (a payer contract fanning out) read as one payment:
