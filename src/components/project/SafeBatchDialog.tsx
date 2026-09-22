@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { type Abi, type AbiFunction, type Hex } from 'viem'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
+import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { clientFor, readAuthorityOf } from '@/lib/authority'
 import { truncateAddress } from '@/lib/format'
@@ -111,6 +112,7 @@ export function SafeBatchDialog({
   const [error, setError] = useState<string | null>(null)
   const [activeIndex, setActiveIndex] = useState(-1)
   const [proposalHash, setProposalHash] = useState<Hex | null>(null)
+  const { address: connected } = useWallet()
 
   const routeQuery = useQuery({
     queryKey: [
@@ -119,6 +121,8 @@ export function SafeBatchDialog({
       deployment?.projectId ?? 0,
       deployment?.indexedAuthority ?? '',
       batch?.isRevnet ?? false,
+      // The route depends on who is connected: re-resolve on an account switch.
+      connected ?? '',
     ],
     enabled: !!deployment,
     staleTime: 15_000,
@@ -246,7 +250,14 @@ export function SafeBatchDialog({
       }
       preparing={preparing}
       status={preparing ? 'Checking the authority and route…' : status}
-      error={error ?? (routeQuery.isError ? 'Could not verify the authority on this chain.' : null)}
+      error={
+        error ??
+        (routeQuery.isError
+          ? 'Could not verify the authority on this chain.'
+          : route?.kind === 'unavailable'
+            ? route.reason
+            : null)
+      }
       busy={locked}
       complete={complete}
       action={route ? batchActionLabel(route, count, chainId) : 'Submit batch'}

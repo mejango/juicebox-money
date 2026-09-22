@@ -91,8 +91,9 @@ function seed() {
   ])
 }
 
-function render() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function render(
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   act(() =>
     root.render(
       <QueryClientProvider client={client}>
@@ -102,6 +103,7 @@ function render() {
       </QueryClientProvider>,
     ),
   )
+  return client
 }
 
 async function settle() {
@@ -233,6 +235,29 @@ describe('Safe batch tray', () => {
       'Proposed to Safe as one batch of 1 call.',
     )
     expect(window.localStorage.getItem(safeBatchStorageKey(1, 2))).toBeNull()
+  })
+
+  it('shows why submit is off next to the button and re-resolves the route on a wallet switch', async () => {
+    const signer = mocks.wallet.address
+    const reason = `The connected wallet is not a signer of ${SAFE}. Switch to a signer of this Safe.`
+    mocks.wallet.address = '0x3333333333333333333333333333333333333333'
+    mocks.resolveRoute.mockResolvedValueOnce({ kind: 'unavailable', authorityKind: 'safe', reason })
+    seed()
+    const client = render()
+    await settle()
+    click(button('Review and propose on Ethereum'))
+    await settle()
+    click(byAria('Move step 1 down'))
+    await settle()
+
+    expect(button('Submit batch').disabled).toBe(true)
+    expect(document.querySelector('dialog .text-red-600')?.textContent).toBe(reason)
+
+    mocks.wallet.address = signer
+    render(client)
+    await settle()
+    expect(button('Propose batch to Safe').disabled).toBe(false)
+    expect(document.querySelector('dialog .text-red-600')).toBeNull()
   })
 
   it('adds the resolved preset steps for checked chains and reports it', async () => {
