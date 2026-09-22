@@ -51,17 +51,15 @@ export const SAFE_BATCH_PRESETS: readonly SafeBatchPreset[] = [
 export const MIN_TWAP_WINDOW = 300n
 /** `JBBuybackHook.MAX_TWAP_WINDOW`, also the deployer's default registration window. */
 export const MAX_TWAP_WINDOW = 172_800n
-/** The window stored when a pool is registered at exactly the maximum. */
-const DEFAULT_TWAP_WINDOW = 1_800n
+/**
+ * The window every migrated pool is registered with, whatever the old hook held.
+ * Must match revnet-money's preset: Safe co-signers on either client only meet on identical calldata.
+ */
+const PRESET_TWAP_WINDOW = 1_800n
 export const DEPLOYER_DEFAULT_TWAP_NOTE =
   'The old window was the deployer default (48h); 30 minutes will be stored.'
-/**
- * Windows a project keeps identical on every chain, used instead of the carried value.
- * Must match revnet-money's table: Safe co-signers on either client only meet on identical calldata.
- */
-export const PROJECT_TWAP_WINDOWS: Readonly<Record<number, bigint>> = { 7: 3600n }
-export function projectTwapNote(window: bigint): string {
-  return `This project uses a ${window}s window on every chain.`
+export function replacedTwapNote(window: bigint): string {
+  return `The old window was ${window}s; 30 minutes will be stored.`
 }
 
 export type PresetChainResolution = {
@@ -149,14 +147,21 @@ async function readPool(
   }
 }
 
-/** The pool-registration values carried from an old hook; the max window is stored as 30 minutes. */
-function carriedPoolValues(pool: PoolRead, projectId: number) {
-  const fixed = PROJECT_TWAP_WINDOWS[projectId]
-  const defaulted = pool.twapWindow === MAX_TWAP_WINDOW
-  const twapWindow = fixed ?? (defaulted ? DEFAULT_TWAP_WINDOW : pool.twapWindow)
+/** The pool-registration values carried from an old hook, with the window reset to 30 minutes. */
+function carriedPoolValues(pool: PoolRead) {
   return {
-    values: { fee: pool.fee, tickSpacing: pool.tickSpacing, twapWindow, terminalToken: pool.write },
-    note: fixed !== undefined ? projectTwapNote(fixed) : defaulted ? DEPLOYER_DEFAULT_TWAP_NOTE : undefined,
+    values: {
+      fee: pool.fee,
+      tickSpacing: pool.tickSpacing,
+      twapWindow: PRESET_TWAP_WINDOW,
+      terminalToken: pool.write,
+    },
+    note:
+      pool.twapWindow === MAX_TWAP_WINDOW
+        ? DEPLOYER_DEFAULT_TWAP_NOTE
+        : pool.twapWindow !== PRESET_TWAP_WINDOW
+          ? replacedTwapNote(pool.twapWindow)
+          : undefined,
   }
 }
 
@@ -248,7 +253,7 @@ export async function resolvePreset(
       })
       // A second registration reverts with PoolAlreadySet.
       if (carried > 0n) continue
-      const { values, note } = carriedPoolValues(pool, projectId)
+      const { values, note } = carriedPoolValues(pool)
       steps.push(buildStep({ kind: 'setPoolFor', chainId, projectId, values, note }))
     }
   }
@@ -339,7 +344,7 @@ export async function resolveMirrorValues(
         values: { hook, terminalToken: token, twapWindow: step.values.twapWindow },
       }
     }
-    const { values } = carriedPoolValues(pool, to.projectId)
+    const { values } = carriedPoolValues(pool)
     return { values: { ...values, twapWindow: step.values.twapWindow } }
   }
   if (step.kind === 'initializePoolFor') {

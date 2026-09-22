@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DEPLOYER_DEFAULT_TWAP_NOTE,
   presetInfraAvailable,
-  projectTwapNote,
+  replacedTwapNote,
   resolveMirrorValues,
   resolvePreset,
   SAFE_BATCH_PRESETS,
@@ -187,12 +187,12 @@ describe('buyback 1.4.0 + gateway preset', () => {
     expect(pool.note).toBe(DEPLOYER_DEFAULT_TWAP_NOTE)
   })
 
-  it('uses the fixed 3600s window for project 7 on every chain, whatever the old window', async () => {
-    for (const [chainId, twap] of [[1, 172_800n], [8453, 3600n], [11155111, 900n]] as const) {
+  it('stores 30 minutes whatever the old window, noting a replaced one', async () => {
+    for (const [twap, note] of [[3600n, replacedTwapNote(3600n)], [900n, replacedTwapNote(900n)], [1800n, undefined]] as const) {
       const client = chain({ pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap } } })
-      const pool = (await resolvePreset(PRESET, { chainId, projectId: 7, client })).steps.find(step => step.kind === 'setPoolFor')!
-      expect(pool.args).toEqual([7n, 10_000, 200, 3600n, NATIVE])
-      expect(pool.note).toBe(projectTwapNote(3600n))
+      const pool = (await resolvePreset(PRESET, { chainId: 8453, projectId: 7, client })).steps.find(step => step.kind === 'setPoolFor')!
+      expect(pool.args).toEqual([7n, 10_000, 200, 1800n, NATIVE])
+      expect(pool.note).toBe(note)
     }
   })
 
@@ -207,7 +207,7 @@ describe('buyback 1.4.0 + gateway preset', () => {
     const resolved = await resolvePreset(PRESET, { chainId: 84532, projectId: 6, client })
     const pools = resolved.steps.filter(step => step.kind === 'setPoolFor')
     expect(pools).toHaveLength(1)
-    expect(pools[0].args).toEqual([6n, 10_000, 200, 3600n, USDC_BASE])
+    expect(pools[0].args).toEqual([6n, 10_000, 200, 1800n, USDC_BASE])
   })
 
   it('adds no pool step when the project has no pool, and skips applied steps', async () => {
