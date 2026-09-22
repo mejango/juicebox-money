@@ -55,7 +55,10 @@ export const MAX_TWAP_WINDOW = 172_800n
 const DEFAULT_TWAP_WINDOW = 1_800n
 export const DEPLOYER_DEFAULT_TWAP_NOTE =
   'The old window was the deployer default (48h); 30 minutes will be stored.'
-/** Windows a project keeps identical on every chain, used instead of the carried value. */
+/**
+ * Windows a project keeps identical on every chain, used instead of the carried value.
+ * Must match revnet-money's table: Safe co-signers on either client only meet on identical calldata.
+ */
 export const PROJECT_TWAP_WINDOWS: Readonly<Record<number, bigint>> = { 7: 3600n }
 export function projectTwapNote(window: bigint): string {
   return `This project uses a ${window}s window on every chain.`
