@@ -1088,7 +1088,14 @@ export function SafeQueueCard({
 
   const verifyReadyTx = async (row: ReadyTx): Promise<VerifiedReadyTx> => {
     const fresh = await freshCanonicalQueuedTx(row.chain, safe, row.tx);
+    // simulateSafeExecution reverifies before and after simulating; the
+    // "before" call would repeat the check just above, so it is skipped.
+    let checked = true;
     const reverifyAuthority = async () => {
+      if (checked) {
+        checked = false;
+        return;
+      }
       await freshCanonicalQueuedTx(row.chain, safe, fresh);
     };
     const snapshot = await simulateSafeExecution(
@@ -1326,8 +1333,15 @@ export function SafeQueueCard({
       // A later consecutive nonce cannot simulate against today's Safe
       // nonce until the earlier transaction executes. Include only the
       // current transaction on each chain; later nonces need a new review.
-      setNotice(`Checking ${relayrRows.length} chains…`);
-      verifiedRows.push(...(await Promise.all(relayrRows.map(verifyReadyTx))));
+      // ponytail: one chain at a time — every RPC read goes through one
+      // rate-limited JB Center host, and concurrent chains trip its 429s.
+      for (let index = 0; index < relayrRows.length; index++) {
+        const row = relayrRows[index];
+        setNotice(
+          `Checking ${index + 1}/${relayrRows.length} on ${row.chain.name}…`,
+        );
+        verifiedRows.push(await verifyReadyTx(row));
+      }
       const entries = verifiedRows.map((row) =>
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
@@ -1359,22 +1373,15 @@ export function SafeQueueCard({
       "Confirm one Relayr payment to execute every reviewed transaction.",
     );
     try {
-      // Chains are independent, so each pass checks them concurrently.
       const reverifyBatch = async () => {
-        await Promise.all(
-          batchReview.rows.map(async (row, index) => {
-            const entry = batchReview.entries[index];
-            if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-            assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
-          }),
-        );
+        for (let index = 0; index < batchReview.rows.length; index++) {
+          const row = batchReview.rows[index];
+          const entry = batchReview.entries[index];
+          if (!entry) throw new Error("The reviewed Relayr bundle changed.");
+          setNotice(`Re-checking ${index + 1}/${batchReview.rows.length} on ${row.chain.name}…`);
+          assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
+        }
       };
-      // The review may be minutes old, and a queued transaction executed or
-      // replaced through the Safe app meanwhile consumes its nonce — which
-      // would revert that chain's execTransaction after Relayr is paid.
-      // Re-verify every included transaction immediately before payment.
-      setNotice(`Re-checking ${batchReview.rows.length} transactions…`);
-      await reverifyBatch();
       // A quote about to expire would be rejected at payment time anyway —
       // refresh it here so the flow re-reviews a live payment instead of
       // failing after the confirmations above.
@@ -1416,9 +1423,10 @@ export function SafeQueueCard({
           };
         }),
       });
-      // The review can remain open while project authority, Safe policy,
-      // nonce, confirmations, or the hosted queue changes. relayrPay runs
-      // reverifyBatch before its payment review and again before sending.
+      // The review may be minutes old or stay open while authority, Safe
+      // policy, nonce, or the hosted queue changes. relayrPay runs
+      // reverifyBatch before its payment review, after it, and right before
+      // sending, so no payment moves against a stale transaction.
       let submittedSession: RelayrPendingSession | null = null;
       const expectedTransactions = quote.expectedTransactions;
       if (
@@ -1777,6 +1785,8 @@ export function SafeQueueCard({
                 : `Pay once and execute ${batchReview.rows.length}`}
             </button>
           </div>
+          {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+          <TxError error={error} />
         </div>
       ) : null}
 
@@ -1981,8 +1991,8 @@ export function SafeQueueCard({
         </div>
       )}
 
-      {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
-      <TxError error={error} />
+      {!batchReview && notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {!batchReview ? <TxError error={error} /> : null}
     </section>
   );
 }
