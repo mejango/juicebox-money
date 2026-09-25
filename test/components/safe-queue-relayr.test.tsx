@@ -155,7 +155,7 @@ async function click(label: RegExp) {
 
 async function selectPayment(index: number) {
   await act(async () => {
-    renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')[index].props.onChange()
+    renderer.root.findByType('select').props.onChange({ target: { value: String(index) } })
   })
 }
 
@@ -195,7 +195,7 @@ describe('Safe queue Relayr execution', () => {
     await click(/Review 4 ready executions/)
     expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
     expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5, 5, 5])
-    expect(renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')).toHaveLength(2)
+    expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(2)
     await selectPayment(1)
     await click(/Pay once and execute 4/)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ chain: 84532 }), OWNER, BUNDLE, [...testnets],
@@ -210,8 +210,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.post.mock.calls[0][0]).toHaveLength(2)
     expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5])
     expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
-    expect(renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')
-      .every(node => !node.props.checked)).toBe(true)
+    expect(renderer.root.findByType('select').props.value).toBe(-1)
 
     await selectPayment(1)
     await click(/Pay once and execute 2/)
@@ -243,8 +242,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.review).not.toHaveBeenCalled()
     expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
-    expect(renderer.root.findAllByType('input').filter(node => node.props.type === 'radio'))
-      .toHaveLength(1)
+    expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(1)
   })
 
   it('executes mixed network families directly and preserves dependent nonce order', async () => {

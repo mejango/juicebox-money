@@ -73,7 +73,6 @@ import {
   safeExecSignatures,
   safeQueueLink,
   simulateSafeExecution,
-  safeTxLink,
   safeUsableConfirmationCount,
   type SafeInfo,
   type SafeExecutionSnapshot,
@@ -1324,16 +1323,11 @@ export function SafeQueueCard({
             (candidate) => candidate.chain.chainId === row.chain.chainId,
           ) === index,
       );
-      for (let index = 0; index < relayrRows.length; index++) {
-        const row = relayrRows[index];
-        // A later consecutive nonce cannot simulate against today's Safe
-        // nonce until the earlier transaction executes. Include only the
-        // current transaction on each chain; later nonces need a new review.
-        setNotice(
-          `Checking ${index + 1}/${relayrRows.length} on ${row.chain.name}…`,
-        );
-        verifiedRows.push(await verifyReadyTx(row));
-      }
+      // A later consecutive nonce cannot simulate against today's Safe
+      // nonce until the earlier transaction executes. Include only the
+      // current transaction on each chain; later nonces need a new review.
+      setNotice(`Checking ${relayrRows.length} chains…`);
+      verifiedRows.push(...(await Promise.all(relayrRows.map(verifyReadyTx))));
       const entries = verifiedRows.map((row) =>
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
@@ -1365,27 +1359,22 @@ export function SafeQueueCard({
       "Confirm one Relayr payment to execute every reviewed transaction.",
     );
     try {
+      // Chains are independent, so each pass checks them concurrently.
       const reverifyBatch = async () => {
-        for (let index = 0; index < batchReview.rows.length; index++) {
-          const row = batchReview.rows[index];
-          const entry = batchReview.entries[index];
-          if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-          const current = await verifyReadyTx(row);
-          assertFrozenBatchRow(row, current, entry);
-        }
+        await Promise.all(
+          batchReview.rows.map(async (row, index) => {
+            const entry = batchReview.entries[index];
+            if (!entry) throw new Error("The reviewed Relayr bundle changed.");
+            assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
+          }),
+        );
       };
       // The review may be minutes old, and a queued transaction executed or
       // replaced through the Safe app meanwhile consumes its nonce — which
       // would revert that chain's execTransaction after Relayr is paid.
       // Re-verify every included transaction immediately before payment.
-      for (let index = 0; index < batchReview.rows.length; index++) {
-        const row = batchReview.rows[index];
-        const entry = batchReview.entries[index];
-        if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-        setNotice(`Re-checking transaction #${row.tx.nonce} on ${row.chain.name}…`);
-        const current = await verifyReadyTx(row);
-        assertFrozenBatchRow(row, current, entry);
-      }
+      setNotice(`Re-checking ${batchReview.rows.length} transactions…`);
+      await reverifyBatch();
       // A quote about to expire would be rejected at payment time anyway —
       // refresh it here so the flow re-reviews a live payment instead of
       // failing after the confirmations above.
@@ -1428,15 +1417,8 @@ export function SafeQueueCard({
         }),
       });
       // The review can remain open while project authority, Safe policy,
-      // nonce, confirmations, or the hosted queue changes. Re-fetch and
-      // re-simulate every exact entry immediately before paying Relayr.
-      for (let index = 0; index < batchReview.rows.length; index++) {
-        const row = batchReview.rows[index];
-        const entry = batchReview.entries[index];
-        if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-        const current = await verifyReadyTx(row);
-        assertFrozenBatchRow(row, current, entry);
-      }
+      // nonce, confirmations, or the hosted queue changes. relayrPay runs
+      // reverifyBatch before its payment review and again before sending.
       let submittedSession: RelayrPendingSession | null = null;
       const expectedTransactions = quote.expectedTransactions;
       if (
@@ -1752,43 +1734,49 @@ export function SafeQueueCard({
             ))}
           </ul>
 
-          <fieldset className="mt-4">
-            <legend className="field-label">Pay Relayr on</legend>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {batchReview.payments.map((payment, index) => (
-                <label
-                  key={`${payment.chain}:${payment.amount}:${index}`}
-                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
-                    paymentIndex === index
-                      ? "border-bluebs-500 bg-white text-ink"
-                      : "border-smoke-200 bg-white/60 text-smoke-700"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="safe-relayr-payment"
-                    checked={paymentIndex === index}
-                    onChange={() => setPaymentIndex(index)}
-                    disabled={!!busy}
-                    className="accent-bluebs-600"
+          <label htmlFor="safe-relayr-payment" className="field-label mt-4 block">
+            Pay Relayr on
+          </label>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <div className="relative min-w-0 flex-1">
+              {batchReview.payments[paymentIndex] ? (
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                  <ChainIcon
+                    chainId={batchReview.payments[paymentIndex].chain as JBChainId}
+                    size={16}
                   />
-                  <ChainIcon chainId={payment.chain as JBChainId} size={16} />
-                  {relayrPaymentLabel(payment)}
-                </label>
-              ))}
+                </span>
+              ) : null}
+              <select
+                id="safe-relayr-payment"
+                value={paymentIndex}
+                onChange={(event) => setPaymentIndex(Number(event.target.value))}
+                disabled={!!busy}
+                className={`select-caret min-h-[42px] w-full truncate rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
+                  batchReview.payments[paymentIndex] ? "pl-9" : "pl-3"
+                }`}
+              >
+                <option value={-1} disabled>
+                  Choose a chain
+                </option>
+                {batchReview.payments.map((payment, index) => (
+                  <option key={`${payment.chain}:${payment.amount}:${index}`} value={index}>
+                    {relayrPaymentLabel(payment)}
+                  </option>
+                ))}
+              </select>
             </div>
-          </fieldset>
-
-          <button
-            type="button"
-            onClick={confirmExecuteAll}
-            disabled={!!busy || !!pendingSession || !batchReview.payments[paymentIndex]}
-            className="btn-primary mt-4 min-h-[42px] w-full text-sm"
-          >
-            {busy === "execute-all"
-              ? "Executing…"
-              : `Pay once and execute ${batchReview.rows.length}`}
-          </button>
+            <button
+              type="button"
+              onClick={confirmExecuteAll}
+              disabled={!!busy || !!pendingSession || !batchReview.payments[paymentIndex]}
+              className="btn-primary min-h-[42px] shrink-0 px-5 text-sm"
+            >
+              {busy === "execute-all"
+                ? "Executing…"
+                : `Pay once and execute ${batchReview.rows.length}`}
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -1878,9 +1866,6 @@ export function SafeQueueCard({
                       const isCurrent = plan.direct.has(tx);
                       const alternative = plan.alternatives.has(tx);
                       const hash = tx.safeTxHash ?? tx.contractTransactionHash;
-                      const href = hash
-                        ? safeTxLink(chain.chainId, safe, hash)
-                        : queueUrl;
                       return (
                         <li
                           key={`${tx.nonce}:${hash ?? tx.data}`}
@@ -1982,16 +1967,6 @@ export function SafeQueueCard({
                                     ? "Executing…"
                                     : "Execute"}
                                 </button>
-                              ) : null}
-                              {href ? (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs font-medium text-bluebs-600 hover:underline"
-                                >
-                                  Safe ↗
-                                </a>
                               ) : null}
                             </div>
                           </div>
