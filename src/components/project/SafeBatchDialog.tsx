@@ -1,7 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { type Abi, type AbiFunction, type Hex } from 'viem'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
@@ -99,6 +99,7 @@ export function SafeBatchDialog({
   chainId: JBChainId
   onClose: () => void
 }) {
+  const queryClient = useQueryClient()
   const batch = useSafeBatch()
   const deployment = batch?.deployments.find(
     candidate => candidate.chainId === chainId,
@@ -188,6 +189,8 @@ export function SafeBatchDialog({
         onProgress: setStatus,
         onStep: setActiveIndex,
         onProposed: hash => {
+          // The queue card does not poll; show the new proposal there now.
+          void queryClient.invalidateQueries({ queryKey: ['safeQueues'] })
           setProposalHash(hash)
           batch.clear(chainId)
           setStatus(`Proposed to Safe as one batch of ${count} call${count === 1 ? '' : 's'}.`)

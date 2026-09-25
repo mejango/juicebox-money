@@ -1175,6 +1175,9 @@ export async function relayrPay(
   onSubmitted?: (hash: Hex) => void,
   reverify?: () => Promise<void>,
   onSending?: () => void,
+  /** Run `reverify` only right before sending, for callers that already
+   *  checked when the quote was made. */
+  reverifyBeforeSendOnly = false,
 ): Promise<Hex> {
   assertNoViewAs()
   const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])
@@ -1187,7 +1190,7 @@ export async function relayrPay(
   }
   let details = readBoundPayment()
   const reviewed = details
-  await reverify?.()
+  if (!reverifyBeforeSendOnly) await reverify?.()
   const chainId = details.chainId
   const client = publicClient(chainId)
   await requireRelayrPaymentRuntime(client)
@@ -1217,7 +1220,7 @@ export async function relayrPay(
   if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
     throw new Error('The Relayr payment changed. Review the original funding choice again.')
   }
-  await reverify?.()
+  if (!reverifyBeforeSendOnly) await reverify?.()
   const { wallet, account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')

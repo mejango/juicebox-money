@@ -256,6 +256,15 @@ describe('Relayr quote and payment boundaries', () => {
     expect(mocks.requireReview.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[0])
   })
 
+  it.each([[false, 3], [true, 1]] as const)('with reverifyBeforeSendOnly=%s runs reverify %i time(s), last right before sending', async (beforeSendOnly, runs) => {
+    const reverify = vi.fn(async () => {
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    })
+    await relayrPay(paymentFor({ chain: TESTNETS[0] }), ALICE, BUNDLE_UUID, TESTNETS, undefined, reverify, undefined, beforeSendOnly)
+    expect(reverify).toHaveBeenCalledTimes(runs)
+    expect(reverify.mock.invocationCallOrder.at(-1)).toBeGreaterThan(mocks.requireReview.mock.invocationCallOrder[0])
+  })
+
   it.each(TESTNETS)('authenticates and pays the canonical contract on testnet %s', async chain => {
     const testnetPayment = paymentFor({ chain })
     await expect(relayrPay(testnetPayment, ALICE, BUNDLE_UUID, TESTNETS)).resolves.toBe(HASH)

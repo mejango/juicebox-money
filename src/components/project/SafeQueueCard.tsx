@@ -69,8 +69,6 @@ import {
   hasSafeService,
   listPendingSafeTxs,
   safeExecRelayrEntry,
-  safeExecArgs,
-  safeExecSignatures,
   safeQueueLink,
   simulateSafeExecution,
   safeUsableConfirmationCount,
@@ -80,7 +78,8 @@ import {
   SAFE_EXEC_ABI,
 } from "@/lib/safe";
 import { truncateAddress } from "@/lib/format";
-import { requireTransactionReview } from "@/lib/transaction-review";
+import { ModalShell } from "@/components/ui/ModalShell";
+import { AddressLabel } from "@/components/ui/AddressLabel";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
 import {
@@ -139,6 +138,38 @@ type BatchReview = {
   entries: RelayrEntry[];
   payments: RelayrPayment[];
 };
+
+/** Signers by ENS name when they have one, with the connected wallet marked. */
+function SignerList({ owners, you }: { owners: readonly string[]; you?: string }) {
+  return (
+    <>
+      {owners.map((owner, index) => (
+        <span key={owner}>
+          {index ? ", " : null}
+          <AddressLabel address={owner} />
+          {you && owner.toLowerCase() === you.toLowerCase() ? " (you)" : null}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** One chain's line in the Execute all dialog. */
+type BatchDialogRow = {
+  chainId: number;
+  nonce: number | null;
+  label: string;
+  calls: string[] | null;
+};
+
+function batchDialogRow(row: ReadyTx): BatchDialogRow {
+  return {
+    chainId: row.chain.chainId,
+    nonce: Number(row.tx.nonce),
+    label: transactionLabel(row.chain.chainId, row.tx),
+    calls: batchCallLabels(row.chain.chainId, row.tx),
+  };
+}
 
 const ENS_SET_TEXT_SELECTOR = encodeFunctionData({
   abi: ensTextResolverAbi,
@@ -966,6 +997,29 @@ export function SafeQueueCard({
   const [notice, setNotice] = useState<string | null>(null);
   const [batchReview, setBatchReview] = useState<BatchReview | null>(null);
   const [paymentIndex, setPaymentIndex] = useState(-1);
+  // Execute all runs in one dialog; each chain row carries its own status.
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRows, setBatchRows] = useState<BatchDialogRow[]>([]);
+  const [batchStatus, setBatchStatus] = useState<Record<number, string>>({});
+  const [batchDone, setBatchDone] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  // The queue loads once the card is on screen, then refreshes on focus and
+  // after actions rather than on a timer.
+  const sectionRef = useRef<HTMLElement>(null);
+  const [onScreen, setOnScreen] = useState(false);
+  useEffect(() => {
+    const node = sectionRef.current;
+    if (!node || onScreen) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setOnScreen(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setOnScreen(true);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [onScreen]);
   const pendingScope = useMemo(
     () => `safe-queue:${safe.toLowerCase()}`,
     [safe],
@@ -986,10 +1040,11 @@ export function SafeQueueCard({
         .join(","),
     ],
     // Each refresh re-reads every chain's Safe identity (~15 RPC calls per
-    // chain) through one rate-limited JB Center host, so the display polls
-    // slowly and pauses while an action runs; actions re-verify live state.
+    // chain) through one rate-limited JB Center host, so there is no timer:
+    // load when on screen, refresh on focus (never mid-action) and after
+    // actions. Actions re-verify live state themselves.
+    enabled: onScreen,
     staleTime: 60_000,
-    refetchInterval: busy ? false : 60_000,
     refetchOnWindowFocus: !busy,
     queryFn: async (): Promise<ChainQueue[]> =>
       Promise.all(
@@ -1084,6 +1139,17 @@ export function SafeQueueCard({
     }
     return rows;
   }, [query.data]);
+  // Relayr runs one transaction per chain: each chain's current nonce.
+  const relayrRows = useMemo(
+    () =>
+      ready.filter(
+        (row, index, rows) =>
+          rows.findIndex(
+            (candidate) => candidate.chain.chainId === row.chain.chainId,
+          ) === index,
+      ),
+    [ready],
+  );
   const relayrBatch = useMemo(() => {
     const destinations = [...new Set(ready.map((row) => row.chain.chainId))];
     return destinations.length > 1 && relayrSupportsChains(destinations);
@@ -1139,6 +1205,11 @@ export function SafeQueueCard({
     }
   };
 
+  const markBatchExecuted = useCallback((chainIds: readonly number[]) => {
+    setBatchStatus(Object.fromEntries(chainIds.map((chainId) => [chainId, "Executed"])));
+    setBatchDone(true);
+  }, []);
+
   const recoverPaidBundle = useCallback(
     async (session: RelayrPendingSession) => {
       setBusy("recover-bundle");
@@ -1158,7 +1229,7 @@ export function SafeQueueCard({
             setPendingSession(updated);
             const progress = relayrProgress(nextRecords, session.expectedCount);
             setNotice(
-              `Checking paid Relayr bundle… ${progress.confirmed}/${progress.total}`,
+              `Checking the paid bundle… ${progress.confirmed}/${progress.total} landed`,
             );
           },
           2_500,
@@ -1177,10 +1248,10 @@ export function SafeQueueCard({
         );
         clearRelayrPendingSession(pendingScope);
         setPendingSession(null);
+        markBatchExecuted(session.chainIds);
         setNotice(
           `Executed ${session.itemCount} Safe transaction${session.itemCount === 1 ? "" : "s"}.`,
         );
-        setBatchReview(null);
         await refetchQueues();
       } catch (recoveryError) {
         // Keep the paid bundle and its per-chain terminal states visible.
@@ -1195,7 +1266,7 @@ export function SafeQueueCard({
         setBusy(null);
       }
     },
-    [pendingScope, refetchQueues, safe],
+    [markBatchExecuted, pendingScope, refetchQueues, safe],
   );
 
   useEffect(() => {
@@ -1330,25 +1401,27 @@ export function SafeQueueCard({
         return;
       }
 
-      const verifiedRows: VerifiedReadyTx[] = [];
-      const relayrRows = ready.filter(
-        (row, index, rows) =>
-          rows.findIndex(
-            (candidate) => candidate.chain.chainId === row.chain.chainId,
-          ) === index,
-      );
-      // A later consecutive nonce cannot simulate against today's Safe
-      // nonce until the earlier transaction executes. Include only the
-      // current transaction on each chain; later nonces need a new review.
-      // ponytail: one chain at a time — every RPC read goes through one
+      // Check 1 of 2: every chain's current transaction is re-fetched and
+      // simulated before quoting. Later nonces need a new review after these
+      // land. ponytail: one chain at a time — every RPC read goes through one
       // rate-limited JB Center host, and concurrent chains trip its 429s.
-      for (let index = 0; index < relayrRows.length; index++) {
-        const row = relayrRows[index];
-        setNotice(
-          `Checking ${index + 1}/${relayrRows.length} on ${row.chain.name}…`,
-        );
-        verifiedRows.push(await verifyReadyTx(row));
+      setBatchRows(relayrRows.map(batchDialogRow));
+      setBatchStatus({});
+      setBatchDone(false);
+      setBatchReview(null);
+      setBatchOpen(true);
+      const verifiedRows: VerifiedReadyTx[] = [];
+      for (const row of relayrRows) {
+        setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Checking…" }));
+        try {
+          verifiedRows.push(await verifyReadyTx(row));
+        } catch (checkError) {
+          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Check failed" }));
+          throw checkError;
+        }
+        setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
       }
+      setNotice("Getting one Relayr quote for every chain…");
       const entries = verifiedRows.map((row) =>
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
       );
@@ -1376,17 +1449,22 @@ export function SafeQueueCard({
     let paidSession: RelayrPendingSession | null = null;
     setBusy("execute-all");
     setError(null);
-    setNotice(
-      "Confirm one Relayr payment to execute every reviewed transaction.",
-    );
+    setNotice(null);
     try {
+      // Check 2 of 2, run by relayrPay right before the payment is sent.
       const reverifyBatch = async () => {
         for (let index = 0; index < batchReview.rows.length; index++) {
           const row = batchReview.rows[index];
           const entry = batchReview.entries[index];
           if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-          setNotice(`Re-checking ${index + 1}/${batchReview.rows.length} on ${row.chain.name}…`);
-          assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
+          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Re-checking…" }));
+          try {
+            assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
+          } catch (checkError) {
+            setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Changed" }));
+            throw checkError;
+          }
+          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
         }
       };
       // A quote about to expire would be rejected at payment time anyway —
@@ -1407,33 +1485,8 @@ export function SafeQueueCard({
         setNotice("The quote was refreshed. Choose a funding chain and review the new payment.");
         return;
       }
-      await requireTransactionReview({
-        kind: "authorization",
-        title: "Review Safe execution bundle",
-        description:
-          "Paying Relayr will cause these exact Safe execTransaction calls to be submitted onchain. Review every chain and call before reviewing the separate payment transaction.",
-        confirmLabel: "Agree & review payment",
-        calls: batchReview.rows.map((row, index) => {
-          const entry = batchReview.entries[index];
-          if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-          const args = safeExecArgs(row.tx, safeExecSignatures(row.tx));
-          return {
-            chainId: entry.chain,
-            to: entry.target,
-            value: BigInt(entry.value),
-            data: entry.data,
-            abi: SAFE_EXEC_ABI,
-            functionName: "execTransaction",
-            args,
-            label: `Execute Safe transaction #${row.tx.nonce}`,
-            contractName: "Safe",
-          };
-        }),
-      });
-      // The review may be minutes old or stay open while authority, Safe
-      // policy, nonce, or the hosted queue changes. relayrPay runs
-      // reverifyBatch before its payment review, after it, and right before
-      // sending, so no payment moves against a stale transaction.
+      // The dialog lists every chain's exact call; relayrPay's own review
+      // covers the payment the wallet signs.
       let submittedSession: RelayrPendingSession | null = null;
       const expectedTransactions = quote.expectedTransactions;
       if (
@@ -1509,6 +1562,7 @@ export function SafeQueueCard({
           paidSession = submittedSession;
           setPendingSession(submittedSession);
         },
+        true,
       );
       const initialSession = saveRelayrPendingSession(pendingScope, {
         ...(submittedSession ?? {
@@ -1539,7 +1593,7 @@ export function SafeQueueCard({
           setPendingSession(updated);
           const progress = relayrProgress(nextRecords, batchReview.rows.length);
           setNotice(
-            `Executing through Relayr… ${progress.confirmed}/${progress.total}`,
+            `Executing through Relayr… ${progress.confirmed}/${progress.total} landed`,
           );
         },
         2_500,
@@ -1553,8 +1607,8 @@ export function SafeQueueCard({
       );
       clearRelayrPendingSession(pendingScope);
       setPendingSession(null);
+      markBatchExecuted(batchReview.rows.map((row) => row.chain.chainId));
       setNotice(`Executed ${batchReview.rows.length} Safe transactions.`);
-      setBatchReview(null);
       await refetchQueues();
     } catch (batchError) {
       // Only an explicit wallet rejection before a hash was returned proves
@@ -1579,8 +1633,229 @@ export function SafeQueueCard({
     setError(lockError instanceof Error ? lockError.message : "This Safe has another Relayr payment in progress.");
   });
 
+  const openPaidBundle = () => {
+    if (!pendingSession) return;
+    if (!batchRows.length) {
+      setBatchRows(
+        pendingSession.chainIds.map((chainId, index) => {
+          const nonce = pendingSession.expectedSafeExecutions?.[index]?.nonce ?? null;
+          return {
+            chainId,
+            nonce,
+            label: nonce === null ? "Safe transaction" : `Safe transaction #${nonce}`,
+            calls: null,
+          };
+        }),
+      );
+    }
+    setConfirmClear(false);
+    setBatchOpen(true);
+  };
+
+  const closeExecuteAll = () => {
+    setBatchOpen(false);
+    setConfirmClear(false);
+    if (pendingSession) return;
+    setBatchReview(null);
+    setBatchRows([]);
+    setBatchStatus({});
+    setBatchDone(false);
+    setNotice(null);
+    setError(null);
+  };
+
+  const clearPaidReceipt = () => {
+    clearRelayrPendingSession(pendingScope);
+    setPendingSession(null);
+    setConfirmClear(false);
+    closeExecuteAll();
+    void refetchQueues();
+  };
+
+  // A paid bundle's rows follow Relayr's per-chain records, matched by chain
+  // within the IDs this bundle quoted.
+  const paidRecord = (chainId: number) => {
+    if (!pendingSession) return undefined;
+    const quotedIds = new Set(
+      (pendingSession.expectedSafeExecutions ?? []).map((proof) =>
+        proof.txUuid.toLowerCase(),
+      ),
+    );
+    const matches = pendingSession.records.filter(
+      (record) =>
+        relayrRecordChain(record) === chainId &&
+        quotedIds.has(String(record.tx_uuid ?? "").toLowerCase()),
+    );
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+
+  const rowStatus = (chainId: number): string => {
+    if (!pendingSession || batchDone) return batchStatus[chainId] ?? "Waiting";
+    const state = paidRecord(chainId)?.status?.state;
+    if (relayrStateIsSuccess(state)) return "Landed | verifying";
+    if (relayrStateIsFailed(state)) return "Failed";
+    return pendingSession.paymentStatus === "confirmed"
+      ? "Executing…"
+      : "Waiting for payment";
+  };
+
+  const payment = batchReview?.payments[paymentIndex];
+  const executeAllDialog = (
+    <ModalShell
+      title={`Execute ${batchRows.length} Safe transactions`}
+      subtitle="One Relayr payment runs each chain's next confirmed transaction. Later nonces need a new review after these land."
+      busy={busy === "execute-all"}
+      onClose={closeExecuteAll}
+      footer={
+        batchDone ? (
+          <div className="flex justify-end">
+            <button type="button" onClick={closeExecuteAll} className="btn-primary min-h-[42px] px-5 text-sm">
+              Done
+            </button>
+          </div>
+        ) : pendingSession ? (
+          confirmClear ? (
+            <div className="space-y-3">
+              <p className="text-xs leading-relaxed text-smoke-700">
+                Clear only after checking every chain yourself. Clearing forgets
+                this receipt; it never refunds, and paying again can pay twice.
+              </p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => setConfirmClear(false)} className="btn-secondary min-h-[42px] px-4 text-sm">
+                  Keep receipt
+                </button>
+                <button type="button" onClick={clearPaidReceipt} className="btn-primary min-h-[42px] px-4 text-sm">
+                  Clear saved receipt
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmClear(true)}
+                disabled={busy !== null}
+                className="text-xs font-medium text-smoke-700 hover:text-ink disabled:opacity-50"
+              >
+                Clear saved receipt
+              </button>
+              <button
+                type="button"
+                onClick={() => void recoverPaidBundle(pendingSession)}
+                disabled={busy !== null}
+                className="btn-primary min-h-[42px] px-5 text-sm"
+              >
+                {busy === "recover-bundle" || busy === "execute-all"
+                  ? "Checking…"
+                  : "Check status"}
+              </button>
+            </div>
+          )
+        ) : (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="relative min-w-0 flex-1">
+              {payment ? (
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                  <ChainIcon chainId={payment.chain as JBChainId} size={16} />
+                </span>
+              ) : null}
+              <select
+                aria-label="Pay Relayr on"
+                value={paymentIndex}
+                onChange={(event) => setPaymentIndex(Number(event.target.value))}
+                disabled={!!busy || !batchReview}
+                className={`select-caret min-h-[42px] w-full truncate rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
+                  payment ? "pl-9" : "pl-3"
+                }`}
+              >
+                <option value={-1} disabled>
+                  {batchReview ? "Pay Relayr on…" : "Getting a quote…"}
+                </option>
+                {batchReview?.payments.map((option, index) => (
+                  <option key={`${option.chain}:${option.amount}:${index}`} value={index}>
+                    {relayrPaymentLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={confirmExecuteAll}
+              disabled={!!busy || !payment}
+              className="btn-primary min-h-[42px] shrink-0 px-5 text-sm"
+            >
+              {busy === "execute-all"
+                ? "Executing…"
+                : busy === "quote-all"
+                  ? "Checking…"
+                  : `Pay once and execute ${batchRows.length}`}
+            </button>
+          </div>
+        )
+      }
+    >
+      <ul className="divide-y divide-smoke-200 rounded-lg border border-smoke-200">
+        {batchRows.map((row) => {
+          const status = rowStatus(row.chainId);
+          const record = paidRecord(row.chainId);
+          const hash = record ? relayrDestinationHash(record) : null;
+          const failed = status === "Failed" || status === "Check failed" || status === "Changed";
+          return (
+            <li key={row.chainId} className="px-3 py-2.5 text-sm">
+              <div className="flex items-center gap-2">
+                <ChainIcon chainId={row.chainId as JBChainId} size={16} />
+                <span className="font-medium text-ink">{chainName(row.chainId)}</span>
+                {row.nonce !== null ? (
+                  <span className="font-mono text-xs text-smoke-500">#{row.nonce}</span>
+                ) : null}
+                <span className="ml-auto shrink-0 text-xs">
+                  {hash && explorerTxUrl(row.chainId, hash) ? (
+                    <a
+                      href={explorerTxUrl(row.chainId, hash)!}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={failed ? "text-error-600 underline" : "text-bluebs-600 underline"}
+                    >
+                      {status}
+                    </a>
+                  ) : (
+                    <span className={failed ? "text-error-600" : status === "Executed" ? "text-ink" : "text-smoke-600"}>
+                      {status}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <p className="mt-0.5 truncate pl-6 text-xs text-smoke-700">{row.label}</p>
+              {row.calls?.length ? (
+                <ol className="mt-1 list-decimal pl-10 text-xs text-smoke-700">
+                  {row.calls.map((label, index) => (
+                    <li key={index}>{label}</li>
+                  ))}
+                </ol>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {pendingSession?.paymentHash &&
+      pendingSession.paymentChainId &&
+      explorerTxUrl(pendingSession.paymentChainId, pendingSession.paymentHash) ? (
+        <a
+          href={explorerTxUrl(pendingSession.paymentChainId, pendingSession.paymentHash)!}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex text-xs text-bluebs-600 underline"
+        >
+          Relayr payment on {chainName(pendingSession.paymentChainId)} ↗
+        </a>
+      ) : null}
+      {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      <TxError error={error} />
+    </ModalShell>
+  );
+
   return (
-    <section className="card p-5">
+    <section ref={sectionRef} className="card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <span className="field-label">Pending multisig transactions</span>
@@ -1589,219 +1864,33 @@ export function SafeQueueCard({
             can inspect, co-sign, and execute them here.
           </p>
         </div>
-        {readyBatchCount >= 2 ? (
+        {pendingSession ? (
+          <button
+            type="button"
+            onClick={openPaidBundle}
+            className="btn-secondary min-h-[40px] px-4 text-sm"
+          >
+            {busy === "recover-bundle" ? "Checking paid bundle…" : "View paid bundle"}
+          </button>
+        ) : readyBatchCount >= 2 ? (
           <button
             type="button"
             onClick={reviewExecuteAll}
-            disabled={!!busy || !!pendingSession}
+            disabled={!!busy}
             className="btn-primary min-h-[40px] px-4 text-sm"
           >
-            {pendingSession
-              ? "Resolve the pending bundle first"
-              : busy === "quote-all"
+            {busy === "quote-all"
               ? "Checking…"
               : busy === "execute-all-direct"
                 ? "Executing directly…"
-              : `Review ${readyBatchCount} ready executions`}
+                : `Execute ${readyBatchCount} ready`}
           </button>
         ) : null}
       </div>
 
-      {batchReview ? (
-        <div className="mt-4 rounded-xl border border-bluebs-200 bg-bluebs-50/40 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-ink">
-                Execute {batchReview.rows.length} confirmed Safe transactions
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Each chain’s current transaction simulated successfully. Later
-                nonces need a new review after these transactions land. Choose
-                where to make one Relayr payment for the whole bundle.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setBatchReview(null);
-                setNotice(null);
-              }}
-              disabled={!!busy}
-              className="text-xs font-medium text-smoke-700 hover:text-ink"
-            >
-              Cancel
-            </button>
-          </div>
+      {batchOpen ? executeAllDialog : null}
 
-          <ul className="mt-3 divide-y divide-bluebs-100 rounded-lg border border-bluebs-100 bg-white">
-            {batchReview.rows.map((row) => (
-              <li
-                key={`${row.chain.chainId}:${row.tx.nonce}`}
-                className="flex items-center gap-2 px-3 py-2 text-xs text-smoke-700"
-              >
-                <ChainIcon chainId={row.chain.chainId} size={16} />
-                <span className="font-medium text-ink">{row.chain.name}</span>
-                <span className="font-mono">nonce {row.tx.nonce}</span>
-                <span className="min-w-0 truncate">
-                  {transactionLabel(row.chain.chainId, row.tx)}
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          <label htmlFor="safe-relayr-payment" className="field-label mt-4 block">
-            Pay Relayr on
-          </label>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-            <div className="relative min-w-0 flex-1">
-              {batchReview.payments[paymentIndex] ? (
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                  <ChainIcon
-                    chainId={batchReview.payments[paymentIndex].chain as JBChainId}
-                    size={16}
-                  />
-                </span>
-              ) : null}
-              <select
-                id="safe-relayr-payment"
-                value={paymentIndex}
-                onChange={(event) => setPaymentIndex(Number(event.target.value))}
-                disabled={!!busy}
-                className={`select-caret min-h-[42px] w-full truncate rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
-                  batchReview.payments[paymentIndex] ? "pl-9" : "pl-3"
-                }`}
-              >
-                <option value={-1} disabled>
-                  Choose a chain
-                </option>
-                {batchReview.payments.map((payment, index) => (
-                  <option key={`${payment.chain}:${payment.amount}:${index}`} value={index}>
-                    {relayrPaymentLabel(payment)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={confirmExecuteAll}
-              disabled={!!busy || !!pendingSession || !batchReview.payments[paymentIndex]}
-              className="btn-primary min-h-[42px] shrink-0 px-5 text-sm"
-            >
-              {busy === "execute-all"
-                ? "Executing…"
-                : `Pay once and execute ${batchReview.rows.length}`}
-            </button>
-          </div>
-          {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
-          <TxError error={error} />
-        </div>
-      ) : null}
-
-      {pendingSession ? (
-        <div className="mt-4 rounded-xl border border-smoke-200 bg-white/60 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-ink">
-                Relayr payment {pendingSession.paymentStatus}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Bundle{" "}
-                <span className="font-mono">{pendingSession.bundleUuid}</span>{" "}
-                {pendingSession.paymentStatus === "sending"
-                  ? "may have a submitted payment whose hash is unavailable."
-                  : "has a submitted payment."} Checking its status will not re-sign,
-                re-pay, or resubmit transactions.
-              </p>
-              {pendingSession.paymentHash &&
-              pendingSession.paymentChainId &&
-              explorerTxUrl(
-                pendingSession.paymentChainId,
-                pendingSession.paymentHash,
-              ) ? (
-                <a
-                  href={
-                    explorerTxUrl(
-                      pendingSession.paymentChainId,
-                      pendingSession.paymentHash,
-                    )!
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-flex font-mono text-xs text-bluebs-600 underline"
-                >
-                  Payment {pendingSession.paymentHash.slice(0, 10)}…
-                </a>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void recoverPaidBundle(pendingSession)}
-              className="btn-secondary min-h-[40px] px-4 text-sm"
-            >
-              {busy === "recover-bundle" ? "Checking…" : "Check bundle status"}
-            </button>
-          </div>
-          <div className="mt-3 space-y-2 border-t border-smoke-200 pt-3">
-            {pendingSession.chainIds.map((chainId, index) => {
-              const quotedIds = new Set(
-                (pendingSession.expectedSafeExecutions ?? []).map((proof) =>
-                  proof.txUuid.toLowerCase(),
-                ),
-              );
-              const matches = pendingSession.records.filter(
-                (row) => relayrRecordChain(row) === chainId &&
-                  quotedIds.has(String(row.tx_uuid ?? "").toLowerCase()),
-              );
-              const record = matches.length === 1 ? matches[0] : undefined;
-              const state = record?.status?.state;
-              const hash = record ? relayrDestinationHash(record) : null;
-              const relayrReported = relayrStateIsSuccess(state);
-              const label = relayrReported
-                ? "Relayr-reported; onchain proof pending"
-                : relayrStateIsFailed(state)
-                  ? "Failed"
-                  : state || "Pending";
-              return (
-                <div
-                  key={`${chainId}-${index}`}
-                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                >
-                  <span>
-                    {chainName(chainId)}
-                  </span>
-                  {hash && explorerTxUrl(chainId, hash) ? (
-                    <a
-                      href={explorerTxUrl(chainId, hash)!}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`font-mono underline ${
-                        relayrStateIsFailed(state)
-                          ? "text-error-600"
-                          : "text-bluebs-600"
-                      }`}
-                    >
-                      {label} | {hash.slice(0, 10)}…
-                    </a>
-                  ) : (
-                    <span
-                      className={
-                        relayrStateIsFailed(state)
-                          ? "text-error-600"
-                          : "text-smoke-600"
-                      }
-                    >
-                      {label}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {query.isLoading ? (
+      {query.isPending ? (
         <SafeQueueSkeleton groups={chains.length} />
       ) : (
         <div className="mt-4 space-y-5">
@@ -1921,20 +2010,19 @@ export function SafeQueueCard({
                                 ) : null}
                                 <p className="mt-1 text-xs text-smoke-500">
                                   Signed:{" "}
-                                  {tx.confirmations?.length
-                                    ? tx.confirmations
-                                        .map((item) =>
-                                          truncateAddress(item.owner),
-                                        )
-                                        .join(", ")
-                                    : "none"}
+                                  {tx.confirmations?.length ? (
+                                    <SignerList
+                                      owners={tx.confirmations.map((item) => item.owner)}
+                                      you={address}
+                                    />
+                                  ) : (
+                                    "none"
+                                  )}
                                 </p>
                                 {!readyToExecute && missingOwners.length ? (
                                   <p className="mt-1 text-xs text-smoke-500">
                                     Still needs {required - count} of:{" "}
-                                    {missingOwners
-                                      .map((owner) => truncateAddress(owner))
-                                      .join(", ")}
+                                    <SignerList owners={missingOwners} you={address} />
                                   </p>
                                 ) : null}
                               </summary>
@@ -2002,8 +2090,8 @@ export function SafeQueueCard({
         </div>
       )}
 
-      {!batchReview && notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
-      {!batchReview ? <TxError error={error} /> : null}
+      {!batchOpen && notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {!batchOpen ? <TxError error={error} /> : null}
     </section>
   );
 }
