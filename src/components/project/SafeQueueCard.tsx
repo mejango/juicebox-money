@@ -981,9 +981,12 @@ export function SafeQueueCard({
         )
         .join(","),
     ],
-    staleTime: 15_000,
-    refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
+    // Each refresh re-reads every chain's Safe identity (~15 RPC calls per
+    // chain) through one rate-limited JB Center host, so the display polls
+    // slowly and pauses while an action runs; actions re-verify live state.
+    staleTime: 60_000,
+    refetchInterval: busy ? false : 60_000,
+    refetchOnWindowFocus: !busy,
     queryFn: async (): Promise<ChainQueue[]> =>
       Promise.all(
         chains.map(async (chain) => {
