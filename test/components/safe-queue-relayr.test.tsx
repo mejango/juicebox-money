@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   clear: vi.fn(),
   review: vi.fn(),
+  viaSafeApp: false,
 }))
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OWNER }) }))
@@ -42,6 +43,10 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/hooks/useEnsName', () => ({ useEnsName: () => ({ data: undefined }) }))
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
+  isSafeConnection: () => mocks.viaSafeApp,
+}))
 vi.mock('@/lib/authority', () => ({
   clientFor: () => ({ readContract: async () => SAFE }),
 }))
@@ -161,6 +166,7 @@ async function selectPayment(index: number) {
 }
 
 beforeEach(() => {
+  mocks.viaSafeApp = false
   mocks.rows = [chain(1, [5, 6]), chain(10, [5, 6])]
   mocks.session = null
   mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTx) => ({
@@ -314,5 +320,13 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
+  })
+
+  it('hands execution to Safe{Wallet} when the site is opened as a Safe App', async () => {
+    mocks.viaSafeApp = true
+    await renderQueue()
+    expect(() => button(/Execute 2 ready/)).toThrow()
+    expect(renderer.root.findAllByType('button').filter(node => /^Execute$/.test(textOf(node)))).toHaveLength(0)
+    expect(textOf(renderer.root)).toMatch(/connected as a Safe/)
   })
 })

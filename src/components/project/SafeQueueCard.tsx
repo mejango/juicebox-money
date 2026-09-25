@@ -79,6 +79,8 @@ import {
 } from "@/lib/safe";
 import { truncateAddress } from "@/lib/format";
 import { ModalShell } from "@/components/ui/ModalShell";
+import { isSafeConnection } from "@/lib/safe-connector";
+import { wagmiConfig } from "@/providers/Providers";
 import { AddressLabel } from "@/components/ui/AddressLabel";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
@@ -1854,6 +1856,12 @@ export function SafeQueueCard({
     </ModalShell>
   );
 
+  // Opened as a Safe App, the connected account is a Safe, not an owner: it
+  // cannot sign for itself, and executing or paying Relayr from it would
+  // take the very nonce the queued transaction needs. Safe{Wallet}'s own
+  // queue is where its owners sign and execute.
+  const viaSafeApp = isSafeConnection(wagmiConfig);
+
   return (
     <section ref={sectionRef} className="card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1863,6 +1871,12 @@ export function SafeQueueCard({
             {authorityLabel}-only actions are proposed per chain. Safe signers
             can inspect, co-sign, and execute them here.
           </p>
+          {viaSafeApp ? (
+            <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+              You are connected as a Safe. Its owners sign and execute these
+              in Safe&#123;Wallet&#125;: use Open in Safe on each chain.
+            </p>
+          ) : null}
         </div>
         {pendingSession ? (
           <button
@@ -1872,7 +1886,7 @@ export function SafeQueueCard({
           >
             {busy === "recover-bundle" ? "Checking paid bundle…" : "View paid bundle"}
           </button>
-        ) : readyBatchCount >= 2 ? (
+        ) : readyBatchCount >= 2 && !viaSafeApp ? (
           <button
             type="button"
             onClick={reviewExecuteAll}
@@ -2057,7 +2071,7 @@ export function SafeQueueCard({
                                   You signed
                                 </span>
                               ) : null}
-                              {readyToExecute ? (
+                              {readyToExecute && !viaSafeApp ? (
                                 <button
                                   type="button"
                                   onClick={() => execute(chain, tx)}
