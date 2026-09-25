@@ -61,5 +61,3 @@ export async function readRouterPath(client: PublicClient, chainId: number, proj
     : knownRouter ? terminal : null
   return { registry, terminal, gateway, router }
 }
-
-export const RETAINED_FEE_NOTE = 'Eligible failed fee routes stay in the gateway for retry. They are not settled payments or forgiven fees. A successful retry settles the route; a qualified finalization can return funds to the source project.'
