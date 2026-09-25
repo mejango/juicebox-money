@@ -157,7 +157,7 @@ beforeEach(() => {
             payment_deadline: PAYMENT_DEADLINE,
           },
         ],
-        transactions: [],
+        transactions: entries.map((request, index) => ({ tx_uuid: TX_UUIDS[index], request })),
         txn_uuids: TX_UUIDS,
       })
     }

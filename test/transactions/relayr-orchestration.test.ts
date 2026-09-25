@@ -161,7 +161,8 @@ function installSuccessfulBundle(payments = [payment]) {
       const entries = (JSON.parse(String(init.body)) as { transactions: RelayrEntry[] }).transactions
       posts.push(entries)
       return response({ bundle_uuid: BUNDLE_UUID, payment_info: payments,
-        txn_uuids: entries.map((_, index) => DESTINATION_UUIDS[index]) })
+        txn_uuids: entries.map((_, index) => DESTINATION_UUIDS[index]),
+        transactions: successfulRecords(entries) })
     }
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
       return response({ transactions: successfulRecords(posts.at(-1) ?? []) })
@@ -329,6 +330,12 @@ describe('Relayr quote and payment boundaries', () => {
         bundle_uuid: BUNDLE_UUID,
         payment_info: [],
         txn_uuids: [BUNDLE_UUID, OTHER_UUID, THIRD_UUID],
+        // Relayr lists records out of request order; binding follows the request.
+        transactions: [
+          { tx_uuid: THIRD_UUID, request: { chain: 1, target: TARGET, data: '0x03', value: '3', virtual_nonce: 1 } },
+          { tx_uuid: BUNDLE_UUID, request: { chain: 1, target: TARGET, data: '0x01', value: '0', virtual_nonce: 0 } },
+          { tx_uuid: OTHER_UUID, request: { chain: 10, target: TARGET, data: '0x02', value: '2', virtual_nonce: 0 } },
+        ],
       }),
     )
     const entries = [
@@ -337,7 +344,10 @@ describe('Relayr quote and payment boundaries', () => {
       { chain: 1, target: TARGET, data: '0x03' as Hex, value: '3' },
     ]
 
-    await relayrPostBundle(entries)
+    const quote = await relayrPostBundle(entries)
+    expect(quote.expectedTransactions?.map(binding => binding.txUuid)).toEqual(
+      [BUNDLE_UUID, OTHER_UUID, THIRD_UUID].map(uuid => uuid.toLowerCase()),
+    )
 
     const init = fetchMock.mock.calls[0][1]!
     expect(JSON.parse(String(init.body))).toEqual({

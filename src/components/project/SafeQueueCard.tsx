@@ -214,6 +214,10 @@ export async function verifyRelayrSafeBatchLanding(
     );
   }
 
+  // Records are matched by chain and exact request; the ID only has to be one
+  // this bundle quoted, since sessions saved before quotes bound IDs by
+  // request carry position-paired IDs.
+  const quotedIds = new Set(proofs.map((proof) => String(proof.txUuid).toLowerCase()));
   const seenChains = new Set<number>();
   const seenHashes = new Set<string>();
   const seenTxUuids = new Set<string>();
@@ -255,7 +259,7 @@ export async function verifyRelayrSafeBatchLanding(
       proof.nonce < 0 ||
       !/^0x[0-9a-fA-F]{64}$/u.test(proof.safeTxHash) ||
       typeof proof.txUuid !== "string" ||
-      txUuid !== proof.txUuid.toLowerCase() ||
+      !quotedIds.has(txUuid) ||
       seenTxUuids.has(txUuid) ||
       !request ||
       request.chain !== entry.chain ||
@@ -1603,106 +1607,6 @@ export function SafeQueueCard({
         ) : null}
       </div>
 
-      {pendingSession ? (
-        <div className="mt-4 rounded-xl border border-smoke-200 bg-white/60 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-ink">
-                Relayr payment {pendingSession.paymentStatus}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Bundle{" "}
-                <span className="font-mono">{pendingSession.bundleUuid}</span>{" "}
-                {pendingSession.paymentStatus === "sending"
-                  ? "may have a submitted payment whose hash is unavailable."
-                  : "has a submitted payment."} Checking its status will not re-sign,
-                re-pay, or resubmit transactions.
-              </p>
-              {pendingSession.paymentHash &&
-              pendingSession.paymentChainId &&
-              explorerTxUrl(
-                pendingSession.paymentChainId,
-                pendingSession.paymentHash,
-              ) ? (
-                <a
-                  href={
-                    explorerTxUrl(
-                      pendingSession.paymentChainId,
-                      pendingSession.paymentHash,
-                    )!
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-flex font-mono text-xs text-bluebs-600 underline"
-                >
-                  Payment {pendingSession.paymentHash.slice(0, 10)}…
-                </a>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void recoverPaidBundle(pendingSession)}
-              className="btn-secondary min-h-[40px] px-4 text-sm"
-            >
-              {busy === "recover-bundle" ? "Checking…" : "Check bundle status"}
-            </button>
-          </div>
-          <div className="mt-3 space-y-2 border-t border-smoke-200 pt-3">
-            {pendingSession.chainIds.map((chainId, index) => {
-              const proof = pendingSession.expectedSafeExecutions?.[index];
-              const matches = pendingSession.records.filter(
-                (row) => relayrRecordChain(row) === chainId &&
-                  !!proof && row.tx_uuid?.toLowerCase() === proof.txUuid.toLowerCase(),
-              );
-              const record = matches.length === 1 ? matches[0] : undefined;
-              const state = record?.status?.state;
-              const hash = record ? relayrDestinationHash(record) : null;
-              const relayrReported = relayrStateIsSuccess(state);
-              const label = relayrReported
-                ? "Relayr-reported; onchain proof pending"
-                : relayrStateIsFailed(state)
-                  ? "Failed"
-                  : state || "Pending";
-              return (
-                <div
-                  key={`${chainId}-${index}`}
-                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                >
-                  <span>
-                    {chainName(chainId)}
-                  </span>
-                  {hash && explorerTxUrl(chainId, hash) ? (
-                    <a
-                      href={explorerTxUrl(chainId, hash)!}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={`font-mono underline ${
-                        relayrStateIsFailed(state)
-                          ? "text-error-600"
-                          : "text-bluebs-600"
-                      }`}
-                    >
-                      {label} | {hash.slice(0, 10)}…
-                    </a>
-                  ) : (
-                    <span
-                      className={
-                        relayrStateIsFailed(state)
-                          ? "text-error-600"
-                          : "text-smoke-600"
-                      }
-                    >
-                      {label}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
       {batchReview ? (
         <div className="mt-4 rounded-xl border border-bluebs-200 bg-bluebs-50/40 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1790,6 +1694,110 @@ export function SafeQueueCard({
           </div>
           {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
           <TxError error={error} />
+        </div>
+      ) : null}
+
+      {pendingSession ? (
+        <div className="mt-4 rounded-xl border border-smoke-200 bg-white/60 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-ink">
+                Relayr payment {pendingSession.paymentStatus}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+                Bundle{" "}
+                <span className="font-mono">{pendingSession.bundleUuid}</span>{" "}
+                {pendingSession.paymentStatus === "sending"
+                  ? "may have a submitted payment whose hash is unavailable."
+                  : "has a submitted payment."} Checking its status will not re-sign,
+                re-pay, or resubmit transactions.
+              </p>
+              {pendingSession.paymentHash &&
+              pendingSession.paymentChainId &&
+              explorerTxUrl(
+                pendingSession.paymentChainId,
+                pendingSession.paymentHash,
+              ) ? (
+                <a
+                  href={
+                    explorerTxUrl(
+                      pendingSession.paymentChainId,
+                      pendingSession.paymentHash,
+                    )!
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex font-mono text-xs text-bluebs-600 underline"
+                >
+                  Payment {pendingSession.paymentHash.slice(0, 10)}…
+                </a>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void recoverPaidBundle(pendingSession)}
+              className="btn-secondary min-h-[40px] px-4 text-sm"
+            >
+              {busy === "recover-bundle" ? "Checking…" : "Check bundle status"}
+            </button>
+          </div>
+          <div className="mt-3 space-y-2 border-t border-smoke-200 pt-3">
+            {pendingSession.chainIds.map((chainId, index) => {
+              const quotedIds = new Set(
+                (pendingSession.expectedSafeExecutions ?? []).map((proof) =>
+                  proof.txUuid.toLowerCase(),
+                ),
+              );
+              const matches = pendingSession.records.filter(
+                (row) => relayrRecordChain(row) === chainId &&
+                  quotedIds.has(String(row.tx_uuid ?? "").toLowerCase()),
+              );
+              const record = matches.length === 1 ? matches[0] : undefined;
+              const state = record?.status?.state;
+              const hash = record ? relayrDestinationHash(record) : null;
+              const relayrReported = relayrStateIsSuccess(state);
+              const label = relayrReported
+                ? "Relayr-reported; onchain proof pending"
+                : relayrStateIsFailed(state)
+                  ? "Failed"
+                  : state || "Pending";
+              return (
+                <div
+                  key={`${chainId}-${index}`}
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                >
+                  <span>
+                    {chainName(chainId)}
+                  </span>
+                  {hash && explorerTxUrl(chainId, hash) ? (
+                    <a
+                      href={explorerTxUrl(chainId, hash)!}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`font-mono underline ${
+                        relayrStateIsFailed(state)
+                          ? "text-error-600"
+                          : "text-bluebs-600"
+                      }`}
+                    >
+                      {label} | {hash.slice(0, 10)}…
+                    </a>
+                  ) : (
+                    <span
+                      className={
+                        relayrStateIsFailed(state)
+                          ? "text-error-600"
+                          : "text-smoke-600"
+                      }
+                    >
+                      {label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 

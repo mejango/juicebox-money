@@ -975,15 +975,38 @@ export async function relayrPostBundle(
       'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.',
     )
   }
+  // Relayr does not keep tx_uuids in request order (a live bundle came back
+  // Arbitrum, Base, Ethereum, Optimism for a 1, 10, 8453, 42161 request), so
+  // each entry is bound to the record carrying its exact request instead.
+  let records = Array.isArray(body.transactions) ? body.transactions : []
+  if (records.length !== ordered.length || records.some(record => !record.request || !record.tx_uuid)) {
+    const response = await relayrFetch(`${RELAYR_API}/v1/bundle/${bundleUuid}`, undefined, RELAYR_STATUS_REQUEST_TIMEOUT_MS)
+    if (!response.ok) throw new Error('Relayr did not return the quoted transactions. Nothing was paid.')
+    const bundle = (await response.json()) as { transactions?: RelayrTransactionRecord[] }
+    records = Array.isArray(bundle.transactions) ? bundle.transactions : []
+  }
+  const quotedIds = new Set(txUuids)
+  const expectedTransactions = ordered.map(entry => {
+    const matches = records.filter(record => {
+      const request = record.request
+      return !!request && quotedIds.has(String(record.tx_uuid ?? '').toLowerCase()) &&
+        request.chain === entry.chain && isAddressEqual(request.target, entry.target) &&
+        request.data.toLowerCase() === entry.data.toLowerCase() &&
+        request.virtual_nonce === entry.virtual_nonce
+    })
+    if (matches.length !== 1) {
+      throw new Error('Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.')
+    }
+    return { txUuid: String(matches[0].tx_uuid).toLowerCase(), chain: entry.chain, entry }
+  })
+  if (new Set(expectedTransactions.map(binding => binding.txUuid)).size !== ordered.length) {
+    throw new Error('Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.')
+  }
   return {
     bundle_uuid: bundleUuid,
     payment_info: body.payment_info,
-    transactions: Array.isArray(body.transactions) ? body.transactions : [],
-    expectedTransactions: ordered.map((entry, index) => ({
-      txUuid: txUuids[index],
-      chain: entry.chain,
-      entry,
-    })),
+    transactions: records,
+    expectedTransactions,
   }
 }
 
@@ -1362,6 +1385,11 @@ async function verifySavedRelayrDestinations(
       records.length !== saved.expectedCount || !saved.account || !isAddress(saved.account)) {
     throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
   }
+  const bindingIds = new Set(bindings.map(binding => binding.txUuid.toLowerCase()))
+  const recordIds = records.map(record => String(record.tx_uuid ?? '').toLowerCase())
+  if (new Set(recordIds).size !== saved.expectedCount || recordIds.some(id => !bindingIds.has(id))) {
+    throw new Error('Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.')
+  }
   for (const binding of bindings) {
     const { entry } = binding
     const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][binding.chain as JBChainId]
@@ -1374,7 +1402,11 @@ async function verifySavedRelayrDestinations(
         decoded.args[0].value !== BigInt(entry.value)) {
       throw new Error('The saved relay authorization does not match its account or value.')
     }
-    const matches = records.filter(record => record.tx_uuid?.toLowerCase() === binding.txUuid)
+    // Sessions saved before quotes bound IDs by request carry position-paired
+    // IDs, so match the chain within this bundle's quoted IDs; the onchain
+    // input check below proves the exact call.
+    const matches = records.filter(record => relayrRecordChain(record) === binding.chain &&
+      bindingIds.has(String(record.tx_uuid ?? '').toLowerCase()))
     const hash = matches.length === 1 ? relayrDestinationHash(matches[0]) : null
     if (!hash || !/^0x[0-9a-f]{64}$/iu.test(hash)) {
       throw new Error('Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.')
