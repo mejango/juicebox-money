@@ -11,12 +11,16 @@ const budgets = {
   routes: {
     // The root layout carries shared Wagmi and an always-ready transaction
     // review queue. The full decoder/dialog loads on request; home measures
-    // ~423 KiB after that split. Retain the original route ceiling.
-    '/page': 428 * KIB,
+    // ~423 KiB after that split. SDK 2.12.1 (+2.7 KiB), the lazy shop-read split that
+    // took the shop tab back off home (531 -> 431 KiB) and Sticky split rows (+1.3 KiB)
+    // measure 432.7 KiB; round up to the next KiB.
+    '/page': 434 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
-    '/create/page': 485 * KIB,
+    // It shares home's chunks, so SDK 2.12.1 and the shop-read split land here too
+    // (561 -> 487 KiB), plus Sticky split rows and launch checks (+4.9 KiB): 492.0 KiB.
+    '/create/page': 493 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -47,7 +51,9 @@ const budgets = {
   // same Node/npm toolchain. Allow 1.9 KiB headroom for this new capability.
   // Deferred Safe/review/chart UI keeps create at 482.9 KiB within its 485 KiB
   // route limit; existing route, largest-chunk and wallet-load caps stay fixed.
-  allScripts: 2445 * KIB,
+  // Main already measured 2446.5 KiB before 840b2ca hid it. SDK 2.12.1, the separate
+  // lazy shop-read chunk and Sticky splits (+6.5 KiB) measure 2459.5 KiB.
+  allScripts: 2461 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
