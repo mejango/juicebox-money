@@ -296,7 +296,7 @@ describe('multichain reserved split replacement', () => {
   it('preserves a one-billionth recipient share through the editor draft', () => {
     const source = snapshot(8453)
     const smallest = split({ percent: 1 })
-    const result = assembleReservedDestination(source, [splitToDraft(smallest)], NOW)
+    const result = assembleReservedDestination(source, [splitToDraft(smallest, source.chainId)], NOW)
     expect(result[1]).toEqual(smallest)
   })
 

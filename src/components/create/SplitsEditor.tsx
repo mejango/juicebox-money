@@ -8,12 +8,19 @@ import { AddressField, ProjectIdField } from './AddressField'
 import { AddButton, Piped } from './ui'
 import { chainsWithoutLpSplitHook } from '@/lib/launch'
 import { DateTimeField } from '@/components/ui/DateTimeField'
+import {
+  STICKY_MAX_CRITERIA_WEEKS,
+  stickyGroupDraftError,
+  type StickyGroupDraft,
+} from '@/lib/sticky'
+import { StickyTokenStatus } from './StickyTokenStatus'
 
 /**
  * Shared split-row editor for reserved tokens, routed payouts, and item
  * sale splits. Each row picks a recipient type first (website/ parity):
- * an address (ENS names resolve), or a project — which also needs a token
- * beneficiary. On multichain launches every row can override its recipient
+ * an address (ENS names resolve), a project (which also needs a token
+ * beneficiary), a split hook, or Sticky holders (a Sticky token plus a
+ * holder group). On multichain launches every row can override its recipient
  * per chain, in case the same address doesn't represent the entity
  * everywhere. Percentages are out of 100 of the bucket being split; any
  * unallocated remainder goes to the owner.
@@ -25,12 +32,15 @@ export type DraftSplit = {
   id: string
   /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
   value: string
-  kind: 'address' | 'project' | 'hook'
+  kind: 'address' | 'project' | 'hook' | 'sticky'
   /** The receiving address ('address' kind) — 0x… or an ENS name. */
   recipient: string
   /** The receiving project id ('project' kind). */
   projectId: string
-  /** Who receives the paid project's tokens ('project' kind, required). */
+  /**
+   * Who receives the paid project's tokens ('project' kind, required), or the
+   * Sticky token whose holders are paid ('sticky' kind).
+   */
   beneficiary: string
   /** Per-chain overrides of the identity field (address or project id). */
   perChain: Record<number, string>
@@ -50,7 +60,7 @@ export type DraftSplit = {
   preferAddToBalance: boolean
   /** Lock this split until a date (datetime-local; '' = unlocked). */
   lockedUntil: string
-}
+} & StickyGroupDraft
 
 export function newDraftSplit(): DraftSplit {
   return {
@@ -68,6 +78,9 @@ export function newDraftSplit(): DraftSplit {
     hookAddress: '',
     preferAddToBalance: false,
     lockedUntil: '',
+    stickyGroup: 'all',
+    stickyMinWeeks: '',
+    stickyMaxWeeks: '',
   }
 }
 
@@ -93,6 +106,12 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
     return (
       resolvedAddress(split.recipient) !== null &&
       overrides.every(v => resolvedAddress(v) !== null)
+    )
+  }
+  if (split.kind === 'sticky') {
+    return (
+      resolvedAddress(split.beneficiary) !== null &&
+      stickyGroupDraftError(split) === null
     )
   }
   if (split.kind === 'hook') {
@@ -141,6 +160,8 @@ export function SplitsEditor({
   allowFundMarket = false,
   showRouting = false,
   allowLock = false,
+  allowSticky = false,
+  stickyBlocked = null,
 }: {
   splits: DraftSplit[]
   onChange: (splits: DraftSplit[]) => void
@@ -165,6 +186,10 @@ export function SplitsEditor({
   showRouting?: boolean
   /** Offer per-split locks (fixed-duration stages). */
   allowLock?: boolean
+  /** Offer Sticky holders (payout and reserved-token splits only). */
+  allowSticky?: boolean
+  /** Why a Sticky row can't be used here, e.g. no project ERC-20 yet. */
+  stickyBlocked?: string | null
 }) {
   const update = (id: string, patch: Partial<DraftSplit>) => {
     onChange(splits.map(s => (s.id === id ? { ...s, ...patch } : s)))
@@ -176,6 +201,9 @@ export function SplitsEditor({
   // rather than encoded and left to fail on chain.
   const lpGapChains = chainsWithoutLpSplitHook(chainIds ?? [])
   const fundMarketOk = lpGapChains.length === 0
+  const stickyReason = allowSticky
+    ? stickyBlocked
+    : 'Sticky holders can only get payouts and reserved tokens. Pick another recipient.'
 
   return (
     <div>
@@ -214,17 +242,22 @@ export function SplitsEditor({
             </div>
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-x-2">
                 <div className="flex min-w-0 items-start gap-2">
                   <select
                     value={split.kind}
-                    onChange={e =>
+                    onChange={e => {
+                      const kind = e.target.value as DraftSplit['kind']
                       update(split.id, {
-                        kind: e.target.value as DraftSplit['kind'],
+                        kind,
                         perChain: {},
                         perChainBeneficiary: {},
+                        // A Sticky row's beneficiary is a token, never a wallet.
+                        ...(kind === 'sticky' || split.kind === 'sticky'
+                          ? { beneficiary: '' }
+                          : {}),
                       })
-                    }
+                    }}
                     disabled={disabled}
                     aria-label="Recipient type"
                     className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
@@ -232,6 +265,9 @@ export function SplitsEditor({
                     <option value="address">Address</option>
                     <option value="project">Project</option>
                     {allowHook ? <option value="hook">Hook</option> : null}
+                    {allowSticky || split.kind === 'sticky' ? (
+                      <option value="sticky">Sticky</option>
+                    ) : null}
                   </select>
                   {split.kind === 'hook' && allowFundMarket ? (
                     <select
@@ -285,6 +321,21 @@ export function SplitsEditor({
                     ariaLabel="Recipient address"
                   />
                 </div>
+              ) : null}
+
+              {split.kind === 'sticky' ? (
+                stickyReason ? (
+                  <p role="alert" className="mt-2 text-[11px] leading-relaxed text-error-600">
+                    {stickyReason}
+                  </p>
+                ) : (
+                  <StickyFields
+                    split={split}
+                    disabled={disabled}
+                    chainIds={chainIds?.length ? chainIds : [1]}
+                    onChange={patch => update(split.id, patch)}
+                  />
+                )
               ) : null}
 
               {split.kind === 'hook' ? (
@@ -426,7 +477,7 @@ export function SplitsEditor({
                 </div>
               ) : null}
 
-              {multiChain && split.kind !== 'hook' ? (
+              {multiChain && split.kind !== 'hook' && split.kind !== 'sticky' ? (
                 <div className="-ml-[7.5rem] mt-2 border-l-2 border-smoke-200 pl-3 sm:ml-0 sm:border-l-0 sm:pl-0">
                   <button
                     onClick={() =>
@@ -567,6 +618,84 @@ export function SplitsEditor({
           )
         ) : null}
       </div>
+    </div>
+  )
+}
+
+/** A Sticky row: the Sticky token, then which holders get paid. */
+function StickyFields({
+  split,
+  disabled,
+  chainIds,
+  onChange,
+}: {
+  split: DraftSplit
+  disabled: boolean
+  chainIds: readonly number[]
+  onChange: (patch: Partial<DraftSplit>) => void
+}) {
+  const weeksInput = (
+    field: 'stickyMinWeeks' | 'stickyMaxWeeks',
+    label: string,
+    placeholder: string,
+  ) => (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={split[field]}
+      onChange={e =>
+        onChange({ [field]: e.target.value.replace(/\D/g, '').slice(0, 3) })
+      }
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={label}
+      className="input-well min-h-[40px] w-16 px-2.5 text-xs tabular-nums disabled:opacity-60"
+    />
+  )
+  return (
+    <div className="-ml-[7.5rem] mt-2 space-y-2 sm:ml-0">
+      <AddressField
+        value={split.beneficiary}
+        onChange={beneficiary => onChange({ beneficiary })}
+        disabled={disabled}
+        placeholder="0x… (Sticky token)"
+        ariaLabel="Sticky token"
+      />
+      <div className="flex flex-wrap items-center gap-2 text-xs text-smoke-700">
+        <select
+          value={split.stickyGroup}
+          onChange={e =>
+            onChange({
+              stickyGroup: e.target.value as StickyGroupDraft['stickyGroup'],
+            })
+          }
+          disabled={disabled}
+          aria-label="Sticky holders"
+          className="input-well select-caret min-h-[40px] px-3 pr-8 text-xs disabled:opacity-60"
+        >
+          <option value="all">All holders</option>
+          <option value="tenure">Holders stuck at least</option>
+        </select>
+        {split.stickyGroup === 'tenure' ? (
+          <>
+            {weeksInput('stickyMinWeeks', 'Minimum weeks stuck', '4')}
+            <span>weeks, up to</span>
+            {weeksInput('stickyMaxWeeks', 'Maximum weeks stuck (optional)', 'any')}
+            <span>weeks</span>
+          </>
+        ) : null}
+      </div>
+      {split.stickyGroup === 'all' ? (
+        <p className="text-[11px] leading-relaxed text-smoke-500">
+          Pays every holder by voting power when each round starts.
+        </p>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-smoke-500">
+          Counts stake held that long when each round starts, 1 to{' '}
+          {STICKY_MAX_CRITERIA_WEEKS} weeks.
+        </p>
+      )}
+      <StickyTokenStatus row={split} chainIds={chainIds} />
     </div>
   )
 }

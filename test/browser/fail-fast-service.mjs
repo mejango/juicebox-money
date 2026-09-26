@@ -116,7 +116,7 @@ const activityEventFields = `
   sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from }
   sendReservedTokensToSplitsEvent { tokenCount from }
   sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from }
-  sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from }
+  sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
   repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
@@ -300,16 +300,6 @@ const contractFixtures = [
     functionName: 'terminalsOf',
     args: [1n],
     result: [MULTI_TERMINAL],
-  },
-  {
-    name: 'JBDirectory.isTerminalOf',
-    address: DIRECTORY,
-    abi: jbDirectoryAbi,
-    functionName: 'isTerminalOf',
-    args: [1n, ROUTER_REGISTRY],
-    // The fixture project lists only MULTI_TERMINAL above. Registry defaults
-    // therefore cannot imply that it has a router or gateway attached.
-    result: false,
   },
   {
     name: 'JBDirectory.controllerOf',
@@ -731,7 +721,7 @@ const graphqlFixtures = [
         limit: $limit
       ) {
         items {
-          projectId chainId name logoUri projectTagline createdAt suckerGroupId
+          projectId chainId name logoUri metadataUri projectTagline createdAt suckerGroupId
         }
       }
     }`,
@@ -744,6 +734,7 @@ const graphqlFixtures = [
             chainId: project.chainId,
             name: project.name,
             logoUri: project.logoUri,
+            metadataUri: project.metadataUri,
             projectTagline: project.projectTagline,
             createdAt: project.createdAt,
             suckerGroupId: project.suckerGroupId,
@@ -765,7 +756,7 @@ const graphqlFixtures = [
           id version volume trendingScore paymentsCount
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
-              projectId chainId name logoUri projectTagline tokenSymbol
+              projectId chainId name logoUri metadataUri projectTagline tokenSymbol
               decimals suckerGroupId volume paymentsCount
             }
           }
@@ -789,6 +780,7 @@ const graphqlFixtures = [
                   chainId: CHAIN_ID,
                   name: 'Browser Fixture Project',
                   logoUri: null,
+                  metadataUri: null,
                   projectTagline: 'Deterministic V6 trending card.',
                   tokenSymbol: 'USDC',
                   decimals: 6,
@@ -826,7 +818,7 @@ const graphqlFixtures = [
       ) {
         items {
           ${activityEventFields}
-          project { name logoUri tokenSymbol decimals }
+          project { name logoUri metadataUri tokenSymbol decimals }
         }
       }
     }`,
@@ -848,6 +840,7 @@ const graphqlFixtures = [
             project: {
               name: 'Browser Fixture Project',
               logoUri: null,
+              metadataUri: null,
               tokenSymbol: 'USDC',
               decimals: 6,
             },

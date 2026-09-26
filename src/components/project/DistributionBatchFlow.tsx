@@ -9,6 +9,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { TxError } from '@/components/ui/TxError'
 import { chainName } from '@/lib/urn'
 import { formatTokenAmount } from '@/lib/format'
+import { isStickyHook, stickyRecipientLabel } from '@/lib/sticky'
 import { distributionCall, distributionProjects, matchingPayoutToken, readPayoutOptions, reviewPayout, reviewReserved, reverifyDistribution, verifyDistributionCompletion, type Distribution, type PayoutOptions } from '@/lib/project-distributions'
 import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
@@ -30,7 +31,7 @@ function distributionReviewRows(distributions: readonly Distribution[]): TxConfi
         { label: 'Payout amount', value: `${formatUnits(item.amount, item.context.decimals)} ${payoutCurrency(item.currency, item.context.currency, item.symbol)}` },
         { label: 'Minimum distributed', value: `${formatTokenAmount(item.min, decimals)} ${item.symbol} before payout fees` },
       ] : []),
-      ...item.splits.map(split => ({ label: !isAddressEqual(split.hook, zeroAddress) ? `Hook ${split.hook}` : split.projectId > 0n ? `Project #${split.projectId}` : isAddressEqual(split.beneficiary, zeroAddress) ? item.authority : split.beneficiary,
+      ...item.splits.map(split => ({ label: isStickyHook(split.hook, item.chainId) ? stickyRecipientLabel(split, split.beneficiary) : !isAddressEqual(split.hook, zeroAddress) ? `Hook ${split.hook}` : split.projectId > 0n ? `Project #${split.projectId}` : isAddressEqual(split.beneficiary, zeroAddress) ? item.authority : split.beneficiary,
         value: `${formatTokenAmount(amount * BigInt(split.percent) / 1_000_000_000n, decimals)} ${item.symbol} (${split.percent / 10_000_000}%)${item.kind === 'payouts' ? ' before fees' : ''}` })),
       ...(recipientTotal < 1_000_000_000 || allocated < amount ? [{ label: `Owner ${item.owner}`, value: `${formatTokenAmount(amount - allocated, decimals)} ${item.symbol} remainder${item.kind === 'payouts' ? ' before fees' : ''}` }] : []),
     ]

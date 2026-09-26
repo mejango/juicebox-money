@@ -3,24 +3,16 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  JBOmnichainDeployerContracts,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
   jbContractAddress,
-  jbOmnichainDeployerAbi,
   jbSplitsAbi,
   SPLITS_TOTAL_PERCENT,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  BASE_CURRENCY_ETH,
-  BASE_CURRENCY_USD,
-  decode721RulesetMetadata,
   DISCOUNT_DENOMINATOR,
   effectiveTierPrice,
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
   getProject721Shop,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
@@ -39,7 +31,6 @@ import {
 } from '@/components/LoadingSkeletons'
 import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import { describeTransferSchedule } from '@/lib/transfer-schedule'
-import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
   AddShopItemsModal,
   type ShopWriteTarget,
@@ -66,24 +57,27 @@ import type {
   BsShopRows,
 } from '@/lib/bendystraw'
 import {
-  appIpfsUrl,
   formatTokenAmount,
   timeAgo,
 } from '@/lib/format'
-import { bytes32ToCidV0 } from '@bananapus/nana-sdk-core'
-import {
-  TIER_UNLIMITED_SUPPLY,
-  parseTierMetadataJson,
-  pickTierMetadata,
-  tierMediaAssetUrl,
-  tierMediaImageUrl,
-} from '@/lib/tier-metadata'
-import { tokenSymbol } from '@/lib/token-symbol'
+import { TIER_UNLIMITED_SUPPLY } from '@/lib/tier-metadata'
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import { PERSIST } from '@/lib/query-persist'
 import { SPLIT_SALES_TOKEN_CREDIT_TITLE } from '@/lib/shop-copy'
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import {
+  useShop721,
+  useShop721Media,
+  type Shop,
+  type ShopConfigFlags,
+  type ShopTier,
+  type ShopTierFlags,
+  type TierMedia,
+} from '@/hooks/useShop721'
+import { readShop } from '@/lib/shop-read'
+import { isStickyHook } from '@/lib/sticky'
+import { StickyRecipient } from '@/components/project/StickyRecipient'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
@@ -95,22 +89,6 @@ import { explorerTxUrl } from '@/lib/chainDisplay'
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
 
-type ShopTierFlags = {
-  allowOwnerMint: boolean
-  transfersPausable: boolean
-  cantBeRemoved: boolean
-  cantIncreaseDiscountPercent: boolean
-  cantBuyWithCredits: boolean
-}
-
-type ShopConfigFlags = {
-  preventOverspending: boolean
-  noNewTiersWithReserves: boolean
-  noNewTiersWithVotes: boolean
-  noNewTiersWithOwnerMinting: boolean
-  issueTokensForSplits: boolean
-}
-
 const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['preventOverspending', 'Require exact payment'],
   ['noNewTiersWithReserves', 'Lock reserved items after launch'],
@@ -118,28 +96,6 @@ const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['noNewTiersWithOwnerMinting', 'Lock owner minting after launch'],
   ['issueTokensForSplits', SPLIT_SALES_TOKEN_CREDIT_TITLE],
 ]
-
-const ZERO_BYTES32 = `0x${'0'.repeat(64)}`
-
-type ShopTier = {
-  id: number
-  /** Full (undiscounted) price in the shop's pricing terms. */
-  price: bigint
-  remaining: number
-  initial: number
-  category: number
-  /** Out of the SDK's 200-point discount denominator. */
-  discountPercent: number
-  reserveFrequency: number
-  votingUnits: bigint
-  /** Share of each sale paid out to the tier's split group, out of SPLITS_TOTAL_PERCENT. */
-  splitPercent: number
-  encodedIpfsUri: `0x${string}`
-  /** tokenUriResolver output (tiersOf includeResolvedUri=true); '' if none. */
-  resolvedUri: string
-  /** Stored tier flags (store tiersOf); undefined if the read failed. */
-  flags?: ShopTierFlags
-}
 
 /**
  * Shopper-facing copy for each stored tier flag (revnet-app parity).
@@ -185,77 +141,6 @@ const flagDescriptions = (
     "Buyers can't use shop credits to mint this item — only a fresh payment.",
   ],
 ]
-
-type Shop = {
-  hook: Address
-  /** Shared implementation address used to key 721 hook metadata. */
-  idTarget: Address
-  cashOutEnabled: boolean
-  /** Whether the current ruleset has the 721 transfer-pause bit enabled. */
-  transfersPaused: boolean | null
-  /**
-   * Whether each stage pauses transfers, oldest first. Only read for a revnet, whose
-   * stages are queued once at deployFor and can never be requeued — so this is the
-   * settled schedule rather than a reading of the current moment. Null elsewhere,
-   * where a future ruleset really can still change the answer.
-   */
-  transferPauseByStage: { stage: number; paused: boolean }[] | null
-  pricing: { currency: number; decimals: number; symbol: string }
-  tiers: ShopTier[]
-  configFlags: ShopConfigFlags | null
-}
-
-type TierMedia = {
-  name?: string
-  description?: string
-  image?: string
-  animationUrl?: string
-  mediaType?: string
-  categoryName?: string
-}
-
-/** The project's 721 shop, shared by the tab, the pay box, and activity rows (one query key). */
-export function useShop721(chainId: JBChainId, projectId: number, isRevnet: boolean) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-  return useQuery({
-    queryKey: ['shop721', chainId, projectId, isRevnet],
-    meta: PERSIST,
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      readShop(publicClient!, chainId, projectId, isRevnet, nativeSymbol),
-  })
-}
-
-/**
- * Tier display metadata (name/image/category name), resolved from the
- * onchain resolver's data URI or the tier's IPFS JSON. Best-effort — cards
- * render immediately and hydrate as this lands.
- * The tier set the media was resolved FROM is part of the identity: keyed on
- * the hook alone, an infinite-staleTime persisted entry survives reloads, so
- * tiers added from anywhere but this browser rendered as "Item #N" forever.
- */
-export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefined) {
-  const mediaTierKey = (shop?.tiers ?? [])
-    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
-    .join(',')
-  return useQuery({
-    queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
-    meta: PERSIST,
-    enabled: !!shop && shop.tiers.length > 0,
-    staleTime: Infinity,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        shop!.tiers.map(
-          async tier => [tier.id, await resolveTierMedia(tier)] as const,
-        ),
-      )
-      return Object.fromEntries(entries) as Record<number, TierMedia>
-    },
-  })
-}
 
 export function ShopTab({
   chainId,
@@ -1992,7 +1877,9 @@ function TierSaleRouting({
             return (
               <div key={index} className="flex items-start justify-between gap-4">
                 <dt className="min-w-0 text-ink">
-                  {split.projectId > 0n ? (
+                  {isStickyHook(split.hook, chainId) ? (
+                    <StickyRecipient split={split} chainId={chainId} />
+                  ) : split.projectId > 0n ? (
                     `Project ${split.projectId.toString()}`
                   ) : (
                     <AddressLink
@@ -2045,235 +1932,4 @@ function plainText(value: string): string {
 function discountLabel(discountPercent: number): string {
   const pct = (discountPercent * 100) / Number(DISCOUNT_DENOMINATOR)
   return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}% off`
-}
-
-async function resolveLegacyTierUris(
-  client: PublicClient,
-  store: Address,
-  hook: Address,
-  tiers: Awaited<ReturnType<typeof readTierPage>>,
-) {
-  const legacy = tiers.filter(
-    tier => tier.encodedIpfsUri.toLowerCase() === ZERO_BYTES32,
-  )
-  const resolved = new Map<number, string>()
-  for (let offset = 0; offset < legacy.length; offset += 10) {
-    const batch = await Promise.all(
-      legacy.slice(offset, offset + 10).map(async tier => {
-        const row = (
-          await client.readContract({
-            address: store,
-            abi: jb721TiersHookStoreAbi,
-            functionName: 'tiersOf',
-            args: [hook, [], true, BigInt(tier.id), 1n],
-          })
-        )[0]
-        return [tier.id, row?.resolvedUri ?? ''] as const
-      }),
-    )
-    for (const entry of batch) resolved.set(...entry)
-  }
-  return resolved
-}
-
-/**
- * Resolve the project's shop: hook, store, pricing context, and tiers.
- * Returns null when the project authoritatively has no 721 shop; throws on
- * RPC failure so the UI shows an error instead of a false "no store".
- */
-async function readShop(
-  client: PublicClient,
-  chainId: JBChainId,
-  projectId: number,
-  isRevnet: boolean,
-  nativeSymbol: string,
-): Promise<Shop | null> {
-  const [identity, current, allRulesets] = await Promise.all([
-    getProject721Shop(client, {
-      chainId,
-      projectId: BigInt(projectId),
-      isRevnet,
-      tierLimit: 0,
-    }),
-    getCurrentRuleset(client, {
-      chainId,
-      projectId: BigInt(projectId),
-    }).catch(() => null),
-    // Only a revnet's schedule is settled: its stages are queued at deployFor and no
-    // revnet actor holds QUEUE_RULESETS. A plain project can still queue a ruleset that
-    // changes the answer, so there it stays a statement about the current stage.
-    isRevnet
-      ? getAllRulesets(client, {
-          chainId,
-          projectId: BigInt(projectId),
-          size: 50n,
-        }).catch(() => null)
-      : Promise.resolve(null),
-  ])
-  if (!identity) return null
-  const resolved = identity
-  const rawTiers = await readAllActiveTiers(
-    client,
-    resolved.store,
-    resolved.hook,
-  )
-  const resolvedUriById = await resolveLegacyTierUris(
-    client,
-    resolved.store,
-    resolved.hook,
-    rawTiers,
-  )
-
-  const idTarget = resolved.metadataIdTarget
-  if (!idTarget || idTarget === zeroAddress) {
-    throw new Error('The shop metadata target is invalid.')
-  }
-
-  const { currency, decimals } = resolved.pricing
-
-  let cashOutEnabled = false
-  if (!isRevnet && current) {
-    const dataHook = current.metadata.dataHook
-    const omni = jbContractAddress['6'][
-      JBOmnichainDeployerContracts.JBOmnichainDeployer
-    ]?.[chainId] as Address | undefined
-    if (
-      omni &&
-      dataHook &&
-      dataHook.toLowerCase() === omni.toLowerCase()
-    ) {
-      // The ruleset flag only says to consult the omnichain deployer. Its
-      // per-ruleset 721 config authoritatively decides whether cash outs are
-      // forwarded to this collection.
-      const configured = await client
-        .readContract({
-          address: omni,
-          abi: jbOmnichainDeployerAbi,
-          functionName: 'tiered721HookOf',
-          args: [BigInt(projectId), BigInt(current.ruleset.id)],
-        })
-        .catch(() => null)
-      cashOutEnabled = !!(
-        configured &&
-        configured[0].toLowerCase() === resolved.hook.toLowerCase() &&
-        configured[1]
-      )
-    } else {
-      // A direct custom-project data hook uses the ruleset flag itself.
-      cashOutEnabled = !!(
-        dataHook &&
-        dataHook.toLowerCase() === resolved.hook.toLowerCase() &&
-        current.metadata.useDataHookForCashOut
-      )
-    }
-  }
-
-  let symbol: string
-  if (currency === BASE_CURRENCY_ETH) {
-    symbol = nativeSymbol
-  } else if (currency === BASE_CURRENCY_USD) {
-    symbol = 'USD'
-  } else {
-    // Token-keyed currency (uint32(uint160(token))): match the project's
-    // accounting contexts to find the token, then read its symbol.
-    symbol = `currency #${currency}`
-    const contexts = await getAccountingContexts(client, {
-      chainId,
-      projectId: BigInt(projectId),
-    }).catch(() => [])
-    const match = contexts.find(ctx => ctx.currency === currency)
-    if (match) {
-      symbol = await tokenSymbol(client, match.token, { chainId })
-    }
-  }
-
-  // Tier and collection-wide flags come from the store directly —
-  // getProject721Shop's tier shape doesn't carry them. These are display-only,
-  // so failed reads leave their corresponding detail sections unavailable.
-  const configFlags = await client
-    .readContract({
-        address: resolved.store,
-        abi: jb721TiersHookStoreAbi,
-        functionName: 'flagsOf',
-        args: [resolved.hook],
-      })
-      .then(flags => ({ ...flags }))
-    .catch(() => null)
-
-  const tiers: ShopTier[] = rawTiers.map(tier => ({
-    id: tier.id,
-    price: tier.price,
-    remaining: tier.remainingSupply,
-    initial: tier.initialSupply,
-    category: tier.category,
-    discountPercent: tier.discountPercent,
-    reserveFrequency: tier.reserveFrequency,
-    votingUnits: tier.votingUnits,
-    splitPercent: Number(tier.splitPercent),
-    encodedIpfsUri: tier.encodedIpfsUri,
-    resolvedUri: resolvedUriById.get(tier.id) ?? '',
-    flags: { ...tier.flags },
-  }))
-
-  return {
-    hook: resolved.hook,
-    idTarget,
-    cashOutEnabled,
-    transfersPaused: current
-      ? decode721RulesetMetadata(Number(current.metadata.metadata ?? 0))
-          .pauseTransfers
-      : null,
-    transferPauseByStage: allRulesets?.length
-      ? [...allRulesets]
-          // Oldest first, numbered the way the Rulesets tab numbers stages.
-          .sort((left, right) => left.ruleset.start - right.ruleset.start)
-          .map((entry, index) => ({
-            stage: index + 1,
-            paused: decode721RulesetMetadata(Number(entry.metadata.metadata ?? 0))
-              .pauseTransfers,
-          }))
-      : null,
-    pricing: { currency, decimals, symbol },
-    tiers,
-    configFlags,
-  }
-}
-
-/** Resolve a tier's display metadata: the resolver's data URI first, then
- *  the tier's IPFS JSON. Best-effort — {} on any failure. */
-async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
-  const pick = (json: Record<string, unknown>): TierMedia => {
-    const meta = pickTierMetadata(json)
-    return {
-      name: meta.name,
-      description: meta.description,
-      image: tierMediaImageUrl(meta.image),
-      animationUrl: tierMediaAssetUrl(meta.animationUrl),
-      mediaType: meta.mediaType,
-      categoryName: meta.categoryName,
-    }
-  }
-
-  const resolved = tier.resolvedUri
-    ? parseTierMetadataJson(tier.resolvedUri)
-    : null
-  if (resolved && Object.keys(resolved).length > 0) return pick(resolved)
-
-  const cid = bytes32ToCidV0(tier.encodedIpfsUri)
-  const url = cid ? appIpfsUrl(`ipfs://${cid}`) : null
-  if (!url) return {}
-  try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 8_000)
-    const res = await fetch(url, { signal: controller.signal }).finally(() =>
-      clearTimeout(timer),
-    )
-    if (!res.ok) return {}
-    const json = (await res.json()) as unknown
-    return json && typeof json === 'object'
-      ? pick(json as Record<string, unknown>)
-      : {}
-  } catch {
-    return {}
-  }
 }

@@ -58,11 +58,11 @@ describe('LP split hook generations', () => {
   })
 
   it('recognizes the current hook and keeps a legacy one read-only', () => {
-    const current = splitToDraft(hookSplit(LP_SPLIT_HOOK))
+    const current = splitToDraft(hookSplit(LP_SPLIT_HOOK), 8453)
     expect(current.kind).toBe('hook')
     expect(current.hookKind).toBe('fundmarket')
 
-    const legacy = splitToDraft(hookSplit(LEGACY_LP_SPLIT_HOOKS[0]))
+    const legacy = splitToDraft(hookSplit(LEGACY_LP_SPLIT_HOOKS[0]), 8453)
     expect(legacy.hookKind).toBe('fundmarket-legacy')
     // The legacy address is preserved verbatim, so an unrelated edit cannot
     // migrate an existing split onto a different hook.
@@ -70,6 +70,7 @@ describe('LP split hook generations', () => {
 
     const unrelated = splitToDraft(
       hookSplit(`0x${'ab'.repeat(20)}` as Address),
+      8453,
     )
     expect(unrelated.hookKind).toBe('custom')
   })

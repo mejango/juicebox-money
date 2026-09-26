@@ -15,6 +15,7 @@ import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
   hasPermissions,
   getCurrentRuleset,
+  getTokenAddress,
   type JBSplit,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -41,16 +42,23 @@ import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@/lib/relayr-chains'
 import { getRevnetOperator } from '@/lib/bendystraw'
-import { resolvedAddress } from '@/lib/ens'
 import {
   billionthsToPct,
   toLocalDateTimeInput,
   truncateAddress,
 } from '@/lib/format'
-import { lpSplitHookGeneration, requireLpSplitHook } from '@/lib/launch'
+import { lpSplitHookGeneration } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
 import { fetchSafeInfo } from '@/lib/safe'
 import type { RawSplit } from '@/lib/splits-types'
+import { draftSplitRecipient } from '@/lib/split-recipient'
+import {
+  isStickyHook,
+  stickyGroupDraft,
+  stickyNoErc20Reason,
+} from '@/lib/sticky'
+import { stickyDestinationProblem } from '@/lib/sticky-check'
+import { StickyRecipient } from '@/components/project/StickyRecipient'
 import { buildSplitGroupsAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
@@ -72,11 +80,21 @@ function fingerprint(splits: readonly RawSplit[]): string {
  *  lock renders as LOCAL wall clock because `draftToSplit` parses it back as
  *  local — a UTC string here would re-encode the lock shifted by the viewer's
  *  offset. */
-export function splitToDraft(sp: RawSplit): DraftSplit {
+export function splitToDraft(sp: RawSplit, chainId: number): DraftSplit {
   const base = newDraftSplit()
   const value = billionthsToPct(sp.percent, 7)
   const lockedUntil =
     sp.lockedUntil > 0 ? toLocalDateTimeInput(sp.lockedUntil) : ''
+  if (isStickyHook(sp.hook, chainId)) {
+    return {
+      ...base,
+      value,
+      kind: 'sticky',
+      beneficiary: sp.beneficiary,
+      ...stickyGroupDraft(sp.projectId),
+      lockedUntil,
+    }
+  }
   if (sp.hook !== zeroAddress) {
     return {
       ...base,
@@ -120,43 +138,9 @@ export function splitToDraft(sp: RawSplit): DraftSplit {
 /** An editable draft row → a JBSplit (percent out of 1e9). Assumes the row
  *  passed `splitOk`, so every referenced address resolves. */
 function draftToSplit(row: DraftSplit, chainId: number): JBSplit {
-  const lockedUntil = row.lockedUntil
-    ? Math.floor(new Date(row.lockedUntil).getTime() / 1000)
-    : 0
-  const percent = Math.round(Number(row.value) * 1e7)
-  if (row.kind === 'hook') {
-    const id = row.projectId.trim().replace('#', '')
-    return {
-      percent,
-      projectId: id ? BigInt(id) : 0n,
-      beneficiary: resolvedAddress(row.beneficiary) ?? zeroAddress,
-      preferAddToBalance: false,
-      lockedUntil,
-      hook:
-        row.hookKind === 'fundmarket'
-          ? requireLpSplitHook(chainId)
-          : resolvedAddress(row.hookAddress)!,
-    }
-  }
-  if (row.kind === 'project') {
-    return {
-      percent,
-      projectId: BigInt(row.projectId.trim().replace('#', '')),
-      beneficiary: row.preferAddToBalance
-        ? (resolvedAddress(row.beneficiary) ?? zeroAddress)
-        : resolvedAddress(row.beneficiary)!,
-      preferAddToBalance: row.preferAddToBalance,
-      lockedUntil,
-      hook: zeroAddress,
-    }
-  }
   return {
-    percent,
-    projectId: 0n,
-    beneficiary: resolvedAddress(row.recipient)!,
-    preferAddToBalance: false,
-    lockedUntil,
-    hook: zeroAddress,
+    percent: Math.round(Number(row.value) * 1e7),
+    ...draftSplitRecipient(row, chainId),
   }
 }
 
@@ -684,8 +668,16 @@ function EditSplitsModal({
   const primarySnapshot = destinationsQuery.data?.find(row => row.chainId === chainId)?.snapshot
   const primaryRelayable = !!primarySnapshot?.relayable && addressOnlySplits(primarySnapshot.currentSplits, lockSnapshotAt ?? Math.floor(Date.now() / 1000))
   const multiBlocked = selectedChains.size > 1 && !sharedAddressDrafts(drafts)
-    ? 'Project and hook recipients must be edited separately. Deselect other chains to continue.'
+    ? 'Project, hook, and Sticky recipients must be edited separately. Deselect other chains to continue.'
     : null
+  // Reserved tokens reach Sticky holders only through the project's ERC-20.
+  const { data: projectToken } = useQuery({
+    queryKey: ['editSplitsProjectToken', chainId, projectId],
+    enabled: open && isReserved && !!publicClient,
+    staleTime: 60_000,
+    queryFn: () => getTokenAddress(publicClient!, { chainId, projectId: BigInt(projectId) }),
+  })
+  const stickyBlocked = isReserved && projectToken === null ? stickyNoErc20Reason(chainId) : null
 
   const {
     data: live,
@@ -739,10 +731,10 @@ function EditSplitsModal({
     const now = Math.floor(Date.now() / 1000)
     setLockSnapshotAt(now)
     setLockedRows(live.filter(s => s.lockedUntil > now).map(s => ({ ...s })))
-    setDrafts(live.filter(s => s.lockedUntil <= now).map(splitToDraft))
+    setDrafts(live.filter(s => s.lockedUntil <= now).map(split => splitToDraft(split, chainId)))
     setBaseline(fingerprint(live))
     initialized.current = true
-  }, [open, live, liveFetching, fallbackFetching])
+  }, [open, live, liveFetching, fallbackFetching, chainId])
 
   const lockedPercent = useMemo(
     () => lockedRows.reduce((sum, s) => sum + s.percent, 0),
@@ -802,6 +794,18 @@ function EditSplitsModal({
       // Rows presented as locked stay in this review even if their lock expires
       // while the form is open. Reopening permits explicitly editing them.
       const now = lockSnapshotAt ?? Math.floor(Date.now() / 1000)
+      // The distributor never reverts, so an unregistered token or a missing ERC-20 would
+      // quietly misroute. Check each destination chain before anything is signed.
+      for (const snapshot of snapshots) {
+        const problem = await stickyDestinationProblem({
+          client: clientFor(snapshot.chainId),
+          chainId: snapshot.chainId,
+          projectId: snapshot.projectId,
+          reserved: isReserved,
+          splits: drafts.filter(row => row.kind === 'sticky').map(row => draftSplitRecipient(row, snapshot.chainId)),
+        })
+        if (problem) throw new Error(problem)
+      }
       const destinations = snapshots.map(snapshot => {
         if (snapshots.length > 1) {
           if (!snapshot.relayable) throw new Error('Edit Safe accounts and different authorities separately.')
@@ -847,7 +851,15 @@ function EditSplitsModal({
   const reviewRows: TxConfirmRow[] = plan ? plan.destinations.flatMap(destination => {
     const allocated = destination.splits.reduce((total, split) => total + split.percent, 0)
     const previousAllocated = destination.currentSplits.reduce((total, split) => total + split.percent, 0)
-    const recipientRows = (splits: readonly RawSplit[]) => splits.length ? splits.map(split => `${lockedRecipientLabel(split)} ${billionthsToPct(split.percent, 7)}%${split.lockedUntil > Math.floor(Date.now() / 1000) ? ' (locked)' : ''}`).join('; ') : 'None'
+    const recipientRows = (splits: readonly RawSplit[]) => splits.length ? (
+      <span className="flex min-w-0 flex-col gap-0.5">
+        {splits.map((split, index) => (
+          <span key={index}>
+            <RecipientLabel split={split} chainId={destination.chainId} /> {billionthsToPct(split.percent, 7)}%{split.lockedUntil > Math.floor(Date.now() / 1000) ? ' (locked)' : ''}
+          </span>
+        ))}
+      </span>
+    ) : 'None'
     return [
       { label: chainName(destination.chainId), value: `Project #${destination.projectId}, current ruleset ${destination.rulesetId}` },
       { label: 'Previous recipients', value: recipientRows(destination.currentSplits) },
@@ -902,7 +914,7 @@ function EditSplitsModal({
               <ul className="mt-1.5 space-y-1">
                 {lockedRows.map((s, i) => (
                   <li key={i} className="flex justify-between gap-3">
-                    <span>{lockedRecipientLabel(s)}</span>
+                    <span><RecipientLabel split={s} chainId={chainId} /></span>
                     <span className="tabular-nums">
                       {billionthsToPct(s.percent, 6)}%
                     </span>
@@ -932,7 +944,7 @@ function EditSplitsModal({
                 <span>{chainName(id)}{id === chainId ? ' (shown here)' : !row ? ' — checking…' : row.error ? ` — ${row.error}` : !eligible ? ' — edit this chain separately' : ''}</span>
               </label>
             })}
-            <p className="text-xs text-smoke-600">The selected chains share the address recipients below. Choose all mainnets or all testnets; each chain keeps its own locked recipients. Project recipients, hooks, and Safe accounts are edited separately.</p>
+            <p className="text-xs text-smoke-600">The selected chains share the address recipients below. Choose all mainnets or all testnets; each chain keeps its own locked recipients. Project recipients, hooks, Sticky holders, and Safe accounts are edited separately.</p>
           </fieldset> : <p className="mb-3 text-xs text-smoke-600">These recipients apply on {chainName(chainId)}. {isReserved ? '' : 'Payout token groups are edited separately on each chain.'}</p>}
           {multiBlocked ? <p className="mb-3 text-xs font-medium text-red-700">{multiBlocked}</p> : null}
 
@@ -952,6 +964,8 @@ function EditSplitsModal({
             allowFundMarket={isReserved}
             showRouting={!isReserved}
             allowLock
+            allowSticky
+            stickyBlocked={stickyBlocked}
           />
 
           {clearsGroup && clearBlocked ? (
@@ -1011,6 +1025,12 @@ function EditSplitsModal({
       )}
     </div>
   )
+}
+
+function RecipientLabel({ split, chainId }: { split: RawSplit; chainId: JBChainId }) {
+  return isStickyHook(split.hook, chainId)
+    ? <StickyRecipient split={split} chainId={chainId} />
+    : <>{lockedRecipientLabel(split)}</>
 }
 
 function lockedRecipientLabel(s: RawSplit): string {

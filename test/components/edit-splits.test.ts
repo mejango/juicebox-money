@@ -117,18 +117,18 @@ describe('lock round trip', () => {
   }
 
   it('renders the lock as local wall clock, not UTC', () => {
-    expect(splitToDraft(expiredLock).lockedUntil).toBe('2025-08-06T10:06')
+    expect(splitToDraft(expiredLock, 8453).lockedUntil).toBe('2025-08-06T10:06')
   })
 
   it('re-encodes an untouched lock to the same timestamp', () => {
-    const result = assembleSplits([], [splitToDraft(expiredLock)], EMPTY_FALLBACK, 8453)
+    const result = assembleSplits([], [splitToDraft(expiredLock, 8453)], EMPTY_FALLBACK, 8453)
     if ('error' in result) throw new Error(result.error)
     expect(result.splits[0].lockedUntil).toBe(LOCKED_UNTIL)
   })
 
   it('leaves an unlocked split unlocked', () => {
-    expect(splitToDraft(fallbackRow).lockedUntil).toBe('')
-    const result = assembleSplits([], [splitToDraft(fallbackRow)], EMPTY_FALLBACK, 8453)
+    expect(splitToDraft(fallbackRow, 8453).lockedUntil).toBe('')
+    const result = assembleSplits([], [splitToDraft(fallbackRow, 8453)], EMPTY_FALLBACK, 8453)
     if ('error' in result) throw new Error(result.error)
     expect(result.splits[0].lockedUntil).toBe(0)
   })

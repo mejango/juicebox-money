@@ -327,6 +327,8 @@ export type BsActivityEvent = {
     tokenCount: string
     beneficiary: string
     splitProjectId: number
+    /** The split hook; a Sticky split's splitProjectId is its holder group. Absent from account queries. */
+    hook?: string
     from: string
   } | null
   sendReservedTokensToSplitsEvent?: {
@@ -448,7 +450,7 @@ const ACTIVITY_EVENT_FIELDS = `
     amount amountUsd beneficiary splitProjectId from
   }
   sendReservedTokensToSplitEvent {
-    tokenCount beneficiary splitProjectId from
+    tokenCount beneficiary splitProjectId hook from
   }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent {
