@@ -124,4 +124,16 @@ module.exports = phase => ({
       },
     ]
   },
+  // One origin for the app, so wallet sign-in and framing allowlists name only
+  // juicebox.money.
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: 'www.juicebox.money' }],
+        destination: 'https://juicebox.money/:path*',
+        permanent: true,
+      },
+    ]
+  },
 })
