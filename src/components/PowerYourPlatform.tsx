@@ -4,6 +4,62 @@ import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { PLATFORM_BUILD_PROMPT } from '@/lib/build-prompt'
 
+const PLATFORMS = [
+  {
+    name: 'Juicebox Money',
+    href: '/',
+    tag: 'General purpose',
+    description: 'Create, fund, manage, and explore projects through this website.',
+  },
+  {
+    name: 'Revnet',
+    href: 'https://revnet.money',
+    tag: 'Terms fixed at launch',
+    description:
+      'Launch a project with a fixed schedule for creating tokens and exchanging them for available funds. Its operator keeps a limited set of controls.',
+  },
+  {
+    name: 'Homerun',
+    href: 'https://homerun.money',
+    tag: 'Homes',
+    description: "Run your homes' investments and revenues.",
+  },
+  {
+    name: 'Beep',
+    href: 'https://beep.biz',
+    tag: 'Point of sale',
+    description: 'Take payments in person with a tap or a QR code.',
+  },
+  {
+    name: 'Plugin',
+    href: 'https://plugin.money',
+    tag: 'Machines',
+    description:
+      'Give your machine a money engine so it can fundraise, process revenues, and manage incentives between machines.',
+  },
+  {
+    name: 'Succulent',
+    href: 'https://succulent.money',
+    tag: 'Social',
+    description: 'Post updates and support projects from one feed.',
+  },
+  {
+    name: 'Banny',
+    href: 'https://retail.banny.eth.shop',
+    tag: 'Collectibles',
+    description: 'Collect Bannys and dress them in outfits and backgrounds.',
+  },
+  {
+    name: 'Croptop',
+    href: 'https://crop.top',
+    tag: 'Publishing',
+    description: "Post to a project's collection under rules its owner sets.",
+  },
+]
+
+const PLATFORM_LINK_CLASS =
+  'font-agrandir text-lg font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800'
+
 export function PowerYourPlatform() {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -66,42 +122,35 @@ export function PowerYourPlatform() {
                 Platforms powered by Juicebox
               </p>
               <div className="mt-5 space-y-4">
-                <article className="rounded-lg border border-smoke-200 bg-smoke-25 p-4">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <Link
-                      href="/"
-                      className="font-agrandir text-lg font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
-                    >
-                      Juicebox Money
-                    </Link>
-                    <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-smoke-500">
-                      General purpose
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-                    Create, fund, manage, and explore projects through this website.
-                  </p>
-                </article>
-
-                <article className="rounded-lg border border-smoke-200 bg-smoke-25 p-4">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <a
-                      href="https://revnet.money"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-agrandir text-lg font-medium text-bluebs-700 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-800"
-                    >
-                      Revnet
-                    </a>
-                    <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-smoke-500">
-                      Terms fixed at launch
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-                    Launch a project with a fixed schedule for creating tokens and exchanging them
-                    for available funds. Its operator keeps a limited set of controls.
-                  </p>
-                </article>
+                {PLATFORMS.map((platform) => (
+                  <article
+                    key={platform.name}
+                    className="rounded-lg border border-smoke-200 bg-smoke-25 p-4"
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      {platform.href.startsWith('/') ? (
+                        <Link href={platform.href} className={PLATFORM_LINK_CLASS}>
+                          {platform.name}
+                        </Link>
+                      ) : (
+                        <a
+                          href={platform.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={PLATFORM_LINK_CLASS}
+                        >
+                          {platform.name}
+                        </a>
+                      )}
+                      <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-smoke-500">
+                        {platform.tag}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+                      {platform.description}
+                    </p>
+                  </article>
+                ))}
               </div>
               <p className="mt-5 text-xs leading-relaxed text-smoke-600">
                 Start your own:{' '}

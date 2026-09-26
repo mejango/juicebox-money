@@ -58,6 +58,7 @@ const WHY_JUICEBOX_POINTS = [
   'Share funds and tokens with recipients you choose.',
   'Build your own payment experience with open-source tools.',
   'Follow payments, payouts, and changes to the rules in the public record.',
+  'Fully automatable and AI compatible, on any permissioned spectrum you want.',
 ]
 
 const JUICEBOX_FEATURES = [
@@ -531,7 +532,7 @@ export default function HomePage() {
             <p className="mx-auto mt-4 max-w-3xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
               Start simply, add powerful tools when you need them, and keep the
               important rules visible to everyone along the way. Easy enough for
-              a group of friends, powerful enough for a global network of anons.
+              a group of friends, powerful enough for a global network of anons and agents.
             </p>
 
             <div className="mt-12 grid gap-x-16 gap-y-20 md:grid-cols-2 sm:mt-16 sm:gap-y-28">
