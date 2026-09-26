@@ -242,7 +242,7 @@ export function SplitsEditor({
             </div>
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-x-2">
                 <div className="flex min-w-0 items-start gap-2">
                   <select
                     value={split.kind}
@@ -653,7 +653,7 @@ function StickyFields({
     />
   )
   return (
-    <div className="mt-2 space-y-2">
+    <div className="-ml-[7.5rem] mt-2 space-y-2 sm:ml-0">
       <AddressField
         value={split.beneficiary}
         onChange={beneficiary => onChange({ beneficiary })}
