@@ -258,7 +258,7 @@ export function SplitsEditor({
             <span className="mt-3 shrink-0 text-sm text-smoke-700">to</span>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-start justify-between gap-x-2">
-                <div className="flex min-w-0 items-start gap-2">
+                <div className="flex min-w-0 flex-wrap items-start gap-2">
                   <select
                     value={split.kind}
                     onChange={e => {
