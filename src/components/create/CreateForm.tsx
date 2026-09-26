@@ -14,7 +14,6 @@ import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
 import {
   parseUnits,
-  zeroAddress,
   type Address,
   type PublicClient,
 } from "viem";
@@ -40,6 +39,13 @@ import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
 import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
 import { resolvedAddress } from "@/lib/ens";
+import { draftSplitRecipient } from "@/lib/split-recipient";
+import {
+  STICKY_RESERVED_NEEDS_ERC20,
+  stickyDraftGroupId,
+  stickyGroupDraftError,
+} from "@/lib/sticky";
+import { StickyRecipient } from "@/components/project/StickyRecipient";
 import {
   DRAFT_KEY,
   draftFileName,
@@ -66,7 +72,6 @@ import {
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
-  requireLpSplitHook,
   activeChainOverrides,
   autoIssuanceMintChain,
   buildLaunchRequest,
@@ -804,6 +809,66 @@ export function CreateForm() {
         ),
       )
     );
+  // Sticky rows that this launch encodes. A new project has no ERC-20 at launch, so only a
+  // revnet (REVDeployer deploys one) can send reserved tokens to Sticky holders, and shop
+  // items can't pay Sticky holders at all (the distributor only takes terminals and the
+  // controller). Every token is checked on every selected chain before launch.
+  const stickySplits = isSimpleProject
+    ? []
+    : stages.flatMap((stage, index) => {
+        const label = `${flavor === "revnet" ? "Stage" : "Ruleset"} #${index + 1}`;
+        const routed = flavor !== "revnet" && stage.payouts === "routed";
+        return [
+          ...stage.reservedSplits.map((row) => ({ row, label: `${label} reserved` })),
+          ...(routed ? stage.payoutSplits.map((row) => ({ row, label: `${label} payouts` })) : []),
+          ...(routed && multiToken
+            ? stage.payoutSplitsUsdc.map((row) => ({ row, label: `${label} USDC payouts` }))
+            : []),
+        ].filter(({ row }) => row.kind === "sticky");
+      });
+  const stickySyncBlock =
+    flavor !== "revnet" &&
+    !isSimpleProject &&
+    stages.some((stage) => stage.reservedSplits.some((row) => row.kind === "sticky"))
+      ? STICKY_RESERVED_NEEDS_ERC20
+      : items.some((item) => item.splits.some((row) => row.kind === "sticky"))
+        ? "Shop items can't pay Sticky holders. Remove the Sticky recipient from the item."
+        : null;
+  const stickyTargets = stickySplits
+    .filter(({ row }) => splitOk(row, "percent") || splitOk(row, "amount"))
+    .map(({ row }) => ({
+      beneficiary: resolvedAddress(row.beneficiary)!,
+      projectId: stickyDraftGroupId(row),
+    }));
+  // The onchain checks load on demand; most launches have no Sticky rows.
+  const readStickyProblem = async () =>
+    (await import("@/lib/sticky-check")).stickySplitsProblem(stickyTargets, selected, (chainId) => {
+      const client = getPublicClient(config, {
+        chainId: chainId as SupportedChainId,
+      }) as PublicClient | undefined;
+      if (!client) throw new Error(`Could not connect to ${chainName(chainId)}.`);
+      return client;
+    });
+  const stickyCheck = useQuery({
+    queryKey: [
+      "createStickySplits",
+      selected.join(","),
+      stickyTargets.map((t) => `${t.beneficiary.toLowerCase()}:${t.projectId}`).join("|"),
+    ],
+    enabled: stickyTargets.length > 0 && selected.length > 0 && !stickySyncBlock,
+    staleTime: 60_000,
+    queryFn: readStickyProblem,
+  });
+  const stickyBlock =
+    stickySyncBlock ??
+    (stickyTargets.length === 0
+      ? null
+      : stickyCheck.isError
+        ? "Could not check the Sticky tokens. Try again in a moment."
+        : (stickyCheck.data ?? null));
+  const stickyOk =
+    stickySyncBlock === null &&
+    (stickyTargets.length === 0 || (stickyCheck.isSuccess && stickyCheck.data === null));
   // A restored multichain session resumes on its persisted plans; the form
   // (validated when the launch originally started) no longer gates it.
   const canResume = phase === "failed" && restoredSessionRef.current !== null;
@@ -818,6 +883,7 @@ export function CreateForm() {
       tickerOk &&
       bridgeOk &&
       lpHookOk &&
+      stickyOk &&
       selected.length > 0 &&
       stagesOk &&
       badStage === -1 &&
@@ -852,57 +918,13 @@ export function CreateForm() {
     });
   };
 
-  /** Recipient tail of a split row for one chain: an address (per-chain
-   *  override → default; ENS already resolved into the sync cache), a
-   *  project id + token beneficiary, or a split hook. */
-  const toRecipient = (row: DraftSplit, chainId: number) => {
-    const override = row.perChain[chainId]?.trim() || "";
-    const lockedUntil = row.lockedUntil
-      ? Math.floor(new Date(row.lockedUntil).getTime() / 1000)
-      : 0;
-    if (row.kind === "hook") {
-      const optionalId = row.projectId.trim().replace("#", "");
-      return {
-        projectId: optionalId ? BigInt(optionalId) : 0n,
-        beneficiary: resolvedAddress(row.beneficiary) ?? zeroAddress,
-        preferAddToBalance: false,
-        lockedUntil,
-        hook:
-          row.hookKind === "fundmarket"
-            ? requireLpSplitHook(chainId)
-            : resolvedAddress(row.hookAddress)!,
-      };
-    }
-    if (row.kind === "project") {
-      const id = (override || row.projectId).trim().replace("#", "");
-      const beneficiary =
-        row.perChainBeneficiary[chainId]?.trim() || row.beneficiary;
-      return {
-        projectId: BigInt(id),
-        beneficiary: row.preferAddToBalance
-          ? (resolvedAddress(beneficiary) ?? zeroAddress)
-          : resolvedAddress(beneficiary)!,
-        preferAddToBalance: row.preferAddToBalance,
-        lockedUntil,
-        hook: zeroAddress,
-      };
-    }
-    return {
-      projectId: 0n,
-      beneficiary: resolvedAddress(override || row.recipient)!,
-      preferAddToBalance: false,
-      lockedUntil,
-      hook: zeroAddress,
-    };
-  };
-
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
   const toSplitConfigs = (rows: DraftSplit[], chainId: number): SplitConfig[] =>
     rows
       .filter((s) => splitOk(s, "percent"))
       .map((row) => ({
         percent: Math.round(Number(row.value) * 1e7),
-        ...toRecipient(row, chainId),
+        ...draftSplitRecipient(row, chainId),
       }));
 
   /** Reserved-token rows express shares of all newly issued tokens. Their
@@ -922,7 +944,7 @@ export function CreateForm() {
       percent: Math.min(100, total),
       splits: valid.map((row, index) => ({
         percent: percents[index],
-        ...toRecipient(row, chainId),
+        ...draftSplitRecipient(row, chainId),
       })),
     };
   };
@@ -962,7 +984,7 @@ export function CreateForm() {
     return {
       splits: valid.map((row, i) => ({
         percent: percents[i],
-        ...toRecipient(row, chainId),
+        ...draftSplitRecipient(row, chainId),
       })),
       limit: total,
     };
@@ -1387,7 +1409,7 @@ export function CreateForm() {
         const forChain = (chainId: number) =>
           splitRows.map((r, i) => ({
             percent: rel[i],
-            ...toRecipient(r, chainId),
+            ...draftSplitRecipient(r, chainId),
           }));
         splits = forChain(selected[0]);
         for (const chainId of selected) perChainSplits[chainId] = forChain(chainId);
@@ -1713,6 +1735,15 @@ export function CreateForm() {
     try {
       let pinned = resumablePinned();
       if (!pinned) {
+        // The distributor never reverts, so an unregistered token would quietly pay group 0.
+        // Re-read every Sticky token on every chain right before the launch is pinned.
+        if (stickyTargets.length > 0) {
+          const problem = await readStickyProblem();
+          if (problem) {
+            setLaunchError(problem);
+            return;
+          }
+        }
         setPhase("pinning");
         // Initialize the checklist before the first signature request.
         const initial: Record<number, ChainStatus> = Object.fromEntries(
@@ -2208,6 +2239,33 @@ export function CreateForm() {
           label: `${flavor === "revnet" ? "Stage" : "Ruleset"} #${i + 1}`,
           value: stageSummary(stage, i, unitLabel, rulesFlavor, multiToken),
         }))),
+    ...(stickySplits.length > 0
+      ? [
+          {
+            label: "Sticky",
+            value: (
+              <span className="flex min-w-0 flex-col gap-1">
+                {stickySplits.map(({ row, label }) => (
+                  <span key={row.id}>
+                    {label}:{" "}
+                    {resolvedAddress(row.beneficiary) && !stickyGroupDraftError(row) ? (
+                      <StickyRecipient
+                        split={{
+                          projectId: stickyDraftGroupId(row),
+                          beneficiary: resolvedAddress(row.beneficiary)!,
+                        }}
+                        chainId={selected[0] as JBChainId}
+                      />
+                    ) : (
+                      "Sticky token needed"
+                    )}
+                  </span>
+                ))}
+              </span>
+            ),
+          },
+        ]
+      : []),
     {
       label: selected.length > 1 ? "Creation fees" : "Creation fee",
       value:
@@ -3958,6 +4016,12 @@ export function CreateForm() {
             the same value. If your Safe executes days later, the first stage will already
             have begun and some of its scheduled issuance cuts may have passed — execute
             promptly, or re-create the launch when you’re ready to sign.
+          </p>
+        ) : null}
+
+        {stickyBlock && !canResume ? (
+          <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+            {stickyBlock}
           </p>
         ) : null}
 

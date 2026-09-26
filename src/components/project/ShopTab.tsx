@@ -76,6 +76,8 @@ import {
   type TierMedia,
 } from '@/hooks/useShop721'
 import { readShop } from '@/lib/shop-read'
+import { isStickyHook } from '@/lib/sticky'
+import { StickyRecipient } from '@/components/project/StickyRecipient'
 
 /**
  * Shop tab (website/ parity: renderShopSection) — the project's 721 tiers,
@@ -1875,7 +1877,9 @@ function TierSaleRouting({
             return (
               <div key={index} className="flex items-start justify-between gap-4">
                 <dt className="min-w-0 text-ink">
-                  {split.projectId > 0n ? (
+                  {isStickyHook(split.hook, chainId) ? (
+                    <StickyRecipient split={split} chainId={chainId} />
+                  ) : split.projectId > 0n ? (
                     `Project ${split.projectId.toString()}`
                   ) : (
                     <AddressLink

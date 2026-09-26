@@ -29,7 +29,7 @@ import {
   jbTokensAbi,
   SPLITS_TOTAL_PERCENT,
 } from '@bananapus/nana-sdk-core'
-import { JBPermissionCatalogV6 } from '@bananapus/nana-sdk-core/v6'
+import { JBPermissionCatalogV6, describeStickySplit } from '@bananapus/nana-sdk-core/v6'
 import {
   USDC_ADDRESSES,
   jbContractAddress,
@@ -47,6 +47,7 @@ import {
   type TransactionReviewCall,
 } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
+import { isStickyHook } from '@/lib/sticky'
 
 import { FeeBuybackNotice, useFeeBuybackReview } from './FeeBuybackNotice'
 
@@ -1241,12 +1242,18 @@ export function describeSplitGroups(chainId: number, value: unknown): PrettyStep
         return null;
       }
       total += split.percent;
+      // A Sticky split's projectId is its holder group and its beneficiary is the Sticky token.
+      const sticky = typeof split.hook === "string" && isStickyHook(split.hook, chainId);
       const parts = [
-        split.projectId !== 0n
-          ? `project #${split.projectId} (beneficiary ${split.beneficiary})`
-          : v4AddressLabel(chainId, split.beneficiary),
+        sticky
+          ? `${describeStickySplit({ projectId: split.projectId })} → Sticky token ${v4AddressLabel(chainId, split.beneficiary)}`
+          : split.projectId !== 0n
+            ? `project #${split.projectId} (beneficiary ${split.beneficiary})`
+            : v4AddressLabel(chainId, split.beneficiary),
       ];
-      if (typeof split.hook === "string" && split.hook.toLowerCase() !== zeroAddress) {
+      if (sticky) {
+        parts.push(`via StickyDistributor ${split.hook}`);
+      } else if (typeof split.hook === "string" && split.hook.toLowerCase() !== zeroAddress) {
         parts.push(`via hook ${split.hook}`);
       }
       if (split.preferAddToBalance === true) parts.push("prefers add-to-balance");

@@ -17,6 +17,7 @@ import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from "./ui";
 import { AddressField } from "./AddressField";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
+import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 
 import {
   numOk,
@@ -596,6 +597,7 @@ export function StageRulesEditor({
               allocatedLabel="set aside"
               allowHook
               allowFundMarket
+              allowSticky
             />
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <span className="field-label">Tokens without payment</span>
@@ -744,6 +746,8 @@ export function StageRulesEditor({
               allowHook
               allowFundMarket
               allowLock={duration > 0 && duration !== FOREVER_SECONDS}
+              allowSticky
+              stickyBlocked={STICKY_RESERVED_NEEDS_ERC20}
             />
           </div>
         )}
@@ -822,6 +826,7 @@ export function StageRulesEditor({
                 allowHook
                 showRouting
                 allowLock={duration > 0 && duration !== FOREVER_SECONDS}
+                allowSticky
               />
               {stage.payoutSplits.length === 0 ? (
                 <p className="mt-2 text-xs text-smoke-700">
@@ -859,6 +864,7 @@ export function StageRulesEditor({
                     allowHook
                     showRouting
                     allowLock={duration > 0 && duration !== FOREVER_SECONDS}
+                    allowSticky
                   />
                   {stage.payoutSplitsUsdc.length === 0 ? (
                     <p className="mt-2 text-xs text-smoke-700">

@@ -19,6 +19,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { CASH_OUTS_OFF_REVNET, lpSplitHookGeneration } from '@/lib/launch'
 import { toLocalDateTimeInput } from '@/lib/format'
+import { isStickyHook, stickyGroupDraft } from '@/lib/sticky'
 import {
   erc20Abi,
   formatUnits,
@@ -109,13 +110,22 @@ function scaleDecimals(
   return toDecimals > fromDecimals ? amount * factor : amount / factor
 }
 
-function splitRecipient(raw: RawSplit, value: string): DraftSplit {
+function splitRecipient(
+  raw: RawSplit,
+  value: string,
+  chainId: JBChainId,
+): DraftSplit {
   const split = newDraftSplit()
   split.value = value
   split.preferAddToBalance = raw.preferAddToBalance
   split.lockedUntil = lockDate(Number(raw.lockedUntil))
 
-  if (raw.hook.toLowerCase() !== ZERO_ADDRESS) {
+  if (isStickyHook(raw.hook, chainId)) {
+    // The distributor resolves per chain on redeploy; the token and group carry over.
+    split.kind = 'sticky'
+    split.beneficiary = raw.beneficiary
+    Object.assign(split, stickyGroupDraft(raw.projectId))
+  } else if (raw.hook.toLowerCase() !== ZERO_ADDRESS) {
     split.kind = 'hook'
     // A redeploy of a market split should attach the CURRENT hook, which the preset
     // resolves per chain. A superseded generation stays a literal custom address so the
@@ -150,12 +160,14 @@ function reservedRows(
   splits: readonly RawSplit[],
   reservedPercent: number,
   owner: string,
+  chainId: JBChainId,
 ): DraftSplit[] {
   if (reservedPercent <= 0) return []
   const rows = splits.map((split) =>
     splitRecipient(
       split,
       percent(reservedPercent * (Number(split.percent) / SPLITS_TOTAL_PERCENT)),
+      chainId,
     ),
   )
   const allocated = splits.reduce((sum, split) => sum + Number(split.percent), 0)
@@ -171,12 +183,16 @@ function reservedRows(
   return rows.filter((row) => Number(row.value) > 0)
 }
 
-function payoutPercentRows(splits: readonly RawSplit[]): DraftSplit[] {
+function payoutPercentRows(
+  splits: readonly RawSplit[],
+  chainId: JBChainId,
+): DraftSplit[] {
   return splits
     .map((split) =>
       splitRecipient(
         split,
         percent((Number(split.percent) / SPLITS_TOTAL_PERCENT) * 100),
+        chainId,
       ),
     )
     .filter((row) => Number(row.value) > 0)
@@ -187,10 +203,11 @@ function payoutAmountRows(
   limit: bigint,
   decimals: number,
   owner: string,
+  chainId: JBChainId,
 ): DraftSplit[] {
   const rows = splits.map((split) => {
     const amount = (limit * BigInt(split.percent)) / BigInt(SPLITS_TOTAL_PERCENT)
-    return splitRecipient(split, formatUnits(amount, decimals))
+    return splitRecipient(split, formatUnits(amount, decimals), chainId)
   })
   const allocated = splits.reduce((sum, split) => sum + Number(split.percent), 0)
   const remainder = Math.max(0, SPLITS_TOTAL_PERCENT - allocated)
@@ -494,6 +511,7 @@ export async function buildProjectDraftExport({
     rawReserved,
     Number(current.metadata.reservedPercent) / 100,
     owner,
+    chainId,
   )
   stage.holdFees = current.metadata.holdFees
   // 9,999 is the revnet "off" encoding (10,000 reverts at deploy), so decoding `< 10_000` as
@@ -540,12 +558,13 @@ export async function buildProjectDraftExport({
     const rows = !firstLimit
       ? []
       : isUnlimited
-        ? payoutPercentRows(item.payoutSplits)
+        ? payoutPercentRows(item.payoutSplits, chainId)
         : payoutAmountRows(
             item.payoutSplits,
             firstLimit.amount,
             item.context.decimals,
             owner,
+            chainId,
           )
     if (isUsdc) {
       stage.routedModeUsdc = mode

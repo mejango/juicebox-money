@@ -22,7 +22,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   }
 })
 
-import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { stickyDistributorAddress, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { parseDraft } from '@/lib/draft'
 import { buildProjectDraftExport } from '@/lib/project-draft-export'
 import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
@@ -318,5 +318,29 @@ describe('split lock round trip', () => {
     expect(Math.floor(new Date(row.lockedUntil).getTime() / 1000)).toBe(
       LOCKED_UNTIL,
     )
+  })
+
+  it('exports a Sticky split as a Sticky row, not a project or a custom hook', async () => {
+    const live = ruleset({ weightCutPercent: 0n })
+    live.metadata.reservedPercent = 5_000n
+    mocks.getCurrentRuleset.mockResolvedValue(live)
+    const sticky = {
+      percent: 1_000_000_000,
+      projectId: 4052n,
+      beneficiary: TOKEN,
+      preferAddToBalance: false,
+      lockedUntil: 0,
+      hook: stickyDistributorAddress(CHAIN),
+    }
+
+    const { draft } = await exportDraft({ client: client({ splitsOf: [sticky] }) })
+
+    expect(draft.stages[0].reservedSplits[0]).toMatchObject({
+      kind: 'sticky',
+      beneficiary: TOKEN,
+      stickyGroup: 'tenure',
+      stickyMinWeeks: '4',
+      stickyMaxWeeks: '52',
+    })
   })
 })

@@ -1,14 +1,14 @@
-import { parseUnits, zeroAddress, type Address } from 'viem'
+import { parseUnits } from 'viem'
 import type {
   DraftItem,
   StoreCategory,
 } from '@/components/create/StoreEditor'
-import { splitOk, type DraftSplit } from '@/components/create/SplitsEditor'
+import { splitOk } from '@/components/create/SplitsEditor'
 import { resolvedAddress } from '@/lib/ens'
+import { draftSplitRecipient } from '@/lib/split-recipient'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
 import { DISCOUNT_DENOMINATOR } from '@bananapus/nana-sdk-core/v6'
 import {
-  requireLpSplitHook,
   type SplitConfig,
   type StoreItem,
   splitShares,
@@ -109,7 +109,7 @@ export function storeItemsForChain(
       )
       splits = splitRows.map((split, index) => ({
         percent: relativePercents[index],
-        ...splitRecipientForChain(split, chainId),
+        ...draftSplitRecipient(split, chainId),
       }))
     }
 
@@ -157,48 +157,4 @@ export function storeItemsForChain(
       perChainSupply,
     }
   })
-}
-
-function splitRecipientForChain(split: DraftSplit, chainId: number) {
-  const override = split.perChain[chainId]?.trim() || ''
-  const lockedUntil = split.lockedUntil
-    ? Math.floor(new Date(split.lockedUntil).getTime() / 1000)
-    : 0
-
-  if (split.kind === 'hook') {
-    const optionalProjectId = split.projectId.trim().replace('#', '')
-    return {
-      projectId: optionalProjectId ? BigInt(optionalProjectId) : 0n,
-      beneficiary: resolvedAddress(split.beneficiary) ?? zeroAddress,
-      preferAddToBalance: false,
-      lockedUntil,
-      hook:
-        split.hookKind === 'fundmarket'
-          ? requireLpSplitHook(chainId)
-          : resolvedAddress(split.hookAddress)!,
-    }
-  }
-
-  if (split.kind === 'project') {
-    const projectId = (override || split.projectId).trim().replace('#', '')
-    const beneficiary =
-      split.perChainBeneficiary[chainId]?.trim() || split.beneficiary
-    return {
-      projectId: BigInt(projectId),
-      beneficiary: split.preferAddToBalance
-        ? (resolvedAddress(beneficiary) ?? zeroAddress)
-        : resolvedAddress(beneficiary)!,
-      preferAddToBalance: split.preferAddToBalance,
-      lockedUntil,
-      hook: zeroAddress,
-    }
-  }
-
-  return {
-    projectId: 0n,
-    beneficiary: resolvedAddress(override || split.recipient)! as Address,
-    preferAddToBalance: false,
-    lockedUntil,
-    hook: zeroAddress,
-  }
 }

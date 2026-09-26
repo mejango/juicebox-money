@@ -116,7 +116,7 @@ const activityEventFields = `
   sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from }
   sendReservedTokensToSplitsEvent { tokenCount from }
   sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from }
-  sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from }
+  sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
   repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
