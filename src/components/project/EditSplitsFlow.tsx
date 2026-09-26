@@ -30,6 +30,7 @@ import {
 import { usePublicClient, useReadContract } from 'wagmi'
 import {
   SplitsEditor,
+  isStickyRow,
   newDraftSplit,
   splitOk,
   type DraftSplit,
@@ -89,7 +90,8 @@ export function splitToDraft(sp: RawSplit, chainId: number): DraftSplit {
     return {
       ...base,
       value,
-      kind: 'sticky',
+      kind: 'hook',
+      hookKind: 'sticky',
       beneficiary: sp.beneficiary,
       ...stickyGroupDraft(sp.projectId),
       lockedUntil,
@@ -671,13 +673,20 @@ function EditSplitsModal({
     ? 'Project, hook, and Sticky recipients must be edited separately. Deselect other chains to continue.'
     : null
   // Reserved tokens reach Sticky holders only through the project's ERC-20.
-  const { data: projectToken } = useQuery({
+  const { data: projectToken, isError: projectTokenError } = useQuery({
     queryKey: ['editSplitsProjectToken', chainId, projectId],
     enabled: open && isReserved && !!publicClient,
     staleTime: 60_000,
     queryFn: () => getTokenAddress(publicClient!, { chainId, projectId: BigInt(projectId) }),
   })
-  const stickyBlocked = isReserved && projectToken === null ? stickyNoErc20Reason(chainId) : null
+  // Sticky is offered for reserved tokens only once the ERC-20 is confirmed on this chain.
+  const stickyBlocked = !isReserved || projectToken
+    ? null
+    : projectToken === null
+      ? stickyNoErc20Reason(chainId)
+      : projectTokenError
+        ? `Could not check this project's ERC-20 on ${chainName(chainId)}.`
+        : `Checking this project's ERC-20 on ${chainName(chainId)}…`
 
   const {
     data: live,
@@ -802,7 +811,7 @@ function EditSplitsModal({
           chainId: snapshot.chainId,
           projectId: snapshot.projectId,
           reserved: isReserved,
-          splits: drafts.filter(row => row.kind === 'sticky').map(row => draftSplitRecipient(row, snapshot.chainId)),
+          splits: drafts.filter(isStickyRow).map(row => draftSplitRecipient(row, snapshot.chainId)),
         })
         if (problem) throw new Error(problem)
       }

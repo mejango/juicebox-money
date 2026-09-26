@@ -47,6 +47,18 @@ export function isStickyHook(hook: string, chainId: number): boolean {
   }
 }
 
+/** The chains in `chainIds` with no StickyDistributor, where Sticky splits can't be encoded. */
+export function chainsWithoutSticky(chainIds: readonly number[]): number[] {
+  return chainIds.filter(chainId => {
+    try {
+      stickyDistributorAddress(chainId as JBChainId)
+      return false
+    } catch {
+      return true
+    }
+  })
+}
+
 /** The StickyDistributor to encode on `chainId`, throwing where Sticky is not deployed. */
 export function requireStickyDistributor(chainId: number): Address {
   try {

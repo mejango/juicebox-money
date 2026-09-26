@@ -1,5 +1,5 @@
 import { zeroAddress, type Address } from 'viem'
-import type { DraftSplit } from '@/components/create/SplitsEditor'
+import { isStickyRow, type DraftSplit } from '@/components/create/SplitsEditor'
 import { resolvedAddress } from '@/lib/ens'
 import { requireLpSplitHook } from '@/lib/launch'
 import { requireStickyDistributor, stickyDraftGroupId } from '@/lib/sticky'
@@ -16,7 +16,7 @@ export type SplitRecipientFields = {
 /**
  * The recipient tail of a split row on one chain: an address (per-chain
  * override, then the default; ENS already resolved into the sync cache), a
- * project id plus token beneficiary, a split hook, or Sticky holders. Assumes
+ * project id plus token beneficiary, or a split hook (Sticky holders included). Assumes
  * the row passed `splitOk`, so every referenced address resolves.
  */
 export function draftSplitRecipient(
@@ -27,7 +27,7 @@ export function draftSplitRecipient(
   const lockedUntil = row.lockedUntil
     ? Math.floor(new Date(row.lockedUntil).getTime() / 1000)
     : 0
-  if (row.kind === 'sticky') {
+  if (isStickyRow(row)) {
     return {
       projectId: stickyDraftGroupId(row),
       beneficiary: resolvedAddress(row.beneficiary)!,
