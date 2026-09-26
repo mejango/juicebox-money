@@ -12,7 +12,7 @@ import {
 } from 'react'
 import { formatUnits } from 'viem'
 import { SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
-import { useShop721, useShop721Media } from '@/components/project/ShopTab'
+import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
