@@ -336,7 +336,8 @@ describe('split lock round trip', () => {
     const { draft } = await exportDraft({ client: client({ splitsOf: [sticky] }) })
 
     expect(draft.stages[0].reservedSplits[0]).toMatchObject({
-      kind: 'sticky',
+      kind: 'hook',
+      hookKind: 'sticky',
       beneficiary: TOKEN,
       stickyGroup: 'tenure',
       stickyMinWeeks: '4',

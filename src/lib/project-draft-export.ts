@@ -122,7 +122,8 @@ function splitRecipient(
 
   if (isStickyHook(raw.hook, chainId)) {
     // The distributor resolves per chain on redeploy; the token and group carry over.
-    split.kind = 'sticky'
+    split.kind = 'hook'
+    split.hookKind = 'sticky'
     split.beneficiary = raw.beneficiary
     Object.assign(split, stickyGroupDraft(raw.projectId))
   } else if (raw.hook.toLowerCase() !== ZERO_ADDRESS) {

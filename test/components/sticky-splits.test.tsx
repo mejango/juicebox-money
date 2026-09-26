@@ -40,7 +40,8 @@ function stickyRow(patch: Partial<DraftSplit> = {}): DraftSplit {
   return {
     ...newDraftSplit(),
     value: '10',
-    kind: 'sticky',
+    kind: 'hook',
+    hookKind: 'sticky',
     beneficiary: TOKEN,
     stickyGroup: 'tenure',
     stickyMinWeeks: '4',
@@ -94,7 +95,8 @@ describe('Sticky split encoding', () => {
     const encoded = { percent: 100_000_000, ...draftSplitRecipient(stickyRow(), CHAIN) }
     const row = splitToDraft(encoded, CHAIN)
     expect(row).toMatchObject({
-      kind: 'sticky',
+      kind: 'hook',
+      hookKind: 'sticky',
       value: '10',
       beneficiary: TOKEN,
       stickyGroup: 'tenure',
@@ -112,6 +114,7 @@ describe('Sticky split encoding', () => {
       CHAIN,
     )
     expect(row.kind).toBe('hook')
+    expect(row.hookKind).toBe('custom')
     expect(isStickyHook(TOKEN, CHAIN)).toBe(false)
     expect(isStickyHook(DISTRIBUTOR, CHAIN)).toBe(true)
   })
@@ -129,12 +132,27 @@ describe('Sticky split encoding', () => {
   it('survives a .jb draft round trip instead of collapsing to an address', () => {
     const draft = parseDraft(JSON.stringify({ name: 'Sticky', chains: [CHAIN], stages: [{ reservedSplits: [stickyRow()] }] }))
     expect(draft.stages[0].reservedSplits[0]).toMatchObject({
-      kind: 'sticky',
+      kind: 'hook',
+      hookKind: 'sticky',
       beneficiary: TOKEN,
       stickyGroup: 'tenure',
       stickyMinWeeks: '4',
       stickyMaxWeeks: '52',
     })
+  })
+
+  it('loads a draft saved with the old sticky kind as a Sticky hook row', () => {
+    const { kind: _kind, hookKind: _hookKind, ...legacy } = stickyRow()
+    const draft = parseDraft(JSON.stringify({
+      name: 'Sticky',
+      chains: [CHAIN],
+      stages: [{ reservedSplits: [{ ...legacy, kind: 'sticky' }] }],
+      items: [{ name: 'Tee', splits: [{ ...legacy, kind: 'sticky', hookKind: 'fundmarket' }] }],
+    }))
+    const row = draft.stages[0].reservedSplits[0]
+    expect(row).toMatchObject({ kind: 'hook', hookKind: 'sticky', beneficiary: TOKEN, stickyMinWeeks: '4' })
+    expect(draftSplitRecipient(row, CHAIN)).toEqual(draftSplitRecipient(stickyRow(), CHAIN))
+    expect(draft.items[0].splits[0]).toMatchObject({ kind: 'hook', hookKind: 'sticky' })
   })
 })
 
@@ -208,25 +226,54 @@ describe('Sticky split editor', () => {
         <SplitsEditor splits={[stickyRow()]} onChange={() => {}} disabled={false} bucketLabel="payouts" chainIds={[CHAIN]} {...props} />
       </QueryClientProvider>,
     )
+  const hookRow = { ...newDraftSplit(), kind: 'hook' as const, hookKind: 'custom' as const }
+  const kindOptions = (html: string) =>
+    html.match(/aria-label="Recipient type"[^>]*>(.*?)<\/select>/)![1]
+  const hookOptions = (html: string) =>
+    html.match(/aria-label="Hook type"[^>]*>(.*?)<\/select>/)?.[1] ?? ''
 
-  it('shows the token field, the group, and the summary', () => {
-    const html = render({ allowSticky: true })
-    expect(html).toContain('<option value="sticky" selected="">Sticky</option>')
+  it('lists Sticky as a hook type, never as a recipient type', () => {
+    const html = render({ allowHook: true, allowSticky: true })
+    expect(kindOptions(html)).not.toContain('Sticky')
+    expect(kindOptions(html)).toContain('<option value="hook" selected="">Hook</option>')
+    expect(hookOptions(html)).toContain('<option value="sticky" selected="">Sticky</option>')
     expect(html).toContain('aria-label="Sticky token"')
     expect(html).toContain('Holders stuck at least')
     expect(html).toContain('Sticky holders stuck 4 to 52 weeks → 0x5ca1…5ca1')
   })
 
-  it('blocks reserved Sticky rows on a project without an ERC-20', () => {
-    const html = render({ allowSticky: true, stickyBlocked: STICKY_RESERVED_NEEDS_ERC20 })
+  it('offers Sticky next to the Fund market on reserved splits that can pay it', () => {
+    const html = render({ splits: [hookRow], allowHook: true, allowFundMarket: true, allowSticky: true })
+    expect(hookOptions(html)).toContain('Fund market')
+    expect(hookOptions(html)).toContain('<option value="sticky">Sticky</option>')
+    expect(hookOptions(html)).toContain('Custom')
+  })
+
+  it('offers the Sticky hook on payouts, which have no Fund market', () => {
+    const html = render({ splits: [hookRow], allowHook: true, allowSticky: true })
+    expect(hookOptions(html)).toContain('<option value="sticky">Sticky</option>')
+    expect(hookOptions(html)).not.toContain('Fund market')
+  })
+
+  it('hides Sticky on reserved splits without an ERC-20, and keeps an existing row with the reason', () => {
+    const blocked = { allowHook: true, allowFundMarket: true, allowSticky: true, stickyBlocked: STICKY_RESERVED_NEEDS_ERC20 }
+    expect(hookOptions(render({ ...blocked, splits: [hookRow] }))).not.toContain('Sticky')
+    const html = render(blocked)
+    expect(hookOptions(html)).toContain('<option value="sticky" selected="">Sticky</option>')
     expect(html).toContain(STICKY_RESERVED_NEEDS_ERC20)
     expect(html).not.toContain('aria-label="Sticky token"')
   })
 
-  it('refuses Sticky where the distributor would reject the caller', () => {
-    const html = render({ allowSticky: false })
+  it('never offers Sticky where the distributor would reject the caller', () => {
+    const html = render({ allowHook: true, allowSticky: false })
     expect(html).toContain('Sticky holders can only get payouts and reserved tokens.')
+    expect(hookOptions(render({ allowHook: true, allowSticky: false, splits: [hookRow] }))).toBe('')
     expect(render({ allowSticky: false, splits: [newDraftSplit()] })).not.toContain('value="sticky"')
+  })
+
+  it('flags a Fund market row outside reserved splits', () => {
+    const html = render({ allowHook: true, allowSticky: true, splits: [{ ...hookRow, hookKind: 'fundmarket' }] })
+    expect(html).toContain('The Fund market only takes reserved tokens.')
   })
 })
 

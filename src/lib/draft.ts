@@ -93,10 +93,13 @@ function sanitizeSplit(raw: unknown): DraftSplit {
   return {
     id: crypto.randomUUID(),
     value: numStr(s.value, 10),
+    // Drafts saved before Sticky became a hook type carry kind 'sticky'.
     kind:
-      s.kind === 'project' || s.kind === 'hook' || s.kind === 'sticky'
+      s.kind === 'project' || s.kind === 'hook'
         ? s.kind
-        : 'address',
+        : s.kind === 'sticky'
+          ? 'hook'
+          : 'address',
     recipient: str(s.recipient, 64),
     projectId: numStr(s.projectId, 11),
     beneficiary: str(s.beneficiary, 64),
@@ -104,7 +107,12 @@ function sanitizeSplit(raw: unknown): DraftSplit {
     perChainBeneficiary: sanitizeChainMap(s.perChainBeneficiary),
     perChainAmount: sanitizeChainMap(s.perChainAmount),
     perChainOpen: false,
-    hookKind: s.hookKind === 'custom' ? 'custom' : 'fundmarket',
+    hookKind:
+      s.kind === 'sticky' || s.hookKind === 'sticky'
+        ? 'sticky'
+        : s.hookKind === 'custom'
+          ? 'custom'
+          : 'fundmarket',
     hookAddress: str(s.hookAddress, 64),
     preferAddToBalance: bool(s.preferAddToBalance),
     lockedUntil: str(s.lockedUntil, 20),

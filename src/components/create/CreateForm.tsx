@@ -88,7 +88,7 @@ import {
   type TreasuryCurrency,
 } from "@/lib/launch";
 import { erc20Abi } from "viem";
-import { splitOk, type DraftSplit } from "./SplitsEditor";
+import { isStickyRow, splitOk, type DraftSplit } from "./SplitsEditor";
 import { AddressField } from "./AddressField";
 import { validateAuthorityPolicy } from "@/lib/launch-multisig";
 import {
@@ -809,6 +809,20 @@ export function CreateForm() {
         ),
       )
     );
+  // The LP hook only takes reserved tokens (it reverts for payouts and shop sales), so a
+  // Fund market row anywhere else, e.g. from an older draft, blocks the launch.
+  const isFundMarketRow = (split: DraftSplit) =>
+    split.kind === "hook" && split.hookKind === "fundmarket";
+  const fundMarketPlacedOk =
+    !stages.some(
+      (stage) =>
+        !isSimpleProject &&
+        flavor !== "revnet" &&
+        stage.payouts === "routed" &&
+        [...stage.payoutSplits, ...(multiToken ? stage.payoutSplitsUsdc : [])].some(
+          isFundMarketRow,
+        ),
+    ) && !items.some((item) => item.splits.some(isFundMarketRow));
   // Sticky rows that this launch encodes. A new project has no ERC-20 at launch, so only a
   // revnet (REVDeployer deploys one) can send reserved tokens to Sticky holders, and shop
   // items can't pay Sticky holders at all (the distributor only takes terminals and the
@@ -824,14 +838,14 @@ export function CreateForm() {
           ...(routed && multiToken
             ? stage.payoutSplitsUsdc.map((row) => ({ row, label: `${label} USDC payouts` }))
             : []),
-        ].filter(({ row }) => row.kind === "sticky");
+        ].filter(({ row }) => isStickyRow(row));
       });
   const stickySyncBlock =
     flavor !== "revnet" &&
     !isSimpleProject &&
-    stages.some((stage) => stage.reservedSplits.some((row) => row.kind === "sticky"))
+    stages.some((stage) => stage.reservedSplits.some(isStickyRow))
       ? STICKY_RESERVED_NEEDS_ERC20
-      : items.some((item) => item.splits.some((row) => row.kind === "sticky"))
+      : items.some((item) => item.splits.some(isStickyRow))
         ? "Shop items can't pay Sticky holders. Remove the Sticky recipient from the item."
         : null;
   const stickyTargets = stickySplits
@@ -883,6 +897,7 @@ export function CreateForm() {
       tickerOk &&
       bridgeOk &&
       lpHookOk &&
+      fundMarketPlacedOk &&
       stickyOk &&
       selected.length > 0 &&
       stagesOk &&

@@ -10,6 +10,7 @@ import { chainsWithoutLpSplitHook } from '@/lib/launch'
 import { DateTimeField } from '@/components/ui/DateTimeField'
 import {
   STICKY_MAX_CRITERIA_WEEKS,
+  chainsWithoutSticky,
   stickyGroupDraftError,
   type StickyGroupDraft,
 } from '@/lib/sticky'
@@ -19,8 +20,8 @@ import { StickyTokenStatus } from './StickyTokenStatus'
  * Shared split-row editor for reserved tokens, routed payouts, and item
  * sale splits. Each row picks a recipient type first (website/ parity):
  * an address (ENS names resolve), a project (which also needs a token
- * beneficiary), a split hook, or Sticky holders (a Sticky token plus a
- * holder group). On multichain launches every row can override its recipient
+ * beneficiary), or a split hook: the Fund market, Sticky holders (a Sticky
+ * token plus a holder group), or a custom hook. On multichain launches every row can override its recipient
  * per chain, in case the same address doesn't represent the entity
  * everywhere. Percentages are out of 100 of the bucket being split; any
  * unallocated remainder goes to the owner.
@@ -32,14 +33,14 @@ export type DraftSplit = {
   id: string
   /** Percent (0–100) in 'percent' mode; a currency amount in 'amount' mode. */
   value: string
-  kind: 'address' | 'project' | 'hook' | 'sticky'
+  kind: 'address' | 'project' | 'hook'
   /** The receiving address ('address' kind) — 0x… or an ENS name. */
   recipient: string
   /** The receiving project id ('project' kind). */
   projectId: string
   /**
    * Who receives the paid project's tokens ('project' kind, required), or the
-   * Sticky token whose holders are paid ('sticky' kind).
+   * Sticky token whose holders are paid (Sticky hook rows).
    */
   beneficiary: string
   /** Per-chain overrides of the identity field (address or project id). */
@@ -52,15 +53,21 @@ export type DraftSplit = {
   /**
    * 'hook' kind: the current Fund market LP hook, a superseded generation of it
    * (recognized read-only — `hookAddress` is re-encoded verbatim so an existing
-   * split is never silently migrated), or a custom hook address.
+   * split is never silently migrated), the chain's Sticky distributor, or a
+   * custom hook address.
    */
-  hookKind: 'fundmarket' | 'fundmarket-legacy' | 'custom'
+  hookKind: 'fundmarket' | 'fundmarket-legacy' | 'sticky' | 'custom'
   hookAddress: string
   /** Project payout routing: pay (default) or add to balance. */
   preferAddToBalance: boolean
   /** Lock this split until a date (datetime-local; '' = unlocked). */
   lockedUntil: string
 } & StickyGroupDraft
+
+/** A row paying Sticky holders: a hook row whose hook is the Sticky distributor. */
+export function isStickyRow(split: Pick<DraftSplit, 'kind' | 'hookKind'>): boolean {
+  return split.kind === 'hook' && split.hookKind === 'sticky'
+}
 
 export function newDraftSplit(): DraftSplit {
   return {
@@ -108,13 +115,13 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
       overrides.every(v => resolvedAddress(v) !== null)
     )
   }
-  if (split.kind === 'sticky') {
-    return (
-      resolvedAddress(split.beneficiary) !== null &&
-      stickyGroupDraftError(split) === null
-    )
-  }
   if (split.kind === 'hook') {
+    if (split.hookKind === 'sticky') {
+      return (
+        resolvedAddress(split.beneficiary) !== null &&
+        stickyGroupDraftError(split) === null
+      )
+    }
     if (split.hookKind === 'fundmarket') return true
     if (split.hookKind === 'fundmarket-legacy')
       return resolvedAddress(split.hookAddress) !== null
@@ -186,9 +193,10 @@ export function SplitsEditor({
   showRouting?: boolean
   /** Offer per-split locks (fixed-duration stages). */
   allowLock?: boolean
-  /** Offer Sticky holders (payout and reserved-token splits only). */
+  /** Offer the Sticky hook (payout and reserved-token splits only). */
   allowSticky?: boolean
-  /** Why a Sticky row can't be used here, e.g. no project ERC-20 yet. */
+  /** Why Sticky can't be used here, e.g. no project ERC-20 yet. Hides the
+   *  option; a row that is already Sticky shows this instead of its fields. */
   stickyBlocked?: string | null
 }) {
   const update = (id: string, patch: Partial<DraftSplit>) => {
@@ -201,9 +209,16 @@ export function SplitsEditor({
   // rather than encoded and left to fail on chain.
   const lpGapChains = chainsWithoutLpSplitHook(chainIds ?? [])
   const fundMarketOk = lpGapChains.length === 0
-  const stickyReason = allowSticky
-    ? stickyBlocked
-    : 'Sticky holders can only get payouts and reserved tokens. Pick another recipient.'
+  // Sticky is offered only where a split to it can pay out. A row that is already Sticky
+  // (a loaded draft, a live split) stays as it is and shows why it can't be used here.
+  const stickyGapChains = chainsWithoutSticky(chainIds?.length ? chainIds : [1])
+  const stickyReason = !allowSticky
+    ? 'Sticky holders can only get payouts and reserved tokens. Pick another recipient.'
+    : (stickyBlocked ??
+      (stickyGapChains.length > 0
+        ? `Sticky is not deployed on ${stickyGapChains.map(chainName).join(', ')}.`
+        : null))
+  const stickyOffered = stickyReason === null
 
   return (
     <div>
@@ -252,10 +267,18 @@ export function SplitsEditor({
                         kind,
                         perChain: {},
                         perChainBeneficiary: {},
-                        // A Sticky row's beneficiary is a token, never a wallet.
-                        ...(kind === 'sticky' || split.kind === 'sticky'
-                          ? { beneficiary: '' }
+                        // A new hook row starts on the hook this editor offers first;
+                        // the Fund market preset encodes the LP hook whatever else is set.
+                        ...(kind === 'hook'
+                          ? {
+                              hookKind:
+                                allowFundMarket && fundMarketOk
+                                  ? 'fundmarket'
+                                  : 'custom',
+                            }
                           : {}),
+                        // A Sticky row's beneficiary is a token, never a wallet.
+                        ...(isStickyRow(split) ? { beneficiary: '' } : {}),
                       })
                     }}
                     disabled={disabled}
@@ -264,30 +287,40 @@ export function SplitsEditor({
                   >
                     <option value="address">Address</option>
                     <option value="project">Project</option>
-                    {allowHook ? <option value="hook">Hook</option> : null}
-                    {allowSticky || split.kind === 'sticky' ? (
-                      <option value="sticky">Sticky</option>
+                    {allowHook || split.kind === 'hook' ? (
+                      <option value="hook">Hook</option>
                     ) : null}
                   </select>
-                  {split.kind === 'hook' && allowFundMarket ? (
+                  {split.kind === 'hook' &&
+                  (allowFundMarket || stickyOffered || split.hookKind !== 'custom') ? (
                     <select
                       value={split.hookKind}
-                      onChange={e =>
+                      onChange={e => {
+                        const hookKind = e.target.value as DraftSplit['hookKind']
                         update(split.id, {
-                          hookKind: e.target.value as DraftSplit['hookKind'],
+                          hookKind,
+                          // A Sticky row's beneficiary is a token, never a wallet.
+                          ...(hookKind === 'sticky' || isStickyRow(split)
+                            ? { beneficiary: '' }
+                            : {}),
                         })
-                      }
+                      }}
                       disabled={disabled}
                       aria-label="Hook type"
                       className="input-well select-caret min-h-[44px] w-36 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
                     >
-                      <option value="fundmarket" disabled={!fundMarketOk}>
-                        Fund market
-                      </option>
+                      {allowFundMarket || split.hookKind === 'fundmarket' ? (
+                        <option value="fundmarket" disabled={!fundMarketOk}>
+                          Fund market
+                        </option>
+                      ) : null}
                       {split.hookKind === 'fundmarket-legacy' ? (
                         <option value="fundmarket-legacy">
                           Fund market (older version)
                         </option>
+                      ) : null}
+                      {stickyOffered || split.hookKind === 'sticky' ? (
+                        <option value="sticky">Sticky</option>
                       ) : null}
                       <option value="custom">Custom</option>
                     </select>
@@ -323,7 +356,7 @@ export function SplitsEditor({
                 </div>
               ) : null}
 
-              {split.kind === 'sticky' ? (
+              {isStickyRow(split) ? (
                 stickyReason ? (
                   <p role="alert" className="mt-2 text-[11px] leading-relaxed text-error-600">
                     {stickyReason}
@@ -338,7 +371,7 @@ export function SplitsEditor({
                 )
               ) : null}
 
-              {split.kind === 'hook' ? (
+              {split.kind === 'hook' && !isStickyRow(split) ? (
                 split.hookKind === 'fundmarket-legacy' && allowFundMarket ? (
                   <p className="mt-2 rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
                     This recipient points at an older version of the market
@@ -346,7 +379,11 @@ export function SplitsEditor({
                     is; pick &ldquo;Fund market&rdquo; to move it to the current
                     one.
                   </p>
-                ) : split.hookKind === 'fundmarket' && allowFundMarket ? (
+                ) : split.hookKind === 'fundmarket' && !allowFundMarket ? (
+                  <p role="alert" className="mt-2 text-[11px] leading-relaxed text-error-600">
+                    The Fund market only takes reserved tokens. Pick another hook.
+                  </p>
+                ) : split.hookKind === 'fundmarket' ? (
                   <div className="mt-2">
                     <p className="rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
                       Makes these tokens available to trade on Uniswap V4.
@@ -477,7 +514,7 @@ export function SplitsEditor({
                 </div>
               ) : null}
 
-              {multiChain && split.kind !== 'hook' && split.kind !== 'sticky' ? (
+              {multiChain && split.kind !== 'hook' ? (
                 <div className="-ml-[7.5rem] mt-2 border-l-2 border-smoke-200 pl-3 sm:ml-0 sm:border-l-0 sm:pl-0">
                   <button
                     onClick={() =>
