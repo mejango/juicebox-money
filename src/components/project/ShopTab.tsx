@@ -24,6 +24,7 @@ import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
+import { ADD_SHOP_MANAGER_HASH } from '@/components/project/AuthorityOverview'
 import {
   CustomerCardSkeleton,
   FormFieldsSkeleton,
@@ -330,13 +331,23 @@ export function ShopTab({
     </button>
   )
 
-  // Shop managers are granted in the Owner tab's Permissions card, which nobody finds from here.
+  // A revnet operator can't grant shop powers, so managers exist only on owner-run projects.
+  const addManagerLink = isRevnet ? null : (
+    <a
+      href={ADD_SHOP_MANAGER_HASH}
+      title="Let another account add, mint, or reprice items"
+      className="text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
+    >
+      + Add manager
+    </a>
+  )
 
   const inventory = (
     <div className="space-y-5">
-      {shop.tiers.length > 0 ? (
-        <div className="flex justify-end">{addItemsButton}</div>
-      ) : null}
+      <div className="flex flex-wrap justify-end gap-x-5 gap-y-2">
+        {shop.tiers.length > 0 ? addItemsButton : null}
+        {addManagerLink}
+      </div>
 
       {!!address && shop.tiers.length > 0 && (credits ?? 0n) > 0n ? (
         <p className="callout callout-info text-sm">

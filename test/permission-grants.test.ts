@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 
 import {
   aggregateGrants,
   permissionIdsOnChain,
+  SHOP_MANAGER_PERMISSION_IDS,
 } from '@/components/project/AuthorityOverview'
 
 // The Permissions card has to answer "which accounts hold which permissions, where" honestly. Three
@@ -107,5 +109,16 @@ describe('aggregateGrants', () => {
     expect(grants).toHaveLength(2)
     expect(grants.find(grant => grant.wildcard)?.union).toEqual([1])
     expect(grants.find(grant => !grant.wildcard)?.union).toEqual([24])
+  })
+})
+
+describe('shop manager preset', () => {
+  it('grants exactly the four 721 shop powers', () => {
+    expect(SHOP_MANAGER_PERMISSION_IDS).toEqual([
+      JBPermissionIdsV6.ADJUST_721_TIERS,
+      JBPermissionIdsV6.SET_721_METADATA,
+      JBPermissionIdsV6.MINT_721,
+      JBPermissionIdsV6.SET_721_DISCOUNT_PERCENT,
+    ])
   })
 })

@@ -8,7 +8,7 @@ import {
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
 import { AddressField } from "@/components/create/AddressField";
 import { CheckRow } from "@/components/create/ui";
@@ -26,6 +26,7 @@ import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { ErrorNote } from "@/components/ui/TxError";
+import { replaceTabHash } from "@/components/project/Tabs";
 import {
   clientFor,
   readAuthorityOf,
@@ -812,6 +813,11 @@ function TransferAuthorityFlow({
   );
 }
 
+/** The Shop tab links here to open the Permissions editor with the shop powers checked. */
+export const ADD_SHOP_MANAGER_HASH = "#owner/add-manager";
+// Adjust, set metadata for, mint, and discount shop items.
+export const SHOP_MANAGER_PERMISSION_IDS = [24, 25, 26, 27];
+
 function PermissionsAcrossChains({
   deployments,
   authorityRows,
@@ -851,6 +857,28 @@ function PermissionsAcrossChains({
     [authorityRows, deployments, query.data],
   );
   const [editing, setEditing] = useState<OperatorGrant | "new" | null>(null);
+  const [presetIds, setPresetIds] = useState<number[] | undefined>();
+  const sectionRef = useRef<HTMLElement>(null);
+  // A revnet operator can't delegate: shop checks read grants from REVOwner, which only the revnet sets.
+  useEffect(() => {
+    if (isRevnet) return;
+    const apply = () => {
+      if (window.location.hash !== ADD_SHOP_MANAGER_HASH) return;
+      replaceTabHash("#owner");
+      setPresetIds(SHOP_MANAGER_PERMISSION_IDS);
+      setEditing("new");
+      requestAnimationFrame(() =>
+        sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      );
+    };
+    apply();
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, [isRevnet]);
+  const closeEditor = () => {
+    setEditing(null);
+    setPresetIds(undefined);
+  };
   const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
   // The owner never appears in the indexed grants: JBPermissioned._requirePermissionFrom passes on
   // `sender == account` before consulting JBPermissions at all, so the most powerful account on the
@@ -869,7 +897,7 @@ function PermissionsAcrossChains({
   }, [authorityRows]);
 
   return (
-    <section className="card p-5">
+    <section ref={sectionRef} className="card scroll-mt-28 p-5">
       <span className="field-label">Permissions</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
@@ -1011,12 +1039,14 @@ function PermissionsAcrossChains({
       {!isRevnet ? (
         editing ? (
           <PermissionEditor
+            key={editing === "new" ? (presetIds ? "shop-manager" : "new") : editing.operator}
             grant={editing === "new" ? null : editing}
+            presetIds={editing === "new" ? presetIds : undefined}
             deployments={deployments}
             authorityRows={authorityRows}
-            onCancel={() => setEditing(null)}
+            onCancel={closeEditor}
             onDone={() => {
-              setEditing(null);
+              closeEditor();
               query.refetch();
             }}
           />
@@ -1036,12 +1066,14 @@ function PermissionsAcrossChains({
 
 function PermissionEditor({
   grant,
+  presetIds,
   deployments,
   authorityRows,
   onCancel,
   onDone,
 }: {
   grant: OperatorGrant | null;
+  presetIds?: number[];
   deployments: AuthorityDeployment[];
   authorityRows: AuthorityRow[];
   onCancel: () => void;
@@ -1056,7 +1088,7 @@ function PermissionEditor({
   const [selected, setSelected] = useState<Set<number>>(() =>
     perChain
       ? new Set(permissionIdsOnChain(grant, seedChainId))
-      : new Set(grant?.union ?? []),
+      : new Set(grant?.union ?? presetIds ?? []),
   );
   const [selectedChains, setSelectedChains] = useState<Set<number>>(() =>
     perChain
@@ -1256,7 +1288,7 @@ function PermissionEditor({
     <div className="mt-5 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
-          {grant ? "Edit permissions" : "Add operator"}
+          {grant ? "Edit permissions" : presetIds ? "Add shop manager" : "Add operator"}
         </p>
         <button
           type="button"
