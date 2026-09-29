@@ -28,7 +28,7 @@ import { ProjectLink } from "@/components/ProjectLink";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
-import { gasWithHeadroom } from "@/lib/gas";
+import { gasWithHeadroom } from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,

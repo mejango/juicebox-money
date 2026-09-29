@@ -23,7 +23,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithinCap } from '@/lib/gas'
+import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import { waitForTrackedReceipt } from '@/lib/receipt'
 import { relayrSupportsChains } from '@/lib/relayr-chains'
 import {

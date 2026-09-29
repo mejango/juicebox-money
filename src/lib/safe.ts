@@ -20,7 +20,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithinCap } from '@/lib/gas'
+import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import {
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,

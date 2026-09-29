@@ -27,7 +27,7 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom } from '@/lib/gas'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   isTransactionReceiptUnavailableError,
   waitForTrackedReceipt,

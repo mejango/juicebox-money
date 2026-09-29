@@ -21,7 +21,7 @@ import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisig
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { requireContractTransactionReview } from '@/lib/transaction-review'
-import { gasWithHeadroom } from '@/lib/gas'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
 import { simulateStateChangingTransaction, TRANSACTION_SIMULATION_GAS } from '@/lib/transaction-simulation'
