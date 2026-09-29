@@ -69,7 +69,7 @@ export function BrandMark({
  * from safe-global/safe-wallet-monorepo; the generic one stands in for the
  * plain injected provider, which by definition has no brand behind it.
  */
-export function WalletFallbackMark({
+function WalletFallbackMark({
   id,
   className = 'h-5 w-5',
 }: {
@@ -100,4 +100,30 @@ export function WalletFallbackMark({
       <circle cx="17.25" cy="14" r="1.15" fill="currentColor" stroke="none" />
     </svg>
   )
+}
+
+/** Only an inline image is a mark this page will draw. */
+const INLINE_IMAGE = /^data:image\/(?:png|svg\+xml|webp|jpeg|gif)[;,]/i
+
+/**
+ * A wallet's own mark when it announced an inline image, else the generic one.
+ *
+ * Any script on the page can announce a wallet over EIP-6963 with any icon it
+ * likes. A remote URL would tell its host that this page was opened, and a
+ * `javascript:` or `data:text/html` URL is not an image at all.
+ */
+export function WalletIcon({
+  id,
+  icon,
+  className = 'h-5 w-5',
+}: {
+  id: string
+  icon?: string
+  className?: string
+}) {
+  if (icon && INLINE_IMAGE.test(icon)) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={icon} alt="" className={className} />
+  }
+  return <WalletFallbackMark id={id} className={className} />
 }

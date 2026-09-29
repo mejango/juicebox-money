@@ -127,6 +127,13 @@ describe('route identity', () => {
     },
   )
 
+  it.each(['%', '100%', 'eth%3A%', '%E0%A4%A', 'eth:1%zz'])(
+    'rejects text with a malformed percent escape instead of throwing (%s)',
+    urn => {
+      expect(parseUrn(urn)).toBeNull()
+    },
+  )
+
   it('keeps unknown chain display fallbacks explicit', () => {
     expect(toUrn(999, 7)).toBe('999:7')
     expect(chainName(999)).toBe('Chain 999')

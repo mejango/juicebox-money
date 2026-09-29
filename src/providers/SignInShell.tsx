@@ -2,7 +2,7 @@
 
 import type { TOAuthMethod } from '@getpara/web-sdk'
 import { useConnectors } from 'wagmi'
-import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
+import { BrandMark, WalletIcon } from '@/components/BrandMarks'
 import { offerableWallets } from '@/lib/wallet-list'
 
 /** Kept in step with the sheet's own list. */
@@ -95,12 +95,11 @@ export function SignInShell({
             aria-label={connector.name}
             className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0 disabled:opacity-60"
           >
-            {connector.icon ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={connector.icon} alt="" className="h-5 w-5 shrink-0" />
-            ) : (
-              <WalletFallbackMark id={connector.id} className="h-5 w-5 shrink-0" />
-            )}
+            <WalletIcon
+              id={connector.id}
+              icon={connector.icon}
+              className="h-5 w-5 shrink-0"
+            />
           </button>
         ))}
       </div>

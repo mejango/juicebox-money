@@ -8,7 +8,7 @@ import {
 } from '@getpara/react-sdk-lite'
 import type { StateSnapshot, TOAuthMethod } from '@getpara/web-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
+import { BrandMark, WalletIcon } from '@/components/BrandMarks'
 import { ModalCloseButton } from '@/components/ui/ModalShell'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { ViewAsForm } from '@/components/ViewAsForm'
@@ -660,16 +660,11 @@ export default function ParaAuthSheet({
                     }}
                     className="btn-secondary flex h-10 w-10 shrink-0 items-center justify-center !px-0"
                   >
-                    {connector.icon ? (
-                      // EIP-6963 hands us the wallet's own mark as a data URI.
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={connector.icon} alt="" className="h-5 w-5 shrink-0" />
-                    ) : (
-                      <WalletFallbackMark
-                        id={connector.id}
-                        className="h-5 w-5 shrink-0"
-                      />
-                    )}
+                    <WalletIcon
+                      id={connector.id}
+                      icon={connector.icon}
+                      className="h-5 w-5 shrink-0"
+                    />
                   </button>
                 ))}
           </div>
