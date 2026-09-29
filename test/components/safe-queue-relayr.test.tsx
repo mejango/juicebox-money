@@ -50,7 +50,7 @@ vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/hooks/useEnsName', () => ({ useEnsName: () => ({ data: undefined }) }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
-  isSafeConnection: () => mocks.viaSafeApp,
+  useSafeConnection: () => mocks.viaSafeApp,
 }))
 vi.mock('@/lib/authority', () => ({
   clientFor: () => ({ readContract: async () => SAFE }),

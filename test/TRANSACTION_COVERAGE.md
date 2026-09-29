@@ -132,6 +132,13 @@ Legend:
   `transactions/safe-orchestration.test.ts`. Safe-app authority calls wait for
   the proposal's execution hash before receipt and postcondition checks in
   `transactions/authority-gas.test.ts`.
+- A Safe connection is the Safe app connector (id `safe`) or Safe{Wallet} over
+  WalletConnect (peer origin `https://app.safe.global`), which proposes the
+  same way; a wallet whose name merely contains "safe" sends as itself.
+  Screens re-render once the peer is read, the newest read wins, and a re-read
+  keeps the previous answer. The execution wait also reads the chain, so an
+  execution hash Safe{Wallet} returns directly is taken as the execution
+  (`safe-connector.test.ts`).
 - Reviewed gas is sent gas: direct authority calls review the gas limit they
   send and Safe-app calls review the `safeTxGas` it becomes
   (`transactions/authority-gas.test.ts`); Safe signatures review the exact

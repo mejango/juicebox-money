@@ -80,7 +80,7 @@ import {
 } from "@/lib/safe";
 import { truncateAddress } from "@/lib/format";
 import { ModalShell } from "@/components/ui/ModalShell";
-import { isSafeConnection } from "@/lib/safe-connector";
+import { useSafeConnection } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { AddressLabel } from "@/components/ui/AddressLabel";
 import { explorerTxUrl } from '@/lib/chainDisplay'
@@ -1864,11 +1864,12 @@ export function SafeQueueCard({
     </ModalShell>
   );
 
-  // Opened as a Safe App, the connected account is a Safe, not an owner: it
+  // Opened as a Safe App (or connected through Safe{Wallet} over
+  // WalletConnect), the connected account is a Safe, not an owner: it
   // cannot sign for itself, and executing or paying Relayr from it would
   // take the very nonce the queued transaction needs. Safe{Wallet}'s own
   // queue is where its owners sign and execute.
-  const viaSafeApp = isSafeConnection(wagmiConfig);
+  const viaSafeApp = useSafeConnection(wagmiConfig);
 
   return (
     <section ref={sectionRef} className="card p-5">

@@ -1170,7 +1170,7 @@ export function PayPanel({
     walletLookupSettled:
       connectedWalletCodeFetched || connectedWalletCodeError,
     walletBytecode: connectedWalletBytecode,
-    isSafe: isSafeConnection(wagmiConfig),
+    isSafe: tx.isSafe,
   });
   const permit2WalletKindLoading =
     needsPermit2Approval &&

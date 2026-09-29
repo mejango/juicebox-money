@@ -32,6 +32,7 @@ import { gasWithHeadroom } from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
+  useSafeConnection,
   waitForSafeExecutionHash,
 } from "@/lib/safe-connector";
 import { etherscanTxUrl, formatTokenAmount } from "@/lib/format";
@@ -295,6 +296,7 @@ function StepBadge({ n }: { n: number }) {
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
+  const safeConnection = useSafeConnection(config);
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
 
@@ -704,7 +706,7 @@ export function CreateForm() {
     ? restoredSessionRef.current.transport === "relayr"
     : (selected.length > 1 || createsAuthoritySafe) &&
       relayrSupportsChains(selected) &&
-      !isSafeConnection(config);
+      !safeConnection;
   const approvalOk =
     isSimpleProject ||
     approvalDeadline !== "custom" ||
@@ -4030,7 +4032,7 @@ export function CreateForm() {
           />
         </div>
 
-        {isSafeConnection(config) ? (
+        {safeConnection ? (
           // The start time is pinned now because every chain must encode the same value —
           // that shared value is what links the chains. A multisig executing days later
           // therefore launches with stage 1 already begun.
