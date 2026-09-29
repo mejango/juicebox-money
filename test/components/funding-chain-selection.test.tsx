@@ -15,6 +15,7 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import {
   requireFundingChainSelection,
   requireTransactionReview,
+  TransactionReviewCancelledError,
 } from '@/lib/transaction-review'
 
 const OPTIONS = [
@@ -52,39 +53,64 @@ function choose(chainId: number) {
 }
 
 describe('funding chain selection modal', () => {
-  it('starts unselected, shows quote labels, and returns only the explicit choice', async () => {
+  it('starts unselected among several quotes without a preferred chain, and returns only the explicit choice', async () => {
     let selection!: Promise<number>
     await act(async () => { selection = requireFundingChainSelection(OPTIONS) })
     await act(async () => { await vi.dynamicImportSettled() })
     const select = document.querySelector<HTMLSelectElement>('dialog select')!
     const dialog = document.querySelector('dialog')!
     expect(select.value).toBe('')
+    expect(select.options[select.selectedIndex].textContent).toBe('Choose a chain')
     expect([...select.classList]).toEqual(expect.arrayContaining(['select-caret', 'pr-9']))
-    expect(button('Continue').disabled).toBe(true)
-    expect(document.querySelector(`label[for="${select.id}"]`)?.textContent).toBe('Funding chain')
-    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Choose a funding chain')
+    expect(button('Continue to payment review').disabled).toBe(true)
+    expect(document.querySelector(`label[for="${select.id}"]`)?.textContent).toBe('Pay on')
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')!)?.textContent).toBe('Choose where to pay')
+    expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe(
+      "One payment covers every chain. You'll review it before your wallet sends it.",
+    )
     expect(select.textContent).toContain(OPTIONS[0].label)
     expect(select.textContent).toContain(OPTIONS[1].label)
 
     choose(8453)
-    expect(button('Continue').disabled).toBe(false)
-    await act(async () => { button('Continue').click() })
+    expect(button('Continue to payment review').disabled).toBe(false)
+    await act(async () => { button('Continue to payment review').click() })
     await expect(selection).resolves.toBe(8453)
     expect(document.querySelector('dialog')).toBeNull()
   })
 
-  it('requires an explicit choice for a sole option and cancels on Escape', async () => {
+  it('preselects the preferred chain when it is quoted', async () => {
+    let selection!: Promise<number>
+    await act(async () => { selection = requireFundingChainSelection(OPTIONS, 8453) })
+    await act(async () => { await vi.dynamicImportSettled() })
+    expect(document.querySelector<HTMLSelectElement>('dialog select')!.value).toBe('8453')
+    expect(button('Continue to payment review').disabled).toBe(false)
+    await act(async () => { button('Continue to payment review').click() })
+    await expect(selection).resolves.toBe(8453)
+  })
+
+  it('preselects a sole option and cancels on Escape', async () => {
     let selection!: Promise<unknown>
     await act(async () => {
       selection = requireFundingChainSelection([OPTIONS[0]]).catch(error => error)
     })
     await act(async () => { await vi.dynamicImportSettled() })
-    expect(document.querySelector<HTMLSelectElement>('dialog select')!.value).toBe('')
-    expect(button('Continue').disabled).toBe(true)
+    expect(document.querySelector<HTMLSelectElement>('dialog select')!.value).toBe('1')
+    expect(button('Continue to payment review').disabled).toBe(false)
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(await selection).toEqual(expect.objectContaining({ message: expect.stringMatching(/cancelled/i) }))
+    expect(await selection).toBeInstanceOf(TransactionReviewCancelledError)
+    expect(document.querySelector('dialog')).toBeNull()
+  })
+
+  it('returns no chain when cancelled, even with a preselected choice', async () => {
+    let selection!: Promise<unknown>
+    await act(async () => {
+      selection = requireFundingChainSelection(OPTIONS, 1).catch(error => error)
+    })
+    await act(async () => { await vi.dynamicImportSettled() })
+    await act(async () => { button('Cancel').click() })
+    expect(await selection).toBeInstanceOf(TransactionReviewCancelledError)
     expect(document.querySelector('dialog')).toBeNull()
   })
 
@@ -102,16 +128,16 @@ describe('funding chain selection modal', () => {
     await act(async () => { await vi.dynamicImportSettled() })
     expect(document.querySelectorAll('dialog')).toHaveLength(1)
     choose(8453)
-    await act(async () => { button('Continue').click() })
+    await act(async () => { button('Continue to payment review').click() })
     await expect(first).resolves.toBe(8453)
     expect(document.querySelector('dialog')?.textContent).toContain('Review transaction')
     expect(document.querySelector('dialog select')).toBeNull()
     await act(async () => { button('Cancel').click() })
     expect(await review).toEqual(expect.objectContaining({ message: 'Review closed. Nothing was sent.' }))
     expect(document.querySelector<HTMLSelectElement>('dialog select')!.value).toBe('')
-    expect(button('Continue').disabled).toBe(true)
+    expect(button('Continue to payment review').disabled).toBe(true)
     choose(1)
-    await act(async () => { button('Continue').click() })
+    await act(async () => { button('Continue to payment review').click() })
     await expect(second).resolves.toBe(1)
   })
 

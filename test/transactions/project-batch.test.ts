@@ -3,6 +3,7 @@ import type { Address, Hex } from 'viem'
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
+  safe: false,
   relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), safeSuccess: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
@@ -16,7 +17,11 @@ vi.mock('@/lib/safe', () => ({
   canonicalSafeTxHash: (_chain: number, _safe: string, tx: { safeTxHash: string }) => tx.safeTxHash,
   receiptHasSafeExecutionSuccess: mocks.safeSuccess,
 }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
+vi.mock('@/lib/safe-connector', () => ({
+  isSafeConnection: () => mocks.safe,
+  SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.',
+  waitForSafeExecutionHash: vi.fn(),
+}))
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
 vi.mock('@/lib/relayr', () => ({
@@ -48,6 +53,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.pending.clear()
   mocks.account = ACCOUNT
+  mocks.safe = false
   const storage = new Map<string, string>()
   vi.stubGlobal('window', { localStorage: {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -418,6 +424,42 @@ describe('durable project batches', () => {
     expect((await run()).status).toBe('complete')
     expect(mocks.client.getLogs).toHaveBeenCalledWith({ address: ACCOUNT, fromBlock: 10n, toBlock: 11n })
     expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets the batch review cover each send, but reviews a resumed batch’s sends again', async () => {
+    const send = mocks.authority.getMockImplementation()!
+    mocks.authority.mockImplementationOnce(send).mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('direct')
+      throw Object.assign(new Error('User rejected'), { code: 4001 })
+    })
+    const calls = [call(1, 'first'), call(1, 'second')].map(item => ({ ...item, relayr: false as const, gas: 500_000n }))
+    await expect(run(calls)).rejects.toThrow('User rejected')
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    // The builder's gas cap is not the gas limit the wallet is sent.
+    expect(mocks.review.mock.calls[0][0].calls).toEqual(calls.map(() => expect.not.objectContaining({ gas: expect.anything() })))
+    expect((await run()).status).toBe('complete')
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(mocks.authority.mock.calls.map(([options]) => [options.calls[0].id, options.reviewedInParent]))
+      .toEqual([['1:first', true], ['1:second', true], ['1:second', false]])
+  })
+
+  it('shows a Safe batch with Safe gas 0 and the Safe nonce guidance', async () => {
+    mocks.safe = true
+    expect((await run([call()], { title: 'Distribute' })).status).toBe('complete')
+    expect(mocks.review).toHaveBeenCalledExactlyOnceWith({
+      title: 'Distribute',
+      description: 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish. Choose the Safe nonce.',
+      confirmLabel: 'Agree & continue to Safe',
+      calls: [expect.objectContaining({ chainId: 1, from: ACCOUNT, to: TARGET, data: '0x1234', value: 3n, safeTxGas: 0n })],
+    })
+    expect(mocks.authority.mock.calls[0][0].reviewedInParent).toBe(true)
+  })
+
+  it('reviews a send again when the connection changed after the batch review', async () => {
+    mocks.review.mockImplementationOnce(async () => { mocks.safe = true })
+    await run([call()])
+    expect(mocks.review.mock.calls[0][0].calls[0]).not.toHaveProperty('safeTxGas')
+    expect(mocks.authority.mock.calls[0][0].reviewedInParent).toBe(false)
   })
 
   it('fails before wallet review when browser locking or durable storage is unavailable', async () => {

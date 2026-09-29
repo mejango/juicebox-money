@@ -369,6 +369,12 @@
         "Mint shop tiers without payment"
       ]
     },
+    "src/lib/contract-write.ts": {
+      "calls": 1,
+      "actions": [
+        "Submit a reviewed direct write"
+      ]
+    },
     "src/hooks/useSafeTx.ts": {
       "calls": 1,
       "actions": [

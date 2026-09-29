@@ -18,7 +18,7 @@ Legend:
 | Deploy a revnet | `REVDeployer.deployFor` | **E** | `contracts/launch.test.ts` |
 | Create an Owner or Operator Safe during launch | Safe 1.4.1 factory `createProxyWithNonce`, exact signer/threshold/address binding, `aggregate3Value` with the authenticated launch, and independent direct-setup recovery | **P/E** | `contracts/launch-multisig.test.ts`, `transactions/launch-multisig-direct.test.ts`, `transactions/launch-relayr.test.ts`, `transactions/launch-session.test.ts` |
 | Add shop tiers | Per-shop `JB721TiersHook.adjustTiers`, exact prices, local inventory/recipients, frozen tier IDs and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
-| Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts` |
+| Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts`, `components/mint-shop-item-gas.test.tsx` |
 | Replace shop item media | Per-shop `JB721TiersHook.setMetadata`, unchanged original metadata fields, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Deploy a project payer address | Raw `JBProjectPayerDeployer.deployProjectPayer` calls with explicit admin/beneficiary, linked project IDs, chosen funding chain and exact clone verification | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/payer-relayr.test.ts`, `components/extras-payer.test.tsx`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
@@ -124,18 +124,46 @@ Legend:
 - Bendystraw HTTP/GraphQL failures, bounded pagination, mismatched shop rows,
   and partial-chain failure reporting: covered in `data/bendystraw.test.ts`.
 - Review cancellation, unavailable reviewer, and mutation during review:
-  covered in `transactions/review.test.ts`.
+  covered in `transactions/review.test.ts`. A closed review or fee picker is
+  reported as itself, never as a wallet cancel, in `errors.test.ts`.
 - Safe signature order and outer `execTransaction` encoding: covered in
   `transactions/safe.test.ts`; account checks, simulation failure, confirmed,
   reverted, and submitted-but-unconfirmed writes are covered in
   `transactions/safe-orchestration.test.ts`. Safe-app authority calls wait for
   the proposal's execution hash before receipt and postcondition checks in
   `transactions/authority-gas.test.ts`.
+- Reviewed gas is sent gas: direct authority calls review the gas limit they
+  send and Safe-app calls review the `safeTxGas` it becomes
+  (`transactions/authority-gas.test.ts`); Safe signatures review the exact
+  signed `safeTxGas`, and Safe executions, hash approvals and same-address
+  deployments measure their gas before the review and send exactly it
+  (`transactions/safe-orchestration.test.ts`). Payer deployments review the
+  fixed 1,000,000 gas they send (`transactions/payer-relayr.test.ts`). Every
+  single-call Safe-app send uses gas 0 and reviews Safe gas 0, including
+  launch Safe creation, the direct launch and free mints
+  (`transactions/launch-multisig-direct.test.ts`,
+  `components/create-launch-gas.test.ts`,
+  `components/mint-shop-item-gas.test.tsx`); a `wallet_sendCalls` batch
+  proposal carries no gas, so Safe chooses its own. The review shows both,
+  warning on a nonzero `safeTxGas`, and says the wallet shows the gas limit
+  unless every call fixes one, in `components/transaction-review-gas.test.tsx`.
+  A call's nested calls render under "Calls it makes, in order", or inside a
+  MultiSend's `transactions` argument, once
+  (`components/transaction-review-nested.test.tsx`).
+- One review per batch: a project batch or payer deployment shows one
+  safety-check review of every exact call, and the direct and Safe-app sends
+  it covered are not reviewed again. A resumed batch, or a connection that
+  changed after the review, reviews each send; relayed ForwardRequests,
+  Relayr payments and Safe signatures keep their own reviews
+  (`transactions/authority-gas.test.ts`, `transactions/project-batch.test.ts`,
+  `transactions/payer-relayr.test.ts`).
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
   `transactions/relayr-orchestration.test.ts`.
-- Funding-chain selection is explicit and quote-bound. Published authorizations
+- Funding-chain selection is quote-bound and confirmed by the person. It
+  preselects the wallet's chain from before any switch when quoted, else a
+  lone quote, else nothing. Published authorizations
   survive cancelled funding and unknown quote responses; payment intent is
   persisted before the wallet sends. Canonical destination verification,
   ineligible-bundle rejection, single-chain direct execution, and unpaid recovery revalidation are

@@ -1,4 +1,5 @@
 import { BaseError, ContractFunctionRevertedError } from 'viem'
+import { TransactionReviewCancelledError } from '@/lib/transaction-review'
 
 /** A validation failure with copy that's already user-ready. */
 export class FlowError extends Error {}
@@ -36,6 +37,7 @@ export function shortError(
   error: unknown,
   fallback = 'Something went wrong.',
 ): string {
+  if (error instanceof TransactionReviewCancelledError) return error.message
   if (error instanceof Error) {
     const message = viemMessage(error)
     if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
@@ -46,6 +48,7 @@ export function shortError(
 
 /** A friendly one-line message out of a viem/wagmi error. */
 export function friendlyError(e: unknown): string {
+  if (e instanceof TransactionReviewCancelledError) return e.message
   const message =
     e instanceof BaseError
       ? viemMessage(e)

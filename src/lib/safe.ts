@@ -20,7 +20,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithinCap } from '@/lib/gas'
+import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import {
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,
@@ -52,6 +52,7 @@ import {
 import {
   isSafeConnection,
   safeServiceBase,
+  SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
   SAFE_SERVICE_PREFIX,
   waitForSafeExecutionHash,
@@ -616,6 +617,7 @@ async function signSafeTx(
         to: tx.to,
         value: BigInt(tx.value ?? 0),
         data: tx.data ?? '0x',
+        safeTxGas: message.safeTxGas,
         label: label ?? `Safe transaction #${tx.nonce}`,
         abi: reviewCall?.abi,
         functionName: reviewCall?.functionName,
@@ -996,12 +998,34 @@ async function sendContractAndConfirm({
   ) {
     throw new Error('Connected account changed. Review the transaction again.')
   }
+  const client = publicClient(chainId)
+  const data = encodeFunctionData({ abi, functionName, args })
+  const gasCap = safeWriteGas(functionName)
+  // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+  const viaSafe = isSafeConnection(wagmiConfig)
+  // The cap is a simulation bound, not a price. Sending it would make the
+  // wallet reserve cap * maxFeePerGas — 10M gas on Ethereum is a ~0.01 ETH
+  // balance requirement for an execution that costs a fraction of it. The
+  // limit is measured once, inside the cap, so the review shows the sent gas.
+  const gas = viaSafe
+    ? 0n
+    : ((await gasWithinCap(client, { account: expectedAccount, to: address, data }, gasCap)) ??
+      gasCap)
+  const sentGas = viaSafe ? { safeTxGas: 0n } : { gas }
+  const safeApp = viaSafe
+    ? {
+        description: [review?.description, SAFE_NONCE_GUIDANCE].filter(Boolean).join(' '),
+        confirmLabel: 'Agree & continue to Safe',
+      }
+    : {}
   if (review) {
     await requireTransactionReview({
       ...review,
+      ...safeApp,
       calls: review.calls.map(call => ({
         ...call,
         from: expectedAccount,
+        ...sentGas,
       })),
     })
   } else {
@@ -1013,6 +1037,7 @@ async function sendContractAndConfirm({
         functionName,
         args,
         account: expectedAccount,
+        ...sentGas,
       },
       {
         title: 'Review onchain transaction',
@@ -1026,14 +1051,12 @@ async function sendContractAndConfirm({
                 : functionName,
         contractName:
           functionName === 'createProxyWithNonce' ? 'Safe Proxy Factory' : 'Safe',
+        ...safeApp,
       },
     )
   }
   await reverifyAuthority?.()
   const { wallet, account } = await connectedWallet(chainId, expectedAccount)
-  const client = publicClient(chainId)
-  const data = encodeFunctionData({ abi, functionName, args })
-  const gasCap = safeWriteGas(functionName)
   const before = safeContext
     ? await verifySafeWriteContext(
         chainId,
@@ -1048,12 +1071,6 @@ async function sendContractAndConfirm({
     data,
     gas: gasCap,
   })
-  // The cap is a simulation bound, not a price. Sending it would make the
-  // wallet reserve cap * maxFeePerGas — 10M gas on Ethereum is a ~0.01 ETH
-  // balance requirement for an execution that costs a fraction of it.
-  const gas =
-    (await gasWithinCap(client, { account, to: address, data }, gasCap)) ??
-    gasCap
   if (functionName === 'execTransaction') {
     let result = false
     try {
@@ -1087,6 +1104,9 @@ async function sendContractAndConfirm({
   const finalAccount = getAccount(wagmiConfig).address
   if (!finalAccount || finalAccount.toLowerCase() !== account.toLowerCase()) {
     throw new Error('Connected account changed. Review the transaction again.')
+  }
+  if (isSafeConnection(wagmiConfig) !== viaSafe) {
+    throw new Error('Connected wallet changed. Review the transaction again.')
   }
   // Reuse the exact call which just simulated, while setting EIP-1559 fees
   // explicitly instead of spreading a provider-specific transaction fee mode.

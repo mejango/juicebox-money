@@ -18,6 +18,7 @@ const BUNDLE = '12345678-1234-1234-1234-123456789abc'
 
 const mocks = vi.hoisted(() => ({
   address: '' as Address,
+  chainId: 1,
   safe: false,
   getTransaction: vi.fn(), getReceipt: vi.fn(), getBlock: vi.fn(), getCode: vi.fn(), readContract: vi.fn(),
   getBlockNumber: vi.fn(), getLogs: vi.fn(),
@@ -25,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   post: vi.fn(), pay: vi.fn(), poll: vi.fn(), funding: vi.fn(), paymentSent: vi.fn(),
 }))
 
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId }) }))
 vi.mock('@/providers/Providers', async () => {
   const chains = await import('viem/chains')
   return { wagmiConfig: {}, SUPPORTED_CHAINS: [chains.mainnet, chains.optimism, chains.base, chains.arbitrum,
@@ -51,7 +52,11 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   waitForSafeExecutionHash: mocks.waitSafe,
 }))
 vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review, requireFundingChainSelection: mocks.funding }))
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
+  requireTransactionReview: mocks.review,
+  requireFundingChainSelection: mocks.funding,
+}))
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   relayrPostBundle: mocks.post, relayrPay: mocks.pay, relayrPoll: mocks.poll,
@@ -61,6 +66,7 @@ import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment,
   payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
 import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@/lib/safe'
+import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 
 let review: PayerDeploymentSession
 let projectId = 100
@@ -111,6 +117,7 @@ function receipt(chain: number) {
 beforeEach(() => {
   projectId += 10
   mocks.address = ALICE
+  mocks.chainId = 1
   mocks.safe = false
   const values = new Map<string, string>()
   storage = { getItem: vi.fn((key: string) => values.get(key) ?? null),
@@ -194,7 +201,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       const decoded = decodeFunctionData({ abi: jbProjectPayerDeployerAbi, data: entry.data })
       expect(decoded.args).toEqual([BigInt(projectId + index), BENEFICIARY, 'Treasury support', '0x', false, ADMIN])
     })
-    expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]))
+    expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]), 1)
     expect(mocks.pay.mock.calls[0][0].chain).toBe(10)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()
@@ -455,6 +462,64 @@ describe('direct and Safe payer recovery', () => {
     expect(mocks.getLogs).toHaveBeenLastCalledWith(11155420, { address: ALICE, fromBlock: 100n, toBlock: 200n })
     expect(mocks.waitSafe).toHaveBeenCalledTimes(1)
     expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('reviews every direct deployment once with the fixed gas it sends', async () => {
+    review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
+    const result = await runPayerDeployments(review, vi.fn())
+    expect(result.phase).toBe('complete')
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    const reviewed = mocks.review.mock.calls[0][0]
+    expect(reviewed.kind).toBe('transaction')
+    expect(reviewed.calls).toEqual(review.calls.map(call =>
+      expect.objectContaining({ chainId: call.chainId, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, gas: 1_000_000n })))
+    expect(mocks.send.mock.calls.map(([chain, request]) => [chain, request.gas])).toEqual([
+      [11155111, 1_000_000n],
+      [11155420, 1_000_000n],
+    ])
+  })
+
+  it('reviews each deployment a resumed attempt sends, with its fixed gas', async () => {
+    review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
+    mocks.waitReceipt.mockRejectedValueOnce(new Error('Receipt unavailable.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/unavailable/)
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    expect(mocks.review).toHaveBeenCalledTimes(2)
+    expect(mocks.review.mock.calls[1][0]).toMatchObject({
+      title: 'Review payer deployment',
+      calls: [expect.objectContaining({ chainId: 11155420, data: review.calls[1].data, gas: 1_000_000n })],
+    })
+    expect(mocks.send.mock.calls.map(([chain, request]) => [chain, request.gas])).toEqual([
+      [11155111, 1_000_000n],
+      [11155420, 1_000_000n],
+    ])
+  })
+
+  it('proposes every Safe deployment after one review with Safe gas 0', async () => {
+    mocks.safe = true
+    review = makeReview([1, 10])
+    await runPayerDeployments(review, vi.fn())
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    const reviewed = mocks.review.mock.calls[0][0]
+    expect(reviewed).toMatchObject({ kind: 'transaction', confirmLabel: 'Agree & continue to Safe' })
+    expect(reviewed.description.endsWith(` ${SAFE_NONCE_GUIDANCE}`)).toBe(true)
+    for (const call of reviewed.calls) {
+      expect(call.safeTxGas).toBe(0n)
+      expect(call).not.toHaveProperty('gas')
+    }
+    // A Safe app signs the sent gas as safeTxGas.
+    expect(mocks.send.mock.calls.map(([, request]) => request.gas)).toEqual([0n, 0n])
+  })
+
+  it('shows a relayed bundle’s raw calls without a gas the wallet never sends', async () => {
+    await runPayerDeployments(review, vi.fn())
+    const reviewed = mocks.review.mock.calls[0][0]
+    expect(reviewed.kind).toBe('authorization')
+    for (const call of reviewed.calls) {
+      expect(call).not.toHaveProperty('gas')
+      expect(call).not.toHaveProperty('safeTxGas')
+    }
   })
 
   it('requires the reviewed wallet to remain connected before saving or sending', async () => {

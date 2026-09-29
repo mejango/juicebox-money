@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   registerFundingChainSelectionHandler,
   requireFundingChainSelection,
+  TransactionReviewCancelledError,
 } from '@/lib/transaction-review'
 
 const OPTIONS = [
@@ -25,6 +26,21 @@ describe('explicit funding chain selection', () => {
     await expect(requireFundingChainSelection([OPTIONS[0]])).rejects.toThrow(/selection is unavailable/i)
   })
 
+  it('preselects a lone quote but still asks for the choice', async () => {
+    const handler = vi.fn().mockResolvedValue(1)
+    handle(handler)
+    await expect(requireFundingChainSelection([OPTIONS[0]], 10)).resolves.toBe(1)
+    expect(handler).toHaveBeenCalledExactlyOnceWith([OPTIONS[0]], 1)
+  })
+
+  it('preselects the preferred chain only when it is quoted', async () => {
+    const handler = vi.fn().mockResolvedValue(8453)
+    handle(handler)
+    await requireFundingChainSelection(OPTIONS, 8453)
+    await requireFundingChainSelection(OPTIONS, 10)
+    expect(handler.mock.calls.map(call => call[1])).toEqual([8453, null])
+  })
+
   it('returns the user choice and restores an earlier provider after unregistering', async () => {
     const earlier = vi.fn().mockResolvedValue(1)
     const latest = vi.fn().mockResolvedValue(8453)
@@ -32,7 +48,7 @@ describe('explicit funding chain selection', () => {
     const unregister = handle(latest)
 
     await expect(requireFundingChainSelection(OPTIONS)).resolves.toBe(8453)
-    expect(latest).toHaveBeenCalledWith(OPTIONS)
+    expect(latest).toHaveBeenCalledWith(OPTIONS, null)
     expect(earlier).not.toHaveBeenCalled()
     unregister()
     await expect(requireFundingChainSelection(OPTIONS)).resolves.toBe(1)
@@ -40,7 +56,9 @@ describe('explicit funding chain selection', () => {
 
   it('cancels without returning a funding chain when the UI closes', async () => {
     handle(async () => null)
-    await expect(requireFundingChainSelection(OPTIONS)).rejects.toThrow(/cancelled.*nothing was sent/i)
+    const closed = requireFundingChainSelection(OPTIONS)
+    await expect(closed).rejects.toBeInstanceOf(TransactionReviewCancelledError)
+    await expect(closed).rejects.toThrow(/cancelled.*nothing was sent/i)
   })
 
   it('rejects choices outside the original options even if the caller mutates them', async () => {

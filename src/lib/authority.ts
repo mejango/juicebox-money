@@ -23,7 +23,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithinCap } from '@/lib/gas'
+import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import { waitForTrackedReceipt } from '@/lib/receipt'
 import { relayrSupportsChains } from '@/lib/relayr-chains'
 import {
@@ -267,15 +267,22 @@ export async function runAuthorityCalls({
   calls,
   onProgress,
   paymentChainId,
+  reviewedInParent = false,
 }: {
   calls: AuthorityCall[]
   onProgress?: (progress: AuthorityProgress) => void
   /** Omit to ask the user to choose from the authenticated quote options. */
   paymentChainId?: number
+  /**
+   * One safety-check review already showed these exact calls, with
+   * safeTxGas 0 under a Safe app. This skips only the per-call direct and
+   * Safe-app reviews; relay and Safe signatures are still reviewed.
+   */
+  reviewedInParent?: boolean
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
-  const connected = getAccount(wagmiConfig).address
+  const { address: connected, chainId: startChainId } = getAccount(wagmiConfig)
   if (!connected) throw new Error('Connect a wallet first.')
 
   const groups = new Map<string, AuthorityCall[]>()
@@ -544,6 +551,7 @@ export async function runAuthorityCalls({
       pendingScope: reviewed.pendingScope,
       onProgress: reportRelayrProgress,
       paymentChainId,
+      preferredPaymentChainId: startChainId,
       reverify: loadRelayrPendingSession(reviewed.pendingScope)?.paymentStatus === 'unpaid'
         ? () => reverifyRelayrGroup(reviewed.calls)
         : undefined,
@@ -649,7 +657,7 @@ export async function runAuthorityCalls({
         })
         continue
       }
-      await requireTransactionReview({
+      if (!reviewedInParent) await requireTransactionReview({
         title: 'Review Safe transaction',
         description: `This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`,
         calls: [
@@ -659,6 +667,8 @@ export async function runAuthorityCalls({
             to: call.target,
             data: call.data,
             value: call.value ?? 0n,
+            // The Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+            safeTxGas: 0n,
             label: call.label,
             abi: call.abi,
             functionName: call.functionName,
@@ -683,7 +693,7 @@ export async function runAuthorityCalls({
         to: call.target,
         data: call.data,
         value: call.value ?? 0n,
-        gas: call.gas,
+        gas: 0n,
       })
       await call.onSubmitted?.(safeTxHash, 'safe-connector')
       const executionHash = await waitForSafeExecutionHash(
@@ -727,7 +737,7 @@ export async function runAuthorityCalls({
     }
 
     if (reviewed.mode === 'direct') {
-      await requireTransactionReview({
+      if (!reviewedInParent) await requireTransactionReview({
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
         description:
           'Confirm each transaction on its destination chain. Calls are sent in the displayed order.',
@@ -737,6 +747,7 @@ export async function runAuthorityCalls({
           to: call.target,
           data: call.data,
           value: call.value ?? 0n,
+          gas: call.gas,
           label: call.label,
           abi: call.abi,
           functionName: call.functionName,
@@ -808,6 +819,7 @@ export async function runAuthorityCalls({
       calls: toRelayrCalls(reviewed.calls),
       account: connected,
       paymentChainId,
+      preferredPaymentChainId: startChainId,
       pendingScope,
       onProgress: reportRelayrProgress,
       reverify: () => reverifyRelayrGroup(reviewed.calls),

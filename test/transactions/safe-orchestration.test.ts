@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     readContract: vi.fn(),
     simulateContract: vi.fn(),
     estimateContractGas: vi.fn(),
+    estimateGas: vi.fn(),
     getBlock: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getBytecode: vi.fn(),
@@ -33,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   safeCreationMatchesAuthorityIdentity: vi.fn(),
   initializerUsesSafeToL2Setup: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
+  safe: false,
+  waitSafe: vi.fn(),
 }))
 
 
@@ -67,9 +70,15 @@ vi.mock('@/lib/transaction-simulation', () => ({
   TRANSACTION_SIMULATION_GAS: 10_000_000n,
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
 }))
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
+  isSafeConnection: () => mocks.safe,
+  waitForSafeExecutionHash: mocks.waitSafe,
+}))
 
 import {
   canonicalSafeTxHash,
+  confirmSafeTx,
   executeSafeTx,
   deploySafeSameAddress,
   findPendingSafeCall,
@@ -79,6 +88,7 @@ import {
   type SafeQueuedTx,
   SAFE_EXECUTION_WRITE_GAS,
 } from '@/lib/safe'
+import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -168,6 +178,10 @@ beforeEach(() => {
   })
   mocks.client.simulateContract.mockResolvedValue({ result: true })
   mocks.client.estimateContractGas.mockResolvedValue(100_000n)
+  // Without a measurement the reviewed and sent gas is the write's cap.
+  mocks.client.estimateGas.mockReset().mockRejectedValue(new Error('cannot estimate'))
+  mocks.safe = false
+  mocks.waitSafe.mockReset()
   mocks.client.getBlock.mockResolvedValue({ baseFeePerGas: 2_000_000_000n })
   mocks.client.waitForTransactionReceipt.mockImplementation(async () => {
     const write = mocks.wallet.writeContract.mock.calls.at(-1)?.[0]
@@ -290,7 +304,14 @@ describe('Safe execution boundary', () => {
       }),
     )
     expect(reverifyAuthority).toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).toHaveBeenCalled()
+    // The node could not measure, so the cap is both reviewed and sent.
+    expect(mocks.requireContractReview).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
+      expect.objectContaining({ label: 'Deploy Safe on this chain' }),
+    )
+    expect(mocks.wallet.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
+    )
   })
 
   it('does not write when Safe replay predicts another address', async () => {
@@ -626,6 +647,48 @@ describe('Safe execution boundary', () => {
     )
   })
 
+  it('measures the gas before the review and sends exactly the reviewed gas', async () => {
+    mocks.client.estimateGas.mockResolvedValue(150_000n)
+
+    await executeSafeTx(1, SAFE, queued())
+
+    expect(mocks.client.estimateGas).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ account: ALICE, to: SAFE, gas: SAFE_EXECUTION_WRITE_GAS }),
+    )
+    expect(mocks.client.estimateGas.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.requireReview.mock.invocationCallOrder[0],
+    )
+    const [call] = mocks.requireReview.mock.calls[0][0].calls
+    expect(call).toMatchObject({ to: SAFE, functionName: 'execTransaction', gas: 300_000n })
+    expect(call).not.toHaveProperty('safeTxGas')
+    expect(mocks.wallet.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'execTransaction', gas: call.gas }),
+    )
+  })
+
+  it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+    mocks.safe = true
+    mocks.waitSafe.mockResolvedValue(HASH)
+
+    await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({ hash: HASH, status: 'confirmed' })
+
+    const review = mocks.requireReview.mock.calls[0][0]
+    expect(review.confirmLabel).toBe('Agree & continue to Safe')
+    expect(review.description.endsWith(` ${SAFE_NONCE_GUIDANCE}`)).toBe(true)
+    expect(review.calls).toEqual([expect.objectContaining({ to: SAFE, safeTxGas: 0n })])
+    expect(review.calls[0]).not.toHaveProperty('gas')
+    expect(mocks.client.estimateGas).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 0n }))
+    expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH)
+  })
+
+  it('does not send when the connection changed after the review', async () => {
+    mocks.requireReview.mockImplementationOnce(async () => { mocks.safe = true })
+
+    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(/Connected wallet changed/)
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
   it('rejects an outer-success receipt without exact Safe ExecutionSuccess', async () => {
     mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
@@ -874,6 +937,30 @@ describe('Safe retry and terminal-state orchestration', () => {
     })
 
     expect(results.map(row => row.nonce)).toEqual([7, 8])
+  })
+
+  it('reviews the exact safeTxGas a co-signature commits to', async () => {
+    const previousFetch = globalThis.fetch
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
+    try {
+      await confirmSafeTx(1, SAFE, { ...queued([]), safeTxGas: '150000' }, ALICE)
+      const review = mocks.requireReview.mock.calls[0][0]
+      expect(review).toMatchObject({ kind: 'authorization' })
+      expect(review.calls).toEqual([
+        expect.objectContaining({ to: TARGET, safeTxGas: 150_000n }),
+      ])
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.objectContaining({ safeTxGas: 150_000n }) }),
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/confirmations/'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    } finally {
+      vi.stubGlobal('fetch', previousFetch)
+    }
   })
 
   it('paginates the hosted queue before deciding an exact proposal is absent', async () => {

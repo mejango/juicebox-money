@@ -21,8 +21,8 @@ import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisig
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { requireContractTransactionReview } from '@/lib/transaction-review'
-import { gasWithHeadroom } from '@/lib/gas'
-import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
 import { simulateStateChangingTransaction, TRANSACTION_SIMULATION_GAS } from '@/lib/transaction-simulation'
 
@@ -143,11 +143,13 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
         hash = await submitReviewedContractWrite({
           request,
           expectedAccount: account,
-          review: reviewed => requireContractTransactionReview({ ...reviewed, account }, {
+          // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+          review: reviewed => requireContractTransactionReview({ ...reviewed, account, ...(safe ? { safeTxGas: 0n } : {}) }, {
             title: 'Review Safe creation',
             label: `Create ${plan.flavor === 'revnet' ? 'Operator' : 'Owner'} Safe`,
-            description: launchMultisigReview(plan),
+            description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
             contractName: 'Multicall3',
+            ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
           }),
           switchChain: options.switchChain,
           currentAccount: () => getAccount(wagmiConfig).address,
@@ -170,7 +172,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
             }
             const estimate = await client.estimateGas({ account, to: reviewed.address, data, value: reviewed.value, gas: TRANSACTION_SIMULATION_GAS })
             const gas = gasWithHeadroom(estimate)
-            return { ...reviewed, account, gas: gas > TRANSACTION_SIMULATION_GAS ? TRANSACTION_SIMULATION_GAS : gas }
+            return { ...reviewed, account, gas: safe ? 0n : gas > TRANSACTION_SIMULATION_GAS ? TRANSACTION_SIMULATION_GAS : gas }
           },
           write: async simulated => {
             read()

@@ -20,7 +20,9 @@ const budgets = {
     // stay in the parent. Create measures ~481 KiB, within the original cap.
     // It shares home's chunks, so SDK 2.12.1 and the shop-read split land here too
     // (561 -> 487 KiB), plus Sticky split rows and launch checks (+4.9 KiB): 492.0 KiB.
-    '/create/page': 493 * KIB,
+    // SDK 2.14.0's shared review runtime measures 493.0 KiB before adoption; its fee
+    // label and cancel error, which home also loads, bring create to 493.2 KiB.
+    '/create/page': 494 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -53,7 +55,15 @@ const budgets = {
   // route limit; existing route, largest-chunk and wallet-load caps stay fixed.
   // Main already measured 2446.5 KiB before 840b2ca hid it. SDK 2.12.1, the separate
   // lazy shop-read chunk and Sticky splits (+6.5 KiB) measure 2459.5 KiB.
-  allScripts: 2461 * KIB,
+  // SDK 2.14.0's shared review runtime measures 2461.3 KiB before adoption. Gas rows,
+  // the one fee picker and cancel-aware errors measure 2462.8 KiB; 1.0 KiB of that is
+  // the browser-test modal-proof page, whose own review module copy now carries
+  // formatEther for the fee label and splits into a separate chunk.
+  // One review per project/payer batch, nested calls under any reviewed call, the
+  // payer and Safe-write gas moved onto their reviews, and Safe gas 0 on every
+  // Safe-app send measure 2463.4 KiB against 2462.8 KiB before (+0.6 KiB across
+  // the review dialog, project, payer and Safe chunks); round up to the next KiB.
+  allScripts: 2464 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

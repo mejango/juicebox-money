@@ -16,7 +16,7 @@ vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ estimateGas: mocks.
 vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: vi.fn() }))
 vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, waitForSafeExecutionHash: mocks.safeHash }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.', waitForSafeExecutionHash: mocks.safeHash }))
 vi.mock('@/lib/launch-multisig', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/launch-multisig')>(),
   checkLaunchMultisigs: mocks.preflight,
@@ -317,6 +317,18 @@ describe('direct launch Safe setup', () => {
     expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH)
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: EXECUTION })
     expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
+  })
+
+  it('proposes Safe creation through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+    mocks.safe.mockReturnValue(true)
+    const args = options()
+    await prepareLaunchMultisigs(args)
+    expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({ address: MULTICALL3, account: ACCOUNT, safeTxGas: 0n }), expect.objectContaining({
+      title: 'Review Safe creation',
+      description: expect.stringMatching(/2 of 2 approvals[\s\S]*\n\nChoose the Safe nonce\.$/),
+      confirmLabel: 'Agree & continue to Safe',
+    }))
+    expect(args.writeContract).toHaveBeenCalledWith(expect.objectContaining({ address: MULTICALL3, gas: 0n }))
   })
 
   it('resumes a saved Safe proposal even when the current wallet is no longer Safe', async () => {

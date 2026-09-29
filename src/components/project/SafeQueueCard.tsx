@@ -15,6 +15,7 @@ import {
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import { useQuery } from "@tanstack/react-query";
+import { getAccount } from "@wagmi/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   decodeFunctionData,
@@ -984,6 +985,13 @@ function executionPlan(
   return { direct, batch, alternatives };
 }
 
+/** The connected chain when it is quoted, else a lone quote, else no choice yet. */
+function initialPaymentIndex(payments: readonly RelayrPayment[]): number {
+  const { chainId } = getAccount(wagmiConfig);
+  const connected = payments.findIndex((payment) => payment.chain === chainId);
+  return connected >= 0 ? connected : payments.length === 1 ? 0 : -1;
+}
+
 export function SafeQueueCard({
   safe,
   chains,
@@ -1429,7 +1437,7 @@ export function SafeQueueCard({
       );
       const quote = await relayrPostBundle(entries);
       const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
-      setPaymentIndex(-1);
+      setPaymentIndex(initialPaymentIndex(payments));
       setBatchReview({ quote, rows: verifiedRows, entries, payments });
       setNotice(null);
     } catch (batchError) {
@@ -1483,8 +1491,8 @@ export function SafeQueueCard({
         const refreshedQuote = await relayrPostBundle(batchReview.entries);
         const payments = relayrPaymentOptions(refreshedQuote, batchReview.entries.map((entry) => entry.chain));
         setBatchReview({ ...batchReview, quote: refreshedQuote, payments });
-        setPaymentIndex(-1);
-        setNotice("The quote was refreshed. Choose a funding chain and review the new payment.");
+        setPaymentIndex(initialPaymentIndex(payments));
+        setNotice("The quote was refreshed. Choose where to pay and review the new payment.");
         return;
       }
       // The dialog lists every chain's exact call; relayrPay's own review
@@ -1762,7 +1770,7 @@ export function SafeQueueCard({
                 </span>
               ) : null}
               <select
-                aria-label="Pay Relayr on"
+                aria-label="Pay on"
                 value={paymentIndex}
                 onChange={(event) => setPaymentIndex(Number(event.target.value))}
                 disabled={!!busy || !batchReview}
@@ -1771,7 +1779,7 @@ export function SafeQueueCard({
                 }`}
               >
                 <option value={-1} disabled>
-                  {batchReview ? "Pay Relayr on…" : "Getting a quote…"}
+                  {batchReview ? "Choose a chain" : "Getting a quote…"}
                 </option>
                 {batchReview?.payments.map((option, index) => (
                   <option key={`${option.chain}:${option.amount}:${index}`} value={index}>

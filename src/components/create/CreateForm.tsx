@@ -28,7 +28,7 @@ import { ProjectLink } from "@/components/ProjectLink";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
-import { gasWithHeadroom } from "@/lib/gas";
+import { gasWithHeadroom } from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -1557,7 +1557,12 @@ export function CreateForm() {
             expectedAccount: address,
             review: (reviewed) =>
               requireContractTransactionReview(
-                { ...reviewed, account: address },
+                {
+                  ...reviewed,
+                  account: address,
+                  // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+                  ...(isSafeConnection(config) ? { safeTxGas: 0n } : {}),
+                },
                 {
                   title: `Review launch on ${chainName(chainId)}`,
                   label: "Launch project",
@@ -1593,7 +1598,10 @@ export function CreateForm() {
                   >[0],
                 ),
               ]);
-              return { ...simulated, gas: gasWithHeadroom(estimate) };
+              return {
+                ...simulated,
+                gas: isSafeConnection(config) ? 0n : gasWithHeadroom(estimate),
+              };
             },
             write: (simulated) =>
               writeContractAsync(
