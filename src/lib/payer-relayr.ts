@@ -8,8 +8,8 @@ import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
 import { connectedWallet, publicClient } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
-import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
-import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { receiptHasSafeExecutionSuccess, SAFE_EXEC_ABI } from '@/lib/safe'
 import { relayrDestinationHash, relayrErrorIsDefiniteNoSubmission, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
 import { relayrSupportsChains } from '@/lib/relayr-chains'
@@ -234,6 +234,18 @@ function entryOf(call: PayerDeploymentCall): RelayrEntry {
   return { chain: call.chainId, target: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: '0' }
 }
 
+/**
+ * A factory call as reviewed, with the gas the wallet sends. Relayr executes
+ * its bundle with its own gas. A Safe app signs the sent gas as safeTxGas,
+ * so a Safe sends 0 and a failed deployment reverts instead of using the nonce.
+ */
+function reviewedDeployment(call: PayerDeploymentCall, transport: PayerDeploymentSession['transport']): TransactionReviewCall {
+  return { chainId: call.chainId, to: JB_PROJECT_PAYER_DEPLOYER, value: 0n, data: call.data,
+    ...(transport === 'direct' ? { gas: DEPLOY_GAS } : transport === 'safe' ? { safeTxGas: 0n } : {}),
+    abi: jbProjectPayerDeployerAbi, functionName: 'deployProjectPayer', args: payerDeploymentRequest(call).args,
+    label: `Deploy payer for project #${call.projectId}`, contractName: 'JBProjectPayerDeployer' }
+}
+
 function assertAccount(session: PayerDeploymentSession) {
   assertNoViewAs()
   const account = getAccount(wagmiConfig).address
@@ -370,17 +382,20 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       onUpdate(snapshot(session))
     }
     assertAccount(session)
+    const viaSafe = session.transport === 'safe'
+    // One review covers every deployment the wallet sends in this run.
+    let reviewedAll = false
     if (!original && !active) {
       await requireTransactionReview({
-        kind: session.transport === 'direct' ? 'transaction' : 'authorization',
+        kind: session.transport === 'relayr' ? 'authorization' : 'transaction',
         title: 'Review payer address deployments',
-        description: 'Deploy one payer address for each selected project. Each address uses the beneficiary, admin, and behavior shown in its exact factory call.',
-        calls: session.calls.map(call => ({ chainId: call.chainId, to: JB_PROJECT_PAYER_DEPLOYER, value: 0n, data: call.data,
-          abi: jbProjectPayerDeployerAbi, functionName: 'deployProjectPayer', args: payerDeploymentRequest(call).args,
-          label: `Deploy payer for project #${call.projectId}`, contractName: 'JBProjectPayerDeployer' })),
+        description: `Deploy one payer address for each selected project. Each address uses the beneficiary, admin, and behavior shown in its exact factory call.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
+        ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+        calls: session.calls.map(call => reviewedDeployment(call, session.transport)),
       })
       assertAccount(session)
       persist(true)
+      reviewedAll = true
     }
     if (session.phase === 'complete') {
       for (let index = 0; index < session.calls.length; index++) {
@@ -495,8 +510,12 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         await requireCanonicalDirectRevert(call, outcome.hash, session.account)
       }
       if (outcome.state === 'ready' || outcome.state === 'failed') {
-        await requireTransactionReview({ title: 'Review payer deployment', calls: [{ chainId: call.chainId, to: JB_PROJECT_PAYER_DEPLOYER, value: 0n, data: call.data,
-          abi: jbProjectPayerDeployerAbi, functionName: 'deployProjectPayer', args: payerDeploymentRequest(call).args, contractName: 'JBProjectPayerDeployer' }] })
+        // A resumed attempt reviews each deployment it sends.
+        if (!reviewedAll) {
+          await requireTransactionReview({ title: 'Review payer deployment',
+            ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: 'Agree & continue to Safe' } : {}),
+            calls: [reviewedDeployment(call, session.transport)] })
+        }
         const { wallet } = await connectedWallet(call.chainId, { expected: session.account, changedError: 'The payer deployment wallet changed.' })
         assertAccount(session)
         await preflight(call, session.account)
@@ -507,7 +526,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         outcome = session.outcomes[index] = { chainId: call.chainId, state: 'sending', failedHashes: beforeSend.failedHashes, fromBlock }
         persist(true)
         try {
-          const hash = await wallet.sendTransaction({ account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: DEPLOY_GAS })
+          const hash = await wallet.sendTransaction({ account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
           outcome = session.outcomes[index] = session.transport === 'safe'
             ? { ...outcome, state: 'submitted', safeProposalHash: hash }
             : { ...outcome, state: 'submitted', hash }

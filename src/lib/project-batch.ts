@@ -6,7 +6,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { canonicalSafeTxHash, receiptHasSafeExecutionSuccess, type SafeQueuedTx } from '@/lib/safe'
-import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
@@ -232,6 +232,8 @@ export async function runProjectBatch({
       if (!live || !isAddressEqual(live, account)) throw new Error('Connected wallet changed. Switch back to the wallet that reviewed this action.')
     }
     checkAccount()
+    // Whether this run's batch review showed every call as a Safe-app proposal.
+    let reviewedViaSafe: boolean | undefined
     try {
     if (!batch) {
       const frozen = decode<ProjectBatchCall[]>(encode(proposedCalls))
@@ -242,8 +244,16 @@ export async function runProjectBatch({
       // Save the entire intent and every participant before any signature can escape.
       persist(batch, true)
       for (const call of batch.calls) await reverify?.(call)
-      await requireTransactionReview({ title, description: 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.',
-        calls: batch.calls.map(call => ({ ...call, from: call.authority, to: call.target, value: call.value ?? 0n })) })
+      // This one review covers each wallet send below. A call's gas cap is not
+      // its sent gas limit, which is measured at send time, so it is not shown.
+      const viaSafe = isSafeConnection(wagmiConfig)
+      await requireTransactionReview({ title,
+        description: `Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
+        ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+        // A Safe app signs the sent gas as safeTxGas; each call is sent with 0.
+        calls: batch.calls.map(({ gas: _gas, ...call }) => ({ ...call, from: call.authority, to: call.target,
+          value: call.value ?? 0n, ...(viaSafe ? { safeTxGas: 0n } : {}) })) })
+      reviewedViaSafe = viaSafe
     }
     const journal = batch
     const complete = (ids: string[]) => {
@@ -359,7 +369,9 @@ export async function runProjectBatch({
               fromBlock }
             persist(journal)
           },
-          }], onProgress: progress => report(progress.message, round) })
+          }], onProgress: progress => report(progress.message, round),
+          // A resumed batch, or a connection that changed since, reviews each send again.
+          reviewedInParent: reviewedViaSafe === isSafeConnection(wagmiConfig) })
         } catch (error) {
           const submission = journal.submissions[call.id]
           const receipt = acceptRevertedTransactions && submission?.kind === 'direct' && submission.hash

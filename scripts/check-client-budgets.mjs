@@ -59,7 +59,11 @@ const budgets = {
   // the one fee picker and cancel-aware errors measure 2462.8 KiB; 1.0 KiB of that is
   // the browser-test modal-proof page, whose own review module copy now carries
   // formatEther for the fee label and splits into a separate chunk.
-  allScripts: 2463 * KIB,
+  // One review per project/payer batch, nested calls under any reviewed call, the
+  // payer and Safe-write gas moved onto their reviews, and Safe gas 0 on every
+  // Safe-app send measure 2463.4 KiB against 2462.8 KiB before (+0.6 KiB across
+  // the review dialog, project, payer and Safe chunks); round up to the next KiB.
+  allScripts: 2464 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

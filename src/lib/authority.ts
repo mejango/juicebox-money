@@ -267,11 +267,18 @@ export async function runAuthorityCalls({
   calls,
   onProgress,
   paymentChainId,
+  reviewedInParent = false,
 }: {
   calls: AuthorityCall[]
   onProgress?: (progress: AuthorityProgress) => void
   /** Omit to ask the user to choose from the authenticated quote options. */
   paymentChainId?: number
+  /**
+   * One safety-check review already showed these exact calls, with
+   * safeTxGas 0 under a Safe app. This skips only the per-call direct and
+   * Safe-app reviews; relay and Safe signatures are still reviewed.
+   */
+  reviewedInParent?: boolean
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
@@ -650,7 +657,7 @@ export async function runAuthorityCalls({
         })
         continue
       }
-      await requireTransactionReview({
+      if (!reviewedInParent) await requireTransactionReview({
         title: 'Review Safe transaction',
         description: `This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`,
         calls: [
@@ -730,7 +737,7 @@ export async function runAuthorityCalls({
     }
 
     if (reviewed.mode === 'direct') {
-      await requireTransactionReview({
+      if (!reviewedInParent) await requireTransactionReview({
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
         description:
           'Confirm each transaction on its destination chain. Calls are sent in the displayed order.',

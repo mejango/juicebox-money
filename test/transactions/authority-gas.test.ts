@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     getTransaction: vi.fn(),
     getTransactionReceipt: vi.fn(),
     getBlock: vi.fn(),
+    getBlockNumber: vi.fn(),
   },
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 vi.mock('@/lib/safe', () => ({
   canonicalSafeTxHash: () => HASH,
   findPendingSafeCall: mocks.findPendingSafeCall,
+  receiptHasSafeExecutionSuccess: () => true,
   runSafeCalls: mocks.runSafeCalls,
 }))
 vi.mock('@/lib/cross-chain-authority', () => ({
@@ -61,7 +63,9 @@ vi.mock('@/lib/safe-connector', () => ({
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
 }))
 
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -735,5 +739,158 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       ([{ message }]) => message.gas,
     )
     expect(signedGas).toEqual([500_000n, 500_000n])
+  })
+})
+
+describe('Authority calls a parent review already covered', () => {
+  it('sends a direct call without reviewing it again, at its measured gas', async () => {
+    mocks.client.estimateGas.mockResolvedValue(120_000n)
+
+    await runAuthorityCalls({
+      calls: [{ chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', gas: 1_000_000n }],
+      reviewedInParent: true,
+    })
+
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ to: TARGET, data: '0x1234', gas: 240_000n }),
+    )
+  })
+
+  it('proposes a Safe app call without reviewing it again, at Safe gas 0', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+
+    await runAuthorityCalls({
+      calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234' }],
+      reviewedInParent: true,
+    })
+
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ account: SAFE, to: TARGET, data: '0x1234', gas: 0n }),
+    )
+  })
+
+  it('still reviews each relayed signature and the payment', async () => {
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+
+    await runAuthorityCalls({
+      calls: [
+        { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+        { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
+      ],
+      reviewedInParent: true,
+    })
+
+    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
+      'Review relayed transaction',
+      'Review relayed transaction',
+      'Review Relayr payment',
+    ])
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('One safety-check review per project batch', () => {
+  const batchCall = (
+    chainId: JBChainId,
+    data: Hex,
+    extra: Partial<ProjectBatchCall> = {},
+  ): ProjectBatchCall => ({
+    id: `${chainId}:${data}`, projectId: 7, chainId, authority: ALICE, target: TARGET,
+    data, gas: 1_000_000n, relayr: false, ...extra,
+  })
+  const run = (calls?: ProjectBatchCall[], account: Address = ALICE) => runProjectBatch({
+    scope: projectBatchScope('review-once', 1, 7), action: 'review-once', account, calls,
+  })
+  // Each receipt belongs to the exact call the wallet last sent.
+  const receiptsProveSends = () => mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
+    const [sent] = mocks.wallet.sendTransaction.mock.calls.at(-1)!
+    return { hash, chainId: 1, from: sent.account, to: sent.to, input: sent.data, value: sent.value, blockHash: HASH }
+  })
+
+  beforeEach(() => {
+    mocks.client.getBlockNumber.mockResolvedValue(1n)
+    mocks.client.estimateGas.mockResolvedValue(120_000n)
+  })
+
+  it('sends every direct call after one review, each at its measured gas', async () => {
+    receiptsProveSends()
+
+    const batch = await run([batchCall(1, '0x1234'), batchCall(1, '0x5678')])
+
+    expect(batch.status).toBe('complete')
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    const [review] = mocks.requireReview.mock.calls[0]
+    expect(review.calls.map((call: { data: Hex }) => call.data)).toEqual(['0x1234', '0x5678'])
+    // A cap is not the gas limit sent; the wallet shows the measured one.
+    for (const call of review.calls) {
+      expect(call).not.toHaveProperty('gas')
+      expect(call).not.toHaveProperty('safeTxGas')
+    }
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => [tx.data, tx.gas])).toEqual([
+      ['0x1234', 240_000n],
+      ['0x5678', 240_000n],
+    ])
+  })
+
+  it('reviews each send again when resuming a saved batch', async () => {
+    receiptsProveSends()
+    mocks.wallet.sendTransaction
+      .mockResolvedValueOnce(HASH)
+      .mockRejectedValueOnce(Object.assign(new Error('User rejected'), { code: 4001 }))
+    await expect(run([batchCall(1, '0x1234'), batchCall(1, '0x5678')])).rejects.toThrow('User rejected')
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+
+    expect((await run()).status).toBe('complete')
+
+    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(mocks.requireReview.mock.calls[1][0]).toMatchObject({
+      title: 'Review transaction',
+      calls: [expect.objectContaining({ data: '0x5678', gas: 240_000n })],
+    })
+  })
+
+  it('proposes every Safe app call after one review showing Safe gas 0', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValue({ wallet: mocks.wallet, account: SAFE })
+    receiptsProveSends()
+
+    const batch = await run([batchCall(1, '0x1234', { authority: SAFE })], SAFE)
+
+    expect(batch.status).toBe('complete')
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    const [review] = mocks.requireReview.mock.calls[0]
+    expect(review.description).toMatch(/Choose the correct Safe nonce\.$/)
+    expect(review.confirmLabel).toBe('Agree & continue to Safe')
+    expect(review.calls).toEqual([
+      expect.objectContaining({ from: SAFE, to: TARGET, data: '0x1234', safeTxGas: 0n }),
+    ])
+    expect(review.calls[0]).not.toHaveProperty('gas')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ account: SAFE, data: '0x1234', gas: 0n }),
+    )
+  })
+
+  it('still reviews each relayed signature and the payment after the batch review', async () => {
+    const batch = await run([
+      batchCall(1, '0x1234', { relayr: undefined }),
+      batchCall(10, '0x5678', { relayr: undefined }),
+    ])
+
+    expect(batch.status).toBe('complete')
+    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
+      'Review project actions',
+      'Review relayed transaction',
+      'Review relayed transaction',
+      'Review Relayr payment',
+    ])
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })
 })

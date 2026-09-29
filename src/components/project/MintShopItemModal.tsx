@@ -176,7 +176,12 @@ export function MintShopItemModal({
         expectedAccount: address,
         review: reviewed =>
           requireContractTransactionReview(
-            { ...reviewed, account: address },
+            {
+              ...reviewed,
+              account: address,
+              // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+              ...(isSafeConnection(config) ? { safeTxGas: 0n } : {}),
+            },
             {
               title: `Review free mint on ${chainName(chainId)}`,
               label: `Mint ${review.quantity} × ${itemName}`,
@@ -211,7 +216,10 @@ export function MintShopItemModal({
             client.simulateContract(simulationRequest),
             client.estimateContractGas(simulationRequest),
           ])
-          return { ...simulated, gas: gasWithHeadroom(estimate) }
+          return {
+            ...simulated,
+            gas: isSafeConnection(config) ? 0n : gasWithHeadroom(estimate),
+          }
         },
         write: simulated =>
           writeContractAsync(

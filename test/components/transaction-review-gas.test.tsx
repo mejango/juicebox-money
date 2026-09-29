@@ -32,15 +32,28 @@ afterEach(() => {
   container.remove()
 })
 
-async function review(fields: Partial<TransactionReviewCall>) {
+async function reviewAll(
+  calls: Partial<TransactionReviewCall>[],
+  kind?: 'transaction' | 'authorization',
+) {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     requireTransactionReview({
-      calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x', ...fields }],
+      kind,
+      calls: calls.map(fields => ({
+        chainId: 1,
+        to: '0x1111111111111111111111111111111111111111',
+        data: '0x',
+        ...fields,
+      })),
     }).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
 }
+
+const review = (fields: Partial<TransactionReviewCall>) => reviewAll([fields])
+
+const SENT = 'This is the exact destination, native value, and calldata the app will ask your wallet to send.'
 
 function row(label: string): string[] | null {
   const term = [...document.querySelectorAll('dialog dt')].find(node => node.textContent === label)
@@ -57,17 +70,38 @@ describe('transaction review gas', () => {
     await review({ gas: 240_000n })
     expect(row('Gas limit')).toEqual(['240,000'])
     expect(row('Safe gas')).toBeNull()
-    expect(description()).toBe(
-      'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce and network fees.',
-    )
+    expect(description()).toBe(`${SENT} Your wallet adds the nonce and network fees.`)
   })
 
-  it('keeps the wallet responsible for gas when none is fixed', async () => {
+  it('says the wallet shows the gas limit when none is fixed', async () => {
     await review({})
     expect(row('Gas limit')).toBeNull()
     expect(row('Safe gas')).toBeNull()
     expect(description()).toBe(
-      'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.',
+      `${SENT} Your wallet shows the gas limit and network fees before you send.`,
+    )
+  })
+
+  it('treats a fixed Safe gas as fixed gas', async () => {
+    await review({ safeTxGas: 0n })
+    expect(description()).toBe(`${SENT} Your wallet adds the nonce and network fees.`)
+  })
+
+  it('leaves the gas limit to the wallet unless every call fixes one', async () => {
+    await reviewAll([{ gas: 240_000n }, {}])
+    expect(description()).toBe(
+      `${SENT} Your wallet shows the gas limit and network fees before you send.`,
+    )
+    act(() => root.unmount())
+    root = createRoot(container)
+    await reviewAll([{ gas: 240_000n }, { safeTxGas: 0n }])
+    expect(description()).toBe(`${SENT} Your wallet adds the nonce and network fees.`)
+  })
+
+  it('keeps the authorization description', async () => {
+    await reviewAll([{ gas: 240_000n }], 'authorization')
+    expect(description()).toBe(
+      'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.',
     )
   })
 

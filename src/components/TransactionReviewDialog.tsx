@@ -1322,16 +1322,25 @@ function specialArgumentView(
     const steps = describeSplitGroups(call.chainId, value)
     if (steps) return <UrPlanView steps={steps} />
   }
-  if (fn.name === 'multiSend' && inputName === 'transactions' && call.calls?.length) {
-    return (
-      <div className="mt-2 space-y-3">
-        {call.calls.map((inner, index) => (
-          <PrettyCall key={index} call={inner} index={index} total={call.calls!.length} nested />
-        ))}
-      </div>
-    )
+  if (nestsCallsIn(fn, inputName) && call.calls?.length) {
+    return <NestedCalls calls={call.calls} />
   }
   return null
+}
+
+/** A MultiSend lists its calls under the argument that encodes them. */
+function nestsCallsIn(fn: AbiFunction, inputName: string): boolean {
+  return fn.name === 'multiSend' && inputName === 'transactions'
+}
+
+function NestedCalls({ calls }: { calls: readonly TransactionReviewCall[] }) {
+  return (
+    <div className="mt-2 space-y-3">
+      {calls.map((inner, index) => (
+        <PrettyCall key={index} call={inner} index={index} total={calls.length} nested />
+      ))}
+    </div>
+  )
 }
 
 function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
@@ -1367,6 +1376,7 @@ function PrettyCall({
   const args = call.args ?? []
   const byteLength = Math.max(0, (call.data.length - 2) / 2)
   const contractName = knownContractName(call)
+  const callsInArgument = !!fn && fn.inputs.some(input => nestsCallsIn(fn, input.name ?? ''))
   return (
     <section className="rounded-xl border border-smoke-200 bg-white p-4 sm:p-5">
       {total > 1 ? (
@@ -1498,6 +1508,13 @@ function PrettyCall({
         </div>
       )}
 
+      {call.calls?.length && !callsInArgument ? (
+        <div className="mt-5 border-t border-smoke-200 pt-4">
+          <p className="text-xs font-medium text-smoke-600">Calls it makes, in order</p>
+          <NestedCalls calls={call.calls} />
+        </div>
+      ) : null}
+
       <p className="mt-3 text-[11px] text-smoke-500">
         Calldata: {byteLength.toLocaleString()} byte{byteLength === 1 ? '' : 's'}
       </p>
@@ -1533,9 +1550,9 @@ function ReviewModal({
   const defaultDescription = isAuthorization
     ? 'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.'
     : `This is the exact destination, native value, and calldata the app will ask your wallet to send. ${
-        request.calls.some(call => call.gas !== undefined)
+        request.calls.every(call => call.gas !== undefined || call.safeTxGas !== undefined)
           ? 'Your wallet adds the nonce and network fees.'
-          : 'Your wallet adds the nonce, gas limit, and network fees.'
+          : 'Your wallet shows the gas limit and network fees before you send.'
       }`
 
   return (
