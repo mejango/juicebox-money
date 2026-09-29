@@ -177,6 +177,20 @@ describe('SearchBox account results', () => {
     expect(mocks.push).toHaveBeenCalledWith(`/${toUrn(1, 3)}`)
   })
 
+  it('keeps ordinary text on project search while a stray % is typed', async () => {
+    // The field parses what is typed on every render; a lone % is not an escape.
+    const renderer = await render()
+    await type(renderer, '100%')
+    await settle()
+
+    expect(renderer.root.findByType('input').props.value).toBe('100%')
+    expect(renderedText(renderer.root)).not.toContain('Go to project')
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      '/api/search?q=100%25',
+      expect.anything(),
+    )
+  })
+
   it('routes an explicit @handle without treating it as account ENS', async () => {
     const renderer = await render()
     await type(renderer, '@Design.Juicebox')

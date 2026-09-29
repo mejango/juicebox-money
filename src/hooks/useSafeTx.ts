@@ -122,6 +122,7 @@ export function useSafeTx(chainId: number) {
   const [safeProposalHash, setSafeProposalHash] = useState<`0x${string}` | null>(
     null,
   )
+  const [safeConfirmationUncertain, setSafeConfirmationUncertain] = useState(false)
   const inFlightRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
@@ -164,7 +165,13 @@ export function useSafeTx(chainId: number) {
       clearInterval(timer)
     }
   }, [hash, safeProposalHash, publicClient])
-  const receiptData = receipt.data ?? polledReceipt ?? undefined
+  // React Query may retain the prior query's data while a new hash starts.
+  // Only a receipt for this exact transaction can settle this action.
+  const receiptData = hash
+    ? [receipt.data, polledReceipt].find(
+        candidate => candidate?.transactionHash?.toLowerCase() === hash.toLowerCase(),
+      )
+    : undefined
 
   useEffect(() => {
     if (!safeProposalHash) return
@@ -175,11 +182,21 @@ export function useSafeTx(chainId: number) {
       .then(executionHash => {
         setHash(executionHash)
         setSafeProposalHash(null)
+        setSafeConfirmationUncertain(false)
       })
       .catch(reason => {
         if (reason instanceof DOMException && reason.name === 'AbortError') return
-        setError(friendlyTxError(reason))
-        setPhase('error')
+        const message = friendlyTxError(reason)
+        if (/executed the proposal.*failed/i.test(message)) {
+          setError(message)
+          setPhase('error')
+        } else {
+          // Losing access to Safe's service does not undo a signed proposal.
+          // Keep its send lock until execution can be checked externally.
+          setError(`Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. ${message}`)
+          setSafeConfirmationUncertain(true)
+          setPhase('pending')
+        }
       })
     return () => controller.abort()
   }, [chainId, safeProposalHash])
@@ -226,6 +243,10 @@ export function useSafeTx(chainId: number) {
       }
       inFlightRef.current = true
       setError(null)
+      setHash(null)
+      setSafeProposalHash(null)
+      setSafeConfirmationUncertain(false)
+      setPolledReceipt(null)
       try {
         const txHash = await submitReviewedContractWrite({
           request,
@@ -260,6 +281,7 @@ export function useSafeTx(chainId: number) {
             if (!approved) throw new TransactionReviewCancelledError()
           },
           switchChain: async reviewedChainId => {
+            if (getAccount(wagmiConfig).chainId === reviewedChainId) return
             await switchChainAsync({ chainId: reviewedChainId }).catch(() => {
               throw new Error('Switch your wallet to the right chain to continue.')
             })
@@ -317,6 +339,7 @@ export function useSafeTx(chainId: number) {
     setError(null)
     setHash(null)
     setSafeProposalHash(null)
+    setSafeConfirmationUncertain(false)
   }, [])
 
   return {
@@ -334,7 +357,7 @@ export function useSafeTx(chainId: number) {
     safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
     receipt: receiptData ?? null,
     /** The transaction has a hash, but the current RPC could not confirm it. */
-    confirmationUncertain: phase === 'pending' && receipt.isError && !receiptData,
+    confirmationUncertain: phase === 'pending' && (safeConfirmationUncertain || (receipt.isError && !receiptData)),
     send,
     reset,
   }

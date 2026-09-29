@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   connected: true,
   publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn() },
   receipt: { data: undefined, isError: false } as {
-    data?: { status: 'success' | 'reverted'; blockNumber?: bigint }
+    data?: { status: 'success' | 'reverted'; blockNumber?: bigint; transactionHash: string }
     isError: boolean
   },
   getAccount: vi.fn(),
@@ -117,6 +117,15 @@ describe('useSafeTx', () => {
     } finally {
       clearViewAs()
     }
+  })
+
+  it('requests the transaction without a redundant switch when already on its chain', async () => {
+    mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10 }))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request) })
+    expect(mocks.switchChain).not.toHaveBeenCalled()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await act(async () => hook.renderer.unmount())
   })
 
   it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
@@ -276,7 +285,7 @@ describe('useSafeTx', () => {
         await hook.ref.current!.send(request)
       })
 
-      mocks.receipt = { data: { status }, isError: false }
+      mocks.receipt = { data: { status, transactionHash: HASH }, isError: false }
       await act(async () => {
         hook.renderer.update(createElement(Harness, { ref: hook.ref }))
       })
@@ -287,13 +296,31 @@ describe('useSafeTx', () => {
     },
   )
 
+  it('does not confirm a new action using the previous successful receipt', async () => {
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request) })
+    mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current!.phase).toBe('success')
+
+    mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
+    await act(async () => { await hook.ref.current!.send(request) })
+    expect(hook.ref.current).toMatchObject({
+      phase: 'pending', busy: true, hash: EXECUTION_HASH, receipt: null,
+    })
+
+    mocks.receipt = { data: { status: 'success', transactionHash: EXECUTION_HASH }, isError: false }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current!.phase).toBe('success')
+  })
+
   it('confirms from a direct receipt lookup when the block watcher stalls', async () => {
     vi.useFakeTimers()
     try {
       const getTransactionReceipt = vi
         .fn()
         .mockResolvedValueOnce(null)
-        .mockResolvedValue({ status: 'success', blockNumber: 77n })
+        .mockResolvedValue({ status: 'success', blockNumber: 77n, transactionHash: HASH })
       mocks.publicClient = {
         ...mocks.publicClient,
         getTransactionReceipt,
@@ -378,7 +405,7 @@ describe('useSafeTx', () => {
     })
   })
 
-  it('surfaces a Safe execution lookup failure', async () => {
+  it('keeps an unconfirmed Safe proposal pending and refuses a duplicate send', async () => {
     mocks.safeConnection = true
     mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
       new Error('Safe service unavailable'),
@@ -392,9 +419,26 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current).toMatchObject({
-      phase: 'error',
-      error: 'Safe service unavailable',
-      busy: false,
+      phase: 'pending',
+      busy: true,
+      confirmationUncertain: true,
     })
+    expect(hook.ref.current!.error).toContain('Safe service unavailable')
+    await act(async () => { expect(await hook.ref.current!.send(request)).toBeNull() })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats a proven Safe execution revert as failed', async () => {
+    mocks.safeConnection = true
+    mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
+      new Error('Safe executed the proposal, but the onchain transaction failed.'),
+    )
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
   })
 })
