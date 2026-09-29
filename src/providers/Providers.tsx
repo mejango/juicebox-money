@@ -22,6 +22,7 @@ import {
 } from './ParaAuthContext'
 import { ProjectRouteProvider } from './ProjectRouteContext'
 import { lazyParaConnector } from './lazy-para-connector'
+import { openOnRampWindow } from './on-ramp-window'
 import { SignInPlaceholder } from './SignInPlaceholder'
 import { externalWalletConnectors } from './wallet-connectors'
 import { verifyMarkedParaSession } from './para-session'
@@ -180,7 +181,10 @@ export function Providers({ children }: PropsWithChildren) {
   const requestAddFunds = useCallback((request: ParaAddFundsRequest) => {
     if (IS_DETERMINISTIC_BROWSER) return
     setParaHostLoaded(true)
-    setParaRequest({ kind: 'addFunds', ...request })
+    // Still inside the click: the host starts Para and waits on it, and a
+    // window opened after that is blocked.
+    const popup = request.display === 'embed' ? null : openOnRampWindow()
+    setParaRequest({ kind: 'addFunds', ...request, popup })
     setParaRequestId(current => current + 1)
   }, [])
   const markParaSettled = useCallback(

@@ -52,7 +52,11 @@ export type ParaAddFundsRequest = {
 
 export type ParaRequest =
   | { kind: 'auth' }
-  | ({ kind: 'addFunds' } & ParaAddFundsRequest)
+  | ({
+      kind: 'addFunds'
+      /** The window opened in the click, before any await could spend it. */
+      popup?: Window | null
+    } & ParaAddFundsRequest)
 
 export type ParaAuthController = {
   modalOpen: boolean

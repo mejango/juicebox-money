@@ -1,6 +1,7 @@
 'use client'
 
 import { ModalCloseButton } from '@/components/ui/ModalShell'
+import { openOnRampWindow } from './on-ramp-window'
 
 /**
  * What we say once the purchase is handed to the on-ramp provider.
@@ -13,14 +14,18 @@ import { ModalCloseButton } from '@/components/ui/ModalShell'
  * broken".
  *
  * `url` is the same window we just opened: popup blockers are common enough
- * that the handoff needs a link the visitor can click themselves.
+ * that the handoff needs a button the visitor can click themselves. A button,
+ * not a `target="_blank"` link: the portal needs `window.opener`.
  */
 export function OnRampHandoff({
   url,
+  opened,
   asset,
   onClose,
 }: {
   url: string
+  /** False when no window is showing the purchase yet, e.g. after sign-in. */
+  opened: boolean
   /** What the provider is being asked to deliver, so the heading names it. */
   asset?: string
   onClose: () => void
@@ -55,14 +60,13 @@ export function OnRampHandoff({
       </ul>
 
       <div className="mt-5 flex items-center justify-between">
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={() => openOnRampWindow(url)}
           className="text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
         >
-          Window didn&apos;t open?
-        </a>
+          {opened ? "Window didn't open?" : 'Open the window'}
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -114,14 +118,13 @@ export function OnRampFrame({
         title={asset ? `Buy ${asset}` : 'Buy crypto'}
         className="mt-3 h-[32rem] w-full rounded-lg border border-smoke-200"
       />
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
+      <button
+        type="button"
+        onClick={() => openOnRampWindow(url)}
         className="mt-2 inline-block text-xs text-smoke-700 underline underline-offset-2 hover:text-ink"
       >
         Open in a separate window instead
-      </a>
+      </button>
     </div>
   )
 }

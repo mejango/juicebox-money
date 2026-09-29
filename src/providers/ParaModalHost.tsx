@@ -83,6 +83,8 @@ function Driver({
   // Whether that purchase is showing in the dialog rather than in a window of
   // its own.
   const [embedded, setEmbedded] = useState(false)
+  // Whether the window opened in the click is showing the purchase.
+  const [windowOpened, setWindowOpened] = useState(false)
   const handledRequest = useRef(0)
   const wasOpen = useRef(false)
   // Set when the on-ramp had to sign the user in first, so it can resume once
@@ -92,10 +94,14 @@ function Driver({
   const startAddFunds = useCallback(
     async (target: Extract<ParaRequest, { kind: 'addFunds' }>) => {
       const para = getParaClient()
+      const popup = target.popup ?? null
       // Both on-ramp paths are keyed to a Para user, even the one that
       // delivers to someone else's wallet. No session means sign in first.
       if (!(await para.isFullyLoggedIn().catch(() => false))) {
-        resumeAddFunds.current = target
+        // A blank window behind the sign-in sheet helps nobody; the handoff
+        // offers a fresh one once there is a session.
+        popup?.close()
+        resumeAddFunds.current = { ...target, popup: null }
         setSheetOpen(true)
         return
       }
@@ -108,19 +114,23 @@ function Driver({
         Object.values(para.getWallets()).find(
           wallet => wallet.type === 'EVM' && wallet.address,
         )?.address
-      if (!destination) return
+      if (!destination) {
+        popup?.close()
+        return
+      }
       // Our domain strings and Para's enums share their values, so the enum
       // objects double as the lookup table.
       const asset = OnRampAsset[target.asset]
       const network = Network[target.network]
       const embed = target.display === 'embed'
-      const { portalUrl, onRampPurchase } =
-        await para.initiateOnRampTransaction({
+      const { portalUrl, onRampPurchase } = await para
+        .initiateOnRampTransaction({
           externalWalletAddress: destination,
-          // Para records the purchase only when IT opens the window; an
-          // embedded one has to be handed that record separately, or the
-          // portal's first message goes unanswered.
-          shouldOpenPopup: !embed,
+          // Para opens its window after its own awaits, where the popup
+          // blocker stops it (and Para then waits on it forever). The window
+          // was opened in the click instead, so Para opens nothing and the
+          // purchase is handed over below.
+          shouldOpenPopup: false,
         params: {
           type: OnRampPurchaseType.BUY,
           provider: OnRampProvider[PARA_ONRAMP_PROVIDER],
@@ -139,13 +149,18 @@ function Driver({
             : {}),
         },
       })
-      // If the SDK has moved the field this reaches for, fall back to the
-      // window rather than showing a frame that can only spin.
-      const framed = embed && recordOnRampPurchase(para, onRampPurchase)
-      if (embed && !framed) {
-        window.open(portalUrl, 'ParaOnRamp', 'popup,width=420,height=640')
-      }
+        .catch(error => {
+          popup?.close()
+          throw error
+        })
+      // The portal's first message asks for this record; without it the
+      // portal spins. If the SDK has moved the field, no frame either.
+      const recorded = recordOnRampPurchase(para, onRampPurchase)
+      const framed = embed && recorded
+      const opened = !embed && !!popup && !popup.closed
+      if (opened) popup.location.href = portalUrl
       setEmbedded(framed)
+      setWindowOpened(opened)
       setHandoffAsset(target.asset === 'USDC' ? 'USDC' : 'ETH')
       setHandoffUrl(portalUrl)
     },
@@ -215,6 +230,7 @@ function Driver({
           ) : (
             <OnRampHandoff
               url={handoffUrl}
+              opened={windowOpened}
               asset={handoffAsset ?? undefined}
               onClose={() => setHandoffUrl(null)}
             />

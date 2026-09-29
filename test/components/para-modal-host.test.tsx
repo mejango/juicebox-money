@@ -85,6 +85,7 @@ vi.mock('@/providers/para-config', () => ({
   }),
   PARA_APP: { appName: 'Juicebox' },
   PARA_ONRAMP_PROVIDER: 'MOONPAY',
+  recordOnRampPurchase: () => true,
 }))
 
 const { default: ParaModalHost } = await import('@/providers/ParaModalHost')
@@ -274,7 +275,7 @@ describe('ParaModalHost', () => {
     expect(para.initiateOnRampTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         externalWalletAddress: para.address,
-        shouldOpenPopup: true,
+        shouldOpenPopup: false,
         params: expect.objectContaining({
           asset: 'ETHEREUM',
           network: 'BASE',
@@ -293,9 +294,54 @@ describe('ParaModalHost', () => {
     const text = host()!.textContent ?? ''
     expect(text).toContain('always go through')
     expect(text).toContain('bank transfer')
-    // Popup blockers are common enough that the link has to be clickable.
-    const link = host()!.querySelector('a[href="https://portal.example/buy"]')
-    expect(link).not.toBeNull()
+    // Popup blockers are common enough that the window has to be reopenable.
+    expect(text).toContain('Open the window')
+  })
+
+  it('points the window opened in the click at the portal, never opening one itself', async () => {
+    // Para opens its own window only after its awaits, where the popup blocker
+    // stops it and Para then waits on the blocked window forever.
+    const popup = { closed: false, close: vi.fn(), location: { href: '' } }
+    render(
+      <Host request={{ ...ADD_FUNDS, popup: popup as unknown as Window }} />,
+    )
+    await settle()
+
+    expect(para.initiateOnRampTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ shouldOpenPopup: false }),
+    )
+    expect(popup.location.href).toBe('https://portal.example/buy')
+    expect(popup.close).not.toHaveBeenCalled()
+    expect(host()!.textContent).toContain('Window didn\'t open?')
+  })
+
+  it('reopens the portal from a click, keeping the opener the portal talks to', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    render(<Host request={ADD_FUNDS} />)
+    await settle()
+
+    const button = [...host()!.querySelectorAll('button')].find(
+      b => b.textContent === 'Open the window',
+    )
+    act(() => button!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+    expect(open).toHaveBeenCalledTimes(1)
+    const [url, , features] = open.mock.calls[0]
+    expect(url).toBe('https://portal.example/buy')
+    expect(String(features)).not.toContain('noopener')
+    open.mockRestore()
+  })
+
+  it('closes the blank window when sign-in has to come first', async () => {
+    para.loggedIn = false
+    const popup = { closed: false, close: vi.fn(), location: { href: '' } }
+    render(
+      <Host request={{ ...ADD_FUNDS, popup: popup as unknown as Window }} />,
+    )
+    await settle()
+
+    expect(popup.close).toHaveBeenCalledTimes(1)
+    expect(popup.location.href).toBe('')
   })
 
   it('keeps the embedded wallet off Para’s own add-funds screen', async () => {
