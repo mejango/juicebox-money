@@ -42,6 +42,7 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: () => mocks.safeConnection,
   SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
+  useSafeConnection: () => mocks.safeConnection,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
 }))
 

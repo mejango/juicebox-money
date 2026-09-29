@@ -18,6 +18,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
+  useSafeConnection,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -115,6 +116,7 @@ export function useSafeTx(chainId: number) {
   const publicClient = usePublicClient({ chainId })
   const { writeContractAsync } = useWriteContract()
   const { switchChainAsync } = useSwitchChain()
+  const isSafe = useSafeConnection(wagmiConfig)
 
   const [phase, setPhase] = useState<TxPhase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -350,7 +352,7 @@ export function useSafeTx(chainId: number) {
       effectivePhase === 'signing' ||
       effectivePhase === 'pending',
     /** Whether the connected writer is a Safe connector. */
-    isSafe: isSafeConnection(wagmiConfig),
+    isSafe,
     error: effectiveError,
     hash,
     safeProposalHash,

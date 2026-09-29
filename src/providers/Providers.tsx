@@ -15,6 +15,7 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { installQueryPersistence } from '@/lib/query-persist'
+import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
 import {
   ParaAuthContext,
   type ParaAddFundsRequest,
@@ -171,6 +172,10 @@ export function Providers({ children }: PropsWithChildren) {
   useEffect(() => {
     if (!IS_DETERMINISTIC_BROWSER) void verifyMarkedParaSession()
   }, [])
+
+  // Safe{Wallet} over WalletConnect proposes like the Safe app, and only the
+  // WalletConnect session's peer tells it apart from other wallets.
+  useEffect(() => watchSafeWalletPeer(wagmiConfig), [])
 
   const requestSignIn = useCallback(() => {
     if (IS_DETERMINISTIC_BROWSER) return

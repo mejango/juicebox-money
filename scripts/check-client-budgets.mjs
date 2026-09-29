@@ -63,7 +63,12 @@ const budgets = {
   // payer and Safe-write gas moved onto their reviews, and Safe gas 0 on every
   // Safe-app send measure 2463.4 KiB against 2462.8 KiB before (+0.6 KiB across
   // the review dialog, project, payer and Safe chunks); round up to the next KiB.
-  allScripts: 2464 * KIB,
+  // Recognizing Safe{Wallet} over WalletConnect (a peer watcher the root layout
+  // mounts, kept apart from the Safe service code, and a hook that re-renders
+  // Safe-aware screens once the peer is read) and letting the Safe execution wait
+  // read the chain measure 2464.1 KiB against 2463.8 KiB before on the same SDK
+  // build; round up to the next KiB. Route caps are unchanged.
+  allScripts: 2465 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
