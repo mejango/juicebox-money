@@ -1193,12 +1193,13 @@ export async function relayrPay(
   const client = publicClient(chainId)
   await requireRelayrPaymentRuntime(client)
 
+  const viaSafe = isSafeConnection(wagmiConfig)
   await requireTransactionReview({
     title: 'Review Relayr payment',
     description:
       'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.' +
-      (isSafeConnection(wagmiConfig) ? ` ${SAFE_NONCE_GUIDANCE}` : ''),
-    confirmLabel: isSafeConnection(wagmiConfig)
+      (viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''),
+    confirmLabel: viaSafe
       ? 'Agree & continue to Safe'
       : 'Agree & pay Relayr',
     calls: [
@@ -1207,6 +1208,8 @@ export async function relayrPay(
         from: expectedAccount,
         to: details.target,
         value: details.amount,
+        // A Safe app signs the sent gas as safeTxGas; 0 makes a failed payment revert.
+        ...(viaSafe ? { safeTxGas: 0n } : { gas: RELAYR_PAYMENT_GAS }),
         data: details.calldata,
         label: 'Pay for relayed transactions',
         contractName: 'Relayr prepaid payment',
@@ -1244,7 +1247,7 @@ export async function relayrPay(
       to: details.target,
       value: details.amount,
       data: details.calldata,
-      gas: RELAYR_PAYMENT_GAS,
+      gas: viaSafe ? 0n : RELAYR_PAYMENT_GAS,
     })
   } catch (error) {
     if (relayrErrorIsDefiniteNoSubmission(error)) throw error

@@ -56,7 +56,7 @@ const budgets = {
   // Main already measured 2446.5 KiB before 840b2ca hid it. SDK 2.12.1, the separate
   // lazy shop-read chunk and Sticky splits (+6.5 KiB) measure 2459.5 KiB.
   // SDK 2.14.0's shared review runtime measures 2461.3 KiB before adoption. Gas rows,
-  // the one fee picker and cancel-aware errors measure 2462.7 KiB; 1.0 KiB of that is
+  // the one fee picker and cancel-aware errors measure 2462.8 KiB; 1.0 KiB of that is
   // the browser-test modal-proof page, whose own review module copy now carries
   // formatEther for the fee label and splits into a separate chunk.
   allScripts: 2463 * KIB,

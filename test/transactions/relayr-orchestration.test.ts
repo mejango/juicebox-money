@@ -414,6 +414,7 @@ describe('Relayr quote and payment boundaries', () => {
             from: ALICE,
             to: RELAYR_PAYMENT_ADDRESS,
             value: 100n,
+            gas: 150_000n,
             data: payment.calldata,
           }),
         ],
@@ -489,6 +490,13 @@ describe('Relayr quote and payment boundaries', () => {
     )
     expect(submitted).toHaveBeenCalledWith(HASH)
     expect(mocks.client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    // The Safe app signs the sent gas as safeTxGas: 0 makes a failed payment revert.
+    const reviewed = mocks.requireReview.mock.calls[0][0].calls[0]
+    expect(reviewed.safeTxGas).toBe(0n)
+    expect(reviewed).not.toHaveProperty('gas')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 0n }),
+    )
   })
 
   it('treats a post-send persistence callback failure as submitted', async () => {

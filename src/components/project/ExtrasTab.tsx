@@ -338,7 +338,7 @@ function payerReviewRows(review: PayerDeploymentSession): TxConfirmRow[] {
   const rows: TxConfirmRow[] = [
     { label: 'Behavior', value: settings.addToBalance ? 'Add to balance' : 'Pay', strong: true },
     ...review.calls.map(call => ({ label: chainName(call.chainId), value: `Project #${call.projectId}` })),
-    { label: 'Execution', value: review.transport === 'relayr' ? 'One Relayr payment; choose its funding chain next' : 'Confirm each chain in sequence' },
+    { label: 'Execution', value: review.transport === 'relayr' ? 'One Relayr payment; choose where to pay next' : 'Confirm each chain in sequence' },
   ]
   if (!settings.addToBalance) rows.push({ label: 'Tokens go to', value: settings.beneficiary === zeroAddress ? 'Whoever sends the ETH' : settings.beneficiary })
   if (settings.memo) rows.push({ label: 'Memo', value: settings.memo })

@@ -660,8 +660,8 @@ export async function runAuthorityCalls({
             to: call.target,
             data: call.data,
             value: call.value ?? 0n,
-            // The Safe Apps provider forwards a sent gas limit as the proposal's safeTxGas.
-            safeTxGas: call.gas,
+            // The Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+            safeTxGas: 0n,
             label: call.label,
             abi: call.abi,
             functionName: call.functionName,
@@ -686,7 +686,7 @@ export async function runAuthorityCalls({
         to: call.target,
         data: call.data,
         value: call.value ?? 0n,
-        gas: call.gas,
+        gas: 0n,
       })
       await call.onSubmitted?.(safeTxHash, 'safe-connector')
       const executionHash = await waitForSafeExecutionHash(

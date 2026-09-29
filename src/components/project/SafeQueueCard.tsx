@@ -1492,7 +1492,7 @@ export function SafeQueueCard({
         const payments = relayrPaymentOptions(refreshedQuote, batchReview.entries.map((entry) => entry.chain));
         setBatchReview({ ...batchReview, quote: refreshedQuote, payments });
         setPaymentIndex(initialPaymentIndex(payments));
-        setNotice("The quote was refreshed. Choose a funding chain and review the new payment.");
+        setNotice("The quote was refreshed. Choose where to pay and review the new payment.");
         return;
       }
       // The dialog lists every chain's exact call; relayrPay's own review

@@ -640,7 +640,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     )
   })
 
-  it('reviews the gas a Safe app turns into the proposal safeTxGas', async () => {
+  it('proposes through a Safe app with safeTxGas 0 and reviews it', async () => {
     mocks.account = SAFE
     mocks.isSafeConnection.mockReturnValue(true)
     mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
@@ -652,10 +652,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     })
 
     const reviewed = mocks.requireReview.mock.calls[0][0].calls
-    expect(reviewed).toEqual([expect.objectContaining({ safeTxGas: 42_000n })])
+    expect(reviewed).toEqual([expect.objectContaining({ safeTxGas: 0n })])
     expect(reviewed[0]).not.toHaveProperty('gas')
+    // The Safe app signs the sent gas as safeTxGas: 0 makes a failed call revert.
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ gas: 42_000n }),
+      expect.objectContaining({ gas: 0n }),
     )
   })
 

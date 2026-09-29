@@ -243,7 +243,12 @@ export function useSafeTx(chainId: number) {
               .filter(Boolean)
               .join('\n\n')
             const approved = await requestContractTransactionReview(
-              { ...reviewed, account: address },
+              {
+                ...reviewed,
+                account: address,
+                // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+                ...(viaSafe ? { safeTxGas: 0n } : {}),
+              },
               {
                 label: reviewed.label,
                 ...(description ? { description } : {}),
@@ -280,7 +285,10 @@ export function useSafeTx(chainId: number) {
               publicClient.simulateContract(simulationRequest),
               publicClient.estimateContractGas(simulationRequest),
             ])
-            return { ...simulated, gas: gasWithHeadroom(estimate) }
+            return {
+              ...simulated,
+              gas: isSafeConnection(wagmiConfig) ? 0n : gasWithHeadroom(estimate),
+            }
           },
           write: simulated => writeContractAsync(simulated),
           onPhase: setPhase,
