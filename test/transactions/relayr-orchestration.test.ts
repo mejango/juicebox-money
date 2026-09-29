@@ -40,7 +40,8 @@ vi.mock('@/lib/wallet-core', () => ({
   publicClient: () => mocks.client,
   connectedWallet: mocks.connectedWallet,
 }))
-vi.mock('@/lib/transaction-review', () => ({
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.requireFundingChainSelection,
 }))
@@ -904,7 +905,7 @@ describe('Relayr polling and resume semantics', () => {
     expect(mocks.requireReview).toHaveBeenCalledTimes(2)
     expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith([
       expect.objectContaining({ chainId: 1, label: expect.stringContaining('Ethereum') }),
-    ])
+    ], 1)
     expect(posts[0][0].data).not.toBe('0x1234')
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
     expect(reverify).toHaveBeenCalledTimes(5)
@@ -1112,9 +1113,24 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith([
       expect.objectContaining({ chainId: 1 }),
       expect.objectContaining({ chainId: 10 }),
-    ])
+    ], 1)
     expect(mocks.connectedWallet).toHaveBeenLastCalledWith(10, expect.any(Object))
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ value: 200n }))
+  })
+
+  it('preselects the chain the wallet started on, not the chain signing switched to', async () => {
+    installSuccessfulBundle([payment, paymentFor({ chain: 10, amount: '200' })])
+    let connectedChain = 10
+    mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: connectedChain }))
+    mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+      connectedChain = chainId
+      return { wallet: mocks.wallet, account: ALICE }
+    })
+    await expect(runRelayrCalls({
+      calls, account: ALICE, pendingScope: 'start-chain-funding',
+    })).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.connectedWallet).toHaveBeenCalledWith(1, expect.any(Object))
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith(expect.any(Array), 10)
   })
 
   it('proves each independently signed destination after one funding payment', async () => {

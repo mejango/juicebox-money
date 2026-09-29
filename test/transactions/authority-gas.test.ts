@@ -41,7 +41,8 @@ vi.mock('@/lib/wallet-core', () => ({
   publicClient: () => mocks.client,
   connectedWallet: mocks.connectedWallet,
 }))
-vi.mock('@/lib/transaction-review', () => ({
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.chooseFunding,
 }))
@@ -622,6 +623,59 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ gas: 240_000n }),
     )
+  })
+
+  it('reviews the exact gas limit it sends', async () => {
+    mocks.client.estimateGas.mockResolvedValue(120_000n)
+
+    await runAuthorityCalls({
+      calls: [{ chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', gas: 1_000_000n }],
+    })
+
+    const reviewed = mocks.requireReview.mock.calls[0][0].calls
+    expect(reviewed).toEqual([expect.objectContaining({ gas: 240_000n })])
+    expect(reviewed[0]).not.toHaveProperty('safeTxGas')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: reviewed[0].gas }),
+    )
+  })
+
+  it('reviews the gas a Safe app turns into the proposal safeTxGas', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+
+    await runAuthorityCalls({
+      calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234' }],
+    })
+
+    const reviewed = mocks.requireReview.mock.calls[0][0].calls
+    expect(reviewed).toEqual([expect.objectContaining({ safeTxGas: 42_000n })])
+    expect(reviewed[0]).not.toHaveProperty('gas')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 42_000n }),
+    )
+  })
+
+  it('preselects the funding chain the wallet started on before signing switched chains', async () => {
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    let connectedChain = 8453
+    mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: connectedChain }))
+    mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+      connectedChain = chainId
+      return { wallet: mocks.wallet, account: ALICE }
+    })
+
+    await runAuthorityCalls({ calls: [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
+    ] })
+
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+    expect(connectedChain).not.toBe(8453)
+    expect(mocks.chooseFunding).toHaveBeenCalledExactlyOnceWith(expect.any(Array), 8453)
   })
 
   it('never sends more than the builder cap', async () => {

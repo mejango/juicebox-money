@@ -35,9 +35,14 @@ const mocks = vi.hoisted(() => ({
   clear: vi.fn(),
   review: vi.fn(),
   viaSafeApp: false,
+  chainId: undefined as number | undefined,
 }))
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OWNER }) }))
+vi.mock('@wagmi/core', async importOriginal => ({
+  ...(await importOriginal<typeof import('@wagmi/core')>()),
+  getAccount: () => ({ address: OWNER, chainId: mocks.chainId }),
+}))
 vi.mock('@tanstack/react-query', () => ({
   useQuery: () => ({ data: mocks.rows, refetch: mocks.refetch }),
 }))
@@ -81,6 +86,7 @@ import {
   RELAYR_PAYMENT_SELECTOR,
   RelayrPaymentSendingError,
   relayrPay,
+  relayrPaymentLabel,
 } from '@/lib/relayr'
 
 function queued(nonce: number): SafeQueuedTx {
@@ -167,6 +173,7 @@ async function selectPayment(index: number) {
 
 beforeEach(() => {
   mocks.viaSafeApp = false
+  mocks.chainId = undefined
   mocks.rows = [chain(1, [5, 6]), chain(10, [5, 6])]
   mocks.session = null
   mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTx) => ({
@@ -220,7 +227,13 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.post.mock.calls[0][0]).toHaveLength(2)
     expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5])
     expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
-    expect(renderer.root.findByType('select').props.value).toBe(-1)
+    const select = renderer.root.findByType('select')
+    expect(select.props.value).toBe(-1)
+    expect(select.props['aria-label']).toBe('Pay on')
+    expect(renderer.root.findAllByType('option').map(textOf)).toEqual([
+      'Choose a chain',
+      ...quote([]).payment_info.map(relayrPaymentLabel),
+    ])
 
     await selectPayment(1)
     await click(/Pay once and execute 2/)
@@ -241,7 +254,19 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.clear).not.toHaveBeenCalled()
   })
 
-  it('requires a new funding choice when the ISO deadline triggers a refreshed quote', async () => {
+  it('preselects the connected chain when it is quoted', async () => {
+    mocks.chainId = 10
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    expect(renderer.root.findByType('select').props.value).toBe(1)
+    await click(/Pay once and execute 2/)
+    expect(mocks.pay).toHaveBeenCalledWith(
+      expect.objectContaining({ chain: 10 }), OWNER, BUNDLE, [1, 10],
+      expect.any(Function), expect.any(Function), expect.any(Function), true,
+    )
+  })
+
+  it('asks for another pay click when the ISO deadline refreshes the quote, preselecting a lone offer', async () => {
     mocks.post
       .mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 30))
       .mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 3_600, [1]))
@@ -252,8 +277,9 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.review).not.toHaveBeenCalled()
-    expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
     expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(1)
+    expect(renderer.root.findByType('select').props.value).toBe(0)
+    expect(button(/Pay once and execute 2/).props.disabled).toBe(false)
   })
 
   it('executes mixed network families directly and preserves dependent nonce order', async () => {

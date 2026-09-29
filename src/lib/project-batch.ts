@@ -203,6 +203,7 @@ export async function runProjectBatch({
   if (typeof navigator === 'undefined' || !navigator.locks) {
     throw new Error('This browser cannot lock project transaction recovery across tabs. Use a browser with Web Locks support.')
   }
+  const startChainId = getAccount(wagmiConfig).chainId
   const previous = loadProjectBatch(scope)
   const proposedCalls = calls ?? previous?.calls
   if (!proposedCalls?.length) throw new Error('Choose at least one project action.')
@@ -288,7 +289,7 @@ export async function runProjectBatch({
         ;(journal.relayrCallIds ??= {})[String(round)] = relayCalls.map(call => call.id)
         persist(journal)
         report('Preparing cross-chain transactions…', round)
-        await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope,
+        await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
           reverify: async () => { checkAccount(); for (const call of relayCalls) await reverify?.(call) },
           onProgress: progress => report(progress.phase === 'executing'
             ? `Relayr reports ${progress.done}/${progress.total} destinations complete; verifying their transactions…`

@@ -11,7 +11,6 @@ import {
   decodeFunctionData,
   decodeFunctionResult,
   encodeFunctionData,
-  formatEther,
   isAddress,
   isAddressEqual,
   keccak256,
@@ -21,7 +20,7 @@ import {
   type Hex,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
-import { requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
@@ -1149,8 +1148,7 @@ async function simulateRelayrPayment(
 
 export function relayrPaymentLabel(payment: RelayrPayment): string {
   const chain = SUPPORTED_CHAINS.find(item => item.id === Number(payment.chain))
-  const amount = Number(formatEther(BigInt(payment.amount)))
-  return `${chain?.name ?? `Chain ${payment.chain}`} — ~${amount.toFixed(5)} ETH`
+  return fundingChainLabel(chain?.name ?? `Chain ${payment.chain}`, BigInt(payment.amount))
 }
 
 /** Invalid provider options never reach the funding picker or amount sorter. */
@@ -1544,6 +1542,7 @@ async function executeRelayrCalls({
   calls,
   account,
   paymentChainId,
+  preferredPaymentChainId = getAccount(wagmiConfig).chainId,
   pendingScope,
   onProgress,
   reverify,
@@ -1552,6 +1551,8 @@ async function executeRelayrCalls({
   calls: RelayrCall[]
   account: Address
   paymentChainId?: number
+  /** Preselected in the funding choice when quoted. Pass the wallet's chain from before the flow switched chains. */
+  preferredPaymentChainId?: number
   pendingScope?: string
   onProgress?: (progress: RelayrProgress) => void
   /** Re-prove every mutable project call around signatures and payment. */
@@ -1640,6 +1641,7 @@ async function executeRelayrCalls({
   if (!payments.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
   const selectedChain = paymentChainId ?? await requireFundingChainSelection(
     payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })),
+    preferredPaymentChainId,
   )
   const payment = payments.find(option => option.chain === selectedChain)
   if (!payment) throw new Error('Relayr returned no payment option on your selected funding chain. Nothing was paid.')

@@ -18,6 +18,7 @@ const BUNDLE = '12345678-1234-1234-1234-123456789abc'
 
 const mocks = vi.hoisted(() => ({
   address: '' as Address,
+  chainId: 1,
   safe: false,
   getTransaction: vi.fn(), getReceipt: vi.fn(), getBlock: vi.fn(), getCode: vi.fn(), readContract: vi.fn(),
   getBlockNumber: vi.fn(), getLogs: vi.fn(),
@@ -25,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   post: vi.fn(), pay: vi.fn(), poll: vi.fn(), funding: vi.fn(), paymentSent: vi.fn(),
 }))
 
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId }) }))
 vi.mock('@/providers/Providers', async () => {
   const chains = await import('viem/chains')
   return { wagmiConfig: {}, SUPPORTED_CHAINS: [chains.mainnet, chains.optimism, chains.base, chains.arbitrum,
@@ -51,7 +52,11 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   waitForSafeExecutionHash: mocks.waitSafe,
 }))
 vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review, requireFundingChainSelection: mocks.funding }))
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
+  requireTransactionReview: mocks.review,
+  requireFundingChainSelection: mocks.funding,
+}))
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   relayrPostBundle: mocks.post, relayrPay: mocks.pay, relayrPoll: mocks.poll,
@@ -111,6 +116,7 @@ function receipt(chain: number) {
 beforeEach(() => {
   projectId += 10
   mocks.address = ALICE
+  mocks.chainId = 1
   mocks.safe = false
   const values = new Map<string, string>()
   storage = { getItem: vi.fn((key: string) => values.get(key) ?? null),
@@ -194,7 +200,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       const decoded = decodeFunctionData({ abi: jbProjectPayerDeployerAbi, data: entry.data })
       expect(decoded.args).toEqual([BigInt(projectId + index), BENEFICIARY, 'Treasury support', '0x', false, ADMIN])
     })
-    expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]))
+    expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]), 1)
     expect(mocks.pay.mock.calls[0][0].chain).toBe(10)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()

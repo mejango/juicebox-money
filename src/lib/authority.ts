@@ -275,7 +275,7 @@ export async function runAuthorityCalls({
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
-  const connected = getAccount(wagmiConfig).address
+  const { address: connected, chainId: startChainId } = getAccount(wagmiConfig)
   if (!connected) throw new Error('Connect a wallet first.')
 
   const groups = new Map<string, AuthorityCall[]>()
@@ -544,6 +544,7 @@ export async function runAuthorityCalls({
       pendingScope: reviewed.pendingScope,
       onProgress: reportRelayrProgress,
       paymentChainId,
+      preferredPaymentChainId: startChainId,
       reverify: loadRelayrPendingSession(reviewed.pendingScope)?.paymentStatus === 'unpaid'
         ? () => reverifyRelayrGroup(reviewed.calls)
         : undefined,
@@ -659,6 +660,8 @@ export async function runAuthorityCalls({
             to: call.target,
             data: call.data,
             value: call.value ?? 0n,
+            // The Safe Apps provider forwards a sent gas limit as the proposal's safeTxGas.
+            safeTxGas: call.gas,
             label: call.label,
             abi: call.abi,
             functionName: call.functionName,
@@ -737,6 +740,7 @@ export async function runAuthorityCalls({
           to: call.target,
           data: call.data,
           value: call.value ?? 0n,
+          gas: call.gas,
           label: call.label,
           abi: call.abi,
           functionName: call.functionName,
@@ -808,6 +812,7 @@ export async function runAuthorityCalls({
       calls: toRelayrCalls(reviewed.calls),
       account: connected,
       paymentChainId,
+      preferredPaymentChainId: startChainId,
       pendingScope,
       onProgress: reportRelayrProgress,
       reverify: () => reverifyRelayrGroup(reviewed.calls),

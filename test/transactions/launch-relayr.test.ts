@@ -8,6 +8,7 @@ import safeArtifacts from '../fixtures/safe-1.4.1.json'
 
 const m = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
+  chainId: 8453,
   safe: false,
   fee: vi.fn(),
   build: vi.fn(),
@@ -29,11 +30,14 @@ vi.mock('@/lib/launch-multisig', async importOriginal => ({
   verifyCreatedLaunchMultisigs: m.multisigReceipt,
   verifyLaunchMultisigSimulation: m.multisigSimulation,
 }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account, chainId: m.chainId }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
   SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
 }))
-vi.mock('@/lib/transaction-review', () => ({ requireFundingChainSelection: m.funding }))
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
+  requireFundingChainSelection: m.funding,
+}))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectCreationFee: m.fee }))
@@ -126,6 +130,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
   m.account = ACCOUNT
+  m.chainId = 8453
   m.safe = false
   m.pending.mockReturnValue(null)
   storage = new Map()
@@ -323,9 +328,20 @@ describe('relayed launch execution and recovery', () => {
     ] }))
     m.funding.mockResolvedValue(11155111)
     await run()
-    expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Chain 11155111') }])
+    expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Chain 11155111') }], 8453)
     expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
+  })
+
+  it('preselects the chain the wallet was on when the launch started, not a chain signing switched to', async () => {
+    const forward = m.forward.getMockImplementation()!
+    m.forward.mockImplementation(async (...args: Parameters<typeof forward>) => {
+      m.chainId = args[0].chainId
+      return forward(...args)
+    })
+    await run()
+    expect(m.chainId).toBe(10)
+    expect(m.funding).toHaveBeenCalledExactlyOnceWith(expect.any(Array), 8453)
   })
 
   it('validates quote destination bindings before presenting its funding choices', async () => {

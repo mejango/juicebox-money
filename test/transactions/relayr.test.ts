@@ -94,7 +94,15 @@ describe('Relayr deterministic planning', () => {
         calldata: '0x',
         target: TARGET,
       }),
-    ).toBe('Optimism — ~0.00100 ETH')
+    ).toBe('Optimism (0.001 ETH)')
+    expect(
+      relayrPaymentLabel({
+        chain: 11155111,
+        amount: '123456789000000',
+        calldata: '0x',
+        target: TARGET,
+      }),
+    ).toBe('Chain 11155111 (~0.000123 ETH)')
   })
 })
 

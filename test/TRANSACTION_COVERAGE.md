@@ -124,18 +124,27 @@ Legend:
 - Bendystraw HTTP/GraphQL failures, bounded pagination, mismatched shop rows,
   and partial-chain failure reporting: covered in `data/bendystraw.test.ts`.
 - Review cancellation, unavailable reviewer, and mutation during review:
-  covered in `transactions/review.test.ts`.
+  covered in `transactions/review.test.ts`. A closed review or fee picker is
+  reported as itself, never as a wallet cancel, in `errors.test.ts`.
 - Safe signature order and outer `execTransaction` encoding: covered in
   `transactions/safe.test.ts`; account checks, simulation failure, confirmed,
   reverted, and submitted-but-unconfirmed writes are covered in
   `transactions/safe-orchestration.test.ts`. Safe-app authority calls wait for
   the proposal's execution hash before receipt and postcondition checks in
   `transactions/authority-gas.test.ts`.
+- Reviewed gas is sent gas: direct authority calls review the gas limit they
+  send and Safe-app calls review the `safeTxGas` it becomes
+  (`transactions/authority-gas.test.ts`); Safe signatures review the exact
+  signed `safeTxGas` (`transactions/safe-orchestration.test.ts`). The review
+  shows both, warning on a nonzero `safeTxGas`, in
+  `components/transaction-review-gas.test.tsx`.
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
   `transactions/relayr-orchestration.test.ts`.
-- Funding-chain selection is explicit and quote-bound. Published authorizations
+- Funding-chain selection is quote-bound and confirmed by the person. It
+  preselects the wallet's chain from before any switch when quoted, else a
+  lone quote, else nothing. Published authorizations
   survive cancelled funding and unknown quote responses; payment intent is
   persisted before the wallet sends. Canonical destination verification,
   ineligible-bundle rejection, single-chain direct execution, and unpaid recovery revalidation are

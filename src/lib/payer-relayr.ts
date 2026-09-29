@@ -354,6 +354,7 @@ async function findSafePayerExecution(call: PayerDeploymentCall, outcome: PayerD
 
 /** Resolve existing outcomes only; never submit replacement clones when a send is uncertain. */
 export async function runPayerDeployments(review: PayerDeploymentSession, onUpdate: (session: PayerDeploymentSession) => void): Promise<PayerDeploymentSession> {
+  const startChainId = getAccount(wagmiConfig).chainId
   return locked(aliases(review), async () => {
     if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('This browser cannot coordinate payer deployments across tabs. Use a browser with Web Locks support.')
     const original = readJournal(review.id)
@@ -404,7 +405,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       if (session.phase === 'quoted') {
         const payments = relayrPaymentOptions(session.quote, session.calls.map(call => call.chainId))
         if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
-        const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })))
+        const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
         const payment = payments.find(item => item.chain === fundingChain)
         if (!payment) throw new Error('Choose one of the quoted funding chains.')
         const reverify = async () => {

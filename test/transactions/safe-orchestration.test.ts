@@ -70,6 +70,7 @@ vi.mock('@/lib/transaction-simulation', () => ({
 
 import {
   canonicalSafeTxHash,
+  confirmSafeTx,
   executeSafeTx,
   deploySafeSameAddress,
   findPendingSafeCall,
@@ -874,6 +875,30 @@ describe('Safe retry and terminal-state orchestration', () => {
     })
 
     expect(results.map(row => row.nonce)).toEqual([7, 8])
+  })
+
+  it('reviews the exact safeTxGas a co-signature commits to', async () => {
+    const previousFetch = globalThis.fetch
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+    mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
+    try {
+      await confirmSafeTx(1, SAFE, { ...queued([]), safeTxGas: '150000' }, ALICE)
+      const review = mocks.requireReview.mock.calls[0][0]
+      expect(review).toMatchObject({ kind: 'authorization' })
+      expect(review.calls).toEqual([
+        expect.objectContaining({ to: TARGET, safeTxGas: 150_000n }),
+      ])
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.objectContaining({ safeTxGas: 150_000n }) }),
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/confirmations/'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    } finally {
+      vi.stubGlobal('fetch', previousFetch)
+    }
   })
 
   it('paginates the hosted queue before deciding an exact proposal is absent', async () => {

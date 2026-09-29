@@ -616,6 +616,7 @@ async function signSafeTx(
         to: tx.to,
         value: BigInt(tx.value ?? 0),
         data: tx.data ?? '0x',
+        safeTxGas: message.safeTxGas,
         label: label ?? `Safe transaction #${tx.nonce}`,
         abi: reviewCall?.abi,
         functionName: reviewCall?.functionName,
