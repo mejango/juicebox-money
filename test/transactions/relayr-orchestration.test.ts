@@ -246,7 +246,7 @@ describe('Relayr quote and payment boundaries', () => {
     expect(mocks.requireReview).toHaveBeenCalledTimes(1)
     expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
       description: expect.stringContaining('Create the owner Safe with 2 of 3 approvals.'),
-      calls: [prerequisite, expect.objectContaining({ from: ALICE, to: TARGET, data: call.data, value: 5n })],
+      calls: [prerequisite, expect.objectContaining({ from: ALICE, to: TARGET, data: call.data, value: 5n, gas: 700_000n })],
       authorization: expect.objectContaining({ message: expect.objectContaining({ from: ALICE, to: TARGET,
         data: call.data, value: 5n, gas: 700_000n, nonce: 4n }) }),
     }))

@@ -857,6 +857,7 @@ export async function buildForwardedTx(
         from: expectedAccount,
         to: call.target,
         value,
+        gas: request.gas,
         data: call.data,
         label: call.label ?? 'Relayed Juicebox transaction',
         abi: call.abi,
