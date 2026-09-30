@@ -142,13 +142,16 @@ export function ProjectTabs({
   tabs,
   sidebar,
   activity,
+  activityLabel = 'Activity',
 }: {
   tabs: TabDef[]
   sidebar: ReactNode
   activity: ReactNode
+  /** The label of the single-column tab that shows `activity`, which also names its hash. */
+  activityLabel?: string
 }) {
   const firstSlug = tabSlug(tabs[0]?.label ?? '')
-  const activitySlug = tabSlug('Activity')
+  const activitySlug = tabSlug(activityLabel)
   const [activeSlug, setActiveSlug] = useState(firstSlug)
   const [isSingleColumn, setIsSingleColumn] = useState(false)
   const [overflowExpanded, setOverflowExpanded] = useState(false)
@@ -265,7 +268,7 @@ export function ProjectTabs({
                 className={`${buttonClasses(activityActive)} min-[801px]:hidden`}
               >
                 <ProjectTabIcon label="Activity" />
-                Activity
+                {activityLabel}
               </button>
               {[...visibleTabs, ...(overflowExpanded ? overflowTabs : [])].map(tab => {
                 const slug = tabSlug(tab.label)
