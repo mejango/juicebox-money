@@ -156,6 +156,18 @@ describe('buyback direction across the project, home, and account feeds', () => 
     expect(plainAction(parts)).not.toContain('reserve')
   })
 
+  it('names a pool buy once when the project reserves none of it', () => {
+    // Base tx 0x8dfa28a2…: the hook burned its 3.32 SBB pool output and
+    // reminted all of it to the payer.
+    const count = '3323155319487796108'
+    const parts = combinedActivityParts([
+      pay,
+      event({ ...swap, swapEvent: { ...swap.swapEvent!, projectTokenAmount: count } }),
+      event({ ...mint, mintTokensEvent: { ...mint.mintTokensEvent!, beneficiaryTokenCount: count } }),
+    ], 'SBB')
+    expect(plainAction(parts)).toBe('bought 3.32 SBB via the buyback pool')
+  })
+
   it("hides the hook's own remint when a cash out sells through the pool", () => {
     // The terminal burns the holder's tokens, then the hook remints the same
     // count to itself and sells it. That mint is plumbing, not a receipt.
@@ -172,6 +184,15 @@ describe('buyback direction across the project, home, and account feeds', () => 
       'cashed out 2.39 SBB and sold 2.34 SBB via the buyback pool',
     )
     expect(parts.actions).toHaveLength(2)
+
+    // The terminal reclaimed nothing: the row's amount is what the sale paid.
+    const poolCashOut = event({
+      ...cashOut,
+      cashOutTokensEvent: { ...cashOut.cashOutTokensEvent!, reclaimAmount: '0', reclaimAmountUsd: '0' },
+    })
+    expect(combinedActivityParts([poolCashOut, swapOf('sell'), hookRemint], 'SBB').amountRaw).toBe(
+      '23000000000000',
+    )
   })
 
   it('does not pair a sale\'s internal mint with a pool purchase', () => {
@@ -299,6 +320,22 @@ describe('combinedActivityParts', () => {
     expect(sentence.match(/ got /g)).toHaveLength(2)
     expect(sentence.match(/after the 38% reserve/g)).toHaveLength(2)
     expect(sentence).not.toContain('bought')
+
+    // With no reserve the remints still name who got what: a fan-out hides its swaps.
+    const unreserved = combinedActivityParts(
+      [
+        payOf('p1', '0xalice', '4000000000000000'),
+        swapOf('s1', '100000000000000000000'),
+        mintOf('m1', '0xalice', '100000000000000000000'),
+        payOf('p2', '0xbob', '6000000000000000'),
+        swapOf('s2', '200000000000000000000'),
+        mintOf('m2', '0xbob', '200000000000000000000'),
+      ],
+      'ART',
+    )
+    const unreservedSentence = renderToStaticMarkup(<>{unreserved.action}</>)
+    expect(unreservedSentence.match(/ got /g)).toHaveLength(2)
+    expect(unreservedSentence).not.toContain('bought')
   })
 
   it('drops the mint record when the pay itself issued the tokens', () => {
