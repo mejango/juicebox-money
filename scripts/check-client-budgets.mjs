@@ -68,7 +68,10 @@ const budgets = {
   // Safe-aware screens once the peer is read) and letting the Safe execution wait
   // read the chain measure 2464.1 KiB against 2463.8 KiB before on the same SDK
   // build; round up to the next KiB. Route caps are unchanged.
-  allScripts: 2465 * KIB,
+  // axios 1.20.0 (in Para's lazy chunk, +1.0), DOMPurify 3.4.16 (+0.4) and Next 16.3.8's
+  // client runtime (+0.2) measure 2465.8 KiB against 2464.3 KiB on the same toolchain;
+  // allow 1.2 KiB of headroom. Route, largest-chunk and lazy-load caps are unchanged.
+  allScripts: 2467 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
