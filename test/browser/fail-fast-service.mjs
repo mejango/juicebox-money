@@ -481,6 +481,34 @@ function operationNameOf(canonical) {
     : undefined
 }
 
+// Trending rows beyond the first. The home page's project links only show the
+// prefetch-loop failure once five or more are in view, so the Trending panel
+// needs a fold of them; each is its own sucker group and so its own link.
+const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
+  id: `browser-fixture-group-${projectId}`,
+  version: 6,
+  volume: '1000000000',
+  trendingScore: String(1_000_000 - projectId),
+  paymentsCount: 3,
+  projects: {
+    items: [
+      {
+        projectId,
+        chainId: CHAIN_ID,
+        name: `Browser Sample Project ${projectId}`,
+        logoUri: null,
+        metadataUri: null,
+        projectTagline: 'Deterministic V6 trending card.',
+        tokenSymbol: 'USDC',
+        decimals: 6,
+        suckerGroupId: `browser-fixture-group-${projectId}`,
+        volume: '1000000000',
+        paymentsCount: 3,
+      },
+    ],
+  },
+}))
+
 const graphqlFixtures = [
   {
     name: 'pendingPayments',
@@ -791,6 +819,7 @@ const graphqlFixtures = [
               ],
             },
           },
+          ...trendingSampleGroups,
         ],
       },
     },

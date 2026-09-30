@@ -1,7 +1,7 @@
-import Link from "next/link";
 import type { JBChainId } from "@bananapus/nana-sdk-core";
 import { ChainIcon } from "@/components/ChainIcon";
 import { Expandable } from "@/components/Expandable";
+import { ProjectLink } from "@/components/ProjectLink";
 import { RichContent } from "@/components/RichContent";
 import { CopyProjectAuditPrompt } from "@/components/project/CopyProjectAuditPrompt";
 import { FundingChart } from "@/components/project/FundingChart";
@@ -197,12 +197,12 @@ export function OverviewTab({
                   {chainName(id)}
                 </dt>
                 <dd>
-                  <Link
+                  <ProjectLink
                     href={`/${toUrn(id, pid)}`}
                     className="text-ink hover:underline"
                   >
                     Project #{pid}
-                  </Link>
+                  </ProjectLink>
                 </dd>
               </div>
             ))}

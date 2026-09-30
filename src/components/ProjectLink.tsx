@@ -7,11 +7,18 @@ import {
   type ProjectNavigationHint,
 } from '@/lib/project-navigation'
 
-type Props = ComponentProps<typeof Link> & {
-  projectHint: ProjectNavigationHint
+type Props = Omit<ComponentProps<typeof Link>, 'prefetch'> & {
+  projectHint?: ProjectNavigationHint
 }
 
-/** A normal Next link which makes already-visible project identity reusable. */
+/**
+ * A Next link to a project route. Given a hint, it makes already-visible
+ * project identity reusable.
+ *
+ * It never prefetches: once more than four links to a dynamic route whose
+ * segment holds a `:` (every `chain:id` project URN) are in view, Next's
+ * prefetcher requests those routes again without end.
+ */
 export function ProjectLink({
   href,
   projectHint,
@@ -22,13 +29,16 @@ export function ProjectLink({
   ...props
 }: Props) {
   const remember = () => {
-    if (typeof href === 'string') rememberProjectNavigation(href, projectHint)
+    if (projectHint && typeof href === 'string') {
+      rememberProjectNavigation(href, projectHint)
+    }
   }
 
   return (
     <Link
       {...props}
       href={href}
+      prefetch={false}
       onPointerEnter={event => {
         remember()
         onPointerEnter?.(event)
