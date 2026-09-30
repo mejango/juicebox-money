@@ -106,5 +106,43 @@ describe.each(Object.keys(sheets) as (keyof typeof sheets)[])(
       expect(markup).not.toContain('javascript:')
       expect(markup).not.toContain('text/html')
     })
+
+    // An icon is drawn when it starts with one of these image types and then `;` or `,`, whatever the case. Nothing else is.
+    const iconTile = async (icon: string) => {
+      mocks.connectors = [{ id: 'probe', name: 'Probe', icon }]
+      let renderer!: TestRenderer.ReactTestRenderer
+      await act(async () => {
+        renderer = TestRenderer.create(sheets[name]())
+      })
+      return renderer.root.findAll(
+        node => node.type === 'button' && node.props['aria-label'] === 'Probe',
+      )[0]
+    }
+
+    it.each([
+      ['a PNG', 'data:image/png;base64,iVBORw0KGgo='],
+      ['a WebP', 'data:image/webp;base64,UklGRg=='],
+      ['a JPEG', 'data:image/jpeg;base64,/9j/4AAQ'],
+      ['a GIF', 'data:image/gif;base64,R0lGODlh'],
+      [
+        'a scheme and image type in capitals',
+        'DATA:IMAGE/PNG;base64,iVBORw0KGgo=',
+      ],
+    ])('draws %s', async (_label, icon) => {
+      const tile = await iconTile(icon)
+
+      expect(tile.findAllByType('img').map(img => img.props.src)).toEqual([icon])
+    })
+
+    it.each([
+      ['image/jpg, which the list spells jpeg', 'data:image/jpg;base64,/9j/4AAQ'],
+      ['an image type the list leaves out', 'data:image/x-icon;base64,AAABAA=='],
+      ['an SVG type with no payload after it', 'data:image/svg+xml'],
+    ])('draws the generic mark for %s', async (_label, icon) => {
+      const tile = await iconTile(icon)
+
+      expect(tile.findAllByType('img')).toHaveLength(0)
+      expect(tile.findAllByType('svg')).toHaveLength(1)
+    })
   },
 )
