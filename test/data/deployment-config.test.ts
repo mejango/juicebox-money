@@ -82,11 +82,13 @@ describe('starting the server', () => {
   const { NEXT_PUBLIC_VERSION: _revision, ...withoutVersion } = buildEnv
 
   it('takes the revision from Railway when no version is set', () => {
+    const result = start({
+      ...withoutVersion,
+      RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef',
+    })
     // The app is not there to load, so a start that gets past the check fails on that, not on the configuration.
-    expect(
-      start({ ...withoutVersion, RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef' })
-        .refused,
-    ).toBe(false)
+    expect(result.refused).toBe(false)
+    expect(result.stderr).toContain('server.js')
   })
 
   it('keeps the version it is given over the one from Railway', () => {

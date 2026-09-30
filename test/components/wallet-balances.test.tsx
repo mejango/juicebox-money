@@ -77,6 +77,12 @@ describe('the wallet balances in the account menu', () => {
     ['the smallest amount that is not dust', '0.0001', 10n ** 14n],
     ['a whole amount', '1', 10n ** 18n],
     ['more decimals than four, rounded', '1.2346', 1_234_567_890_000_000_000n],
+    ['a decimal tie in the fifth place, rounded up', '0.0002', 150_000_000_000_000n],
+    [
+      'a decimal tie in the fifth place of a larger amount, rounded up',
+      '12.3457',
+      12_345_650_000_000_000_000n,
+    ],
     ['thousands, grouped', '1,234.5', 1_234_500_000_000_000_000_000n],
     ['millions, grouped', '1,000,000', 10n ** 24n],
   ])('reads %s as %s ETH', async (_name, expected, wei) => {
