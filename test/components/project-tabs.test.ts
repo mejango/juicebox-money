@@ -166,3 +166,48 @@ describe('project tab alias revalidation', () => {
     await act(async () => renderer.unmount())
   })
 })
+
+describe('the single-column activity tab', () => {
+  async function clickActivityTab(activityLabel?: string) {
+    const win = fakeProjectWindow('/base:7')
+    win.matchMedia = () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })
+    vi.stubGlobal('window', win)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(ProjectTabs, {
+          tabs: [{ label: 'Overview', content: 'overview' }],
+          sidebar: 'sidebar',
+          activity: 'activity',
+          ...(activityLabel ? { activityLabel } : {}),
+        }),
+      )
+    })
+    const [tab] = renderer.root.findAll(
+      node => node.type === 'button' && node.props['aria-selected'] === true,
+    )
+    const label = tab.children.filter(child => typeof child === 'string')
+    await act(async () => tab.props.onClick())
+    await act(async () => renderer.unmount())
+    return { label, hash: win.nativeReplaceState.mock.lastCall?.[2] }
+  }
+
+  it('reads Activity and keeps #activity by default', async () => {
+    expect(await clickActivityTab()).toEqual({
+      label: ['Activity'],
+      hash: '#activity',
+    })
+  })
+
+  it('takes its label, and the hash it keeps, from activityLabel', async () => {
+    expect(await clickActivityTab('Latest')).toEqual({
+      label: ['Latest'],
+      hash: '#latest',
+    })
+  })
+})
