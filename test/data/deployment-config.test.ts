@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GET as health } from '@/app/api/healthz/route'
 import {
@@ -13,6 +16,8 @@ const buildEnv = {
   NEXT_PUBLIC_PARA_ENV: 'PROD',
   NEXT_PUBLIC_VERSION: 'abcdef1234567890',
 }
+
+const root = fileURLToPath(new URL('../..', import.meta.url))
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -51,6 +56,58 @@ describe('deployment configuration', () => {
       'build',
     )
     expect(errors.join('\n')).not.toContain(secret)
+  })
+})
+
+describe('starting the server', () => {
+  // Runs the container's start script with exactly this environment. It stops on an invalid one before it loads the app.
+  function start(env: Record<string, string>) {
+    const { status, stderr } = spawnSync(
+      process.execPath,
+      [join(root, 'scripts', 'start-production.mjs')],
+      {
+        env: env as NodeJS.ProcessEnv,
+        encoding: 'utf8',
+        timeout: 10_000,
+        killSignal: 'SIGKILL',
+      },
+    )
+    return {
+      status,
+      stderr,
+      refused: stderr.includes('Invalid all deployment configuration'),
+    }
+  }
+
+  const { NEXT_PUBLIC_VERSION: _revision, ...withoutVersion } = buildEnv
+
+  it('takes the revision from Railway when no version is set', () => {
+    // The app is not there to load, so a start that gets past the check fails on that, not on the configuration.
+    expect(
+      start({ ...withoutVersion, RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef' })
+        .refused,
+    ).toBe(false)
+  })
+
+  it('keeps the version it is given over the one from Railway', () => {
+    const result = start({
+      ...withoutVersion,
+      NEXT_PUBLIC_VERSION: 'unknown',
+      RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef',
+    })
+    expect(result.refused).toBe(true)
+    expect(result.stderr).toContain(
+      '- NEXT_PUBLIC_VERSION must identify the built revision',
+    )
+  })
+
+  it.each([
+    ['no Railway revision', {}],
+    ['a blank Railway revision', { RAILWAY_GIT_COMMIT_SHA: '  ' }],
+  ])('stops with %s, and never takes the text "undefined" for a revision', (_case, railway) => {
+    const result = start({ ...withoutVersion, ...railway })
+    expect(result.refused).toBe(true)
+    expect(result.stderr).toContain('- NEXT_PUBLIC_VERSION is required')
   })
 })
 

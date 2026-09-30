@@ -74,7 +74,7 @@ if (
 
 if (
   !productionStart.includes('process.env.RAILWAY_GIT_COMMIT_SHA') ||
-  !productionStart.includes('process.env.NEXT_PUBLIC_VERSION ||=')
+  !productionStart.includes('process.env.NEXT_PUBLIC_VERSION = railwayRevision')
 ) {
   throw new Error('runtime must recover the revision from Railway before validation')
 }

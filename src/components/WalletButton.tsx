@@ -12,7 +12,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, formatUnits, type Address } from 'viem'
+import { erc20Abi, type Address } from 'viem'
 import { useAccount, useBalance, useConfig, useReadContract } from 'wagmi'
 import { getBalance, readContract } from 'wagmi/actions'
 import { AddressLabel } from '@/components/ui/AddressLabel'
@@ -22,6 +22,7 @@ import { useOutsideClose } from '@/hooks/useOutsideClose'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { preloadParaHost } from '@/providers/preload-para'
+import { formatTokenAmount } from '@/lib/format'
 import { parseUrn } from '@/lib/urn'
 import {
   projectHandleFromRoute,
@@ -41,9 +42,7 @@ function formatWalletBalance(
   symbol: string,
 ) {
   if (value === undefined) return 'Loading…'
-  return `${Number(formatUnits(value, decimals)).toLocaleString(undefined, {
-    maximumFractionDigits: 4,
-  })} ${symbol}`
+  return `${formatTokenAmount(value, decimals)} ${symbol}`
 }
 
 function BalanceRow({ label, value }: { label: string; value: string }) {
