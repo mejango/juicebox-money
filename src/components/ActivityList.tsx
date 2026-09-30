@@ -543,11 +543,19 @@ export function combinedActivityParts(
     .sort((a, b) =>
       descending(a.mintTokensEvent!.beneficiaryTokenCount, b.mintTokensEvent!.beneficiaryTokenCount),
     )
+  // With no reserve cut, the remint is the pool output the swap fragment
+  // already names. A fan-out hides its swaps, so its remints stay: they say
+  // who got what.
+  const restated = new Set<BsActivityEvent>()
   mints.forEach((entry, index) => {
     if (!canPairRemints) return
     const swapEvent = swaps[index]
     const mintIndex = ordered.indexOf(entry)
     const mint = entry.mintTokensEvent!
+    if (!fanOut && swapEvent?.projectTokenAmount === mint.beneficiaryTokenCount) {
+      restated.add(entry)
+      return
+    }
     const reservePercent = swapEvent
       ? reservePercentLabel(swapEvent.projectTokenAmount, mint.beneficiaryTokenCount)
       : null
@@ -614,6 +622,7 @@ export function combinedActivityParts(
   const withFragments =
     ordered.length > 1
       ? ordered.filter(entry => {
+          if (restated.has(entry)) return false
           if (entry.sendReservedTokensToSplitsEvent) return !hasReceipts
           if (entry.swapEvent?.direction.toLowerCase() === 'buy' && fanOut) return false
           if (!entry.payEvent) return true
@@ -636,9 +645,10 @@ export function combinedActivityParts(
     amountUsd: fanOut
       ? sumOf(pays.map(entry => entry.payEvent!.amountUsd))
       : parts.find(part => part.amountUsd != null)?.amountUsd,
+    // A cash out sold through the pool reclaims "0"; the sale's proceeds follow.
     amountRaw: fanOut
       ? sumOf(pays.map(entry => entry.payEvent!.amount))
-      : parts.find(part => part.amountRaw != null)?.amountRaw,
+      : parts.find(part => part.amountRaw != null && part.amountRaw !== '0')?.amountRaw,
     // A distribution is done "by" its caller; its receipts' inbound flow is
     // theirs, not the row's.
     direction: distributed
