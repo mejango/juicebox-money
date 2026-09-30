@@ -1,7 +1,7 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import Link from 'next/link'
 import { zeroAddress, type Address } from 'viem'
 import { AddressLink } from '@/components/ui/AddressLink'
+import { ProjectLink } from '@/components/ProjectLink'
 import { isStickyHook } from '@/lib/sticky'
 import { toUrn } from '@/lib/urn'
 import { StickyRecipient } from './StickyRecipient'
@@ -44,12 +44,12 @@ export function SplitRecipient({
   }
   if (split.projectId > 0n) {
     return (
-      <Link
+      <ProjectLink
         href={`/${toUrn(chainId, Number(split.projectId))}`}
         className="text-ink hover:underline"
       >
         Project #{split.projectId.toString()}
-      </Link>
+      </ProjectLink>
     )
   }
   if (showBurn && split.beneficiary.toLowerCase() === BURN_ADDRESS) {
