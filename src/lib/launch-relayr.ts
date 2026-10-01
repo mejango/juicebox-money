@@ -461,8 +461,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce,
       plan.multisigs?.length ? {
         description: launchMultisigReview(plan),
+        // The review shows the arguments these exact bytes carry.
         calls: buildSafeDeploymentCalls(plan.multisigs).map(call => ({ chainId, to: call.target,
           data: call.callData, value: call.value, abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
+          args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
           label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig`, contractName: 'Safe Proxy Factory' })),
       } : undefined)
       const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })

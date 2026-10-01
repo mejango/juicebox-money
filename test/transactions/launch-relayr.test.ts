@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { CREATE_BATCH_ABI, MULTICALL3, SAFE_FACTORY, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
+import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import type { LaunchPlan } from '@/lib/launch'
 import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 import safeArtifacts from '../fixtures/safe-1.4.1.json'
@@ -205,6 +206,13 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward.mock.calls[0][3]).toMatchObject({
       calls: [{ to: SAFE_FACTORY, functionName: 'createProxyWithNonce' }],
     })
+    // The review decodes the factory call's own bytes, down to the Safe's owners and threshold.
+    const [creation] = m.forward.mock.calls[0][3].calls
+    expect(functionFromCall(creation)?.name).toBe('createProxyWithNonce')
+    expect(describeSafeInitializer(1, creation.args?.[1])?.[0].rows).toEqual(expect.arrayContaining([
+      ['Owners', `${ACCOUNT}, ${TARGET}`],
+      ['Threshold', '2 of 2'],
+    ]))
     expect(m.forward.mock.calls[0][3].description).toContain(SAFE_PLAN.address)
     const client = clients.get(1)!
     expect(client.call).toHaveBeenCalledWith(expect.objectContaining({ to: MULTICALL3, data: entry.data,

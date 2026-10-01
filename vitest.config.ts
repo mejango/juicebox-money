@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.{ts,tsx}'],
-    setupFiles: ['./test/setup.ts', './test/dialog-shim.ts'],
+    setupFiles: ['./test/setup.ts', './test/dialog-shim.ts', './test/review-calls-setup.ts'],
     clearMocks: true,
     restoreMocks: true,
     unstubEnvs: true,
