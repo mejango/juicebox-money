@@ -65,6 +65,13 @@ export default defineConfig({
           functions: 80,
           lines: 82,
         },
+        // The step run behind the liquidity flows' approval-then-write sends.
+        'src/hooks/useStepRun.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 100,
+          lines: 95,
+        },
         'src/lib/bendystraw.ts': {
           statements: 60,
           branches: 60,
