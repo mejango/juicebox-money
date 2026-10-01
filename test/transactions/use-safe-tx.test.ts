@@ -232,6 +232,24 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.phase).toBe('idle')
   })
 
+  it('sends a request only from the account it was reviewed for', async () => {
+    mocks.account = BOB
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { reviewedAccount: ALICE })
+    })
+
+    expect(mocks.requestReview).toHaveBeenCalledWith(
+      { ...request, account: ALICE },
+      { label: 'Transfer' },
+    )
+    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
+    expect(hook.ref.current!.error).toMatch(/account changed/i)
+    expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+
   it('fails before simulation when switching changes the account', async () => {
     mocks.switchChain.mockImplementationOnce(async () => {
       mocks.account = BOB

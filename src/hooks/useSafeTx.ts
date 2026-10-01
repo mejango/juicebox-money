@@ -57,6 +57,12 @@ export type TxRequest = {
 }
 
 export type TxSendOptions = {
+  /**
+   * The account this request was built for: the one that reviewed it, and
+   * whose beneficiary, holder or recipient it names when it names one. Only
+   * that account may send it. Defaults to the connected account.
+   */
+  reviewedAccount?: Address
   reverify?: (request: TxRequest) => Promise<unknown>
   /** Persist an unknown-submission marker immediately before the wallet write. */
   beforeWrite?: () => unknown | Promise<unknown>
@@ -279,10 +285,11 @@ export function useSafeTx(chainId: number) {
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
+      const account = options?.reviewedAccount ?? address
       try {
         const txHash = await submitReviewedContractWrite({
           request,
-          expectedAccount: address,
+          expectedAccount: account,
           review: async reviewed => {
             // A review notice always opens the review, even where the caller
             // already rendered the payload — the notice exists precisely
@@ -297,7 +304,7 @@ export function useSafeTx(chainId: number) {
             const approved = await requestContractTransactionReview(
               {
                 ...reviewed,
-                account: address,
+                account,
                 // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
                 ...(viaSafe ? { safeTxGas: 0n } : {}),
               },
@@ -332,7 +339,7 @@ export function useSafeTx(chainId: number) {
               functionName: reviewed.functionName,
               args: reviewed.args as unknown[],
               value: reviewed.value,
-              account: address,
+              account,
               ...(options?.simulationBlockNumber !== undefined
                 ? { blockNumber: options.simulationBlockNumber }
                 : {}),
@@ -359,7 +366,7 @@ export function useSafeTx(chainId: number) {
         })
         setHash(txHash)
         if (viaSafe) setSafeProposalHash(txHash)
-        if (viaSafe && address) setSafeExecution({ safe: address, proposalHash: txHash })
+        if (viaSafe && account) setSafeExecution({ safe: account, proposalHash: txHash })
         setPhase('pending')
         return txHash
       } catch (e) {
