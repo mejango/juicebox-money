@@ -66,8 +66,8 @@ vi.mock('@/lib/cross-chain-authority', () => ({
   SAFE_TO_L2_SETUP_CODE_HASH:
     '0x2f25df28caf984366ee584e13241707e85dcd5a6ea0c14267928dafc1fd6274b',
 }))
-vi.mock('@/lib/transaction-simulation', () => ({
-  TRANSACTION_SIMULATION_GAS: 10_000_000n,
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({

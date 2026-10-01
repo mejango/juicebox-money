@@ -29,7 +29,6 @@ vi.mock('@/lib/relayr', () => ({
   relayrTargetSupportsForwarder: async () => true,
   runRelayrCalls: mocks.relayr,
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
-  relayrErrorIsDefiniteNoSubmission: (error: { code?: number }) => error?.code === 4001,
   relayrDestinationHash: (record: { hash: string }) => record.hash,
   relayrRecordChain: (record: { chain: number }) => record.chain,
 }))

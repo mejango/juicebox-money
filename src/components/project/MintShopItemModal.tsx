@@ -27,15 +27,16 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
+  gasWithHeadroom,
   isTransactionReceiptUnavailableError,
   waitForTrackedReceipt,
-} from '@/lib/receipt'
+} from '@bananapus/nana-sdk-core/review'
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
+  safeExecutionFailed,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import { buildMint721TierRequest } from '@/lib/transaction-builders'
@@ -171,6 +172,9 @@ export function MintShopItemModal({
         beneficiary: review.beneficiary,
       })
       setPhase('sending')
+      // Read once: the review, the sent gas and the tracking must agree on
+      // whether a Safe proposes this mint.
+      const viaSafe = isSafeConnection(config)
       let submitted = await submitReviewedContractWrite({
         request,
         expectedAccount: address,
@@ -180,16 +184,16 @@ export function MintShopItemModal({
               ...reviewed,
               account: address,
               // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-              ...(isSafeConnection(config) ? { safeTxGas: 0n } : {}),
+              ...(viaSafe ? { safeTxGas: 0n } : {}),
             },
             {
               title: `Review free mint on ${chainName(chainId)}`,
               label: `Mint ${review.quantity} × ${itemName}`,
               contractName: 'JB721TiersHook',
-              description: isSafeConnection(config)
+              description: viaSafe
                 ? SAFE_NONCE_GUIDANCE
                 : 'This consumes shop inventory and collects no payment. It cannot be undone.',
-              ...(isSafeConnection(config)
+              ...(viaSafe
                 ? { confirmLabel: 'Agree & continue to Safe' }
                 : {}),
             },
@@ -218,24 +222,34 @@ export function MintShopItemModal({
           ])
           return {
             ...simulated,
-            gas: isSafeConnection(config) ? 0n : gasWithHeadroom(estimate),
+            gas: viaSafe ? 0n : gasWithHeadroom(estimate),
           }
         },
-        write: simulated =>
-          writeContractAsync(
+        write: simulated => {
+          if (isSafeConnection(config) !== viaSafe) {
+            throw new Error('Wallet connection changed. Review the free mint again.')
+          }
+          return writeContractAsync(
             simulated as Parameters<typeof writeContractAsync>[0],
-          ),
+          )
+        },
         accountChangedError:
           'Connected account changed. Review the free mint again.',
       })
       setHash(submitted)
       setPhase('confirming')
-      if (isSafeConnection(config)) {
-        submitted = await waitForSafeExecutionHash(chainId, submitted)
+      const proposal = viaSafe ? submitted : null
+      if (proposal) {
+        submitted = await waitForSafeExecutionHash(chainId, proposal)
         setHash(submitted)
       }
       const receipt = await waitForTrackedReceipt(client, submitted)
-      if (receipt.status !== 'success') throw new Error('The mint failed.')
+      if (
+        receipt.status !== 'success' ||
+        (proposal && safeExecutionFailed(receipt, address, proposal))
+      ) {
+        throw new Error('The mint failed.')
+      }
 
       await Promise.all([
         queryClient.invalidateQueries({

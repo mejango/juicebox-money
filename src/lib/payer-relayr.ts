@@ -7,11 +7,11 @@ import { decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctio
 import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
 import { connectedWallet, publicClient } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { receiptHasSafeExecutionSuccess, SAFE_EXEC_ABI } from '@/lib/safe'
-import { relayrDestinationHash, relayrErrorIsDefiniteNoSubmission, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
+import { relayrDestinationHash, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
 import { relayrSupportsChains } from '@/lib/relayr-chains'
 
 const PREFIX = 'jb-payer-deploy-v1:'
@@ -441,7 +441,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           session.phase = 'executing'
           persist()
         } catch (error) {
-          if (!session.paymentHash && relayrErrorIsDefiniteNoSubmission(error)) {
+          if (!session.paymentHash && isDefiniteWalletRejection(error)) {
             session.phase = 'quoted'
             persist()
           }
@@ -532,7 +532,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             : { ...outcome, state: 'submitted', hash }
           persist()
         } catch (error) {
-          if (outcome.state === 'sending' && relayrErrorIsDefiniteNoSubmission(error)) {
+          if (outcome.state === 'sending' && isDefiniteWalletRejection(error)) {
             session.outcomes[index] = beforeSend
             persist()
           }

@@ -38,7 +38,7 @@ import {
 import {
   simulateStateChangingTransaction,
   TRANSACTION_SIMULATION_GAS,
-} from '@/lib/transaction-simulation'
+} from '@bananapus/nana-sdk-core/review'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,

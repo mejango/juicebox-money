@@ -20,7 +20,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import {
   buildForwardedTx,
   TRUSTED_FORWARDER_ABI,
@@ -107,16 +107,6 @@ function requestOf(signed: SignedLaunch, plan: LaunchSession['plans'][number]) {
     throw new Error('The saved launch authorization changed.')
   }
   return request
-}
-
-function walletRejected(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
 }
 
 /**
@@ -555,7 +545,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         persist() // reload during the wallet prompt cannot silently pay again
       })
     } catch (error) {
-      if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
+      if (journal.phase === 'payment-signing' && !journal.paymentHash && isDefiniteWalletRejection(error)) {
         journal.phase = 'quoted'
         delete journal.paymentChainId
         delete journal.paymentDeadline

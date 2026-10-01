@@ -21,7 +21,7 @@ import {
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { relayrSupportsChain, relayrSupportsChains, relayrPaymentChains } from '@/lib/relayr-chains'
@@ -236,17 +236,6 @@ export class RelayrPaymentSendingError extends Error {
 class RelayrPaymentRevertedError extends Error {
   readonly name = 'RelayrPaymentRevertedError'
   constructor() { super('Relayr payment reverted onchain.') }
-}
-
-/** Only an explicit wallet rejection proves that this send did not happen. */
-export function relayrErrorIsDefiniteNoSubmission(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
 }
 
 export function relayrStateIsSuccess(state?: string): boolean {
@@ -1251,7 +1240,7 @@ export async function relayrPay(
       gas: viaSafe ? 0n : RELAYR_PAYMENT_GAS,
     })
   } catch (error) {
-    if (relayrErrorIsDefiniteNoSubmission(error)) throw error
+    if (isDefiniteWalletRejection(error)) throw error
     throw new RelayrPaymentSendingError()
   }
   const submittedHash = hash
@@ -1683,7 +1672,7 @@ async function executeRelayrCalls({
       if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     })
   } catch (error) {
-    if (pendingScope && relayrErrorIsDefiniteNoSubmission(error)) {
+    if (pendingScope && isDefiniteWalletRejection(error)) {
       saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: 'unpaid', paymentHash: null })
     }
     throw error

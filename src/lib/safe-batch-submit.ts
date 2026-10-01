@@ -16,9 +16,9 @@ import {
   packMultiSend,
   type BatchStep,
 } from '@/lib/safe-batch'
+import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
-  simulateCallSequence,
   type SequenceCall,
 } from '@/lib/safe-batch-connector'
 import { isSafeConnection } from '@/lib/safe-connector'
@@ -307,7 +307,7 @@ export async function submitSafeBatch({
   }
 
   onProgress?.(`Simulating ${calls.length} calls from the Safe…`)
-  await simulateCallSequence(client, authority, chainId, sequence)
+  await simulateCallSequence(client, { from: authority, calls: sequence, chainName: chainName(chainId) })
 
   const code = await client.getCode({ address: MULTI_SEND_CALL_ONLY })
   if (!code || code === '0x') {

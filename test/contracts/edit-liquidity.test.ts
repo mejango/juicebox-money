@@ -377,7 +377,7 @@ describe('LP edit encoders', () => {
   })
 
   it('renders an increase plan as a readable step in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
+    const { describeV4UnlockData } = await import('@bananapus/nana-sdk-core/review/decode')
     const steps = describeV4UnlockData(
       buildIncreaseLiquidityUnlockData({
         tokenId: 7n,

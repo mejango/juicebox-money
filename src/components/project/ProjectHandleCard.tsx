@@ -31,7 +31,7 @@ import {
   readDirectEnsProjectRecord,
 } from '@/lib/project-handles'
 import { chainName } from '@/lib/urn'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
 import {
   deploySafeSameAddress,

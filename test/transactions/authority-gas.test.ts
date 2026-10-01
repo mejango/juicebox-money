@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import { toEventSelector, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -57,7 +57,8 @@ vi.mock('@/lib/cross-chain-authority', () => ({
   readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
-vi.mock('@/lib/safe-connector', () => ({
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: mocks.isSafeConnection,
   SAFE_NONCE_GUIDANCE: 'Choose the correct Safe nonce.',
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
@@ -136,7 +137,11 @@ beforeEach(() => {
     if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
-  mocks.client.waitForTransactionReceipt.mockResolvedValue({ status: 'success' })
+  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    transactionHash: hash,
+    status: 'success',
+    logs: [],
+  }))
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
   let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
@@ -502,6 +507,51 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       HASH,
     )
     expect(result.directResults).toEqual([DESTINATION_HASH])
+  })
+
+  it('fails a Safe app proposal whose execution logged ExecutionFailure', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({
+      kind: 'safe',
+      threshold: 2,
+      owners: [ALICE],
+    })
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      destination: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      matches: true,
+    })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    // A nonzero safeTxGas set in Safe makes a failed call log ExecutionFailure
+    // (Safe 1.3 puts the safeTxHash in the data) inside a successful receipt.
+    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash,
+      status: 'success',
+      logs: [
+        {
+          address: SAFE,
+          topics: [toEventSelector('ExecutionFailure(bytes32,uint256)')],
+          data: `${HASH}${'00'.repeat(32)}`,
+        },
+      ],
+    }))
+
+    await expect(
+      runAuthorityCalls({
+        calls: [
+          {
+            chainId: 1,
+            detectionChainId: 10,
+            authority: SAFE,
+            target: TARGET,
+            data: '0x1234',
+            label: 'Set the terminal',
+          },
+        ],
+      }),
+    ).rejects.toThrow('Set the terminal reverted after Safe execution.')
   })
 
   it('reuses an exact pending Safe app proposal without sending a duplicate', async () => {

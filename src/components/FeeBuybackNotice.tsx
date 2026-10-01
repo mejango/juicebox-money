@@ -3,46 +3,22 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   checkFeeBuyback,
+  combineFeeResults,
   createFeeWatch,
   feeMessage,
   feeReceipt,
+  feeReviewConfirmLabel,
+  isFeePayingCall,
   type FeeCall,
   type FeeResult,
 } from '@bananapus/nana-sdk-core/v6/fee-buyback'
 import { feeBuybackContext } from '@/lib/fee-buyback-client'
 
 type Call = FeeCall & { chainId: number; functionName?: string }
-const candidate = (call: Call) =>
-  /^(borrowFrom|reallocateCollateralFromLoan|repayLoan|cashOutTokensOf|useAllowanceOf|sendPayoutsOf|processHeldFeesOf|pay)$/.test(
-    call.functionName ?? '',
-  )
 const initial: FeeResult = { status: 'unknown', fees: [] }
-const severity: Record<FeeResult['status'], number> = {
-  none: 0,
-  ready: 1,
-  unknown: 2,
-  fallback: 3,
-}
-
-/** A batch shows its worst fee status; each call's fees keep their own keys. */
-function combine(results: readonly FeeResult[]): FeeResult {
-  if (results.length === 1) return results[0]
-  const checkedAt = Math.min(...results.map(result => result.checkedAt ?? Infinity))
-  return {
-    status: results.reduce<FeeResult['status']>(
-      (worst, result) =>
-        severity[result.status] > severity[worst] ? result.status : worst,
-      'none',
-    ),
-    fees: results.flatMap((result, index) =>
-      result.fees.map(fee => ({ ...fee, key: `${index}:${fee.key}` })),
-    ),
-    ...(Number.isFinite(checkedAt) ? { checkedAt } : {}),
-  }
-}
 
 export function useFeeBuybackReview(calls: readonly Call[]) {
-  const enabled = calls.some(candidate)
+  const enabled = calls.some(isFeePayingCall)
   const [result, setResult] = useState<FeeResult>(initial)
   const [busy, setBusy] = useState(enabled)
   const [waiting, setWaiting] = useState(false)
@@ -55,7 +31,7 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
     let alive = true
     const stops: (() => void)[] = []
     // Every fee-paying call is simulated alone on its own chain.
-    const checked = calls.filter(candidate).map(call => {
+    const checked = calls.filter(isFeePayingCall).map(call => {
       try {
         return {
           call,
@@ -69,7 +45,7 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
     const publish = () => {
       if (!alive) return
       setAutoRefresh(checked.every(item => item.context))
-      setResult(combine(results))
+      setResult(combineFeeResults(results))
     }
     const monitors = checked.map(({ call, context }, index) =>
       createFeeWatch(
@@ -139,16 +115,7 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
       pending.current = watches.current.length
       for (const monitor of watches.current) void monitor.refresh()
     },
-    confirmLabel:
-      !enabled || result.status === 'none'
-        ? undefined
-        : busy
-          ? 'Checking fee return…'
-          : result.status === 'fallback'
-            ? 'Submit anyway'
-            : result.status === 'ready'
-              ? 'Review and submit'
-              : 'Submit without estimate',
+    confirmLabel: feeReviewConfirmLabel({ enabled, busy, status: result.status }),
   }
 }
 

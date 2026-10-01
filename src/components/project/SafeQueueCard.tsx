@@ -38,7 +38,6 @@ import { useWallet } from "@/hooks/useWallet";
 import {
   clearRelayrPendingSession,
   loadRelayrPendingSession,
-  relayrErrorIsDefiniteNoSubmission,
   relayrDestinationHash,
   relayrPay,
   relayrPaymentLabel,
@@ -103,7 +102,7 @@ import {
   readDirectEnsText,
 } from '@/lib/project-handles'
 import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { readBoundedSafeNonce } from '@/lib/safe-reads'
 import { rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
@@ -1626,7 +1625,7 @@ export function SafeQueueCard({
       if (
         paidSession?.paymentStatus === "sending" &&
         paidSession &&
-        relayrErrorIsDefiniteNoSubmission(batchError)
+        isDefiniteWalletRejection(batchError)
       ) {
         clearRelayrPendingSession(pendingScope);
         setPendingSession(null);

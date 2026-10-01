@@ -15,7 +15,10 @@ vi.mock('@wagmi/core', () => ({ getAccount: mocks.account, waitForTransactionRec
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ estimateGas: mocks.estimateGas }) }))
 vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: vi.fn() }))
-vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
+  simulateStateChangingTransaction: mocks.simulate,
+}))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.', waitForSafeExecutionHash: mocks.safeHash }))
 vi.mock('@/lib/launch-multisig', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/launch-multisig')>(),

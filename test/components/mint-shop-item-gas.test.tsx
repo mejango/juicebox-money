@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import type { Address, Hex } from 'viem'
+import { toEventSelector, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   review: vi.fn(),
   write: vi.fn(),
   waitSafe: vi.fn(),
+  receipt: vi.fn(),
   shop: vi.fn(),
   client: { readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn() },
 }))
@@ -16,6 +17,7 @@ const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const HOOK = '0x2222222222222222222222222222222222222222' as Address
 const STORE = '0x3333333333333333333333333333333333333333' as Address
 const PROPOSAL = `0x${'ab'.repeat(32)}` as Hex
+const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
 
 vi.mock('wagmi', () => ({
   useConfig: () => ({}),
@@ -39,23 +41,32 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ),
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ onConfirm }: { onConfirm: () => void }) => (
-    <button type="button" onClick={onConfirm}>Confirm mint</button>
+  TxConfirmDialog: ({ onConfirm, title, error }: { onConfirm: () => void; title: string; error?: string | null }) => (
+    <div>
+      <p>{title}</p>
+      {error ? <p>{error}</p> : null}
+      <button type="button" onClick={onConfirm}>Confirm mint</button>
+    </div>
   ),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
   getProject721Shop: mocks.shop,
 }))
-vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
-vi.mock('@/lib/safe-connector', () => ({
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
+  requireContractTransactionReview: mocks.review,
+}))
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: () => mocks.safe,
   SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.',
   waitForSafeExecutionHash: mocks.waitSafe,
 }))
-vi.mock('@/lib/receipt', () => ({
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   isTransactionReceiptUnavailableError: () => false,
-  waitForTrackedReceipt: async () => ({ status: 'success' }),
+  waitForTrackedReceipt: mocks.receipt,
 }))
 
 import { MintShopItemModal } from '@/components/project/MintShopItemModal'
@@ -84,6 +95,11 @@ beforeEach(() => {
   mocks.review.mockReset().mockResolvedValue(undefined)
   mocks.write.mockReset().mockResolvedValue(PROPOSAL)
   mocks.waitSafe.mockReset().mockResolvedValue(PROPOSAL)
+  mocks.receipt.mockReset().mockImplementation(async (_client: unknown, hash: Hex) => ({
+    status: 'success',
+    transactionHash: hash,
+    logs: [],
+  }))
   mocks.shop.mockReset().mockResolvedValue({ hook: HOOK })
   mocks.client.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) =>
     functionName === 'owner' ? ACCOUNT
@@ -112,5 +128,34 @@ describe('free mint gas', () => {
     // A Safe app signs the sent gas as safeTxGas.
     expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'mintFor', gas: 0n }))
     expect(mocks.waitSafe).toHaveBeenCalledWith(1, PROPOSAL)
+    expect(text()).toContain('Items minted')
+  })
+
+  it('reports a Safe execution that logged ExecutionFailure as a failed mint', async () => {
+    mocks.safe = true
+    // Safe{Wallet} executed at once and returned the execution's own hash; a
+    // nonzero safeTxGas turned the failed mint into ExecutionFailure.
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [{ address: ACCOUNT, topics: [EXECUTION_FAILURE, PROPOSAL], data: `0x${'00'.repeat(32)}` }],
+    }))
+    await mint()
+    expect(text()).toContain('The mint failed.')
+    expect(text()).not.toContain('Items minted')
+  })
+
+  it('stops before the wallet when the Safe connection changes after review', async () => {
+    mocks.review.mockImplementation(async () => {
+      // A WalletConnect peer read lands mid-flow: the reviewed call was not a Safe proposal.
+      mocks.safe = true
+    })
+    await mint()
+    expect(mocks.write).not.toHaveBeenCalled()
+    expect(text()).toContain('Wallet connection changed. Review the free mint again.')
   })
 })
+
+function text(): string {
+  return JSON.stringify(renderer.toJSON())
+}

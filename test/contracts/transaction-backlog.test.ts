@@ -493,7 +493,7 @@ describe('remaining local transaction builders', () => {
   })
 
   it('renders a move plan as readable steps in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
+    const { describeV4UnlockData } = await import('@bananapus/nana-sdk-core/review/decode')
     const mintParams = encodeAbiParameters(
       [
         {

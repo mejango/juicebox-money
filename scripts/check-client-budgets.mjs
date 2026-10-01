@@ -14,7 +14,11 @@ const budgets = {
     // ~423 KiB after that split. SDK 2.12.1 (+2.7 KiB), the lazy shop-read split that
     // took the shop tab back off home (531 -> 431 KiB) and Sticky split rows (+1.3 KiB)
     // measure 432.7 KiB; round up to the next KiB.
-    '/page': 434 * KIB,
+    // SDK 2.16.0's review decoder (lazy) reads a Safe's router-gateway calls with the SDK's
+    // full gateway ABI. Webpack keeps every export any chunk uses in the one copy of the
+    // SDK's generated-ABI module, which home already loads, so the ABI lands there (+1.1
+    // KiB): home measures 434.7 KiB against 433.5 KiB on main with the same toolchain.
+    '/page': 435 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -22,7 +26,9 @@ const budgets = {
     // (561 -> 487 KiB), plus Sticky split rows and launch checks (+4.9 KiB): 492.0 KiB.
     // SDK 2.14.0's shared review runtime measures 493.0 KiB before adoption; its fee
     // label and cancel error, which home also loads, bring create to 493.2 KiB.
-    '/create/page': 494 * KIB,
+    // SDK 2.16.0's gateway ABI in that shared generated-ABI chunk brings create to 495.1 KiB
+    // (493.8 KiB on main with the same toolchain).
+    '/create/page': 496 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -71,7 +77,11 @@ const budgets = {
   // axios 1.20.0 (in Para's lazy chunk, +1.0), DOMPurify 3.4.16 (+0.4) and Next 16.3.8's
   // client runtime (+0.2) measure 2465.8 KiB against 2464.3 KiB on the same toolchain;
   // allow 1.2 KiB of headroom. Route, largest-chunk and lazy-load caps are unchanged.
-  allScripts: 2467 * KIB,
+  // SDK 2.16.0's shared decoders, receipts and preflights (stricter decoding, the gateway
+  // ABI in the generated-ABI chunk above, the sequence preflight sharing a module with the
+  // single-call one) measure 2467.5 KiB against 2465.8 KiB on main with the same toolchain;
+  // round up to the next KiB.
+  allScripts: 2468 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
