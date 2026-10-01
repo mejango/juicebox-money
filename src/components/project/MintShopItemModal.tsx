@@ -284,7 +284,6 @@ export function MintShopItemModal({
       subtitle={`Send inventory from item #${tierId} on ${chainName(chainId)} without collecting payment.`}
       footer={footer}
       onClose={onClose}
-      busy={busy}
     >
       <div className="space-y-5">
         <div className="callout callout-info text-xs">

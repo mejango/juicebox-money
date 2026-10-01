@@ -170,7 +170,6 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
       subtitle="Preserves the original metadata and updates the media on each reviewed chain."
       footer={footer}
       onClose={onClose}
-      busy={busy}
     >
       <div className="space-y-5">
         <div className="callout callout-info text-xs">
