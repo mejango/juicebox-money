@@ -498,7 +498,7 @@ describe('project payer write flow', () => {
   })
 })
 
-describe('auto-issuance write flow', () => {
+describe('wallet-action:auto-issue-tokens auto-issuance write flow', () => {
   const props = {
     chainId: 1 as const,
     projectId: 42,
@@ -571,7 +571,7 @@ describe('auto-issuance write flow', () => {
   })
 })
 
-describe('cash-out write flow', () => {
+describe('wallet-action:cash-out-project-tokens cash-out write flow', () => {
   it('debounces the amount and sends the exact freshly rendered quote floor', async () => {
     vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer

@@ -88,9 +88,13 @@ enables the full artifact comparison; it does not trust the fixture alone.
   `useSafeTx`, authority, reviewed direct-write, and raw wallet API call sites
   against `test/transaction-sites.json`. A new or moved write fails CI until its
   reviewed boundary and transaction-coverage action are explicitly inventoried.
-  Each of the 26 current `useSafeTx.send` sites has its own stable action record;
+  Each of the 33 current `useSafeTx.send` sites has its own stable action record;
   the gate requires one record per send, exact request/calldata coverage, and a
-  dedicated test reference beyond the shared wrapper test.
+  dedicated test reference beyond the shared wrapper test. Every test file an
+  action lists must carry the action's marker in a `describe`, `it` or `test`
+  title: `wallet-action:` plus the action's name in lowercase with hyphens
+  (`wallet-action:approve-an-erc-20`). A skipped test carries none, so a broad
+  test file cannot make a new operation look covered.
 
 Coverage includes every production `src/**/*.{ts,tsx}` file; only declaration
 files are excluded. The 22 test files currently run 182 tests. Component

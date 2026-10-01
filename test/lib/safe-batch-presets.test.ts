@@ -86,7 +86,7 @@ function chain({
   return client as unknown as PublicClient & typeof client
 }
 
-describe('buyback 1.4.0 + gateway preset', () => {
+describe('wallet-action:submit-a-safe-operator-batch buyback 1.4.0 + gateway preset', () => {
   it('refuses deployed but disallowed selections and propagates unknown allowances', async () => {
     for (const client of [chain({ hookAllowed: false }), chain({ terminalAllowed: false })]) {
       expect(await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })).toMatchObject({ status: 'unavailable', steps: [] })

@@ -134,7 +134,7 @@ function click(element: HTMLElement) {
   act(() => element.click())
 }
 
-describe('Safe batch tray', () => {
+describe('wallet-action:submit-a-safe-operator-batch Safe batch tray', () => {
   it('shows one tab per chain from storage and only the preset button when nothing is queued', async () => {
     render()
     await settle()

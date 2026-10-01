@@ -111,7 +111,7 @@ beforeEach(() => {
 
 afterEach(async () => { await act(async () => renderer.unmount()) })
 
-describe('free mint gas', () => {
+describe('wallet-action:mint-shop-tiers-without-payment free mint gas', () => {
   it('sends the measured gas limit from an ordinary wallet', async () => {
     await mint()
     expect(mocks.review.mock.calls[0][0]).not.toHaveProperty('safeTxGas')

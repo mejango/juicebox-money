@@ -193,7 +193,7 @@ describe('batch route', () => {
   })
 })
 
-describe('Safe owner batch', () => {
+describe('wallet-action:submit-a-safe-operator-batch Safe owner batch', () => {
   it('proposes one operation-1 MultiSendCallOnly SafeTx with the exact hash and body', async () => {
     const steps = presetSteps()
     const { calls } = composeBatch(steps)

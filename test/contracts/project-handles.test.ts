@@ -260,7 +260,7 @@ describe('project handle normalization and routing', () => {
   })
 })
 
-describe('project handle transaction payloads', () => {
+describe('wallet-action:set-project-handle project handle transaction payloads', () => {
   it('encodes the exact ENS text record on the exact resolver', () => {
     const call = buildSetEnsProjectRecordCall({
       resolver: RESOLVER,

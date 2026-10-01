@@ -345,7 +345,7 @@ describe('cash-out accounting context reads', () => {
   })
 })
 
-describe('cash-out transaction request', () => {
+describe('wallet-action:cash-out-project-tokens cash-out transaction request', () => {
   it('explains the buyback hook slippage error instead of exposing its selector', () => {
     expect(
       cashOutExecutionErrorMessage(

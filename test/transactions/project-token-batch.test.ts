@@ -42,7 +42,7 @@ beforeEach(() => {
   mocks.amount.mockImplementation(async (_client, { stageId, beneficiary }) => stageId === 3n ? 0n : beneficiary === BENEFICIARY ? 200n : 100n)
 })
 
-describe('cross-chain credit claims', () => {
+describe('wallet-action:claim-project-token-credits cross-chain credit claims', () => {
   it('freezes each local project, token and credit balance while keeping the holder as beneficiary', async () => {
     const calls = await readClaimCalls(chains, ACCOUNT)
     expect(calls).toHaveLength(2)
@@ -78,7 +78,7 @@ describe('cross-chain credit claims', () => {
   })
 })
 
-describe('aggregate auto issuance', () => {
+describe('wallet-action:auto-issue-tokens aggregate auto issuance', () => {
   it('builds an individual row with the same live project context and call identity as its aggregate', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ stored: [{ stageId: '1', beneficiary: BENEFICIARY }] })))
     const [aggregate] = await readAutoIssueCalls([[10, 84]], ACCOUNT)

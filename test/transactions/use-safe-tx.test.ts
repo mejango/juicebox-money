@@ -108,7 +108,7 @@ beforeEach(() => {
   mocks.writeContract.mockResolvedValue(HASH)
 })
 
-describe('useSafeTx', () => {
+describe('wallet-action:submit-a-reviewed-direct-write useSafeTx', () => {
   it('refuses to send while view-as is active', async () => {
     setViewAs(BOB)
     try {

@@ -62,7 +62,7 @@ beforeEach(() => {
 })
 
 describe('aggregate token action reviews', () => {
-  it('honors selected local project mappings and shows each claim amount before submission', async () => {
+  it('wallet-action:claim-project-token-credits honors selected local project mappings and shows each claim amount before submission', async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')
     const checkboxes = renderer.root.findAllByType('input')
@@ -129,7 +129,7 @@ describe('aggregate token action reviews', () => {
     expect(mocks.claim).not.toHaveBeenCalled()
   })
 
-  it('retains every same-chain beneficiary call in the auto-issuance review', async () => {
+  it('wallet-action:auto-issue-tokens retains every same-chain beneficiary call in the auto-issuance review', async () => {
     const renderer = await render(true)
     await click(renderer, 'Distribute unlocked allocations')
     await click(renderer, 'Review selected chains')

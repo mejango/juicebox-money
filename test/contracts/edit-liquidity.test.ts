@@ -325,7 +325,7 @@ describe('LP edit plan', () => {
   })
 })
 
-describe('LP edit encoders', () => {
+describe('wallet-action:edit-uniswap-v4-liquidity LP edit encoders', () => {
   it('pins the increase payload, with the sweep only when native value is sent', () => {
     const [actions, params] = unlock(
       buildIncreaseLiquidityUnlockData({

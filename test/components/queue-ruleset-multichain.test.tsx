@@ -88,7 +88,7 @@ beforeEach(() => {
   mocks.runAuthorityCalls.mockImplementation(async ({ calls }) => { for (const call of calls) await call.reverifyAuthority?.(); return { directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] } })
 })
 
-describe('multichain ruleset configuration', () => {
+describe('wallet-action:queue-rulesets-across-selected-mainnets multichain ruleset configuration', () => {
   it('enables all testnet peers in the ruleset editor and disables a linked mainnet', async () => {
     currentReview = review([11155111, 11155420, 84532, 421614, 1])
     installReads()

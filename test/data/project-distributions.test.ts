@@ -68,7 +68,7 @@ describe('selected destination distributions', () => {
     expect(() => distributionProjects(1, 17, [[1, 303]])).toThrow('Conflicting')
   })
 
-  it('reads each payout token, ruleset, cycle and balance from its own deployment and encodes six-decimal units', async () => {
+  it('wallet-action:distribute-payouts reads each payout token, ruleset, cycle and balance from its own deployment and encodes six-decimal units', async () => {
     for (const project of projects) {
       const options = await readPayoutOptions(project)
       expect(options.contexts[0]).toMatchObject({ decimals: 6, token: USDC_ADDRESSES[project.chainId], balance: 30_000_000n, limits: [{ remaining: 97_000_000n }] })
@@ -118,7 +118,7 @@ describe('selected destination distributions', () => {
     expect(distributionCall(review).data).toBe(distributionCall({ ...review, min: 11_880_000n }).data)
   })
 
-  it('distributes each reserved balance using that chain’s controller, current ruleset and recipients', async () => {
+  it('wallet-action:distribute-reserved-tokens distributes each reserved balance using that chain’s controller, current ruleset and recipients', async () => {
     for (const project of projects) {
       const review = await reviewReserved(project, ACCOUNT)
       expect(review.current.ruleset.id).toBe(state.get(project.chainId)!.id)

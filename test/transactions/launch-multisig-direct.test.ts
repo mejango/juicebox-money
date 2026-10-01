@@ -91,7 +91,7 @@ beforeEach(() => {
   seed()
 })
 
-describe('direct launch Safe setup', () => {
+describe('wallet-action:create-an-owner-or-operator-safe-during-launch direct launch Safe setup', () => {
   it('reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
     const args = options()
     args.writeContract.mockImplementation(async () => {

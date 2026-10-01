@@ -140,7 +140,7 @@ function split(overrides: Partial<SplitConfig> = {}): SplitConfig {
 }
 
 describe('project launch encoding', () => {
-  it('round-trips the 721 project deployer call through its canonical ABI', () => {
+  it('wallet-action:launch-a-project round-trips the 721 project deployer call through its canonical ABI', () => {
     const request = requestFor(plan())
     const data = encode(request)
     const decoded = decodeFunctionData({ abi: request.abi, data })
@@ -381,7 +381,7 @@ describe('project launch encoding', () => {
     expect(ruleset.fundAccessLimitGroups[0].payoutLimits[0].amount).toBe(0n)
   })
 
-  it('uses the omnichain deployer ABI only for explicitly linked chains', () => {
+  it('wallet-action:launch-linked-chains uses the omnichain deployer ABI only for explicitly linked chains', () => {
     const request = requestFor(
       plan({ chains: [1, 10], linkChains: true, bridge: 'ccip' }),
     )
@@ -431,7 +431,7 @@ describe('project launch encoding', () => {
     expect(launchAcceptsAnyToken('project', true)).toBe(true)
   })
 
-  it('encodes a revnet deployment through the SDK-provided request', () => {
+  it('wallet-action:deploy-a-revnet encodes a revnet deployment through the SDK-provided request', () => {
     const request = requestFor(
       plan({
         flavor: 'revnet',

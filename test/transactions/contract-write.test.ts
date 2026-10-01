@@ -15,7 +15,7 @@ const options = () => ({
   write: vi.fn(async () => '0xhash' as const),
 })
 
-describe('Juicebox Money reviewed writes', () => {
+describe('wallet-action:submit-a-reviewed-direct-write Juicebox Money reviewed writes', () => {
   afterEach(() => clearViewAs())
 
   it('refuses before review while viewing as another account', async () => {

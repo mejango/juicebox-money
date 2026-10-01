@@ -247,6 +247,49 @@ for (const line of readFileSync(coveragePath, 'utf8').split(/\r?\n/)) {
   })
 }
 
+/** The marker a test carries for the action it proves: "Approve an ERC-20" → wallet-action:approve-an-erc-20. */
+function actionMarker(action) {
+  return `wallet-action:${action.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+}
+
+function isTestFunction(expression) {
+  return ts.isIdentifier(expression) && ['describe', 'it', 'test'].includes(expression.text)
+}
+
+const testTitleCache = new Map()
+/** The words of every describe/it/test title in a test file, `.each` tables included; skipped tests have none. */
+function testTitleWords(test) {
+  if (testTitleCache.has(test)) return testTitleCache.get(test)
+  const path = join(root, 'test', test)
+  const source = ts.createSourceFile(
+    path,
+    readFileSync(path, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    extname(path) === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  const words = new Set()
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression
+      const runs =
+        isTestFunction(callee) ||
+        (ts.isCallExpression(callee) &&
+          ts.isPropertyAccessExpression(callee.expression) &&
+          callee.expression.name.text === 'each' &&
+          isTestFunction(callee.expression.expression))
+      const [title] = node.arguments
+      if (runs && title && (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title))) {
+        for (const word of title.text.split(/\s+/)) words.add(word)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  testTitleCache.set(test, words)
+  return words
+}
+
 function checkActionReference(file, action, { requireExact = false } = {}) {
   const row = coverageRows.get(action)
   if (!row) {
@@ -269,7 +312,20 @@ function checkActionReference(file, action, { requireExact = false } = {}) {
       `${file} action ${action} only references the shared useSafeTx wrapper test`,
     )
   }
+  // A listed test must say which of its tests proves the action, so a broad
+  // file cannot make a new operation look covered.
+  const marker = actionMarker(action)
+  for (const test of row.tests) {
+    if (missingTests.includes(test) || markedTests.has(`${test}#${marker}`)) continue
+    markedTests.add(`${test}#${marker}`)
+    if (!testTitleWords(test).has(marker)) {
+      failures.push(
+        `${file} action ${action} needs the marker ${marker} in a describe/it title of test/${test}`,
+      )
+    }
+  }
 }
+const markedTests = new Set()
 
 const sendSiteIds = new Set()
 let mappedSendCount = 0

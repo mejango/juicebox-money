@@ -431,7 +431,7 @@ describe('metadata editor custom properties', () => {
   })
 })
 
-describe('metadata editor per-chain review and recovery', () => {
+describe('wallet-action:update-project-metadata metadata editor per-chain review and recovery', () => {
   const peerMetadata = {
     name: 'Base name',
     projectTagline: 'Base tagline',

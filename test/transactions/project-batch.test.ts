@@ -236,7 +236,7 @@ describe('durable project batches', () => {
     expect(completed.completedIds).toHaveLength(3)
   })
 
-  it('resumes an already paid round without rebuilding or revalidating stale source state', async () => {
+  it('wallet-action:resume-a-reviewed-project-batch resumes an already paid round without rebuilding or revalidating stale source state', async () => {
     const defaultRelay = mocks.relayr.getMockImplementation()!
     mocks.relayr.mockImplementationOnce(async options => {
       mocks.pending.set(options.pendingScope, { paid: true })
@@ -337,7 +337,7 @@ describe('durable project batches', () => {
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps successful receipts pending when application events report a failed distribution', async () => {
+  it('wallet-action:distribute-payouts wallet-action:distribute-reserved-tokens keeps successful receipts pending when application events report a failed distribution', async () => {
     const verifyCompletion = vi.fn().mockRejectedValue(new Error('split hook failed'))
     await expect(run([call()], { verifyCompletion })).rejects.toThrow('split hook failed')
     await expect(run(undefined, { verifyCompletion })).rejects.toThrow('split hook failed')

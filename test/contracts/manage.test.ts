@@ -24,7 +24,7 @@ describe('owner-management requests', () => {
     expect(isKnownController(1, undefined)).toBe(false)
   })
 
-  it('encodes setUriOf against the selected project controller', () => {
+  it('wallet-action:update-project-metadata encodes setUriOf against the selected project controller', () => {
     const request = buildSetUriTx({
       chainId: 1,
       projectId: 42n,
@@ -39,7 +39,7 @@ describe('owner-management requests', () => {
     expect(decoded.args).toEqual([42n, 'ipfs://QmMetadata'])
   })
 
-  it('encodes deterministic deployERC20For args and validates symbols', () => {
+  it('wallet-action:deploy-project-erc-20 encodes deterministic deployERC20For args and validates symbols', () => {
     const request = buildDeployTokenRequest({
       chainId: 1,
       projectId: 42n,

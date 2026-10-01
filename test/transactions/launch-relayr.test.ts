@@ -182,7 +182,7 @@ beforeEach(() => {
 })
 
 describe('relayed launch execution and recovery', () => {
-  it.each(['project', 'revnet'] as const)('bundles a single-chain %s Safe with the exact signed launch and one payment', async flavor => {
+  it.each(['project', 'revnet'] as const)('wallet-action:create-an-owner-or-operator-safe-during-launch bundles a single-chain %s Safe with the exact signed launch and one payment', async flavor => {
     const value = multisigSession(flavor)
     expect(canRelayrLaunch(value)).toBe(true)
     await run(value)

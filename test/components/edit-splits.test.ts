@@ -134,7 +134,7 @@ describe('lock round trip', () => {
   })
 })
 
-describe('assembleSplits', () => {
+describe('wallet-action:edit-reserved-recipients-across-selected-mainnets assembleSplits', () => {
   it('an emptied group is a valid submission when the ruleset-0 fallback is verified empty', () => {
     expect(assembleSplits([], [], EMPTY_FALLBACK, 8453)).toEqual({ splits: [] })
   })

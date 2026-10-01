@@ -381,7 +381,7 @@ describe('multichain launch session persistence', () => {
   })
 })
 
-describe('inline Safe launch recovery', () => {
+describe('wallet-action:create-an-owner-or-operator-safe-during-launch inline Safe launch recovery', () => {
   const setupHash = `0x${'55'.repeat(32)}` as Hex
   const proposalHash = `0x${'66'.repeat(32)}` as Hex
   const launchHash = `0x${'77'.repeat(32)}` as Hex

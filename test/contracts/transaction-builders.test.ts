@@ -62,7 +62,7 @@ function encode(request: EncodableRequest): Hex {
 }
 
 describe("local transaction builders", () => {
-  it("pins an ERC-20 approval to the exact spender and amount", () => {
+  it("wallet-action:approve-an-erc-20 pins an ERC-20 approval to the exact spender and amount", () => {
     const request = buildErc20ApproveRequest({
       chainId: CHAIN_ID,
       token: TOKEN,
@@ -123,7 +123,7 @@ describe("local transaction builders", () => {
     ).rejects.toThrow(/returned no data/);
   });
 
-  it("pins Permit2 authorization and the direct project-token swap payload", () => {
+  it("wallet-action:swap-for-project-tokens wallet-action:swap-project-tokens pins Permit2 authorization and the direct project-token swap payload", () => {
     const expiration = 1_800_000_000;
     const permit = buildPermit2ApproveTx({
       chainId: CHAIN_ID,
@@ -181,7 +181,7 @@ describe("local transaction builders", () => {
     });
   });
 
-  it("sets native top-up calldata and msg.value without changing either amount", () => {
+  it("wallet-action:add-to-treasury-balance sets native top-up calldata and msg.value without changing either amount", () => {
     const request = buildAddToBalanceRequest({
       chainId: CHAIN_ID,
       terminal: TERMINAL,
@@ -224,7 +224,7 @@ describe("local transaction builders", () => {
     expect(encode(request).slice(0, 10)).toBe("0x9e6eec05");
   });
 
-  it("round-trips every live tier field and the explicit removal ids", () => {
+  it("wallet-action:add-shop-tiers round-trips every live tier field and the explicit removal ids", () => {
     const tiers = [
       {
         price: 1_000n,
@@ -278,7 +278,7 @@ describe("local transaction builders", () => {
     });
   });
 
-  it("replaces one tier's media through setMetadata's leave-unchanged sentinels", () => {
+  it("wallet-action:replace-shop-item-media replaces one tier's media through setMetadata's leave-unchanged sentinels", () => {
     const request = buildSet721TierMediaRequest({
       chainId: CHAIN_ID,
       hook: HOOK,
@@ -316,7 +316,7 @@ describe("local transaction builders", () => {
     ).toThrow(/bytes32/);
   });
 
-  it("pins an owner tier mint to its reviewed quantity and beneficiary", () => {
+  it("wallet-action:mint-shop-tiers-without-payment pins an owner tier mint to its reviewed quantity and beneficiary", () => {
     const request = buildMint721TierRequest({
       chainId: CHAIN_ID,
       hook: HOOK,
@@ -362,7 +362,7 @@ describe("local transaction builders", () => {
     ).toThrow(/uint16/);
   });
 
-  it("pins payout execution to the reviewed amount, currency, and slippage floor", () => {
+  it("wallet-action:distribute-payouts pins payout execution to the reviewed amount, currency, and slippage floor", () => {
     const request = buildSendPayoutsRequest({
       chainId: CHAIN_ID,
       terminal: TERMINAL,
@@ -382,7 +382,7 @@ describe("local transaction builders", () => {
     });
   });
 
-  it("pins allowance use to both beneficiaries, its memo, and slippage floor", () => {
+  it("wallet-action:use-surplus-allowance pins allowance use to both beneficiaries, its memo, and slippage floor", () => {
     const request = buildUseAllowanceRequest({
       chainId: CHAIN_ID,
       terminal: TERMINAL,
@@ -414,7 +414,7 @@ describe("local transaction builders", () => {
     });
   });
 
-  it("keeps the SDK queue payload exact while overriding only the verified controller", () => {
+  it("wallet-action:queue-rulesets keeps the SDK queue payload exact while overriding only the verified controller", () => {
     const configuration = buildRulesetConfiguration({
       mustStartAtOrAfter: 1_800_000_000,
       duration: 604_800,
@@ -474,7 +474,7 @@ describe("local transaction builders", () => {
     });
   });
 
-  it("wraps the exact SDK split calldata for authority routing", () => {
+  it("wallet-action:edit-split-groups wraps the exact SDK split calldata for authority routing", () => {
     const splitGroups = [
       {
         groupId: BigInt(TOKEN),
@@ -621,7 +621,7 @@ describe("SDK transaction builders used by wallet flows", () => {
       token: TOKEN,
       value: 0n,
     },
-  ])("pins $label pay calldata and msg.value", ({ token, value }) => {
+  ])("wallet-action:pay-a-project pins $label pay calldata and msg.value", ({ token, value }) => {
     const request = buildPayTx({
       chainId: CHAIN_ID,
       terminal: TERMINAL,
@@ -653,7 +653,7 @@ describe("SDK transaction builders used by wallet flows", () => {
     });
   });
 
-  it("pins borrow calldata to the revnet, floor, collateral, fee, and holder", () => {
+  it("wallet-action:borrow-or-repay pins borrow calldata to the revnet, floor, collateral, fee, and holder", () => {
     const request = buildBorrowTx({
       chainId: CHAIN_ID,
       revnetId: 32n,
@@ -711,7 +711,7 @@ describe("SDK transaction builders used by wallet flows", () => {
     });
   });
 
-  it("pins direct permission replacement to its account and complete id set", () => {
+  it("wallet-action:add-or-revoke-permissions pins direct permission replacement to its account and complete id set", () => {
     const request = buildSetPermissionsTx({
       chainId: CHAIN_ID,
       account: ALICE,

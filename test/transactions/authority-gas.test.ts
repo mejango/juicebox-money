@@ -183,7 +183,7 @@ beforeEach(() => {
   })
 })
 
-describe('Authority gas estimation reaches the signed Relayr request', () => {
+describe('wallet-action:queue-rulesets-across-selected-mainnets Authority gas estimation reaches the signed Relayr request', () => {
   it.each([
     [1, 11155111],
     [1, 1],

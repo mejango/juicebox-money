@@ -74,7 +74,7 @@ async function confirm(renderer: ReactTestRenderer) {
 }
 
 describe('shop batch component journeys', () => {
-  it('reviews and submits per-destination add calls with frozen items and live revalidation', async () => {
+  it('wallet-action:add-shop-tiers reviews and submits per-destination add calls with frozen items and live revalidation', async () => {
     mocks.invalidate.mockRejectedValueOnce(new Error('Cache refresh unavailable'))
     const renderer = await addModal()
     const draft = { ...newDraftItem(), name: 'Reviewed', price: '3.123456', supply: '7', perChainSupply: { 8453: '19' } }
@@ -122,7 +122,7 @@ describe('shop batch component journeys', () => {
     expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
-  it('preserves the full original media JSON in a newly reviewed multichain update', async () => {
+  it('wallet-action:replace-shop-item-media preserves the full original media JSON in a newly reviewed multichain update', async () => {
     const renderer = await mediaModal()
     const file = new File(['image'], 'new.png', { type: 'image/png' })
     await act(async () => renderer.root.findByProps({ type: 'file' }).props.onChange({ target: { files: [file] } }))
