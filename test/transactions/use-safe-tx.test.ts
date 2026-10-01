@@ -478,8 +478,9 @@ describe('wallet-action:submit-a-reviewed-direct-write useSafeTx', () => {
         return true
       })
       const hook = await renderHook()
+      const onBeforeWriteAborted = vi.fn()
       let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
-      await act(async () => { result = await hook.ref.current!.send(request) })
+      await act(async () => { result = await hook.ref.current!.send(request, { onBeforeWriteAborted }) })
       expect(result).toBeNull()
       expect(hook.ref.current).toMatchObject({
         phase: 'error',
@@ -487,8 +488,34 @@ describe('wallet-action:submit-a-reviewed-direct-write useSafeTx', () => {
       })
       // The gas followed the reviewed connection, and nothing reached the wallet.
       expect(mocks.writeContract).not.toHaveBeenCalled()
+      // Nothing was marked before the write, so nothing is withdrawn.
+      expect(onBeforeWriteAborted).not.toHaveBeenCalled()
     },
   )
+
+  it('withdraws the marker written before the write when the connection changes there', async () => {
+    const events: string[] = []
+    const hook = await renderHook()
+    let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
+    await act(async () => {
+      result = await hook.ref.current!.send(request, {
+        beforeWrite: () => {
+          events.push('marked')
+          // A WalletConnect peer read lands between the marker and the write.
+          mocks.safeConnection = true
+        },
+        onBeforeWriteAborted: () => { events.push('withdrawn') },
+        onWriteRejected: () => { events.push('rejected') },
+      })
+    })
+    expect(result).toBeNull()
+    expect(events).toEqual(['marked', 'withdrawn'])
+    expect(hook.ref.current).toMatchObject({
+      phase: 'error',
+      error: 'Wallet connection changed. Review the transaction again.',
+    })
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
 
   it('sends the gas of the reviewed connection when a peer read flickers mid-flow', async () => {
     let simulated = false

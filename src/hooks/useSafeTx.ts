@@ -346,9 +346,11 @@ export function useSafeTx(chainId: number) {
               gas: viaSafe ? 0n : gasWithHeadroom(estimate),
             }
           },
-          write: simulated => {
+          write: async simulated => {
             // A WalletConnect peer read can land mid-flow and change the answer.
             if (isSafeConnection(wagmiConfig) !== viaSafe) {
+              // Nothing reaches the wallet, so a marker written for this write is withdrawn.
+              if (options?.beforeWrite) await options.onBeforeWriteAborted?.()
               throw new Error('Wallet connection changed. Review the transaction again.')
             }
             return writeContractAsync(simulated)
