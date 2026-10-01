@@ -210,7 +210,7 @@ export function GetLoanFlow({
         prepaidFeePercent: BigInt(r.prepaid),
         holder: r.account,
       })
-      await borrowTx.send(request)
+      await borrowTx.send(request, { reviewedAccount: r.account })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -247,7 +247,7 @@ export function GetLoanFlow({
       })
       setAwaitingBorrow(true)
       setQuoting(false)
-      await permTx.send(permReq)
+      await permTx.send(permReq, { reviewedAccount: r.account })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)
@@ -311,12 +311,7 @@ export function GetLoanFlow({
 
   const handleConfirm = () => {
     if (!review || busy) return
-    // Account-unchanged recheck: the frozen args borrow FOR this holder.
-    if (address?.toLowerCase() !== review.account.toLowerCase()) {
-      setReview(null)
-      setFlowError('Your connected account changed — review the loan again.')
-      return
-    }
+    // The frozen args borrow for `review.account`: each send refuses another account.
     beginBorrow(review)
   }
 

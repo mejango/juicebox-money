@@ -383,7 +383,10 @@ export function RedeemShopItemsModal({
     if (!plan || busy) return
     setPrepareError(null)
     try {
-      await tx.send(plan.request, { reviewNotice: plan.reviewNotice })
+      await tx.send(plan.request, {
+        reviewedAccount: plan.quote.holder,
+        reviewNotice: plan.reviewNotice,
+      })
     } catch (error) {
       setPrepareError(
         error instanceof Error

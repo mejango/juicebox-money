@@ -265,6 +265,9 @@ export function MarketEditPanel({
     (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
       const p = planRef.current
       if (!p) return Promise.resolve(null)
+      // The recipient is baked into unlockData: every step, approvals
+      // included, sends only from the account the plan was reviewed for.
+      const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
         return tx.send(
           buildErc20ApproveRequest({
@@ -273,6 +276,7 @@ export function MarketEditPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
+          { reviewedAccount },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -284,6 +288,7 @@ export function MarketEditPanel({
             amount: step.amount,
             expiration: step.expiration,
           }),
+          { reviewedAccount },
         )
       }
       return tx.send(
@@ -295,6 +300,7 @@ export function MarketEditPanel({
           value: p.plan.value,
         }),
         {
+          reviewedAccount,
           simulationBlockNumber: confirmedAt,
           reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
           reverify: async () => {
@@ -365,17 +371,8 @@ export function MarketEditPanel({
       }
     })
 
-  /** The recipient is baked into unlockData: a changed account must re-review. */
-  const reviewedAccountConnected = (p: Reviewed): boolean => {
-    if (connectedAddress && connectedAddress.toLowerCase() === p.account.toLowerCase()) return true
-    replaceReviewed(null)
-    setReviewError('Your connected account changed — review again.')
-    return false
-  }
-
   const startRun = () => {
     if (!reviewed || run.isRunning()) return
-    if (!reviewedAccountConnected(reviewed)) return
     if (liquidityBatchApplies(reviewed.steps)) {
       void runBatch(reviewed)
       return
@@ -385,7 +382,6 @@ export function MarketEditPanel({
 
   const resume = () => {
     if (!reviewed || run.isRunning()) return
-    if (!reviewedAccountConnected(reviewed)) return
     run.resume(reviewed.steps)
   }
 

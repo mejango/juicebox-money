@@ -58,17 +58,19 @@ const DEFAULT_SLIPPAGE_BPS = 100
  * prepared from fresh protocol state and sent exactly as frozen; a pool sale
  * freezes the floor it promises and re-quotes once its approvals clear, since
  * the swap's deadline and the pool comparison cannot be locked before them.
+ * Either way it spends `account`'s tokens and pays `account`, so only that
+ * account may send it.
  */
-type CashOutPlan =
+type CashOutPlan = { account: Address; minimumReturn: bigint } & (
   | {
       kind: 'treasury'
       request: TxRequest
       venue: 'treasury' | 'amm'
-      minimumReturn: bigint
       fee: bigint
       reviewNotice: string | undefined
     }
-  | { kind: 'pool'; minimumReturn: bigint }
+  | { kind: 'pool' }
+)
 
 /**
  * The cash-out flow (JBMultiTerminal.cashOutTokensOf), extracted from
@@ -456,7 +458,7 @@ export function CashOutPanel({
     // What the panel promised, captured before anything is re-quoted.
     const displayedMinimum = bestRoute?.minimumReturn ?? route.minimumReturn
     if (directSellWins && market?.status === 'pool' && projectToken && swapDeployment) {
-      setPlan({ kind: 'pool', minimumReturn: displayedMinimum })
+      setPlan({ kind: 'pool', minimumReturn: displayedMinimum, account: address })
       return
     }
     setPreparing(true)
@@ -480,6 +482,7 @@ export function CashOutPanel({
       const request = prepared.transaction
       setPlan({
         kind: 'treasury',
+        account: address,
         request: { ...request, abi: request.abi as Abi },
         venue: prepared.route.route,
         minimumReturn: prepared.route.minimumReturn,
@@ -501,6 +504,7 @@ export function CashOutPanel({
   const cashOut = async () => {
     if (!plan || !address || busy) return
     setErrorMsg(null)
+    const reviewedAccount = plan.account
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
@@ -514,6 +518,7 @@ export function CashOutPanel({
               spender: swapDeployment.permit2,
               amount: cashOutCount,
             }),
+            { reviewedAccount },
           )
           return
         }
@@ -524,11 +529,14 @@ export function CashOutPanel({
             amount: cashOutCount,
             expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
           })
-          await approveTx.send({
-            ...approval,
-            args: approval.args as unknown as readonly unknown[],
-            label: 'Approve swap router',
-          })
+          await approveTx.send(
+            {
+              ...approval,
+              args: approval.args as unknown as readonly unknown[],
+              label: 'Approve swap router',
+            },
+            { reviewedAccount },
+          )
           return
         }
         const refreshedCashOut = await refetchCashOutRoute()
@@ -565,7 +573,7 @@ export function CashOutPanel({
           zeroForOne: directSellDirection!,
           amountIn: cashOutCount,
           minimumAmountOut: refreshedBest.minimumReturn,
-          recipient: address,
+          recipient: reviewedAccount,
           deadline: swapDeadline(tx.isSafe),
         })
         setUsedDirectSell(true)
@@ -577,6 +585,7 @@ export function CashOutPanel({
               'Sell claimed project tokens through the best available pool route',
           },
           {
+            reviewedAccount,
             reviewNotice: minimumDropNotice({
               displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
@@ -590,7 +599,7 @@ export function CashOutPanel({
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      await tx.send(plan.request, { reviewNotice: plan.reviewNotice })
+      await tx.send(plan.request, { reviewedAccount, reviewNotice: plan.reviewNotice })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }

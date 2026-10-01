@@ -42,6 +42,7 @@ import {
   type PublicClient,
 } from "viem";
 import { usePublicClient } from "wagmi";
+import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
 import { useWallet } from "@/hooks/useWallet";
@@ -69,6 +70,7 @@ import {
   buildErc20ApproveRequest,
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
+import { assertReviewedAccountConnected } from "@/lib/contract-write";
 import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
@@ -321,10 +323,12 @@ export function PayPanel({
   const [sequencePending, setSequencePending] = useState<Hex | null>(null);
   // What the frozen actions actually authorize. The inputs behind them keep
   // moving while the dialog is open (the amount is debounced), so the summary
-  // has to be captured with the actions rather than read live.
+  // has to be captured with the actions rather than read live. `account`
+  // receives the tokens and owns the approvals: only it may send them.
   const [sequenceSummary, setSequenceSummary] = useState<{
     amountRaw: bigint;
     minReturned: bigint;
+    account: Address;
   } | null>(null);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
@@ -1460,7 +1464,7 @@ export function PayPanel({
     setSequenceStarted(false);
     setSequenceSafeStage(null);
     setSequenceActions(actions);
-    setSequenceSummary({ amountRaw, minReturned });
+    setSequenceSummary({ amountRaw, minReturned, account: address });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
@@ -1480,8 +1484,10 @@ export function PayPanel({
   }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
 
   const runPaymentSequence = async () => {
+    const account = sequenceSummary?.account;
     if (
       !address ||
+      !account ||
       !context ||
       !terminalAddress ||
       !publicClient ||
@@ -1492,6 +1498,10 @@ export function PayPanel({
     ) return;
     setSequenceStarted(true);
     setSequenceError(null);
+    // Each send refuses another account on its own; checking before each step
+    // also says so here, where a refused send would read as a cancelled one.
+    const stillReviewed = () =>
+      assertReviewedAccountConnected(account, getAccount(wagmiConfig).address);
     let latestApprovalBlock = approvalBlock;
     const actionOf = (kind: PaymentSequenceAction["kind"]) =>
       sequenceCompletedKinds.includes(kind)
@@ -1503,13 +1513,14 @@ export function PayPanel({
       await nextUiPaint();
     };
     try {
+      stillReviewed();
       const tokenApproval = actionOf("token-approval");
       if (tokenApproval?.kind === "token-approval") {
         await showAction("token-approval");
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          {},
+          { reviewedAccount: account },
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1550,7 +1561,7 @@ export function PayPanel({
             sigDeadline: BigInt(signedAt + 1_800),
           };
           const signature = await signPermit2Async({
-            expectedAccount: address,
+            expectedAccount: account,
             authorization,
           });
           paymentRequest = addPermit2SignatureToSwap(
@@ -1601,11 +1612,12 @@ export function PayPanel({
         }
       }
       if (routerApproval?.kind === "router-approval") {
+        stillReviewed();
         await showAction("router-approval");
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
           routerApproval.request,
-          { simulationBlockNumber: latestApprovalBlock },
+          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1630,6 +1642,7 @@ export function PayPanel({
         );
       }
 
+      stillReviewed();
       await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
       if (paymentAction.swapInputRoute) {
@@ -1643,6 +1656,7 @@ export function PayPanel({
         );
       }
       const paymentHash = await tx.send(paymentRequest, {
+        reviewedAccount: account,
         simulationBlockNumber: latestApprovalBlock,
       });
       if (!paymentHash) throw new Error("Payment was cancelled.");
@@ -2418,7 +2432,7 @@ export function PayPanel({
                 value: `${symbol} → ${activeAction.swapInputRoute.bridgeTokenSymbol} → ${projectTokenLabel}`,
               });
             }
-            if (address) rows.push({ label: "Beneficiary", value: address, mono: true });
+            if (sequenceSummary) rows.push({ label: "Beneficiary", value: sequenceSummary.account, mono: true });
             if (memo.trim()) rows.push({ label: "Note", value: memo.trim() });
             return rows;
           })()}

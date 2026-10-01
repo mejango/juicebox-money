@@ -280,9 +280,10 @@ function ChainLpRows({
   const [reviewing, setReviewing] = useState<bigint | null>(null)
   // The write frozen for the confirm dialog: fee claim for one or both sides,
   // or a burn with the freshly re-read amounts behind its onchain minimums.
+  // Its positions and recipient are `account`'s, so only that account sends it.
   const [pending, setPending] = useState<
-    | { kind: 'claim'; positions: UserLpPosition[] }
-    | { kind: 'remove'; position: UserLpPosition; pairMin: bigint; tokenMin: bigint }
+    | { kind: 'claim'; account: Address; positions: UserLpPosition[] }
+    | { kind: 'remove'; account: Address; position: UserLpPosition; pairMin: bigint; tokenMin: bigint }
     | null
   >(null)
   const [started, setStarted] = useState(false)
@@ -322,11 +323,11 @@ function ChainLpRows({
 
   const claim = (positions: UserLpPosition[]) => {
     if (!connectedAddress || !pool || !positionManager) return
-    stage({ kind: 'claim', positions })
+    stage({ kind: 'claim', account: connectedAddress, positions })
   }
 
-  const runClaim = (positions: UserLpPosition[]) => {
-    if (!connectedAddress || !pool || !positionManager) return
+  const runClaim = ({ account, positions }: Extract<NonNullable<typeof pending>, { kind: 'claim' }>) => {
+    if (!pool || !positionManager) return
     setStarted(true)
     const unlockData =
       positions.length === 1
@@ -336,14 +337,14 @@ function ChainLpRows({
               tokenId: positions[0].tokenId,
               currency0: pool.key.currency0,
               currency1: pool.key.currency1,
-              recipient: connectedAddress,
+              recipient: account,
               deadline: swapDeadline(tx.isSafe),
             }).data,
           )
         : buildCollectMarketFeesUnlockData(
             pool,
             positions.map(position => position.tokenId),
-            connectedAddress,
+            account,
           )
     tx.send(
       buildModifyLiquiditiesRequest({
@@ -353,6 +354,7 @@ function ChainLpRows({
         deadline: swapDeadline(tx.isSafe),
         value: 0n,
       }),
+      { reviewedAccount: account },
     )
     refresh()
   }
@@ -386,6 +388,7 @@ function ChainLpRows({
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
       stage({
         kind: 'remove',
+        account: connectedAddress,
         position: fresh,
         pairMin: retainedFloor(fresh.pairAmount),
         tokenMin: retainedFloor(fresh.tokenAmount),
@@ -400,7 +403,7 @@ function ChainLpRows({
   }
 
   const runRemove = (frozen: Extract<NonNullable<typeof pending>, { kind: 'remove' }>) => {
-    if (!connectedAddress || !pool || !positionManager) return
+    if (!pool || !positionManager) return
     setStarted(true)
     tx.send(
       buildModifyLiquiditiesRequest({
@@ -410,13 +413,14 @@ function ChainLpRows({
           tokenId: frozen.position.tokenId,
           currency0: pool.key.currency0,
           currency1: pool.key.currency1,
-          recipient: connectedAddress,
+          recipient: frozen.account,
           amount0Min: pool.pairIsC0 ? frozen.pairMin : frozen.tokenMin,
           amount1Min: pool.pairIsC0 ? frozen.tokenMin : frozen.pairMin,
         }),
         deadline: swapDeadline(tx.isSafe),
         value: 0n,
       }),
+      { reviewedAccount: frozen.account },
     )
     refresh()
   }
@@ -788,7 +792,7 @@ function ChainLpRows({
                   ),
                 })
               }
-              rows.push({ label: 'To', value: connectedAddress, mono: true })
+              rows.push({ label: 'To', value: pending.account, mono: true })
               rows.push({ label: 'On', value: chainName(chainId) })
               return (
                 <TxConfirmDialog
@@ -826,7 +830,7 @@ function ChainLpRows({
                   }
                   onConfirm={() => {
                     if (tx.phase === 'error') tx.reset()
-                    if (pending.kind === 'claim') runClaim(pending.positions)
+                    if (pending.kind === 'claim') runClaim(pending)
                     else runRemove(pending)
                   }}
                   busy={tx.busy}

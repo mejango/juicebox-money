@@ -994,13 +994,8 @@ function FundsTxFlow({
 
   const handleConfirm = () => {
     if (!review || sending) return
-    // Account-unchanged recheck: the reviewed args embed the beneficiary.
-    if (address?.toLowerCase() !== review.account.toLowerCase()) {
-      setReview(null)
-      setFlowError('Your connected account changed — review the amount again.')
-      return
-    }
-    tx.send(review.request)
+    // The reviewed args embed the beneficiary: only that account may send them.
+    tx.send(review.request, { reviewedAccount: review.account })
   }
 
   const closeReview = () => {
