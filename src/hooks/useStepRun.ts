@@ -12,7 +12,9 @@ import type { useSafeTx } from '@/hooks/useSafeTx'
  * A confirmation counts only for a step whose send the engine took, and only
  * once. The engine answers null, and changes nothing, for a send it does not
  * take (a closed review, say): the run then stops at that step, and `resume`
- * sends it again. A failed step stops the run the same way.
+ * sends it again. A failed step stops the run the same way. A stopped run
+ * belongs to the steps it started with: `stoppedOn` and `resume` answer only
+ * for those, so a plan reviewed since can never continue an older one.
  */
 export function useStepRun<Step>({
   tx,
@@ -26,7 +28,8 @@ export function useStepRun<Step>({
 }) {
   const [running, setRunning] = useState(false)
   const [index, setIndex] = useState(0)
-  const [total, setTotal] = useState(0)
+  /** The steps the run started with, while it is remembered. */
+  const [runSteps, setRunSteps] = useState<readonly Step[] | null>(null)
   /** The step whose send the engine took and whose confirmation is not counted yet. */
   const [accepted, setAccepted] = useState<number | null>(null)
   // Event handlers and send callbacks read these at once; the state above is
@@ -102,7 +105,7 @@ export function useStepRun<Step>({
         confirmedAt: undefined,
       }
       setIndex(0)
-      setTotal(steps.length)
+      setRunSteps(steps)
       setAccepted(null)
       setRunning(true)
       tx.reset()
@@ -111,16 +114,25 @@ export function useStepRun<Step>({
     [tx, sendAt],
   )
 
-  /** Send the step the run stopped at again. */
-  const resume = useCallback(() => {
-    const current = run.current
-    if (current.running || current.index >= current.steps.length) return
-    current.running = true
-    setAccepted(null)
-    setRunning(true)
-    tx.reset()
-    sendAt(current.index)
-  }, [tx, sendAt])
+  /**
+   * Send the step the run stopped at again. It refuses (false) for any steps
+   * but the ones the run started with.
+   */
+  const resume = useCallback(
+    (steps: readonly Step[]): boolean => {
+      const current = run.current
+      if (current.running || steps !== current.steps || current.index >= current.steps.length) {
+        return false
+      }
+      current.running = true
+      setAccepted(null)
+      setRunning(true)
+      tx.reset()
+      sendAt(current.index)
+      return true
+    },
+    [tx, sendAt],
+  )
 
   /** Run other work, such as one Safe batch proposal, as the run: the flow is busy until it ends. */
   const hold = useCallback(
@@ -140,7 +152,10 @@ export function useStepRun<Step>({
     [halt],
   )
 
-  /** Forget the run, once the flow closed or dropped its plan. */
+  /**
+   * Forget the run and reset the engine, whenever the flow drops or replaces
+   * its plan: a stopped step, its error and its confirmed block go with it.
+   */
   const clear = useCallback(() => {
     run.current = {
       steps: [],
@@ -151,17 +166,23 @@ export function useStepRun<Step>({
       confirmedAt: undefined,
     }
     setIndex(0)
-    setTotal(0)
+    setRunSteps(null)
     setAccepted(null)
     setRunning(false)
-  }, [])
+    tx.reset()
+  }, [tx])
 
   return {
     running,
     /** The step the run is on, or stopped at. */
     index,
-    /** The run stopped before its last step confirmed, so `resume` continues it. */
-    stopped: !running && index < total && (index > 0 || tx.phase === 'error'),
+    /** The run through these exact steps stopped before its last step confirmed, so `resume` continues it. */
+    stoppedOn: (steps: readonly Step[] | undefined): boolean =>
+      !running &&
+      !!steps &&
+      steps === runSteps &&
+      index < steps.length &&
+      (index > 0 || tx.phase === 'error'),
     /** `running`, read at once (for a click that lands before the next render). */
     isRunning: () => run.current.running,
     start,

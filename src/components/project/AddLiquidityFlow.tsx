@@ -540,11 +540,15 @@ function AddLiquidityForm({
 
   const busy = quoting || run.running || tx.busy
 
+  /** Replace or drop the reviewed plan; a run through the old one goes with it. */
+  const replacePlan = (next: Plan | null) => {
+    run.clear()
+    planRef.current = next
+    setPlan(next)
+  }
+
   const invalidatePlan = () => {
-    if (planRef.current && !run.isRunning()) {
-      planRef.current = null
-      setPlan(null)
-    }
+    if (planRef.current && !run.isRunning()) replacePlan(null)
     setReviewError(null)
   }
 
@@ -751,8 +755,7 @@ function AddLiquidityForm({
           price: fresh.price,
         },
       }
-      planRef.current = built
-      setPlan(built)
+      replacePlan(built)
     } catch (e) {
       setReviewError(
         e instanceof FlowError
@@ -793,8 +796,7 @@ function AddLiquidityForm({
   /** Account-unchanged recheck: the mint recipient is baked into unlockData. */
   const reviewedAccountConnected = (reviewed: Plan): boolean => {
     if (address && address.toLowerCase() === reviewed.account.toLowerCase()) return true
-    planRef.current = null
-    setPlan(null)
+    replacePlan(null)
     setReviewError('Your connected account changed — review again.')
     return false
   }
@@ -814,18 +816,15 @@ function AddLiquidityForm({
   const resume = () => {
     if (!plan || run.isRunning()) return
     if (!reviewedAccountConnected(plan)) return
-    run.resume()
+    run.resume(plan.steps)
   }
 
   // Closing the dialog drops the frozen plan; the inputs and any success stay.
   const closePlan = () => {
     if (run.isRunning() || tx.busy) return
-    run.clear()
-    planRef.current = null
-    setPlan(null)
+    replacePlan(null)
     setBatchStatus(null)
     setBatchError(null)
-    tx.reset()
   }
 
   const startOver = () => {
@@ -859,6 +858,7 @@ function AddLiquidityForm({
   const confirmDialog = plan
     ? (() => {
         const d = plan.display
+        const stopped = run.stoppedOn(plan.steps)
         const rows: TxConfirmRow[] = []
         if (plan.market) {
           if (d.needTok > 0n) {
@@ -938,7 +938,7 @@ function AddLiquidityForm({
               title: step.label,
               detail: run.running && index === run.index ? runningDetail : undefined,
             }))}
-            activeIndex={run.running || run.stopped ? run.index : -1}
+            activeIndex={run.running || stopped ? run.index : -1}
             stepsIntro={
               liquidityBatchApplies(plan.steps)
                 ? liquidityBatchIntro(plan.steps.length)
@@ -953,7 +953,7 @@ function AddLiquidityForm({
                   : plan.market
                     ? 'Making the market…'
                     : 'Adding liquidity…'
-                : run.stopped
+                : stopped
                   ? `Retry step ${run.index + 1} of ${plan.steps.length}`
                   : liquidityBatchApplies(plan.steps)
                     ? 'Confirm & propose to Safe'
@@ -961,7 +961,7 @@ function AddLiquidityForm({
                       ? 'Confirm & make the market'
                       : 'Confirm & add liquidity'
             }
-            onConfirm={run.stopped ? resume : startRun}
+            onConfirm={stopped ? resume : startRun}
             busy={run.running || tx.busy}
             complete={done}
             status={batchStatus ?? tx.safeNonceGuidance}

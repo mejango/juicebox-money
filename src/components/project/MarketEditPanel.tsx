@@ -249,8 +249,7 @@ export function MarketEditPanel({
         'Edit the market',
       )
       const built: Reviewed = { account: connectedAddress, pool: market, plan, steps }
-      planRef.current = built
-      setReviewed(built)
+      replaceReviewed(built)
     } catch (e) {
       setReviewError(
         e instanceof FlowError ? e.message : e instanceof Error ? shortError(e) : 'Something went wrong.',
@@ -331,6 +330,13 @@ export function MarketEditPanel({
   const busy = quoting || run.running || tx.busy
   const editing = busy || reviewed !== null
 
+  /** Replace or drop the reviewed plan; a run through the old one goes with it. */
+  const replaceReviewed = (next: Reviewed | null) => {
+    run.clear()
+    planRef.current = next
+    setReviewed(next)
+  }
+
   // ponytail: Safe app only; other EIP-5792 wallets keep the sequential path.
   const runBatch = (p: Reviewed) =>
     run.hold(async () => {
@@ -362,8 +368,7 @@ export function MarketEditPanel({
   /** The recipient is baked into unlockData: a changed account must re-review. */
   const reviewedAccountConnected = (p: Reviewed): boolean => {
     if (connectedAddress && connectedAddress.toLowerCase() === p.account.toLowerCase()) return true
-    planRef.current = null
-    setReviewed(null)
+    replaceReviewed(null)
     setReviewError('Your connected account changed — review again.')
     return false
   }
@@ -381,17 +386,14 @@ export function MarketEditPanel({
   const resume = () => {
     if (!reviewed || run.isRunning()) return
     if (!reviewedAccountConnected(reviewed)) return
-    run.resume()
+    run.resume(reviewed.steps)
   }
 
   const back = () => {
-    run.clear()
+    replaceReviewed(null)
     setBatchProposed(false)
     setBatchError(null)
-    planRef.current = null
-    setReviewed(null)
     setReviewError(null)
-    tx.reset()
   }
 
   const amountsText = (token: bigint, pair: bigint) =>
@@ -458,6 +460,7 @@ export function MarketEditPanel({
     return rows
   }
 
+  const stopped = run.stoppedOn(reviewed?.steps)
   const dialog = reviewed || quoting ? (
     <TxConfirmDialog
       open
@@ -465,7 +468,7 @@ export function MarketEditPanel({
       title={batchProposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
       steps={(reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
-      activeIndex={run.running || run.stopped ? run.index : -1}
+      activeIndex={run.running || stopped ? run.index : -1}
       stepsIntro={
         reviewed && liquidityBatchApplies(reviewed.steps)
           ? liquidityBatchIntro(reviewed.steps.length)
@@ -474,11 +477,11 @@ export function MarketEditPanel({
       action={
         run.running
           ? 'Editing the market…'
-          : reviewed && run.stopped
+          : reviewed && stopped
             ? `Retry step ${run.index + 1} of ${reviewed.steps.length}`
             : 'Edit the market'
       }
-      onConfirm={run.stopped ? resume : startRun}
+      onConfirm={stopped ? resume : startRun}
       busy={busy}
       complete={done !== null || batchProposed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}
