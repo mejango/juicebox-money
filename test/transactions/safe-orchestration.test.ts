@@ -712,6 +712,38 @@ describe('Safe execution boundary', () => {
     expect(mocks.waitSafe).toHaveBeenCalledWith(999, proposal)
   })
 
+  it.each([
+    ['Safe 1.4, hash indexed', (hash: Hex) => ({ topics: [EXECUTION_FAILURE_TOPIC, hash], data: `0x${'00'.repeat(32)}` as Hex })],
+    ['Safe 1.3, hash in data', (hash: Hex) => ({ topics: [EXECUTION_FAILURE_TOPIC], data: `${hash}${'00'.repeat(32)}` as Hex })],
+  ] as const)('does not fail a Safe app approval for another proposal\'s ExecutionFailure (%s)', async (_, failure) => {
+    const proposal = `0x${'cd'.repeat(32)}` as Hex
+    const other = `0x${'ce'.repeat(32)}` as Hex
+    const execution = `0x${'ef'.repeat(32)}` as Hex
+    mocks.safe = true
+    // A 2-of-2 Safe: the approval is the whole send, and the run then waits for Bob.
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockResolvedValue(0n)
+    mocks.wallet.writeContract.mockResolvedValueOnce(proposal)
+    mocks.waitSafe.mockResolvedValueOnce(execution)
+    // The same execution also ran another of the connected Safe's proposals, which failed.
+    mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
+      status: 'success',
+      transactionHash: execution,
+      logs: [{ address: ALICE, ...failure(other) }],
+    })
+
+    await expect(
+      runSafeCalls({
+        signer: ALICE,
+        calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).resolves.toEqual([expect.objectContaining({ mode: 'onchain', status: 'waiting' })])
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'approveHash' }),
+    )
+  })
+
   it('does not send when the connection changed after the review', async () => {
     mocks.requireReview.mockImplementationOnce(async () => { mocks.safe = true })
 
