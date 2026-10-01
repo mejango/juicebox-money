@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { useSyncExternalStore } from 'react'
 import type { Hex } from 'viem'
 import { vi } from 'vitest'
 
@@ -83,40 +83,3 @@ function fakeSafeTx() {
 }
 
 export const engine = fakeSafeTx()
-
-/** The confirm dialog's contract: its title, error, action and close. */
-export function ConfirmDialogStub({
-  title,
-  action,
-  onConfirm,
-  onClose,
-  busy,
-  error,
-  complete,
-  children,
-}: {
-  title: ReactNode
-  action: ReactNode
-  onConfirm: () => void
-  onClose: () => void
-  busy?: boolean
-  error?: ReactNode
-  complete?: boolean
-  children?: ReactNode
-}) {
-  return (
-    <section data-confirm-dialog="">
-      <h2>{title}</h2>
-      {error ? <p role="alert">{error}</p> : null}
-      {complete ? null : (
-        <button type="button" data-confirm-action="" disabled={busy} onClick={onConfirm}>
-          {action}
-        </button>
-      )}
-      <button type="button" data-confirm-close="" onClick={onClose}>
-        Close
-      </button>
-      {children}
-    </section>
-  )
-}

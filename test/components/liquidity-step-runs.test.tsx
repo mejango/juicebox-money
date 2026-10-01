@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 
 /**
- * Each liquidity flow sends a plan's steps one after another. A run that
- * stopped part way belongs to that plan only: after the account changes and a
- * new plan is reviewed, confirming must start the new plan, never send the old
- * plan's stopped step (an approval for another account, or a write whose
- * recipient is baked into its bytes).
+ * Each liquidity flow sends a plan's steps one after another, from a confirm
+ * hosted in the ModalShell that holds the flow (as OwnersTab hosts them).
+ *
+ * - A run that stopped part way belongs to that plan only: after the account
+ *   changes and a new plan is reviewed, confirming must start the new plan,
+ *   never send the old plan's stopped step (an approval for another account,
+ *   or a write whose recipient is baked into its bytes).
+ * - While a send is in flight, the shell does not close: Escape, a backdrop
+ *   click or its × would drop the run, and reopening would send it again.
  */
 
-import { act, createElement, type ReactElement } from 'react'
+import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { zeroAddress, type Address, type Hex } from 'viem'
@@ -31,10 +35,6 @@ const ERC20 = [{ currency: TOKEN, max: 10n ** 18n }]
 vi.mock('@/hooks/useSafeTx', async () => {
   const { engine } = await import('../support/lp-flow-harness')
   return { useSafeTx: () => engine.useSafeTx() }
-})
-vi.mock('@/components/ui/TxConfirmDialog', async () => {
-  const { ConfirmDialogStub } = await import('../support/lp-flow-harness')
-  return { TxConfirmDialog: ConfirmDialogStub }
 })
 vi.mock('wagmi', async importOriginal => ({
   ...(await importOriginal<typeof import('wagmi')>()),
@@ -153,6 +153,7 @@ const client = {
 }
 
 import { engine } from '../support/lp-flow-harness'
+import { ModalShell } from '@/components/ui/ModalShell'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { EditPositionPanel } from '@/components/project/EditPositionPanel'
 import { MarketEditPanel } from '@/components/project/MarketEditPanel'
@@ -176,9 +177,20 @@ afterEach(() => {
   host.remove()
 })
 
-/** Render the flow; `flow` builds a fresh element each time, so a re-render reaches it. */
+const hostClose = vi.fn()
+
+/**
+ * Render the flow inside a ModalShell; `flow` builds a fresh element each
+ * time, so a re-render reaches it.
+ */
 async function render(flow: () => ReactElement) {
-  make = () => createElement(QueryClientProvider, { client: queryClient }, flow())
+  make = () => (
+    <QueryClientProvider client={queryClient}>
+      <ModalShell title="Liquidity" onClose={hostClose}>
+        {flow()}
+      </ModalShell>
+    </QueryClientProvider>
+  )
   await act(async () => root.render(make()))
 }
 
@@ -207,7 +219,7 @@ function buttons(): HTMLButtonElement[] {
 /** The flow's own review button, never the confirm dialog's action. */
 async function review(label: string) {
   const button = buttons().find(
-    item => item.textContent === label && !item.hasAttribute('data-confirm-action'),
+    item => item.textContent === label && !item.closest('[data-tx-confirm]'),
   )
   expect(button, label).toBeDefined()
   await act(async () => button!.click())
@@ -215,9 +227,22 @@ async function review(label: string) {
 }
 
 function action(): HTMLButtonElement {
-  const button = host.querySelector<HTMLButtonElement>('[data-confirm-action]')
+  const button = host.querySelector<HTMLButtonElement>('[data-tx-confirm] footer .btn-primary')
   expect(button, 'the confirm dialog action').not.toBeNull()
   return button!
+}
+
+/** Try every way out of the shell: Escape, a backdrop click and its ×. */
+async function tryToLeave() {
+  const dialog = host.querySelector('dialog')!
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+  })
+  await act(async () => {
+    dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+  })
+  const [shellClose] = dialog.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]')
+  await act(async () => shellClose.click())
 }
 
 async function confirm() {
@@ -261,7 +286,7 @@ async function replanAfterStop({
   await switchAccount(BOB)
   await confirm()
   expect(host.textContent).toContain('Your connected account changed — review again.')
-  expect(host.querySelector('[data-confirm-dialog]')).toBeNull()
+  expect(host.querySelector('[data-tx-confirm]')).toBeNull()
 
   await review(reviewLabel)
   // The new plan's review shows nothing of the old run.
@@ -357,5 +382,79 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     })
     // Neither plan's Permit2 authorization was sent again in Alice's name.
     expect(sent().filter(request => request.functionName === 'approve')).toHaveLength(3)
+  })
+})
+
+describe('a liquidity run keeps its modal open while a send is in flight', () => {
+  it('add liquidity', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    await confirm()
+    // The first approval waits on the wallet.
+    expect(engine.send).toHaveBeenCalledTimes(1)
+    await tryToLeave()
+    expect(hostClose).not.toHaveBeenCalled()
+
+    // The mint is pending onchain.
+    await land(H1, H2)
+    await act(async () => engine.answer(H3))
+    await tryToLeave()
+    expect(hostClose).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
+
+    // Once the run is done, the shell closes again.
+    await act(async () => engine.confirm(H3, 12n))
+    await tryToLeave()
+    expect(hostClose).toHaveBeenCalled()
+  })
+
+  it('edit position', async () => {
+    await render(() => (
+      <EditPositionPanel
+        chainId={1}
+        projectId={7}
+        pool={POOL as never}
+        positionManager={POSITION_MANAGER}
+        position={TOKEN_SIDE}
+        sym="TKN"
+        floor={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />
+    ))
+    await settle()
+    await review('Edit position')
+    await confirm()
+    expect(engine.send).toHaveBeenCalledTimes(1)
+
+    await tryToLeave()
+    expect(hostClose).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
+  })
+
+  it('edit market', async () => {
+    await render(() => (
+      <MarketEditPanel
+        chainId={1}
+        projectId={7}
+        pool={POOL as never}
+        positionManager={POSITION_MANAGER}
+        sides={{ tokenSide: TOKEN_SIDE, pairSide: PAIR_SIDE }}
+        sym="TKN"
+        floor={0.5}
+        onClose={() => {}}
+        onDone={() => {}}
+      />
+    ))
+    await settle()
+    await review('Edit the market')
+    await confirm()
+    expect(engine.send).toHaveBeenCalledTimes(1)
+
+    await tryToLeave()
+    expect(hostClose).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
   })
 })

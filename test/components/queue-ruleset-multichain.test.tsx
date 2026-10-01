@@ -21,6 +21,7 @@ vi.mock('wagmi', async original => ({
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => children,
   useEnclosingModalCard: () => null,
+  useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor, runAuthorityCalls: mocks.runAuthorityCalls, safeOutcomeMessage: (_result: unknown, message: string) => message }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), loadRelayrPendingSession: mocks.loadSession, resumeRelayrSession: mocks.resume }))

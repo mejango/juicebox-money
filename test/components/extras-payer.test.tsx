@@ -53,6 +53,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
     createElement('div', null, children),
   ModalCloseButton: () => null,
   useEnclosingModalCard: () => null,
+  useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/providers/Providers', async () => {

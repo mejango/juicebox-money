@@ -38,6 +38,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalCloseButton: (props: Record<string, unknown>) =>
     createElement('button', props),
   useEnclosingModalCard: () => null,
+  useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/providers/Providers', async () => {
   const chains = await import('viem/chains')
