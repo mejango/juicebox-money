@@ -67,8 +67,8 @@ const unlock = (data: `0x${string}`) =>
   decodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], data)
 const mintParams = (mint: { unlockData: `0x${string}` }) => unlock(mint.unlockData)[1][0]
 
-describe('wallet-action:make-or-edit-a-uniswap-v4-market market mint', () => {
-  it('mints both sides of the corridor in one unlock with independent amounts', () => {
+describe('market mint', () => {
+  it('wallet-action:make-or-edit-a-uniswap-v4-market mints both sides of the corridor in one unlock with independent amounts', () => {
     const plan = buildMarketMint({
       pool,
       tokenAmount: 10n ** 18n,

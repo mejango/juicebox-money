@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { provingTitleWords } from './lib/test-titles.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sourceRoot = join(root, 'src')
@@ -252,42 +253,14 @@ function actionMarker(action) {
   return `wallet-action:${action.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
 }
 
-function isTestFunction(expression) {
-  return ts.isIdentifier(expression) && ['describe', 'it', 'test'].includes(expression.text)
-}
-
 const testTitleCache = new Map()
-/** The words of every describe/it/test title in a test file, `.each` tables included; skipped tests have none. */
+/** The words of the titles in a test file that can prove an action. */
 function testTitleWords(test) {
-  if (testTitleCache.has(test)) return testTitleCache.get(test)
-  const path = join(root, 'test', test)
-  const source = ts.createSourceFile(
-    path,
-    readFileSync(path, 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    extname(path) === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  )
-  const words = new Set()
-  function visit(node) {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression
-      const runs =
-        isTestFunction(callee) ||
-        (ts.isCallExpression(callee) &&
-          ts.isPropertyAccessExpression(callee.expression) &&
-          callee.expression.name.text === 'each' &&
-          isTestFunction(callee.expression.expression))
-      const [title] = node.arguments
-      if (runs && title && (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title))) {
-        for (const word of title.text.split(/\s+/)) words.add(word)
-      }
-    }
-    ts.forEachChild(node, visit)
+  if (!testTitleCache.has(test)) {
+    const path = join(root, 'test', test)
+    testTitleCache.set(test, provingTitleWords(readFileSync(path, 'utf8'), path))
   }
-  visit(source)
-  testTitleCache.set(test, words)
-  return words
+  return testTitleCache.get(test)
 }
 
 function checkActionReference(file, action, { requireExact = false } = {}) {
@@ -320,7 +293,7 @@ function checkActionReference(file, action, { requireExact = false } = {}) {
     markedTests.add(`${test}#${marker}`)
     if (!testTitleWords(test).has(marker)) {
       failures.push(
-        `${file} action ${action} needs the marker ${marker} in a describe/it title of test/${test}`,
+        `${file} action ${action} needs the marker ${marker} in the title of a test in test/${test} that proves it`,
       )
     }
   }

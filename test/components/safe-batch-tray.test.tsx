@@ -134,7 +134,7 @@ function click(element: HTMLElement) {
   act(() => element.click())
 }
 
-describe('wallet-action:submit-a-safe-operator-batch Safe batch tray', () => {
+describe('Safe batch tray', () => {
   it('shows one tab per chain from storage and only the preset button when nothing is queued', async () => {
     render()
     await settle()
@@ -184,7 +184,7 @@ describe('wallet-action:submit-a-safe-operator-batch Safe batch tray', () => {
     expect(container.textContent).toContain('Nothing queued')
   })
 
-  it('opens the batch dialog with the steps, disables submit on a dependency problem, and fixes it by moving', async () => {
+  it('wallet-action:submit-a-safe-operator-batch opens the batch dialog with the steps, disables submit on a dependency problem, and fixes it by moving', async () => {
     seed()
     render()
     await settle()

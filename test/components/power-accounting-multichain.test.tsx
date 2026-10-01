@@ -71,8 +71,8 @@ afterEach(async () => {
   renderer = undefined
 })
 
-describe('wallet-action:register-accounting-tokens-across-chains multichain accounting-token review', () => {
-  it('encodes and reviews each destination token with its own decimals and project ID', async () => {
+describe('multichain accounting-token review', () => {
+  it('wallet-action:register-accounting-tokens-across-chains encodes and reviews each destination token with its own decimals and project ID', async () => {
     await renderForm()
     await decimals('Ethereum', '6')
     await decimals('Optimism', '18')

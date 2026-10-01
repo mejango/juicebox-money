@@ -86,7 +86,7 @@ function chain({
   return client as unknown as PublicClient & typeof client
 }
 
-describe('wallet-action:submit-a-safe-operator-batch buyback 1.4.0 + gateway preset', () => {
+describe('buyback 1.4.0 + gateway preset', () => {
   it('refuses deployed but disallowed selections and propagates unknown allowances', async () => {
     for (const client of [chain({ hookAllowed: false }), chain({ terminalAllowed: false })]) {
       expect(await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })).toMatchObject({ status: 'unavailable', steps: [] })
@@ -109,7 +109,7 @@ describe('wallet-action:submit-a-safe-operator-batch buyback 1.4.0 + gateway pre
     expect(rolloutTargets(11155111)).toEqual({ hook: NEW_HOOK, terminal: NEW_TERMINAL })
   })
 
-  it.each(MAINNETS)('builds a migration to the executed targets on mainnet chain %i after checking code and registry permissions', async chainId => {
+  it.each(MAINNETS)('wallet-action:submit-a-safe-operator-batch builds a migration to the executed targets on mainnet chain %i after checking code and registry permissions', async chainId => {
     const targets = rolloutTargets(chainId)!
     expect(targets).not.toBeNull()
     const client = chain({
@@ -151,7 +151,7 @@ describe('wallet-action:submit-a-safe-operator-batch buyback 1.4.0 + gateway pre
     expect(noTerminal.message).toBe('Not deployed on Base Sepolia yet.')
   })
 
-  it('builds hook, carried native pool and terminal steps for a project on the old hook', async () => {
+  it('wallet-action:submit-a-safe-operator-batch builds hook, carried native pool and terminal steps for a project on the old hook', async () => {
     const client = chain({
       pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 1800n } },
     })

@@ -174,7 +174,7 @@ describe('inline Safe launch account transport', () => {
   })
 })
 
-describe('wallet-action:create-an-owner-or-operator-safe-during-launch inline launch authority policy', () => {
+describe('inline launch authority policy', () => {
   it.each([2, 20])('accepts the UI boundary of %i unique signers', count => {
     const owners = Array.from({ length: count }, (_, i) => toHex(i + 2, { size: 20 }))
     expect(validateAuthorityPolicy(owners, count)).toBe(true)
@@ -207,7 +207,7 @@ describe('wallet-action:create-an-owner-or-operator-safe-during-launch inline la
     expect(plan.address).not.toBe((await resolve([rpc().client], { owners: [...input].reverse() })).address)
   })
 
-  it('uses a role-specific salt and one identical policy across every selected chain', async () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch uses a role-specific salt and one identical policy across every selected chain', async () => {
     const first = rpc()
     const second = rpc()
     const owner = await resolve([first.client, second.client])

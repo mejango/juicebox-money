@@ -59,8 +59,8 @@ function terminalStep(chainId: 1 | 8453 = 1): BatchStep {
   })
 }
 
-describe('wallet-action:submit-a-safe-operator-batch Safe batch steps', () => {
-  it('builds the three preset calls byte-for-byte against the reference calldata', () => {
+describe('Safe batch steps', () => {
+  it('wallet-action:submit-a-safe-operator-batch builds the three preset calls byte-for-byte against the reference calldata', () => {
     const hook = hookStep()
     const pool = poolStep()
     const terminal = terminalStep()

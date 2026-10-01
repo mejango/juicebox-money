@@ -260,8 +260,8 @@ describe('project handle normalization and routing', () => {
   })
 })
 
-describe('wallet-action:set-project-handle project handle transaction payloads', () => {
-  it('encodes the exact ENS text record on the exact resolver', () => {
+describe('project handle transaction payloads', () => {
+  it('wallet-action:set-project-handle encodes the exact ENS text record on the exact resolver', () => {
     const call = buildSetEnsProjectRecordCall({
       resolver: RESOLVER,
       ensName: 'banny.eth',
@@ -281,7 +281,7 @@ describe('wallet-action:set-project-handle project handle transaction payloads',
     })
   })
 
-  it('encodes one canonical project tuple and reversed name parts', () => {
+  it('wallet-action:set-project-handle encodes one canonical project tuple and reversed name parts', () => {
     const call = buildSetProjectHandleCall({
       chainId: 8453,
       projectId: 42,

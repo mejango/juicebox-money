@@ -498,7 +498,7 @@ describe('project payer write flow', () => {
   })
 })
 
-describe('wallet-action:auto-issue-tokens auto-issuance write flow', () => {
+describe('auto-issuance write flow', () => {
   const props = {
     chainId: 1 as const,
     projectId: 42,
@@ -507,7 +507,7 @@ describe('wallet-action:auto-issue-tokens auto-issuance write flow', () => {
     onDone: vi.fn(),
   }
 
-  it('prepares the live allocation and submits it through the shared project alias', async () => {
+  it('wallet-action:auto-issue-tokens prepares the live allocation and submits it through the shared project alias', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
@@ -571,8 +571,8 @@ describe('wallet-action:auto-issue-tokens auto-issuance write flow', () => {
   })
 })
 
-describe('wallet-action:cash-out-project-tokens cash-out write flow', () => {
-  it('debounces the amount and sends the exact freshly rendered quote floor', async () => {
+describe('cash-out write flow', () => {
+  it('wallet-action:cash-out-project-tokens debounces the amount and sends the exact freshly rendered quote floor', async () => {
     vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

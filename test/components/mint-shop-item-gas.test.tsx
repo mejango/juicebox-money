@@ -111,14 +111,14 @@ beforeEach(() => {
 
 afterEach(async () => { await act(async () => renderer.unmount()) })
 
-describe('wallet-action:mint-shop-tiers-without-payment free mint gas', () => {
-  it('sends the measured gas limit from an ordinary wallet', async () => {
+describe('free mint gas', () => {
+  it('wallet-action:mint-shop-tiers-without-payment sends the measured gas limit from an ordinary wallet', async () => {
     await mint()
     expect(mocks.review.mock.calls[0][0]).not.toHaveProperty('safeTxGas')
     expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'mintFor', gas: 200_000n }))
   })
 
-  it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+  it('wallet-action:mint-shop-tiers-without-payment proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe = true
     await mint()
     expect(mocks.review).toHaveBeenCalledWith(

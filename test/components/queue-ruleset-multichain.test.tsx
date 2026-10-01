@@ -88,7 +88,7 @@ beforeEach(() => {
   mocks.runAuthorityCalls.mockImplementation(async ({ calls }) => { for (const call of calls) await call.reverifyAuthority?.(); return { directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] } })
 })
 
-describe('wallet-action:queue-rulesets-across-selected-mainnets multichain ruleset configuration', () => {
+describe('multichain ruleset configuration', () => {
   it('enables all testnet peers in the ruleset editor and disables a linked mainnet', async () => {
     currentReview = review([11155111, 11155420, 84532, 421614, 1])
     installReads()
@@ -111,7 +111,7 @@ describe('wallet-action:queue-rulesets-across-selected-mainnets multichain rules
     }
   })
 
-  it('revalidates one frozen ruleset call on each of the four testnets', async () => {
+  it('wallet-action:queue-rulesets-across-selected-mainnets revalidates one frozen ruleset call on each of the four testnets', async () => {
     currentReview = review([11155111, 11155420, 84532, 421614])
     installReads()
     const calls = reviewedQueueCalls(currentReview, 'current')
@@ -197,7 +197,7 @@ describe('wallet-action:queue-rulesets-across-selected-mainnets multichain rules
     expect(primary.starts).toEqual([130])
     expect(destination.starts).toEqual([125])
   })
-  it('encodes each reviewed controller and project ID with the frozen destination config', () => {
+  it('wallet-action:queue-rulesets-across-selected-mainnets encodes each reviewed controller and project ID with the frozen destination config', () => {
     const calls = reviewedQueueCalls(currentReview, 'current')
     expect(calls.map(call => call.target)).toEqual([jbContractAddress['6'][JBCoreContracts.JBController][1], jbContractAddress['6'][JBCoreContracts.JBController][8453]])
     calls.forEach((call, index) => {

@@ -5,8 +5,8 @@ import { buildBurnTokensRequest } from '@/lib/burnTokens'
 const CONTROLLER = '0x1111111111111111111111111111111111111111' as Address
 const HOLDER = '0x2222222222222222222222222222222222222222' as Address
 
-describe('wallet-action:burn-project-tokens standalone token burning', () => {
-  it('pins the reviewed write to the live controller, holder, project, amount, and memo', () => {
+describe('standalone token burning', () => {
+  it('wallet-action:burn-project-tokens pins the reviewed write to the live controller, holder, project, amount, and memo', () => {
     const request = buildBurnTokensRequest({
       chainId: 1,
       controller: CONTROLLER,

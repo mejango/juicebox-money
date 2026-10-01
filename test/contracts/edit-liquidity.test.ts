@@ -325,8 +325,8 @@ describe('LP edit plan', () => {
   })
 })
 
-describe('wallet-action:edit-uniswap-v4-liquidity LP edit encoders', () => {
-  it('pins the increase payload, with the sweep only when native value is sent', () => {
+describe('LP edit encoders', () => {
+  it('wallet-action:edit-uniswap-v4-liquidity pins the increase payload, with the sweep only when native value is sent', () => {
     const [actions, params] = unlock(
       buildIncreaseLiquidityUnlockData({
         tokenId: 7n,
@@ -357,7 +357,7 @@ describe('wallet-action:edit-uniswap-v4-liquidity LP edit encoders', () => {
     ).toEqual([zeroAddress, ALICE])
   })
 
-  it('pins the decrease payload and its per-currency floors', () => {
+  it('wallet-action:edit-uniswap-v4-liquidity pins the decrease payload and its per-currency floors', () => {
     const [actions, params] = unlock(
       buildDecreaseLiquidityUnlockData({
         tokenId: 7n,

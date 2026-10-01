@@ -345,7 +345,7 @@ describe('cash-out accounting context reads', () => {
   })
 })
 
-describe('wallet-action:cash-out-project-tokens cash-out transaction request', () => {
+describe('cash-out transaction request', () => {
   it('explains the buyback hook slippage error instead of exposing its selector', () => {
     expect(
       cashOutExecutionErrorMessage(
@@ -380,7 +380,7 @@ describe('wallet-action:cash-out-project-tokens cash-out transaction request', (
     expect(cashOutPoolBufferBps(route)).toBe(256)
   })
 
-  it('round-trips the treasury route: exact fee, 1% floor, empty metadata', () => {
+  it('wallet-action:cash-out-project-tokens round-trips the treasury route: exact fee, 1% floor, empty metadata', () => {
     const route = resolveCashOutRoute({
       reclaimAmount: 10_000n,
       cashOutTaxRate: 5_000n,
@@ -416,7 +416,7 @@ describe('wallet-action:cash-out-project-tokens cash-out transaction request', (
     ])
   })
 
-  it('keeps a zero terminal minimum and the metadata floor on the amm route', () => {
+  it('wallet-action:cash-out-project-tokens keeps a zero terminal minimum and the metadata floor on the amm route', () => {
     const route: CashOutRoute = {
       route: 'amm',
       expectedReturn: 12_000n,

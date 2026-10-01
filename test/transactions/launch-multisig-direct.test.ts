@@ -91,8 +91,8 @@ beforeEach(() => {
   seed()
 })
 
-describe('wallet-action:create-an-owner-or-operator-safe-during-launch direct launch Safe setup', () => {
-  it('reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
+describe('direct launch Safe setup', () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
     const args = options()
     args.writeContract.mockImplementation(async () => {
       expect(setup()).toEqual({ phase: 'signing' })
@@ -322,7 +322,7 @@ describe('wallet-action:create-an-owner-or-operator-safe-during-launch direct la
     expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
   })
 
-  it('proposes Safe creation through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch proposes Safe creation through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe.mockReturnValue(true)
     const args = options()
     await prepareLaunchMultisigs(args)

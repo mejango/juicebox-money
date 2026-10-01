@@ -183,8 +183,8 @@ afterEach(async () => {
   }
 })
 
-describe('wallet-action:edit-reserved-recipients-across-selected-mainnets multichain reserved split replacement', () => {
-  it('allows all four testnets in one frozen reserved-recipient review', async () => {
+describe('multichain reserved split replacement', () => {
+  it('wallet-action:edit-reserved-recipients-across-selected-mainnets allows all four testnets in one frozen reserved-recipient review', async () => {
     const destinations = await Promise.all(([11155111, 11155420, 84532, 421614] as const).map(async chainId => {
       const expected = live.get(chainId)!
       const destination = await readSplitDestination({ chainId, projectId: expected.projectId, groupId: expected.groupId, account: ACCOUNT })
@@ -315,7 +315,7 @@ describe('wallet-action:edit-reserved-recipients-across-selected-mainnets multic
     expect(assembleReservedDestination(source, [], NOW)).toEqual([])
   })
 
-  it('encodes one frozen setSplitGroupsOf call per destination with its own project and ruleset IDs', () => {
+  it('wallet-action:edit-reserved-recipients-across-selected-mainnets encodes one frozen setSplitGroupsOf call per destination with its own project and ruleset IDs', () => {
     const calls = reviewedSplitCalls(review)
     expect(calls.map(call => call.chainId)).toEqual([1, 8453])
     calls.forEach((call, index) => {

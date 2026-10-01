@@ -15,7 +15,7 @@ const options = () => ({
   write: vi.fn(async () => '0xhash' as const),
 })
 
-describe('wallet-action:submit-a-reviewed-direct-write Juicebox Money reviewed writes', () => {
+describe('Juicebox Money reviewed writes', () => {
   afterEach(() => clearViewAs())
 
   it('refuses before review while viewing as another account', async () => {
@@ -26,7 +26,7 @@ describe('wallet-action:submit-a-reviewed-direct-write Juicebox Money reviewed w
     expect(write.write).not.toHaveBeenCalled()
   })
 
-  it('writes once after review otherwise', async () => {
+  it('wallet-action:submit-a-reviewed-direct-write writes once after review otherwise', async () => {
     const write = options()
     await expect(submitReviewedContractWrite(write)).resolves.toBe('0xhash')
     expect(write.write).toHaveBeenCalledOnce()

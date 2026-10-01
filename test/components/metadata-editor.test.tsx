@@ -431,7 +431,7 @@ describe('metadata editor custom properties', () => {
   })
 })
 
-describe('wallet-action:update-project-metadata metadata editor per-chain review and recovery', () => {
+describe('metadata editor per-chain review and recovery', () => {
   const peerMetadata = {
     name: 'Base name',
     projectTagline: 'Base tagline',
@@ -457,7 +457,7 @@ describe('wallet-action:update-project-metadata metadata editor per-chain review
     metadataByUri.set(PEER.uri!, peerMetadata)
   })
 
-  it('applies only an explicitly edited name to each live profile and encodes distinct project IDs/controllers', async () => {
+  it('wallet-action:update-project-metadata applies only an explicitly edited name to each live profile and encodes distinct project IDs/controllers', async () => {
     mocks.pinJson.mockImplementation(async () => ({ uri: `ipfs://QmPinned${mocks.pinJson.mock.calls.length}` }))
     const renderer = await renderEditor([...ROWS, PEER])
     await typeField(renderer, 'Name', 'Shared new name')

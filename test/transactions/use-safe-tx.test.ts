@@ -108,7 +108,7 @@ beforeEach(() => {
   mocks.writeContract.mockResolvedValue(HASH)
 })
 
-describe('wallet-action:submit-a-reviewed-direct-write useSafeTx', () => {
+describe('useSafeTx', () => {
   it('refuses to send while view-as is active', async () => {
     setViewAs(BOB)
     try {
@@ -140,7 +140,7 @@ describe('wallet-action:submit-a-reviewed-direct-write useSafeTx', () => {
     await act(async () => hook.renderer.unmount())
   })
 
-  it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
+  it('wallet-action:submit-a-reviewed-direct-write runs exact review, chain/account checks, simulation, and the simulated write', async () => {
     const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null
 
