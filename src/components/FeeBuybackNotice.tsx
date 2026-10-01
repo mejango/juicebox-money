@@ -23,6 +23,9 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
   const [busy, setBusy] = useState(enabled)
   const [waiting, setWaiting] = useState(false)
   const [autoRefresh, setAutoRefresh] = useState(false)
+  // Until every fee-paying call's first check reports, nothing is known about
+  // the fee return or whether new blocks can be watched.
+  const [settled, setSettled] = useState(false)
   const confirming = useRef(false)
   const watches = useRef<ReturnType<typeof createFeeWatch>[]>([])
   const pending = useRef(0)
@@ -54,7 +57,10 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
         next => {
           results[index] = next
           publish()
-          if (alive && pending.current > 0 && --pending.current === 0) setBusy(false)
+          if (alive && pending.current > 0 && --pending.current === 0) {
+            setBusy(false)
+            setSettled(true)
+          }
         },
       ),
     )
@@ -106,6 +112,7 @@ export function useFeeBuybackReview(calls: readonly Call[]) {
     enabled,
     result,
     busy,
+    settled,
     waiting,
     autoRefresh,
     confirm,
@@ -138,21 +145,23 @@ export function FeeBuybackNotice({
         .map(fee => (
           <p key={fee.key}>{feeReceipt(fee)}</p>
         ))}
-      <p className="mt-1 text-xs">
-        {review.waiting && review.result.status !== 'ready' ? 'Waiting. ' : ''}
-        {review.autoRefresh
-          ? 'Checking new blocks automatically.'
-          : 'Automatic checks unavailable. Retry now.'}{' '}
-        {review.result.checkedAt
-          ? `Last checked ${new Date(review.result.checkedAt).toLocaleTimeString()}.`
-          : ''}
-      </p>
+      {review.settled ? (
+        <p className="mt-1 text-xs">
+          {review.waiting && review.result.status !== 'ready' ? 'Waiting. ' : ''}
+          {review.autoRefresh
+            ? 'Checking new blocks automatically.'
+            : 'Automatic checks unavailable. Retry now.'}{' '}
+          {review.result.checkedAt
+            ? `Last checked ${new Date(review.result.checkedAt).toLocaleTimeString()}.`
+            : ''}
+        </p>
+      ) : null}
       {review.result.status === 'fallback' && !review.waiting ? (
         <button type="button" className="mt-2 underline" onClick={review.wait}>
           Wait for better rate
         </button>
       ) : null}
-      {review.result.status === 'unknown' ? (
+      {review.settled && review.result.status === 'unknown' ? (
         <button
           type="button"
           className="mt-2 underline"
