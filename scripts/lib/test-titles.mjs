@@ -3,7 +3,14 @@ import ts from 'typescript'
 /** Modifiers under which nothing runs, or nothing proves an action: a skipped, conditional or expected-to-fail test or suite. */
 const NOT_PROVING = new Set(['skip', 'todo', 'skipIf', 'runIf', 'fails'])
 
-/** A test call's function and modifiers: `it.skipIf(cond)('…')` → { name: 'it', modifiers: ['skipIf'] }. */
+/** Suites: their titles prove nothing. `suite` is Vitest's alias for `describe`. */
+const SUITES = new Set(['describe', 'suite'])
+
+/**
+ * A test call's function and modifiers: `it.skipIf(cond)('…')` →
+ * { name: 'it', modifiers: ['skipIf'] }. A bracketed modifier
+ * (`describe['skip']`) is not read: it counts as one that proves nothing.
+ */
 function testCall(callee) {
   const modifiers = []
   let node = callee
@@ -12,9 +19,12 @@ function testCall(callee) {
     else if (ts.isPropertyAccessExpression(node)) {
       modifiers.push(node.name.text)
       node = node.expression
+    } else if (ts.isElementAccessExpression(node)) {
+      modifiers.push('skip')
+      node = node.expression
     } else break
   }
-  return ts.isIdentifier(node) && ['describe', 'it', 'test'].includes(node.text)
+  return ts.isIdentifier(node) && (SUITES.has(node.text) || ['it', 'test'].includes(node.text))
     ? { name: node.text, modifiers }
     : null
 }
@@ -40,7 +50,7 @@ export function provingTitleWords(text, fileName) {
       const [title] = node.arguments
       if (
         call &&
-        call.name !== 'describe' &&
+        !SUITES.has(call.name) &&
         title &&
         (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title))
       ) {

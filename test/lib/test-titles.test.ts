@@ -14,6 +14,7 @@ describe('test titles that can prove a wallet action', () => {
       `test('${marker} proves', () => {})`,
       `it.each([1, 2])('${marker} proves %s', () => {})`,
       `describe.each([1])('suite %s', () => { it.concurrent('${marker} proves', () => {}) })`,
+      `suite('suite', () => { it('${marker} proves', () => {}) })`,
     ]) {
       expect(proves(source), source).toBe(true)
     }
@@ -30,6 +31,10 @@ describe('test titles that can prove a wallet action', () => {
       `it.skipIf(true)('${marker} proves', () => {})`,
       `it.fails('${marker} proves', () => {})`,
       `test.skip.each([1])('${marker} proves %s', () => {})`,
+      `suite('${marker} suite', () => { it('proves', () => {}) })`,
+      `suite.skip('suite', () => { it('${marker} proves', () => {}) })`,
+      `describe['skip']('suite', () => { it('${marker} proves', () => {}) })`,
+      `it['skip']('${marker} proves', () => {})`,
     ]) {
       expect(proves(source), source).toBe(false)
     }

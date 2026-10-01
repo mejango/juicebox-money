@@ -94,9 +94,10 @@ enables the full artifact comparison; it does not trust the fixture alone.
   action lists must carry the action's marker in the title of an `it` or `test`
   (`.each` included) that proves the action: `wallet-action:` plus the action's
   name in lowercase with hyphens (`wallet-action:approve-an-erc-20`). A
-  `describe` title does not count, and nothing under `.skip`, `.todo`,
-  `.skipIf`, `.runIf` or `.fails` counts, so a broad test file cannot make a new
-  operation look covered.
+  `describe` or `suite` title does not count, and nothing under `.skip`,
+  `.todo`, `.skipIf`, `.runIf`, `.fails` or a bracketed modifier
+  (`describe['skip']`) counts, so a broad test file cannot make a new operation
+  look covered.
 - Every review call that carries an ABI must decode with the SDK's
   `functionFromCall` (its `args` encode to exactly its calldata), or the review
   shows it as raw bytes. `test/review-calls-setup.ts` checks each test's mock
