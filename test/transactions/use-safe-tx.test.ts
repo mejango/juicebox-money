@@ -232,22 +232,61 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.phase).toBe('idle')
   })
 
-  it('sends a request only from the account it was reviewed for', async () => {
-    mocks.account = BOB
+  it.each([
+    ['its own review', {}],
+    ['a review its parent showed', { reviewedInParent: true }],
+  ])(
+    'refuses, before %s opens, a request reviewed for another account',
+    async (_, options) => {
+      mocks.account = BOB
+      const beforeWrite = vi.fn()
+      const hook = await renderHook()
+
+      await act(async () => {
+        await expect(
+          hook.ref.current!.send(request, { ...options, reviewedAccount: ALICE, beforeWrite }),
+        ).resolves.toBeNull()
+      })
+
+      expect(hook.ref.current).toMatchObject({
+        phase: 'error',
+        busy: false,
+        error: 'The connected account changed. Review again.',
+      })
+      expect(mocks.requestReview).not.toHaveBeenCalled()
+      expect(mocks.switchChain).not.toHaveBeenCalled()
+      expect(beforeWrite).not.toHaveBeenCalled()
+      expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+    },
+  )
+
+  it('refuses a request whose reviewed account was switched away while its review was open', async () => {
+    mocks.requestReview.mockImplementationOnce(async () => {
+      mocks.account = BOB
+      return true
+    })
     const hook = await renderHook()
 
     await act(async () => {
       await hook.ref.current!.send(request, { reviewedAccount: ALICE })
     })
 
-    expect(mocks.requestReview).toHaveBeenCalledWith(
-      { ...request, account: ALICE },
-      { label: 'Transfer' },
-    )
-    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
-    expect(hook.ref.current!.error).toMatch(/account changed/i)
+    expect(hook.ref.current!.error).toBe('The connected account changed. Review again.')
     expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
     expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('reviews, simulates and sends as the account the request was reviewed for', async () => {
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { reviewedAccount: ALICE })
+    })
+
+    expect(mocks.requestReview).toHaveBeenCalledWith({ ...request, account: ALICE }, { label: 'Transfer' })
+    expect(mocks.publicClient.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ account: ALICE }))
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('fails before simulation when switching changes the account', async () => {

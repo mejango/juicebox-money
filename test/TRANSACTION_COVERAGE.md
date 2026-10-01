@@ -29,12 +29,12 @@ missing marker.
 | Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts`, `components/mint-shop-item-gas.test.tsx` |
 | Replace shop item media | Per-shop `JB721TiersHook.setMetadata`, unchanged original metadata fields, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Deploy a project payer address | Raw `JBProjectPayerDeployer.deployProjectPayer` calls with explicit admin/beneficiary, linked project IDs, chosen funding chain and exact clone verification | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/payer-relayr.test.ts`, `components/extras-payer.test.tsx`, `components/write-flows.test.tsx` |
-| Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts` |
+| Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx` |
 | Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts` |
 | Swap project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
-| Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts` |
+| Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx` |
 | Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
 | Burn project tokens | active `JBController.burnTokensOf` | **E** | `contracts/burn-tokens.test.ts` |
 | Redeem shop NFTs | `cashOutTokensOf` + 721 metadata | **E** | `contracts/transaction-backlog.test.ts` |
@@ -72,7 +72,7 @@ missing marker.
 | Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts` |
 | Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
-| Submit a reviewed direct write | review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
+| Submit a reviewed direct write | reviewed-account check → review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |
 | Propose/confirm/execute a Safe tx | EIP-712 + `execTransaction` | **P/E** | `transactions/safe.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts` |
