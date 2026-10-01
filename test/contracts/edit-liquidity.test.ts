@@ -326,7 +326,7 @@ describe('LP edit plan', () => {
 })
 
 describe('LP edit encoders', () => {
-  it('pins the increase payload, with the sweep only when native value is sent', () => {
+  it('wallet-action:edit-uniswap-v4-liquidity pins the increase payload, with the sweep only when native value is sent', () => {
     const [actions, params] = unlock(
       buildIncreaseLiquidityUnlockData({
         tokenId: 7n,
@@ -357,7 +357,7 @@ describe('LP edit encoders', () => {
     ).toEqual([zeroAddress, ALICE])
   })
 
-  it('pins the decrease payload and its per-currency floors', () => {
+  it('wallet-action:edit-uniswap-v4-liquidity pins the decrease payload and its per-currency floors', () => {
     const [actions, params] = unlock(
       buildDecreaseLiquidityUnlockData({
         tokenId: 7n,
@@ -377,7 +377,7 @@ describe('LP edit encoders', () => {
   })
 
   it('renders an increase plan as a readable step in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
+    const { describeV4UnlockData } = await import('@bananapus/nana-sdk-core/review/decode')
     const steps = describeV4UnlockData(
       buildIncreaseLiquidityUnlockData({
         tokenId: 7n,

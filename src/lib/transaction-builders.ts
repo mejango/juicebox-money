@@ -23,7 +23,6 @@ import {
   decodeAbiParameters,
   encodeAbiParameters,
   encodeFunctionData,
-  erc20Abi,
   type Abi,
   type Address,
   type ContractFunctionArgs,
@@ -42,6 +41,24 @@ type Mint721TierArgs = ContractFunctionArgs<
   'nonpayable',
   'mintFor'
 >
+
+/**
+ * ERC-20 `approve` without a declared return. Some tokens (mainnet USDT)
+ * return nothing, and a declared bool makes the simulation fail to decode
+ * their approval. The calldata is the same as erc20Abi's.
+ */
+const erc20ApproveAbi = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+] as const
 
 const permit2ApproveAbi = [
   {
@@ -121,7 +138,7 @@ export function buildErc20ApproveRequest({
   return {
     chainId,
     address: token,
-    abi: erc20Abi,
+    abi: erc20ApproveAbi,
     functionName: 'approve' as const,
     args: [spender, amount] as const,
   }

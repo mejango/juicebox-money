@@ -10,9 +10,9 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
-  relayrErrorIsDefiniteNoSubmission,
   relayrDestinationHash, relayrRecordChain,
 } from '@/lib/relayr'
+import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { relayrPaymentChains, relayrSupportsChain } from '@/lib/relayr-chains'
@@ -398,7 +398,7 @@ export async function runProjectBatch({
     return journal
     } catch (error) {
       if (batch) {
-        if (relayrErrorIsDefiniteNoSubmission(error)) {
+        if (isDefiniteWalletRejection(error)) {
           let changed = false
           for (const [id, submission] of Object.entries(batch.submissions)) {
             if (!submission.hash) { delete batch.submissions[id]; changed = true }

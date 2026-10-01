@@ -207,7 +207,7 @@ describe('inline launch authority policy', () => {
     expect(plan.address).not.toBe((await resolve([rpc().client], { owners: [...input].reverse() })).address)
   })
 
-  it('uses a role-specific salt and one identical policy across every selected chain', async () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch uses a role-specific salt and one identical policy across every selected chain', async () => {
     const first = rpc()
     const second = rpc()
     const owner = await resolve([first.client, second.client])

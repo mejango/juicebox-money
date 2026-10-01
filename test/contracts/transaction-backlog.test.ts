@@ -15,6 +15,7 @@ import {
   buildAccountingContext,
   buildAutoIssueTx,
   buildBridgeClaimTx,
+  buildCollectUniswapV4FeesTx,
   buildBridgePrepareTx,
   buildCashOutTx,
   buildClaimTokensTx,
@@ -78,7 +79,7 @@ function encode(request: EncodableRequest): Hex {
 }
 
 describe('remaining local transaction builders', () => {
-  it('pins reserved-token distribution to the verified controller and project', () => {
+  it('wallet-action:distribute-reserved-tokens pins reserved-token distribution to the verified controller and project', () => {
     const request = buildSendReservedTokensRequest({
       chainId: CHAIN_ID,
       controller: CONTROLLER,
@@ -99,7 +100,7 @@ describe('remaining local transaction builders', () => {
     })
   })
 
-  it('pins token renaming to its authority, controller, name, and symbol', () => {
+  it('wallet-action:rename-project-erc-20 pins token renaming to its authority, controller, name, and symbol', () => {
     const call = buildTokenMetadataAuthorityCall({
       chainId: CHAIN_ID,
       authority: AUTHORITY,
@@ -126,7 +127,7 @@ describe('remaining local transaction builders', () => {
     })
   })
 
-  it('pins project ownership and revnet operator transfers to canonical targets', () => {
+  it('wallet-action:transfer-project-ownership pins project ownership and revnet operator transfers to canonical targets', () => {
     const ownership = buildProjectOwnershipAuthorityCall({
       chainId: CHAIN_ID,
       authority: AUTHORITY,
@@ -174,7 +175,7 @@ describe('remaining local transaction builders', () => {
     })
   })
 
-  it('round-trips every active ruleset-gated owner power, including minting', () => {
+  it('wallet-action:change-owner-operator-powers round-trips every active ruleset-gated owner power, including minting', () => {
     const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
       CHAIN_ID
     ] as Address
@@ -281,7 +282,7 @@ describe('remaining local transaction builders', () => {
     }
   })
 
-  it('pins every buyback/router action and the complete pool tuple', () => {
+  it('wallet-action:configure-buyback-router pins every buyback/router action and the complete pool tuple', () => {
     const hook = buildBuybackHookAuthorityCall({
       chainId: CHAIN_ID,
       authority: AUTHORITY,
@@ -414,7 +415,7 @@ describe('remaining local transaction builders', () => {
     })
   })
 
-  it('pins the LP burn payload and its per-currency floors', () => {
+  it('wallet-action:remove-uniswap-v4-liquidity pins the LP burn payload and its per-currency floors', () => {
     // The floors are keyed by CURRENCY order, not by pair/token: mapping them to
     // the wrong side would let a position exit for far less than reviewed.
     const unlockData = buildRemoveLiquidityUnlockData({
@@ -443,6 +444,58 @@ describe('remaining local transaction builders', () => {
     expect(tokenId).toBe(2864727n)
     expect(amount0Min).toBe(100n)
     expect(amount1Min).toBe(200n)
+    expect(
+      decodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+        params[1],
+      ),
+    ).toEqual([TOKEN, TERMINAL, ALICE])
+  })
+
+  it('wallet-action:claim-uniswap-v4-lp-fees pins one position’s fee claim to a zero-liquidity decrease and a take to the holder', () => {
+    // LiquidityPositions lifts the SDK collect's unlockData into the same
+    // reviewed modifyLiquidities request every other LP step sends.
+    const POSITION_MANAGER = '0x4646464646464646464646464646464646464646' as Address
+    const collect = buildCollectUniswapV4FeesTx({
+      positionManager: POSITION_MANAGER,
+      tokenId: 2864727n,
+      currency0: TOKEN,
+      currency1: TERMINAL,
+      recipient: ALICE,
+      deadline: 1_900_000_000n,
+    })
+    const [unlockData, deadline] = decodeFunctionData({
+      abi: buildModifyLiquiditiesRequest({
+        chainId: CHAIN_ID,
+        positionManager: POSITION_MANAGER,
+        unlockData: '0x',
+        deadline: 0n,
+        value: 0n,
+      }).abi,
+      data: collect.data,
+    }).args as readonly [Hex, bigint]
+    const request = buildModifyLiquiditiesRequest({
+      chainId: CHAIN_ID,
+      positionManager: POSITION_MANAGER,
+      unlockData,
+      deadline,
+      value: 0n,
+    })
+    expect(encode(request)).toBe(collect.data)
+    expect(request).toMatchObject({ address: POSITION_MANAGER, functionName: 'modifyLiquidities', value: 0n })
+
+    const [actions, params] = decodeAbiParameters(
+      [{ type: 'bytes' }, { type: 'bytes[]' }],
+      unlockData,
+    )
+    // DECREASE_LIQUIDITY (0x01) of nothing settles the fees; TAKE_PAIR (0x11) pays them out.
+    expect(actions).toBe('0x0111')
+    expect(
+      decodeAbiParameters(
+        [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
+        params[0],
+      ),
+    ).toEqual([2864727n, 0n, 0n, 0n, '0x'])
     expect(
       decodeAbiParameters(
         [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
@@ -493,7 +546,7 @@ describe('remaining local transaction builders', () => {
   })
 
   it('renders a move plan as readable steps in the review dialog', async () => {
-    const { describeV4UnlockData } = await import('@/components/TransactionReviewDialog')
+    const { describeV4UnlockData } = await import('@bananapus/nana-sdk-core/review/decode')
     const mintParams = encodeAbiParameters(
       [
         {
@@ -557,7 +610,7 @@ describe('remaining local transaction builders', () => {
     expect(retainedFloor(1_000n)).toBe(950n)
   })
 
-  it('pins Permit2 approval and final PositionManager bytes, deadline, and value', () => {
+  it('wallet-action:authorize-the-uniswap-position-manager wallet-action:add-uniswap-v4-liquidity pins Permit2 approval and final PositionManager bytes, deadline, and value', () => {
     const permit = buildPermit2ApproveRequest({
       chainId: CHAIN_ID,
       token: TOKEN,
@@ -626,7 +679,7 @@ describe('remaining canonical SDK transaction builders', () => {
     })
   })
 
-  it('pins claim-credits calldata to holder, beneficiary, count, and controller', () => {
+  it('wallet-action:claim-project-token-credits pins claim-credits calldata to holder, beneficiary, count, and controller', () => {
     const request = buildClaimTokensTx({
       chainId: CHAIN_ID,
       holder: ALICE,
@@ -649,7 +702,7 @@ describe('remaining canonical SDK transaction builders', () => {
     })
   })
 
-  it('freezes NFT ids in canonical metadata and cashes out zero fungible tokens', () => {
+  it('wallet-action:redeem-shop-nfts freezes NFT ids in canonical metadata and cashes out zero fungible tokens', () => {
     const metadata = build721CashOutMetadata({
       metadataIdTarget: HOOK,
       tokenIds: [1001n, 2002n],
@@ -683,7 +736,7 @@ describe('remaining canonical SDK transaction builders', () => {
     })
   })
 
-  it('pins auto-issuance to the revnet, stage, beneficiary, and REVOwner', () => {
+  it('wallet-action:auto-issue-tokens pins auto-issuance to the revnet, stage, beneficiary, and REVOwner', () => {
     const request = buildAutoIssueTx({
       chainId: CHAIN_ID,
       revnetId: 53n,
@@ -706,7 +759,7 @@ describe('remaining canonical SDK transaction builders', () => {
     })
   })
 
-  it('pins bridge prepare, transport fee, and accounting sync requests', () => {
+  it('wallet-action:prepare-move-tokens-cross-chain wallet-action:sync-sucker-accounting pins bridge prepare, transport fee, and accounting sync requests', () => {
     const beneficiary = pad(ALICE.toLowerCase() as Address, { size: 32 })
     const prepare = buildBridgePrepareTx({
       chainId: CHAIN_ID,
@@ -783,7 +836,7 @@ describe('remaining canonical SDK transaction builders', () => {
     })
   })
 
-  it('pins the full bridge claim leaf and all 32 proof siblings', () => {
+  it('wallet-action:claim-bridged-funds pins the full bridge claim leaf and all 32 proof siblings', () => {
     const proof = Array.from({ length: 32 }, (_, index) =>
       toHex(BigInt(index + 1), { size: 32 }),
     ) as unknown as JBClaim['proof']

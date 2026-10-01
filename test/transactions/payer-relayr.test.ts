@@ -51,7 +51,10 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   isSafeConnection: () => mocks.safe,
   waitForSafeExecutionHash: mocks.waitSafe,
 }))
-vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
+  simulateStateChangingTransaction: mocks.simulate,
+}))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requireTransactionReview: mocks.review,

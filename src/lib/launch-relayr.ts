@@ -20,7 +20,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import {
   buildForwardedTx,
   TRUSTED_FORWARDER_ABI,
@@ -107,16 +107,6 @@ function requestOf(signed: SignedLaunch, plan: LaunchSession['plans'][number]) {
     throw new Error('The saved launch authorization changed.')
   }
   return request
-}
-
-function walletRejected(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
 }
 
 /**
@@ -471,8 +461,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce,
       plan.multisigs?.length ? {
         description: launchMultisigReview(plan),
+        // The review shows the arguments these exact bytes carry.
         calls: buildSafeDeploymentCalls(plan.multisigs).map(call => ({ chainId, to: call.target,
           data: call.callData, value: call.value, abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
+          args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
           label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig`, contractName: 'Safe Proxy Factory' })),
       } : undefined)
       const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
@@ -555,7 +547,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         persist() // reload during the wallet prompt cannot silently pay again
       })
     } catch (error) {
-      if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
+      if (journal.phase === 'payment-signing' && !journal.paymentHash && isDefiniteWalletRejection(error)) {
         journal.phase = 'quoted'
         delete journal.paymentChainId
         delete journal.paymentDeadline

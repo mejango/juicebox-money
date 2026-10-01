@@ -43,7 +43,7 @@ beforeEach(() => {
 })
 
 describe('cross-chain credit claims', () => {
-  it('freezes each local project, token and credit balance while keeping the holder as beneficiary', async () => {
+  it('wallet-action:claim-project-token-credits freezes each local project, token and credit balance while keeping the holder as beneficiary', async () => {
     const calls = await readClaimCalls(chains, ACCOUNT)
     expect(calls).toHaveLength(2)
     for (const [index, projectId] of [42n, 84n].entries()) {
@@ -72,14 +72,14 @@ describe('cross-chain credit claims', () => {
     await expect(reverifyClaimCall(call)).rejects.toThrow(/changed/)
   })
 
-  it('binds a saved claim’s calldata to the unchanged holder and amount', async () => {
+  it('wallet-action:claim-project-token-credits binds a saved claim’s calldata to the unchanged holder and amount', async () => {
     const [call] = await readClaimCalls(chains, ACCOUNT)
     await expect(reverifyClaimCall({ ...call, data: '0x1234' })).rejects.toThrow(/changed/)
   })
 })
 
 describe('aggregate auto issuance', () => {
-  it('builds an individual row with the same live project context and call identity as its aggregate', async () => {
+  it('wallet-action:auto-issue-tokens builds an individual row with the same live project context and call identity as its aggregate', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ stored: [{ stageId: '1', beneficiary: BENEFICIARY }] })))
     const [aggregate] = await readAutoIssueCalls([[10, 84]], ACCOUNT)
     const row = await readAutoIssueAllocationCall(10, 84, '01', BENEFICIARY, ACCOUNT)
@@ -91,7 +91,7 @@ describe('aggregate auto issuance', () => {
     await expect(readAutoIssueAllocationCall(1, 42, stage, BENEFICIARY, ACCOUNT)).rejects.toThrow(/Nothing left to distribute/)
   })
 
-  it('includes every unlocked beneficiary and stage, retaining multiple calls on one chain', async () => {
+  it('wallet-action:auto-issue-tokens includes every unlocked beneficiary and stage, retaining multiple calls on one chain', async () => {
     vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify({ stored: String(input).includes('projectId=42') ? [
       { stageId: '1', beneficiary: ACCOUNT }, { stageId: '1', beneficiary: BENEFICIARY },
       { stageId: '1', beneficiary: ACCOUNT }, { stageId: '2', beneficiary: ACCOUNT },

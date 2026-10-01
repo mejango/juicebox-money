@@ -38,7 +38,8 @@ vi.mock('@/lib/project-handles', async importOriginal => ({
   readBoundedProjectHandleParts: mocks.readBoundedProjectHandleParts,
 }))
 
-vi.mock('@/lib/transaction-simulation', () => ({
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
 }))
 

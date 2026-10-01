@@ -38,6 +38,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalCloseButton: (props: Record<string, unknown>) =>
     createElement('button', props),
   useEnclosingModalCard: () => null,
+  useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/providers/Providers', async () => {
   const chains = await import('viem/chains')
@@ -507,7 +508,7 @@ describe('auto-issuance write flow', () => {
     onDone: vi.fn(),
   }
 
-  it('prepares the live allocation and submits it through the shared project alias', async () => {
+  it('wallet-action:auto-issue-tokens prepares the live allocation and submits it through the shared project alias', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(DistributeFlow, props))
@@ -572,7 +573,7 @@ describe('auto-issuance write flow', () => {
 })
 
 describe('cash-out write flow', () => {
-  it('debounces the amount and sends the exact freshly rendered quote floor', async () => {
+  it('wallet-action:cash-out-project-tokens debounces the amount and sends the exact freshly rendered quote floor', async () => {
     vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {

@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.{ts,tsx}'],
-    setupFiles: ['./test/setup.ts', './test/dialog-shim.ts'],
+    setupFiles: ['./test/setup.ts', './test/dialog-shim.ts', './test/review-calls-setup.ts'],
     clearMocks: true,
     restoreMocks: true,
     unstubEnvs: true,
@@ -64,6 +64,13 @@ export default defineConfig({
           branches: 68,
           functions: 80,
           lines: 82,
+        },
+        // The step run behind the liquidity flows' approval-then-write sends.
+        'src/hooks/useStepRun.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 100,
+          lines: 95,
         },
         'src/lib/bendystraw.ts': {
           statements: 60,

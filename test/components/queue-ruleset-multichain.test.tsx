@@ -21,6 +21,7 @@ vi.mock('wagmi', async original => ({
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => children,
   useEnclosingModalCard: () => null,
+  useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor, runAuthorityCalls: mocks.runAuthorityCalls, safeOutcomeMessage: (_result: unknown, message: string) => message }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), loadRelayrPendingSession: mocks.loadSession, resumeRelayrSession: mocks.resume }))
@@ -111,7 +112,7 @@ describe('multichain ruleset configuration', () => {
     }
   })
 
-  it('revalidates one frozen ruleset call on each of the four testnets', async () => {
+  it('wallet-action:queue-rulesets-across-selected-mainnets revalidates one frozen ruleset call on each of the four testnets', async () => {
     currentReview = review([11155111, 11155420, 84532, 421614])
     installReads()
     const calls = reviewedQueueCalls(currentReview, 'current')
@@ -197,7 +198,7 @@ describe('multichain ruleset configuration', () => {
     expect(primary.starts).toEqual([130])
     expect(destination.starts).toEqual([125])
   })
-  it('encodes each reviewed controller and project ID with the frozen destination config', () => {
+  it('wallet-action:queue-rulesets-across-selected-mainnets encodes each reviewed controller and project ID with the frozen destination config', () => {
     const calls = reviewedQueueCalls(currentReview, 'current')
     expect(calls.map(call => call.target)).toEqual([jbContractAddress['6'][JBCoreContracts.JBController][1], jbContractAddress['6'][JBCoreContracts.JBController][8453]])
     calls.forEach((call, index) => {

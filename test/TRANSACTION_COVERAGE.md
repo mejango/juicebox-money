@@ -11,6 +11,14 @@ Legend:
 - **P** — pure planning/state-machine assertions
 - **—** — no dedicated regression test yet
 
+Each test file named for an action that a wallet write maps to carries the
+action's marker in the `it` or `test` title (`.each` included) of a test that
+proves it, for example `wallet-action:approve-an-erc-20` for "Approve an
+ERC-20". A `describe` or `suite` title, and any test under `.skip`, `.todo`,
+`.skipIf`, `.runIf`, `.fails` or a bracketed modifier (`describe['skip']`),
+does not count. `npm run transaction:check` fails on a
+missing marker.
+
 | User action | Contract function or authorization | Coverage | Test |
 | --- | --- | :---: | --- |
 | Launch a project | 721 deployer `launchProjectFor` | **E** | `contracts/launch.test.ts` |
@@ -59,7 +67,7 @@ Legend:
 | Sync sucker accounting | sucker sync call | **E** | `contracts/transaction-backlog.test.ts` |
 | Add Uniswap V4 liquidity | approvals + `modifyLiquidities` | **E** | `contracts/transaction-backlog.test.ts` |
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
-| Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take | **E** | `contracts/transaction-backlog.test.ts` |
+| Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take: one position, or both sides of a market with one take | **E** | `contracts/transaction-backlog.test.ts`, `contracts/market-liquidity.test.ts` |
 | Remove Uniswap V4 liquidity | `modifyLiquidities` burn + take with 95% floors | **E** | `contracts/transaction-backlog.test.ts` |
 | Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts` |
 | Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts` |

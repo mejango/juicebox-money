@@ -4,7 +4,7 @@ import { decodeEventLog, decodeFunctionResult, encodeFunctionData, isAddressEqua
 import { clientFor, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { simulateStateChangingTransaction } from '@/lib/transaction-simulation'
+import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
 import type { RawSplit } from '@/lib/splits-types'

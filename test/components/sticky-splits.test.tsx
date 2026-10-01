@@ -23,7 +23,7 @@ import { newDraftSplit, splitOk, SplitsEditor, type DraftSplit } from '@/compone
 import { combinedActivityParts, groupSameTxEvents } from '@/components/ActivityList'
 import { SplitRecipient } from '@/components/project/SplitRecipient'
 import { splitToDraft } from '@/components/project/EditSplitsFlow'
-import { describeSplitGroups } from '@/components/TransactionReviewDialog'
+import { describeSplitGroups } from '@bananapus/nana-sdk-core/review/decode'
 import type { BsActivityEvent } from '@/lib/bendystraw'
 import { parseDraft } from '@/lib/draft'
 import { draftSplitRecipient } from '@/lib/split-recipient'

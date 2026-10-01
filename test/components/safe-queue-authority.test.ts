@@ -36,9 +36,9 @@ vi.mock('@/lib/project-handles', async (importOriginal) => ({
 vi.mock('@/lib/cross-chain-authority', () => ({
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
-vi.mock('@/lib/transaction-simulation', () => ({
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
-  TRANSACTION_SIMULATION_GAS: 10_000_000n,
 }))
 vi.mock('@/lib/safe-reads', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/safe-reads')>()),

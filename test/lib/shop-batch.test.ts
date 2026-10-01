@@ -51,7 +51,7 @@ beforeEach(() => {
 })
 
 describe('shop batch destination review', () => {
-  it('preserves exact price, recipient/project/hook mappings, flags, and per-chain inventory', async () => {
+  it('wallet-action:add-shop-tiers preserves exact price, recipient/project/hook mappings, flags, and per-chain inventory', async () => {
     const snapshots = await Promise.all(targets.map(target => readShopSnapshot(target, ACCOUNT, false, 'shop-add-items')))
     const draft = { ...newDraftItem(), name: 'Exact item', price: '999999999999.123456', supply: '9', perChainSupply: { 8453: '23' }, category: 4, allowOwnerMint: true, votingUnits: '19', reserveN: '3', reserveBeneficiary: ACCOUNT, discountPct: '12.5' }
     draft.splits = [
@@ -148,7 +148,7 @@ describe('shop batch destination review', () => {
 })
 
 describe('original item metadata', () => {
-  it('preserves arbitrary original metadata and changes only the media fields', () => {
+  it('wallet-action:replace-shop-item-media preserves arbitrary original metadata and changes only the media fields', () => {
     const original = { name: 'Original', description: 'Keep', categoryName: 'Rare', image: 'old.png', animation_url: 'old.mp4', attributes: [{ trait_type: 'color', value: 'blue' }], properties: { license: 'custom', nested: [1, 2] }, external_url: 'https://example.com', custom: 123 }
     expect(replaceShopMetadataMedia(original, 'ipfs://new', 'audio/wav')).toEqual({ name: 'Original', description: 'Keep', categoryName: 'Rare', animation_url: 'ipfs://new', mediaType: 'audio/wav', attributes: original.attributes, properties: original.properties, external_url: original.external_url, custom: 123 })
     expect(original.image).toBe('old.png')

@@ -156,7 +156,7 @@ describe('assembleSplits', () => {
     })
   })
 
-  it('re-submits locked rows verbatim even when every editable row was removed', () => {
+  it('wallet-action:edit-reserved-recipients-across-selected-mainnets re-submits locked rows verbatim even when every editable row was removed', () => {
     const result = assembleSplits([lockedRow], [], EMPTY_FALLBACK, 8453)
     expect(result).toEqual({
       splits: [
@@ -177,7 +177,7 @@ describe('assembleSplits', () => {
     expect(result).toHaveProperty('splits')
   })
 
-  it('rebuilds editable drafts after the locked rows', () => {
+  it('wallet-action:edit-reserved-recipients-across-selected-mainnets rebuilds editable drafts after the locked rows', () => {
     const result = assembleSplits([lockedRow], [addressDraft('25')], EMPTY_FALLBACK, 8453)
     if ('error' in result) throw new Error(result.error)
     expect(result.splits).toHaveLength(2)

@@ -88,15 +88,26 @@ enables the full artifact comparison; it does not trust the fixture alone.
   `useSafeTx`, authority, reviewed direct-write, and raw wallet API call sites
   against `test/transaction-sites.json`. A new or moved write fails CI until its
   reviewed boundary and transaction-coverage action are explicitly inventoried.
-  Each of the 26 current `useSafeTx.send` sites has its own stable action record;
+  Each of the 33 current `useSafeTx.send` sites has its own stable action record;
   the gate requires one record per send, exact request/calldata coverage, and a
-  dedicated test reference beyond the shared wrapper test.
+  dedicated test reference beyond the shared wrapper test. Every test file an
+  action lists must carry the action's marker in the title of an `it` or `test`
+  (`.each` included) that proves the action: `wallet-action:` plus the action's
+  name in lowercase with hyphens (`wallet-action:approve-an-erc-20`). A
+  `describe` or `suite` title does not count, and nothing under `.skip`,
+  `.todo`, `.skipIf`, `.runIf`, `.fails` or a bracketed modifier
+  (`describe['skip']`) counts, so a broad test file cannot make a new operation
+  look covered.
+- Every review call that carries an ABI must decode with the SDK's
+  `functionFromCall` (its `args` encode to exactly its calldata), or the review
+  shows it as raw bytes. `test/review-calls-setup.ts` checks each test's mock
+  calls and every call the review dialog renders, and fails the test that
+  produced one that does not decode.
 
 Coverage includes every production `src/**/*.{ts,tsx}` file; only declaration
-files are excluded. The 22 test files currently run 182 tests. Component
-write-flow, rich-content XSS, and IPFS-boundary tests put the measured
-all-source baseline at 12.23% statements, 9.07% branches, 10.00% functions,
-and 12.72% lines. CI floors are ratcheted to 10.4/8.0/9.1/10.9 respectively,
+files are excluded. In September 2026 the 171 test files ran 1,906 tests and
+measured the all-source baseline at 51.62% statements, 44.81% branches, 46.48%
+functions, and 53.17% lines. CI floors are ratcheted to 10.4/8.0/9.1/10.9 respectively,
 while strong
 per-file floors protect the three component write flows plus the deeply tested
 contract, review, Safe, and Relayr boundaries. Coverage is diagnostic, not the

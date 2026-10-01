@@ -21,10 +21,14 @@ import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisig
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { requireContractTransactionReview } from '@/lib/transaction-review'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import {
+  gasWithHeadroom,
+  isDefiniteWalletRejection,
+  simulateStateChangingTransaction,
+  TRANSACTION_SIMULATION_GAS,
+} from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
-import { simulateStateChangingTransaction, TRANSACTION_SIMULATION_GAS } from '@/lib/transaction-simulation'
 
 type Setup = NonNullable<LaunchChainStatus['multisigSetup']>
 type LaunchMultisigSetupRequest = ReturnType<typeof buildSafeDeploymentTx> & {
@@ -63,15 +67,6 @@ async function withLaunchLock<T>(action: () => Promise<T>): Promise<T> {
   return action()
 }
 
-function walletRejected(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; current && typeof current === 'object' && depth < 8; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
-}
 
 function requireSession(chainId: number, salt: Hex): LaunchSession {
   const session = loadLaunchSession({ strict: true })
@@ -189,7 +184,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
           accountChangedError: 'Connected account changed. Review Safe creation again.',
         })
       } catch (error) {
-        if (!walletInvoked || walletRejected(error)) persist({ phase: 'failed' })
+        if (!walletInvoked || isDefiniteWalletRejection(error)) persist({ phase: 'failed' })
         throw error
       }
       if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {

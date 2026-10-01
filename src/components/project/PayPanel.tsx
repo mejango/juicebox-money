@@ -26,6 +26,7 @@ import {
   tokenCurrencyId,
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
+import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
@@ -1517,7 +1518,7 @@ export function PayPanel({
           return;
         }
         setSequenceStatus(`Confirming ${symbol} approval onchain…`);
-        const receipt = await waitForPaymentReceipt(publicClient, approvalHash);
+        const receipt = await waitForTrackedReceipt(publicClient, approvalHash);
         if (receipt.status !== "success") throw new Error(`${symbol} approval reverted onchain.`);
         latestApprovalBlock = receipt.blockNumber;
         approveTx.reset();
@@ -1613,7 +1614,7 @@ export function PayPanel({
           return;
         }
         setSequenceStatus("Confirming swap-router authorization onchain…");
-        const receipt = await waitForPaymentReceipt(publicClient, approvalHash);
+        const receipt = await waitForTrackedReceipt(publicClient, approvalHash);
         if (receipt.status !== "success") {
           throw new Error("Swap-router authorization reverted onchain.");
         }
@@ -1653,7 +1654,7 @@ export function PayPanel({
       setSequenceStatus("Payment submitted. Confirming onchain…");
       let paymentReceipt
       try {
-        paymentReceipt = await waitForPaymentReceipt(publicClient, paymentHash);
+        paymentReceipt = await waitForTrackedReceipt(publicClient, paymentHash);
       } catch {
         // The wait gave up (~5 min) — the payment is PENDING, not failed. Re-enabling the
         // button here let a second `pay` go out while the first was still in flight, which
@@ -2458,21 +2459,6 @@ export function PayPanel({
       ) : null}
     </div>
   );
-}
-
-async function waitForPaymentReceipt(client: PublicClient, hash: Hex) {
-  try {
-    return await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
-  } catch (firstError) {
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      try {
-        return await client.getTransactionReceipt({ hash });
-      } catch {
-        await new Promise(resolve => window.setTimeout(resolve, 2_000));
-      }
-    }
-    throw firstError;
-  }
 }
 
 function nextUiPaint(): Promise<void> {

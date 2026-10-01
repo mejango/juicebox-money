@@ -32,6 +32,7 @@ import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useStepRun } from '@/hooks/useStepRun'
 import { useWallet } from '@/hooks/useWallet'
 import {
   LIQUIDITY_BATCH_PROPOSED,
@@ -464,8 +465,6 @@ function AddLiquidityForm({
   const [plan, setPlan] = useState<Plan | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [stepIdx, setStepIdx] = useState(0)
   const [done, setDone] = useState(false)
   const queryClient = useQueryClient()
   const [mintHash, setMintHash] = useState<`0x${string}` | null>(null)
@@ -474,17 +473,82 @@ function AddLiquidityForm({
   const [batchError, setBatchError] = useState<string | null>(null)
 
   const planRef = useRef<Plan | null>(null)
-  const stepIdxRef = useRef(0)
-  const runningRef = useRef(false)
-  const processedRef = useRef<string | null>(null)
 
-  const busy = quoting || running || tx.busy
+  // ----- send one step -----------------------------------------------------
+  // `confirmedAt` is the block of the run's last confirmed approval. `useSafeTx` documents
+  // `simulationBlockNumber` as REQUIRED when a reviewed write immediately follows an ERC-20 or
+  // Permit2 approval: on a lagging load-balanced RPC the mint otherwise simulates against a
+  // pre-approval block and reverts on allowance — after the user has already paid for two
+  // approvals.
+  const sendStep = useCallback(
+    (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
+      const p = planRef.current
+      if (!p) return Promise.resolve(null)
+      if (step.kind === 'approve-erc20') {
+        return tx.send(
+          buildErc20ApproveRequest({
+            chainId,
+            token: step.token,
+            spender: UNISWAP_PERMIT2_ADDRESS,
+            amount: step.amount,
+          }),
+        )
+      }
+      if (step.kind === 'permit2-approve') {
+        return tx.send(
+          buildPermit2ApproveRequest({
+            chainId,
+            token: step.token,
+            positionManager: p.posm,
+            amount: step.amount,
+            expiration: step.expiration,
+          }),
+        )
+      }
+      // Deadline is set at send time — everything that touches funds is
+      // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
+      // gets 30 days (matching the Permit2 steps) because signature
+      // collection outlives 20 minutes and would strand the mint.
+      const deadline = swapDeadline(isSafeConnection(wagmiConfig))
+      return tx.send(
+        buildModifyLiquiditiesRequest({
+          chainId,
+          positionManager: p.posm,
+          unlockData: p.mint.unlockData,
+          deadline,
+          value: p.mint.value,
+        }),
+        { simulationBlockNumber: confirmedAt },
+      )
+    },
+    [tx, chainId],
+  )
+
+  // ----- run the steps, each once the one before it confirms ---------------
+  const run = useStepRun<Step>({
+    tx,
+    send: sendStep,
+    onFinish: hash => {
+      setMintHash(hash)
+      setDone(true)
+      // The positions list is a sibling query: without this it keeps
+      // claiming the wallet owns nothing right after a successful mint.
+      void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
+      void queryClient.invalidateQueries({ queryKey: ['market'] })
+    },
+  })
+
+  const busy = quoting || run.running || tx.busy
+
+  /** Replace or drop the reviewed plan; a run through the old one goes with it. */
+  const replacePlan = (next: Plan | null) => {
+    run.clear()
+    planRef.current = next
+    setPlan(next)
+  }
 
   const invalidatePlan = () => {
-    if (planRef.current && !runningRef.current) {
-      planRef.current = null
-      setPlan(null)
-    }
+    if (planRef.current && !run.isRunning()) replacePlan(null)
     setReviewError(null)
   }
 
@@ -691,8 +755,7 @@ function AddLiquidityForm({
           price: fresh.price,
         },
       }
-      planRef.current = built
-      setPlan(built)
+      replacePlan(built)
     } catch (e) {
       setReviewError(
         e instanceof FlowError
@@ -706,168 +769,62 @@ function AddLiquidityForm({
     }
   }
 
-  // ----- send one step -----------------------------------------------------
-  // The block of the most recent approval receipt in this run. `useSafeTx` documents
-  // `simulationBlockNumber` as REQUIRED when a reviewed write immediately follows an ERC-20 or
-  // Permit2 approval: on a lagging load-balanced RPC the mint otherwise simulates against a
-  // pre-approval block and reverts on allowance — after the user has already paid for two
-  // approvals. PayPanel already threads it; this flow did not.
-  const approvalBlockRef = useRef<bigint | undefined>(undefined)
-
-  const sendStep = useCallback(
-    (step: Step) => {
-      const p = planRef.current
-      if (!p) return
-      if (step.kind === 'approve-erc20') {
-        tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
-        )
-      } else if (step.kind === 'permit2-approve') {
-        tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager: p.posm,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-        )
-      } else {
-        // Deadline is set at send time — everything that touches funds is
-        // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
-        // gets 30 days (matching the Permit2 steps) because signature
-        // collection outlives 20 minutes and would strand the mint.
-        const deadline = swapDeadline(isSafeConnection(wagmiConfig))
-        tx.send(
-          buildModifyLiquiditiesRequest({
-            chainId,
-            positionManager: p.posm,
-            unlockData: p.mint.unlockData,
-            deadline,
-            value: p.mint.value,
-          }),
-          { simulationBlockNumber: approvalBlockRef.current },
-        )
-      }
-    },
-    [tx, chainId],
-  )
-
-  // ----- driver: advance through the steps on each receipt -----------------
-  useEffect(() => {
-    if (!runningRef.current) return
-    const p = planRef.current
-    if (!p) return
-    if (tx.phase === 'success' && tx.hash && tx.hash !== processedRef.current) {
-      processedRef.current = tx.hash
-      // Record the approval's block so the mint simulates at or after it.
-      const block = tx.receipt?.blockNumber
-      if (
-        block !== undefined &&
-        (approvalBlockRef.current === undefined || block > approvalBlockRef.current)
-      ) {
-        approvalBlockRef.current = block
-      }
-      const isLast = stepIdxRef.current >= p.steps.length - 1
-      if (isLast) {
-        setMintHash(tx.hash)
-        runningRef.current = false
-        setRunning(false)
-        setDone(true)
-        // The positions list is a sibling query: without this it keeps
-        // claiming the wallet owns nothing right after a successful mint.
-        void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
-        void queryClient.invalidateQueries({ queryKey: ['market'] })
-      } else {
-        const next = stepIdxRef.current + 1
-        stepIdxRef.current = next
-        setStepIdx(next)
-        tx.reset()
-        sendStep(p.steps[next])
-      }
-    } else if (tx.phase === 'error') {
-      runningRef.current = false
-      setRunning(false)
-    }
-  }, [tx.phase, tx.hash, tx, sendStep, queryClient])
-
   // ponytail: Safe app only; other EIP-5792 wallets keep the sequential path.
-  const runBatch = async (p: Plan) => {
-    setBatchError(null)
-    setBatchStatus(null)
-    setDone(false)
-    setMintHash(null)
-    runningRef.current = true
-    setRunning(true)
-    try {
-      await proposeLiquidityBatch({
-        chainId,
-        account: p.account,
-        positionManager: p.posm,
-        steps: p.steps,
-        unlockData: p.mint.unlockData,
-        value: p.mint.value,
-        title: p.market ? 'Make the market' : 'Add liquidity',
-      })
-      setBatchStatus(LIQUIDITY_BATCH_PROPOSED)
-      setDone(true)
-    } catch (e) {
-      setBatchError(e instanceof Error ? shortError(e) : 'Could not propose the batch.')
-    } finally {
-      runningRef.current = false
-      setRunning(false)
-    }
+  const runBatch = (p: Plan) =>
+    run.hold(async () => {
+      setBatchError(null)
+      setBatchStatus(null)
+      setDone(false)
+      setMintHash(null)
+      try {
+        await proposeLiquidityBatch({
+          chainId,
+          account: p.account,
+          positionManager: p.posm,
+          steps: p.steps,
+          unlockData: p.mint.unlockData,
+          value: p.mint.value,
+          title: p.market ? 'Make the market' : 'Add liquidity',
+        })
+        setBatchStatus(LIQUIDITY_BATCH_PROPOSED)
+        setDone(true)
+      } catch (e) {
+        setBatchError(e instanceof Error ? shortError(e) : 'Could not propose the batch.')
+      }
+    })
+
+  /** Account-unchanged recheck: the mint recipient is baked into unlockData. */
+  const reviewedAccountConnected = (reviewed: Plan): boolean => {
+    if (address && address.toLowerCase() === reviewed.account.toLowerCase()) return true
+    replacePlan(null)
+    setReviewError('Your connected account changed — review again.')
+    return false
   }
 
   const startRun = () => {
-    if (!plan || runningRef.current) return
-    // Account-unchanged recheck: the mint recipient is baked into unlockData.
-    if (!address || address.toLowerCase() !== plan.account.toLowerCase()) {
-      planRef.current = null
-      setPlan(null)
-      setReviewError('Your connected account changed — review again.')
-      return
-    }
+    if (!plan || run.isRunning()) return
+    if (!reviewedAccountConnected(plan)) return
     if (liquidityBatchApplies(plan.steps)) {
       void runBatch(plan)
       return
     }
-    processedRef.current = null
-    stepIdxRef.current = 0
-    setStepIdx(0)
     setDone(false)
     setMintHash(null)
-    tx.reset()
-    runningRef.current = true
-    setRunning(true)
-    sendStep(plan.steps[0])
+    run.start(plan.steps)
   }
 
   const resume = () => {
-    if (!plan || runningRef.current) return
-    tx.reset()
-    processedRef.current = null
-    runningRef.current = true
-    setRunning(true)
-    sendStep(plan.steps[stepIdxRef.current])
+    if (!plan || run.isRunning()) return
+    if (!reviewedAccountConnected(plan)) return
+    run.resume(plan.steps)
   }
 
   // Closing the dialog drops the frozen plan; the inputs and any success stay.
   const closePlan = () => {
-    if (runningRef.current || tx.busy) return
-    processedRef.current = null
-    stepIdxRef.current = 0
-    setStepIdx(0)
-    planRef.current = null
-    setPlan(null)
+    if (run.isRunning() || tx.busy) return
+    replacePlan(null)
     setBatchStatus(null)
     setBatchError(null)
-    tx.reset()
   }
 
   const startOver = () => {
@@ -901,6 +858,7 @@ function AddLiquidityForm({
   const confirmDialog = plan
     ? (() => {
         const d = plan.display
+        const stopped = run.stoppedOn(plan.steps)
         const rows: TxConfirmRow[] = []
         if (plan.market) {
           if (d.needTok > 0n) {
@@ -978,9 +936,9 @@ function AddLiquidityForm({
             steps={plan.steps.map((step, index) => ({
               key: `${step.kind}:${index}`,
               title: step.label,
-              detail: running && index === stepIdx ? runningDetail : undefined,
+              detail: run.running && index === run.index ? runningDetail : undefined,
             }))}
-            activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+            activeIndex={run.running || stopped ? run.index : -1}
             stepsIntro={
               liquidityBatchApplies(plan.steps)
                 ? liquidityBatchIntro(plan.steps.length)
@@ -989,22 +947,22 @@ function AddLiquidityForm({
                   : 'One transaction: the mint. It is reviewed and simulated before you sign.'
             }
             action={
-              running
+              run.running
                 ? liquidityBatchApplies(plan.steps)
                   ? 'Proposing to Safe…'
                   : plan.market
                     ? 'Making the market…'
                     : 'Adding liquidity…'
-                : tx.phase === 'error'
-                  ? `Retry step ${stepIdx + 1} of ${plan.steps.length}`
+                : stopped
+                  ? `Retry step ${run.index + 1} of ${plan.steps.length}`
                   : liquidityBatchApplies(plan.steps)
                     ? 'Confirm & propose to Safe'
                     : plan.market
                       ? 'Confirm & make the market'
                       : 'Confirm & add liquidity'
             }
-            onConfirm={tx.phase === 'error' ? resume : startRun}
-            busy={running || tx.busy}
+            onConfirm={stopped ? resume : startRun}
+            busy={run.running || tx.busy}
             complete={done}
             status={batchStatus ?? tx.safeNonceGuidance}
             error={batchError ?? tx.error}

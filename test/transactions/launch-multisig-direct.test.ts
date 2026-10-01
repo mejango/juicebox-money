@@ -15,7 +15,10 @@ vi.mock('@wagmi/core', () => ({ getAccount: mocks.account, waitForTransactionRec
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ estimateGas: mocks.estimateGas }) }))
 vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: vi.fn() }))
-vi.mock('@/lib/transaction-simulation', () => ({ simulateStateChangingTransaction: mocks.simulate, TRANSACTION_SIMULATION_GAS: 10_000_000n }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
+  simulateStateChangingTransaction: mocks.simulate,
+}))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.', waitForSafeExecutionHash: mocks.safeHash }))
 vi.mock('@/lib/launch-multisig', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/launch-multisig')>(),
@@ -89,7 +92,7 @@ beforeEach(() => {
 })
 
 describe('direct launch Safe setup', () => {
-  it('reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
     const args = options()
     args.writeContract.mockImplementation(async () => {
       expect(setup()).toEqual({ phase: 'signing' })
@@ -319,7 +322,7 @@ describe('direct launch Safe setup', () => {
     expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
   })
 
-  it('proposes Safe creation through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+  it('wallet-action:create-an-owner-or-operator-safe-during-launch proposes Safe creation through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe.mockReturnValue(true)
     const args = options()
     await prepareLaunchMultisigs(args)

@@ -82,7 +82,7 @@ describe('distribution batch reviews and recovery', () => {
     expect(mocks.reserved).toHaveBeenCalledExactlyOnceWith({ chainId: 8453, projectId: 303 }, ACCOUNT)
   })
 
-  it('collects each selected payout amount in that accounting token’s decimals and freezes perchain calls', async () => {
+  it('wallet-action:distribute-payouts collects each selected payout amount in that accounting token’s decimals and freezes perchain calls', async () => {
     const renderer = await mount('payouts')
     await click(renderer, 'Distribute payouts')
     await act(async () => renderer.root.findAllByType('input').filter(item => item.props.type === 'checkbox')[1].props.onChange())
@@ -98,7 +98,7 @@ describe('distribution batch reviews and recovery', () => {
     expect(sent.map((call: { context: PayoutDistribution }) => call.context.amount)).toEqual([12_340_000n, 7_890_000n])
   })
 
-  it('reviews selected reserved balances/recipients and rejects a wallet swap before any submission', async () => {
+  it('wallet-action:distribute-reserved-tokens reviews selected reserved balances/recipients and rejects a wallet swap before any submission', async () => {
     const renderer = await mount('reserved')
     await click(renderer, 'Distribute reserved tokens')
     await act(async () => renderer.root.findAllByType('input')[1].props.onChange())

@@ -4,11 +4,12 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { bandPrices } from '@/lib/edit-liquidity'
 import { FlowError, shortError } from '@/lib/errors'
@@ -147,18 +148,12 @@ export function MarketEditPanel({
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [stepIdx, setStepIdx] = useState(0)
   const [done, setDone] = useState<`0x${string}` | null>(null)
   // The Safe-app batch path: one proposal instead of the step-by-step run.
   const [batchProposed, setBatchProposed] = useState(false)
   const [batchError, setBatchError] = useState<string | null>(null)
 
   const planRef = useRef<Reviewed | null>(null)
-  const runningRef = useRef(false)
-  const stepIdxRef = useRef(0)
-  const processedRef = useRef<string | null>(null)
-  const approvalBlockRef = useRef<bigint | undefined>(undefined)
 
   const balances = useQuery({
     queryKey: ['lpEditBalances', chainId, pool.poolId, connectedAddress],
@@ -189,9 +184,6 @@ export function MarketEditPanel({
       token.toLowerCase() === projectToken.toLowerCase() ? sym : pairSym,
     [projectToken, sym, pairSym],
   )
-
-  const busy = quoting || running || tx.busy
-  const editing = busy || reviewed !== null
 
   const preview = useMemo(() => {
     if (!corridor) return null
@@ -257,8 +249,7 @@ export function MarketEditPanel({
         'Edit the market',
       )
       const built: Reviewed = { account: connectedAddress, pool: market, plan, steps }
-      planRef.current = built
-      setReviewed(built)
+      replaceReviewed(built)
     } catch (e) {
       setReviewError(
         e instanceof FlowError ? e.message : e instanceof Error ? shortError(e) : 'Something went wrong.',
@@ -268,12 +259,14 @@ export function MarketEditPanel({
     }
   }
 
+  // `confirmedAt` is the block of the run's last confirmed approval: the edit
+  // must simulate at or after it, or a lagging RPC rejects it on allowance.
   const sendStep = useCallback(
-    (step: Step) => {
+    (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
       const p = planRef.current
-      if (!p) return
+      if (!p) return Promise.resolve(null)
       if (step.kind === 'approve-erc20') {
-        tx.send(
+        return tx.send(
           buildErc20ApproveRequest({
             chainId,
             token: step.token,
@@ -281,8 +274,9 @@ export function MarketEditPanel({
             amount: step.amount,
           }),
         )
-      } else if (step.kind === 'permit2-approve') {
-        tx.send(
+      }
+      if (step.kind === 'permit2-approve') {
+        return tx.send(
           buildPermit2ApproveRequest({
             chainId,
             token: step.token,
@@ -291,142 +285,115 @@ export function MarketEditPanel({
             expiration: step.expiration,
           }),
         )
-      } else {
-        tx.send(
-          buildModifyLiquiditiesRequest({
-            chainId,
-            positionManager,
-            unlockData: p.plan.unlockData,
-            deadline: swapDeadline(isSafeConnection(wagmiConfig)),
-            value: p.plan.value,
-          }),
-          {
-            simulationBlockNumber: approvalBlockRef.current,
-            reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
-            reverify: async () => {
-              if (!client) return
-              const { market, positions } = await readLive(p.account)
-              const problem = marketEditStillFits(p.plan, {
-                sqrtP: market.sqrtP,
-                liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
-              })
-              if (problem) throw new FlowError(problem)
-            },
-          },
-        )
       }
+      return tx.send(
+        buildModifyLiquiditiesRequest({
+          chainId,
+          positionManager,
+          unlockData: p.plan.unlockData,
+          deadline: swapDeadline(isSafeConnection(wagmiConfig)),
+          value: p.plan.value,
+        }),
+        {
+          simulationBlockNumber: confirmedAt,
+          reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
+          reverify: async () => {
+            if (!client) return
+            const { market, positions } = await readLive(p.account)
+            const problem = marketEditStillFits(p.plan, {
+              sqrtP: market.sqrtP,
+              liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
+            })
+            if (problem) throw new FlowError(problem)
+          },
+        },
+      )
     },
     // readLive closes over stable props; the plan itself is read from the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tx, chainId, positionManager, client, sym],
   )
 
-  useEffect(() => {
-    if (!runningRef.current) return
-    const p = planRef.current
-    if (!p) return
-    if (tx.phase === 'success' && tx.hash && tx.hash !== processedRef.current) {
-      processedRef.current = tx.hash
-      const block = tx.receipt?.blockNumber
-      if (block !== undefined && (approvalBlockRef.current === undefined || block > approvalBlockRef.current)) {
-        approvalBlockRef.current = block
-      }
-      const isLast = stepIdxRef.current >= p.steps.length - 1
-      if (isLast) {
-        runningRef.current = false
-        setRunning(false)
-        setDone(tx.hash)
-        void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
-        void queryClient.invalidateQueries({ queryKey: ['userLpFees'] })
-        void queryClient.invalidateQueries({ queryKey: ['market'] })
-        onDone(tx.hash)
-      } else {
-        const next = stepIdxRef.current + 1
-        stepIdxRef.current = next
-        setStepIdx(next)
-        tx.reset()
-        sendStep(p.steps[next])
-      }
-    } else if (tx.phase === 'error') {
-      runningRef.current = false
-      setRunning(false)
-    }
-  }, [tx.phase, tx.hash, tx, sendStep, queryClient, onDone])
+  // Each step once the one before it confirms.
+  const run = useStepRun<Step>({
+    tx,
+    send: sendStep,
+    onFinish: hash => {
+      setDone(hash)
+      void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
+      void queryClient.invalidateQueries({ queryKey: ['userLpFees'] })
+      void queryClient.invalidateQueries({ queryKey: ['market'] })
+      onDone(hash)
+    },
+  })
+
+  const busy = quoting || run.running || tx.busy
+  const editing = busy || reviewed !== null
+
+  /** Replace or drop the reviewed plan; a run through the old one goes with it. */
+  const replaceReviewed = (next: Reviewed | null) => {
+    run.clear()
+    planRef.current = next
+    setReviewed(next)
+  }
 
   // ponytail: Safe app only; other EIP-5792 wallets keep the sequential path.
-  const runBatch = async (p: Reviewed) => {
-    setBatchError(null)
-    runningRef.current = true
-    setRunning(true)
-    try {
-      const { market, positions } = await readLive(p.account)
-      const problem = marketEditStillFits(p.plan, {
-        sqrtP: market.sqrtP,
-        liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
-      })
-      if (problem) throw new FlowError(problem)
-      await proposeLiquidityBatch({
-        chainId,
-        account: p.account,
-        positionManager,
-        steps: p.steps,
-        unlockData: p.plan.unlockData,
-        value: p.plan.value,
-        title: 'Edit the market',
-      })
-      setBatchProposed(true)
-    } catch (e) {
-      setBatchError(
-        e instanceof FlowError ? e.message : e instanceof Error ? shortError(e) : 'Could not propose the batch.',
-      )
-    } finally {
-      runningRef.current = false
-      setRunning(false)
-    }
+  const runBatch = (p: Reviewed) =>
+    run.hold(async () => {
+      setBatchError(null)
+      try {
+        const { market, positions } = await readLive(p.account)
+        const problem = marketEditStillFits(p.plan, {
+          sqrtP: market.sqrtP,
+          liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
+        })
+        if (problem) throw new FlowError(problem)
+        await proposeLiquidityBatch({
+          chainId,
+          account: p.account,
+          positionManager,
+          steps: p.steps,
+          unlockData: p.plan.unlockData,
+          value: p.plan.value,
+          title: 'Edit the market',
+        })
+        setBatchProposed(true)
+      } catch (e) {
+        setBatchError(
+          e instanceof FlowError ? e.message : e instanceof Error ? shortError(e) : 'Could not propose the batch.',
+        )
+      }
+    })
+
+  /** The recipient is baked into unlockData: a changed account must re-review. */
+  const reviewedAccountConnected = (p: Reviewed): boolean => {
+    if (connectedAddress && connectedAddress.toLowerCase() === p.account.toLowerCase()) return true
+    replaceReviewed(null)
+    setReviewError('Your connected account changed — review again.')
+    return false
   }
 
   const startRun = () => {
-    if (!reviewed || runningRef.current) return
-    if (!connectedAddress || connectedAddress.toLowerCase() !== reviewed.account.toLowerCase()) {
-      planRef.current = null
-      setReviewed(null)
-      setReviewError('Your connected account changed — review again.')
-      return
-    }
+    if (!reviewed || run.isRunning()) return
+    if (!reviewedAccountConnected(reviewed)) return
     if (liquidityBatchApplies(reviewed.steps)) {
       void runBatch(reviewed)
       return
     }
-    processedRef.current = null
-    stepIdxRef.current = 0
-    setStepIdx(0)
-    tx.reset()
-    runningRef.current = true
-    setRunning(true)
-    sendStep(reviewed.steps[0])
+    run.start(reviewed.steps)
   }
 
   const resume = () => {
-    if (!reviewed || runningRef.current) return
-    tx.reset()
-    processedRef.current = null
-    runningRef.current = true
-    setRunning(true)
-    sendStep(reviewed.steps[stepIdxRef.current])
+    if (!reviewed || run.isRunning()) return
+    if (!reviewedAccountConnected(reviewed)) return
+    run.resume(reviewed.steps)
   }
 
   const back = () => {
-    runningRef.current = false
-    processedRef.current = null
-    stepIdxRef.current = 0
+    replaceReviewed(null)
     setBatchProposed(false)
     setBatchError(null)
-    setRunning(false)
-    setStepIdx(0)
-    planRef.current = null
-    setReviewed(null)
     setReviewError(null)
-    tx.reset()
   }
 
   const amountsText = (token: bigint, pair: bigint) =>
@@ -493,6 +460,7 @@ export function MarketEditPanel({
     return rows
   }
 
+  const stopped = run.stoppedOn(reviewed?.steps)
   const dialog = reviewed || quoting ? (
     <TxConfirmDialog
       open
@@ -500,20 +468,20 @@ export function MarketEditPanel({
       title={batchProposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
       steps={(reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
-      activeIndex={running || tx.phase === 'error' ? stepIdx : -1}
+      activeIndex={run.running || stopped ? run.index : -1}
       stepsIntro={
         reviewed && liquidityBatchApplies(reviewed.steps)
           ? liquidityBatchIntro(reviewed.steps.length)
           : undefined
       }
       action={
-        running
+        run.running
           ? 'Editing the market…'
-          : reviewed && tx.phase === 'error'
-            ? `Retry step ${stepIdx + 1} of ${reviewed.steps.length}`
+          : reviewed && stopped
+            ? `Retry step ${run.index + 1} of ${reviewed.steps.length}`
             : 'Edit the market'
       }
-      onConfirm={tx.phase === 'error' ? resume : startRun}
+      onConfirm={stopped ? resume : startRun}
       busy={busy}
       complete={done !== null || batchProposed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}

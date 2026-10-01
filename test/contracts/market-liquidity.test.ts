@@ -68,7 +68,7 @@ const unlock = (data: `0x${string}`) =>
 const mintParams = (mint: { unlockData: `0x${string}` }) => unlock(mint.unlockData)[1][0]
 
 describe('market mint', () => {
-  it('mints both sides of the corridor in one unlock with independent amounts', () => {
+  it('wallet-action:make-or-edit-a-uniswap-v4-market mints both sides of the corridor in one unlock with independent amounts', () => {
     const plan = buildMarketMint({
       pool,
       tokenAmount: 10n ** 18n,
@@ -225,7 +225,7 @@ describe('market grouping and edits', () => {
     ).toMatch(/price moved/)
   })
 
-  it("claims both sides' fees with one take", () => {
+  it("wallet-action:claim-uniswap-v4-lp-fees claims both sides' fees with one take", () => {
     const [actions, params] = unlock(buildCollectMarketFeesUnlockData(pool, [7n, 8n], ALICE))
     expect(actions).toBe('0x010111')
     expect(params).toHaveLength(3)

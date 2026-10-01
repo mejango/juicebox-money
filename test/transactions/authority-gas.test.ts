@@ -1,4 +1,4 @@
-import type { Address, Hex } from 'viem'
+import { decodeFunctionData, toEventSelector, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -57,20 +57,26 @@ vi.mock('@/lib/cross-chain-authority', () => ({
   readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
-vi.mock('@/lib/safe-connector', () => ({
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: mocks.isSafeConnection,
   SAFE_NONCE_GUIDANCE: 'Choose the correct Safe nonce.',
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
 }))
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
+import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
+import { buildQueueRulesetsAuthorityCall } from '@/lib/transaction-builders'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x3333333333333333333333333333333333333333' as Address
 const SAFE = '0x4444444444444444444444444444444444444444' as Address
+const CONTROLLER = '0x5555555555555555555555555555555555555555' as Address
+const OTHER_CONTROLLER = '0x6666666666666666666666666666666666666666' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const DESTINATION_HASH = `0x${'cd'.repeat(32)}` as Hex
 const BUNDLE_UUID = '01234567-89ab-cdef-0123-456789abcdef'
@@ -136,7 +142,11 @@ beforeEach(() => {
     if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
-  mocks.client.waitForTransactionReceipt.mockResolvedValue({ status: 'success' })
+  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    transactionHash: hash,
+    status: 'success',
+    logs: [],
+  }))
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
   let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
@@ -175,6 +185,44 @@ beforeEach(() => {
       })
     }
     throw new Error(`Unexpected request: ${url}`)
+  })
+})
+
+describe('relayed ruleset queue', () => {
+  it("wallet-action:queue-rulesets-across-selected-mainnets queues each mainnet's rules on its own controller and project behind one Relayr payment", async () => {
+    mocks.client.estimateGas.mockResolvedValue(300_000n)
+    const configuration = buildRulesetConfiguration({
+      mustStartAtOrAfter: 1_800_000_000,
+      duration: 604_800,
+      weight: 1_000n * 10n ** 18n,
+      weightCutPercent: 25_000_000,
+    })
+    const calls = ([[1, CONTROLLER, 7n], [10, OTHER_CONTROLLER, 9n]] as const).map(
+      ([chainId, controller, projectId]) => buildQueueRulesetsAuthorityCall({
+        chainId, authority: ALICE, controller, projectId,
+        rulesetConfigurations: [configuration], memo: '', label: 'Queue new rules',
+      }),
+    )
+
+    const result = await runAuthorityCalls({ calls })
+
+    expect(result.relayrGroups).toBe(1)
+    // Each chain's signed request queues its own project's rules on its own controller.
+    const signed = mocks.wallet.signTypedData.mock.calls.map(([{ domain, message }]) => ({
+      chainId: domain.chainId,
+      to: message.to,
+      call: decodeFunctionData({ abi: calls[0].abi!, data: message.data }),
+    }))
+    expect(signed).toEqual([
+      { chainId: 1n, to: CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [7n, [configuration], ''] } },
+      { chainId: 10n, to: OTHER_CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [9n, [configuration], ''] } },
+    ])
+    // Each queue is reviewed decoded, and one payment funds both.
+    const reviewed = mocks.requireReview.mock.calls.flatMap(([request]) => request.calls ?? [])
+    expect(reviewed.filter(call => functionFromCall(call)?.name === 'queueRulesetsOf')).toHaveLength(2)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ to: PAYMENT_ADDRESS, data: PAYMENT_CALLDATA }),
+    )
   })
 })
 
@@ -502,6 +550,51 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       HASH,
     )
     expect(result.directResults).toEqual([DESTINATION_HASH])
+  })
+
+  it('fails a Safe app proposal whose execution logged ExecutionFailure', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({
+      kind: 'safe',
+      threshold: 2,
+      owners: [ALICE],
+    })
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      destination: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      matches: true,
+    })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    // A nonzero safeTxGas set in Safe makes a failed call log ExecutionFailure
+    // (Safe 1.3 puts the safeTxHash in the data) inside a successful receipt.
+    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash,
+      status: 'success',
+      logs: [
+        {
+          address: SAFE,
+          topics: [toEventSelector('ExecutionFailure(bytes32,uint256)')],
+          data: `${HASH}${'00'.repeat(32)}`,
+        },
+      ],
+    }))
+
+    await expect(
+      runAuthorityCalls({
+        calls: [
+          {
+            chainId: 1,
+            detectionChainId: 10,
+            authority: SAFE,
+            target: TARGET,
+            data: '0x1234',
+            label: 'Set the terminal',
+          },
+        ],
+      }),
+    ).rejects.toThrow('Set the terminal reverted after Safe execution.')
   })
 
   it('reuses an exact pending Safe app proposal without sending a duplicate', async () => {

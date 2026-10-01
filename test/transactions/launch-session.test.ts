@@ -386,7 +386,7 @@ describe('inline Safe launch recovery', () => {
   const proposalHash = `0x${'66'.repeat(32)}` as Hex
   const launchHash = `0x${'77'.repeat(32)}` as Hex
 
-  it.each(['project', 'revnet'] as const)('preserves the exact pinned %s authority policy across every chain', flavor => {
+  it.each(['project', 'revnet'] as const)('wallet-action:create-an-owner-or-operator-safe-during-launch preserves the exact pinned %s authority policy across every chain', flavor => {
     const original = safeSession(flavor)
     expect(saveLaunchSession(original)).toBe(true)
     expect(loadLaunchSession({ strict: true })).toEqual(original)

@@ -38,7 +38,7 @@ import {
 import {
   simulateStateChangingTransaction,
   TRANSACTION_SIMULATION_GAS,
-} from '@/lib/transaction-simulation'
+} from '@bananapus/nana-sdk-core/review'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
@@ -51,6 +51,7 @@ import {
 } from '@/lib/transaction-review'
 import {
   isSafeConnection,
+  safeExecutionFailed,
   safeServiceBase,
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
@@ -1120,9 +1121,9 @@ async function sendContractAndConfirm({
     ...fees,
     ...('maxFeePerGas' in fees ? { type: 'eip1559' as const } : {}),
   })
-  if (isSafeConnection(wagmiConfig)) {
-    hash = await waitForSafeExecutionHash(chainId, hash)
-  }
+  // A Safe app replies with its proposal; its execution is what lands.
+  const proposal = viaSafe ? hash : null
+  if (proposal) hash = await waitForSafeExecutionHash(chainId, proposal)
   let receipt
   try {
     receipt = await client.waitForTransactionReceipt({ hash })
@@ -1133,6 +1134,9 @@ async function sendContractAndConfirm({
   }
   if (receipt.status !== 'success') {
     throw new Error(`${functionName} reverted onchain (tx ${hash}).`)
+  }
+  if (proposal && safeExecutionFailed(receipt, account, proposal)) {
+    throw new Error(`${functionName} reverted after Safe execution (tx ${hash}).`)
   }
   if (
     safeContext?.mode === 'execute' &&

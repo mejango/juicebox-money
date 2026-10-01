@@ -54,6 +54,11 @@ export function useWallet() {
   return {
     isConnected,
     address: address as Address | undefined,
+    /**
+     * A Juicebox Center wallet, which pays through its own review and cannot
+     * send these writes. Homerun and Sticky offer one; this app does not.
+     */
+    isCenterWallet: false,
     /** Wallet connectors the user can pick from (excludes the Para bridge,
      *  the redundant injected fallback, and duplicate names). */
     connectors: offerableWallets(connectors),
