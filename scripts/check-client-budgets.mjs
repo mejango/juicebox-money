@@ -18,7 +18,9 @@ const budgets = {
     // full gateway ABI. Webpack keeps every export any chunk uses in the one copy of the
     // SDK's generated-ABI module, which home already loads, so the ABI lands there (+1.1
     // KiB): home measures 434.7 KiB against 433.5 KiB on main with the same toolchain.
-    '/page': 435 * KIB,
+    // SDK 2.18.0 puts each generated ABI in a module of its own, so home loads only the
+    // ABIs it uses: 428.9 KiB. Ratcheted down to keep the gain.
+    '/page': 430 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -28,7 +30,8 @@ const budgets = {
     // label and cancel error, which home also loads, bring create to 493.2 KiB.
     // SDK 2.16.0's gateway ABI in that shared generated-ABI chunk brings create to 495.1 KiB
     // (493.8 KiB on main with the same toolchain).
-    '/create/page': 496 * KIB,
+    // SDK 2.18.0's per-ABI modules bring create to 490.7 KiB. Ratcheted down to keep the gain.
+    '/create/page': 491 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -81,7 +84,11 @@ const budgets = {
   // ABI in the generated-ABI chunk above, the sequence preflight sharing a module with the
   // single-call one) measure 2467.5 KiB against 2465.8 KiB on main with the same toolchain;
   // round up to the next KiB.
-  allScripts: 2468 * KIB,
+  // SDK 2.18.0 splits the generated ABIs into one module each. First loads drop (home 434.7
+  // -> 428.9 KiB, create 495.1 -> 490.7 KiB), but webpack now copies each ABI module into
+  // every lazy chunk that uses it, so all client JavaScript measures 2473.7 KiB against
+  // 2467.7 KiB; round up to the next KiB. revnet.money took the same trade in its #58.
+  allScripts: 2474 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
