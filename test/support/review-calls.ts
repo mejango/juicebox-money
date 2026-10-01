@@ -34,22 +34,35 @@ function undecodedCall(call: unknown, decode: Decode): string | null {
   } does not decode ${call.data.slice(0, 10)}…`
 }
 
+/** How deep the search goes: a mock's arguments, a request, its steps or calls, a step. */
+const MAX_DEPTH = 6
+
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
 /**
  * Every call in `value` that carries an ABI but does not decode with the SDK's
  * `functionFromCall`: its `args` are missing, or are not what its calldata
- * carries, so the review dialog shows it as raw bytes. Arrays and each
- * object's `calls` are searched, so a review request, a batch, a relayed call
- * and its review context are all covered.
+ * carries, so the review dialog shows it as raw bytes. Arrays and every own
+ * value of a plain object are searched, to a bounded depth, so a review
+ * request, a batch and its steps, a relayed call and its review context are
+ * all covered. Class instances (DOM nodes, events, React fibers) and ABIs are
+ * not searched.
  */
 export function undecodedCalls(
   value: unknown,
   decode: Decode,
   seen = new WeakSet<object>(),
+  depth = 0,
 ): string[] {
-  if (!value || typeof value !== 'object' || seen.has(value)) return []
+  if (depth > MAX_DEPTH || !value || typeof value !== 'object' || seen.has(value)) return []
   seen.add(value)
-  if (Array.isArray(value)) return value.flatMap(item => undecodedCalls(item, decode, seen))
+  const next = (item: unknown) => undecodedCalls(item, decode, seen, depth + 1)
+  if (Array.isArray(value)) return value.flatMap(next)
+  if (!isPlainObject(value)) return []
   const found = undecodedCall(value, decode)
-  const nested = (value as { calls?: unknown }).calls
-  return [...(found ? [found] : []), ...undecodedCalls(nested, decode, seen)]
+  const nested = Object.entries(value).flatMap(([key, item]) => (key === 'abi' ? [] : next(item)))
+  return [...(found ? [found] : []), ...nested]
 }

@@ -25,6 +25,8 @@ describe('review call decoding check', () => {
           // A relayed call and its review context.
           { target: TARGET, data, abi, functionName: 'transfer', args: [RECIPIENT, 6n], label: 'Relayed' },
           { description: 'context', calls: [{ ...good, calls: [wrongArgs] }] },
+          // A batch's steps, under any key.
+          { chainId: 1, steps: [{ id: 'step', ...good, args: [RECIPIENT, 7n], label: 'Step' }] },
           // A raw call without an ABI is not checked.
           { chainId: 1, to: TARGET, data: '0xdeadbeef' },
         ],
@@ -34,6 +36,7 @@ describe('review call decoding check', () => {
       expect.stringContaining('Missing args: transfer with no args'),
       expect.stringContaining('Relayed: transfer with 2 args'),
       expect.stringContaining('Wrong args: transfer with 2 args'),
+      expect.stringContaining('Step: transfer with 2 args'),
     ])
   })
 
