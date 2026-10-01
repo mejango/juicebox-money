@@ -111,6 +111,8 @@ export function BurnTokensFlow({
           label: `Permanently burn ${formatTokenAmount(tokenCount, 18)} ${tokenSymbol}`,
         },
         {
+          // The holder whose tokens the reviewed request burns.
+          reviewedAccount: plan.args[0],
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])

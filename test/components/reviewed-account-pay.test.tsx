@@ -13,7 +13,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Address, Hex } from 'viem'
+import type { Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -21,40 +21,37 @@ const BOB = '0x2222222222222222222222222222222222222222' as Address
 const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
-const APPROVAL = `0x${'a1'.repeat(32)}` as Hex
-const PAYMENT = `0x${'a2'.repeat(32)}` as Hex
 const CHANGED = 'The connected account changed. Review again.'
 
-const w = vi.hoisted(() => ({
-  account: '' as string,
-  token: 'native' as 'native' | 'erc20',
-  writeContract: vi.fn(),
-  requestReview: vi.fn(),
-  switchChain: vi.fn(),
-  /** Resolves the approval's receipt; set while the sequence waits on it. */
-  confirmApproval: null as null | (() => void),
-}))
+const m = vi.hoisted(() => ({ token: 'native' as 'native' | 'erc20' }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@wagmi/core', async importOriginal => ({
-  ...(await importOriginal<typeof import('@wagmi/core')>()),
-  getAccount: () => ({ address: w.account, chainId: 1 }),
-}))
-vi.mock('wagmi', () => ({
-  usePublicClient: () => client,
-  useWriteContract: () => ({ writeContractAsync: w.writeContract }),
-  useSwitchChain: () => ({ switchChainAsync: w.switchChain }),
-  useWaitForTransactionReceipt: () => ({ data: undefined, isError: false }),
-  useConfig: () => ({}),
-  useSignTypedData: () => ({ signTypedDataAsync: vi.fn() }),
-}))
-vi.mock('@/hooks/useWallet', () => ({
-  useWallet: () => ({ isConnected: true, address: w.account, openSignIn: () => {}, isCenterWallet: false }),
-}))
-vi.mock('@/lib/transaction-review', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-  requestContractTransactionReview: w.requestReview,
-}))
+vi.mock('@wagmi/core', async importOriginal => {
+  const { wallet } = await import('../support/fake-wallet')
+  return {
+    ...(await importOriginal<typeof import('@wagmi/core')>()),
+    getAccount: () => ({ address: wallet.account, chainId: 1 }),
+  }
+})
+vi.mock('wagmi', async () => {
+  const { walletHooks } = await import('../support/fake-wallet')
+  return {
+    ...walletHooks,
+    useConfig: () => ({}),
+    useSignTypedData: () => ({ signTypedDataAsync: vi.fn() }),
+  }
+})
+vi.mock('@/hooks/useWallet', async () => {
+  const { useFakeWallet } = await import('../support/fake-wallet')
+  return { useWallet: useFakeWallet }
+})
+vi.mock('@/lib/transaction-review', async importOriginal => {
+  const { wallet } = await import('../support/fake-wallet')
+  return {
+    ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
+    requestContractTransactionReview: wallet.requestReview,
+  }
+})
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: () => false,
@@ -69,7 +66,12 @@ vi.mock('@/hooks/useProjectTokenSymbol', () => ({
 }))
 vi.mock('@/hooks/useTokenBalance', () => ({ useTokenBalance: () => ({ balance: 10n ** 24n }) }))
 vi.mock('@/hooks/useTokenBalances', () => ({
-  useTokenBalances: () => ({ balances: new Map([[NATIVE, 10n ** 24n], [USDC, 10n ** 24n]]) }),
+  useTokenBalances: () => ({
+    balances: new Map([
+      ['0x000000000000000000000000000000000000EEEe', 10n ** 24n],
+      ['0x4444444444444444444444444444444444444444', 10n ** 24n],
+    ]),
+  }),
 }))
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', () => ({
@@ -107,7 +109,7 @@ function query(key: string) {
   switch (key) {
     case 'paySurface':
       return {
-        data: { contexts: [contextFor(w.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
+        data: { contexts: [contextFor(m.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
         isError: false,
       }
     case 'previewPay':
@@ -129,34 +131,16 @@ function query(key: string) {
   }
 }
 
-const client = {
-  simulateContract: vi.fn(async (args: Record<string, unknown>) => ({ request: { ...args } })),
-  estimateContractGas: vi.fn(async () => 50_000n),
-  waitForTransactionReceipt: vi.fn(
-    ({ hash }: { hash: Hex }) =>
-      new Promise(resolve => {
-        w.confirmApproval = () => resolve({ status: 'success', blockNumber: 10n, transactionHash: hash })
-      }),
-  ),
-  getTransactionReceipt: vi.fn(async () => null),
-}
-
+import { sentHash, wallet } from '../support/fake-wallet'
 import { PayPanel } from '@/components/project/PayPanel'
 
 let host: HTMLDivElement
 let root: Root
 
-const panel = () => (
-  <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
-)
-
 beforeEach(() => {
-  w.account = ALICE
-  w.token = 'native'
-  w.confirmApproval = null
-  w.requestReview.mockResolvedValue(true)
-  w.switchChain.mockResolvedValue(undefined)
-  w.writeContract.mockImplementation(async () => (w.writeContract.mock.calls.length === 1 ? APPROVAL : PAYMENT))
+  wallet.reset()
+  wallet.connect(ALICE)
+  m.token = 'native'
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -166,16 +150,6 @@ afterEach(() => {
   act(() => root.unmount())
   host.remove()
 })
-
-async function render() {
-  await act(async () => root.render(panel()))
-}
-
-/** The wallet switches account; the panel sees it on its next render. */
-async function switchAccount(account: Address) {
-  w.account = account
-  await act(async () => root.render(panel()))
-}
 
 /** Let timers, animation frames and effects run until `done` holds. */
 async function waitUntil(done: () => boolean) {
@@ -196,22 +170,20 @@ async function click(label: string) {
   await act(async () => button(label).click())
 }
 
-/** Type an amount and let the panel's 400 ms debounce settle. */
-async function enterAmount(value: string) {
+/** Review a payment as Alice: the sequence dialog opens on its frozen actions. */
+async function reviewPayment() {
+  await act(async () =>
+    root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
+  )
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
+  // The panel debounces the amount for 400 ms before it previews and quotes.
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 450))
   })
-}
-
-/** Review a payment as Alice: the sequence dialog opens on its frozen actions. */
-async function reviewPayment() {
-  await render()
-  await enterAmount('1')
   await click('Pay')
   expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
 }
@@ -221,53 +193,50 @@ const dialogError = () => host.querySelector('[data-error]')?.textContent
 describe('a payment reviewed for one account', () => {
   it('wallet-action:pay-a-project never pays from an account switched to before confirming', async () => {
     await reviewPayment()
-    await switchAccount(BOB)
+    await act(async () => wallet.connect(BOB))
     await click('Confirm & Pay')
-    await waitUntil(() => !!dialogError() || w.writeContract.mock.calls.length > 0)
+    await waitUntil(() => !!dialogError() || wallet.writeContract.mock.calls.length > 0)
 
-    expect(w.writeContract).not.toHaveBeenCalled()
-    expect(w.requestReview).not.toHaveBeenCalled()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(dialogError()).toBe(CHANGED)
   })
 
   it('wallet-action:approve-an-erc-20 never approves from an account switched to before confirming', async () => {
-    w.token = 'erc20'
+    m.token = 'erc20'
     await reviewPayment()
-    await switchAccount(BOB)
+    await act(async () => wallet.connect(BOB))
     await click('Confirm & Pay')
-    await waitUntil(() => !!dialogError() || w.writeContract.mock.calls.length > 0)
+    await waitUntil(() => !!dialogError() || wallet.writeContract.mock.calls.length > 0)
 
-    expect(w.writeContract).not.toHaveBeenCalled()
-    expect(w.requestReview).not.toHaveBeenCalled()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(dialogError()).toBe(CHANGED)
   })
 
   it('stops after an approval when the account switches before the payment, and says why', async () => {
-    w.token = 'erc20'
+    m.token = 'erc20'
     await reviewPayment()
     await click('Confirm & Pay')
-    await waitUntil(() => !!w.confirmApproval)
+    await waitUntil(() => wallet.awaits(sentHash(1)))
     // Alice's approval reached her wallet and is confirming.
-    expect(w.writeContract).toHaveBeenCalledOnce()
-    expect(w.writeContract.mock.calls[0][0]).toMatchObject({ functionName: 'approve', account: ALICE })
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
 
-    await switchAccount(BOB)
-    await act(async () => w.confirmApproval!())
+    await act(async () => wallet.connect(BOB))
+    await act(async () => wallet.confirm(sentHash(1)))
     await waitUntil(() => !!dialogError())
 
-    expect(w.writeContract).toHaveBeenCalledOnce()
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     expect(dialogError()).toBe(CHANGED)
   })
 
   it('pays from the account that reviewed it, as its beneficiary', async () => {
     await reviewPayment()
     await click('Confirm & Pay')
-    await waitUntil(() => w.writeContract.mock.calls.length > 0)
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
 
-    expect(w.writeContract).toHaveBeenCalledOnce()
-    const sent = w.writeContract.mock.calls[0][0] as { functionName: string; args: readonly unknown[]; account: unknown }
-    expect(sent.functionName).toBe('pay')
-    expect(sent.account).toBe(ALICE)
-    expect(sent.args[3]).toBe(ALICE)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
+    expect(request.args[3]).toBe(ALICE)
   })
 })

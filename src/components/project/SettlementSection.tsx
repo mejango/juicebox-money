@@ -607,7 +607,8 @@ function MovementGroup({
         token: group.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi })
+      // Sent by the account the bridge fee was estimated for.
+      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: address })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')
     } finally {
@@ -812,7 +813,7 @@ function ClaimButton({
   chains: [number, number][]
 }) {
   const config = useConfig()
-  const { isConnected, openSignIn } = useWallet()
+  const { isConnected, address, openSignIn } = useWallet()
   const tx = useSafeTx(m.destChainId)
   const [building, setBuilding] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -833,7 +834,7 @@ function ClaimButton({
 
   const claim = async () => {
     if (busy) return
-    if (!isConnected) {
+    if (!isConnected || !address) {
       openSignIn()
       return
     }
@@ -867,7 +868,8 @@ function ClaimButton({
         sucker: m.destSucker as Address,
         claim: claimData,
       })
-      await tx.send({ ...request, abi: request.abi as Abi })
+      // Permissionless: the beneficiary is in the leaf, not the sender.
+      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: address })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not claim.')
     } finally {

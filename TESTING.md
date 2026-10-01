@@ -80,7 +80,12 @@ enables the full artifact comparison; it does not trust the fixture alone.
   is not a safe retry.
 - `test/components/` exercises component orchestration around high-risk writes:
   frozen reviews, account drift, immediate onchain re-reads, debounced amounts,
-  and exact requests passed into the safe transaction boundary.
+  and exact requests passed into the safe transaction boundary. Every
+  `useSafeTx.send` names the account its request was reviewed for, and the
+  reviewed write (`src/lib/contract-write.ts`) refuses any other connected
+  account. The `reviewed-account-*` tests run the real engine over a fake
+  wallet (`test/support/fake-wallet.ts`) and switch accounts between review
+  and confirm, or between steps: nothing reaches the wallet.
 - [`test/TRANSACTION_COVERAGE.md`](test/TRANSACTION_COVERAGE.md) is the safety
   inventory. Every new wallet write must add or update a row and should have an
   exact ABI round-trip test before it is considered covered.

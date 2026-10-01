@@ -335,6 +335,8 @@ type OnChainLoan = {
 /** A reviewed repayment: read fresh when Repay is pressed and frozen until
  *  the dialog closes, so what the holder confirms is what gets sent. */
 type RepayPlan = {
+  /** The holder it repays from and returns collateral to: only it may send it. */
+  account: Address
   request: ReturnType<typeof buildRepayLoanTx>
   amount: bigint
   maxRepay: bigint
@@ -387,7 +389,7 @@ function RepayFlow({
   // Once the ERC-20 approval lands, send the repayment held in the plan.
   useEffect(() => {
     if (approveTx.phase === 'success' && plan?.approve) {
-      repayTx.send(plan.request)
+      repayTx.send(plan.request, { reviewedAccount: plan.account })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveTx.phase])
@@ -447,6 +449,7 @@ function RepayFlow({
             args: [holder, loans],
           })) as bigint)
       setPlan({
+        account: holder,
         request,
         amount: fresh.amount,
         maxRepay,
@@ -471,20 +474,16 @@ function RepayFlow({
 
   const handleConfirm = async () => {
     if (!plan || busy) return
-    if (address?.toLowerCase() !== holder.toLowerCase()) {
-      setFlowError('Your connected account changed — reopen the loan to repay.')
-      return
-    }
     setFlowError(null)
     if (plan.isNative) {
-      await repayTx.send(plan.request)
+      await repayTx.send(plan.request, { reviewedAccount: plan.account })
       return
     }
     if (!plan.approve || approveTx.phase === 'success') {
-      await repayTx.send(plan.request)
+      await repayTx.send(plan.request, { reviewedAccount: plan.account })
       return
     }
-    await approveTx.send(plan.approve)
+    await approveTx.send(plan.approve, { reviewedAccount: plan.account })
   }
 
   const closeDialog = () => {

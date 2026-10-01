@@ -796,7 +796,8 @@ function GossipRow({
         sucker: peer.syncSucker,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as unknown as Abi })
+      // Sent by the account the bridge fee was estimated for.
+      await tx.send({ ...request, abi: request.abi as unknown as Abi }, { reviewedAccount: address })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')
     } finally {

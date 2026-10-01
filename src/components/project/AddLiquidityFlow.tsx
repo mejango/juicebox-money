@@ -484,6 +484,9 @@ function AddLiquidityForm({
     (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
       const p = planRef.current
       if (!p) return Promise.resolve(null)
+      // The mint recipient is baked into unlockData: every step, approvals
+      // included, sends only from the account the plan was reviewed for.
+      const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
         return tx.send(
           buildErc20ApproveRequest({
@@ -492,6 +495,7 @@ function AddLiquidityForm({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
+          { reviewedAccount },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -503,6 +507,7 @@ function AddLiquidityForm({
             amount: step.amount,
             expiration: step.expiration,
           }),
+          { reviewedAccount },
         )
       }
       // Deadline is set at send time — everything that touches funds is
@@ -518,7 +523,7 @@ function AddLiquidityForm({
           deadline,
           value: p.mint.value,
         }),
-        { simulationBlockNumber: confirmedAt },
+        { reviewedAccount, simulationBlockNumber: confirmedAt },
       )
     },
     [tx, chainId],
@@ -793,17 +798,8 @@ function AddLiquidityForm({
       }
     })
 
-  /** Account-unchanged recheck: the mint recipient is baked into unlockData. */
-  const reviewedAccountConnected = (reviewed: Plan): boolean => {
-    if (address && address.toLowerCase() === reviewed.account.toLowerCase()) return true
-    replacePlan(null)
-    setReviewError('Your connected account changed — review again.')
-    return false
-  }
-
   const startRun = () => {
     if (!plan || run.isRunning()) return
-    if (!reviewedAccountConnected(plan)) return
     if (liquidityBatchApplies(plan.steps)) {
       void runBatch(plan)
       return
@@ -815,7 +811,6 @@ function AddLiquidityForm({
 
   const resume = () => {
     if (!plan || run.isRunning()) return
-    if (!reviewedAccountConnected(plan)) return
     run.resume(plan.steps)
   }
 

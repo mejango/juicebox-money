@@ -34,10 +34,10 @@ missing marker.
 | Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts` |
 | Swap project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
-| Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx` |
-| Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx` |
-| Burn project tokens | active `JBController.burnTokensOf` | **E** | `contracts/burn-tokens.test.ts` |
-| Redeem shop NFTs | `cashOutTokensOf` + 721 metadata | **E** | `contracts/transaction-backlog.test.ts` |
+| Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx`, `components/reviewed-account-holder.test.tsx` |
+| Cash out project tokens | `JBMultiTerminal.cashOutTokensOf` | **E** | `contracts/cash-out.test.ts`, `components/write-flows.test.tsx`, `components/reviewed-account-holder.test.tsx` |
+| Burn project tokens | active `JBController.burnTokensOf` | **E** | `contracts/burn-tokens.test.ts`, `components/reviewed-account-holder.test.tsx` |
+| Redeem shop NFTs | `cashOutTokensOf` + 721 metadata | **E** | `contracts/transaction-backlog.test.ts`, `components/reviewed-account-shop.test.tsx` |
 | Distribute payouts | Local terminal/token/decimals/limit/recipient `sendPayoutsOf` calls, frozen minimums and exact distribution event verification | **P/E** | `contracts/transaction-builders.test.ts`, `data/project-distributions.test.ts`, `components/distribution-batch.test.tsx`, `transactions/project-batch.test.ts` |
 | Use surplus allowance | `JBMultiTerminal.useAllowanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Queue rulesets | `JBController.queueRulesetsOf` | **E** | `contracts/transaction-builders.test.ts` |
@@ -60,17 +60,17 @@ missing marker.
 | Submit a Safe operator batch | Ordered steps composed into one `MultiSendCallOnly.multiSend` operation-1 SafeTx (owner), one Safe-app `wallet_sendCalls` proposal, or sequential direct writes; sequence simulated first | **E** | `lib/safe-batch.test.ts`, `lib/safe-batch-presets.test.ts`, `transactions/safe-batch-submit.test.ts`, `components/safe-batch-tray.test.tsx` |
 | Set project handle | ENS resolver `setText` + mainnet `JBProjectHandles.setEnsNamePartsFor` | **E** | `contracts/project-handles.test.ts` |
 | Deploy same Safe on Ethereum | Safe proxy factory `createProxyWithNonce` after exact-address simulation | **P/E** | `data/cross-chain-authority.test.ts`, `transactions/safe-orchestration.test.ts` |
-| Borrow or repay | `REVLoans.borrowFrom` / `repayLoan` | **E** | `contracts/transaction-builders.test.ts` |
+| Borrow or repay | `REVLoans.borrowFrom` / `repayLoan` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-holder.test.tsx` |
 | Auto-issue tokens | Every unlocked `REVOwner.autoIssueFor` stage/beneficiary allocation, with repeated-chain calls in later rounds and single-allocation rows sharing the same recovery aliases | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/project-token-batch.test.ts`, `components/project-token-batches.test.tsx`, `components/write-flows.test.tsx` |
 | Prepare/move tokens cross-chain | terminal + sucker calls | **E** | `contracts/transaction-backlog.test.ts` |
 | Claim bridged funds | sucker claim call | **E** | `contracts/transaction-backlog.test.ts` |
 | Sync sucker accounting | sucker sync call | **E** | `contracts/transaction-backlog.test.ts` |
-| Add Uniswap V4 liquidity | approvals + `modifyLiquidities` | **E** | `contracts/transaction-backlog.test.ts` |
+| Add Uniswap V4 liquidity | approvals + `modifyLiquidities` | **E** | `contracts/transaction-backlog.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
-| Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take: one position, or both sides of a market with one take | **E** | `contracts/transaction-backlog.test.ts`, `contracts/market-liquidity.test.ts` |
+| Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take: one position, or both sides of a market with one take | **E** | `contracts/transaction-backlog.test.ts`, `contracts/market-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Remove Uniswap V4 liquidity | `modifyLiquidities` burn + take with 95% floors | **E** | `contracts/transaction-backlog.test.ts` |
-| Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts` |
-| Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts` |
+| Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
+| Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
 | Submit a reviewed direct write | reviewed-account check → review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |

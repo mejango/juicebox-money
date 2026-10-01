@@ -5,8 +5,10 @@
  * hosted in the ModalShell that holds the flow (as OwnersTab hosts them).
  *
  * - A run that stopped part way belongs to that plan only: after the account
- *   changes and a new plan is reviewed, confirming must start the new plan,
- *   never send the old plan's stopped step (an approval for another account,
+ *   changes, its stopped step goes to the engine only as the old account's,
+ *   which the engine refuses (useSafeTx and reviewed-account tests), and a
+ *   newly reviewed plan starts from its own first step for the new account,
+ *   never from the old plan's stopped step (an approval for another account,
  *   or a write whose recipient is baked into its bytes).
  * - While a send is in flight, the shell does not close: Escape, a backdrop
  *   click or its × would drop the run, and reopening would send it again.
@@ -268,6 +270,15 @@ async function typeInto(label: string, value: string) {
 }
 
 const sent = () => engine.send.mock.calls.map(([request]) => request as Record<string, unknown>)
+const sentAs = () => (engine.send.mock.calls.at(-1)![1] as { reviewedAccount?: string }).reviewedAccount
+const CHANGED = 'The connected account changed. Review again.'
+
+/** Close the confirm dialog with its cancel control. */
+async function cancel() {
+  const [button] = host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] footer .btn-secondary')
+  expect(button, 'the confirm dialog cancel').toBeDefined()
+  await act(async () => button.click())
+}
 
 /** Stop at step k, switch account, review a new plan, and confirm it. */
 async function replanAfterStop({
@@ -284,8 +295,15 @@ async function replanAfterStop({
   expect(action().textContent).toBe(stoppedAction)
   expect(host.textContent).toContain(stoppedError)
   await switchAccount(BOB)
+  const before = engine.send.mock.calls.length
   await confirm()
-  expect(host.textContent).toContain('Your connected account changed — review again.')
+  // The stopped step is offered only as Alice's; the engine refuses it for Bob.
+  expect(engine.send.mock.calls.length).toBe(before + 1)
+  expect(sentAs()).toBe(ALICE)
+  await act(async () => engine.fail(CHANGED))
+  await act(async () => engine.answer(null))
+  expect(host.textContent).toContain(CHANGED)
+  await cancel()
   expect(host.querySelector('[data-tx-confirm]')).toBeNull()
 
   await review(reviewLabel)
@@ -296,8 +314,9 @@ async function replanAfterStop({
   const first = sent().at(-1)!
   // The new plan's first step: the approval for Bob, never the old plan's stopped step.
   expect(first).toMatchObject({ address: TOKEN, functionName: 'approve' })
+  expect(sentAs()).toBe(BOB)
   expect(sent().filter(request => request.functionName === 'modifyLiquidities')).toHaveLength(
-    stoppedAction.startsWith('Retry step 3') ? 1 : 0,
+    stoppedAction.startsWith('Retry step 3') ? 2 : 0,
   )
 }
 
@@ -380,8 +399,17 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       stoppedError: 'Transaction cancelled.',
       finalAction: 'Edit the market',
     })
-    // Neither plan's Permit2 authorization was sent again in Alice's name.
-    expect(sent().filter(request => request.functionName === 'approve')).toHaveLength(3)
+    // Alice's stopped Permit2 authorization went back to the engine only as hers,
+    // which it refuses while Bob is connected; Bob's plan starts with his own approval.
+    const approvals = engine.send.mock.calls.filter(
+      ([request]) => (request as { functionName?: string }).functionName === 'approve',
+    )
+    expect(approvals.map(([, options]) => (options as { reviewedAccount?: string }).reviewedAccount)).toEqual([
+      ALICE,
+      ALICE,
+      ALICE,
+      BOB,
+    ])
   })
 })
 

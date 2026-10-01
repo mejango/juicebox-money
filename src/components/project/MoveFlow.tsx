@@ -313,7 +313,6 @@ function MoveFlow({
 }) {
   const config = useConfig()
   const tx = useSafeTx(from)
-  const { address } = useWallet()
 
   // step: 0 review, 1 approve (if needed), 2 prepare, 3 send, 4 done
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
@@ -489,19 +488,10 @@ function MoveFlow({
     }
   }
 
-  /** Every send step's gate: when the connected account changed since the
-   *  review was frozen, drop back to review instead of sending. */
-  const guardAccount = (): boolean => {
-    if (address?.toLowerCase() === review?.account.toLowerCase()) return true
-    setReview(null)
-    setStep(0)
-    setFlowError('Your connected account changed — review the move again.')
-    return false
-  }
-
+  // Every step moves `review.account`'s tokens to it on the other chain: each
+  // send refuses any other connected account.
   const sendApprove = () => {
     if (!review || busy) return
-    if (!guardAccount()) return
     tx.send(
       buildErc20ApproveRequest({
         chainId: from as JBChainId,
@@ -509,12 +499,12 @@ function MoveFlow({
         spender: review.sucker,
         amount: review.amount,
       }),
+      { reviewedAccount: review.account },
     )
   }
 
   const sendPrepare = () => {
     if (!review || busy) return
-    if (!guardAccount()) return
     const request = buildBridgePrepareTx({
       chainId: from,
       sucker: review.sucker,
@@ -523,12 +513,11 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi })
+    tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
   }
 
   const sendToRemote = async () => {
     if (!review || busy) return
-    if (!guardAccount()) return
     setFlowError(null)
     setChecking(true)
     try {
@@ -555,7 +544,7 @@ function MoveFlow({
         token: review.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi })
+      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')
     } finally {

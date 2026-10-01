@@ -329,6 +329,9 @@ export function EditPositionPanel({
     (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
       const p = planRef.current
       if (!p) return Promise.resolve(null)
+      // The recipient is baked into unlockData: every step, approvals
+      // included, sends only from the account the plan was reviewed for.
+      const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
         return tx.send(
           buildErc20ApproveRequest({
@@ -337,6 +340,7 @@ export function EditPositionPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
+          { reviewedAccount },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -348,6 +352,7 @@ export function EditPositionPanel({
             amount: step.amount,
             expiration: step.expiration,
           }),
+          { reviewedAccount },
         )
       }
       // Everything that touches funds is frozen inside unlockData; only the
@@ -361,6 +366,7 @@ export function EditPositionPanel({
           value: p.plan.value,
         }),
         {
+          reviewedAccount,
           simulationBlockNumber: confirmedAt,
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
@@ -433,17 +439,8 @@ export function EditPositionPanel({
       }
     })
 
-  /** The recipient is baked into unlockData: a changed account must re-review. */
-  const reviewedAccountConnected = (p: Reviewed): boolean => {
-    if (connectedAddress && connectedAddress.toLowerCase() === p.account.toLowerCase()) return true
-    replaceReviewed(null)
-    setReviewError('Your connected account changed — review again.')
-    return false
-  }
-
   const startRun = () => {
     if (!reviewed || run.isRunning()) return
-    if (!reviewedAccountConnected(reviewed)) return
     if (liquidityBatchApplies(reviewed.steps)) {
       void runBatch(reviewed)
       return
@@ -453,7 +450,6 @@ export function EditPositionPanel({
 
   const resume = () => {
     if (!reviewed || run.isRunning()) return
-    if (!reviewedAccountConnected(reviewed)) return
     run.resume(reviewed.steps)
   }
 
