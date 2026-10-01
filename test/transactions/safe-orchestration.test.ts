@@ -103,6 +103,9 @@ const TRUE_RESULT = `0x${'0'.repeat(63)}1` as Hex
 const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
 )
+const EXECUTION_FAILURE_TOPIC = keccak256(
+  stringToHex('ExecutionFailure(bytes32,uint256)'),
+)
 
 function safeIdentity(owners = [ALICE], threshold = 1) {
   return {
@@ -183,10 +186,10 @@ beforeEach(() => {
   mocks.safe = false
   mocks.waitSafe.mockReset()
   mocks.client.getBlock.mockResolvedValue({ baseFeePerGas: 2_000_000_000n })
-  mocks.client.waitForTransactionReceipt.mockImplementation(async () => {
+  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => {
     const write = mocks.wallet.writeContract.mock.calls.at(-1)?.[0]
     if (write?.functionName !== 'execTransaction') {
-      return { status: 'success', logs: [] }
+      return { status: 'success', transactionHash: hash, logs: [] }
     }
     const args = write.args as readonly unknown[]
     const executed: SafeQueuedTx = {
@@ -203,6 +206,7 @@ beforeEach(() => {
     }
     return {
       status: 'success',
+      transactionHash: hash,
       logs: [
         {
           address: SAFE,
@@ -680,6 +684,32 @@ describe('Safe execution boundary', () => {
     expect(mocks.client.estimateGas).not.toHaveBeenCalled()
     expect(mocks.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 0n }))
     expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH)
+  })
+
+  it('fails a Safe app approval whose execution logged ExecutionFailure', async () => {
+    const proposal = `0x${'cd'.repeat(32)}` as Hex
+    const execution = `0x${'ef'.repeat(32)}` as Hex
+    mocks.safe = true
+    mocks.readSafeApprovedHash.mockResolvedValue(0n)
+    mocks.wallet.writeContract.mockResolvedValue(proposal)
+    mocks.waitSafe.mockResolvedValue(execution)
+    mocks.client.waitForTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      transactionHash: execution,
+      // The connected Safe ran the approval with a nonzero safeTxGas, and the call failed inside it.
+      logs: [{ address: ALICE, topics: [EXECUTION_FAILURE_TOPIC, proposal], data: `0x${'00'.repeat(32)}` }],
+    })
+
+    await expect(
+      runSafeCalls({
+        signer: ALICE,
+        calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).rejects.toThrow(/approveHash reverted after Safe execution/)
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'approveHash', gas: 0n }),
+    )
+    expect(mocks.waitSafe).toHaveBeenCalledWith(999, proposal)
   })
 
   it('does not send when the connection changed after the review', async () => {
