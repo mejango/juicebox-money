@@ -2958,17 +2958,18 @@ export function CreateForm() {
               </span>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
               <p className="mb-3 mt-2 text-xs leading-relaxed text-smoke-700">
-                {flavor === "revnet" ? "The operator" : "The owner"}
                 {authorityMode === "create"
-                  ? " is made up of addresses that need to agree on decisions. "
-                  : " is an address you already control. "}
+                  ? "Create a multisig so its signers approve decisions together. "
+                  : "Use your wallet or an existing multisig. "}
                 <button
                   type="button"
                   onClick={() => setAuthorityMode(mode => mode === "create" ? "existing" : "create")}
                   disabled={busy}
                   className="font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-60"
                 >
-                  {authorityMode === "create" ? "Already have a multisig?" : "Create a new multisig?"}
+                  {authorityMode === "create"
+                    ? flavor === "revnet" ? "Already have an operator in mind?" : "Already have an owner in mind?"
+                    : "Create a new multisig?"}
                 </button>
               </p>
               {authorityMode === "create" ? (
@@ -4042,6 +4043,23 @@ export function CreateForm() {
             have begun and some of its scheduled issuance cuts may have passed — execute
             promptly, or re-create the launch when you’re ready to sign.
           </p>
+        ) : null}
+
+        {createsAuthoritySafe && !ownerOk && !canResume ? (
+          <div role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+            <p>
+              Complete the {flavor === "revnet" ? "operator" : "owner"} multisig
+              with unique wallet addresses and a valid approval policy.
+            </p>
+            <button
+              type="button"
+              onClick={() => goToStep(0)}
+              disabled={busy}
+              className="mt-1 font-medium underline underline-offset-2 disabled:opacity-60"
+            >
+              {flavor === "revnet" ? "Edit revnet operator" : "Edit project owner"}
+            </button>
+          </div>
         ) : null}
 
         {stickyBlock && !canResume ? (
