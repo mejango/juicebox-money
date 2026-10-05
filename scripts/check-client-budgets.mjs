@@ -102,8 +102,8 @@ const budgets = {
   // a shared lazy chunk and contract checks stay server-side; round up to 2487.
   // The SDK's Safe checks replace jbm's own copies: 2489.2 KiB against 2486.4 KiB on
   // main with the same toolchain; round up to the next KiB. Binding a Safe app's
-  // execution to its reviewed call, the Safe proposal end state, the creation-record
-  // cache and the canonical-handle rule measure 2490.1 KiB.
+  // execution to its reviewed call, the Safe proposal end state and registry, the
+  // creation-record cache and the canonical-handle rule measure 2490.7 KiB.
   allScripts: 2491 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
