@@ -785,10 +785,10 @@ async function requireReleasedRequestsUnused(
   account: Address,
 ): Promise<readonly string[]> {
   let unused = !!nonces && nonces.length === published.length
-  for (let index = 0; unused && index < published.length; index++) {
+  for (let index = 0; unused && nonces && index < published.length; index++) {
     const request = relayrForwardRequest(published[index])
     unused = !!request && await relayrRequestExpiredUnused({ chainId: published[index].chain, account,
-      nonce: nonces![index], deadline: request.deadline })
+      nonce: nonces[index], deadline: request.deadline })
   }
   if (!unused || !nonces) {
     throw new Error('A relay request this action published may still run, or may have run outside Relayr. Keep it pending and check its destination before signing again.')
