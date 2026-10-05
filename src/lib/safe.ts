@@ -1251,6 +1251,16 @@ export function isSafeExecutionSuccessLog(
   )
 }
 
+/** Whether `log` is `safe`'s result for `safeTxHash`: ExecutionSuccess or ExecutionFailure. */
+export function isSafeExecutionLog(
+  log: { address: Address; topics: readonly Hex[]; data: Hex },
+  safe: Address,
+  safeTxHash: Hex,
+): boolean {
+  const { status } = safeExecutionResult({ status: 'success', logs: [log] }, safe, safeTxHash)
+  return status === 'success' || status === 'failed'
+}
+
 const SAME_ADDRESS_INELIGIBLE =
   'The source Safe, creation initializer, or destination state is no longer eligible for same-address deployment.'
 

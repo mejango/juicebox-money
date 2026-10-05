@@ -452,6 +452,12 @@ describe('durable project batches', () => {
       blockHash: BLOCK, blockNumber: 10n, status: 'success', logs })
   }
   const SAFE_TX = `0x${'ef'.repeat(32)}` as Hex
+  const FAILED = 'The saved Safe proposal failed onchain. Review it again.'
+  /** The Safe's ExecutionFailure for `safeTxHash`, in the transaction `transactionHash`. */
+  const executionFailure = (safeTxHash: Hex, transactionHash: Hex) => ({
+    ...executionSuccess(safeTxHash, transactionHash),
+    topics: [toEventSelector('ExecutionFailure(bytes32,uint256)'), safeTxHash],
+  })
 
   it('finds a connector execution from canonical Safe logs without a hosted service', async () => {
     // The Safe app returned its proposal's safeTxHash; an owner executed it later.
@@ -484,9 +490,13 @@ describe('durable project batches', () => {
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
     ['cannot be read as an execution', () => executedBy(HASH, '0xdeadbeef', [executionSuccess(SAFE_TX, HASH)]),
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
-    ['ran the call, and it failed', () => executedBy(HASH, execTransaction(), [{
-      ...executionSuccess(SAFE_TX, HASH), topics: [toEventSelector('ExecutionFailure(bytes32,uint256)'), SAFE_TX],
-    }]), 'The saved Safe proposal ran, and its call failed. Review it again.'],
+    ['ran the call, and it failed', () => executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)]),
+      FAILED],
+    ['reverted', () => {
+      executedBy(HASH, execTransaction(), [])
+      mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+        blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    }, FAILED],
   ] as const)('releases a saved call whose execution %s, so it never holds the batch', async (_, executed, line) => {
     await interruptedConnectorCall(HASH)
     mocks.waitForExecution.mockResolvedValue(HASH)
@@ -503,6 +513,36 @@ describe('durable project batches', () => {
       blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [] })
     expect((await run([call()])).status).toBe('complete')
     expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
+  it('finds a proposal executed later whose call failed, and releases it', async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    const failure = executionFailure(SAFE_TX, HASH)
+    mocks.client.getBlockNumber.mockResolvedValueOnce(11n)
+    mocks.client.getLogs.mockResolvedValueOnce([failure])
+    // The service would report it failed; the chain already shows it.
+    mocks.waitForExecution.mockRejectedValue(new DOMException('Safe execution wait aborted', 'AbortError'))
+    executedBy(HASH, execTransaction(), [failure])
+    await expect(run()).rejects.toThrow(FAILED)
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it('releases a proposal Safe\'s service reports executed and failed', async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    mocks.waitForExecution.mockRejectedValue(
+      new Error('Safe executed the proposal, but the onchain transaction failed.'),
+    )
+    await expect(run()).rejects.toThrow(FAILED)
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it('keeps a saved Safe call while the receipt that would release it is not canonical', async () => {
+    await interruptedConnectorCall(HASH)
+    mocks.waitForExecution.mockResolvedValue(HASH)
+    executedBy(HASH, execTransaction('0xdead'), [executionSuccess(SAFE_TX, HASH)])
+    mocks.client.getBlock.mockResolvedValue({ hash: `0x${'99'.repeat(32)}` })
+    await expect(run()).rejects.toThrow('The original project receipt is no longer canonical. Check it again before continuing.')
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: HASH })
   })
 
   it('keeps the rest of a batch when it releases one saved Safe call', async () => {

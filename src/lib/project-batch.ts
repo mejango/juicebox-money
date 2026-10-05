@@ -10,7 +10,7 @@ import {
   safeTransactionMatchesCall,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
-import { isSafeExecutionSuccessLog } from '@/lib/safe'
+import { isSafeExecutionLog } from '@/lib/safe'
 import {
   isSafeConnection,
   readSafeAppExecution,
@@ -156,17 +156,26 @@ async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Pr
  */
 class SafeSubmissionSettled extends Error {}
 
+/** A saved Safe proposal the Safe ran without effect: its call failed, or its execution reverted. */
+const SAFE_SUBMISSION_FAILED = 'The saved Safe proposal failed onchain. Review it again.'
+
 async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, acceptReverted = false): Promise<TransactionReceipt> {
   const client = clientFor(call.chainId)
   const [tx, receipt] = await Promise.all([
     client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
   ])
   if (tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== call.chainId ||
-      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
-      tx.blockHash !== receipt.blockHash || (receipt.status !== 'success' && !(acceptReverted && !safeHash && receipt.status === 'reverted'))) {
+      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() || tx.blockHash !== receipt.blockHash) {
     throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
   }
+  // Only a canonical receipt decides a saved call, a release included.
+  const block = await client.getBlock({ blockNumber: receipt.blockNumber })
+  if (!block.hash || block.hash !== receipt.blockHash) {
+    throw new Error('The original project receipt is no longer canonical. Check it again before continuing.')
+  }
   if (safeHash) {
+    // An execution that reverted ran nothing; the Safe's result decides anything else.
+    if (receipt.status !== 'success') throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
     const execution = await readSafeAppExecution({
       client: { getTransaction: async () => tx },
       receipt,
@@ -175,18 +184,17 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
       calls: [{ to: call.target, data: call.data, value: call.value }],
     })
     if (execution.status !== 'success') {
-      throw new SafeSubmissionSettled(execution.status === 'failed'
-        ? 'The saved Safe proposal ran, and its call failed. Review it again.'
-        : SAFE_PROPOSAL_UNCONFIRMED)
+      throw new SafeSubmissionSettled(execution.status === 'unproven' ? SAFE_PROPOSAL_UNCONFIRMED : SAFE_SUBMISSION_FAILED)
     }
-  } else if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
+    return receipt
+  }
+  if (receipt.status !== 'success' && !(acceptReverted && receipt.status === 'reverted')) {
+    throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
+  }
+  if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
       !isAddressEqual(tx.to, call.target) || tx.input.toLowerCase() !== call.data.toLowerCase() ||
       tx.value !== (call.value ?? 0n)) {
     throw new Error('The receipt belongs to a different project transaction. Keep the original action pending.')
-  }
-  const block = await client.getBlock({ blockNumber: receipt.blockNumber })
-  if (!block.hash || block.hash !== receipt.blockHash) {
-    throw new Error('The original project receipt is no longer canonical. Check it again before continuing.')
   }
   return receipt
 }
@@ -199,7 +207,8 @@ async function safeExecution(call: ProjectBatchCall, submission: CallSubmission)
   for (let start = submission.fromBlock; start <= latest; start += 10_000n) {
     const end = start + 9_999n < latest ? start + 9_999n : latest
     const logs = await client.getLogs({ address: call.authority, fromBlock: start, toBlock: end })
-    const log = logs.find(log => isSafeExecutionSuccessLog(log, call.authority, submission.hash!))
+    // Its ExecutionFailure is a result too: a failed call is settled, never left pending.
+    const log = logs.find(log => isSafeExecutionLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
   }
   return null
@@ -367,7 +376,16 @@ export async function runProjectBatch({
           else {
             execution = await safeExecution(call, saved)
             try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
-            catch { report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round); return journal }
+            catch (error) {
+              // Safe's service saw it run and fail: settled. Anything else may still execute.
+              if (error instanceof Error && /executed the proposal.*failed/i.test(error.message)) {
+                delete journal.submissions[call.id]
+                persist(journal)
+                throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
+              }
+              report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round)
+              return journal
+            }
           }
           if (execution) {
             const receipt = await verifySubmitted(call, execution, saved.kind === 'direct' ? undefined : saved.hash)
