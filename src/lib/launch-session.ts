@@ -18,7 +18,6 @@
 import type { LaunchPlan } from '@/lib/launch'
 import type { Address } from 'viem'
 import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
-import { relayrSentPaymentSnapshot } from '@/lib/relayr-payments'
 import { DRAFT_KEY } from '@/lib/draft'
 import { validateLaunchMultisigs } from '@/lib/launch-multisig'
 
@@ -168,9 +167,7 @@ export function loadLaunchSession({ strict = false }: { strict?: boolean } = {})
           signed.some(item => !item || !Number.isSafeInteger(item.chainId) || !value.chains!.includes(item.chainId) ||
             !Number.isSafeInteger(item.deadline) || item.deadline < 1 || typeof item.nonce !== 'string' || !/^\d+$/u.test(item.nonce) ||
             !item.entry || item.entry.chain !== item.chainId || typeof item.entry.target !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(item.entry.target) ||
-            typeof item.entry.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(item.entry.data) || typeof item.entry.value !== 'string' || !/^\d+$/u.test(item.entry.value)) ||
-          (journal.payments !== undefined && (!Array.isArray(journal.payments) || journal.payments.length > 16 ||
-            !journal.payments.every(payment => relayrSentPaymentSnapshot(payment))))) throw new Error()
+            typeof item.entry.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/u.test(item.entry.data) || typeof item.entry.value !== 'string' || !/^\d+$/u.test(item.entry.value))) throw new Error()
     }
     // A pinned plan without `projectName` launched its chains with the store
     // name as the revnet description name; a resume must re-encode

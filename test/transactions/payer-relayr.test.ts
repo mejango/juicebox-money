@@ -310,6 +310,15 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a saved deployment whose payment record is malformed pending', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    const key = `jb-payer-deploy-v1:journal:${review.id}`
+    const saved = JSON.parse(window.localStorage.getItem(key)!)
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, payments: [{ hash: PAYMENT_HASH, chainId: 999 }] }))
+    expect(() => loadPayerDeployment(review.scope)).toThrow('The saved payer payments are malformed. Keep it pending.')
+  })
+
   it('uses a stable project action scope regardless of selection or input changes', () => {
     expect(payerDeploymentScope([[10, 84], [1, 42]])).toBe(payerDeploymentScope([[1, 42], [10, 84]]))
     expect(() => buildPayerDeploymentReview({ projects: [[1, 42]], selectedChainIds: [10], account: ALICE,

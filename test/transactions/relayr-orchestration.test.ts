@@ -1076,6 +1076,20 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each<[string, Record<string, unknown>]>([
+    ['a payment with no transaction hash', { payments: [{ chainId: 1, target: RELAYR_PAYMENT_ADDRESS, calldata: payment.calldata,
+      amount: '100', deadline: String(PAYMENT_DEADLINE), bundleUuid: BUNDLE_UUID, hash: '0x1234' }] }],
+    ['a payment option that is not one', { paymentOptions: [{ chain: '1' }] }],
+  ])('reads a saved publication with %s as unreadable, never as an unused nonce', async (_, field) => {
+    const storage = localStorageWindow()
+    storage.values.set('jb-relayr-pending-v1:other-action', JSON.stringify({ bundleUuid: BUNDLE_UUID, paymentHash: null,
+      paymentChainId: null, paymentStatus: 'unpaid', chainIds: [1], expectedCount: 1, records: [], itemCount: 1,
+      account: ALICE, createdAt: 1, publishedEntries: [signedEntry()], ...field }))
+    vi.stubGlobal('window', storage.window)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'same-action' })).rejects.toThrow('records could not be read completely')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
   it('preserves malformed exact-entry evidence when a tolerant own-scope read precedes authorization', async () => {
     const storage = localStorageWindow()
     const raw = JSON.stringify({ bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',

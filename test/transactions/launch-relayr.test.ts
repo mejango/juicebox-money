@@ -187,6 +187,20 @@ beforeEach(() => {
   saveLaunchSession(session())
 })
 
+describe('saved launch payments', () => {
+  it('refuses a saved launch whose payment record is malformed before checking anything', async () => {
+    m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
+      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+    })
+    await expect(run()).rejects.toThrow('reload after funding submission')
+    const saved = loadLaunchSession()!
+    saved.relayr!.payments = [{ ...saved.relayr!.payments![0], calldata: '0x1234' }]
+    saveLaunchSession(saved)
+    await expect(run()).rejects.toThrow('The saved Relayr launch is invalid.')
+    expect(m.poll).not.toHaveBeenCalled()
+  })
+})
+
 describe('relayed launch execution and recovery', () => {
   it.each(['project', 'revnet'] as const)('wallet-action:create-an-owner-or-operator-safe-during-launch bundles a single-chain %s Safe with the exact signed launch and one payment', async flavor => {
     const value = multisigSession(flavor)

@@ -32,7 +32,7 @@ import {
   relayrPoll,
   relayrPostBundle,
 } from '@/lib/relayr'
-import type { RelayrSentPayment } from '@/lib/relayr-payments'
+import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import {
   RelayrDestinationRevertedError,
   RelayrPaymentRevertedError,
@@ -197,7 +197,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         journal.signed.length > current.chains.length ||
         new Set(journal.signed.map(item => item.chainId)).size !== journal.signed.length ||
         journal.signed.some(item => !current.chains.includes(item.chainId)) ||
-        !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase))) {
+        !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase) ||
+        (journal.payments !== undefined && (!Array.isArray(journal.payments) || journal.payments.length > 16 ||
+          !journal.payments.every(payment => relayrSentPaymentSnapshot(payment)))))) {
       throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
     }
     if (journal && ['payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase)) {
