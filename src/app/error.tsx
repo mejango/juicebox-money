@@ -1,17 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-
-/** True for the failure modes a fresh page load reliably fixes: a stale or
-    cold-start-interrupted chunk/RSC fetch. */
-function isStaleDeploymentError(error: Error) {
-  return (
-    error.name === 'ChunkLoadError' ||
-    /Loading chunk .* failed|Failed to fetch dynamically imported module|import\(\) failed/i.test(
-      error.message,
-    )
-  )
-}
+import { isStaleDeploymentError } from '@/lib/deployment-errors'
 
 const RELOAD_KEY = 'stale-deployment-reload'
 

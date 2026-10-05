@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encodeFunctionResult } from 'viem'
+import { encodeErrorResult, encodeFunctionResult } from 'viem'
 import {
   JBCoreContracts,
   jbContractAddress,
@@ -134,13 +134,27 @@ describe('project page data with on-chain fallback', () => {
     await expect(getProjectPageData(1, 999_999, deps)).resolves.toBeNull()
   })
 
-  it('never throws even when the indexer and the RPC read both fail', async () => {
+  it('keeps a dual outage distinguishable from a nonexistent project', async () => {
     const deps = {
       getProject: vi.fn().mockRejectedValue(new Error('bendystraw 503')),
       readOnChainProject: vi.fn().mockRejectedValue(new Error('rpc down')),
     }
 
-    await expect(getProjectPageData(1, 7, deps)).resolves.toBeNull()
+    await expect(getProjectPageData(1, 7, deps)).rejects.toThrow('Project details are temporarily unavailable')
+  })
+
+  it('does not call a missing indexer record nonexistent when RPC is unavailable', async () => {
+    await expect(getProjectPageData(1, 7, {
+      getProject: vi.fn().mockResolvedValue(null),
+      readOnChainProject: vi.fn().mockRejectedValue(new Error('RPC timeout with secret key')),
+    })).rejects.toThrow('Project details are temporarily unavailable')
+  })
+
+  it('keeps indexed identity usable if only RPC reads fail', async () => {
+    await expect(getProjectPageData(1, 7, {
+      getProject: vi.fn().mockResolvedValue(indexedProject()),
+      readOnChainProject: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+    })).resolves.toEqual({ project: indexedProject(), degraded: false })
   })
 })
 
@@ -207,18 +221,29 @@ describe('on-chain project shell read', () => {
     ])
   })
 
-  it('treats an ownerOf revert as project-not-found', async () => {
+  it('treats an explicit nonexistent-token revert as project-not-found', async () => {
     const fetchMock = vi.fn().mockImplementation(
       async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body)) as { id: unknown }
         return rpcResponse(body.id, {
-          error: { code: 3, message: 'execution reverted', data: '0x' },
+          error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: jbProjectsAbi, errorName: 'ERC721NonexistentToken', args: [999_999n] }) },
         })
       },
     )
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(readOnChainProject(1, 999_999)).resolves.toBeNull()
+  })
+
+  it.each([
+    { code: 3, message: 'execution reverted', data: '0x' },
+    { code: -32603, message: 'RPC endpoint unavailable' },
+  ])('keeps generic reverts and RPC failures as unknown identity', async error => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const { id } = JSON.parse(String(init?.body)) as { id: unknown }
+      return rpcResponse(id, { error })
+    }))
+    await expect(readOnChainProject(1, 7)).rejects.toThrow('Project identity is temporarily unavailable')
   })
 
   it('keeps the project shell when only the metadata reads fail', async () => {

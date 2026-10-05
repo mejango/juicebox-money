@@ -175,13 +175,14 @@ const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
 export async function getProject(
   chainId: number,
   projectId: number,
+  options: { policy?: 'no-store' } = {},
 ): Promise<BsProject | null> {
   const data = await bendystraw<{ project: BsProject | null }>(
     `query($chainId: Float!, $projectId: Float!) {
       project(chainId: $chainId, projectId: $projectId, version: 6) { ${PROJECT_FIELDS} }
     }`,
     { chainId, projectId },
-    { policy: 'standard' },
+    { policy: 'standard', ...options },
   )
   return data.project
 }
@@ -1210,6 +1211,7 @@ export async function getOwnedShopItems(
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
   chainId?: number,
+  options: { policy?: 'no-store' } = {},
 ): Promise<BsProject[]> {
   // A sucker group spans one row per chain per version, so 10 truncated real groups — and the
   // members that fell off vanished from project-page siblings, the wallet's cross-chain
@@ -1226,9 +1228,15 @@ export async function getSuckerGroupProjects(
     {
       network: bendystrawNetworkHint(chainId),
       policy: 'stable',
+      ...options,
     },
   )
   return data.suckerGroup?.projects.items ?? []
+}
+
+/** A linked project must itself occur in the returned versioned group records. */
+export function projectGroupIsIncomplete(project: BsProject, members: BsProject[]): boolean {
+  return !!project.suckerGroupId && !members.some(member => matchesProjectRef(member, [project]))
 }
 
 export { resolveProjectDeployments } from '@bananapus/nana-sdk-core'

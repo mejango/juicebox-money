@@ -12,6 +12,8 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   createPublicClient,
+  BaseError,
+  ContractFunctionRevertedError,
   getAbiItem,
   isAddress,
   isAddressEqual,
@@ -68,8 +70,8 @@ const operatorPermissionsSetEvent = getAbiItem({
 /**
  * The smallest read that proves a project exists on a chain: JBProjects
  * ownerOf, plus a best-effort controllerOf + uriOf for metadata. Returns
- * null when the chain is unknown, the project NFT doesn't exist, or the
- * RPC read fails — the caller treats null as "not found on chain".
+ * null only when the registry explicitly reports a nonexistent project NFT.
+ * An unreadable identity throws so an outage cannot become a false 404.
  */
 export async function readOnChainProject(
   chainId: number,
@@ -78,7 +80,7 @@ export async function readOnChainProject(
   const chain = JB_CHAINS[chainId as JBChainId]?.chain
   const projects = V6_ADDRESSES[JBCoreContracts.JBProjects]?.[chainId]
   const directory = V6_ADDRESSES[JBCoreContracts.JBDirectory]?.[chainId]
-  if (!chain || !projects) return null
+  if (!chain || !projects) throw new Error('Project identity is unavailable on this network.')
   const client = createPublicClient({
     chain,
     transport: jbCenterRpcTransport(chainId, 4_000),
@@ -117,9 +119,18 @@ export async function readOnChainProject(
       }
     }
     return { owner, metadataUri, metadataUriResolved }
-  } catch {
-    // ownerOf reverted (no such project) or the RPC is unreachable.
-    return null
+  } catch (error) {
+    const reverted = error instanceof BaseError
+      ? error.walk(cause => cause instanceof ContractFunctionRevertedError)
+      : null
+    if (
+      reverted instanceof ContractFunctionRevertedError &&
+      reverted.data?.errorName === 'ERC721NonexistentToken' &&
+      reverted.data.args?.[0] === BigInt(projectId)
+    ) {
+      return null
+    }
+    throw new Error('Project identity is temporarily unavailable.')
   }
 }
 
@@ -441,8 +452,8 @@ function shellProject(
  * efficient primary, while identity and the controller's CURRENT metadata URI
  * are reconciled onchain so a recent name/logo edit does not wait for the
  * indexer. Falls back to a degraded on-chain shell for fresh projects or an
- * indexer outage; null only when the project can't be found either. Never
- * throws.
+ * indexer outage; null only when the registry confirms the NFT does not exist.
+ * If neither source can establish identity, throws a safe error for retry.
  */
 export async function getProjectPageData(
   chainId: number,
@@ -450,15 +461,22 @@ export async function getProjectPageData(
   deps: {
     getProject: typeof getProject
     readOnChainProject: typeof readOnChainProject
-  } = { getProject, readOnChainProject },
+  } = {
+    // A Retry must observe a new record instead of reusing a cached null.
+    getProject: (chain, id) => getProject(chain, id, { policy: 'no-store' }),
+    readOnChainProject,
+  },
 ): Promise<ProjectPageData | null> {
-  const [indexedResult, shell] = await Promise.all([
+  const [indexedResult, chainResult] = await Promise.all([
     deps
       .getProject(chainId, projectId)
       .then(project => ({ project, failed: false }))
       .catch(() => ({ project: null, failed: true })),
-    deps.readOnChainProject(chainId, projectId).catch(() => null),
+    deps.readOnChainProject(chainId, projectId)
+      .then(shell => ({ shell, failed: false }))
+      .catch(() => ({ shell: null, failed: true })),
   ])
+  const shell = chainResult.shell
   const indexed = indexedResult.project
   if (indexed) {
     return {
@@ -475,6 +493,7 @@ export async function getProjectPageData(
     }
   }
 
+  if (chainResult.failed) throw new Error('Project details are temporarily unavailable. Retry shortly.')
   if (!shell) return null
   return {
     project: shellProject(chainId, projectId, shell),

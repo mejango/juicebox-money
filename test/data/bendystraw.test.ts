@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   bendystraw,
   getPagedItems,
+  getProject,
   getParticipants,
   getParticipantsForRefs,
   getRevnetOperatorCandidates,
@@ -30,6 +31,14 @@ function bodyOf(init?: RequestInit): {
 }
 
 describe('minimal Bendystraw client', () => {
+  it('can request fresh project data without Next revalidation caching', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(graphqlResponse({ data: { project: null } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(getProject(84532, 45, { policy: 'no-store' })).resolves.toBeNull()
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit & { next?: unknown }
+    expect(init.cache).toBe('no-store')
+    expect(init.next).toBeUndefined()
+  })
   it('builds bounded exact-ref batches and rejects malformed identities', () => {
     expect(
       bendystrawProjectRefsFilters(

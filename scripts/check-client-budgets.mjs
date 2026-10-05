@@ -31,7 +31,9 @@ const budgets = {
     // SDK 2.16.0's gateway ABI in that shared generated-ABI chunk brings create to 495.1 KiB
     // (493.8 KiB on main with the same toolchain).
     // SDK 2.18.0's per-ABI modules bring create to 490.7 KiB. Ratcheted down to keep the gain.
-    '/create/page': 491 * KIB,
+    // Shared explicit shop/overload validation adds 1.9 KiB (492.6 measured
+    // against the 2.18.0 baseline); round the new launch safeguards up to 493.
+    '/create/page': 493 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -88,7 +90,10 @@ const budgets = {
   // -> 428.9 KiB, create 495.1 -> 490.7 KiB), but webpack now copies each ABI module into
   // every lazy chunk that uses it, so all client JavaScript measures 2473.7 KiB against
   // 2467.7 KiB; round up to the next KiB. revnet.money took the same trade in its #58.
-  allScripts: 2474 * KIB,
+  // Deployment diagnostics, retry boundaries, their browser proof and shared
+  // launch guards measure 2486.4 KiB (+12.7 from that baseline). The dialog is
+  // a shared lazy chunk and contract checks stay server-side; round up to 2487.
+  allScripts: 2487 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
@@ -257,6 +262,21 @@ if (!chunks.length) {
     } else {
       process.stdout.write('PASS transaction review dialog is lazy-loaded\n')
     }
+  }
+
+  const diagnosticFiles = new Set(
+    chunks
+      .filter(path => readFileSync(path, 'utf8').includes('Read-only checks of the selected project'))
+      .map(path => relative(distDir, path).split(sep).join('/')),
+  )
+  if (!diagnosticFiles.size) {
+    fail('deployment diagnostic dialog is missing from the production build')
+  } else {
+    const eager = Object.keys(budgets.routes).flatMap(route =>
+      (pages[route] ?? []).filter(file => diagnosticFiles.has(file)),
+    )
+    if (eager.length) fail(`deployment diagnostic dialog is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
+    else process.stdout.write('PASS deployment diagnostic dialog is lazy-loaded\n')
   }
 
   const paraScripts = chunks.filter(path => {
