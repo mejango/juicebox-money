@@ -191,14 +191,21 @@ and the check fails on a missing marker.
   (`components/metadata-editor.test.tsx`,
   `components/edit-splits-multichain.test.tsx`,
   `components/queue-ruleset-multichain.test.tsx`). An unpaid quote that nothing
-  can fund (its options expired, or every request it published did) stops
-  reserving the forwarder nonce, the same action quotes or signs again, a payer
-  deployment quotes its raw calls again, each after Relayr confirms the old
-  bundle unpaid and unrun, and the account view reads it as expired
+  can fund (it offers no option the app can authenticate, its options
+  expired, or every request it published did) stops reserving the forwarder
+  nonce, and the account view reads it as expired. The same action quotes
+  again with the requests it published while they verify, which needs no
+  bundle read since their nonces let only one bundle run. It signs again only
+  once each request is expired and its nonce unused at a canonical finalized
+  block, with that nonce, and after one uncached read reports the old bundle
+  unpaid and unrun; an old request that may still run, or may have run
+  outside Relayr, keeps it pending, for unpaid and R104 releases alike. A
+  payer deployment quotes its raw calls again only after that read
   (`transactions/relayr-orchestration.test.ts`,
   `transactions/payer-relayr.test.ts`, `components/account-view.test.tsx`). A
   session refuses to save payments or payment options it cannot keep exactly,
-  and saves only the options it authenticated. Quotes bind each posted call to
+  and saves every option it can authenticate, several on one chain included.
+  Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
   (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the

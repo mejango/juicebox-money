@@ -102,10 +102,8 @@ atomic.
   payment, and published recovery records preserve the reservation after a reload.
   Another action must resolve that reservation before funding conflicting calls.
   An unpaid project action stops reserving once nothing can fund it: its quote
-  can no longer be paid, or every request it published is past its deadline.
-  The same action then quotes again with the requests it published, or signs
-  again once they can no longer run, and only after one uncached read of its
-  bundle reports it unpaid with every call pending. One whose payments
+  offers no option it can authenticate, its options can no longer be paid, or
+  every request it published is past its deadline. One whose payments
   reverted keeps its reservation until the retry rule below clears it, or
   until nothing can fund it (ruling R104): every payment it sent proven
   canonically reverted, the deadline of each of those payments and of each of
@@ -113,6 +111,16 @@ atomic.
   unpaid with every call pending and no destination hash. A launch keeps its
   reservation until its requests expire unused, since it quotes again on its
   own.
+- A released project action quotes again with the requests it published while
+  they still verify. That needs no read of the old bundle: the new bundle
+  carries the same signed requests, so their nonces let at most one of the two
+  run. Signing again uses new signatures, so it is allowed only once, at a
+  canonical finalized block, each published request's deadline has passed and
+  the forwarder still expects its nonce, and it signs with that same nonce;
+  anyone holding an old request could otherwise run it at the forwarder,
+  outside Relayr. One uncached read of the old bundle must also report it
+  unpaid with every call pending. A payer deployment's raw calls carry no
+  nonce, so it quotes them again only after that same read.
 - Funding options must match the validated Relayr payment contract, native token,
   bundle identity, deadline, and destination network family. An unavailable
   selected chain cannot silently become another funding chain. Testnet calls
