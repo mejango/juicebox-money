@@ -1,6 +1,13 @@
 import { createElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
-import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
+import {
+  encodeFunctionData,
+  toEventSelector,
+  TransactionNotFoundError,
+  zeroAddress,
+  type Address,
+  type Hex,
+} from 'viem'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -136,7 +143,7 @@ describe('Safe connector detection', () => {
 
 describe('Safe execution wait', () => {
   it('passes the chain’s public client from the watched config', async () => {
-    const chainClient = { getTransaction: vi.fn() }
+    const chainClient = { getTransaction: vi.fn(async () => ({ hash: HASH })) }
     runtime.getPublicClient.mockReturnValue(chainClient)
     runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
     const signal = new AbortController().signal
@@ -144,24 +151,63 @@ describe('Safe execution wait', () => {
     await expect(waitForSafeExecutionHash(10, HASH, { signal })).resolves.toBe(HASH)
     expect(runtime.getPublicClient).toHaveBeenCalledWith(config, { chainId: 10 })
     expect(runtime.waitForSafeExecutionHash).toHaveBeenLastCalledWith(10, HASH, {
-      client: chainClient,
+      client: expect.objectContaining({ getTransaction: expect.any(Function) }),
       signal,
     })
+    // The SDK reads the chain's own client.
+    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+    await options.client.getTransaction({ hash: HASH })
+    expect(chainClient.getTransaction).toHaveBeenCalledWith({ hash: HASH })
 
     await waitForSafeExecutionHash(1, HASH)
     expect(runtime.getPublicClient).toHaveBeenLastCalledWith(config, { chainId: 1 })
-    expect(runtime.waitForSafeExecutionHash).toHaveBeenLastCalledWith(1, HASH, {
-      client: chainClient,
-    })
   })
 
   it('lets an explicit client win over the watched config', async () => {
-    const client = { getTransaction: vi.fn() }
+    const client = { getTransaction: vi.fn(async () => ({ hash: HASH })) }
     runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
 
     await waitForSafeExecutionHash(10, HASH, { client })
-    expect(runtime.waitForSafeExecutionHash).toHaveBeenLastCalledWith(10, HASH, { client })
+    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+    await expect(options.client.getTransaction({ hash: HASH })).resolves.toEqual({ hash: HASH })
+    expect(client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
     expect(runtime.getPublicClient).not.toHaveBeenCalled()
+  })
+
+  it("hands the SDK only a real not-found: a node that can't answer is asked again", async () => {
+    vi.useFakeTimers()
+    const client = {
+      getTransaction: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockRejectedValueOnce(new Error('HTTP 503'))
+        .mockResolvedValueOnce({ hash: HASH })
+        .mockRejectedValue(new TransactionNotFoundError({ hash: HASH })),
+    }
+    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
+    await waitForSafeExecutionHash(11155420, HASH, { client })
+    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+
+    const look = options.client.getTransaction({ hash: HASH })
+    await vi.advanceTimersByTimeAsync(10_000)
+    await expect(look).resolves.toEqual({ hash: HASH })
+    expect(client.getTransaction).toHaveBeenCalledTimes(3)
+    // A real not-found reaches the SDK at once.
+    await expect(options.client.getTransaction({ hash: HASH })).rejects.toBeInstanceOf(TransactionNotFoundError)
+  })
+
+  it('stops asking when its wait is aborted', async () => {
+    vi.useFakeTimers()
+    const client = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) }
+    const controller = new AbortController()
+    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
+    await waitForSafeExecutionHash(11155420, HASH, { client, signal: controller.signal })
+    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+
+    const look = options.client.getTransaction({ hash: HASH })
+    const settled = expect(look).rejects.toThrow(/aborted/i)
+    controller.abort()
+    await settled
   })
 })
 

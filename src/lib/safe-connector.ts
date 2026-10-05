@@ -1,7 +1,13 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
-import { decodeFunctionData, isAddressEqual, type Address, type Hex } from 'viem'
+import {
+  decodeFunctionData,
+  isAddressEqual,
+  TransactionNotFoundError,
+  type Address,
+  type Hex,
+} from 'viem'
 import type { Config } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
@@ -182,6 +188,56 @@ export async function findPendingSafeAppProposal(
   )
 }
 
+/** How often a look at the chain asks again when the node can't answer. */
+const CHAIN_RETRY_MS = 5_000
+/** How long one look asks a node that can't answer before the failure reaches the SDK. */
+const CHAIN_RETRY_LIMIT_MS = 5 * 60_000
+
+function abortable(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const aborted = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Safe execution wait aborted', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', aborted)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', aborted, { once: true })
+    if (signal?.aborted) aborted()
+  })
+}
+
+/**
+ * The chain as the SDK's wait reads it. The SDK takes any failed lookup as
+ * "no such transaction" and, on a chain without a Safe service, gives the
+ * proposal up after 12 of those in a row. Only viem's TransactionNotFoundError
+ * says that here: any other failure says nothing about the transaction, so the
+ * look asks again every 5 seconds, for up to 5 minutes, before it reaches the
+ * SDK, and stops with the wait. (The SDK is learning to read a not-found this
+ * way itself; once jbm takes that version this wrapper goes.)
+ */
+function notFoundOnly(
+  client: { getTransaction: (args: { hash: Hex }) => Promise<unknown> },
+  signal?: AbortSignal,
+): { getTransaction: (args: { hash: Hex }) => Promise<unknown> } {
+  return {
+    async getTransaction(args) {
+      const started = Date.now()
+      for (;;) {
+        try {
+          return await client.getTransaction(args)
+        } catch (error) {
+          if (error instanceof TransactionNotFoundError || Date.now() - started >= CHAIN_RETRY_LIMIT_MS) {
+            throw error
+          }
+          await abortable(CHAIN_RETRY_MS, signal)
+        }
+      }
+    },
+  }
+}
+
 /**
  * The SDK's wait, reading the chain as well: Safe{Wallet} over WalletConnect
  * replies with the execution's own hash when the owner executes at once. An
@@ -193,8 +249,9 @@ export function waitForSafeExecutionHash(
   options: NonNullable<Parameters<typeof waitForExecution>[2]> = {},
 ): Promise<Hex> {
   const config = getWatchedConfig()
+  const client = options.client ?? (config && getPublicClient(config, { chainId }))
   return waitForExecution(chainId, safeTxHash, {
     ...options,
-    client: options.client ?? (config && getPublicClient(config, { chainId })),
+    client: client ? notFoundOnly(client, options.signal) : undefined,
   })
 }
