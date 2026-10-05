@@ -364,12 +364,21 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     // Relayr ran is reconciled below, never paid again.
     let fundedElsewhere = false
     if (journal?.phase === 'payment-reverted' && journal.quote) {
-      const reverted = await revertedRelayrQuote(journal.quote.bundle_uuid)
-      if (reverted.records) {
-        journal.records = reverted.records
-        persist()
-      }
+      const reverted = await revertedRelayrQuote({ bundleUuid: journal.quote.bundle_uuid, payments: journal.payments ?? [],
+        options: journal.quote.payment_info, destinationChainIds: journal.signed.map(item => item.chainId), account })
+      if (reverted.records) journal.records = reverted.records
       fundedElsewhere = reverted.state === 'funded'
+      if (reverted.state === 'released') {
+        // Ruling R104: nothing can fund the quote any more, so the same signed
+        // calls are quoted again below, with a new funding choice.
+        journal.phase = 'quoted'
+        delete journal.payments
+        delete journal.paymentHash
+        delete journal.paymentChainId
+        delete journal.paymentDeadline
+        delete current.paymentChainId
+      }
+      persist()
     }
     if (journal && (['payment-signing', 'submitted', 'executing'].includes(journal.phase) || fundedElsewhere)) {
       // A payment that reverted funded nothing: the quote waits on the retry rule.

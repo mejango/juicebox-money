@@ -425,6 +425,26 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       }
       if (session.phase === 'reviewed') await requestQuote()
       const chains = session.calls.map(call => call.chainId)
+      // Another payment may have funded a quote whose own payment reverted:
+      // what Relayr ran is proven below, never paid again.
+      let fundedElsewhere = false
+      if (session.phase === 'payment-reverted' && session.quote) {
+        const reverted = await revertedRelayrQuote({ bundleUuid: session.quote.bundle_uuid, payments: session.payments ?? [],
+          options: session.quote.payment_info, destinationChainIds: chains, account: session.account })
+        if (reverted.records) {
+          session.records = reverted.records
+          persist()
+        }
+        fundedElsewhere = reverted.state === 'funded'
+        if (reverted.state === 'released') {
+          // Ruling R104: nothing can fund the quote any more, so the same raw
+          // calls are quoted again, with a new funding choice.
+          delete session.payments
+          delete session.paymentHash
+          delete session.paymentChainId
+          await requestQuote()
+        }
+      }
       if (session.quote && session.phase === 'quoted' && !session.payments?.length &&
           !relayrPaymentOptions(session.quote, chains).length) {
         // Nothing can fund an unpaid quote past its deadline, so the same raw
@@ -434,17 +454,6 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       const quote = session.quote
       if (!quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
       assertQuoteBindings(session)
-      // Another payment may have funded a quote whose own payment reverted:
-      // what Relayr ran is proven below, never paid again.
-      let fundedElsewhere = false
-      if (session.phase === 'payment-reverted') {
-        const reverted = await revertedRelayrQuote(quote.bundle_uuid)
-        if (reverted.records) {
-          session.records = reverted.records
-          persist()
-        }
-        fundedElsewhere = reverted.state === 'funded'
-      }
       let paidNow = false
       if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {
         let payment: RelayrPayment | undefined

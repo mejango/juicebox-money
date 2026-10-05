@@ -77,6 +77,7 @@ import {
   loadRelayrPendingSession,
   listRelayrPendingScopes,
   clearRelayrPendingSession,
+  readRelayrPendingSessionsForAuthorization,
   relayrQuoteReleased,
   resumeRelayrSession,
   type RelayrCall,
@@ -1598,13 +1599,14 @@ describe('paying a reverted Relayr payment again', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
-  it('does not pay again once the quote expires', async () => {
+  it('does not pay again once the quote expires, while its release is unproven', async () => {
     const start = Date.now()
     const deadline = Math.floor(start / 1_000) + 600
     relayr({}, [paymentFor({}, deadline)])
     await revertedPayment()
     vi.spyOn(Date, 'now').mockReturnValue((deadline - 15) * 1_000)
-    await expect(runRelayrCalls(options)).rejects.toThrow('This Relayr quote expired. Review the action again for a new quote.')
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(mocks.requireReview).toHaveBeenCalledTimes(2)
   })
@@ -1657,6 +1659,101 @@ describe('paying a reverted Relayr payment again', () => {
     await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).resolves.toMatchObject({ paymentHash: HASH })
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  describe('once its quote expired (ruling R104)', () => {
+    const START = 1_900_000_000_000
+    const DEADLINE = START / 1_000 + 600
+    const WAITING = 'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.'
+    let finalizedAt: number
+    let finalizedHash: Hex
+
+    beforeEach(() => {
+      vi.spyOn(Date, 'now').mockReturnValue(START)
+      finalizedAt = DEADLINE + 1
+      finalizedHash = BLOCK_HASH
+    })
+
+    /**
+     * Pay the first quote, payable until DEADLINE, and see the payment revert.
+     * Then the clock passes the deadline, and so does the finalized block
+     * unless a test says otherwise.
+     */
+    async function expired(bundle: Record<string, unknown> = {}, quoted = [paymentFor({}, DEADLINE)]) {
+      const relayed = relayr(bundle, quoted)
+      await revertedPayment()
+      vi.mocked(fetch).mockClear()
+      const post = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' && String(input).endsWith('/prepaid')
+        ? response({ ...await (await post(input, init)).json(), payment_info: [payment] })
+        : post(input, init))
+      vi.mocked(Date.now).mockReturnValue((DEADLINE + 1) * 1_000)
+      mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
+        ? { number: 200n, hash: finalizedHash, timestamp: BigInt(finalizedAt) }
+        : { hash: BLOCK_HASH })
+      return relayed
+    }
+
+    /** Relayr reports the bundle unpaid with its call pending, whatever the chain says. */
+    function unpaidReads(posts: RelayrEntry[][]) {
+      const post = vi.mocked(fetch).getMockImplementation()!
+      vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? post(input, init)
+        : response({ bundle_uuid: BUNDLE_UUID, payment_received: false,
+          transactions: [{ tx_uuid: OTHER_UUID, request: posts[0][0], status: { state: 'Pending' } }] }))
+    }
+
+    it('releases a quote nothing can fund any more, and quotes the same published calls again', async () => {
+      const { posts } = await expired()
+      mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+      await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+      expect(posts).toHaveLength(2)
+      expect(posts[1]).toEqual(posts[0])
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+      expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(2)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
+      expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+    })
+
+    it('releases it from the account view, which frees the wallet\'s forwarder nonce', async () => {
+      await expired()
+      expect(readRelayrPendingSessionsForAuthorization()).toHaveLength(1)
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(
+        'This Relayr quote expired after its payment reverted, and nothing ran. Review the action again for a new quote.')
+      const saved = loadRelayrPendingSession(options.pendingScope)!
+      expect(saved).toMatchObject({ paymentStatus: 'reverted', released: true, payments: [expect.objectContaining({ hash: HASH })] })
+      expect(relayrQuoteReleased(saved)).toBe(true)
+      expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+    })
+
+    it('keeps the quote while another of its options is still open at the finalized block of its chain', async () => {
+      const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ chain: 10 }, DEADLINE + 3_600)])
+      await expect(runRelayrCalls(options)).rejects.toThrow(WAITING)
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it.each<[string, (posts: RelayrEntry[][]) => void, Record<string, unknown>, string | RegExp]>([
+      ['a payment it sent did not revert', posts => { mocks.paymentStatuses.set(HASH, 'success'); unpaidReads(posts) }, {}, WAITING],
+      ['its deadline has not passed at the finalized block', () => { finalizedAt = DEADLINE }, {}, WAITING],
+      ['the finalized block is no longer canonical', () => { finalizedHash = SECOND_DESTINATION_HASH }, {}, WAITING],
+      ['Relayr does not report it unpaid', () => {}, { payment_received: null }, WAITING],
+      ['Relayr reports a call running', () => {}, { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] },
+        'Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.'],
+      ['Relayr reports a destination hash', () => {},
+        { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending', data: { hash: `0x${'77'.repeat(32)}` } } }] }, /do not pay again/],
+    ])('keeps the quote when %s', async (_, arrange, bundle, message) => {
+      const { posts } = await expired(bundle)
+      arrange(posts)
+      await expect(runRelayrCalls(options)).rejects.toThrow(message)
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(message)
+      const saved = loadRelayrPendingSession(options.pendingScope)!
+      expect(saved).toMatchObject({ paymentStatus: 'reverted' })
+      expect(saved.released).toBeUndefined()
+      expect(readRelayrPendingSessionsForAuthorization()).toHaveLength(1)
+      expect(posts).toHaveLength(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('proves a quote another payment funded from the original action, and never pays it again', async () => {

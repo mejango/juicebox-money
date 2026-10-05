@@ -13,6 +13,7 @@ import {
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   fetchRelayrBundlesByAccount,
+  relayrPaidQuoteOpen,
   relayrQuoteReleased,
   relayrSessionExpired,
   relayrSessionExpiresAt,
@@ -152,7 +153,9 @@ export function AccountPendingRelayr({ address }: { address: string }) {
             </div>
             {session.paymentStatus === 'reverted' ? (
               <p className="mt-2 text-xs text-smoke-600">
-                The payment reverted onchain. Pay again from the original action.
+                {relayrPaidQuoteOpen(session.payments)
+                  ? 'The payment reverted onchain. Pay again from the original action.'
+                  : 'The payment reverted and its quote expired. Check the original bundle to release it.'}
               </p>
             ) : null}
             {relayrSessionExpired(session) && !projectSafeProof ? (

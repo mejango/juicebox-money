@@ -391,6 +391,45 @@ describe('AccountPendingRelayr', () => {
     expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
   })
 
+  it.each<[string, number, string]>([
+    ['still open', 3_600, 'The payment reverted onchain. Pay again from the original action.'],
+    ['expired', -60, 'The payment reverted and its quote expired. Check the original bundle to release it.'],
+  ])('points a reverted payment whose quote is %s to the place that can continue it', async (_, offset, line) => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) + offset
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      bundleUuid, paymentStatus: 'reverted', records: [],
+      payments: [{ chainId: 1, target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d', amount: '100', deadline: String(deadline),
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}`,
+        bundleUuid, hash: `0x${'ab'.repeat(32)}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain(line)
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+  })
+
+  it('reads a released quote whose payment reverted as expired, with nothing to check', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'reverted', released: true, records: [],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+  })
+
   it('shows the account its in-flight legs and resumes by session', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([

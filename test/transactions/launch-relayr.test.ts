@@ -847,6 +847,56 @@ describe('paying a reverted launch quote again', () => {
     expect(m.pay).toHaveBeenCalledTimes(2)
   })
 
+  describe('once its quote expired (ruling R104)', () => {
+    const WAITING = 'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.'
+
+    /** Relayr reports the bundle as `body` says, by default unpaid with every call pending. */
+    function relayrReports(body: Record<string, unknown> = {}) {
+      vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
+        transactions: entries.map((entry, index) => ({ tx_uuid: `tx-${index}`, request: entry, status: { state: 'Pending' } })),
+        ...body }), { status: 200 }))
+    }
+
+    /** The launch's payment reverts, and its quote's deadline passes on the clock and at the finalized block. */
+    async function expired() {
+      m.pay.mockImplementationOnce(reverting)
+      await expect(run()).rejects.toThrow(/reverted onchain/)
+      const funding = clients.get(8453)!
+      const option = paymentFor(8453)
+      funding.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: RELAYR_PAYMENT_ADDRESS,
+        input: option.calldata, value: 200n, blockHash: BLOCK, blockNumber: 123n } as never))
+      funding.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, to: RELAYR_PAYMENT_ADDRESS,
+        blockHash: BLOCK, blockNumber: 123n, status: 'reverted', logs: [] } as never))
+      relayrReports()
+      vi.mocked(Date.now).mockReturnValue((NOW + 601) * 1_000)
+      for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 601) })
+    }
+
+    it('quotes the same signed launch again once nothing can fund the reverted quote', async () => {
+      await expired()
+      const quoted = m.quote.getMockImplementation()!
+      m.quote.mockImplementationOnce(async (signed: RelayrEntry[]) => ({ ...await quoted(signed),
+        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 3600)) }))
+      m.pay.mockImplementationOnce(paying)
+      await run()
+      expect(m.quote).toHaveBeenCalledTimes(2)
+      expect(m.quote.mock.calls[1][0]).toEqual(m.quote.mock.calls[0][0])
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.funding).toHaveBeenCalledTimes(2)
+      expect(m.pay.mock.calls[1][0]).toMatchObject({ sent: [] })
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
+    })
+
+    it('keeps the quote while Relayr does not report it unpaid', async () => {
+      await expired()
+      relayrReports({ payment_received: null })
+      await expect(run()).rejects.toThrow(WAITING)
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', payments: [expect.objectContaining({ hash: HASH })] })
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
