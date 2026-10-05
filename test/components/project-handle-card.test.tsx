@@ -309,9 +309,12 @@ describe('ProjectHandleCard', () => {
         .findByProps({ placeholder: 'banny.eth' })
         .props.onChange({ target: { value: 'banny.eth' } }),
     )
-    await flushQueries()
+    const line = "Can't verify this Safe is the same on Ethereum."
+    for (let attempt = 0; attempt < 20 && !textOf(renderer.root).includes(line); attempt += 1) {
+      await flushQueries()
+    }
 
-    expect(textOf(renderer.root)).toContain("Can't verify this Safe is the same on Ethereum.")
+    expect(textOf(renderer.root)).toContain(line)
     const publish = renderer.root
       .findAllByType('button')
       .find(button => textOf(button) === 'Resume: publish handle')
