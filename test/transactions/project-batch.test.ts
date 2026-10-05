@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
   relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
+  readRecord: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -26,6 +27,10 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   isSafeConnection: () => mocks.safe,
   SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.',
   waitForSafeExecutionHash: mocks.waitForExecution,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
+  readSafeTransaction: mocks.readRecord,
 }))
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
@@ -549,13 +554,34 @@ describe('durable project batches', () => {
     expect(loadProjectBatch(scope)).toBeNull()
   })
 
-  it('releases a proposal Safe\'s service reports executed and failed', async () => {
+  it("releases a proposal Safe's service reports executed and failed, once its own receipt shows the failure", async () => {
     await interruptedConnectorCall(SAFE_TX)
     mocks.waitForExecution.mockRejectedValue(
       new Error('Safe executed the proposal, but the onchain transaction failed.'),
     )
+    mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+    executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
     await expect(run()).rejects.toThrow(FAILED)
+    expect(mocks.readRecord).toHaveBeenCalledWith(1, ACCOUNT, SAFE_TX, expect.anything())
     expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it.each([
+    ['names no transaction', () => mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true })],
+    ['cannot be read', () => mocks.readRecord.mockRejectedValue(new Error('Safe service unavailable'))],
+    ['names a receipt that is not canonical', () => {
+      mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+      executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
+      mocks.client.getBlock.mockResolvedValue({ hash: `0x${'99'.repeat(32)}` })
+    }],
+  ] as const)("keeps a proposal the service reports failed while its record %s", async (_, setup) => {
+    await interruptedConnectorCall(SAFE_TX)
+    mocks.waitForExecution.mockRejectedValue(
+      new Error('Safe executed the proposal, but the onchain transaction failed.'),
+    )
+    setup()
+    await run().catch(() => undefined)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: SAFE_TX })
   })
 
   it('keeps a saved Safe call while the receipt that would release it is not canonical', async () => {

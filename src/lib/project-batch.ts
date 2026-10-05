@@ -7,10 +7,11 @@ import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authorit
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   canonicalSafeTxHash,
+  readSafeTransaction,
   safeTransactionMatchesCall,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
-import { isSafeExecutionLog } from '@/lib/safe'
+import { isSafeExecutionLog, SAFE_SERVICE } from '@/lib/safe'
 import {
   isSafeConnection,
   readSafeAppExecution,
@@ -398,14 +399,18 @@ export async function runProjectBatch({
             execution = await safeExecution(call, saved, recordScan)
             try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
             catch (error) {
-              // Safe's service saw it run and fail: settled. Anything else may still execute.
-              if (error instanceof Error && /executed the proposal.*failed/i.test(error.message)) {
-                delete journal.submissions[call.id]
-                persist(journal)
-                throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
+              // Safe's service says it ran and failed: its own receipt decides,
+              // read from the service's authenticated record. Anything else may still execute.
+              const failed = error instanceof Error && /executed the proposal.*failed/i.test(error.message)
+              const record = failed
+                ? await readSafeTransaction(call.chainId, call.authority, saved.hash, SAFE_SERVICE).catch(() => null)
+                : null
+              const recorded = (record as { transactionHash?: unknown } | null)?.transactionHash
+              if (typeof recorded === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(recorded)) execution = recorded as Hex
+              else {
+                report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round)
+                return journal
               }
-              report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round)
-              return journal
             }
           }
           if (execution) {
