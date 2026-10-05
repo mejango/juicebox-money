@@ -302,6 +302,22 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     } finally { clearRelayrPendingSession(scope) }
   })
 
+  it('rechecks the authority of a saved action whose payment reverted before paying it again', async () => {
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
+    ]
+    const scope = relayrCallsScope(calls)
+    saveRelayrPendingSession(scope, { bundleUuid: BUNDLE_UUID, paymentHash: HASH,
+      paymentChainId: 1, paymentStatus: 'reverted', chainIds: [1, 10], expectedCount: 2,
+      records: [], itemCount: 2, account: ALICE, createdAt: Date.now() })
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'contract' })
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow(/unsupported contract/)
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
   it('rechecks an unpaid saved action after funding review before sending its payment', async () => {
     let changed = false
     const reverifyAuthority = vi.fn(async () => {

@@ -315,7 +315,7 @@ export async function runAuthorityCalls({
   for (const group of groups.values()) {
     const savedScope = relayrCallsScope(toRelayrCalls(group))
     const saved = loadRelayrPendingSession(savedScope)
-    if (saved && saved.paymentStatus !== 'unpaid') {
+    if (saved && !relayrSessionAwaitsPayment(saved)) {
       reviewedGroups.push({ calls: group, mode: 'relayr', pendingScope: savedScope })
       continue
     }
