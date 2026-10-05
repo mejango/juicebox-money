@@ -58,8 +58,11 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
 }))
 vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
-  readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),

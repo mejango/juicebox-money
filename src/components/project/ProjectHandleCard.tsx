@@ -40,7 +40,6 @@ import {
 } from '@bananapus/nana-sdk-core/safe'
 import { fetchSafeCreation, safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
 import {
-  isCanonicalSafeCreation,
   readCrossChainHandleAuthority,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
@@ -815,10 +814,7 @@ export function ProjectHandleCard({
       if (!creation) {
         throw new Error('Could not read the Safe’s canonical creation config.')
       }
-      if (
-        !isCanonicalSafeCreation(creation) ||
-        !validateSafeCreationForCurrentPolicy(creation, before.source).valid
-      ) {
+      if (!validateSafeCreationForCurrentPolicy(creation, before.source).valid) {
         throw new Error(
           'This Safe’s original initializer no longer matches its current owners, threshold, fallback handler, or supported implementation. Deploy and align the Ethereum Safe in Safe before publishing.',
         )

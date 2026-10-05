@@ -51,10 +51,10 @@ vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   readBoundedSafeNonce: mocks.readSafeNonce,
   readBoundedSafeApprovedHash: mocks.readSafeApprovedHash,
   prepareSafeSameAddressDeployment: mocks.prepareDeployment,
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
 vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
-  readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
@@ -349,16 +349,18 @@ describe('Safe execution boundary', () => {
       expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
     })
 
-    it("refuses Safe 1.3.0's EIP-155 deployment before reading anything", async () => {
+    it("deploys a Safe that Safe 1.3.0's EIP-155 factory made, as the SDK proves it", async () => {
+      const eip155 = { ...creation, factory: '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC' as Address }
+
       await expect(
-        deploySafeSameAddress(
-          1,
-          { ...creation, factory: '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC' },
-          SAFE,
-          { sourceChainId: 10, reverifyAuthority: vi.fn() },
-        ),
-      ).rejects.toThrow(/no longer eligible for same-address deployment/)
-      expect(mocks.prepareDeployment).not.toHaveBeenCalled()
+        deploySafeSameAddress(1, eip155, SAFE, {
+          sourceChainId: 10,
+          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
+        }),
+      ).resolves.toBe(HASH)
+      expect(mocks.prepareDeployment).toHaveBeenCalledWith(
+        expect.objectContaining({ creation: eip155, safe: SAFE }),
+      )
     })
 
     it('refuses a wallet that does not sign for the source Safe', async () => {

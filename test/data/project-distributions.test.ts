@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ clientFor: vi.fn(), current: vi.fn(), contexts: vi.fn(), token: vi.fn(), permission: vi.fn(), identity: vi.fn() }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor }))
-vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.identity }))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.identity,
+}))
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'USDC' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getAccountingContexts: mocks.contexts, getTokenAddress: mocks.token, hasPermissions: mocks.permission }))
 

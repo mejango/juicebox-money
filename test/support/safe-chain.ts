@@ -30,7 +30,7 @@ const SAFE_READ_ABI = [
 
 /** Safe 1.3.0's canonical singleton. */
 export const SAFE_130_SINGLETON = '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552' as Address
-/** Safe 1.3.0's EIP-155 singleton, which the SDK recognizes and this app does not. */
+/** Safe 1.3.0's EIP-155 singleton, one of the releases the SDK recognizes. */
 export const SAFE_130_EIP155_SINGLETON = '0x69f4D1788e39c87893C980c06EdF4b7f686e2938' as Address
 
 /**

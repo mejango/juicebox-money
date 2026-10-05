@@ -23,6 +23,7 @@ import {
 import {
   multiSendCallsOf,
   prepareSafeSameAddressDeployment,
+  readAuthorityIdentity,
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,
   SAFE_CREATE_ABI,
@@ -54,8 +55,6 @@ import {
   type SafeServiceOptions,
 } from '@bananapus/nana-sdk-core/safe-service'
 import {
-  isCanonicalSafeCreation,
-  readAuthorityIdentity,
   readMatchingAuthorityIdentities,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
@@ -1299,9 +1298,6 @@ export async function deploySafeSameAddress(
     reverifyAuthority: () => Promise<void>
   },
 ): Promise<Hex> {
-  if (!isCanonicalSafeCreation(creation)) {
-    throw new Error(SAME_ADDRESS_INELIGIBLE)
-  }
   const client = publicClient(chainId)
   const sourceClient = publicClient(sourceChainId)
   const signer = getAccount(wagmiConfig).address

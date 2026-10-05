@@ -5,7 +5,6 @@ import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { runSafeCalls, type SafeCallResult } from '@/lib/safe'
 import {
@@ -13,6 +12,7 @@ import {
   MULTI_SEND_ABI,
   MULTI_SEND_CALL_ONLY,
   packMultiSend,
+  readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
 import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'

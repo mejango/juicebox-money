@@ -2,7 +2,7 @@ import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbCon
 import { JBPermissionIdsV6, RESERVED_TOKEN_SPLIT_GROUP_ID, getAccountingContexts, getCurrentRuleset, getTokenAddress, hasPermissions, payoutSplitGroupId, verifyPayoutReceipt, verifyReservedDistributionReceipt, type JBAccountingContext } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionResult, encodeFunctionData, isAddressEqual, zeroAddress, type Address, type TransactionReceipt } from 'viem'
 import { clientFor, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { isKnownController } from '@/lib/manage'

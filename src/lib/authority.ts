@@ -51,8 +51,8 @@ import {
   SAFE_SERVICE,
   type SafeCallResult,
 } from '@/lib/safe'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
-  readAuthorityIdentity,
   readMatchingAuthorityIdentities,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'

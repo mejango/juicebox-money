@@ -39,7 +39,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@/lib/relayr-chains'
 import { getRevnetOperator } from '@/lib/bendystraw'

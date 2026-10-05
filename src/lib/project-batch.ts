@@ -4,7 +4,7 @@ import { getAccount } from '@wagmi/core'
 import { isAddress, isAddressEqual, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   canonicalSafeTxHash,
   safeExecutionResult,

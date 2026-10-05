@@ -2,7 +2,7 @@ import { bytes32ToCidV0, jb721TiersHookAbi, jb721TiersHookStoreAbi, type JBChain
 import { getProject721Shop, hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { clientFor } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { ipfsUrl } from '@/lib/format'
 import { build721TierConfigs } from '@/lib/launch'
 import { loadProjectBatch, projectBatchScope, type ProjectBatchCall } from '@/lib/project-batch'

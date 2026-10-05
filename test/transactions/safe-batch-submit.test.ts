@@ -41,13 +41,10 @@ vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
   requireContractTransactionReview: mocks.requireReview,
 }))
-vi.mock('@/lib/cross-chain-authority', async original => ({
-  ...(await original<typeof import('@/lib/cross-chain-authority')>()),
-  readAuthorityIdentity: mocks.readAuthorityIdentity,
-}))
 vi.mock('@bananapus/nana-sdk-core/safe', async original => ({
   ...(await original<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
 vi.mock('@/lib/safe-connector', async original => ({
   ...(await original<typeof import('@/lib/safe-connector')>()),
