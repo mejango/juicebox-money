@@ -357,8 +357,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       fundedElsewhere = reverted.state === 'funded'
       if (reverted.state === 'released') {
         // Ruling R104: nothing can fund the quote any more, so the same signed
-        // calls are quoted again below, with a new funding choice.
+        // calls are quoted again below, with a new funding choice. The old
+        // quote goes now: a device clock behind the chain must never offer it.
         journal.phase = 'quoted'
+        delete journal.quote
         delete journal.payments
         delete journal.paymentHash
         delete journal.paymentChainId

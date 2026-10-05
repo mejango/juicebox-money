@@ -858,7 +858,7 @@ describe('paying a reverted launch quote again', () => {
     }
 
     /** The launch's payment reverts, and its quote's deadline passes on the clock and at the finalized block. */
-    async function expired() {
+    async function expired(finalizedAt = NOW + 601) {
       m.pay.mockImplementationOnce(reverting)
       await expect(run()).rejects.toThrow(/reverted onchain/)
       const funding = clients.get(8453)!
@@ -869,7 +869,7 @@ describe('paying a reverted launch quote again', () => {
         blockHash: BLOCK, blockNumber: 123n, status: 'reverted', logs: [] } as never))
       relayrReports()
       vi.mocked(Date.now).mockReturnValue((NOW + 601) * 1_000)
-      for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 601) })
+      for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(finalizedAt) })
     }
 
     it('quotes the same signed launch again once nothing can fund the reverted quote', async () => {
@@ -885,6 +885,22 @@ describe('paying a reverted launch quote again', () => {
       expect(m.funding).toHaveBeenCalledTimes(2)
       expect(m.pay.mock.calls[1][0]).toMatchObject({ sent: [] })
       expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
+    })
+
+    it('quotes again at once after a release, never offering the released quote by the device clock', async () => {
+      // The first quote's Ethereum option is past its deadline at the finalized
+      // block, but still open by the device clock after the release.
+      const quoted = m.quote.getMockImplementation()!
+      m.quote.mockImplementationOnce(async (signed: RelayrEntry[]) => ({ ...await quoted(signed),
+        payment_info: [paymentFor(8453), paymentFor(1, NOW + 700)] }))
+      await expired(NOW + 701)
+      m.quote.mockImplementationOnce(async (signed: RelayrEntry[]) => ({ ...await quoted(signed),
+        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 3600)) }))
+      m.pay.mockImplementationOnce(paying)
+      await run()
+      expect(m.quote).toHaveBeenCalledTimes(2)
+      expect(m.funding.mock.calls[1][0].map((option: { chainId: number }) => option.chainId)).toEqual([8453, 1])
+      expect(m.pay.mock.calls[1][0]).toMatchObject({ sent: [] })
     })
 
     it('keeps the quote while Relayr does not report it unpaid', async () => {
