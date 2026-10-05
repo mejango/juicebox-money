@@ -143,14 +143,18 @@ function successfulRecords(entries: readonly RelayrEntry[]) {
 
 /** Destination RPC proof is derived from the exact signed payload sent in POST. */
 function installDestinationProof(entries: () => readonly RelayrEntry[]) {
-  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
+  const entryOf = (hash: Hex) => {
     const entry = entries()[DESTINATION_HASHES.indexOf(hash)]
     if (!entry) throw new Error(`No destination transaction fixture for ${hash}`)
+    return entry
+  }
+  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
+    const entry = entryOf(hash)
     return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value),
-      chainId: entry.chain, blockHash: BLOCK_HASH }
+      chainId: entry.chain, blockHash: BLOCK_HASH, blockNumber: 100n }
   })
   mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({
-    transactionHash: hash, status: 'success', blockHash: BLOCK_HASH, blockNumber: 100n,
+    transactionHash: hash, to: entryOf(hash).target, status: 'success', blockHash: BLOCK_HASH, blockNumber: 100n,
   }))
   mocks.client.getBlock.mockResolvedValue({ hash: BLOCK_HASH })
 }
@@ -168,7 +172,7 @@ function installSuccessfulBundle(payments = [payment]) {
         transactions: successfulRecords(entries) })
     }
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
-      return response({ transactions: successfulRecords(posts.at(-1) ?? []) })
+      return response({ bundle_uuid: BUNDLE_UUID, transactions: successfulRecords(posts.at(-1) ?? []) })
     }
     throw new Error(`Unexpected Relayr request: ${url}`)
   })
@@ -586,9 +590,9 @@ describe('Relayr polling and resume semantics', () => {
       status: { state: 'completed', data: { hash: DESTINATION_HASH } },
     }
     vi.mocked(fetch)
-      .mockResolvedValueOnce(response({ transactions: [complete] }))
+      .mockResolvedValueOnce(response({ bundle_uuid: 'bundle-two', transactions: [complete] }))
       .mockResolvedValueOnce(
-        response({ transactions: [complete, complete] }),
+        response({ bundle_uuid: 'bundle-two', transactions: [complete, complete] }),
       )
 
     await expect(
@@ -601,9 +605,9 @@ describe('Relayr polling and resume semantics', () => {
     const complete = { status: { state: 'completed' } }
     vi.mocked(fetch)
       .mockResolvedValueOnce(
-        response({ transactions: [complete, complete, complete] }),
+        response({ bundle_uuid: 'bundle-two-exact', transactions: [complete, complete, complete] }),
       )
-      .mockResolvedValueOnce(response({ transactions: [complete, complete] }))
+      .mockResolvedValueOnce(response({ bundle_uuid: 'bundle-two-exact', transactions: [complete, complete] }))
 
     await expect(
       relayrPoll('bundle-two-exact', 2, undefined, 0, 1_000),
@@ -703,10 +707,11 @@ describe('Relayr polling and resume semantics', () => {
   it('polls through pending status and returns only at terminal success', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(
-        response({ transactions: [{ status: { state: 'submitted' } }] }),
+        response({ bundle_uuid: 'bundle', transactions: [{ status: { state: 'submitted' } }] }),
       )
       .mockResolvedValueOnce(
         response({
+          bundle_uuid: 'bundle',
           transactions: [
             {
               status: {
@@ -727,7 +732,7 @@ describe('Relayr polling and resume semantics', () => {
 
   it('turns a failed destination into a non-retryable terminal error', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      response({ transactions: [{ status: { state: 'failed' } }] }),
+      response({ bundle_uuid: 'bundle', transactions: [{ status: { state: 'failed' } }] }),
     )
 
     await expect(relayrPoll('bundle', 1, undefined, 0, 1_000)).rejects.toEqual(
@@ -758,6 +763,7 @@ describe('Relayr polling and resume semantics', () => {
       .mockResolvedValueOnce(response({ error: 'not found' }, 404))
       .mockResolvedValueOnce(
         response({
+          bundle_uuid: 'bundle',
           transactions: [
             { status: { state: 'completed', data: { hash: DESTINATION_HASH } } },
           ],
@@ -1178,6 +1184,23 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.client.readContract.mock.calls.filter(([input]) => input.functionName === 'nonces')).toHaveLength(1)
   })
 
+  it('offers no payment for a quote whose records are not exactly the quoted IDs, and keeps the publication', async () => {
+    const posts = installSuccessfulBundle()
+    const relayr = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const body = await (await relayr(input, init)).json() as { transactions: unknown[] }
+      // The quote and the bundle also list a record under an ID this quote did not issue.
+      return response({ ...body, transactions: [...body.transactions, { ...successfulRecords(posts[0])[0], tx_uuid: THIRD_UUID }] })
+    })
+    const options = { calls, account: ALICE, pendingScope: 'inexact-records' }
+    await expect(runRelayrCalls(options)).rejects.toThrow('Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.')
+    expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'unpaid', bundleUuid: 'publication-pending', publishedEntries: posts[0].map(entry => expect.objectContaining({ data: entry.data })),
+    })
+  })
+
   it('reuses exactly the published signature after the quote response is lost', async () => {
     const posts = installSuccessfulBundle()
     let lostEntries: RelayrEntry[] = []
@@ -1233,7 +1256,7 @@ describe('Relayr funding choice and exact execution proof', () => {
       paymentStatus: 'sending', paymentHash: null, bundleUuid: BUNDLE_UUID,
     })
     mocks.client.getTransaction.mockRejectedValueOnce(new Error('Destination RPC unavailable'))
-    await expect(runRelayrCalls(options)).rejects.toThrow('Destination RPC unavailable')
+    await expect(runRelayrCalls(options)).rejects.toThrow(/Could not read destination transaction .* on chain 1/)
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'sending', paymentHash: null })
     expect(posts).toHaveLength(1)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
@@ -1241,29 +1264,51 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['transaction UUID', 'calldata', 'receipt status', 'canonical block'])('keeps paid bundles pending when %s proof is wrong', async problem => {
+  it.each<[string, RegExp]>([
+    ['transaction UUID', /names a transaction this quote did not bind/],
+    ['destination request', /does not match the signed request/],
+    ['shared hash', /one destination transaction for two signed calls/],
+    ['calldata', /does not prove the signed Relayr call/],
+    ['receipt target', /Could not read destination transaction/],
+    ['receipt status', /it reverted onchain/],
+    ['canonical block', /no longer canonical/],
+  ])('keeps paid bundles pending when the %s proof is wrong', async (problem, message) => {
     const posts = installSuccessfulBundle()
-    if (problem === 'transaction UUID') {
-      const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    const twoChains = problem === 'shared hash'
+    /** Relayr's status reports the posted calls' records as `edit` changes them. */
+    const reportStatus = (edit: (record: ReturnType<typeof successfulRecords>[number]) => object) => {
+      const original = vi.mocked(fetch).getMockImplementation()!
       vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST'
-        ? originalFetch(input, init)
-        : response({ transactions: successfulRecords(posts[0]).map(record => ({ ...record, tx_uuid: THIRD_UUID })) }))
+        ? original(input, init)
+        : response({ bundle_uuid: BUNDLE_UUID, transactions: successfulRecords(posts[0]).map(edit) }))
+    }
+    if (problem === 'transaction UUID') {
+      reportStatus(record => ({ ...record, tx_uuid: THIRD_UUID }))
+    } else if (problem === 'destination request') {
+      // Relayr names another call on the chain, while the chain holds the signed one.
+      reportStatus(record => ({ ...record, request: { ...record.request, data: '0x1234' } }))
+    } else if (problem === 'shared hash') {
+      reportStatus(record => ({ ...record, status: { state: 'success', data: { hash: DESTINATION_HASH } } }))
     } else if (problem === 'calldata') {
       const originalTransaction = mocks.client.getTransaction.getMockImplementation()!
       mocks.client.getTransaction.mockImplementation(async input => ({ ...await originalTransaction(input), input: '0x1234' }))
+    } else if (problem === 'receipt target') {
+      const originalReceipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+      mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await originalReceipt(input), to: BOB }))
     } else if (problem === 'receipt status') {
       const originalReceipt = mocks.client.getTransactionReceipt.getMockImplementation()!
       mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await originalReceipt(input), status: 'reverted' }))
     } else {
       mocks.client.getBlock.mockResolvedValue({ hash: HASH })
     }
-    const options = { calls, account: ALICE, pendingScope: `wrong-${problem}` }
-    await expect(runRelayrCalls(options)).rejects.toThrow(/exact destination|does not prove|no longer canonical/i)
+    const options = { calls: twoChains ? [...calls, { chainId: 10 as const, target: BOB, data: '0x5678' as Hex, value: 2n }] : calls,
+      account: ALICE, pendingScope: `wrong-${problem}`, paymentChainId: 1 }
+    await expect(runRelayrCalls(options)).rejects.toThrow(message)
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'confirmed', paymentHash: HASH })
-    await expect(runRelayrCalls(options)).rejects.toThrow(/exact destination|does not prove|no longer canonical/i)
+    await expect(runRelayrCalls(options)).rejects.toThrow(message)
     expect(loadRelayrPendingSession(options.pendingScope)).not.toBeNull()
     expect(posts).toHaveLength(1)
-    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(twoChains ? 2 : 1)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 

@@ -4,8 +4,7 @@ import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId
 import { CREATE_BATCH_ABI, MULTICALL3, SAFE_FACTORY, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import type { LaunchPlan } from '@/lib/launch'
-import type { RelayrEntry, RelayrPayment, RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
-import type { RelayrQuote } from '@/lib/relayr'
+import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import safeArtifacts from '../fixtures/safe-1.4.1.json'
 
 const m = vi.hoisted(() => ({
@@ -95,10 +94,11 @@ function makeClient(chainId: number) {
     getBlock: vi.fn(async () => ({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW) })),
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
       const entry = entries.find(item => hashFor(item.chain) === hash)!
-      return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
+      return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK, blockNumber: 123n }
     }),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => ({
-      transactionHash: hash, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
+      transactionHash: hash, to: entries.find(item => hashFor(item.chain) === hash)?.target, blockHash: BLOCK, blockNumber: 123n,
+      status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
     })),
   }
 }
@@ -164,6 +164,7 @@ beforeEach(() => {
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
       payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
+      transactions: signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, request: entry })),
       expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry })) }
     records = signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { state: 'Confirmed', data: { hash: hashFor(entry.chain) } } }))
     return quote
@@ -302,7 +303,7 @@ describe('relayed launch execution and recovery', () => {
     const client = clients.get(1)!
     client.getTransaction.mockImplementation(async ({ hash }) => ({ hash,
       to: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1], input: entries[0].data,
-      value: 17n, chainId: 1, blockHash: BLOCK }))
+      value: 17n, chainId: 1, blockHash: BLOCK, blockNumber: 123n }))
     await expect(run(value)).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses[1].phase).toBe('uncertain')
     expect(m.multisigReceipt).not.toHaveBeenCalled()
@@ -750,7 +751,10 @@ describe('relayed launch execution and recovery', () => {
     const newHash = `0x${'ee'.repeat(32)}` as Hex
     records = [{ tx_uuid: 'tx-0', status: { data: { hash: newHash } } }]
     clients.get(10)!.getTransaction.mockImplementation(async ({ hash }) => ({
-      hash, to: entries[0].target, input: entries[0].data, value: BigInt(entries[0].value), chainId: 10, blockHash: BLOCK,
+      hash, to: entries[0].target, input: entries[0].data, value: BigInt(entries[0].value), chainId: 10, blockHash: BLOCK, blockNumber: 123n,
+    }))
+    clients.get(10)!.getTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash, to: entries[0].target, blockHash: BLOCK, blockNumber: 123n, status: 'success', logs: [],
     }))
     await run()
     expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'done', txHash: newHash })

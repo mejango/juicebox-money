@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPaymentChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
-import type { RelayrQuote } from '@/lib/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPaymentChains, type RelayrEntry, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -89,6 +88,8 @@ function quoteFor(entries: RelayrEntry[]): RelayrQuote {
   return { bundle_uuid: BUNDLE, payment_info: relayrPaymentChains(entries.map(entry => entry.chain)).map(chain => ({ chain, amount: '1000',
     target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN, payment_deadline: deadline,
     calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '')}${'0'.repeat(32)}${deadline.toString(16).padStart(64, '0')}` as Hex })),
+    transactions: entries.map((entry, index) => ({ request: entry,
+      tx_uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}` })),
     expectedTransactions: entries.map((entry, index) => ({ chain: entry.chain, entry,
       txUuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}` })),
   }

@@ -16,6 +16,7 @@ import {
   type Address,
   type Abi,
   type Hex,
+  type TransactionReceipt,
 } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
@@ -30,14 +31,17 @@ import {
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
-  type RelayrQuote,
 } from '@/lib/relayr'
 import {
+  RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
   relayrDestinationHash,
+  relayrForwardRequest,
   relayrPaymentChains,
   relayrSupportsChains,
+  verifyRelayrDestination,
   type RelayrEntry,
+  type RelayrQuote,
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import { isSafeConnection } from '@/lib/safe-connector'
@@ -103,9 +107,8 @@ function requestOf(signed: SignedLaunch, plan: LaunchSession['plans'][number]) {
   signed = { ...signed, entry: unbundleLaunchMultisigs(signed.entry, plan) }
   if (!isAddressEqual(signed.entry.target, forwarderFor(signed.chainId)) ||
       signed.entry.chain !== signed.chainId) throw new Error('The saved launch forwarder changed.')
-  const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: signed.entry.data })
-  if (decoded.functionName !== 'execute') throw new Error('The saved launch is not a forwarder execution.')
-  const request = decoded.args[0]
+  const request = relayrForwardRequest(signed.entry)
+  if (!request) throw new Error('The saved launch is not a forwarder execution.')
   if (request.deadline !== signed.deadline || request.value !== BigInt(signed.entry.value)) {
     throw new Error('The saved launch authorization changed.')
   }
@@ -286,37 +289,32 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           throw new Error('The saved launch quote does not match its signed destination.')
         }
         // A record's chain/request is provider input. Only the quote's bound UUID identifies its destination.
-        const matching = original.records.filter(record => record.tx_uuid === binding.txUuid)
+        const matching = original.records.filter(record =>
+          String(record.tx_uuid ?? '').toLowerCase() === binding.txUuid.toLowerCase())
         if (matching.length > 1) throw new Error('Relayr returned conflicting destination records.')
         const hash = current.statuses[signed.chainId]?.txHash ??
           (matching[0] ? relayrDestinationHash(matching[0]) : null)
         if (hash) {
           try {
-            const [tx, receipt] = await Promise.all([
-              client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
-            ])
-            if (!tx.to || !isAddressEqual(tx.to, signed.entry.target) || tx.input !== signed.entry.data ||
-                tx.value !== BigInt(signed.entry.value) || receipt.transactionHash !== hash ||
-                tx.hash !== hash || tx.chainId !== signed.chainId || tx.blockHash !== receipt.blockHash) {
-              throw new Error('Relayr destination transaction does not match the signed launch.')
-            }
-            const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
-            if (canonical.hash !== receipt.blockHash) throw new Error('The destination receipt is no longer canonical.')
-            if (receipt.status === 'success') {
-              await verifyCreatedLaunchMultisigs(client, current.plans[signed.chainId], receipt.blockNumber)
-              const projectId = projectIdFromReceipt(receipt, signed.chainId as JBChainId)
-              if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
-              status(signed.chainId, { phase: 'done', txHash: hash, projectId })
+            let receipt: TransactionReceipt
+            try {
+              receipt = await verifyRelayrDestination(client, { entry: signed.entry, hash })
+            } catch (error) {
+              if (!(error instanceof RelayrDestinationRevertedError)) throw error
+              // A reverted execute leaves the nonce unused. Its old authorization can only compete
+              // with a retry of that SAME nonce, never create an additional project after a success.
+              const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
+                functionName: 'nonces', args: [account] })
+              if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
+              status(signed.chainId, { phase: 'failed', txHash: hash, error: 'The destination launch reverted.' })
+              allDone = false
+              allRemainingExpired = false
               continue
             }
-            // A reverted execute leaves the nonce unused. Its old authorization can only compete
-            // with a retry of that SAME nonce, never create an additional project after a success.
-            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-              functionName: 'nonces', args: [account] })
-            if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
-            status(signed.chainId, { phase: 'failed', txHash: hash, error: 'The destination launch reverted.' })
-            allDone = false
-            allRemainingExpired = false
+            await verifyCreatedLaunchMultisigs(client, current.plans[signed.chainId], receipt.blockNumber)
+            const projectId = projectIdFromReceipt(receipt, signed.chainId as JBChainId)
+            if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
+            status(signed.chainId, { phase: 'done', txHash: hash, projectId })
             continue
           } catch (error) {
             status(signed.chainId, { phase: 'uncertain', txHash: hash,
@@ -470,9 +468,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
           label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig`, contractName: 'Safe Proxy Factory' })),
       } : undefined)
-      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
-      if (decoded.functionName !== 'execute') throw new Error('Invalid launch authorization.')
-      journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, plan), nonce: nonce.toString(), deadline: decoded.args[0].deadline })
+      const signedRequest = relayrForwardRequest(entry)
+      if (!signedRequest) throw new Error('Invalid launch authorization.')
+      journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, plan), nonce: nonce.toString(), deadline: signedRequest.deadline })
       persist()
       status(chainId, { phase: 'pending' })
     }

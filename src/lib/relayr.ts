@@ -8,7 +8,6 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  decodeFunctionData,
   decodeFunctionResult,
   encodeFunctionData,
   isAddress,
@@ -34,15 +33,19 @@ import {
   RELAYR_PAYMENT_GAS,
   RELAYR_PAYMENT_SELECTOR,
   TRUSTED_FORWARDER_ABI,
+  bindRelayrQuote,
+  relayrBundleRequest,
   relayrDestinationHash,
+  relayrForwardRequest,
   relayrPaymentChains,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsSuccess,
   relayrSupportsChain,
-  relayrSupportsChains,
+  verifyRelayrDestinations,
   type RelayrEntry,
   type RelayrPayment,
+  type RelayrQuote,
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
@@ -112,18 +115,6 @@ export type RelayrPaymentDetails = {
   calldata: Hex
   bundleUuid: string
   deadline: bigint
-}
-
-export type RelayrQuote = {
-  bundle_uuid: string
-  payment_info: RelayrPayment[]
-  transactions?: RelayrTransactionRecord[]
-  /** Client-authenticated quote ordering; never accepted from status alone. */
-  expectedTransactions?: {
-    txUuid: string
-    chain: number
-    entry: RelayrEntry
-  }[]
 }
 
 export type RelayrPendingSession = {
@@ -674,9 +665,8 @@ export async function relayrTargetSupportsForwarder(call: RelayrCall): Promise<b
 
 async function verifyForwardedEntries(entries: RelayrEntry[], account: Address): Promise<void> {
   for (const entry of entries) {
-    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
-    if (decoded.functionName !== 'execute') throw new Error('Invalid relay authorization.')
-    const request = decoded.args[0]
+    const request = relayrForwardRequest(entry)
+    if (!request) throw new Error('Invalid relay authorization.')
     const client = publicClient(entry.chain as JBChainId)
     if (!isAddressEqual(request.from, account) ||
         request.value !== BigInt(entry.value) ||
@@ -814,18 +804,16 @@ export async function buildForwardedTx(
   }
 }
 
+/**
+ * Post the signed calls and bind Relayr's quote to them with the SDK: each call
+ * takes the one quoted ID whose record carries its exact request, and the
+ * bundle's records are exactly the quoted IDs. Throws, with nothing paid,
+ * otherwise.
+ */
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
 ): Promise<RelayrQuote> {
-  if (!relayrSupportsChains([...new Set(transactions.map(transaction => transaction.chain))])) {
-    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
-  }
-  const nextNonce = new Map<number, number>()
-  const ordered = transactions.map(transaction => {
-    const nonce = nextNonce.get(transaction.chain) ?? 0
-    nextNonce.set(transaction.chain, nonce + 1)
-    return { ...transaction, virtual_nonce: nonce }
-  })
+  const request = relayrBundleRequest(transactions)
   let response: Response
   try {
     response = await relayrFetch(
@@ -833,10 +821,7 @@ export async function relayrPostBundle(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transactions: ordered,
-          virtual_nonce_mode: 'ChainIndependent',
-        }),
+        body: JSON.stringify(request),
       },
       RELAYR_QUOTE_TIMEOUT_MS,
     )
@@ -848,76 +833,7 @@ export async function relayrPostBundle(
     }
     throw error
   }
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(
-      `Relayr HTTP ${response.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`,
-    )
-  }
-  const body = (await response.json()) as Partial<RelayrQuote> & {
-    tx_uuids?: unknown
-    txn_uuids?: unknown
-  }
-  const bundleUuid = String(body.bundle_uuid ?? '').toLowerCase()
-  if (!RELAYR_UUID_RE.test(bundleUuid)) {
-    throw new Error('Relayr returned no valid bundle ID. Nothing was paid.')
-  }
-  const currentIds = Array.isArray(body.tx_uuids) ? body.tx_uuids : null
-  const legacyIds = Array.isArray(body.txn_uuids) ? body.txn_uuids : null
-  if (
-    currentIds &&
-    legacyIds &&
-    JSON.stringify(currentIds) !== JSON.stringify(legacyIds)
-  ) {
-    throw new Error('Relayr returned conflicting transaction IDs. Nothing was paid.')
-  }
-  const rawIds = currentIds ?? legacyIds
-  const txUuids = Array.isArray(rawIds)
-    ? rawIds.map(value => String(value).toLowerCase())
-    : []
-  if (
-    txUuids.length !== ordered.length ||
-    txUuids.some(uuid => !RELAYR_UUID_RE.test(uuid)) ||
-    new Set(txUuids).size !== ordered.length ||
-    !Array.isArray(body.payment_info)
-  ) {
-    throw new Error(
-      'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.',
-    )
-  }
-  // Relayr does not keep tx_uuids in request order (a live bundle came back
-  // Arbitrum, Base, Ethereum, Optimism for a 1, 10, 8453, 42161 request), so
-  // each entry is bound to the record carrying its exact request instead.
-  let records = Array.isArray(body.transactions) ? body.transactions : []
-  if (records.length !== ordered.length || records.some(record => !record.request || !record.tx_uuid)) {
-    const response = await relayrFetch(`${RELAYR_API}/v1/bundle/${bundleUuid}`, undefined, RELAYR_STATUS_REQUEST_TIMEOUT_MS)
-    if (!response.ok) throw new Error('Relayr did not return the quoted transactions. Nothing was paid.')
-    const bundle = (await response.json()) as { transactions?: RelayrTransactionRecord[] }
-    records = Array.isArray(bundle.transactions) ? bundle.transactions : []
-  }
-  const quotedIds = new Set(txUuids)
-  const expectedTransactions = ordered.map(entry => {
-    const matches = records.filter(record => {
-      const request = record.request
-      return !!request && quotedIds.has(String(record.tx_uuid ?? '').toLowerCase()) &&
-        request.chain === entry.chain && isAddressEqual(request.target, entry.target) &&
-        request.data.toLowerCase() === entry.data.toLowerCase() &&
-        request.virtual_nonce === entry.virtual_nonce
-    })
-    if (matches.length !== 1) {
-      throw new Error('Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.')
-    }
-    return { txUuid: String(matches[0].tx_uuid).toLowerCase(), chain: entry.chain, entry }
-  })
-  if (new Set(expectedTransactions.map(binding => binding.txUuid)).size !== ordered.length) {
-    throw new Error('Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.')
-  }
-  return {
-    bundle_uuid: bundleUuid,
-    payment_info: body.payment_info,
-    transactions: records,
-    expectedTransactions,
-  }
+  return bindRelayrQuote(response, request)
 }
 
 function relayrDeadlineSeconds(value: unknown): number | null {
@@ -1186,6 +1102,14 @@ export async function relayrPay(
   return hash
 }
 
+/** The records of a bundle read, or null unless the read names exactly this bundle. */
+function bundleRecords(body: unknown, uuid: string): RelayrTransactionRecord[] | null {
+  const { bundle_uuid: echoed, transactions } = (body ?? {}) as { bundle_uuid?: unknown; transactions?: unknown }
+  return typeof echoed === 'string' && echoed.toLowerCase() === uuid.toLowerCase() && Array.isArray(transactions)
+    ? transactions as RelayrTransactionRecord[]
+    : null
+}
+
 export async function relayrPoll(
   uuid: string,
   expectedCount: number,
@@ -1207,7 +1131,8 @@ export async function relayrPoll(
       const elapsed = Date.now() - started
       const response = await relayrFetch(
         `${RELAYR_API}/v1/bundle/${uuid}`,
-        undefined,
+        // A cached answer could hide a payment or a destination result.
+        { cache: 'no-store' },
         Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, Math.max(timeoutMs - elapsed, 1)),
       )
       if (response.status === 404) {
@@ -1224,11 +1149,8 @@ export async function relayrPoll(
       } else {
         consecutiveNotFound = 0
       }
-      if (response.ok) {
-        const body = (await response.json()) as {
-          transactions?: RelayrTransactionRecord[]
-        }
-        const records = body.transactions ?? []
+      const records = response.ok ? bundleRecords(await response.json(), uuid) : null
+      if (records) {
         lastRecords = records
         onUpdate?.(records)
         if (
@@ -1274,60 +1196,24 @@ function relayrSessionFinished(
   )
 }
 
-/** Prove the exact signed outer transaction on every destination, independent of API labels. */
+/**
+ * Prove the exact signed outer transaction on every destination with the SDK,
+ * independent of API labels. A forwarded bundle carries one call per chain,
+ * so a saved session with two bindings on one chain is not this app's.
+ */
 async function verifySavedRelayrDestinations(
   saved: RelayrPendingSession,
   records: RelayrTransactionRecord[],
 ): Promise<void> {
   const bindings = saved.expectedTransactions
   if (!bindings || bindings.length !== saved.expectedCount ||
-      new Set(bindings.map(binding => binding.txUuid)).size !== saved.expectedCount ||
       new Set(bindings.map(binding => binding.chain)).size !== saved.expectedCount ||
-      records.length !== saved.expectedCount || !saved.account || !isAddress(saved.account)) {
+      !saved.account || !isAddress(saved.account)) {
     throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
   }
-  const bindingIds = new Set(bindings.map(binding => binding.txUuid.toLowerCase()))
-  const recordIds = records.map(record => String(record.tx_uuid ?? '').toLowerCase())
-  if (new Set(recordIds).size !== saved.expectedCount || recordIds.some(id => !bindingIds.has(id))) {
-    throw new Error('Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.')
-  }
-  for (const binding of bindings) {
-    const { entry } = binding
-    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][binding.chain as JBChainId]
-    if (!forwarder || !isAddressEqual(entry.target, forwarder) || entry.chain !== binding.chain) {
-      throw new Error('The saved Relayr destination is not the canonical forwarder.')
-    }
-    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
-    if (decoded.functionName !== 'execute' ||
-        !isAddressEqual(decoded.args[0].from, saved.account) ||
-        decoded.args[0].value !== BigInt(entry.value)) {
-      throw new Error('The saved relay authorization does not match its account or value.')
-    }
-    // Sessions saved before quotes bound IDs by request carry position-paired
-    // IDs, so match the chain within this bundle's quoted IDs; the onchain
-    // input check below proves the exact call.
-    const matches = records.filter(record => relayrRecordChain(record) === binding.chain &&
-      bindingIds.has(String(record.tx_uuid ?? '').toLowerCase()))
-    const hash = matches.length === 1 ? relayrDestinationHash(matches[0]) : null
-    if (!hash || !/^0x[0-9a-f]{64}$/iu.test(hash)) {
-      throw new Error('Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.')
-    }
-    const client = publicClient(binding.chain as JBChainId)
-    const [tx, receipt] = await Promise.all([
-      client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
-    ])
-    if (!tx.to || !isAddressEqual(tx.to, entry.target) ||
-        tx.input.toLowerCase() !== entry.data.toLowerCase() || tx.value !== BigInt(entry.value) ||
-        tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== binding.chain ||
-        receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
-        tx.blockHash !== receipt.blockHash || receipt.status !== 'success') {
-      throw new Error('The destination receipt does not prove the signed Relayr call succeeded. Keep the original bundle pending.')
-    }
-    const block = await client.getBlock({ blockNumber: receipt.blockNumber })
-    if (!block.hash || block.hash !== receipt.blockHash) {
-      throw new Error('The destination receipt is no longer canonical. Keep the original bundle pending.')
-    }
-  }
+  await verifyRelayrDestinations(chainId => publicClient(chainId as JBChainId), {
+    bindings, records, account: saved.account,
+  })
 }
 
 /** Resume a persisted payment attempt using only its original quote and exact receipts. */
@@ -1503,10 +1389,10 @@ async function executeRelayrCalls({
   if (saved) {
     if (entries.length !== calls.length) throw new Error('The saved relay publication is incomplete. Keep the original action pending.')
     for (let index = 0; index < calls.length; index++) {
-      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entries[index].data })
-      if (decoded.functionName !== 'execute' || entries[index].chain !== calls[index].chainId ||
-          !isAddressEqual(decoded.args[0].from, account) || !isAddressEqual(decoded.args[0].to, calls[index].target) ||
-          decoded.args[0].data !== calls[index].data || decoded.args[0].value !== (calls[index].value ?? 0n)) {
+      const request = relayrForwardRequest(entries[index])
+      if (!request || entries[index].chain !== calls[index].chainId ||
+          !isAddressEqual(request.from, account) || !isAddressEqual(request.to, calls[index].target) ||
+          request.data !== calls[index].data || request.value !== (calls[index].value ?? 0n)) {
         throw new Error('The original published Relayr calls changed. Keep the original action pending.')
       }
     }

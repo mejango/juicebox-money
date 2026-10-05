@@ -168,9 +168,10 @@ beforeEach(() => {
   let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
   mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
     const entry = entries[hash === DESTINATION_HASH ? 0 : 1]
-    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH }
+    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n }
   })
-  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
+    to: entries[hash === DESTINATION_HASH ? 0 : 1]?.target, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
   mocks.client.getBlock.mockResolvedValue({ hash: HASH })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
@@ -194,6 +195,7 @@ beforeEach(() => {
     }
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
       return response({
+        bundle_uuid: BUNDLE_UUID,
         transactions: [
           { chain: 1, tx_uuid: TX_UUIDS[0], status: { state: 'success', data: { hash: DESTINATION_HASH } } },
           { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: HASH } } },

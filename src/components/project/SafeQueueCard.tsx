@@ -45,7 +45,6 @@ import {
   saveRelayrPendingSessionDurably,
   withRelayrScopeLock,
   type RelayrPendingSession,
-  type RelayrQuote,
   type RelayrSafeExecutionProof,
 } from "@/lib/relayr";
 import {
@@ -57,6 +56,7 @@ import {
   relayrSupportsChains,
   type RelayrEntry,
   type RelayrPayment,
+  type RelayrQuote,
   type RelayrTransactionRecord,
 } from "@bananapus/nana-sdk-core/review/relayr";
 import {
