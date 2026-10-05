@@ -155,7 +155,9 @@ export function AccountPendingRelayr({ address }: { address: string }) {
               <p className="mt-2 text-xs text-smoke-600">
                 {relayrPaidQuoteOpen(session.payments)
                   ? 'The payment reverted onchain. Pay again from the original action.'
-                  : 'The payment reverted and its quote expired. Check the original bundle to release it.'}
+                  : projectSafeProof
+                    ? 'The payment reverted and its quote expired. Resume it from the original project action to release it.'
+                    : 'The payment reverted and its quote expired. Check the original bundle to release it.'}
               </p>
             ) : null}
             {relayrSessionExpired(session) && !projectSafeProof ? (

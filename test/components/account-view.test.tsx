@@ -414,6 +414,28 @@ describe('AccountPendingRelayr', () => {
     expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
   })
 
+  it('points a reverted project batch whose quote expired to its original project action', async () => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) - 60
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'project-batch:batch-1:0', session: pendingSession({
+      bundleUuid, paymentStatus: 'reverted', records: [],
+      payments: [{ chainId: 1, target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d', amount: '100', deadline: String(deadline),
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}`,
+        bundleUuid, hash: `0x${'ab'.repeat(32)}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('The payment reverted and its quote expired. Resume it from the original project action to release it.')
+    expect(text).not.toContain('Check the original bundle')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+  })
+
   it('reads a released quote whose payment reverted as expired, with nothing to check', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
