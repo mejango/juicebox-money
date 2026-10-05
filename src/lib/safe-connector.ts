@@ -53,6 +53,10 @@ export function useSafeConnection(config: Config): boolean {
 export const SAFE_PROPOSAL_UNCONFIRMED =
   'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
 
+/** What a Safe app flow says while its proposal waits for the Safe's other signers. */
+export const SAFE_PROPOSAL_AWAITING =
+  'Proposed to your Safe. Its other signers can approve it there.'
+
 /** A call a Safe app proposal was reviewed to run. */
 export type SafeAppCall = { to: Address; data: Hex; value?: bigint }
 

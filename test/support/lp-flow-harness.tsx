@@ -2,15 +2,16 @@ import { useSyncExternalStore } from 'react'
 import type { Hex } from 'viem'
 import { vi } from 'vitest'
 
-type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'success' | 'error'
+type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'submitted' | 'success' | 'error'
 type EngineState = {
   phase: Phase
   hash: Hex | null
   receipt: { blockNumber: bigint; transactionHash: Hex } | null
   error: string | null
+  notice: string | null
 }
 
-const IDLE: EngineState = { phase: 'idle', hash: null, receipt: null, error: null }
+const IDLE: EngineState = { phase: 'idle', hash: null, receipt: null, error: null, notice: null }
 
 /**
  * A stand-in for useSafeTx whose sends the test answers, keeping the engine's
@@ -53,6 +54,7 @@ function fakeSafeTx() {
           snapshot.phase === 'simulating' ||
           snapshot.phase === 'signing' ||
           snapshot.phase === 'pending',
+        settled: snapshot.phase === 'success' || snapshot.phase === 'submitted',
         isSafe: false,
         safeProposalHash: null,
         safeNonceGuidance: null,
@@ -68,7 +70,11 @@ function fakeSafeTx() {
       next(hash)
     },
     confirm(hash: Hex, blockNumber: bigint) {
-      set({ phase: 'success', hash, receipt: { blockNumber, transactionHash: hash } })
+      set({ phase: 'success', hash, receipt: { blockNumber, transactionHash: hash }, notice: null })
+    },
+    /** The send went to a Safe, which has not settled it: its confirm can end, showing `notice`. */
+    propose(notice: string) {
+      set({ phase: 'submitted', notice })
     },
     fail(error: string) {
       set({ phase: 'error', error })

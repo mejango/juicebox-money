@@ -744,7 +744,7 @@ function GossipRow({
   // Mark in-flight the moment the tx enters the mempool; clear on failure;
   // re-mark and refetch once it lands.
   useEffect(() => {
-    if (tx.phase === 'pending') onSyncSent(key)
+    if (tx.phase === 'pending' || tx.phase === 'submitted') onSyncSent(key)
     else if (tx.phase === 'error') onSyncCleared(key)
     else if (tx.phase === 'success') {
       onSyncSent(key)
@@ -898,9 +898,11 @@ function GossipRow({
           action={phaseLabel ?? 'Confirm & sync'}
           onConfirm={() => void sync()}
           busy={busy}
-          complete={tx.phase === 'success'}
+          complete={tx.settled}
           status={
-            tx.phase === 'pending' && txUrl ? (
+            tx.notice ? (
+              tx.notice
+            ) : tx.phase === 'pending' && txUrl ? (
               <>
                 Waiting for confirmation —{' '}
                 <a

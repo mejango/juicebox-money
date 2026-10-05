@@ -502,7 +502,7 @@ describe('useSafeTx', () => {
     })
   })
 
-  it('keeps an unconfirmed Safe proposal pending and refuses a duplicate send', async () => {
+  it('ends a Safe proposal it lost track of in a dismissible state, and never sends it again', async () => {
     mocks.safeConnection = true
     mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
       new Error('Safe service unavailable'),
@@ -516,13 +516,59 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
-      busy: true,
+      phase: 'submitted',
+      busy: false,
+      settled: true,
       confirmationUncertain: true,
+      error: null,
     })
-    expect(hook.ref.current!.error).toContain('Safe service unavailable')
+    expect(hook.ref.current!.notice).toBe(`${SAFE_PROPOSAL_UNCONFIRMED_LINE} Safe service unavailable`)
+    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', busy: false })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+  })
+
+  it('ends a proposal awaiting the Safe\'s other signers on Done, keeps it locked, and settles it once executed', async () => {
+    mocks.safeConnection = true
+    let executed!: (hash: Hex) => void
+    mocks.waitForSafeExecutionHash.mockImplementationOnce(
+      () => new Promise<Hex>(resolve => { executed = resolve }),
+    )
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+      await Promise.resolve()
+    })
+
+    expect(hook.ref.current).toMatchObject({
+      phase: 'submitted',
+      busy: false,
+      settled: true,
+      error: null,
+      notice: 'Proposed to your Safe. Its other signers can approve it there.',
+    })
+    // Done closes the confirm; the proposal is still followed.
+    await act(async () => { hook.ref.current!.reset() })
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', busy: false })
     await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
     expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      executed(EXECUTION_HASH)
+      await Promise.resolve()
+    })
+    mocks.receipt = {
+      data: {
+        status: 'success',
+        transactionHash: EXECUTION_HASH,
+        logs: [{ address: ALICE, topics: [EXECUTION_SUCCESS, HASH], data: PAYMENT_WORD }],
+      },
+      isError: false,
+    }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, settled: true, notice: null })
   })
 
   it('refuses a Center wallet before review, like view-as', async () => {
@@ -721,12 +767,22 @@ describe('useSafeTx', () => {
     }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
-      busy: true,
+      phase: 'submitted',
+      busy: false,
+      settled: true,
       confirmationUncertain: true,
-      error: 'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+      error: null,
+      notice: SAFE_PROPOSAL_UNCONFIRMED_LINE,
     })
     await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
+    // Dismissed, the same request stays locked; another request can be sent.
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, reviewedByAlice)
+    })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
   })
 
   it('settles a Safe proposal once its execution logs ExecutionSuccess for it', async () => {
@@ -751,7 +807,7 @@ describe('useSafeTx', () => {
 
   it.each([
     ['ran the reviewed call', execTransaction(), 'success'],
-    ['ran another call', execTransaction('0xdeadbeef'), 'pending'],
+    ['ran another call', execTransaction('0xdeadbeef'), 'submitted'],
   ] as const)('settles a proposal Safe{Wallet} executed at once only when the execution %s', async (_, input, phase) => {
     mocks.safeConnection = true
     // Safe{Wallet} executed at once and returned the execution's own hash; the
@@ -775,7 +831,7 @@ describe('useSafeTx', () => {
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe(phase)
     expect(mocks.publicClient.getTransaction).toHaveBeenCalledWith({ hash: HASH })
-    if (phase === 'pending') expect(hook.ref.current!.error).toBe(SAFE_PROPOSAL_UNCONFIRMED_LINE)
+    if (phase === 'submitted') expect(hook.ref.current!.notice).toBe(SAFE_PROPOSAL_UNCONFIRMED_LINE)
   })
 
   it('treats a proven Safe execution revert as failed', async () => {

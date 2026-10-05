@@ -696,10 +696,12 @@ function MoveFlow({
           step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
         }
         busy={busy}
-        complete={step === 4}
+        complete={step === 4 || tx.phase === 'submitted'}
         status={
           preparing ? (
             'Checking the route and your balances…'
+          ) : tx.notice ? (
+            tx.notice
           ) : tx.phase === 'pending' && txUrl ? (
             <>
               Waiting for confirmation —{' '}

@@ -528,7 +528,7 @@ export function EditPositionPanel({
     <TxConfirmDialog
       open
       preparing={!reviewed}
-      title={batchProposed ? 'Proposed to Safe' : done ? 'Position updated' : 'Confirm edit'}
+      title={batchProposed || run.proposed ? 'Proposed to Safe' : done ? 'Position updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
       steps={(reviewed?.steps ?? []).map((step, index) => ({
         key: `${step.kind}:${index}`,
@@ -551,8 +551,8 @@ export function EditPositionPanel({
       }
       onConfirm={stopped ? resume : startRun}
       busy={busy}
-      complete={done !== null || batchProposed}
-      status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your position…' : tx.safeNonceGuidance}
+      complete={done !== null || batchProposed || run.proposed}
+      status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your position…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}
     >

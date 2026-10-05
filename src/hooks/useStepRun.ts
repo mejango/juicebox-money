@@ -32,6 +32,8 @@ export function useStepRun<Step>({
   const [runSteps, setRunSteps] = useState<readonly Step[] | null>(null)
   /** The step whose send the engine took and whose confirmation is not counted yet. */
   const [accepted, setAccepted] = useState<number | null>(null)
+  /** The run ended on a step proposed to a Safe. */
+  const [proposed, setProposed] = useState(false)
   // Event handlers and send callbacks read these at once; the state above is
   // what renders.
   const run = useRef({
@@ -66,6 +68,14 @@ export function useStepRun<Step>({
     if (!running || run.current.holding) return
     if (tx.phase === 'error') {
       setAccepted(null)
+      halt()
+      return
+    }
+    // A step proposed to a Safe ends the run: its confirm ends on Done, and
+    // the steps after it are reviewed again once the Safe executes it.
+    if (tx.phase === 'submitted') {
+      setAccepted(null)
+      setProposed(true)
       halt()
       return
     }
@@ -107,6 +117,7 @@ export function useStepRun<Step>({
       setIndex(0)
       setRunSteps(steps)
       setAccepted(null)
+      setProposed(false)
       setRunning(true)
       tx.reset()
       sendAt(0)
@@ -126,6 +137,7 @@ export function useStepRun<Step>({
       }
       current.running = true
       setAccepted(null)
+      setProposed(false)
       setRunning(true)
       tx.reset()
       sendAt(current.index)
@@ -168,6 +180,7 @@ export function useStepRun<Step>({
     setIndex(0)
     setRunSteps(null)
     setAccepted(null)
+    setProposed(false)
     setRunning(false)
     tx.reset()
   }, [tx])
@@ -176,6 +189,8 @@ export function useStepRun<Step>({
     running,
     /** The step the run is on, or stopped at. */
     index,
+    /** The run ended on a step proposed to a Safe: the confirm ends on Done. */
+    proposed,
     /** The run through these exact steps stopped before its last step confirmed, so `resume` continues it. */
     stoppedOn: (steps: readonly Step[] | undefined): boolean =>
       !running &&

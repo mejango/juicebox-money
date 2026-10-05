@@ -1046,7 +1046,7 @@ function FundsTxFlow({
           : []
       }
       activeIndex={sending ? 0 : -1}
-      complete={tx.phase === 'success'}
+      complete={tx.settled}
       busy={busy}
       action={
         tx.phase === 'error' ? 'Retry' : 'Confirm & withdraw'
@@ -1055,6 +1055,8 @@ function FundsTxFlow({
       status={
         !review ? (
           'Checking what you can withdraw…'
+        ) : tx.notice ? (
+          tx.notice
         ) : tx.phase === 'pending' ? (
           <>
             Waiting for confirmation

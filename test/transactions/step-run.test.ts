@@ -174,6 +174,21 @@ describe('useStepRun', () => {
     expect(run.send).toHaveBeenCalledTimes(2)
   })
 
+  it('ends on a step proposed to a Safe, and sends no later step once the Safe executes it', async () => {
+    const run = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => run.ref.current!.start(plan))
+    await run.answer(H1)
+    await run.engine({ phase: 'submitted' })
+    expect(run.ref.current).toMatchObject({ running: false, proposed: true, index: 0 })
+
+    await run.confirm(H1, 10n)
+    expect(run.send).toHaveBeenCalledTimes(1)
+    expect(run.onFinish).not.toHaveBeenCalled()
+    await act(async () => run.ref.current!.clear())
+    expect(run.ref.current!.proposed).toBe(false)
+  })
+
   it('stops on a failed step and sends that step again on resume', async () => {
     const run = await renderRun()
     const plan = ['approve', 'mint']

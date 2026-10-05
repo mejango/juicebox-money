@@ -390,11 +390,14 @@ export function GetLoanFlow({
       }
       onConfirm={handleConfirm}
       busy={busy}
-      complete={borrowTx.phase === 'success'}
+      complete={borrowTx.settled || permTx.phase === 'submitted'}
       status={
         !review
           ? 'Getting a fresh loan quote…'
-          : (borrowTx.safeNonceGuidance ?? permTx.safeNonceGuidance)
+          : (borrowTx.notice ??
+            permTx.notice ??
+            borrowTx.safeNonceGuidance ??
+            permTx.safeNonceGuidance)
       }
       error={reviewError}
       onClose={closeReview}

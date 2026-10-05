@@ -737,7 +737,7 @@ function ChainLpRows({
                   {formatTokenAmount(value, pool.pair.decimals)} {pool.pair.symbol}
                 </span>
               )
-              const complete = started && tx.phase === 'success'
+              const complete = started && tx.settled
               const rows: TxConfirmRow[] = []
               if (pending.kind === 'claim') {
                 const owedToken = pending.positions.reduce(
@@ -835,7 +835,7 @@ function ChainLpRows({
                   }}
                   busy={tx.busy}
                   complete={complete}
-                  status={tx.safeNonceGuidance}
+                  status={tx.notice ?? tx.safeNonceGuidance}
                   error={tx.error}
                   onClose={closePending}
                 />

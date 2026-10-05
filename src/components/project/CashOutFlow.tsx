@@ -677,9 +677,11 @@ export function CashOutPanel({
       }
       onConfirm={() => void cashOut()}
       busy={busy}
-      complete={success}
+      complete={success || tx.phase === 'submitted' || approveTx.phase === 'submitted'}
       status={
-        tx.phase === 'pending' && txUrl ? (
+        tx.notice || approveTx.notice ? (
+          (tx.notice ?? approveTx.notice)
+        ) : tx.phase === 'pending' && txUrl ? (
           <>
             Waiting for confirmation —{' '}
             <a

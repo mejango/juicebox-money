@@ -413,6 +413,31 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
   })
 })
 
+describe('a liquidity run proposed to a Safe', () => {
+  it('ends its confirm on Done with the line, and sends no later step once the Safe executes', async () => {
+    const PROPOSED = 'Proposed to your Safe. Its other signers can approve it there.'
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    await confirm()
+    await act(async () => engine.answer(H1))
+    await act(async () => engine.propose(PROPOSED))
+
+    const confirmDialog = host.querySelector('[data-tx-confirm]')!
+    expect(confirmDialog.textContent).toContain('Proposed to Safe')
+    expect(confirmDialog.textContent).toContain(PROPOSED)
+    expect(action().textContent).toBe('Done')
+    // Not busy: the shell closes.
+    await tryToLeave()
+    expect(hostClose).toHaveBeenCalled()
+
+    // The Safe executes the approval later; the run stays ended.
+    await act(async () => engine.confirm(H1, 10n))
+    expect(engine.send).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('a liquidity run keeps its modal open while a send is in flight', () => {
   it('add liquidity', async () => {
     await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)

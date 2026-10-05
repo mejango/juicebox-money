@@ -775,9 +775,11 @@ function MovementGroup({
         }
         onConfirm={() => void execute()}
         busy={busy}
-        complete={tx.phase === 'success'}
+        complete={tx.settled}
         status={
-          tx.phase === 'pending' && txUrl ? (
+          tx.notice ? (
+            tx.notice
+          ) : tx.phase === 'pending' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a
@@ -951,9 +953,11 @@ function ClaimButton({
         }
         onConfirm={() => void claim()}
         busy={busy}
-        complete={tx.phase === 'success'}
+        complete={tx.settled}
         status={
-          tx.phase === 'pending' && txUrl ? (
+          tx.notice ? (
+            tx.notice
+          ) : tx.phase === 'pending' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a

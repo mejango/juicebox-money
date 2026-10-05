@@ -224,16 +224,15 @@ export function BurnTokensFlow({
             },
           ]}
           activeIndex={sending ? 0 : -1}
-          complete={tx.phase === 'success'}
+          complete={tx.settled}
           busy={sending || preparing}
           action={tx.phase === 'error' || error ? 'Retry' : 'Confirm & burn'}
           onConfirm={() => void burn()}
           status={
             !plan
               ? 'Reading your balance and the controller…'
-              : tx.phase === 'pending'
-                ? 'Waiting for confirmation…'
-                : undefined
+              : (tx.notice ??
+                (tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined))
           }
           error={error ?? tx.error}
         />

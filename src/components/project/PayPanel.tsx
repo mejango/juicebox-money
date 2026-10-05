@@ -1204,18 +1204,17 @@ export function PayPanel({
     }
   }, [approveTx.phase, refetchAllowance, refetchPermit2Allowance, routerApproveTx.phase]);
 
-  const sequenceSafePhase =
+  const sequenceSafeTx =
     sequenceSafeStage === "token-approval"
-      ? approveTx.phase
+      ? approveTx
       : sequenceSafeStage === "router-approval"
-        ? routerApproveTx.phase
-        : tx.phase;
-  const sequenceSafeError =
-    sequenceSafeStage === "token-approval"
-      ? approveTx.error
-      : sequenceSafeStage === "router-approval"
-        ? routerApproveTx.error
-        : tx.error;
+        ? routerApproveTx
+        : tx;
+  const sequenceSafePhase = sequenceSafeTx.phase;
+  const sequenceSafeError = sequenceSafeTx.error;
+  // A Safe stage whose result can't be proven here says so in place of the stage's own line.
+  const sequenceSafeNotice =
+    sequenceSafeStage && sequenceSafeTx.confirmationUncertain ? sequenceSafeTx.notice : null;
 
   useEffect(() => {
     if (!sequenceSafeStage) return;
@@ -2446,19 +2445,11 @@ export function PayPanel({
               sequenceCompletedKinds.includes(action.kind),
             ).length,
           )}
-          status={sequenceStatus}
+          status={sequenceSafeNotice ?? sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
-          complete={sequenceComplete}
-          cancelLabel={sequenceSafeStage ? "Close" : "Cancel"}
-          actionDisabled={!!sequenceSafeStage}
-          action={
-            sequenceSafeStage
-              ? "Waiting for Safe"
-              : mode === "pay"
-                ? "Confirm & Pay"
-                : "Confirm & Add"
-          }
+          complete={sequenceComplete || !!sequenceSafeStage}
+          action={mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
           onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;

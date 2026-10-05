@@ -551,11 +551,14 @@ function RepayFlow({
       }
       onConfirm={() => void handleConfirm()}
       busy={checking || busy}
-      complete={repayTx.phase === 'success'}
+      complete={repayTx.settled || approveTx.phase === 'submitted'}
       status={
         !plan
           ? 'Reading the loan and its current fee…'
-          : (repayTx.safeNonceGuidance ?? approveTx.safeNonceGuidance)
+          : (repayTx.notice ??
+            approveTx.notice ??
+            repayTx.safeNonceGuidance ??
+            approveTx.safeNonceGuidance)
       }
       error={error}
       onClose={closeDialog}
