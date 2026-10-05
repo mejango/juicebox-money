@@ -20,7 +20,11 @@ const budgets = {
     // KiB): home measures 434.7 KiB against 433.5 KiB on main with the same toolchain.
     // SDK 2.18.0 puts each generated ABI in a module of its own, so home loads only the
     // ABIs it uses: 428.9 KiB. Ratcheted down to keep the gain.
-    '/page': 430 * KIB,
+    // Taking the SDK's Safe checks: home already loads the SDK's safe module through the
+    // launch code, and webpack keeps one copy of it with every export any chunk uses, so
+    // the authority reads, creation proof and same-address deployment land there too:
+    // home measures 434.3 KiB against 429.5 KiB on main with the same toolchain.
+    '/page': 435 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -33,7 +37,10 @@ const budgets = {
     // SDK 2.18.0's per-ABI modules bring create to 490.7 KiB. Ratcheted down to keep the gain.
     // Shared explicit shop/overload validation adds 1.9 KiB (492.6 measured
     // against the 2.18.0 baseline); round the new launch safeguards up to 493.
-    '/create/page': 493 * KIB,
+    // The SDK's Safe checks add the same safe-module copy as home, and create's Safe app
+    // connection carries the one copy of the SDK's safe-service module, which holds the
+    // queue, signature and execution checks jbm uses: 501.3 KiB against 492.6 KiB.
+    '/create/page': 502 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -93,7 +100,9 @@ const budgets = {
   // Deployment diagnostics, retry boundaries, their browser proof and shared
   // launch guards measure 2486.4 KiB (+12.7 from that baseline). The dialog is
   // a shared lazy chunk and contract checks stay server-side; round up to 2487.
-  allScripts: 2487 * KIB,
+  // The SDK's Safe checks replace jbm's own copies: 2489.2 KiB against 2486.4 KiB on
+  // main with the same toolchain; round up to the next KiB.
+  allScripts: 2490 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
