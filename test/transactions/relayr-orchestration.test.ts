@@ -1726,6 +1726,13 @@ describe('paying a reverted Relayr payment again', () => {
       expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
     })
 
+    it('keeps the quote while another option on the paid chain is still open at its finalized block', async () => {
+      const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ amount: '200' }, DEADLINE + 3_600)])
+      await expect(runRelayrCalls(options)).rejects.toThrow(WAITING)
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+    })
+
     it('keeps a released quote pending when its old request ran outside Relayr', async () => {
       const { posts } = await expired()
       // Anyone holding the old signed request ran it at the forwarder: its nonce
@@ -1949,6 +1956,15 @@ describe('unpaid Relayr quotes', () => {
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(KEEP_PENDING)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it('stop reserving at once when none of their options can be authenticated', async () => {
+    installSuccessfulBundle([paymentFor({ chain: 11155111 })])
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'unfundable' })).rejects.toThrow(/network family/)
+    const saved = loadRelayrPendingSession('unfundable')!
+    expect(saved).toMatchObject({ paymentStatus: 'unpaid', paymentOptions: [] })
+    expect(relayrQuoteReleased(saved)).toBe(true)
+    expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
   })
 
   it('are not released once a payment was sent', async () => {

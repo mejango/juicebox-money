@@ -140,7 +140,11 @@ export type RelayrPendingSession = {
   publishedNonces?: string[]
   /** Every payment sent for this bundle, as relayrPaymentDetails authenticated it, under the hash it was mined. */
   payments?: RelayrSentPayment[]
-  /** The quote's payment options that passed relayrPaymentDetails when it was quoted, authenticated again whenever one is used. */
+  /**
+   * Every option of the quote that relayrPaymentDetails accepts before it
+   * expires, several on one chain included, authenticated again whenever one
+   * is used. Empty when the quote offered none.
+   */
   paymentOptions?: RelayrPayment[]
   /** A reverted quote nothing can fund any more (ruling R104): its action quotes its calls again. */
   released?: true
@@ -158,7 +162,8 @@ export function relayrSessionAwaitsPayment(session: Pick<RelayrPendingSession, '
 /**
  * An unpaid quote stops reserving its calls once nothing can fund it: none of
  * its saved payment options passes relayrPaymentDetails any more (the SDK
- * expires a quote 15 seconds before its deadline), or every request it
+ * expires a quote 15 seconds before its deadline, and a quote may offer no
+ * option it accepts at all), or every request it
  * published is past its deadline, which also releases a publication whose
  * quote response was lost. A quote whose payments reverted is released only
  * once revertedRelayrQuote proved it (ruling R104).
@@ -169,7 +174,7 @@ export function relayrQuoteReleased(session: RelayrPendingSession, nowMs = Date.
   const nowSeconds = nowMs / 1_000
   const requests = (session.publishedEntries ?? []).map(entry => relayrForwardRequest(entry))
   if (requests.length && requests.every(request => request && request.deadline <= nowSeconds)) return true
-  return !!session.paymentOptions?.length && !relayrPaymentOptions(
+  return !!session.paymentOptions && !relayrPaymentOptions(
     { bundle_uuid: session.bundleUuid, payment_info: session.paymentOptions }, session.chainIds, nowSeconds).length
 }
 
@@ -446,9 +451,9 @@ export function saveRelayrPendingSession(
   if (payments === null) {
     throw new Error('The payments sent for this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.')
   }
-  const paymentOptions = session.paymentOptions?.length
-    ? exactSnapshots(session.paymentOptions, relayrPaymentOptionSnapshot) ?? null
-    : undefined
+  const paymentOptions = session.paymentOptions === undefined ? undefined
+    : Array.isArray(session.paymentOptions) && !session.paymentOptions.length ? []
+      : exactSnapshots(session.paymentOptions, relayrPaymentOptionSnapshot) ?? null
   if (paymentOptions === null) {
     throw new Error('The payment options of this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.')
   }
@@ -659,7 +664,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
       if (value.expectedSafeExecutions !== undefined && (!Array.isArray(value.expectedSafeExecutions) ||
           value.expectedSafeExecutions.length !== value.expectedCount || !value.expectedSafeExecutions.every(relayrSafeExecutionSnapshot))) throw new Error()
       if ((value.payments !== undefined && !relayrSentPaymentsSnapshot(value.payments)) ||
-          (value.paymentOptions !== undefined && !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
+          (value.paymentOptions !== undefined && !(Array.isArray(value.paymentOptions) && !value.paymentOptions.length) &&
+            !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
       // A quote nothing can fund reserves no forwarder nonce.
       return relayrQuoteReleased(value) ? [] : [{ scope, session: value }]
     })
@@ -1313,6 +1319,20 @@ export function relayrPaidQuoteOpen(payments: readonly RelayrSentPayment[] | und
   }
 }
 
+/** Every option of a quote that relayrPaymentDetails accepts before it expires, several on one chain included. */
+function relayrQuotedOptions(
+  quote: Pick<RelayrQuote, 'bundle_uuid' | 'payment_info'>,
+  destinationChainIds: readonly number[],
+): { option: RelayrPayment; details: RelayrPaymentDetails }[] {
+  return (Array.isArray(quote.payment_info) ? quote.payment_info : []).flatMap(option => {
+    try {
+      return [{ option, details: relayrPaymentDetails(option, { bundleUuid: quote.bundle_uuid, destinationChainIds, nowSeconds: 0 }) }]
+    } catch {
+      return []
+    }
+  })
+}
+
 /**
  * Nothing can fund the quote any more: every payment it sent is proven
  * canonically reverted, and the deadline of each of those payments, and of
@@ -1337,11 +1357,9 @@ async function relayrQuoteUnfundable({ payments, options, bundleUuid, destinatio
   }
   const deadlines = new Map<string, { chainId: number; deadline: string }>(
     payments.map(payment => [`${payment.chainId}:${payment.deadline}`, payment]))
-  for (const option of options) {
-    try {
-      const details = relayrPaymentDetails(option, { bundleUuid, destinationChainIds, nowSeconds: 0 })
-      deadlines.set(`${details.chainId}:${details.deadline}`, { chainId: details.chainId, deadline: details.deadline.toString() })
-    } catch { /* An option no flow here can authenticate is never paid from it. */ }
+  // An option no flow here can authenticate is never paid from it.
+  for (const { details } of relayrQuotedOptions({ bundle_uuid: bundleUuid, payment_info: [...options] }, destinationChainIds)) {
+    deadlines.set(`${details.chainId}:${details.deadline}`, { chainId: details.chainId, deadline: details.deadline.toString() })
   }
   for (const { chainId, deadline } of deadlines.values()) {
     if (!await relayrDeadlinePassed(chainId, deadline)) return false
@@ -1769,7 +1787,7 @@ async function executeRelayrCalls({
     quote = await relayrPostBundle(entries)
     const options = relayrPaymentOptions(quote, destinations)
     session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
-      paymentOptions: options }
+      paymentOptions: relayrQuotedOptions(quote, destinations).map(({ option }) => option) }
     if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
     const selectedChain = paymentChainId ?? await requireFundingChainSelection(
