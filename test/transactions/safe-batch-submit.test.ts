@@ -1,4 +1,4 @@
-import { toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     simulateCalls: vi.fn(),
     readContract: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
+    getTransaction: vi.fn(),
   },
   wallet: { signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -68,7 +69,7 @@ import {
   resolveSafeBatchRoute,
   submitSafeBatch,
 } from '@/lib/safe-batch-submit'
-import { safeTransactionHash } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI, safeTransactionHash } from '@bananapus/nana-sdk-core/safe-service'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -465,6 +466,48 @@ describe('Safe app batch', () => {
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
     ).rejects.toThrow('The batch reverted after Safe execution.')
+  })
+
+  it('confirms a batch Safe{Wallet} executed at once only when it ran exactly these calls, in order', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    const { calls } = composeBatch(presetSteps())
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names a safeTxHash this app never saw.
+    mocks.sendCalls.mockResolvedValue({ id: EXECUTION })
+    mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION)
+    mocks.waitForTrackedReceipt.mockResolvedValue({
+      status: 'success',
+      transactionHash: EXECUTION,
+      logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS, `0x${'ef'.repeat(32)}`], data: `0x${'00'.repeat(32)}` }],
+    })
+    const ran = (batch: typeof calls) =>
+      mocks.client.getTransaction.mockResolvedValue({
+        hash: EXECUTION,
+        from: ALICE,
+        to: SAFE,
+        input: encodeFunctionData({
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args: [MULTI_SEND_CALL_ONLY, 0n, encodeMultiSend(batch), 1, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+        }),
+      })
+    const submit = () =>
+      submitSafeBatch({
+        chainId: 1,
+        authority: SAFE,
+        steps: presetSteps(),
+        route: { kind: 'safe-app', authorityKind: 'safe' },
+      })
+
+    ran(calls)
+    await expect(submit()).resolves.toEqual({ kind: 'safe-app', safeTxHash: EXECUTION, executionHash: EXECUTION })
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
+
+    ran([...calls].reverse())
+    await expect(submit()).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
   })
 
   it('does not send when the review is refused or the wallet returns no hash', async () => {

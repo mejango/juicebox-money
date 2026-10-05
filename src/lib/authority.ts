@@ -729,7 +729,16 @@ export async function runAuthorityCalls({
       )
       const failure = `${call.label ?? 'Project action'} reverted after Safe execution.`
       if (receipt.status !== 'success') throw new Error(failure)
-      requireSafeProposalSuccess(receipt, call.authority, safeTxHash, failure)
+      await requireSafeProposalSuccess(
+        {
+          client: clientFor(call.chainId),
+          receipt,
+          safe: call.authority,
+          proposalHash: safeTxHash,
+          calls: [{ to: call.target, data: call.data, value: call.value }],
+        },
+        failure,
+      )
       directResults.push(executionHash)
       continue
     }

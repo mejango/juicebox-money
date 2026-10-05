@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { toEventSelector, type Address, type Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, zeroAddress, type Abi, type Address, type Hex } from 'viem'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -10,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   waitSafe: vi.fn(),
   receipt: vi.fn(),
   shop: vi.fn(),
-  client: { readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn() },
+  client: { readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
 }))
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -19,6 +20,8 @@ const STORE = '0x3333333333333333333333333333333333333333' as Address
 const PROPOSAL = `0x${'ab'.repeat(32)}` as Hex
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
 const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
+/** The safeTxHash the Safe's own event names, which a wallet that executed at once never returns. */
+const SAFE_TX = `0x${'ef'.repeat(32)}` as Hex
 
 vi.mock('wagmi', () => ({
   useConfig: () => ({}),
@@ -112,6 +115,23 @@ beforeEach(() => {
 
 afterEach(async () => { await act(async () => renderer.unmount()) })
 
+/** The Safe's execTransaction of the mint the wallet was asked to send, or of `data` in its place. */
+function executesSentMint(data?: Hex) {
+  mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+    const sent = mocks.write.mock.calls[0][0] as { address: Address; abi: Abi; functionName: string; args: readonly unknown[] }
+    return {
+      hash,
+      from: STORE,
+      to: ACCOUNT,
+      input: encodeFunctionData({
+        abi: SAFE_EXEC_ABI,
+        functionName: 'execTransaction',
+        args: [sent.address, 0n, data ?? encodeFunctionData(sent), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+      }),
+    }
+  })
+}
+
 describe('free mint gas', () => {
   it('wallet-action:mint-shop-tiers-without-payment sends the measured gas limit from an ordinary wallet', async () => {
     await mint()
@@ -121,12 +141,14 @@ describe('free mint gas', () => {
 
   it('wallet-action:mint-shop-tiers-without-payment proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe = true
-    // Safe{Wallet} executed at once and returned the execution's own hash.
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names its safeTxHash.
     mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
       status: 'success',
       transactionHash: hash,
-      logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` }],
+      logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
     }))
+    executesSentMint()
     await mint()
     expect(mocks.review).toHaveBeenCalledWith(
       expect.objectContaining({ address: HOOK, functionName: 'mintFor', safeTxGas: 0n }),
@@ -145,10 +167,25 @@ describe('free mint gas', () => {
     mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
       status: 'success',
       transactionHash: hash,
-      logs: [{ address: ACCOUNT, topics: [EXECUTION_FAILURE, PROPOSAL], data: `0x${'00'.repeat(32)}` }],
+      logs: [{ address: ACCOUNT, topics: [EXECUTION_FAILURE, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
     }))
+    executesSentMint()
     await mint()
     expect(text()).toContain('The mint failed.')
+    expect(text()).not.toContain('Items minted')
+  })
+
+  it('does not report a mint Safe{Wallet} executed at once as minted when the execution ran another call', async () => {
+    mocks.safe = true
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
+    }))
+    executesSentMint('0xdeadbeef')
+    await mint()
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: PROPOSAL })
+    expect(text()).toContain('Mint submitted')
     expect(text()).not.toContain('Items minted')
   })
 

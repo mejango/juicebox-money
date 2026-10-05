@@ -1,7 +1,9 @@
 import {
+  encodeFunctionData,
   keccak256,
   stringToHex,
   zeroAddress,
+  type Abi,
   type Address,
   type Hex,
 } from 'viem'
@@ -17,6 +19,7 @@ const mocks = vi.hoisted(() => ({
     getBlock: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getCode: vi.fn(),
+    getTransaction: vi.fn(),
   },
   wallet: { writeContract: vi.fn(), signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -80,6 +83,7 @@ import {
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import {
   canonicalSafeTxHash,
+  SAFE_EXEC_ABI,
   safeProposalFor,
   safeTransactionHash,
   type SafeQueuedTransaction,
@@ -464,19 +468,41 @@ describe('Safe execution boundary', () => {
     )
   })
 
-  it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
-    mocks.safe = true
-    mocks.waitSafe.mockResolvedValue(HASH)
-    // The connected Safe app executed its proposal at once: its own event and
-    // the queued Safe's, in one receipt.
+  /** The connected Safe app's own execTransaction of the call its wallet was asked to send, or of `data` instead. */
+  function connectedSafeRan(data?: Hex) {
+    mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      const sent = mocks.wallet.writeContract.mock.calls[0][0] as {
+        address: Address; abi: Abi; functionName: string; args: readonly unknown[]
+      }
+      return {
+        hash,
+        from: BOB,
+        to: ALICE,
+        input: encodeFunctionData({
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args: [sent.address, 0n, data ?? encodeFunctionData(sent), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+        }),
+      }
+    })
+  }
+  /** The connected Safe app executed its proposal at once: its own event, for a safeTxHash it never returned, and the queued Safe's. */
+  function executedAtOnce() {
     mocks.client.waitForTransactionReceipt.mockImplementationOnce(async ({ hash }: { hash: Hex }) => ({
       status: 'success',
       transactionHash: hash,
       logs: [
-        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, hash], data: `0x${'00'.repeat(32)}` },
+        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, `0x${'ee'.repeat(32)}`], data: `0x${'00'.repeat(32)}` },
         success(canonicalSafeTxHash(1, SAFE, queued())),
       ],
     }))
+  }
+
+  it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
+    mocks.safe = true
+    mocks.waitSafe.mockResolvedValue(HASH)
+    executedAtOnce()
+    connectedSafeRan()
 
     await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({ hash: HASH, status: 'confirmed' })
 
@@ -488,6 +514,18 @@ describe('Safe execution boundary', () => {
     expect(mocks.client.estimateGas).not.toHaveBeenCalled()
     expect(mocks.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 0n }))
     expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH)
+  })
+
+  it('does not confirm a proposal Safe{Wallet} executed at once when the execution ran another call', async () => {
+    mocks.safe = true
+    mocks.waitSafe.mockResolvedValue(HASH)
+    executedAtOnce()
+    connectedSafeRan('0xdeadbeef')
+
+    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
   })
 
   it('fails a Safe app approval whose execution logged ExecutionFailure', async () => {

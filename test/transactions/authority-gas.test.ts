@@ -1,4 +1,4 @@
-import { decodeFunctionData, toEventSelector, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -73,7 +73,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
-import { canonicalSafeTxHash } from '@bananapus/nana-sdk-core/safe-service'
+import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -653,6 +653,47 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     ).rejects.toThrow(
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
     )
+  })
+
+  it.each([
+    ['ran the reviewed call', '0x1234', true],
+    ['ran another call', '0xdead', false],
+  ] as const)('confirms a proposal Safe{Wallet} executed at once only when the execution %s', async (_, ran, confirmed) => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 1, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names a safeTxHash this app never saw.
+    mocks.waitForSafeExecutionHash.mockResolvedValue(HASH)
+    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash,
+      status: 'success',
+      logs: [{ ...SAFE_PROPOSAL_SUCCESS, topics: [SAFE_PROPOSAL_SUCCESS.topics[0], `0x${'ef'.repeat(32)}`] }],
+    }))
+    mocks.client.getTransaction.mockImplementation(async ({ hash }) => ({
+      hash,
+      from: ALICE,
+      to: SAFE,
+      input: encodeFunctionData({
+        abi: SAFE_EXEC_ABI,
+        functionName: 'execTransaction',
+        args: [TARGET, 0n, ran, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+      }),
+    }))
+
+    const sent = runAuthorityCalls({
+      calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234', label: 'Set the terminal' }],
+    })
+
+    if (confirmed) await expect(sent).resolves.toMatchObject({ directResults: [HASH] })
+    else {
+      await expect(sent).rejects.toThrow(
+        'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+      )
+    }
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
   })
 
   it('reuses an exact pending Safe app proposal without sending a duplicate', async () => {

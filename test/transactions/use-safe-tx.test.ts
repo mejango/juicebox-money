@@ -1,13 +1,22 @@
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
-import { parseAbi, toEventSelector, UserRejectedRequestError, type Address } from 'viem'
+import {
+  encodeFunctionData,
+  parseAbi,
+  toEventSelector,
+  UserRejectedRequestError,
+  zeroAddress,
+  type Address,
+  type Hex,
+} from 'viem'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   centerWallet: false,
   connected: true,
-  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn() },
+  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
   receipt: { data: undefined, isError: false } as {
     data?: {
       status: 'success' | 'reverted'
@@ -47,7 +56,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
-  SAFE_PROPOSAL_UNCONFIRMED: (await importOriginal<typeof import('@/lib/safe-connector')>()).SAFE_PROPOSAL_UNCONFIRMED,
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: () => mocks.safeConnection,
   SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
   useSafeConnection: () => mocks.safeConnection,
@@ -66,6 +75,8 @@ const EXECUTION_HASH = `0x${'cd'.repeat(32)}` as const
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
 const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
 const PAYMENT_WORD = `0x${'00'.repeat(32)}` as const
+const SAFE_PROPOSAL_UNCONFIRMED_LINE =
+  'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
   chainId: 10,
@@ -76,6 +87,14 @@ const request = {
   value: 7n,
   label: 'Transfer',
 }
+
+/** Alice's Safe running `data` as the call to Bob that `request` reviews, as an owner sends it. */
+const execTransaction = (data: Hex = encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] })) =>
+  encodeFunctionData({
+    abi: SAFE_EXEC_ABI,
+    functionName: 'execTransaction',
+    args: [BOB, 7n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+  })
 
 type SafeTxValue = ReturnType<typeof useSafeTx>
 
@@ -104,6 +123,12 @@ beforeEach(() => {
   mocks.safeConnection = false
   mocks.switchChain.mockResolvedValue(undefined)
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
+  mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+    hash,
+    from: BOB,
+    to: ALICE,
+    input: execTransaction(),
+  }))
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
@@ -722,6 +747,35 @@ describe('useSafeTx', () => {
     }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
+  })
+
+  it.each([
+    ['ran the reviewed call', execTransaction(), 'success'],
+    ['ran another call', execTransaction('0xdeadbeef'), 'pending'],
+  ] as const)('settles a proposal Safe{Wallet} executed at once only when the execution %s', async (_, input, phase) => {
+    mocks.safeConnection = true
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names a safeTxHash this app never saw.
+    mocks.waitForSafeExecutionHash.mockResolvedValueOnce(HASH)
+    mocks.publicClient.getTransaction.mockResolvedValue({ hash: HASH, from: BOB, to: ALICE, input })
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mocks.receipt = {
+      data: {
+        status: 'success',
+        transactionHash: HASH,
+        logs: [{ address: ALICE, topics: [EXECUTION_SUCCESS, `0x${'ef'.repeat(32)}`], data: PAYMENT_WORD }],
+      },
+      isError: false,
+    }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current!.phase).toBe(phase)
+    expect(mocks.publicClient.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+    if (phase === 'pending') expect(hook.ref.current!.error).toBe(SAFE_PROPOSAL_UNCONFIRMED_LINE)
   })
 
   it('treats a proven Safe execution revert as failed', async () => {

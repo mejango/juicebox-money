@@ -7,12 +7,16 @@ import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authorit
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   canonicalSafeTxHash,
-  safeExecutionResult,
   safeTransactionMatchesCall,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import {
+  isSafeConnection,
+  readSafeAppExecution,
+  SAFE_NONCE_GUIDANCE,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
@@ -155,7 +159,14 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
     throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
   }
   if (safeHash) {
-    if (safeExecutionResult(receipt, call.authority, safeHash).status !== 'success') {
+    const execution = await readSafeAppExecution({
+      client: { getTransaction: async () => tx },
+      receipt,
+      safe: call.authority,
+      proposalHash: safeHash,
+      calls: [{ to: call.target, data: call.data, value: call.value }],
+    })
+    if (execution.status !== 'success') {
       throw new Error('This receipt does not prove execution of the exact saved Safe proposal.')
     }
   } else if (!tx.to || !isAddressEqual(tx.from, call.authority) ||

@@ -102,6 +102,9 @@ export async function proposeSafeBatch({
   const receipt = await waitForTrackedReceipt(client, executionHash)
   const failure = 'The batch reverted after Safe execution.'
   if (receipt.status !== 'success') throw new Error(failure)
-  requireSafeProposalSuccess(receipt, safe, safeTxHash, failure)
+  await requireSafeProposalSuccess(
+    { client, receipt, safe, proposalHash: safeTxHash, calls },
+    failure,
+  )
   return { safeTxHash, executionHash }
 }

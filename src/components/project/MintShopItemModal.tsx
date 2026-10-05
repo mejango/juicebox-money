@@ -13,6 +13,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
+  encodeFunctionData,
   isAddress,
   zeroAddress,
   type Address,
@@ -33,9 +34,9 @@ import {
   waitForTrackedReceipt,
 } from '@bananapus/nana-sdk-core/review'
 import { shortError } from '@/lib/errors'
-import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import {
   isSafeConnection,
+  readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
@@ -249,7 +250,13 @@ export function MintShopItemModal({
         // Only the Safe's ExecutionSuccess for this proposal confirms the
         // mint. A receipt without it may still have minted, so the form will
         // not submit it again.
-        const outcome = safeExecutionResult(receipt, address, proposal).status
+        const { status: outcome } = await readSafeAppExecution({
+          client,
+          receipt,
+          safe: address,
+          proposalHash: proposal,
+          calls: [{ to: request.address, data: encodeFunctionData(request) }],
+        })
         if (outcome === 'unproven') {
           setPhase('uncertain')
           return

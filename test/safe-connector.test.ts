@@ -1,6 +1,8 @@
 import { createElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
-import type { Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type FakeConnector = { id: string; name: string; getProvider?: () => Promise<unknown> }
@@ -29,6 +31,7 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
 
 import {
   isSafeConnection,
+  readSafeAppExecution,
   useSafeConnection,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
@@ -159,5 +162,80 @@ describe('Safe execution wait', () => {
     await waitForSafeExecutionHash(10, HASH, { client })
     expect(runtime.waitForSafeExecutionHash).toHaveBeenLastCalledWith(10, HASH, { client })
     expect(runtime.getPublicClient).not.toHaveBeenCalled()
+  })
+})
+
+describe('Safe app execution', () => {
+  const SAFE = '0x1111111111111111111111111111111111111111' as Address
+  const OWNER = '0x2222222222222222222222222222222222222222' as Address
+  const TARGET = '0x5555555555555555555555555555555555555555' as Address
+  const OTHER = '0x6666666666666666666666666666666666666666' as Address
+  /** The execution's own transaction hash, which Safe{Wallet} returns when it executes at once. */
+  const EXECUTION = `0x${'cd'.repeat(32)}` as Hex
+  /** The safeTxHash the Safe's own event names. */
+  const SAFE_TX = `0x${'ef'.repeat(32)}` as Hex
+  const CALL = { to: TARGET, data: '0x1234' as Hex, value: 5n }
+  const SECOND = { to: OTHER, data: '0x5678' as Hex, value: 0n }
+
+  const receipt = (safeTxHash: Hex) => ({
+    status: 'success' as const,
+    transactionHash: EXECUTION,
+    logs: [{
+      address: SAFE,
+      topics: [toEventSelector('ExecutionSuccess(bytes32,uint256)'), safeTxHash],
+      data: `0x${'00'.repeat(32)}` as Hex,
+    }],
+  })
+  const execTransaction = (to: Address, value: bigint, data: Hex, operation: number) =>
+    encodeFunctionData({
+      abi: SAFE_EXEC_ABI,
+      functionName: 'execTransaction',
+      args: [to, value, data, operation, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+    })
+  /** A chain whose transaction EXECUTION calls `to` with `input`. */
+  const chain = (input: Hex, to: Address | null = SAFE) => ({
+    getTransaction: vi.fn(async () => ({ to, input, from: OWNER })),
+  })
+  const atOnce = (client: ReturnType<typeof chain>, calls: readonly (typeof CALL)[] = [CALL]) =>
+    readSafeAppExecution({ client, receipt: receipt(SAFE_TX), safe: SAFE, proposalHash: EXECUTION, calls })
+
+  it('binds an execution Safe{Wallet} returned at once to exactly the reviewed call', async () => {
+    const client = chain(execTransaction(TARGET, 5n, '0x1234', 0))
+    await expect(atOnce(client)).resolves.toMatchObject({ status: 'success' })
+    expect(client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
+  })
+
+  it.each([
+    ['other calldata', chain(execTransaction(TARGET, 5n, '0xdead', 0))],
+    ['another value', chain(execTransaction(TARGET, 6n, '0x1234', 0))],
+    ['another target', chain(execTransaction(OTHER, 5n, '0x1234', 0))],
+    ['a DELEGATECALL of the call', chain(execTransaction(TARGET, 5n, '0x1234', 1))],
+    ['a call to another contract', chain(execTransaction(TARGET, 5n, '0x1234', 0), OTHER)],
+    ['a contract creation', chain(execTransaction(TARGET, 5n, '0x1234', 0), null)],
+    ['something other than execTransaction', chain('0xd4d9bdcd' as Hex)],
+  ])('leaves an execution returned at once unproven when it ran %s', async (_, client) => {
+    await expect(atOnce(client)).resolves.toMatchObject({ status: 'unproven' })
+  })
+
+  it('leaves it unproven when the chain cannot show the execution', async () => {
+    const client = { getTransaction: vi.fn(async () => { throw new Error('not found') }) }
+    await expect(atOnce(client as unknown as ReturnType<typeof chain>)).resolves.toMatchObject({ status: 'unproven' })
+  })
+
+  it('binds a batch to MultiSendCallOnly running exactly the reviewed calls, in order', async () => {
+    const batch = (calls: (typeof CALL)[], value = 0n) =>
+      chain(execTransaction(MULTI_SEND_CALL_ONLY, value, encodeMultiSend(calls), 1))
+    await expect(atOnce(batch([CALL, SECOND]), [CALL, SECOND])).resolves.toMatchObject({ status: 'success' })
+    await expect(atOnce(batch([SECOND, CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+    await expect(atOnce(batch([CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+    await expect(atOnce(batch([CALL, SECOND], 1n), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+  })
+
+  it("reads a proposal executed later from the Safe's event for it, without the transaction", async () => {
+    const client = chain('0x')
+    await expect(
+      readSafeAppExecution({ client, receipt: receipt(SAFE_TX), safe: SAFE, proposalHash: SAFE_TX, calls: [CALL] }),
+    ).resolves.toMatchObject({ status: 'success' })
+    expect(client.getTransaction).not.toHaveBeenCalled()
   })
 })

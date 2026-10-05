@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAccount } from '@wagmi/core'
-import { BaseError, type Abi, type Address } from 'viem'
+import { BaseError, encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import {
   usePublicClient,
   useSwitchChain,
@@ -12,7 +12,7 @@ import {
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
-import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import type { SafeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
   requestContractTransactionReview,
@@ -22,10 +22,12 @@ import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   isSafeConnection,
+  readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
   SAFE_PROPOSAL_UNCONFIRMED,
   useSafeConnection,
   waitForSafeExecutionHash,
+  type SafeAppCall,
 } from '@/lib/safe-connector'
 
 /** How long the block-subscription watcher gets before its silence is reported. */
@@ -109,6 +111,19 @@ export function txPhaseLabel(
   return labels.idle
 }
 
+/** The call a contract write request makes. */
+function callOf(request: Pick<TxRequest, 'address' | 'abi' | 'functionName' | 'args' | 'value'>): SafeAppCall {
+  return {
+    to: request.address,
+    data: encodeFunctionData({
+      abi: request.abi,
+      functionName: request.functionName,
+      args: request.args as unknown[],
+    }),
+    value: request.value,
+  }
+}
+
 /** A friendly one-line message out of a viem/wagmi error. */
 function friendlyTxError(e: unknown): string {
   if (e instanceof BaseError) {
@@ -144,8 +159,17 @@ export function useSafeTx(chainId: number) {
     null,
   )
   const [safeConfirmationUncertain, setSafeConfirmationUncertain] = useState(false)
-  /** The Safe and proposal whose execution `hash` is, once it is known. */
-  const [safeExecution, setSafeExecution] = useState<{ safe: Address; proposalHash: `0x${string}` } | null>(null)
+  /** The Safe, proposal and reviewed call whose execution `hash` is, once it is known. */
+  const [safeExecution, setSafeExecution] = useState<{
+    safe: Address
+    proposalHash: `0x${string}`
+    call: SafeAppCall
+  } | null>(null)
+  /** What the execution proves about the proposal, for the receipt it read. */
+  const [safeOutcome, setSafeOutcome] = useState<{
+    receipt: Hex
+    status: SafeExecutionResult['status']
+  } | null>(null)
   const inFlightRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
@@ -227,22 +251,43 @@ export function useSafeTx(chainId: number) {
   // A successful receipt *query* can still contain an onchain revert. Only the
   // receipt's status is authoritative, and for a Safe execution, the Safe's own
   // event for this proposal: ExecutionSuccess settles it, ExecutionFailure fails
-  // it, and a receipt with neither leaves it unconfirmed. A receipt RPC error
+  // it, and a receipt with neither leaves it unconfirmed. An execution Safe{Wallet}
+  // returned at once must also have run the reviewed call. A receipt RPC error
   // leaves the already submitted transaction pending/unknown so the UI never
   // invites a duplicate submission merely because confirmation could not be read.
-  const safeOutcome =
+  useEffect(() => {
+    if (phase !== 'pending' || receiptData?.status !== 'success' || !safeExecution || !publicClient) return
+    let cancelled = false
+    const read = receiptData.transactionHash
+    void readSafeAppExecution({
+      client: publicClient,
+      receipt: receiptData,
+      safe: safeExecution.safe,
+      proposalHash: safeExecution.proposalHash,
+      calls: [safeExecution.call],
+    })
+      .catch(() => ({ status: 'unproven' as const }))
+      .then(({ status }) => {
+        if (!cancelled) setSafeOutcome({ receipt: read, status })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [phase, receiptData, safeExecution, publicClient])
+  const outcome =
     phase === 'pending' && receiptData?.status === 'success' && safeExecution
-      ? safeExecutionResult(receiptData, safeExecution.safe, safeExecution.proposalHash).status
+      ? safeOutcome?.receipt === receiptData.transactionHash
+        ? safeOutcome.status
+        : 'reading'
       : null
-  const safeExecutionReverted = safeOutcome === 'failed' || safeOutcome === 'reverted'
-  const safeExecutionUnproven = safeOutcome === 'unproven'
+  const safeExecutionReverted = outcome === 'failed' || outcome === 'reverted'
+  const safeExecutionUnproven = outcome === 'unproven'
   const receiptReverted =
     phase === 'pending' && (receiptData?.status === 'reverted' || safeExecutionReverted)
   const effectivePhase: TxPhase =
     phase === 'pending' &&
     receiptData?.status === 'success' &&
-    !safeExecutionReverted &&
-    !safeExecutionUnproven
+    (outcome === null || outcome === 'success')
       ? 'success'
       : receiptReverted
         ? 'error'
@@ -290,11 +335,14 @@ export function useSafeTx(chainId: number) {
       setSafeProposalHash(null)
       setSafeConfirmationUncertain(false)
       setSafeExecution(null)
+      setSafeOutcome(null)
       setPolledReceipt(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
       const account = options.reviewedAccount
+      /** The exact call simulated and sent, which a Safe execution must run. */
+      let sentCall = callOf(request)
       try {
         const txHash = await submitReviewedContractWrite({
           request,
@@ -342,6 +390,7 @@ export function useSafeTx(chainId: number) {
           // value must succeed before a signature is requested. Only the
           // simulation result reaches the wallet writer.
           simulate: async reviewed => {
+            sentCall = callOf(reviewed)
             const simulationRequest = {
               address: reviewed.address,
               abi: reviewed.abi,
@@ -374,8 +423,10 @@ export function useSafeTx(chainId: number) {
           onPhase: setPhase,
         })
         setHash(txHash)
-        if (viaSafe) setSafeProposalHash(txHash)
-        if (viaSafe) setSafeExecution({ safe: account, proposalHash: txHash })
+        if (viaSafe) {
+          setSafeProposalHash(txHash)
+          setSafeExecution({ safe: account, proposalHash: txHash, call: sentCall })
+        }
         setPhase('pending')
         return txHash
       } catch (e) {
@@ -400,6 +451,7 @@ export function useSafeTx(chainId: number) {
     setSafeProposalHash(null)
     setSafeConfirmationUncertain(false)
     setSafeExecution(null)
+    setSafeOutcome(null)
   }, [])
 
   return {

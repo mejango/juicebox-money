@@ -722,10 +722,14 @@ async function sendContractAndConfirm({
     throw new Error(`${functionName} reverted onchain (tx ${hash}).`)
   }
   if (proposal) {
-    requireSafeProposalSuccess(
-      receipt,
-      account,
-      proposal,
+    await requireSafeProposalSuccess(
+      {
+        client,
+        receipt,
+        safe: account,
+        proposalHash: proposal,
+        calls: [{ to: address, data }],
+      },
       `${functionName} reverted after Safe execution (tx ${hash}).`,
     )
   }
