@@ -173,7 +173,18 @@ and the check fails on a missing marker.
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
-  `transactions/relayr-orchestration.test.ts`. Quotes bind each posted call to
+  `transactions/relayr-orchestration.test.ts`. A payment proven reverted
+  onchain leaves its quote to be paid once more, on the same chain, and only
+  when the SDK's retry rule clears every payment the session sent for it: each
+  reverted, the quote still open, and Relayr's uncached bundle unpaid with every
+  call pending. A declined retry stays on that rule. Covered for authority
+  actions, payer deployments and launches in
+  `transactions/relayr-orchestration.test.ts`,
+  `transactions/payer-relayr.test.ts` and `transactions/launch-relayr.test.ts`;
+  the editors route such a bundle back to its original calls
+  (`components/metadata-editor.test.tsx`,
+  `components/edit-splits-multichain.test.tsx`,
+  `components/queue-ruleset-multichain.test.tsx`). Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
   (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the

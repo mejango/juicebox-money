@@ -36,6 +36,7 @@ import {
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
+  relayrSessionAwaitsPayment,
   relayrTargetSupportsForwarder,
   runRelayrCalls,
   type RelayrCall,
@@ -552,13 +553,10 @@ export async function runAuthorityCalls({
   // case a fresh simulation may now revert and must not lead to a duplicate
   // quote or payment.
   for (const reviewed of reviewedGroups) {
-    if (
-      reviewed.mode !== 'relayr' ||
-      !reviewed.pendingScope ||
-      !loadRelayrPendingSession(reviewed.pendingScope)
-    ) {
-      continue
-    }
+    const pending = reviewed.mode === 'relayr' && reviewed.pendingScope
+      ? loadRelayrPendingSession(reviewed.pendingScope)
+      : null
+    if (!pending) continue
     const recovered = await runRelayrCalls({
       calls: toRelayrCalls(reviewed.calls),
       account: connected,
@@ -566,7 +564,7 @@ export async function runAuthorityCalls({
       onProgress: reportRelayrProgress,
       paymentChainId,
       preferredPaymentChainId: startChainId,
-      reverify: loadRelayrPendingSession(reviewed.pendingScope)?.paymentStatus === 'unpaid'
+      reverify: relayrSessionAwaitsPayment(pending)
         ? () => reverifyRelayrGroup(reviewed.calls)
         : undefined,
     })

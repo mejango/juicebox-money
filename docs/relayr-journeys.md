@@ -110,7 +110,12 @@ atomic.
   insufficient signed gas limit stops funding.
 - Payment submission is journaled before asking the wallet to send. Once a
   payment might have been broadcast, a timeout or missing hash requires
-  reconciliation of that attempt, never an automatic second payment.
+  reconciliation of that attempt, never an automatic second payment. A payment
+  is proven from the chain under the hash it was mined. One proven reverted
+  leaves its quote to be paid once more, never replaced, and only when the
+  SDK's retry rule clears every payment sent for it: each reverted, the quote
+  still open, and Relayr's bundle, read without a cache, unpaid with every call
+  pending.
 - Relayr's response supplies candidate transaction hashes. Completion requires
   checking the exact destination transaction and its canonical receipt. Safe
   execution additionally needs its Safe transaction proof.

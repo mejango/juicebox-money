@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
-  /** The status the chain mines a payment with. */
+  /** The status the chain mines a payment with, unless `paymentStatuses` names its hash. */
   paymentStatus: 'success' as 'success' | 'reverted',
+  paymentStatuses: new Map<string, 'success' | 'reverted'>(),
   client: {
     readContract: vi.fn(),
     request: vi.fn(),
@@ -75,6 +76,7 @@ import {
   loadRelayrPendingSession,
   listRelayrPendingScopes,
   clearRelayrPendingSession,
+  resumeRelayrSession,
   type RelayrCall,
 } from '@/lib/relayr'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
@@ -167,7 +169,7 @@ function installChain(entries: () => readonly RelayrEntry[]) {
   mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => {
     const transaction = transactionOf(hash)
     return { transactionHash: hash, to: transaction.to, blockHash: BLOCK_HASH, blockNumber: transaction.blockNumber,
-      status: DESTINATION_HASHES.includes(hash) ? 'success' : mocks.paymentStatus }
+      status: DESTINATION_HASHES.includes(hash) ? 'success' : mocks.paymentStatuses.get(hash) ?? mocks.paymentStatus }
   })
   mocks.client.getBlock.mockResolvedValue({ hash: BLOCK_HASH })
 }
@@ -254,8 +256,10 @@ beforeEach(() => {
     throw new Error(`Unexpected RPC method ${method}`)
   })
   mocks.paymentStatus = 'success'
+  mocks.paymentStatuses.clear()
   installChain(() => [])
-  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: mocks.paymentStatus }))
+  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
+    status: mocks.paymentStatuses.get(hash) ?? mocks.paymentStatus }))
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
 })
@@ -1406,5 +1410,136 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('paying a reverted Relayr payment again', () => {
+  const SECOND_PAYMENT = `0x${'5c'.repeat(32)}` as Hex
+  const calls: RelayrCall[] = [{ chainId: 1, target: TARGET, data: '0x1234', value: 5n }]
+  const options = { calls, account: ALICE, pendingScope: 'reverted-payment' }
+
+  beforeEach(() => {
+    vi.stubGlobal('window', localStorageWindow().window)
+  })
+
+  /**
+   * Relayr: the quote binds the posted call. Until a payment the session sent
+   * succeeds, the bundle reads as `bundle` says, by default unpaid with its
+   * call pending; then Relayr runs it.
+   */
+  function relayr(bundle: Record<string, unknown> = {}, payments = [payment]) {
+    const posts = installSuccessfulBundle(payments)
+    const quote = vi.mocked(fetch).getMockImplementation()!
+    const paid = () => (loadRelayrPendingSession(options.pendingScope)?.payments ?? [])
+      .some(sent => (mocks.paymentStatuses.get(sent.hash) ?? mocks.paymentStatus) === 'success')
+    const reads = vi.fn(async () => paid()
+      ? quote(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE_UUID}`, undefined)
+      : response({ bundle_uuid: BUNDLE_UUID, payment_received: false,
+        transactions: [{ tx_uuid: OTHER_UUID, request: posts[0][0], status: { state: 'Pending' } }], ...bundle }))
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? quote(input, init) : reads())
+    return { posts, reads }
+  }
+
+  /** Pay once and see the payment revert onchain. */
+  async function revertedPayment() {
+    mocks.paymentStatuses.set(HASH, 'reverted')
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError', hash: HASH })
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'reverted', bundleUuid: BUNDLE_UUID, payments: [expect.objectContaining({ hash: HASH })],
+    })
+  }
+
+  it('pays the same quote again after proving every sent payment reverted and reading Relayr unpaid and unrun', async () => {
+    const { posts, reads } = relayr()
+    await revertedPayment()
+    mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+    expect(posts).toHaveLength(1)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
+    expect(mocks.wallet.sendTransaction.mock.calls[1][0]).toEqual(mocks.wallet.sendTransaction.mock.calls[0][0])
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE_UUID}`, expect.objectContaining({ cache: 'no-store' }))
+    expect(reads.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.sendTransaction.mock.invocationCallOrder[1])
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+  })
+
+  it.each<[string, Record<string, unknown>, RegExp]>([
+    ['Relayr reports a payment from elsewhere', { payment_received: true }, /already reports a payment for this bundle/],
+    ['a call is running', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] }, /running or run/],
+    ['a call names a destination hash', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending', data: { hash: DESTINATION_HASH } } }] }, /running or run/],
+    ['Relayr does not say whether it was paid', { payment_received: null }, /has not said/],
+    ['the read names another bundle', { bundle_uuid: OTHER_UUID }, /has not said/],
+  ])('does not pay again when %s', async (_, bundle, message) => {
+    relayr(bundle)
+    await revertedPayment()
+    await expect(runRelayrCalls(options)).rejects.toThrow(message)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted' })
+  })
+
+  it('does not pay again while Relayr is unreachable', async () => {
+    relayr()
+    await revertedPayment()
+    const quote = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? quote(input, init) : Promise.reject(new TypeError('network down')))
+    await expect(runRelayrCalls(options)).rejects.toThrow(/has not said/)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not pay again once the quote expires', async () => {
+    const start = Date.now()
+    const deadline = Math.floor(start / 1_000) + 600
+    relayr({}, [paymentFor({}, deadline)])
+    await revertedPayment()
+    vi.spyOn(Date, 'now').mockReturnValue((deadline - 15) * 1_000)
+    await expect(runRelayrCalls(options)).rejects.toThrow('This Relayr quote expired. Review the action again for a new quote.')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a retry when any payment it sent did not revert, including one before a declined retry', async () => {
+    relayr()
+    await revertedPayment()
+    mocks.paymentStatuses.set(SECOND_PAYMENT, 'reverted')
+    mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError', hash: SECOND_PAYMENT })
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(Object.assign(new Error('User rejected'), { code: 4001 }))
+    await expect(runRelayrCalls(options)).rejects.toThrow('User rejected')
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({
+      paymentStatus: 'reverted', bundleUuid: BUNDLE_UUID,
+      payments: [expect.objectContaining({ hash: HASH }), expect.objectContaining({ hash: SECOND_PAYMENT })],
+    })
+    // The first payment now reads as successful: a later one reverting proves nothing.
+    mocks.paymentStatuses.set(HASH, 'success')
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'This Relayr payment succeeded onchain, so its bundle is paid. Do not pay again.')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(3)
+    expect(mocks.requireFundingChainSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('finds a payment that reverted while the app was away, then pays the same quote again on the retry rule', async () => {
+    relayr()
+    mocks.paymentStatuses.set(HASH, 'reverted')
+    mocks.client.waitForTransactionReceipt.mockRejectedValueOnce(new Error('page closed'))
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError', hash: HASH })
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'submitted' })
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError', hash: HASH })
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted' })
+    mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('tells the account view to reopen the original action, and resolves a bundle another payment ran', async () => {
+    relayr()
+    await revertedPayment()
+    await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(
+      'This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
+    // Another payment funded the bundle after all, and Relayr ran it.
+    mocks.paymentStatuses.clear()
+    await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).resolves.toMatchObject({ paymentHash: HASH })
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 })

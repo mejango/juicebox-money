@@ -650,6 +650,26 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
+  it('pays a review whose payment reverted again through its original calls, not the saved-bundle check', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'reverted')
+      throw new Error('The Relayr funding transaction reverted onchain.')
+    })
+    const first = await renderEditor([...ROWS, PEER])
+    await saveAndReadPin(first)
+    const originalData = submittedCalls().map(call => call.data)
+    await act(async () => first.unmount())
+
+    const renderer = await renderEditor([PEER])
+    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    expect(submittedCalls().map(call => call.data)).toEqual(originalData)
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
+    expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
+    clearRelayrPendingSession(scope)
+    await act(async () => renderer.unmount())
+  })
+
   it('requires the original wallet before resuming a saved paid review', async () => {
     let scope = ''
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {

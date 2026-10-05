@@ -45,7 +45,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
-import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
+import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession } from "@/lib/relayr";
 import { relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
@@ -720,7 +720,7 @@ export function QueueRecovery({ journal, onComplete }: { journal: QueueRecoveryJ
       try {
         if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
         const saved = loadRelayrPendingSession(journal.scope);
-        if (saved?.paymentStatus === "unpaid") {
+        if (saved && relayrSessionAwaitsPayment(saved)) {
           await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
         } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => {
           if (progress.phase === "executing") setStatus(`Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`);

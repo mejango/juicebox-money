@@ -47,7 +47,7 @@ import {
   preservedMetadataKeys,
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
-import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -855,7 +855,7 @@ export function MetadataEditor({
         const account = getAccount(wagmiConfig).address
         if (!account || !isAddressEqual(account, frozen.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
         const pending = loadRelayrPendingSession(frozen.scope)
-        if (pending && pending.paymentStatus !== 'unpaid') {
+        if (pending && !relayrSessionAwaitsPayment(pending)) {
           await resumeRelayrSession({ scope: frozen.scope, account, onProgress: progress => {
             if (progress.phase === 'executing') setStatus(`Relayr reports ${progress.done}/${progress.total} complete; checking the original receipts…`)
           } })

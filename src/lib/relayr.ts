@@ -30,6 +30,7 @@ import {
   RELAYR_API,
   RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_GAS,
+  RelayrPaymentRevertedError,
   RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   bindRelayrQuote,
@@ -43,6 +44,7 @@ import {
   relayrRecordChain,
   relayrStateIsSuccess,
   relayrSupportsChain,
+  requireRelayrPaymentRetry,
   requireRelayrPaymentRuntime,
   simulateRelayrPayment,
   verifyRelayrDestinations,
@@ -117,7 +119,8 @@ export type RelayrPendingSession = {
   bundleUuid: string
   paymentHash: Hex | null
   paymentChainId: number | null
-  paymentStatus: 'unpaid' | 'sending' | 'submitted' | 'confirmed'
+  /** `reverted`: the latest payment canonically reverted; only the SDK's retry rule lets the quote be paid again. */
+  paymentStatus: 'unpaid' | 'sending' | 'submitted' | 'confirmed' | 'reverted'
   chainIds: number[]
   expectedCount: number
   records: RelayrTransactionRecord[]
@@ -134,6 +137,17 @@ export type RelayrPendingSession = {
   publishedEntries?: RelayrEntry[]
   /** Every payment sent for this bundle, as relayrPaymentDetails authenticated it, under the hash it was mined. */
   payments?: RelayrSentPayment[]
+  /** The quote's payment options as Relayr returned them, authenticated again whenever one is used. */
+  paymentOptions?: RelayrPayment[]
+}
+
+/**
+ * Whether a saved session waits on a payment, unpaid or after its payment
+ * reverted, so that only its original action, which re-proves its calls, may
+ * continue it.
+ */
+export function relayrSessionAwaitsPayment(session: Pick<RelayrPendingSession, 'paymentStatus'>): boolean {
+  return session.paymentStatus === 'unpaid' || session.paymentStatus === 'reverted'
 }
 
 export type RelayrSafeExecutionProof = {
@@ -357,6 +371,24 @@ function exactSnapshots<T>(
     : undefined
 }
 
+function relayrPaymentOptionSnapshot(payment: RelayrPayment): RelayrPayment | null {
+  if (!payment || typeof payment !== 'object' || !Number.isSafeInteger(payment.chain) ||
+      typeof payment.amount !== 'string' || typeof payment.calldata !== 'string' || typeof payment.target !== 'string' ||
+      (payment.token !== undefined && typeof payment.token !== 'string') ||
+      (payment.payment_deadline !== undefined && typeof payment.payment_deadline !== 'number' &&
+        typeof payment.payment_deadline !== 'string')) {
+    return null
+  }
+  return {
+    chain: payment.chain,
+    amount: payment.amount,
+    calldata: payment.calldata,
+    target: payment.target,
+    ...(payment.token !== undefined ? { token: payment.token } : {}),
+    ...(payment.payment_deadline !== undefined ? { payment_deadline: payment.payment_deadline } : {}),
+  }
+}
+
 function relayrBindingSnapshot(
   binding: NonNullable<RelayrQuote['expectedTransactions']>[number],
 ): NonNullable<RelayrQuote['expectedTransactions']>[number] | null {
@@ -382,6 +414,7 @@ export function saveRelayrPendingSession(
   const expectedTransactions = exactSnapshots(session.expectedTransactions, relayrBindingSnapshot)
   const publishedEntries = exactSnapshots(session.publishedEntries, relayrEntrySnapshot)
   const payments = exactSnapshots(session.payments, relayrSentPaymentSnapshot)
+  const paymentOptions = exactSnapshots(session.paymentOptions, relayrPaymentOptionSnapshot)
   const safeSession: RelayrPendingSession = {
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
@@ -405,6 +438,7 @@ export function saveRelayrPendingSession(
     ...(expectedTransactions ? { expectedTransactions } : {}),
     ...(publishedEntries ? { publishedEntries } : {}),
     ...(payments ? { payments } : {}),
+    ...(paymentOptions ? { paymentOptions } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -487,7 +521,7 @@ export function loadRelayrPendingSession(
         typeof value.paymentChainId === 'number' ? value.paymentChainId : null,
       paymentStatus:
         value.paymentStatus === 'unpaid' ? 'unpaid' : value.paymentStatus === 'sending' ? 'sending' :
-          value.paymentStatus === 'submitted' ? 'submitted' : 'confirmed',
+          value.paymentStatus === 'submitted' ? 'submitted' : value.paymentStatus === 'reverted' ? 'reverted' : 'confirmed',
       chainIds: Array.isArray(value.chainIds)
         ? value.chainIds.filter(
             (chainId): chainId is number =>
@@ -514,6 +548,7 @@ export function loadRelayrPendingSession(
         : undefined,
       publishedEntries: Array.isArray(value.publishedEntries) ? value.publishedEntries : undefined,
       payments: Array.isArray(value.payments) ? value.payments : undefined,
+      paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
     }
     // Reading a tolerant UI view must not erase malformed durable evidence before
     // the authorization path can inspect the original record strictly.
@@ -564,7 +599,7 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           !Array.isArray(value.records) || !value.records.every(record => record && typeof record === 'object') ||
           !Array.isArray(value.chainIds) || !value.chainIds.length || !value.chainIds.every(chain => Number.isSafeInteger(chain) && chain > 0) ||
           (value.account !== null && !isAddress(value.account)) ||
-          !['unpaid', 'sending', 'submitted', 'confirmed'].includes(value.paymentStatus) ||
+          !['unpaid', 'sending', 'submitted', 'confirmed', 'reverted'].includes(value.paymentStatus) ||
           (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
           (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1))) throw new Error()
       for (const entries of [value.publishedEntries, value.expectedEntries]) {
@@ -575,8 +610,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           value.expectedTransactions.length !== value.expectedCount || !value.expectedTransactions.every(binding => relayrBindingSnapshot(binding) && value.chainIds.includes(binding.chain)))) throw new Error()
       if (value.expectedSafeExecutions !== undefined && (!Array.isArray(value.expectedSafeExecutions) ||
           value.expectedSafeExecutions.length !== value.expectedCount || !value.expectedSafeExecutions.every(relayrSafeExecutionSnapshot))) throw new Error()
-      if (value.payments !== undefined && (!Array.isArray(value.payments) || !value.payments.length ||
-          value.payments.length > MAX_RELAYR_SESSION_ENTRIES || !value.payments.every(relayrSentPaymentSnapshot))) throw new Error()
+      if ((value.payments !== undefined && !exactSnapshots(value.payments, relayrSentPaymentSnapshot)) ||
+          (value.paymentOptions !== undefined && !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
       return [{ scope, session: value }]
     })
   } catch {
@@ -867,17 +902,42 @@ export function relayrPaymentOptions(
 }
 
 /**
+ * Clear a quote that was paid before for one more payment, with the SDK's
+ * retry rule for each payment sent: every one of them canonically reverted,
+ * the quote is still open, and Relayr reports the bundle unpaid with every
+ * call pending.
+ */
+async function requireRelayrRetry(sent: readonly RelayrSentPayment[], account: Address, bundleUuid: string): Promise<void> {
+  if (sent.some(payment => payment.bundleUuid !== bundleUuid)) {
+    throw new Error('A saved Relayr payment belongs to another bundle. Do not pay again; check the original bundle.')
+  }
+  const byPayment = new Map<string, { payment: RelayrSentPayment; hashes: Hex[] }>()
+  for (const payment of sent) {
+    const key = `${payment.chainId}:${payment.calldata.toLowerCase()}:${payment.amount}`
+    const group = byPayment.get(key) ?? { payment, hashes: [] }
+    group.hashes.push(payment.hash)
+    byPayment.set(key, group)
+  }
+  for (const { payment, hashes } of byPayment.values()) {
+    await requireRelayrPaymentRetry(publicClient(payment.chainId as JBChainId), { hashes, from: account, payment })
+  }
+}
+
+/**
  * Review, simulate and send one payment for a quote from the account it was
  * reviewed for, then prove it from the chain with the SDK. The option is read
  * through relayrPaymentDetails before the review, after it and right before
- * sending, and must not change in between. Resolves with the hash the payment
- * was mined under and every payment sent for the quote.
+ * sending, and must not change in between. A quote that was paid before is
+ * paid again only when the SDK's retry rule clears every payment `sent` for
+ * it, right before the wallet opens. Resolves with the hash the payment was
+ * mined under and every payment sent for the quote.
  */
 export async function relayrPay({
   payment,
   account: expectedAccount,
   bundleUuid,
   destinationChainIds,
+  sent = [],
   reverify,
   reverifyBeforeSendOnly = false,
   onSending,
@@ -889,6 +949,8 @@ export async function relayrPay({
   account: Address
   bundleUuid: string
   destinationChainIds: readonly number[]
+  /** Every payment this session already sent for the quote, each under the hash it was mined. */
+  sent?: readonly RelayrSentPayment[]
   /** Re-prove the bundle's calls before the review, after it and right before sending. */
   reverify?: () => Promise<void>
   /** Run `reverify` only right before sending, for callers that already checked when the quote was made. */
@@ -951,6 +1013,7 @@ export async function relayrPay({
   // quote immediately before the fixed-gas write.
   const details = readReviewed()
   await reverify?.()
+  if (sent.length) await requireRelayrRetry(sent, account, details.bundleUuid)
   onSending?.(details)
   let hash: Hex
   try {
@@ -967,7 +1030,7 @@ export async function relayrPay({
   }
   // Once the wallet returns a hash, a storage, receipt or proof failure is an
   // uncertain submitted outcome, never permission to quote and pay again.
-  let payments = [sentRelayrPayment(details, hash)]
+  let payments = [...sent, sentRelayrPayment(details, hash)]
   try {
     onSent?.(payments)
   } catch {
@@ -984,7 +1047,7 @@ export async function relayrPay({
   const mined = receipt.transactionHash
   if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash, chainId)
   if (mined.toLowerCase() !== hash.toLowerCase()) {
-    payments = [sentRelayrPayment(details, mined)]
+    payments = [...sent, sentRelayrPayment(details, mined)]
     try {
       onSent?.(payments)
     } catch {
@@ -1115,6 +1178,24 @@ async function verifySavedRelayrDestinations(
   })
 }
 
+/**
+ * Prove a submitted session's latest payment from the chain. A success
+ * confirms it, and a canonical revert leaves the quote to the SDK's retry
+ * rule. While the proof is unavailable the session stays submitted.
+ */
+async function proveLatestRelayrPayment(scope: string, session: RelayrPendingSession): Promise<RelayrPendingSession> {
+  const latest = session.payments?.at(-1)
+  if (!latest || !session.account || !isAddress(session.account)) return session
+  try {
+    await verifyRelayrPayment(publicClient(latest.chainId as JBChainId), { hash: latest.hash, from: session.account, payment: latest })
+  } catch (error) {
+    if (error instanceof RelayrPaymentRevertedError) saveRelayrPendingSession(scope, { ...session, paymentStatus: 'reverted' })
+    if (error instanceof RelayrProofError) throw error
+    return session
+  }
+  return saveRelayrPendingSession(scope, { ...session, paymentStatus: 'confirmed' })
+}
+
 /** Resume a persisted payment attempt using only its original quote and exact receipts. */
 async function resumeSavedRelayrSession(
   pendingScope: string,
@@ -1140,32 +1221,48 @@ async function resumeSavedRelayrSession(
   if (saved.paymentStatus === 'unpaid') {
     throw new Error('The original signatures are saved and no payment was attempted. Reopen the original action to continue with those exact authorizations.')
   }
-  if (!saved.expectedTransactions) {
+  const expectedTransactions = saved.expectedTransactions
+  if (!expectedTransactions) {
     throw new Error('This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.')
   }
+  if (saved.paymentStatus === 'submitted') saved = await proveLatestRelayrPayment(pendingScope, saved)
   let records = saved.records
   let verified = false
   if (relayrSessionFinished(records, saved.expectedCount)) {
     try { await verifySavedRelayrDestinations(saved, records); verified = true } catch { /* Refresh stale provider records. */ }
   }
   if (!verified) {
+    // A quote whose payment reverted ran only if another payment funded it,
+    // which one read shows; anything else may still be running.
+    const reverted = saved.paymentStatus === 'reverted'
     try {
       records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
         records = next
         saveRelayrPendingSession(pendingScope, { ...saved, records: next })
         reportProgress(next)
-      }, 2_500, 15_000)
+      }, reverted ? 0 : 2_500, reverted ? 0 : 15_000)
     } catch (error) {
       if (error instanceof RelayrExecutionError && error.records.length) records = error.records
       // A provider failure or missing bundle never proves that signed calls cannot execute.
       // Receipts can nevertheless prove completion even if the provider's label is wrong.
     }
   }
-  if (!verified) await verifySavedRelayrDestinations(saved, records)
+  if (!verified) {
+    try {
+      await verifySavedRelayrDestinations(saved, records)
+    } catch (error) {
+      // Nothing proves a destination of a quote whose payment reverted, unless
+      // another payment funded it; its original action pays it again.
+      if (saved.paymentStatus === 'reverted' && !(error instanceof RelayrProofError)) {
+        throw new Error('This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
+      }
+      throw error
+    }
+  }
   await onComplete?.(records)
   clearRelayrPendingSession(pendingScope)
   return { quote: { bundle_uuid: saved.bundleUuid, payment_info: [], transactions: records,
-    expectedTransactions: saved.expectedTransactions }, paymentHash: saved.paymentHash, records }
+    expectedTransactions }, paymentHash: saved.paymentHash, records }
 }
 
 function requireSessionAccount(
@@ -1255,7 +1352,7 @@ async function executeRelayrCalls({
   const saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
-    if (saved.paymentStatus !== 'unpaid') return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
+    if (!relayrSessionAwaitsPayment(saved)) return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
   }
 
   if (isSafeConnection(wagmiConfig) || calls.some(call => !relayrSupportsChain(call.chainId))) {
@@ -1310,31 +1407,51 @@ async function executeRelayrCalls({
     entries.push(await buildForwardedTx(calls[index], account))
     await reverify?.()
   }
-  let session: RelayrPendingSession = {
-    bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
-    chainIds: calls.map(call => call.chainId), expectedCount: calls.length, records: [], itemCount: calls.length,
-    account, createdAt: signedAt, publishedEntries: entries,
+  const repaying = saved?.paymentStatus === 'reverted' ? saved : null
+  let session: RelayrPendingSession
+  let quote: RelayrQuote
+  let payment: RelayrPayment
+  if (repaying) {
+    // A quote that was paid before is never replaced: it is paid again, on
+    // the chain it was paid on, and only when the SDK's retry rule clears it.
+    const latest = repaying.payments?.at(-1)
+    const option = latest && repaying.paymentOptions?.find(item => item.chain === latest.chainId)
+    if (!option || !repaying.paymentOptions || !repaying.expectedTransactions) {
+      throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+    }
+    session = repaying
+    quote = { bundle_uuid: repaying.bundleUuid, payment_info: repaying.paymentOptions,
+      transactions: repaying.records, expectedTransactions: repaying.expectedTransactions }
+    payment = option
+  } else {
+    session = {
+      bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      chainIds: calls.map(call => call.chainId), expectedCount: calls.length, records: [], itemCount: calls.length,
+      account, createdAt: signedAt, publishedEntries: entries,
+    }
+    // Posting exposes executable signatures, even when the server's response never arrives.
+    assertAuthorizationAvailable()
+    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    onProgress?.({ phase: 'quoting' })
+    quote = await relayrPostBundle(entries)
+    session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
+      paymentOptions: quote.payment_info }
+    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    const options = relayrPaymentOptions(quote, destinations)
+    if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
+    const selectedChain = paymentChainId ?? await requireFundingChainSelection(
+      options.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })),
+      preferredPaymentChainId,
+    )
+    const selected = options.find(option => option.chain === selectedChain)
+    if (!selected) throw new Error('Relayr returned no payment option on your selected funding chain. Nothing was paid.')
+    payment = selected
   }
-  // Posting exposes executable signatures, even when the server's response never arrives.
-  assertAuthorizationAvailable()
-  if (pendingScope) session = persistRelayrPublication(pendingScope, session)
-  onProgress?.({ phase: 'quoting' })
-  const quote = await relayrPostBundle(entries)
-  session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions }
-  if (pendingScope) session = persistRelayrPublication(pendingScope, session)
-  const payments = relayrPaymentOptions(quote, destinations)
-  if (!payments.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
-  const selectedChain = paymentChainId ?? await requireFundingChainSelection(
-    payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })),
-    preferredPaymentChainId,
-  )
-  const payment = payments.find(option => option.chain === selectedChain)
-  if (!payment) throw new Error('Relayr returned no payment option on your selected funding chain. Nothing was paid.')
   onProgress?.({ phase: 'paying', payment })
   session = {
     ...session,
     bundleUuid: quote.bundle_uuid,
-    paymentHash: null,
+    paymentHash: repaying ? session.paymentHash : null,
     paymentChainId: payment.chain,
     paymentStatus: 'sending',
     chainIds: calls.map(call => call.chainId),
@@ -1354,10 +1471,11 @@ async function executeRelayrCalls({
   try {
     ;({ hash: paymentHash } = await relayrPay({
       payment, account, bundleUuid: quote.bundle_uuid, destinationChainIds: destinations,
+      sent: session.payments ?? [],
       reverify: verifyBeforePayment,
       onSending: () => {
         const current = pendingScope ? loadRelayrPendingSession(pendingScope) : null
-        if (current && (current.paymentStatus !== 'unpaid' || current.bundleUuid !== quote.bundle_uuid)) {
+        if (current && (!relayrSessionAwaitsPayment(current) || current.bundleUuid !== quote.bundle_uuid)) {
           throw new Error('Another payment attempt is saved for this action. Check the original bundle before continuing.')
         }
         if (pendingScope) session = persistRelayrPublication(pendingScope, session)
@@ -1370,8 +1488,13 @@ async function executeRelayrCalls({
       },
     }))
   } catch (error) {
-    if (pendingScope && isDefiniteWalletRejection(error)) {
-      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: 'unpaid', paymentHash: null })
+    if (pendingScope && error instanceof RelayrPaymentRevertedError) {
+      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: 'reverted' })
+    } else if (pendingScope && isDefiniteWalletRejection(error)) {
+      // A declined payment sent nothing, but a quote paid before stays on the retry rule.
+      saveRelayrPendingSession(pendingScope, session.payments?.length
+        ? { ...session, paymentStatus: 'reverted' }
+        : { ...session, paymentStatus: 'unpaid', paymentHash: null })
     }
     throw error
   }

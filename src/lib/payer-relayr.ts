@@ -14,7 +14,7 @@ import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/saf
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
-import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { RelayrPaymentRevertedError, RelayrProofError, relayrDestinationHash, relayrRecordChain, relayrSupportsChains, verifyRelayrPayment, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -59,7 +59,8 @@ export type PayerDeploymentSession = {
   transport: 'direct' | 'safe' | 'relayr'
   calls: PayerDeploymentCall[]
   outcomes: PayerDeploymentOutcome[]
-  phase: 'reviewed' | 'publishing' | 'quoted' | 'payment-sending' | 'executing' | 'complete'
+  /** `payment-reverted`: the latest payment canonically reverted; only the SDK's retry rule lets the quote be paid again. */
+  phase: 'reviewed' | 'publishing' | 'quoted' | 'payment-sending' | 'payment-reverted' | 'executing' | 'complete'
   createdAt: number
   quote?: RelayrQuote
   paymentHash?: Hex
@@ -99,7 +100,7 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
       !Array.isArray(value.calls) || value.calls.length < 1 || value.calls.length > 8 ||
       new Set(value.calls.map(call => call.chainId)).size !== value.calls.length ||
       !['direct', 'safe', 'relayr'].includes(value.transport) ||
-      !['reviewed', 'publishing', 'quoted', 'payment-sending', 'executing', 'complete'].includes(value.phase) ||
+      !['reviewed', 'publishing', 'quoted', 'payment-sending', 'payment-reverted', 'executing', 'complete'].includes(value.phase) ||
       !Array.isArray(value.outcomes) || value.outcomes.length !== value.calls.length ||
       !Array.isArray(value.records)) throw new Error('The saved payer deployment is malformed. Keep it pending.')
   value.calls.forEach(assertCall)
@@ -425,26 +426,42 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       }
       if (!session.quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
       assertQuoteBindings(session)
-      if (session.phase === 'quoted') {
-        const payments = relayrPaymentOptions(session.quote, session.calls.map(call => call.chainId))
-        if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
-        const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
-        const payment = payments.find(item => item.chain === fundingChain)
-        if (!payment) throw new Error('Choose one of the quoted funding chains.')
+      const quote = session.quote
+      let paidNow = false
+      if (session.phase === 'quoted' || session.phase === 'payment-reverted') {
+        let payment: RelayrPayment | undefined
+        if (session.phase === 'payment-reverted') {
+          // A quote that was paid before is paid again on the same chain, and
+          // only when the SDK's retry rule clears it.
+          const latest = session.payments?.at(-1)
+          payment = latest && quote.payment_info.find(item => item.chain === latest.chainId)
+          if (!payment) throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+        } else {
+          const payments = relayrPaymentOptions(quote, session.calls.map(call => call.chainId))
+          if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
+          const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
+          payment = payments.find(item => item.chain === fundingChain)
+          if (!payment) throw new Error('Choose one of the quoted funding chains.')
+        }
+        const chosen = payment
+        /** The wallet holds the payment and has returned no hash for it. */
+        let sending = false
         const reverify = async () => {
           assertAccount(session)
           for (const call of session.calls) await preflight(call, zeroAddress)
         }
         try {
           const { hash } = await relayrPay({
-            payment, account: session.account, bundleUuid: session.quote.bundle_uuid,
-            destinationChainIds: session.calls.map(call => call.chainId), reverify,
+            payment: chosen, account: session.account, bundleUuid: quote.bundle_uuid,
+            destinationChainIds: session.calls.map(call => call.chainId), sent: session.payments ?? [], reverify,
             onSending: () => {
               session.phase = 'payment-sending'
-              session.paymentChainId = payment.chain
+              session.paymentChainId = chosen.chain
               persist(true)
+              sending = true
             },
             onSent: payments => {
+              sending = false
               session.payments = payments
               session.paymentHash = payments[payments.length - 1].hash
               session.phase = 'executing'
@@ -454,17 +471,36 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           session.paymentHash = hash
           session.phase = 'executing'
           persist()
+          paidNow = true
         } catch (error) {
-          if (!session.paymentHash && isDefiniteWalletRejection(error)) {
-            session.phase = 'quoted'
+          if (error instanceof RelayrPaymentRevertedError) {
+            session.phase = 'payment-reverted'
+            persist()
+          } else if (sending && isDefiniteWalletRejection(error)) {
+            // A declined payment sent nothing, but a quote paid before stays on the retry rule.
+            session.phase = session.payments?.length ? 'payment-reverted' : 'quoted'
             persist()
           }
           throw error
         }
       }
+      const latest = session.payments?.at(-1)
+      if (!paidNow && latest && session.phase === 'executing') {
+        // A payment that reverted funded nothing: the quote waits on the retry rule.
+        // A send with no hash yet stays as it is, since it may still land.
+        try {
+          await verifyRelayrPayment(publicClient(latest.chainId as JBChainId), { hash: latest.hash, from: session.account, payment: latest })
+        } catch (error) {
+          if (error instanceof RelayrPaymentRevertedError) {
+            session.phase = 'payment-reverted'
+            persist()
+          }
+          if (error instanceof RelayrProofError) throw error
+        }
+      }
       let pollError: unknown
       try {
-        await relayrPoll(session.quote.bundle_uuid, session.calls.length, records => {
+        await relayrPoll(quote.bundle_uuid, session.calls.length, records => {
           session.records = records
           persist()
         }, 2_500, 60_000)
@@ -483,7 +519,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             persist()
           }
         }
-        const binding = session.quote.expectedTransactions![index]
+        const binding = quote.expectedTransactions[index]
         const matching = session.records.filter(record => record.tx_uuid?.toLowerCase() === binding.txUuid.toLowerCase() && relayrRecordChain(record) === call.chainId)
         if (matching.length !== 1) continue
         const record = matching[0]

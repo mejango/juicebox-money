@@ -40,7 +40,7 @@ import { TxError } from '@/components/ui/TxError'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
-import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@bananapus/nana-sdk-core/review/relayr'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import {
@@ -427,7 +427,7 @@ export function SplitRecovery({ journal, onComplete }: { journal: SplitJournal; 
           }
           const saved = loadRelayrPendingSession(journal.scope)
           if (!saved) throw new Error('This saved bundle is no longer pending. Reload to read the current recipients.')
-          if (saved.paymentStatus === 'unpaid') {
+          if (relayrSessionAwaitsPayment(saved)) {
             await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
           } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => setStatus(progress.phase === 'executing'
             ? `Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`

@@ -140,6 +140,11 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 </button>
               )}
             </div>
+            {session.paymentStatus === 'reverted' ? (
+              <p className="mt-2 text-xs text-smoke-600">
+                The payment reverted onchain. Pay again from the original action.
+              </p>
+            ) : null}
             {relayrSessionExpired(session) && !projectSafeProof ? (
               <p className="mt-2 text-xs text-smoke-600">
                 Authorization deadline passed{' '}

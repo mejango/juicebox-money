@@ -260,6 +260,16 @@ describe('queue recovery after cancellation or partial execution', () => {
     expect(storage.size).toBe(2)
     await act(async () => renderer.unmount())
   })
+  it('pays a bundle whose payment reverted again through its original calls, not the saved-bundle check', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'reverted' })
+    const { renderer, completed } = await mountSaved()
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].calls.map((call: { data: string }) => call.data)).toEqual(reviewedQueueCalls(currentReview, 'current').map(call => call.data))
+    expect(mocks.resume).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+  })
   it('resumes a paid partial bundle without resimulating or submitting completed destination queues', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'confirmed' })
     const { renderer, completed, journal } = await mountSaved()
