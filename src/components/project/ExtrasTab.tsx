@@ -2,7 +2,7 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isAddress, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -39,6 +39,7 @@ type ExtrasTabProps = {
   chains: [number, number][]
   /** Per-chain project owner or revnet operator. */
   authorities: [number, string | null | undefined][]
+  deploymentCheck?: ReactNode
 }
 
 export function ExtrasTab(props: ExtrasTabProps) {
@@ -50,6 +51,15 @@ export function ExtrasTab(props: ExtrasTabProps) {
         projectId={props.projectId}
         chains={props.chains}
       />
+      {props.deploymentCheck ? (
+        <div className="card p-5">
+          <h2 className="font-agrandir text-lg font-medium">Deployment</h2>
+          <p className="mt-2 text-sm leading-relaxed text-smoke-700">
+            Check this project&apos;s deployment and data availability.
+          </p>
+          {props.deploymentCheck}
+        </div>
+      ) : null}
     </div>
   )
 }

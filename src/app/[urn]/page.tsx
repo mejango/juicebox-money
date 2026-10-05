@@ -663,6 +663,12 @@ export default async function ProjectPage({
       ([chainId]) => chainId === projectOnChain.chainId,
     )?.[1] ?? null) as Address | null,
   }));
+  const diagnosticDeployments = chains.map(row => ({
+    chainId: row.chainId,
+    projectId: row.projectId,
+    version: row.version,
+    operator: authorities.find(([id]) => id === row.chainId)?.[1],
+  }));
   const indexedHandleOperatorCandidates = await getRevnetOperatorCandidatesCached(
     urn.chainId,
     project.projectId,
@@ -844,10 +850,9 @@ export default async function ProjectPage({
             </div>
           </div>
         </header>
-        <ProjectDataStatus
-          deployments={chains.map(row => ({ chainId: row.chainId, projectId: row.projectId, version: row.version, operator: authorities.find(([id]) => id === row.chainId)?.[1] }))}
-          notice={siblings.error || activityResult.error || operator === undefined ? 'partial' : undefined}
-        />
+        {siblings.error || activityResult.error || operator === undefined ? (
+          <ProjectDataStatus deployments={diagnosticDeployments} notice="partial" />
+        ) : null}
 
         {/* Content + pay card */}
         <ProjectTabs
@@ -960,6 +965,7 @@ export default async function ProjectPage({
                   isRevnet={isRevnet}
                   chains={chainPairs}
                   authorities={authorities}
+                  deploymentCheck={<ProjectDataStatus deployments={diagnosticDeployments} />}
                   profile={{
                     name: metadata?.name ?? name,
                     tagline:

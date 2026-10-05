@@ -110,7 +110,7 @@ function ProjectDataStatusContents({
         ) : null}
         <button
           type="button"
-          className="text-smoke-700 underline underline-offset-4 hover:text-ink"
+          className={notice ? 'text-smoke-700 underline underline-offset-4 hover:text-ink' : 'btn-secondary min-h-[40px] px-4 text-sm'}
           onClick={() => { setOpen(true); void check(selected) }}
         >
           Check deployment
