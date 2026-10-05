@@ -474,6 +474,8 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             onSending: () => {
               session.phase = 'payment-sending'
               session.paymentChainId = chosen.chain
+              // The wallet's payment has no hash yet, even when an earlier one reverted.
+              delete session.paymentHash
               persist(true)
               sending = true
             },

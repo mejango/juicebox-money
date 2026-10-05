@@ -397,7 +397,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }
       // A no-hash funding attempt remains ambiguous even when destination signatures expire.
       // Re-running would risk paying twice. Keep the original funding journal for manual resolution.
-      if (journal.phase === 'payment-signing' && !journal.paymentHash) {
+      if (journal.phase === 'payment-signing') {
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
         if (await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])]) &&
@@ -581,6 +581,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         reverify: verifySigned,
         onSending: () => {
           journal!.phase = 'payment-signing'
+          // The wallet's payment has no hash yet, even when an earlier one reverted.
+          delete journal!.paymentHash
           persist() // reload during the wallet prompt cannot silently pay again
           sending = true
         },

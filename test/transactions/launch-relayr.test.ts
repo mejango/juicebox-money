@@ -828,6 +828,25 @@ describe('paying a reverted launch quote again', () => {
     expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
   })
 
+  it('retains a retry the wallet sent with no hash as it does a first payment, abandonable only after both canonical deadlines', async () => {
+    m.pay.mockImplementationOnce(reverting)
+    await expect(run()).rejects.toThrow(/reverted onchain/)
+    m.pay.mockImplementation(async ({ reverify, onSending }) => {
+      await reverify(); onSending(); throw new Error('no hash returned')
+    })
+    await expect(run()).rejects.toThrow('no hash returned')
+    expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
+    expect(loadLaunchSession()?.relayr?.paymentHash).toBeUndefined()
+    m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
+    for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    await expect(run()).rejects.toThrow('earlier payment may have been charged')
+    const saved = loadLaunchSession()!
+    expect(saved.relayr).toMatchObject({ phase: 'payment-signing', payments: [expect.objectContaining({ hash: HASH })] })
+    expect(canAbandonRelayrLaunch(saved)).toBe(true)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.pay).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, type RelayrEntry, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -627,8 +627,14 @@ describe('paying a reverted payer quote again', () => {
     const reverted = loadPayerDeployment(review.scope)!
     expect(reverted).toMatchObject({ phase: 'payment-reverted', paymentHash: PAYMENT_HASH,
       payments: [expect.objectContaining({ hash: PAYMENT_HASH, chainId: 10, bundleUuid: BUNDLE })] })
+    const pay = mocks.pay.getMockImplementation()!
+    let held: PayerDeploymentSession | null = null
+    mocks.pay.mockImplementationOnce(async (options: Parameters<typeof relayrPay>[0]) => pay({ ...options,
+      onSending: (details: RelayrPaymentDetails) => { options.onSending?.(details); held = loadPayerDeployment(review.scope) } }))
     const result = await runPayerDeployments(reverted, vi.fn())
     expect(result.phase).toBe('complete')
+    expect(held).toMatchObject({ phase: 'payment-sending', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+    expect(held!.paymentHash).toBeUndefined()
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.funding).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(2)

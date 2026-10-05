@@ -1585,7 +1585,8 @@ async function executeRelayrCalls({
   session = {
     ...session,
     bundleUuid: quote.bundle_uuid,
-    paymentHash: repaying ? session.paymentHash : null,
+    // While the wallet holds a payment it has no hash yet; `payments` keeps every earlier one.
+    paymentHash: null,
     paymentChainId: payment.chain,
     paymentStatus: 'sending',
     chainIds: calls.map(call => call.chainId),

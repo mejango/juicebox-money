@@ -1520,6 +1520,18 @@ describe('paying a reverted Relayr payment again', () => {
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 
+  it('saves no payment hash while the wallet holds a retry, keeping the reverted one in the payment history', async () => {
+    relayr()
+    await revertedPayment()
+    let held: unknown
+    mocks.wallet.sendTransaction.mockImplementationOnce(async () => {
+      held = loadRelayrPendingSession(options.pendingScope)
+      return SECOND_PAYMENT
+    })
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+    expect(held).toMatchObject({ paymentStatus: 'sending', paymentHash: null, payments: [expect.objectContaining({ hash: HASH })] })
+  })
+
   it('does not pay again while Relayr is unreachable', async () => {
     relayr()
     await revertedPayment()
