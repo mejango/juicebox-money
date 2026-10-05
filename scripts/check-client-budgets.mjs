@@ -119,8 +119,12 @@ const budgets = {
   // and in a shared lazy chunk; importing the SDK's Relayr family check on create
   // instead would avoid that copy but load the whole Relayr module there (+6.2
   // KiB on create's first load). Create stays at 491.9 KiB and home at 429.5
-  // KiB. Allow 1.2 KiB of headroom.
-  allScripts: 2495 * KIB,
+  // KiB. The review's fixes (the R104 release of a reverted quote, the proof of
+  // a quote another payment funded, the exact retry option, the bundle read
+  // before a release, and the strict session saves) measure 2495.0 KiB (+1.2),
+  // in the shared Relayr chunk, the launch and payer flows and the account
+  // card. Allow 2 KiB of headroom.
+  allScripts: 2497 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
