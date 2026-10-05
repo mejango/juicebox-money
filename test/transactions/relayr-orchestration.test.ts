@@ -1532,6 +1532,30 @@ describe('paying a reverted Relayr payment again', () => {
     expect(held).toMatchObject({ paymentStatus: 'sending', paymentHash: null, payments: [expect.objectContaining({ hash: HASH })] })
   })
 
+  it('pays again only with the exact option its last payment used, never another amount on that chain', async () => {
+    relayr()
+    await revertedPayment()
+    const saved = loadRelayrPendingSession(options.pendingScope)!
+    saveRelayrPendingSession(options.pendingScope, { ...saved, paymentOptions: [paymentFor({ amount: '200' })] })
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    saveRelayrPendingSession(options.pendingScope, { ...saved, paymentOptions: [paymentFor({ amount: '200' }), payment] })
+    mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+    expect(mocks.wallet.sendTransaction.mock.calls[1][0]).toMatchObject({ value: 100n, data: payment.calldata })
+  })
+
+  it('leaves a saved quote as it was when the wallet declines before it holds the payment', async () => {
+    installSuccessfulBundle()
+    const scope = 'declined-before-payment'
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: ALICE })
+      .mockRejectedValueOnce(Object.assign(new Error('User rejected the chain switch'), { code: 4001 }))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: scope })).rejects.toThrow('User rejected the chain switch')
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', paymentChainId: null, bundleUuid: BUNDLE_UUID })
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
   it('does not pay again while Relayr is unreachable', async () => {
     relayr()
     await revertedPayment()

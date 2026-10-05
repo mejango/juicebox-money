@@ -945,13 +945,20 @@ async function requireRelayrRetry(sent: readonly RelayrSentPayment[], account: A
   }
 }
 
-/** The saved option a quote paid before is paid again with: the one on its latest payment's chain. */
+/**
+ * The saved option a quote paid before is paid again with: exactly the one
+ * its latest payment used, on its chain with its calldata and amount.
+ */
 export function relayrRetryOption(
   payments: readonly RelayrSentPayment[] | undefined,
   options: readonly RelayrPayment[] | undefined,
 ): RelayrPayment {
   const latest = payments?.at(-1)
-  const option = latest && options?.find(item => item.chain === latest.chainId)
+  const sameAmount = (amount: unknown) => {
+    try { return typeof amount === 'string' && !!latest && BigInt(amount) === BigInt(latest.amount) } catch { return false }
+  }
+  const option = latest && options?.find(item => item.chain === latest.chainId &&
+    typeof item.calldata === 'string' && item.calldata.toLowerCase() === latest.calldata.toLowerCase() && sameAmount(item.amount))
   if (!option) throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
   return option
 }
@@ -1603,6 +1610,8 @@ async function executeRelayrCalls({
     await verifyForwardedEntries(entries, account)
   }
   let paymentHash: Hex
+  /** The wallet holds the payment and has returned no hash for it. */
+  let sending = false
   try {
     ;({ hash: paymentHash } = await relayrPay({
       payment, account, bundleUuid: quote.bundle_uuid, destinationChainIds: destinations,
@@ -1614,8 +1623,10 @@ async function executeRelayrCalls({
           throw new Error('Another payment attempt is saved for this action. Check the original bundle before continuing.')
         }
         if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+        sending = true
       },
       onSent: payments => {
+        sending = false
         const hash = payments[payments.length - 1].hash
         session = { ...session, payments, paymentHash: hash, paymentStatus: 'submitted' }
         if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
@@ -1623,13 +1634,10 @@ async function executeRelayrCalls({
       },
     }))
   } catch (error) {
-    if (pendingScope && error instanceof RelayrPaymentRevertedError) {
-      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: 'reverted' })
-    } else if (pendingScope && isDefiniteWalletRejection(error)) {
-      // A declined payment sent nothing, but a quote paid before stays on the retry rule.
-      saveRelayrPendingSession(pendingScope, session.payments?.length
-        ? { ...session, paymentStatus: 'reverted' }
-        : { ...session, paymentStatus: 'unpaid', paymentHash: null })
+    const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!session.payments?.length })
+    if (pendingScope && outcome) {
+      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: outcome,
+        paymentHash: outcome === 'reverted' ? session.payments?.at(-1)?.hash ?? null : null })
     }
     throw error
   }
