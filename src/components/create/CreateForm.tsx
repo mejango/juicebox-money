@@ -138,7 +138,6 @@ import {
   type ChainEnvironment,
 } from "@/lib/chains";
 import { itemOk, type DraftItem } from "./store-draft";
-import { relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
@@ -701,11 +700,14 @@ export function CreateForm() {
     : (owner.trim() === "" || resolvedAddress(owner) !== null) &&
       ownerOverrides.every((v) => resolvedAddress(v) !== null));
   // A saved run keeps its transport. Relayr can combine Safe deployment and
-  // the authenticated launch even when only one chain is selected.
+  // the authenticated launch even when only one chain is selected. The picker
+  // holds one environment's chains, each environment one of Relayr's network
+  // families (test/data/chains.test.ts), so this page needs no SDK Relayr
+  // module, which loads in full for any export; the launch checks the chains.
   const usesRelayr = restoredSessionRef.current
     ? restoredSessionRef.current.transport === "relayr"
-    : (selected.length > 1 || createsAuthoritySafe) &&
-      relayrSupportsChains(selected) &&
+    : selected.length > 0 &&
+      (selected.length > 1 || createsAuthoritySafe) &&
       !safeConnection;
   const approvalOk =
     isSimpleProject ||

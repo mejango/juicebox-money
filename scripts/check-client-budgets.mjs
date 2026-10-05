@@ -112,7 +112,15 @@ const budgets = {
   // line measure 2492.2 KiB; round up to the next KiB. The chain's last word before an
   // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5;
   // binding an execution on the transaction already read, 2492.7.
-  allScripts: 2493 * KIB,
+  // SDK 2.17's Relayr binding, payment proofs and retry rule, and the unpaid
+  // quote release, measure 2493.8 KiB against 2486.0 KiB on main with the same
+  // toolchain (+7.8). About 5 KiB of that is the launch journal, its Safe checks
+  // and the create draft, which webpack now emits both in create's page chunk
+  // and in a shared lazy chunk; importing the SDK's Relayr family check on create
+  // instead would avoid that copy but load the whole Relayr module there (+6.2
+  // KiB on create's first load). Create stays at 491.9 KiB and home at 429.5
+  // KiB. Allow 1.2 KiB of headroom.
+  allScripts: 2495 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
