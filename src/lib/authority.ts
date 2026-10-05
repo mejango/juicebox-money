@@ -41,12 +41,10 @@ import {
 } from '@/lib/relayr'
 import {
   canonicalSafeTxHash,
-  findPendingSafeTransaction,
   hasSafeService,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
 import {
-  getSafeNextNonce,
   runSafeCalls,
   SAFE_SERVICE,
   type SafeCallResult,
@@ -57,6 +55,7 @@ import {
   UnprovenSafeError,
 } from '@/lib/cross-chain-authority'
 import {
+  findPendingSafeAppProposal,
   isSafeConnection,
   requireSafeProposalSuccess,
   SAFE_NONCE_GUIDANCE,
@@ -649,18 +648,15 @@ export async function runAuthorityCalls({
       await call.reverifyAuthority?.()
       // A retry confirms the exact proposal already queued instead of
       // proposing it twice; a chain without Safe's service has no queue.
-      let existing: SafeQueuedTransaction | null = null
-      if (hasSafeService(call.chainId)) {
-        const nonce = await getSafeNextNonce(call.chainId, call.authority)
-        if (nonce === null) throw new Error('Could not read the Safe nonce.')
-        existing = await findPendingSafeTransaction(
-          call.chainId,
-          call.authority,
-          nonce,
-          { to: call.target, data: call.data, value: call.value },
-          SAFE_SERVICE,
-        )
-      }
+      const existing = hasSafeService(call.chainId)
+        ? await findPendingSafeAppProposal(
+            clientFor(call.chainId),
+            call.chainId,
+            call.authority,
+            { to: call.target, data: call.data, value: call.value },
+            SAFE_SERVICE,
+          )
+        : null
       if (existing) {
         await call.onSafePrepared?.(existing)
         safeResults.push({

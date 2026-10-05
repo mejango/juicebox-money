@@ -4,12 +4,15 @@ import { useSyncExternalStore } from 'react'
 import { decodeFunctionData, isAddressEqual, type Address, type Hex } from 'viem'
 import type { Config } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
-import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
+import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import {
+  findPendingSafeTransaction,
   isSafeWalletPeer,
   SAFE_EXEC_ABI,
   safeExecutionResult,
   type SafeExecutionResult,
+  type SafeQueuedTransaction,
+  type SafeServiceOptions,
   waitForSafeExecutionHash as waitForExecution,
 } from '@bananapus/nana-sdk-core/safe-service'
 import {
@@ -151,6 +154,32 @@ export async function requireSafeProposalSuccess(
   const { status } = await readSafeAppExecution(execution)
   if (status === 'unproven') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
   if (status !== 'success') throw new Error(failure)
+}
+
+/**
+ * The exact pending proposal of `call` in `safe`'s queue, read from Safe's
+ * service at the Safe's onchain nonce, or null: a Safe app never proposes a
+ * call that is already queued, whoever queued it. Throws when the nonce or
+ * the queue can't be read.
+ */
+export async function findPendingSafeAppProposal(
+  client: Parameters<typeof readBoundedSafeNonce>[0],
+  chainId: number,
+  safe: Address,
+  call: SafeAppCall,
+  service?: SafeServiceOptions,
+): Promise<SafeQueuedTransaction | null> {
+  const nonce = await readBoundedSafeNonce(client, safe).catch(() => null)
+  if (nonce === null || nonce > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Could not read the Safe nonce.')
+  }
+  return findPendingSafeTransaction(
+    chainId,
+    safe,
+    Number(nonce),
+    { to: call.to, data: call.data, value: call.value },
+    service,
+  )
 }
 
 /**

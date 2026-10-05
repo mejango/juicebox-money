@@ -49,7 +49,6 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
-  getSafeNextNonce: async () => 7,
   runSafeCalls: mocks.runSafeCalls,
 }))
 vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
@@ -63,6 +62,8 @@ vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
+  // The Safe's onchain nonce, as the pending-proposal lookup reads it.
+  readBoundedSafeNonce: async () => 7n,
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
