@@ -43,7 +43,8 @@ vi.mock('@/lib/safe-batch-presets', async original => ({
 
 import { SafeBatchProvider } from '@/components/project/SafeBatchProvider'
 import { SafeBatchTray } from '@/components/project/SafeBatchTray'
-import { buildStep, composeBatch, encodeMultiSend, MULTI_SEND_CALL_ONLY, readSafeBatch, safeBatchStorageKey, writeSafeBatch } from '@/lib/safe-batch'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
+import { buildStep, composeBatch, readSafeBatch, safeBatchStorageKey, writeSafeBatch } from '@/lib/safe-batch'
 import '../dialog-shim'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address

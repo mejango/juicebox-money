@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     estimateGas: vi.fn(),
     getBlock: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
-    getBytecode: vi.fn(),
+    getCode: vi.fn(),
   },
   wallet: { writeContract: vi.fn(), signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -29,10 +29,7 @@ const mocks = vi.hoisted(() => ({
   readSafeApprovedHash: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
-  isEip7702DelegatedEoaRuntime: vi.fn(),
-  isDeployableSafeAuthority: vi.fn(),
-  safeCreationMatchesAuthorityIdentity: vi.fn(),
-  initializerUsesSafeToL2Setup: vi.fn(),
+  prepareDeployment: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
   safe: false,
   waitSafe: vi.fn(),
@@ -49,22 +46,16 @@ vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
   requireContractTransactionReview: mocks.requireContractReview,
 }))
-vi.mock('@/lib/safe-reads', () => ({
-  readBoundedSafeThreshold: mocks.readSafeThreshold,
-  readBoundedSafeOwners: mocks.readSafeOwners,
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
   readBoundedSafeApprovedHash: mocks.readSafeApprovedHash,
+  prepareSafeSameAddressDeployment: mocks.prepareDeployment,
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
-  isEip7702DelegatedEoaRuntime: mocks.isEip7702DelegatedEoaRuntime,
-  isDeployableSafeAuthority: mocks.isDeployableSafeAuthority,
-  safeCreationMatchesAuthorityIdentity: mocks.safeCreationMatchesAuthorityIdentity,
-  initializerUsesSafeToL2Setup: mocks.initializerUsesSafeToL2Setup,
-  SAFE_TO_L2_SETUP_ADDRESS: '0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54',
-  SAFE_TO_L2_SETUP_CODE_HASH:
-    '0x2f25df28caf984366ee584e13241707e85dcd5a6ea0c14267928dafc1fd6274b',
 }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
@@ -98,7 +89,6 @@ const TARGET = '0x4444444444444444444444444444444444444444' as Address
 const FACTORY = '0x5555555555555555555555555555555555555555' as Address
 const SINGLETON = '0x6666666666666666666666666666666666666666' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
-const EIP_7702_CODE = `0xef0100${ALICE.slice(2)}` as Hex
 const TRUE_RESULT = `0x${'0'.repeat(63)}1` as Hex
 const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
@@ -167,13 +157,6 @@ beforeEach(() => {
     destination: safeIdentity(),
     matches: true,
   })
-  mocks.isEip7702DelegatedEoaRuntime.mockImplementation(
-    code => typeof code === 'string' && /^0xef0100[0-9a-f]{40}$/iu.test(code),
-  )
-  mocks.isDeployableSafeAuthority.mockImplementation(
-    identity => identity?.kind === 'safe',
-  )
-  mocks.safeCreationMatchesAuthorityIdentity.mockReturnValue(true)
   mocks.simulateStateChangingTransaction.mockResolvedValue(TRUE_RESULT)
   mocks.client.readContract.mockImplementation(async input => {
     if (input.functionName === 'approvedHashes') return 0n
@@ -219,15 +202,11 @@ beforeEach(() => {
       ],
     }
   })
-  mocks.client.getBytecode.mockImplementation(
-    async ({ address }: { address: Address }) =>
-      address === SAFE
-        ? mocks.wallet.writeContract.mock.calls.length
-          ? ('0x6000' as Hex)
-          : undefined
-        : address === ALICE || address === BOB
-          ? undefined
-          : ('0x6000' as Hex),
+  // The deployed Safe has code once the wallet has sent its deployment.
+  mocks.client.getCode.mockImplementation(async ({ address }: { address: Address }) =>
+    address === SAFE && mocks.wallet.writeContract.mock.calls.length
+      ? ('0x6000' as Hex)
+      : undefined,
   )
   mocks.wallet.writeContract.mockResolvedValue(HASH)
 })
@@ -276,324 +255,122 @@ describe('Safe execution boundary', () => {
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
 
-  it('proves the destination code and CREATE2 result before replaying a Safe', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${SAFE.slice(2)}` as Hex,
-    )
-    const reverifyAuthority = vi.fn().mockResolvedValue(undefined)
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        { sourceChainId: 10, reverifyAuthority },
-      ),
-    ).resolves.toBe(HASH)
-
-    expect(mocks.simulateStateChangingTransaction).toHaveBeenCalledWith(
-      mocks.client,
-      expect.objectContaining({
-        to: FACTORY,
-        gas: 3_000_000n,
-      }),
-    )
-    expect(reverifyAuthority).toHaveBeenCalled()
-    // The node could not measure, so the cap is both reviewed and sent.
-    expect(mocks.requireContractReview).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
-      expect.objectContaining({ label: 'Deploy Safe on this chain' }),
-    )
-    expect(mocks.wallet.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
-    )
-  })
-
-  it('does not write when Safe replay predicts another address', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${TARGET.slice(2)}` as Hex,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/would deploy.*not the expected project authority/i)
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects destination contract owners before irreversible Safe deployment', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === FACTORY || address === SINGLETON
-          ? ('0x6000' as Hex)
-          : undefined,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/owner is a contract on the destination chain/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('allows an exact delegated EOA owner through destination replay checks', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE
-          ? EIP_7702_CODE
-          : address === SAFE
-            ? undefined
-            : ('0x6000' as Hex),
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${TARGET.slice(2)}` as Hex,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/would deploy.*not the expected project authority/i)
-    expect(mocks.simulateStateChangingTransaction).toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects a 7702-prefixed contract owner before Safe deployment', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE
-          ? (`${EIP_7702_CODE}00` as Hex)
-          : address === SAFE
-            ? undefined
-            : ('0x6000' as Hex),
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/owner is a contract on the destination chain/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('treats a delegated EOA at the target address as occupied', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1
-        ? safeIdentity()
-        : { kind: 'delegated-eoa', delegation: ALICE },
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/destination state is no longer eligible/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects a destination fallback handler with different runtime code', async () => {
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256('0x6000'),
+  describe('same-address Safe deployment', () => {
+    // The SDK proves the deployment itself (its tests cover each refusal);
+    // these prove this app sends only what it proved, and names each refusal.
+    const CANONICAL_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as Address
+    const CANONICAL_SINGLETON = '0x41675C099F32341bf84BFc5382aF534df5C7461a' as Address
+    const creation = {
+      factory: CANONICAL_FACTORY,
+      singleton: CANONICAL_SINGLETON,
+      initializer: '0x1234' as Hex,
+      saltNonce: 7n,
     }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? ('0x6001' as Hex)
-            : ('0x6000' as Hex),
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects an exact delegated fallback even when its marker hash matches', async () => {
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256(EIP_7702_CODE),
+    const call = {
+      target: CANONICAL_FACTORY,
+      data: '0xabcd' as Hex,
+      abi: [],
+      functionName: 'createProxyWithNonce' as const,
+      args: [CANONICAL_SINGLETON, '0x1234' as Hex, 7n] as const,
     }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? EIP_7702_CODE
-            : ('0x6000' as Hex),
-    )
+    const deploy = (reverifyAuthority = vi.fn().mockResolvedValue(undefined)) =>
+      deploySafeSameAddress(1, creation, SAFE, { sourceChainId: 10, reverifyAuthority })
 
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
+    beforeEach(() => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: true, call, source: safeIdentity() })
+    })
 
-  it('fails closed on a 7702-prefix-plus-extra fallback mismatch', async () => {
-    const sourceCode = `${EIP_7702_CODE}00` as Hex
-    const destinationCode = `${EIP_7702_CODE}01` as Hex
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256(sourceCode),
-    }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? destinationCode
-            : ('0x6000' as Hex),
-    )
+    it('reviews and sends exactly the factory call the SDK proved, proving it again first', async () => {
+      const reverifyAuthority = vi.fn().mockResolvedValue(undefined)
 
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+      await expect(deploy(reverifyAuthority)).resolves.toBe(HASH)
+
+      expect(mocks.prepareDeployment).toHaveBeenCalledWith({
+        sourceClient: mocks.client,
+        destinationClient: mocks.client,
+        creation,
+        safe: SAFE,
+        from: ALICE,
+      })
+      // Once before the review, and again before the wallet sends.
+      expect(mocks.prepareDeployment.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(reverifyAuthority).toHaveBeenCalled()
+      // The node could not measure, so the cap is both reviewed and sent.
+      expect(mocks.requireContractReview).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
+        expect.objectContaining({ label: 'Deploy Safe on this chain' }),
+      )
+      expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          address: CANONICAL_FACTORY,
+          functionName: 'createProxyWithNonce',
+          args: call.args,
+          gas: 3_000_000n,
+        }),
+      )
+      expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+        expect.objectContaining({ authority: SAFE }),
+      )
+    })
+
+    it.each([
+      ['address-occupied', /already has code on this chain/],
+      ['contract-owner', /owner is a contract on the destination chain/],
+      ['fallback-handler-mismatch', /fallback handler bytecode does not match/],
+      ['delegated-fallback-handler', /fallback handler bytecode does not match/],
+      ['factory-mismatch', /factory or singleton bytecode does not match/],
+      ['singleton-unavailable', /factory or singleton bytecode does not match/],
+      ['setup-library-mismatch', /SafeToL2Setup library is missing or altered/],
+      ['unexpected-address', /would not deploy/],
+      ['simulation-failed', /would not deploy/],
+      ['initializer-policy-mismatch', /no longer eligible for same-address deployment/],
+      ['not-a-safe', /no longer eligible for same-address deployment/],
+      ['rpc-error', /Could not verify this Safe onchain/],
+    ] as const)('names the SDK refusal %s and sends nothing', async (reason, message) => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: false, reason })
+
+      await expect(deploy()).rejects.toThrow(message)
+      expect(mocks.requireContractReview).not.toHaveBeenCalled()
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it("refuses Safe 1.3.0's EIP-155 deployment before reading anything", async () => {
+      await expect(
+        deploySafeSameAddress(
+          1,
+          { ...creation, factory: '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC' },
+          SAFE,
+          { sourceChainId: 10, reverifyAuthority: vi.fn() },
+        ),
+      ).rejects.toThrow(/no longer eligible for same-address deployment/)
+      expect(mocks.prepareDeployment).not.toHaveBeenCalled()
+    })
+
+    it('refuses a wallet that does not sign for the source Safe', async () => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: true, call, source: safeIdentity([BOB]) })
+
+      await expect(deploy()).rejects.toThrow(`Switch to a current signer of ${SAFE}.`)
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it('sends nothing when the source policy changes before the wallet sends', async () => {
+      mocks.prepareDeployment
+        .mockResolvedValueOnce({ valid: true, call, source: safeIdentity() })
+        .mockResolvedValue({ valid: true, call, source: safeIdentity([ALICE, BOB], 2) })
+
+      await expect(deploy()).rejects.toThrow(/policy or nonce changed/i)
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it('does not report a deployment whose Safe does not match the source', async () => {
+      mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+        source: safeIdentity(),
+        destination: safeIdentity([BOB]),
+        matches: false,
+      })
+
+      await expect(deploy()).rejects.toThrow(/does not match the live source Safe/)
+    })
   })
 
   it('refuses to run or execute Safe calls while view-as is active', async () => {

@@ -14,12 +14,9 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  decodeFunctionData,
   encodeFunctionData,
-  encodePacked,
   getAddress,
   isAddress,
-  size,
   type Abi,
   type Address,
   type Hex,
@@ -672,77 +669,6 @@ export async function mirrorBatch(
     }
   }
   return { steps: mirrored, skipped }
-}
-
-// ---------------------------------------------------------------------------
-// MultiSend
-// ---------------------------------------------------------------------------
-
-/** Safe 1.3.0 canonical MultiSendCallOnly, same address on every supported chain. */
-export const MULTI_SEND_CALL_ONLY =
-  '0x40A2aCCbd92BCA938b02010E17A5b8929b49130D' as Address
-
-export const multiSendAbi = [
-  {
-    type: 'function',
-    name: 'multiSend',
-    stateMutability: 'payable',
-    inputs: [{ name: 'transactions', type: 'bytes' }],
-    outputs: [],
-  },
-] as const
-
-/** Each call packed as `uint8 operation=0 ‖ address to ‖ uint256 value ‖ uint256 data.length ‖ bytes data`. */
-export function packMultiSend(calls: readonly BatchCall[]): Hex {
-  return `0x${calls
-    .map(call =>
-      encodePacked(
-        ['uint8', 'address', 'uint256', 'uint256', 'bytes'],
-        [0, call.to, call.value, BigInt(size(call.data)), call.data],
-      ).slice(2),
-    )
-    .join('')}`
-}
-
-export function encodeMultiSend(calls: readonly BatchCall[]): Hex {
-  if (!calls.length) throw new Error('A batch needs at least one call.')
-  return encodeFunctionData({
-    abi: multiSendAbi,
-    functionName: 'multiSend',
-    args: [packMultiSend(calls)],
-  })
-}
-
-/** The calls inside `multiSend` calldata, or null when it is not a plain CALL-only batch. */
-export function decodeMultiSend(data: Hex | null | undefined): BatchCall[] | null {
-  if (!data) return null
-  let packed: Hex
-  try {
-    const decoded = decodeFunctionData({ abi: multiSendAbi, data })
-    packed = decoded.args[0]
-  } catch {
-    return null
-  }
-  const bytes = packed.slice(2).toLowerCase()
-  if (bytes.length % 2 !== 0) return null
-  const calls: BatchCall[] = []
-  let offset = 0
-  while (offset < bytes.length) {
-    // 1 + 20 + 32 + 32 bytes of header before the call data.
-    if (bytes.length - offset < 170) return null
-    const operation = bytes.slice(offset, offset + 2)
-    if (operation !== '00') return null
-    const to = `0x${bytes.slice(offset + 2, offset + 42)}`
-    const value = BigInt(`0x${bytes.slice(offset + 42, offset + 106)}`)
-    const length = Number(BigInt(`0x${bytes.slice(offset + 106, offset + 170)}`))
-    const start = offset + 170
-    const end = start + length * 2
-    if (!Number.isSafeInteger(length) || end > bytes.length) return null
-    if (!isAddress(to)) return null
-    calls.push({ to: getAddress(to), value, data: `0x${bytes.slice(start, end)}` })
-    offset = end
-  }
-  return calls.length ? calls : null
 }
 
 // ---------------------------------------------------------------------------

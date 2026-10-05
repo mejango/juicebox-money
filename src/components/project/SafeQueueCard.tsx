@@ -59,7 +59,6 @@ import {
   type RelayrTransactionRecord,
 } from "@/lib/relayr";
 import { relayrSupportsChains } from "@/lib/relayr-chains";
-import { decodeMultiSend, MULTI_SEND_CALL_ONLY } from "@/lib/safe-batch";
 import {
   confirmSafeTx,
   canonicalSafeTxHash,
@@ -103,7 +102,7 @@ import {
 } from '@/lib/project-handles'
 import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
-import { readBoundedSafeNonce } from '@/lib/safe-reads'
+import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import { rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 
@@ -929,8 +928,7 @@ function callLabel(chainId: JBChainId, to: Address, data: Hex | null | undefined
 
 /** The labelled inner calls of a queued operator batch, or null for any other row. */
 export function batchCallLabels(chainId: JBChainId, tx: SafeQueuedTx): string[] | null {
-  if (Number(tx.operation ?? 0) !== 1 || !isAddressEqual(tx.to, MULTI_SEND_CALL_ONLY)) return null;
-  const calls = decodeMultiSend(tx.data);
+  const calls = multiSendCallsOf(tx);
   return calls ? calls.map(call => callLabel(chainId, call.to, call.data)) : null;
 }
 

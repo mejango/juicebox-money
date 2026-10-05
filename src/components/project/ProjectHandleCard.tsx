@@ -33,15 +33,15 @@ import {
 import { chainName } from '@/lib/urn'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
-import {
-  deploySafeSameAddress,
-  fetchSafeCreation,
-  safeQueueLink,
-} from '@/lib/safe'
+import { deploySafeSameAddress, safeQueueLink } from '@/lib/safe'
 import {
   isDeployableSafeAuthority,
+  validateSafeCreationForCurrentPolicy,
+} from '@bananapus/nana-sdk-core/safe'
+import { fetchSafeCreation } from '@bananapus/nana-sdk-core/safe-service'
+import {
+  isCanonicalSafeCreation,
   readMatchingAuthorityIdentities,
-  safeCreationMatchesAuthorityIdentity,
 } from '@/lib/cross-chain-authority'
 
 type ProjectHandleState = {
@@ -793,7 +793,10 @@ export function ProjectHandleCard({
       if (!creation) {
         throw new Error('Could not read the Safe’s canonical creation config.')
       }
-      if (!safeCreationMatchesAuthorityIdentity(creation, before.source)) {
+      if (
+        !isCanonicalSafeCreation(creation) ||
+        !validateSafeCreationForCurrentPolicy(creation, before.source).valid
+      ) {
         throw new Error(
           'This Safe’s original initializer no longer matches its current owners, threshold, fallback handler, or supported implementation. Deploy and align the Ethereum Safe in Safe before publishing.',
         )

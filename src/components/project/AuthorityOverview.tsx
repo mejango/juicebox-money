@@ -48,10 +48,10 @@ import {
 } from "@/lib/permissions";
 import {
   deploySafeSameAddress,
-  fetchSafeCreation,
   fetchSafeInfo,
   type SafeInfo,
 } from "@/lib/safe";
+import { fetchSafeCreation } from "@bananapus/nana-sdk-core/safe-service";
 import { readMatchingAuthorityIdentities } from "@/lib/cross-chain-authority";
 import { buildStep } from "@/lib/safe-batch";
 import {

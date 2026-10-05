@@ -10,7 +10,8 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
 import { listPendingSafeTxs, safeTxLink, safeUsableConfirmationCount, type SafeQueuedTx } from '@/lib/safe'
-import { composeBatch, decodeMultiSend, mirrorBatch, MULTI_SEND_CALL_ONLY, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
+import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
+import { composeBatch, mirrorBatch, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
 import { presetInfraAvailable, resolveMirrorValues } from '@/lib/safe-batch-presets'
 import { chainName } from '@/lib/urn'
 
@@ -34,8 +35,7 @@ function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: 
       const pending = await listPendingSafeTxs(chainId, authority!)
       return (
         pending.find(tx => {
-          if (tx.to.toLowerCase() !== MULTI_SEND_CALL_ONLY.toLowerCase() || Number(tx.operation) !== 1) return false
-          const calls = decodeMultiSend(tx.data)
+          const calls = multiSendCallsOf(tx)
           return !!calls && callsKey(calls) === key
         }) ?? null
       )

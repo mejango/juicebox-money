@@ -5,7 +5,7 @@ import {
 import { encodeFunctionData, zeroAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { batchCallLabels, SELECTOR_LABELS, transactionLabel } from '@/components/project/SafeQueueCard'
-import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@/lib/safe-batch'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
 

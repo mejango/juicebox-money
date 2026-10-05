@@ -45,8 +45,8 @@ vi.mock('@/lib/cross-chain-authority', async original => ({
   ...(await original<typeof import('@/lib/cross-chain-authority')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
-vi.mock('@/lib/safe-reads', async original => ({
-  ...(await original<typeof import('@/lib/safe-reads')>()),
+vi.mock('@bananapus/nana-sdk-core/safe', async original => ({
+  ...(await original<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
 }))
 vi.mock('@/lib/safe-connector', async original => ({
@@ -60,13 +60,11 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
 }))
 
 import {
-  buildStep,
-  composeBatch,
   encodeMultiSend,
   MULTI_SEND_CALL_ONLY,
   packMultiSend,
-  type BatchStep,
-} from '@/lib/safe-batch'
+} from '@bananapus/nana-sdk-core/safe'
+import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
 import {
   authorityCallForStep,
   batchActionLabel,

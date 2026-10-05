@@ -17,23 +17,22 @@ import {
 } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
-import { TESTNET_CHAINS } from '@/lib/chains'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import {
+  prepareSafeSameAddressDeployment,
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,
-} from '@/lib/safe-reads'
+  SAFE_CREATE_ABI,
+  type SafeAuthorityIdentity,
+  type SafeCreation,
+  type SafeSameAddressDeploymentRefusal,
+} from '@bananapus/nana-sdk-core/safe'
 import {
-  isEip7702DelegatedEoaRuntime,
-  isDeployableSafeAuthority,
+  isCanonicalSafeCreation,
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
-  initializerUsesSafeToL2Setup,
-  safeCreationMatchesAuthorityIdentity,
-  SAFE_TO_L2_SETUP_ADDRESS,
-  SAFE_TO_L2_SETUP_CODE_HASH,
 } from '@/lib/cross-chain-authority'
 import {
   simulateStateChangingTransaction,
@@ -55,7 +54,6 @@ import {
   safeServiceBase,
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
-  SAFE_SERVICE_PREFIX,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -221,20 +219,6 @@ const SAFE_ONCHAIN_ABI = [
   },
 ] as const
 
-const PROXY_FACTORY_ABI = [
-  {
-    type: 'function',
-    name: 'createProxyWithNonce',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: '_singleton', type: 'address' },
-      { name: 'initializer', type: 'bytes' },
-      { name: 'saltNonce', type: 'uint256' },
-    ],
-    outputs: [{ type: 'address' }],
-  },
-] as const
-
 const SAFE_TX_TYPES = {
   SafeTx: [
     { name: 'to', type: 'address' },
@@ -274,13 +258,8 @@ const SAFE_APPROVAL_WRITE_GAS = 500_000n
 export const SAFE_EXECUTION_WRITE_GAS = TRANSACTION_SIMULATION_GAS
 const SAFE_DEPLOY_WRITE_GAS = 3_000_000n
 
-type LiveSafeIdentity = Extract<
-  NonNullable<Awaited<ReturnType<typeof readAuthorityIdentity>>>,
-  { kind: 'safe' }
->
-
 type LiveSafeState = {
-  identity: LiveSafeIdentity
+  identity: SafeAuthorityIdentity
   nonce: number
 }
 
@@ -441,7 +420,7 @@ async function readLiveSafeState(
   return { identity, nonce }
 }
 
-function safePolicyFingerprint(identity: LiveSafeIdentity): string {
+function safePolicyFingerprint(identity: SafeAuthorityIdentity): string {
   return JSON.stringify({
     owners: identity.owners.map(owner => owner.toLowerCase()).sort(),
     threshold: identity.threshold,
@@ -1661,62 +1640,45 @@ function safeCallMatches(
   }
 }
 
-export type SafeCreation = {
-  factory: Address
-  singleton: Address
-  initializer: Hex
-  saltNonce: bigint
-}
+const SAME_ADDRESS_INELIGIBLE =
+  'The source Safe, creation initializer, or destination state is no longer eligible for same-address deployment.'
 
-export async function fetchSafeCreation(
+/** Why the SDK refused a same-address deployment, as this app says it. */
+function sameAddressRefusal(
+  reason: SafeSameAddressDeploymentRefusal,
   safe: Address,
-  sourceChainId?: number,
-): Promise<SafeCreation | null> {
-  // Derived from SAFE_TX_BASE rather than restated: a hard-coded list silently skips any
-  // chain added to the service map. Testnet first — a Safe being looked up during
-  // development is far more likely to live there.
-  const isTestnet = (chainId: number) =>
-    TESTNET_CHAINS.some(chain => chain.id === chainId)
-  const availableChains = Object.keys(SAFE_SERVICE_PREFIX)
-    .map(Number)
-    .sort((a, b) => Number(isTestnet(b)) - Number(isTestnet(a)))
-  // A cross-chain replay must use the creation of the exact source Safe, not
-  // a same-address record selected from another transaction service.
-  const searchOrder = sourceChainId === undefined
-    ? availableChains
-    : availableChains.includes(sourceChainId)
-      ? [sourceChainId]
-      : []
-  for (const chainId of searchOrder) {
-    const base = txBase(chainId)
-    if (!base) continue
-    try {
-      const response = await safeFetch(
-        `${base}/api/v1/safes/${getAddress(safe)}/creation/`,
-        { headers: requestHeaders() },
-      )
-      if (!response.ok) continue
-      const data = (await response.json()) as {
-        factoryAddress?: Address
-        masterCopy?: Address
-        setupData?: Hex
-        saltNonce?: string
-      }
-      if (data.factoryAddress && data.masterCopy && data.setupData) {
-        return {
-          factory: getAddress(data.factoryAddress),
-          singleton: getAddress(data.masterCopy),
-          initializer: data.setupData,
-          saltNonce: BigInt(data.saltNonce ?? 0),
-        }
-      }
-    } catch {
-      // Try the next known service.
-    }
+): string {
+  switch (reason) {
+    case 'rpc-error':
+      return 'Could not verify this Safe onchain.'
+    case 'address-occupied':
+      return `${safe} already has code on this chain. Recheck its Safe policy instead of replaying deployment.`
+    case 'factory-unavailable':
+    case 'factory-mismatch':
+    case 'singleton-unavailable':
+    case 'singleton-mismatch':
+      return 'The recognized Safe factory or singleton bytecode does not match across source and destination chains.'
+    case 'setup-library-mismatch':
+      return 'The canonical SafeToL2Setup library is missing or altered on the destination chain.'
+    case 'contract-owner':
+      return 'A source Safe owner is a contract on the destination chain, so its control policy cannot be replayed safely.'
+    case 'fallback-handler-unavailable':
+    case 'delegated-fallback-handler':
+    case 'fallback-handler-mismatch':
+      return 'The Safe fallback handler bytecode does not match across source and destination chains.'
+    case 'simulation-failed':
+    case 'unexpected-address':
+      return `The Safe creation would not deploy ${safe} on this chain.`
+    default:
+      return SAME_ADDRESS_INELIGIBLE
   }
-  return null
 }
 
+/**
+ * Deploy the source chain's Safe at its own address on `chainId`, from its
+ * creation record. The SDK proves the deployment before the review and again
+ * before the wallet sends it; the deployed Safe must then match the source.
+ */
 export async function deploySafeSameAddress(
   chainId: JBChainId,
   creation: SafeCreation,
@@ -1729,170 +1691,54 @@ export async function deploySafeSameAddress(
     reverifyAuthority: () => Promise<void>
   },
 ): Promise<Hex> {
+  if (!isCanonicalSafeCreation(creation)) {
+    throw new Error(SAME_ADDRESS_INELIGIBLE)
+  }
   const client = publicClient(chainId)
   const sourceClient = publicClient(sourceChainId)
-  const verifyDeploymentState = async (): Promise<LiveSafeState> => {
+  const signer = getAccount(wagmiConfig).address
+  if (!signer) throw new Error(`Switch to a current signer of ${expectedSafe}.`)
+  const prepare = async () => {
     await reverifyAuthority()
-    const [source, destination, nonceRaw] = await Promise.all([
-      readAuthorityIdentity(sourceClient, expectedSafe),
-      readAuthorityIdentity(client, expectedSafe),
+    const [deployment, nonceRaw] = await Promise.all([
+      prepareSafeSameAddressDeployment({
+        sourceClient,
+        destinationClient: client,
+        creation,
+        safe: expectedSafe,
+        from: signer,
+      }),
       readBoundedSafeNonce(sourceClient, expectedSafe),
     ])
-    const nonce = nonceRaw === null ? NaN : Number(nonceRaw)
-    if (
-      !source ||
-      !isDeployableSafeAuthority(source) ||
-      !safeCreationMatchesAuthorityIdentity(creation, source) ||
-      !destination ||
-      destination.kind !== 'eoa' ||
-      !Number.isSafeInteger(nonce) ||
-      nonce < 0
-    ) {
-      throw new Error(
-        'The source Safe, creation initializer, or destination state is no longer eligible for same-address deployment.',
-      )
+    if (!deployment.valid) {
+      throw new Error(sameAddressRefusal(deployment.reason, expectedSafe))
     }
-    const signer = getAccount(wagmiConfig).address
-    if (
-      !signer ||
-      !source.owners.some(
-        owner => owner.toLowerCase() === signer.toLowerCase(),
-      )
-    ) {
+    const nonce = nonceRaw === null ? NaN : Number(nonceRaw)
+    if (!Number.isSafeInteger(nonce) || nonce < 0) {
+      throw new Error(SAME_ADDRESS_INELIGIBLE)
+    }
+    if (!deployment.source.owners.some(owner => isAddressEqual(owner, signer))) {
       throw new Error(`Switch to a current signer of ${expectedSafe}.`)
     }
-    // The deterministic initializer reuses these exact owner and handler
-    // addresses. Prove their destination-chain control surface before CREATE2
-    // makes the deployment irreversible.
-    const destinationPolicyCodes = await Promise.all([
-      ...source.owners.map(owner => client.getBytecode({ address: owner })),
-      ...(!isAddressEqual(source.fallbackHandler, zeroAddress)
-        ? [client.getBytecode({ address: source.fallbackHandler })]
-        : []),
-    ])
-    if (
-      destinationPolicyCodes
-        .slice(0, source.owners.length)
-        .some(
-          code =>
-            code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code),
-        )
-    ) {
-      throw new Error(
-        'A source Safe owner is a contract on the destination chain, so its control policy cannot be replayed safely.',
-      )
+    return {
+      call: deployment.call,
+      state: { identity: deployment.source, nonce } satisfies LiveSafeState,
     }
-    if (!isAddressEqual(source.fallbackHandler, zeroAddress)) {
-      const destinationFallbackCode = destinationPolicyCodes.at(-1)
-      if (
-        !destinationFallbackCode ||
-        destinationFallbackCode === '0x' ||
-        isEip7702DelegatedEoaRuntime(destinationFallbackCode) ||
-        !source.fallbackHandlerCodeHash ||
-        keccak256(destinationFallbackCode).toLowerCase() !==
-          source.fallbackHandlerCodeHash.toLowerCase()
-      ) {
-        throw new Error(
-          'The Safe fallback handler bytecode does not match across source and destination chains.',
-        )
-      }
-    }
-    return { identity: source, nonce }
   }
-  const sourceBefore = await verifyDeploymentState()
-  const [
-    existingCode,
-    factoryCode,
-    singletonCode,
-    sourceFactoryCode,
-    sourceSingletonCode,
-    setupLibraryCode,
-  ] = await Promise.all([
-    client.getBytecode({ address: expectedSafe }),
-    client.getBytecode({ address: creation.factory }),
-    client.getBytecode({ address: creation.singleton }),
-    sourceClient.getBytecode({ address: creation.factory }),
-    sourceClient.getBytecode({ address: creation.singleton }),
-    client.getBytecode({ address: SAFE_TO_L2_SETUP_ADDRESS }),
-  ])
-  if (existingCode && existingCode !== '0x') {
-    throw new Error(
-      `${expectedSafe} already has code on this chain. Recheck its Safe policy instead of replaying deployment.`,
-    )
-  }
-  if (
-    !factoryCode ||
-    factoryCode === '0x' ||
-    !singletonCode ||
-    singletonCode === '0x' ||
-    !sourceFactoryCode ||
-    sourceFactoryCode === '0x' ||
-    !sourceSingletonCode ||
-    sourceSingletonCode === '0x' ||
-    sourceFactoryCode.toLowerCase() !== factoryCode.toLowerCase() ||
-    sourceSingletonCode.toLowerCase() !== singletonCode.toLowerCase()
-  ) {
-    throw new Error(
-      'The recognized Safe factory or singleton bytecode does not match across source and destination chains.',
-    )
-  }
-  // The initializer delegatecalls SafeToL2Setup on the destination chain, so
-  // that library's runtime must be the canonical one there too.
-  if (
-    initializerUsesSafeToL2Setup(creation.initializer) &&
-    (!setupLibraryCode ||
-      keccak256(setupLibraryCode) !== SAFE_TO_L2_SETUP_CODE_HASH)
-  ) {
-    throw new Error(
-      'The canonical SafeToL2Setup library is missing or altered on the destination chain.',
-    )
-  }
-  const args = [
-    creation.singleton,
-    creation.initializer,
-    creation.saltNonce,
-  ] as const
-  const signer = getAccount(wagmiConfig).address!
-  const rawResult = await simulateStateChangingTransaction(client, {
-    from: signer,
-    to: creation.factory,
-    data: encodeFunctionData({
-      abi: PROXY_FACTORY_ABI,
-      functionName: 'createProxyWithNonce',
-      args,
-    }),
-    gas: SAFE_DEPLOY_WRITE_GAS,
-  })
-  let predicted: Address | null = null
-  try {
-    predicted = decodeFunctionResult({
-      abi: PROXY_FACTORY_ABI,
-      functionName: 'createProxyWithNonce',
-      data: rawResult,
-    })
-  } catch {
-    // Handled by the exact-address check below.
-  }
-  if (!predicted || !isAddressEqual(predicted, expectedSafe)) {
-    throw new Error(
-      `The Safe creation would deploy ${predicted ?? 'an unreadable address'}, not the expected project authority ${expectedSafe}.`,
-    )
-  }
-  const reverifyDeployment = async () => {
-    const current = await verifyDeploymentState()
-    assertSafeStateUnchanged(sourceBefore, current)
-  }
+  const before = await prepare()
   const submission = await sendContractAndConfirm({
     chainId,
-    address: creation.factory,
-    abi: PROXY_FACTORY_ABI,
-    functionName: 'createProxyWithNonce',
-    args,
-    reverifyAuthority: reverifyDeployment,
+    address: before.call.target,
+    abi: SAFE_CREATE_ABI,
+    functionName: before.call.functionName,
+    args: before.call.args,
+    reverifyAuthority: async () => {
+      assertSafeStateUnchanged(before.state, (await prepare()).state)
+    },
     expectedAccount: signer,
   })
   for (let attempt = 0; attempt < 6; attempt++) {
-    const code = await client.getBytecode({ address: expectedSafe }).catch(() => null)
+    const code = await client.getCode({ address: expectedSafe }).catch(() => null)
     if (code && code !== '0x') {
       await reverifyAuthority()
       const confirmed = await readMatchingAuthorityIdentities({

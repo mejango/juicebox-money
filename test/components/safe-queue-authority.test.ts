@@ -40,8 +40,8 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
 }))
-vi.mock('@/lib/safe-reads', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/safe-reads')>()),
+vi.mock('@bananapus/nana-sdk-core/safe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
 }))
 
