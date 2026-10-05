@@ -369,9 +369,9 @@ export function useSafeTx(chainId: number) {
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
       const account = options.reviewedAccount
-      /** The exact call simulated and sent, which a Safe execution must run. */
-      let sentCall = callOf(request)
       try {
+        /** The exact call simulated and sent, which a Safe execution must run. */
+        let sentCall = callOf(request)
         const txHash = await submitReviewedContractWrite({
           request,
           expectedAccount: account,

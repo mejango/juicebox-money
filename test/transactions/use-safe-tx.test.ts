@@ -573,6 +573,20 @@ describe('useSafeTx', () => {
     expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, settled: true, notice: null })
   })
 
+  it('reports a request it cannot encode as an error, and takes the next one', async () => {
+    const hook = await renderHook()
+    let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
+    await act(async () => {
+      result = await hook.ref.current!.send({ ...request, functionName: 'missing' }, reviewedByAlice)
+    })
+    expect(result).toBeNull()
+    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
+    expect(mocks.requestReview).not.toHaveBeenCalled()
+
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+
   it('refuses a Center wallet before review, like view-as', async () => {
     mocks.centerWallet = true
     const hook = await renderHook()
