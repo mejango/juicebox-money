@@ -35,6 +35,7 @@ import {
   relayrPoll,
   relayrPostBundle,
   relayrRetryOption,
+  revertedRelayrQuote,
 } from '@/lib/relayr'
 import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import {
@@ -360,10 +361,21 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       return false
     }
 
-    if (journal && ['payment-signing', 'submitted', 'executing'].includes(journal.phase)) {
+    // Another payment may have funded a quote whose own payment reverted: what
+    // Relayr ran is reconciled below, never paid again.
+    let fundedElsewhere = false
+    if (journal?.phase === 'payment-reverted' && journal.quote) {
+      const reverted = await revertedRelayrQuote(journal.quote.bundle_uuid)
+      if (reverted.records) {
+        journal.records = reverted.records
+        persist()
+      }
+      fundedElsewhere = reverted.state === 'funded'
+    }
+    if (journal && (['payment-signing', 'submitted', 'executing'].includes(journal.phase) || fundedElsewhere)) {
       // A payment that reverted funded nothing: the quote waits on the retry rule.
       // A send with no hash yet stays as it is, since it may still land.
-      if (journal.phase !== 'payment-signing') {
+      if (journal.phase === 'submitted' || journal.phase === 'executing') {
         const resumed = journal
         await proveSavedRelayrPayment(resumed.payments, account, () => {
           resumed.phase = 'payment-reverted'

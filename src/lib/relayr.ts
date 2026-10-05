@@ -1168,6 +1168,38 @@ async function readRelayrBundle(
     : null
 }
 
+/** Relayr has not run the call: `pending` in any case, with no destination hash. */
+function relayrRecordPending(record: RelayrTransactionRecord): boolean {
+  const state = record?.status?.state
+  return relayrDestinationHash(record) === null && typeof state === 'string' && state.trim().toLowerCase() === 'pending'
+}
+
+/** Relayr reports a payment for the bundle, or a call running or run. */
+function relayrBundleFunded(read: RelayrBundleRead): boolean {
+  return read.paymentReceived === true || read.records.some(record => !relayrRecordPending(record))
+}
+
+/**
+ * What a quote whose own payments reverted allows, from one read of its
+ * bundle: 'funded' when Relayr reports a payment or a call running or run,
+ * so another payment funded it and its destinations are proven, never paid
+ * again; otherwise 'payable', for the SDK's retry rule. Resolves with the
+ * records Relayr reported, or null when the bundle could not be read.
+ */
+export async function revertedRelayrQuote(bundleUuid: string): Promise<{
+  state: 'funded' | 'payable'
+  records: RelayrTransactionRecord[] | null
+}> {
+  let read: Awaited<ReturnType<typeof readRelayrBundle>>
+  try {
+    read = await readRelayrBundle(bundleUuid)
+  } catch {
+    read = null
+  }
+  const bundle = read && read !== 'not-found' ? read : null
+  return { state: bundle && relayrBundleFunded(bundle) ? 'funded' : 'payable', records: bundle?.records ?? null }
+}
+
 export async function relayrPoll(
   uuid: string,
   expectedCount: number,
@@ -1269,12 +1301,16 @@ async function verifySavedRelayrDestinations(
   })
 }
 
-/** Resume a persisted payment attempt using only its original quote and exact receipts. */
+/**
+ * Resume a persisted payment attempt using only its original quote and exact
+ * receipts. `reverted` is a read of a reverted session's bundle already made.
+ */
 async function resumeSavedRelayrSession(
   pendingScope: string,
   saved: RelayrPendingSession,
   onProgress?: (progress: RelayrProgress) => void,
   onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>,
+  reverted?: Awaited<ReturnType<typeof revertedRelayrQuote>>,
 ): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -1312,33 +1348,39 @@ async function resumeSavedRelayrSession(
   if (relayrSessionFinished(records, saved.expectedCount)) {
     try { await verifySavedRelayrDestinations(saved, records); verified = true } catch { /* Refresh stale provider records. */ }
   }
-  if (!verified) {
+  if (!verified && saved.paymentStatus === 'reverted') {
     // A quote whose payment reverted ran only if another payment funded it,
-    // which one read shows; anything else may still be running.
-    const reverted = saved.paymentStatus === 'reverted'
+    // which one read of its bundle shows. Its original action pays it again.
+    const read = reverted ?? await revertedRelayrQuote(saved.bundleUuid)
+    if (read.records) {
+      records = read.records
+      saveRelayrPendingSession(pendingScope, { ...saved, records })
+      reportProgress(records)
+    }
+    if (read.state === 'payable') {
+      throw new Error('This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
+    }
+    try {
+      await verifySavedRelayrDestinations(saved, records)
+    } catch (error) {
+      if (error instanceof RelayrProofError) throw error
+      throw new Error('Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.')
+    }
+    verified = true
+  }
+  if (!verified) {
     try {
       records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
         records = next
         saveRelayrPendingSession(pendingScope, { ...saved, records: next })
         reportProgress(next)
-      }, reverted ? 0 : 2_500, reverted ? 0 : 15_000)
+      }, 2_500, 15_000)
     } catch (error) {
       if (error instanceof RelayrExecutionError && error.records.length) records = error.records
       // A provider failure or missing bundle never proves that signed calls cannot execute.
       // Receipts can nevertheless prove completion even if the provider's label is wrong.
     }
-  }
-  if (!verified) {
-    try {
-      await verifySavedRelayrDestinations(saved, records)
-    } catch (error) {
-      // Nothing proves a destination of a quote whose payment reverted, unless
-      // another payment funded it; its original action pays it again.
-      if (saved.paymentStatus === 'reverted' && !(error instanceof RelayrProofError)) {
-        throw new Error('This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
-      }
-      throw error
-    }
+    await verifySavedRelayrDestinations(saved, records)
   }
   await onComplete?.(records)
   clearRelayrPendingSession(pendingScope)
@@ -1434,6 +1476,11 @@ async function executeRelayrCalls({
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
     if (!relayrSessionAwaitsPayment(saved)) return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
+    if (saved.paymentStatus === 'reverted') {
+      // Another payment may have funded the quote: what Relayr ran is proven, never paid again.
+      const reverted = await revertedRelayrQuote(saved.bundleUuid)
+      if (reverted.state === 'funded') return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete, reverted)
+    }
   }
 
   if (isSafeConnection(wagmiConfig) || calls.some(call => !relayrSupportsChain(call.chainId))) {

@@ -816,6 +816,18 @@ describe('paying a reverted launch quote again', () => {
     expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
   })
 
+  it('proves a quote another payment funded after its own payment reverted, and never pays it again', async () => {
+    m.pay.mockImplementationOnce(reverting)
+    await expect(run()).rejects.toThrow(/reverted onchain/)
+    // Another payment funded the bundle, and Relayr ran it.
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE,
+      payment_received: true, transactions: records }), { status: 200 }))
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
+  })
+
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)

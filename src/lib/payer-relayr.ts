@@ -12,7 +12,7 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -435,8 +435,19 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       const quote = session.quote
       if (!quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
       assertQuoteBindings(session)
+      // Another payment may have funded a quote whose own payment reverted:
+      // what Relayr ran is proven below, never paid again.
+      let fundedElsewhere = false
+      if (session.phase === 'payment-reverted') {
+        const reverted = await revertedRelayrQuote(quote.bundle_uuid)
+        if (reverted.records) {
+          session.records = reverted.records
+          persist()
+        }
+        fundedElsewhere = reverted.state === 'funded'
+      }
       let paidNow = false
-      if (session.phase === 'quoted' || session.phase === 'payment-reverted') {
+      if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {
         let payment: RelayrPayment | undefined
         if (session.phase === 'payment-reverted') {
           // A quote that was paid before is paid again on the same chain, and

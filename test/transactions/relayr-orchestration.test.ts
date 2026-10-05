@@ -1442,18 +1442,26 @@ describe('paying a reverted Relayr payment again', () => {
   /**
    * Relayr: the quote binds the posted call. Until a payment the session sent
    * succeeds, the bundle reads as `bundle` says, by default unpaid with its
-   * call pending; then Relayr runs it.
+   * call pending; then Relayr runs it. A read answers after a moment, as a
+   * browser's does, unless its request is aborted first.
    */
   function relayr(bundle: Record<string, unknown> = {}, payments = [payment]) {
     const posts = installSuccessfulBundle(payments)
     const quote = vi.mocked(fetch).getMockImplementation()!
     const paid = () => (loadRelayrPendingSession(options.pendingScope)?.payments ?? [])
       .some(sent => (mocks.paymentStatuses.get(sent.hash) ?? mocks.paymentStatus) === 'success')
-    const reads = vi.fn(async () => paid()
-      ? quote(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE_UUID}`, undefined)
-      : response({ bundle_uuid: BUNDLE_UUID, payment_received: false,
-        transactions: [{ tx_uuid: OTHER_UUID, request: posts[0][0], status: { state: 'Pending' } }], ...bundle }))
-    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? quote(input, init) : reads())
+    const reads = vi.fn(async (signal?: AbortSignal | null) => {
+      await new Promise<void>((resolve, reject) => {
+        const answered = setTimeout(resolve, 5)
+        signal?.addEventListener('abort', () => { clearTimeout(answered); reject(signal.reason) }, { once: true })
+      })
+      return paid()
+        ? quote(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE_UUID}`, undefined)
+        : response({ bundle_uuid: BUNDLE_UUID, payment_received: false, ...bundle,
+          transactions: ((bundle.transactions as object[] | undefined) ?? [{ tx_uuid: OTHER_UUID, status: { state: 'Pending' } }])
+            .map(record => ({ request: posts[0][0], ...record })) })
+    })
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? quote(input, init) : reads(init?.signal))
     return { posts, reads }
   }
 
@@ -1481,18 +1489,35 @@ describe('paying a reverted Relayr payment again', () => {
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 
-  it.each<[string, Record<string, unknown>, RegExp]>([
-    ['Relayr reports a payment from elsewhere', { payment_received: true }, /already reports a payment for this bundle/],
-    ['a call is running', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] }, /running or run/],
-    ['a call names a destination hash', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending', data: { hash: DESTINATION_HASH } } }] }, /running or run/],
-    ['Relayr does not say whether it was paid', { payment_received: null }, /has not said/],
-    ['the read names another bundle', { bundle_uuid: OTHER_UUID }, /has not said/],
-  ])('does not pay again when %s', async (_, bundle, message) => {
+  it.each<[string, Record<string, unknown>]>([
+    ['Relayr does not say whether it was paid', { payment_received: null }],
+    ['the read names another bundle', { bundle_uuid: OTHER_UUID }],
+  ])('does not pay again when %s', async (_, bundle) => {
     relayr(bundle)
     await revertedPayment()
-    await expect(runRelayrCalls(options)).rejects.toThrow(message)
+    await expect(runRelayrCalls(options)).rejects.toThrow(/has not said/)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted' })
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['Relayr reports a payment from elsewhere', { payment_received: true }],
+    ['a call is running', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] }],
+  ])('proves the destinations instead of paying again when %s, and waits while they run', async (_, bundle) => {
+    relayr(bundle)
+    await revertedPayment()
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted' })
+  })
+
+  it('completes instead of paying again when a call names a destination hash that proves it ran', async () => {
+    relayr({ transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending', data: { hash: DESTINATION_HASH } } }] })
+    await revertedPayment()
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 
   it('does not pay again while Relayr is unreachable', async () => {
@@ -1516,7 +1541,7 @@ describe('paying a reverted Relayr payment again', () => {
   })
 
   it('refuses a retry when any payment it sent did not revert, including one before a declined retry', async () => {
-    relayr()
+    const { posts } = relayr()
     await revertedPayment()
     mocks.paymentStatuses.set(SECOND_PAYMENT, 'reverted')
     mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
@@ -1527,8 +1552,13 @@ describe('paying a reverted Relayr payment again', () => {
       paymentStatus: 'reverted', bundleUuid: BUNDLE_UUID,
       payments: [expect.objectContaining({ hash: HASH }), expect.objectContaining({ hash: SECOND_PAYMENT })],
     })
-    // The first payment now reads as successful: a later one reverting proves nothing.
+    // The first payment now reads as successful onchain while Relayr still
+    // reports the bundle unpaid: a later one reverting proves nothing.
     mocks.paymentStatuses.set(HASH, 'success')
+    const post = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? post(input, init)
+      : response({ bundle_uuid: BUNDLE_UUID, payment_received: false,
+        transactions: [{ tx_uuid: OTHER_UUID, request: posts[0][0], status: { state: 'Pending' } }] }))
     await expect(runRelayrCalls(options)).rejects.toThrow(
       'This Relayr payment succeeded onchain, so its bundle is paid. Do not pay again.')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(3)
@@ -1558,6 +1588,18 @@ describe('paying a reverted Relayr payment again', () => {
     await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).resolves.toMatchObject({ paymentHash: HASH })
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('proves a quote another payment funded from the original action, and never pays it again', async () => {
+    const { posts } = relayr()
+    await revertedPayment()
+    const post = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? post(input, init)
+      : response({ bundle_uuid: BUNDLE_UUID, payment_received: true, transactions: successfulRecords(posts[0]) }))
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ records: successfulRecords(posts[0]) })
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 })
 
