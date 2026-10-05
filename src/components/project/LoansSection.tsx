@@ -490,8 +490,8 @@ function RepayFlow({
     if (busy) return
     setPlan(null)
     setFlowError(null)
-    approveTx.reset()
-    if (repayTx.phase !== 'success') repayTx.reset()
+    approveTx.dismiss()
+    if (repayTx.phase !== 'success') repayTx.dismiss()
   }
 
   const repayStep = plan?.approve ? 1 : 0

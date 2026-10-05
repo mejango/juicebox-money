@@ -320,8 +320,8 @@ export function GetLoanFlow({
     setReview(null)
     setFlowError(null)
     setAwaitingBorrow(false)
-    permTx.reset()
-    if (borrowTx.phase !== 'success') borrowTx.reset()
+    permTx.dismiss()
+    if (borrowTx.phase !== 'success') borrowTx.dismiss()
   }
 
   const borrowStep = review?.needsPermission ? 1 : 0

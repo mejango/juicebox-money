@@ -617,8 +617,8 @@ export function CashOutPanel({
     setPlan(null)
     setErrorMsg(null)
     if (success) return
-    tx.reset()
-    approveTx.reset()
+    tx.dismiss()
+    approveTx.dismiss()
   }
 
   const confirmDialog = plan ? (

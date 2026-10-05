@@ -429,7 +429,7 @@ function ChainLpRows({
     if (tx.busy) return
     setPending(null)
     setStarted(false)
-    tx.reset()
+    tx.dismiss()
   }
 
   if (!address) return null

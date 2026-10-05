@@ -884,6 +884,7 @@ function GossipRow({
           onClose={() => {
             setOpen(false)
             setFlowError(null)
+            if (tx.phase === 'submitted') tx.dismiss()
           }}
           title={tx.phase === 'success' ? 'Sync sent' : 'Confirm sync'}
           rows={rows}

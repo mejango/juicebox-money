@@ -1,8 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { getAccount } from '@wagmi/core'
-import { BaseError, encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
+import {
+  BaseError,
+  encodeFunctionData,
+  type Abi,
+  type Address,
+  type Hex,
+  type TransactionReceipt,
+} from 'viem'
 import {
   usePublicClient,
   useSwitchChain,
@@ -11,8 +18,8 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
-import type { SafeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { gasWithHeadroom, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
+import { canonicalSafeTxHash, hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
   requestContractTransactionReview,
@@ -21,6 +28,7 @@ import {
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
+  findPendingSafeAppProposal,
   isSafeConnection,
   readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
@@ -51,6 +59,8 @@ export type TxPhase =
   | 'submitted'
   | 'success'
   | 'error'
+
+type FollowClient = NonNullable<ReturnType<typeof usePublicClient>>
 
 export type TxRequest = {
   chainId: number
@@ -138,6 +148,151 @@ function friendlyTxError(e: unknown): string {
   return 'Something went wrong.'
 }
 
+// ── Safe proposals ───────────────────────────────────────────────────────────
+
+/** Where a Safe proposal is, as its follow reads it. */
+type ProposalPhase =
+  /** The reply may be the execution itself: Safe{Wallet} executing at once. */
+  | 'checking'
+  /** With the Safe, awaiting its signers. */
+  | 'awaiting'
+  /** Executed: its receipt is being read. */
+  | 'executing'
+  | 'success'
+  | 'failed'
+  /** Over, but this app can't prove it ran: held until the user dismisses it. */
+  | 'unproven'
+
+type SafeProposal = {
+  chainId: number
+  safe: Address
+  call: SafeAppCall
+  /** The safeTxHash, or the execution's own hash when Safe{Wallet} executed at once. */
+  proposalHash: Hex
+  phase: ProposalPhase
+  executionHash: Hex | null
+  receipt: TransactionReceipt | null
+  /** The line for a failed or unproven result. */
+  message: string | null
+}
+
+/**
+ * Every Safe proposal made here this session, by chain, Safe and exact call.
+ * Every useSafeTx shares it and the registry follows each proposal itself, so
+ * a flow that closes, remounts or changes chain never drops one, and the same
+ * call is never proposed twice while one is pending. Nothing is persisted: a
+ * reload starts empty, and Safe's own queue answers for what it holds.
+ */
+const proposals = new Map<string, SafeProposal>()
+const proposalListeners = new Set<() => void>()
+
+function subscribeProposals(listener: () => void): () => void {
+  proposalListeners.add(listener)
+  return () => {
+    proposalListeners.delete(listener)
+  }
+}
+
+function notifyProposals(): void {
+  for (const listener of proposalListeners) listener()
+}
+
+function proposalKey(chainId: number, safe: Address, call: SafeAppCall): string {
+  return `${chainId}:${safe.toLowerCase()}:${call.to.toLowerCase()}:${call.value ?? 0n}:${call.data.toLowerCase()}`
+}
+
+function updateProposal(key: string, next: Partial<SafeProposal>): void {
+  const current = proposals.get(key)
+  if (!current) return
+  proposals.set(key, { ...current, ...next })
+  notifyProposals()
+}
+
+/** A proposal holds its call until its result: while pending, and when unproven until dismissed. */
+function holdsCall(proposal: SafeProposal | undefined): proposal is SafeProposal {
+  return !!proposal && proposal.phase !== 'success' && proposal.phase !== 'failed'
+}
+
+/** Follow a proposal to its result, whatever becomes of the flow that made it. */
+async function followProposal(key: string, client: FollowClient, reply: boolean): Promise<void> {
+  const proposal = proposals.get(key)
+  if (!proposal) return
+  const { chainId, safe, call, proposalHash } = proposal
+  // A reply the chain already knows as a transaction is the execution itself.
+  let executionHash =
+    reply &&
+    (await Promise.resolve()
+      .then(() => client.getTransaction({ hash: proposalHash }))
+      .then(
+        () => true,
+        () => false,
+      ))
+      ? proposalHash
+      : null
+  if (!executionHash) {
+    updateProposal(key, { phase: 'awaiting' })
+    try {
+      executionHash = await waitForSafeExecutionHash(chainId, proposalHash, { client })
+    } catch (reason) {
+      const message = friendlyTxError(reason)
+      updateProposal(
+        key,
+        /executed the proposal.*failed/i.test(message)
+          ? { phase: 'failed', message }
+          : { phase: 'unproven', message: `${SAFE_PROPOSAL_UNCONFIRMED} ${message}` },
+      )
+      return
+    }
+  }
+  updateProposal(key, { phase: 'executing', executionHash })
+  const failed = `Safe executed the proposal, but the onchain transaction failed (${executionHash}).`
+  let receipt: TransactionReceipt
+  try {
+    receipt = await waitForTrackedReceipt(client, executionHash)
+  } catch {
+    updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED })
+    return
+  }
+  // Only the Safe's own event for this proposal decides it, and an execution
+  // returned at once must also have run the reviewed call.
+  const { status } =
+    receipt.status === 'success'
+      ? await readSafeAppExecution({ client, receipt, safe, proposalHash, calls: [call] }).catch(
+          () => ({ status: 'unproven' as const }),
+        )
+      : { status: 'reverted' as const }
+  updateProposal(
+    key,
+    status === 'success'
+      ? { phase: 'success', receipt }
+      : status === 'unproven'
+        ? { phase: 'unproven', receipt, message: SAFE_PROPOSAL_UNCONFIRMED }
+        : { phase: 'failed', receipt, message: failed },
+  )
+}
+
+/** Record a proposal and follow it; `reply` says whether the hash is the wallet's own answer. */
+function recordProposal(
+  proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call' | 'proposalHash'>,
+  client: FollowClient,
+  reply: boolean,
+): string {
+  const key = proposalKey(proposal.chainId, proposal.safe, proposal.call)
+  proposals.set(key, {
+    ...proposal,
+    phase: reply ? 'checking' : 'awaiting',
+    executionHash: null,
+    receipt: null,
+    message: null,
+  })
+  notifyProposals()
+  // A follow that fails in any other way leaves the proposal unproven, never stuck.
+  void followProposal(key, client, reply).catch(() =>
+    updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED }),
+  )
+  return key
+}
+
 /**
  * The one transaction pipeline every project-page write flow uses
  * (website/ parity: exact review → simulate → send → status):
@@ -157,26 +312,15 @@ export function useSafeTx(chainId: number) {
 
   const [phase, setPhase] = useState<TxPhase>('idle')
   const [error, setError] = useState<string | null>(null)
+  /** The transaction an ordinary send is waiting on. */
   const [hash, setHash] = useState<`0x${string}` | null>(null)
-  const [safeProposalHash, setSafeProposalHash] = useState<`0x${string}` | null>(
-    null,
+  /** The Safe proposal this flow shows, by its key in the registry. */
+  const [shownKey, setShownKey] = useState<string | null>(null)
+  const proposal = useSyncExternalStore(
+    subscribeProposals,
+    () => (shownKey ? proposals.get(shownKey) : undefined),
+    () => undefined,
   )
-  const [safeConfirmationUncertain, setSafeConfirmationUncertain] = useState(false)
-  /** The Safe, proposal and reviewed call whose execution `hash` is, once it is known. */
-  const [safeExecution, setSafeExecution] = useState<{
-    safe: Address
-    proposalHash: `0x${string}`
-    call: SafeAppCall
-  } | null>(null)
-  /** Why tracking a proposal stopped before its result: the Safe's service was lost. */
-  const [safeLost, setSafeLost] = useState<string | null>(null)
-  /** Whether a proposal is still followed, which a reset must not drop. */
-  const followingRef = useRef(false)
-  /** What the execution proves about the proposal, for the receipt it read. */
-  const [safeOutcome, setSafeOutcome] = useState<{
-    receipt: Hex
-    status: SafeExecutionResult['status']
-  } | null>(null)
   const inFlightRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
@@ -185,7 +329,7 @@ export function useSafeTx(chainId: number) {
     // Bounded: a stalled watcher must surface as "confirmation unavailable",
     // never as a spinner that outlives the transaction it is watching.
     timeout: RECEIPT_WATCH_TIMEOUT_MS,
-    query: { enabled: !!hash && !safeProposalHash },
+    query: { enabled: !!hash },
   })
 
   // The watcher subscribes to new blocks and can sit pending forever on some
@@ -195,7 +339,7 @@ export function useSafeTx(chainId: number) {
   const [polledReceipt, setPolledReceipt] = useState<PolledReceipt | null>(null)
   useEffect(() => {
     setPolledReceipt(null)
-    if (!hash || safeProposalHash || !publicClient) return
+    if (!hash || !publicClient) return
     if (typeof publicClient.getTransactionReceipt !== 'function') return
     let cancelled = false
     let attempts = 0
@@ -218,7 +362,7 @@ export function useSafeTx(chainId: number) {
       cancelled = true
       clearInterval(timer)
     }
-  }, [hash, safeProposalHash, publicClient])
+  }, [hash, publicClient])
   // React Query may retain the prior query's data while a new hash starts.
   // Only a receipt for this exact transaction can settle this action.
   const receiptData = hash
@@ -227,113 +371,50 @@ export function useSafeTx(chainId: number) {
       )
     : undefined
 
-  useEffect(() => {
-    if (!safeProposalHash) return
-    const controller = new AbortController()
-    void waitForSafeExecutionHash(chainId, safeProposalHash, {
-      signal: controller.signal,
-    })
-      .then(executionHash => {
-        setHash(executionHash)
-        setSafeProposalHash(null)
-        setSafeConfirmationUncertain(false)
-      })
-      .catch(reason => {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return
-        const message = friendlyTxError(reason)
-        if (/executed the proposal.*failed/i.test(message)) {
-          setError(message)
-          setPhase('error')
-        } else {
-          // Losing access to Safe's service does not undo a signed proposal:
-          // it stays locked, and the result is checked in Safe.
-          setSafeLost(`${SAFE_PROPOSAL_UNCONFIRMED} ${message}`)
-          setSafeConfirmationUncertain(true)
-          setPhase('pending')
-        }
-      })
-    return () => controller.abort()
-  }, [chainId, safeProposalHash])
-
-  // A successful receipt *query* can still contain an onchain revert. Only the
-  // receipt's status is authoritative, and for a Safe execution, the Safe's own
-  // event for this proposal: ExecutionSuccess settles it, ExecutionFailure fails
-  // it, and a receipt with neither leaves it unconfirmed. An execution Safe{Wallet}
-  // returned at once must also have run the reviewed call. A receipt RPC error
-  // leaves the already submitted transaction pending/unknown so the UI never
-  // invites a duplicate submission merely because confirmation could not be read.
-  useEffect(() => {
-    if (phase !== 'pending' || receiptData?.status !== 'success' || !safeExecution || !publicClient) return
-    let cancelled = false
-    const read = receiptData.transactionHash
-    void readSafeAppExecution({
-      client: publicClient,
-      receipt: receiptData,
-      safe: safeExecution.safe,
-      proposalHash: safeExecution.proposalHash,
-      calls: [safeExecution.call],
-    })
-      .catch(() => ({ status: 'unproven' as const }))
-      .then(({ status }) => {
-        if (!cancelled) setSafeOutcome({ receipt: read, status })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [phase, receiptData, safeExecution, publicClient])
-  const outcome =
-    phase === 'pending' && receiptData?.status === 'success' && safeExecution
-      ? safeOutcome?.receipt === receiptData.transactionHash
-        ? safeOutcome.status
-        : 'reading'
-      : null
-  const safeExecutionReverted = outcome === 'failed' || outcome === 'reverted'
-  const safeExecutionUnproven = outcome === 'unproven'
-  const receiptReverted =
-    phase === 'pending' && (receiptData?.status === 'reverted' || safeExecutionReverted)
-  // Once a proposal is with the Safe, the confirm can end: while its other
-  // signers decide, or when its result can't be proven here. Either way no send
-  // goes out: a proposal still awaited stays followed (a reset leaves it) and
-  // settles once the Safe executes it; an unproven result holds the request
-  // only until it is dismissed, after its line.
-  const awaitingSigners =
-    phase === 'pending' && !!safeExecution && !!safeProposalHash && !safeConfirmationUncertain
-  const safeUnsettled =
-    phase === 'pending' && !!safeExecution && (safeConfirmationUncertain || safeExecutionUnproven)
-  const effectivePhase: TxPhase =
-    phase === 'pending' &&
-    receiptData?.status === 'success' &&
-    (outcome === null || outcome === 'success')
+  // An ordinary send settles on its receipt's status alone. A receipt RPC
+  // error leaves it pending/unknown, so the UI never invites a duplicate
+  // submission merely because confirmation could not be read.
+  const receiptReverted = phase === 'pending' && receiptData?.status === 'reverted'
+  // A Safe proposal's state is the registry's. Its confirm ends on Done while
+  // the signers decide, and when its result can't be proven here; no send of
+  // its call goes out until the Safe settles it, or the user dismisses an
+  // unproven result after its line.
+  const effectivePhase: TxPhase = proposal
+    ? proposal.phase === 'checking' || proposal.phase === 'executing'
+      ? 'pending'
+      : proposal.phase === 'awaiting' || proposal.phase === 'unproven'
+        ? 'submitted'
+        : proposal.phase === 'success'
+          ? 'success'
+          : 'error'
+    : phase === 'pending' && receiptData?.status === 'success'
       ? 'success'
       : receiptReverted
         ? 'error'
-        : awaitingSigners || safeUnsettled
-          ? 'submitted'
-          : phase
+        : phase
   const notice =
-    effectivePhase !== 'submitted'
-      ? null
-      : awaitingSigners
-        ? SAFE_PROPOSAL_AWAITING
-        : (safeLost ?? SAFE_PROPOSAL_UNCONFIRMED)
-  const following =
-    phase === 'pending' && !!safeExecution && !safeUnsettled && !receiptReverted && effectivePhase !== 'success'
-  const effectiveError = effectivePhase === 'submitted'
-    ? null
-    : safeExecutionReverted
-      ? `Safe executed the proposal, but the onchain transaction failed${hash ? ` (${hash})` : ''}.`
-      : receiptReverted
-        ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-        : phase === 'pending' && receipt.isError && !receiptData
-          ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
-          : error
+    proposal?.phase === 'awaiting'
+      ? SAFE_PROPOSAL_AWAITING
+      : proposal?.phase === 'unproven'
+        ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
+        : null
+  const effectiveError = proposal
+    ? proposal.phase === 'failed'
+      ? proposal.message
+      : null
+    : receiptReverted
+      ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
+      : phase === 'pending' && receipt.isError && !receiptData
+        ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
+        : error
+  const awaitingProposal =
+    proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
 
   useEffect(() => {
-    followingRef.current = following
     if (effectivePhase === 'success' || effectivePhase === 'error') {
       inFlightRef.current = false
     }
-  }, [effectivePhase, following])
+  }, [effectivePhase])
 
   const send = useCallback(
     async (
@@ -359,11 +440,7 @@ export function useSafeTx(chainId: number) {
       inFlightRef.current = true
       setError(null)
       setHash(null)
-      setSafeProposalHash(null)
-      setSafeConfirmationUncertain(false)
-      setSafeExecution(null)
-      setSafeOutcome(null)
-      setSafeLost(null)
+      setShownKey(null)
       setPolledReceipt(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
@@ -372,6 +449,33 @@ export function useSafeTx(chainId: number) {
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
         let sentCall = callOf(request)
+        if (viaSafe) {
+          // A call the Safe already has, from this session or its own queue, is
+          // shown as it is and never proposed again.
+          const key = proposalKey(request.chainId, account, sentCall)
+          const held = proposals.get(key)
+          const queued =
+            !holdsCall(held) && hasSafeService(request.chainId)
+              ? await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
+              : null
+          if (holdsCall(held) || queued) {
+            if (queued) {
+              recordProposal(
+                {
+                  chainId: request.chainId,
+                  safe: account,
+                  call: sentCall,
+                  proposalHash: canonicalSafeTxHash(request.chainId, account, queued),
+                },
+                publicClient,
+                false,
+              )
+            }
+            inFlightRef.current = false
+            setShownKey(key)
+            return proposals.get(key)!.proposalHash
+          }
+        }
         const txHash = await submitReviewedContractWrite({
           request,
           expectedAccount: account,
@@ -450,10 +554,18 @@ export function useSafeTx(chainId: number) {
           },
           onPhase: setPhase,
         })
-        setHash(txHash)
         if (viaSafe) {
-          setSafeProposalHash(txHash)
-          setSafeExecution({ safe: account, proposalHash: txHash, call: sentCall })
+          // The registry holds the call from here; this flow only shows it.
+          inFlightRef.current = false
+          setShownKey(
+            recordProposal(
+              { chainId: request.chainId, safe: account, call: sentCall, proposalHash: txHash },
+              publicClient,
+              true,
+            ),
+          )
+        } else {
+          setHash(txHash)
         }
         setPhase('pending')
         return txHash
@@ -471,19 +583,31 @@ export function useSafeTx(chainId: number) {
     [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync],
   )
 
+  /**
+   * Clear this flow's state, as a new review opens. A Safe proposal stays in
+   * the registry: still followed while pending, and still held when unproven,
+   * since the user may not have seen its line.
+   */
   const reset = useCallback(() => {
-    // Closing the confirm leaves a proposal with the Safe followed until it executes.
-    if (followingRef.current) return
     inFlightRef.current = false
     setPhase('idle')
     setError(null)
     setHash(null)
-    setSafeProposalHash(null)
-    setSafeConfirmationUncertain(false)
-    setSafeExecution(null)
-    setSafeOutcome(null)
-    setSafeLost(null)
+    setShownKey(null)
   }, [])
+
+  /**
+   * The user closed the confirm after its line. An unproven Safe result is
+   * released: its call is the user's to send again. A pending proposal stays
+   * followed and held.
+   */
+  const dismiss = useCallback(() => {
+    if (shownKey && proposals.get(shownKey)?.phase === 'unproven') {
+      proposals.delete(shownKey)
+      notifyProposals()
+    }
+    reset()
+  }, [reset, shownKey])
 
   return {
     phase: effectivePhase,
@@ -499,15 +623,16 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
-    hash,
-    safeProposalHash,
-    safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
-    receipt: receiptData ?? null,
-    /** The transaction has a hash, but the current RPC could not confirm it. */
-    confirmationUncertain:
-      phase === 'pending' &&
-      (safeConfirmationUncertain || safeExecutionUnproven || (receipt.isError && !receiptData)),
+    hash: proposal ? proposal.executionHash : hash,
+    safeProposalHash: awaitingProposal,
+    safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
+    receipt: proposal ? proposal.receipt : (receiptData ?? null),
+    /** The transaction has a hash, but its result could not be confirmed here. */
+    confirmationUncertain: proposal
+      ? proposal.phase === 'unproven'
+      : phase === 'pending' && receipt.isError && !receiptData,
     send,
     reset,
+    dismiss,
   }
 }

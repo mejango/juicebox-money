@@ -817,6 +817,7 @@ function AddLiquidityForm({
   // Closing the dialog drops the frozen plan; the inputs and any success stay.
   const closePlan = () => {
     if (run.isRunning() || tx.busy) return
+    tx.dismiss()
     replacePlan(null)
     setBatchStatus(null)
     setBatchError(null)

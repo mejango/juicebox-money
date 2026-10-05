@@ -140,7 +140,7 @@ export function BurnTokensFlow({
   function closeReview() {
     setPlan(null)
     setError(null)
-    if (tx.phase !== 'success') tx.reset()
+    if (tx.phase !== 'success') tx.dismiss()
   }
 
   return (

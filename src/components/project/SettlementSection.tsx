@@ -756,6 +756,7 @@ function MovementGroup({
         onClose={() => {
           setOpen(false)
           setFlowError(null)
+          if (tx.phase === 'submitted') tx.dismiss()
         }}
         title={tx.phase === 'success' ? 'Moves sent' : 'Confirm send'}
         rows={rows}
@@ -934,6 +935,7 @@ function ClaimButton({
         onClose={() => {
           setOpen(false)
           setFlowError(null)
+          if (tx.phase === 'submitted') tx.dismiss()
         }}
         title={tx.phase === 'success' ? 'Claimed' : 'Confirm claim'}
         rows={rows}

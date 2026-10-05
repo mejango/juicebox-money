@@ -23,7 +23,12 @@ const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
 const CHANGED = 'The connected account changed. Review again.'
 
-const m = vi.hoisted(() => ({ token: 'native' as 'native' | 'erc20' }))
+const m = vi.hoisted(() => ({
+  token: 'native' as 'native' | 'erc20',
+  /** Connected as a Safe app, whose Safe is the account. */
+  safe: false,
+  waitForSafeExecutionHash: (() => Promise.reject(new Error('unset'))) as (...args: unknown[]) => Promise<unknown>,
+}))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
@@ -54,8 +59,10 @@ vi.mock('@/lib/transaction-review', async importOriginal => {
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
-  isSafeConnection: () => false,
-  useSafeConnection: () => false,
+  isSafeConnection: () => m.safe,
+  useSafeConnection: () => m.safe,
+  findPendingSafeAppProposal: async () => null,
+  waitForSafeExecutionHash: (...args: unknown[]) => m.waitForSafeExecutionHash(...args),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -84,10 +91,12 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, error, status }: {
+  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status }: {
     open: boolean
     action: string
     onConfirm: () => void
+    onClose: () => void
+    complete?: boolean
     error?: ReactNode
     status?: ReactNode
   }) =>
@@ -95,7 +104,11 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
       <section data-tx-confirm>
         <p data-status>{status}</p>
         <p data-error>{error}</p>
-        <button type="button" onClick={onConfirm}>{action}</button>
+        {complete ? (
+          <button type="button" onClick={onClose}>Done</button>
+        ) : (
+          <button type="button" onClick={onConfirm}>{action}</button>
+        )}
       </section>
     ) : null,
 }))
@@ -141,6 +154,7 @@ beforeEach(() => {
   wallet.reset()
   wallet.connect(ALICE)
   m.token = 'native'
+  m.safe = false
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -189,6 +203,7 @@ async function reviewPayment() {
 }
 
 const dialogError = () => host.querySelector('[data-error]')?.textContent
+const dialogStatus = () => host.querySelector('[data-status]')?.textContent
 
 describe('a payment reviewed for one account', () => {
   it('wallet-action:pay-a-project never pays from an account switched to before confirming', async () => {
@@ -238,5 +253,34 @@ describe('a payment reviewed for one account', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[3]).toBe(ALICE)
+  })
+})
+
+describe('a payment from a Safe', () => {
+  it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
+    m.safe = true
+    m.token = 'erc20'
+    // Safe's service is lost before the approval's execution can be read.
+    m.waitForSafeExecutionHash = () => Promise.reject(new Error('Safe service unavailable'))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => dialogStatus()?.includes('Safe service unavailable') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(dialogStatus()).toBe(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. Safe service unavailable',
+    )
+
+    await click('Done')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(button('Pay').disabled).toBe(false)
+
+    // Dismissed after its line, the same approval can be proposed again.
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
+    expect(wallet.writes()).toEqual([
+      { functionName: 'approve', account: ALICE },
+      { functionName: 'approve', account: ALICE },
+    ])
   })
 })

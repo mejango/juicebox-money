@@ -594,7 +594,7 @@ export function RedeemShopItemsModal({
           onClose={() => {
             setPlan(null)
             setPrepareError(null)
-            if (tx.phase !== 'success') tx.reset()
+            if (tx.phase !== 'success') tx.dismiss()
           }}
         />
       ) : null}

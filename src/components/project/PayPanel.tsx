@@ -2453,6 +2453,12 @@ export function PayPanel({
           onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
+            // A Safe stage whose result can't be proven here ends with its line:
+            // Done dismisses it, so its call is the user's again and the panel is free.
+            if (sequenceSafeStage && sequenceSafeTx.confirmationUncertain) {
+              sequenceSafeTx.dismiss();
+              setSequenceSafeStage(null);
+            }
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);

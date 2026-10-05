@@ -678,7 +678,10 @@ function MoveFlow({
       <TxConfirmDialog
         open={dialogOpen}
         preparing={preparing}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false)
+          if (tx.phase === 'submitted') tx.dismiss()
+        }}
         title={step === 4 ? 'Move sent' : 'Confirm move'}
         rows={rows}
         steps={steps}

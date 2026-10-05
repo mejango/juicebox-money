@@ -386,6 +386,7 @@ export function MarketEditPanel({
   }
 
   const back = () => {
+    tx.dismiss()
     replaceReviewed(null)
     setBatchProposed(false)
     setBatchError(null)

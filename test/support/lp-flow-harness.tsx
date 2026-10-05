@@ -43,9 +43,12 @@ function fakeSafeTx() {
       }),
   )
   const reset = vi.fn(() => set(IDLE))
+  /** Closing a confirm: the engine forgets its state, as `reset` does here. */
+  const dismiss = vi.fn(() => set(IDLE))
   return {
     send,
     reset,
+    dismiss,
     useSafeTx() {
       const snapshot = useSyncExternalStore(subscribe, () => state)
       return {
@@ -61,6 +64,7 @@ function fakeSafeTx() {
         confirmationUncertain: false,
         send,
         reset,
+        dismiss,
       }
     },
     /** Answer the oldest send still waiting: the hash the engine took it with, or null. */
@@ -84,6 +88,7 @@ function fakeSafeTx() {
       waiting.length = 0
       send.mockClear()
       reset.mockClear()
+      dismiss.mockClear()
     },
   }
 }

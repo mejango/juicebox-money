@@ -454,6 +454,7 @@ export function EditPositionPanel({
   }
 
   const back = () => {
+    tx.dismiss()
     replaceReviewed(null)
     setBatchProposed(false)
     setBatchError(null)

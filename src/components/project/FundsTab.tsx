@@ -873,7 +873,7 @@ function FundsTxFlow({
     setAmount('')
     setFlowError(null)
     setReview(null)
-    tx.reset()
+    tx.dismiss()
   }
 
   /** Re-read live state, validate, and get the quote by simulating the call
@@ -1000,7 +1000,7 @@ function FundsTxFlow({
 
   const closeReview = () => {
     setReview(null)
-    if (tx.phase !== 'success') tx.reset()
+    if (tx.phase !== 'success') tx.dismiss()
   }
 
   if (!line) return null
