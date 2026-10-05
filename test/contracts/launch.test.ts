@@ -383,15 +383,26 @@ describe('project launch encoding', () => {
 
   it('wallet-action:launch-linked-chains uses the omnichain deployer ABI only for explicitly linked chains', () => {
     const request = requestFor(
-      plan({ chains: [1, 10], linkChains: true, bridge: 'ccip' }),
+      plan({
+        chains: [1, 10],
+        linkChains: true,
+        bridge: 'ccip',
+        store: { ...plan().store, currency: 'usd', preventOverspending: true },
+      }),
     )
     const data = encode(request)
+    const decoded = decodeFunctionData({ abi: request.abi, data })
 
     expect(request.address).toBe(jbContractAddress['6'].JBOmnichainDeployer[1])
     expect(data.slice(0, 10)).toBe('0x2d993173')
-    expect(decodeFunctionData({ abi: request.abi, data }).functionName).toBe(
-      'launchProjectFor',
-    )
+    expect(decoded.functionName).toBe('launchProjectFor')
+    expect(decoded.args).toHaveLength(7)
+    expect(decoded.args?.[2]).toMatchObject({
+      deployTiersHookConfig: {
+        tiersConfig: { currency: BASE_CURRENCY_USD, decimals: 6, tiers: [] },
+        flags: { preventOverspending: true },
+      },
+    })
   })
 
   // The .jb draft carries both levers and the wizard now honors them on
@@ -499,6 +510,32 @@ describe('project launch encoding', () => {
     expect(config.description.name).toBe('Test project')
     expect(config.description.ticker).toBe('REV')
     expect(tiered721.baseline721HookConfiguration.name).toBe('Shop collection')
+  })
+
+  it('preserves pricing and every selected permission for an empty revnet shop', () => {
+    const request = requestFor(plan({
+      flavor: 'revnet',
+      store: {
+        ...plan().store,
+        currency: 'usd',
+        operatorCanAdjustTiers: false,
+        operatorCanUpdateMetadata: false,
+        operatorCanMint: false,
+        operatorCanIncreaseDiscount: false,
+        items: [],
+      },
+    }))
+    const decoded = decodeFunctionData({ abi: request.abi, data: encode(request) })
+    expect(decoded.functionName).toBe('deployFor')
+    // The four-argument contract default silently grants every permission.
+    expect(decoded.args).toHaveLength(6)
+    expect(decoded.args?.[4]).toMatchObject({
+      preventOperatorAdjustingTiers: true,
+      preventOperatorUpdatingMetadata: true,
+      preventOperatorMinting: true,
+      preventOperatorIncreasingDiscountPercent: true,
+      baseline721HookConfiguration: { tiersConfig: { currency: BASE_CURRENCY_USD, decimals: 6, tiers: [] } },
+    })
   })
 
   it('encodes project pauses and permanently closes the revnet transfer gate', () => {

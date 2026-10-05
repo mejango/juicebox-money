@@ -82,7 +82,11 @@ export async function GET(
     return new Response(null, { status: 400 })
   }
 
-  const project = await getProjectLinkPreview(chainId, projectId)
+  const preview = await getProjectLinkPreview(chainId, projectId)
+    .then(project => ({ project, unavailable: false }))
+    .catch(() => ({ project: null, unavailable: true }))
+  if (preview.unavailable) return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  const project = preview.project
   if (!project) return new Response(null, { status: 404 })
 
   const resolvedLogo = projectLogoUrl(project.logoUri)

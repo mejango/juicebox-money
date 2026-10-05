@@ -5,7 +5,6 @@ import {
   USDC_ADDRESSES,
   jb721TiersHookProjectDeployerAbi,
   jbContractAddress,
-  jbOmnichainDeployerAbi,
   parseSuckerDeployerConfig,
   type JBChainId,
   type JBSuckerBridge,
@@ -16,12 +15,15 @@ import {
   buildAccountingContext,
   build721RulesetMetadata,
   buildDeployRevnetTx,
+  buildOmnichainLaunchProjectTx,
   buildRevnetStageConfig,
+  buildRevnet721Config,
   buildRulesetConfiguration,
   buildRulesetMetadata,
   buildTerminalConfigurations,
   projectIdFromLaunchLogs,
   requiredFeedPairs as sdkRequiredFeedPairs,
+  resolve721PricingContext,
   TIER_UNLIMITED_SUPPLY,
   tokenCurrencyId,
   v6Address,
@@ -752,6 +754,7 @@ export function buildLaunchRequest(args: {
       })
     })
 
+    const shop = build721HookConfig(plan.store, args.projectUri, accounting, chainId)
     return buildDeployRevnetTx({
       chainId,
       config: {
@@ -769,24 +772,20 @@ export function buildLaunchRequest(args: {
       accountingContexts: contexts,
       suckerConfig: suckerConfigFor(plan, chainId, args.salt),
       creationFee: args.creationFee,
-      tiered721Config:
-        plan.store.items.length > 0
-          ? {
-              baseline721HookConfiguration: build721HookConfig(
-                plan.store,
-                args.projectUri,
-                accounting,
-                chainId,
-              ),
-              salt: args.salt,
-              preventOperatorAdjustingTiers: !plan.store.operatorCanAdjustTiers,
-              preventOperatorUpdatingMetadata:
-                !plan.store.operatorCanUpdateMetadata,
-              preventOperatorMinting: !plan.store.operatorCanMint,
-              preventOperatorIncreasingDiscountPercent:
-                !plan.store.operatorCanIncreaseDiscount,
-            }
-          : undefined,
+      // Empty stores still have pricing and operator permissions. Passing the
+      // explicit config preserves those choices when tiers are added later.
+      tiered721Config: buildRevnet721Config({
+        ...shop,
+        pricing: shop.tiersConfig,
+        tiers: shop.tiersConfig.tiers,
+        salt: args.salt,
+        operatorPermissions: {
+          canAdjustTiers: plan.store.operatorCanAdjustTiers,
+          canUpdateMetadata: plan.store.operatorCanUpdateMetadata,
+          canMint: plan.store.operatorCanMint,
+          canIncreaseDiscountPercent: plan.store.operatorCanIncreaseDiscount,
+        },
+      }),
     })
   }
 
@@ -919,31 +918,23 @@ export function buildLaunchRequest(args: {
   // the suckers). Its ruleset tuple takes FULL metadata; the deployer
   // injects the 721 hook as the pay data hook itself.
   if (plan.linkChains && plan.chains.length > 1) {
-    return {
+    return buildOmnichainLaunchProjectTx({
       chainId,
-      address: v6Address('JBOmnichainDeployer', chainId),
-      abi: jbOmnichainDeployerAbi,
-      functionName: 'launchProjectFor' as const,
-      args: [
-        owner,
-        args.projectUri,
-        {
-          deployTiersHookConfig: build721HookConfig(
-            args.plan.store,
-            args.projectUri,
-            accounting,
-            chainId,
-          ),
-          useDataHookForCashOut: plan.store.itemsRedeem,
-          salt: args.salt,
-        },
-        rulesetConfigurations,
-        terminalConfigurations,
-        '',
-        suckerConfigFor(plan, chainId, args.salt),
-      ],
-      value: args.creationFee,
-    } as const
+      chainIds: plan.chains as JBChainId[],
+      owner,
+      projectUri: args.projectUri,
+      deploy721Config: {
+        deployTiersHookConfig: build721HookConfig(plan.store, args.projectUri, accounting, chainId),
+        useDataHookForCashOut: plan.store.itemsRedeem,
+        salt: args.salt,
+      },
+      rulesetConfigurations,
+      terminalConfigurations,
+      assets: bridgeAssetsFor(plan),
+      bridge: plan.bridge,
+      salt: args.salt,
+      creationFee: args.creationFee,
+    })
   }
 
   return {
@@ -1022,19 +1013,9 @@ export function activeChainOverrides(
   return chains.map(chainId => byChain[chainId]?.trim() ?? '').filter(Boolean)
 }
 
-/** Sucker deployment config for one chain: CCIP deployer + token mappings
- *  per remote chain, sharing ONE salt so the suckers pair. Unlinked (or
- *  single-chain) launches pass empty configurations. Custom-token
- *  accounting maps no terminal tokens — only project tokens bridge. */
-function suckerConfigFor(
-  plan: LaunchPlan,
-  chainId: JBChainId,
-  salt: `0x${string}`,
-) {
-  if (!plan.linkChains || plan.chains.length < 2) {
-    return { deployerConfigurations: [], salt }
-  }
-  const assets = plan.accounting.custom
+/** Custom-token accounting bridges project tokens without terminal assets. */
+function bridgeAssetsFor(plan: LaunchPlan) {
+  return plan.accounting.custom
     ? []
     : [
         ...(plan.accounting.tokens.includes('eth')
@@ -1044,10 +1025,22 @@ function suckerConfigFor(
           ? [MappableAsset.USDC]
           : []),
       ]
+}
+
+/** Sucker deployment config for one chain, sharing ONE salt so peers pair.
+ * Unlinked or single-chain launches pass empty configurations. */
+function suckerConfigFor(
+  plan: LaunchPlan,
+  chainId: JBChainId,
+  salt: `0x${string}`,
+) {
+  if (!plan.linkChains || plan.chains.length < 2) {
+    return { deployerConfigurations: [], salt }
+  }
   const config = parseSuckerDeployerConfig(
     chainId,
     plan.chains as JBChainId[],
-    assets,
+    bridgeAssetsFor(plan),
     { version: 6, bridge: plan.bridge },
   )
   return {
@@ -1167,15 +1160,16 @@ function build721HookConfig(
       'Shop items are priced in the project token, but no custom accounting token is configured. Pick ETH or USD pricing.',
     )
   }
-  const pricing =
+  const pricing = resolve721PricingContext(
     store.currency === 'token' && accounting.custom
       ? {
           currency: tokenCurrencyId(accounting.custom.address),
           decimals: accounting.custom.decimals,
         }
       : store.currency === 'usd'
-        ? { currency: BASE_CURRENCY_USD, decimals: 6 }
-        : { currency: BASE_CURRENCY_ETH, decimals: 18 }
+        ? { currency: BASE_CURRENCY_USD }
+        : { currency: BASE_CURRENCY_ETH },
+  )
   const tiers = build721TierConfigs(store.items, chainId)
   return {
     name: store.name,

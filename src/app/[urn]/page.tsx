@@ -18,6 +18,7 @@ import { ProjectLink } from "@/components/ProjectLink";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { OverviewTab } from "@/components/project/OverviewTab";
 import { ProjectStats } from "@/components/project/ProjectStats";
+import { ProjectDataStatus } from "@/components/project/ProjectDataStatus";
 import { ProjectTabs } from "@/components/project/Tabs";
 import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
 import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
@@ -41,6 +42,7 @@ import {
   getRevnetOperatorCandidates,
   getSuckerGroupProjects,
   projectGroupPaymentsCount,
+  projectGroupIsIncomplete,
   resolveProjectDeployments,
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
@@ -386,7 +388,7 @@ export async function generateMetadata({
   const pageUrl = new URL(pagePath, siteOrigin).href;
   // Scrapers cache og:image by URL, so bake the numbers into it: the card refreshes
   // whenever the balance or payment count moves.
-  const preview = await getProjectLinkPreview(urn.chainId, urn.projectId);
+  const preview = await getProjectLinkPreview(urn.chainId, urn.projectId).catch(() => null);
   const imageUrl = new URL(
     `/api/project-og/${urn.chainId}/${urn.projectId}?v=${previewVersion(preview)}`,
     assetOrigin,
@@ -424,8 +426,7 @@ export async function generateMetadata({
 
 /**
  * Reduced project page for the indexer-fallback path: the project provably
- * exists onchain, but indexed stats are unavailable (fresh launch that the
- * indexer hasn't caught up with, or an indexer outage). Renders identity
+ * exists onchain, but indexed stats are unavailable. Renders identity
  * from on-chain metadata with a plain-language notice instead of a 404/500.
  */
 async function DegradedProjectShell({
@@ -453,9 +454,6 @@ async function DegradedProjectShell({
   const roleLabel = isRevnet ? "Operator" : "Owner";
   const notice = (
     <div className="rounded-xl border border-smoke-200 bg-smoke-50 p-6 text-sm text-smoke-700">
-      {reason === "not-indexed"
-        ? "This project exists onchain, but its indexed data isn't available yet — it may have just launched. Stats, activity, and most actions will appear once indexing catches up."
-        : "Project stats are temporarily unavailable — the data indexer isn't responding. The project itself is unaffected onchain."}{" "}
       The verified handle editor remains available under {roleLabel}.
     </div>
   );
@@ -502,6 +500,7 @@ async function DegradedProjectShell({
           </div>
         </div>
       </header>
+      <ProjectDataStatus deployments={[{ chainId: route.chainId, projectId: route.projectId, version: project.version, operator: authority }]} notice={reason} />
       <ProjectTabs
         sidebar={null}
         activity={notice}
@@ -569,10 +568,10 @@ export default async function ProjectPage({
     // rendered fully, but cross-chain stats, per-chain tabs and authorities all silently
     // shrank to the home chain. Carry the failure so the UI can say so instead.
     (project.suckerGroupId
-      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId)
+      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId, { policy: 'no-store' })
       : Promise.resolve([] as BsProject[])
     )
-      .then(projects => ({ projects, error: false }))
+      .then(projects => ({ projects, error: projectGroupIsIncomplete(project, projects) }))
       .catch(() => ({ projects: [] as BsProject[], error: true })),
     // `undefined` = the indexer couldn't be read, which is NOT the same claim
     // as "this revnet has no operator" (null). The UI says so rather than
@@ -727,14 +726,6 @@ export default async function ProjectPage({
                 {tagline}
               </p>
             ) : null}
-            {siblings.error ? (
-              // The page otherwise looks complete, so an unannounced failure here reads as
-              // "this project is only on one chain" rather than "we couldn't check".
-              <p className="mt-2 text-sm text-amber-700">
-                Couldn&apos;t load this project&apos;s linked chains. Cross-chain totals and
-                per-chain views may be incomplete.
-              </p>
-            ) : null}
             <ProjectStats
               totalRaisedUsd={totalRaisedUsd}
               raisedByChain={chains.map((row) => ({
@@ -853,6 +844,10 @@ export default async function ProjectPage({
             </div>
           </div>
         </header>
+        <ProjectDataStatus
+          deployments={chains.map(row => ({ chainId: row.chainId, projectId: row.projectId, version: row.version, operator: authorities.find(([id]) => id === row.chainId)?.[1] }))}
+          notice={siblings.error || activityResult.error || operator === undefined ? 'partial' : undefined}
+        />
 
         {/* Content + pay card */}
         <ProjectTabs

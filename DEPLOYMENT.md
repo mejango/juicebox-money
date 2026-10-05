@@ -119,3 +119,9 @@ that a rollback.
 The same image supports mainnet and testnet chains. Creation presents an
 explicit Production/Testnets choice, and indexed reads select the matching
 Bendystraw endpoint from each operation's chain ID.
+
+## Shared SDK deployment checks
+
+The app pins `@bananapus/nana-sdk-core` to the published npm release `2.19.0`. The lockfile records the registry archive and integrity for reproducible installs and container builds. The SDK remains the owner of shared deployment checks.
+
+The deployment helpers and diagnostics shipped in [Juice SDK PR #168](https://github.com/Bananapus/juice-sdk-v4/pull/168). This release preserves existing omitted-config deployment defaults; this app passes its selected shop settings explicitly.
