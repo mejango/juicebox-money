@@ -66,7 +66,8 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
   payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
-import { relayrPay, relayrPoll } from '@/lib/relayr'
+import { relayrPay, relayrPaymentDetails, relayrPoll } from '@/lib/relayr'
+import { sentRelayrPayment } from '@/lib/relayr-payments'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 
@@ -152,12 +153,14 @@ beforeEach(() => {
   mocks.funding.mockReset().mockResolvedValue(10)
   mocks.send.mockReset().mockImplementation(async (chain: number) => mocks.safe ? SAFE_PROPOSAL : hashFor(chain))
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quoteFor(entries))
-  mocks.pay.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-    await args[5]?.()
-    args[6]?.()
+  mocks.pay.mockReset().mockImplementation(async ({ payment, bundleUuid, reverify, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+    const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds: review.calls.map(call => call.chainId) })
+    await reverify?.()
+    onSending?.(details)
     mocks.paymentSent()
-    args[4]?.(PAYMENT_HASH)
-    return PAYMENT_HASH
+    const payments = [sentRelayrPayment(details, PAYMENT_HASH)]
+    onSent?.(payments)
+    return { hash: PAYMENT_HASH, payments }
   })
   mocks.poll.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPoll>) => {
     args[2]?.(records())
@@ -175,8 +178,8 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
     expect(mocks.funding.mock.calls[0][0].map((option: { chainId: number }) => option.chainId)).toEqual(testnets)
-    expect(mocks.pay.mock.calls[0][0].chain).toBe(84532)
-    expect(mocks.pay.mock.calls[0][3]).toEqual(testnets)
+    expect(mocks.pay.mock.calls[0][0].payment.chain).toBe(84532)
+    expect(mocks.pay.mock.calls[0][0].destinationChainIds).toEqual(testnets)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()
   })
@@ -206,7 +209,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       expect(decoded.args).toEqual([BigInt(projectId + index), BENEFICIARY, 'Treasury support', '0x', false, ADMIN])
     })
     expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]), 1)
-    expect(mocks.pay.mock.calls[0][0].chain).toBe(10)
+    expect(mocks.pay.mock.calls[0][0].payment.chain).toBe(10)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.phase).toBe('complete')
@@ -253,8 +256,8 @@ describe('payer deployment review and raw Relayr execution', () => {
   })
 
   it('persists the payment send window and never repays an ambiguous no-hash send', async () => {
-    mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
-      args[6]?.()
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, onSending }: Parameters<typeof relayrPay>[0]) => {
+      onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds: review.calls.map(call => call.chainId) }))
       expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-sending')
       throw new Error('Wallet disconnected after send.')
     })

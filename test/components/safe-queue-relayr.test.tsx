@@ -95,8 +95,10 @@ import {
 import {
   RelayrPaymentSendingError,
   relayrPay,
+  relayrPaymentDetails,
   relayrPaymentLabel,
 } from '@/lib/relayr'
+import { sentRelayrPayment } from '@/lib/relayr-payments'
 
 function queued(nonce: number): SafeQueuedTransaction {
   return {
@@ -199,8 +201,8 @@ beforeEach(() => {
     return session
   })
   mocks.clear.mockReset().mockImplementation(() => { mocks.session = null })
-  mocks.pay.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-    args[6]?.()
+  mocks.pay.mockReset().mockImplementation(async ({ payment, bundleUuid, destinationChainIds, onSending }: Parameters<typeof relayrPay>[0]) => {
+    onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
     throw new RelayrPaymentSendingError()
   })
   mocks.poll.mockReset().mockRejectedValue(new Error('Bundle outcomes remain unresolved.'))
@@ -223,8 +225,8 @@ describe('Safe queue Relayr execution', () => {
     expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(2)
     await selectPayment(1)
     await click(/Pay once and execute 4/)
-    expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ chain: 84532 }), OWNER, BUNDLE, [...testnets],
-      expect.any(Function), expect.any(Function), expect.any(Function), true)
+    expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 84532 }),
+      account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [...testnets], reverifyBeforeSendOnly: true }))
     // Check 1 ran at review; check 2 belongs to relayrPay right before sending.
     expect(mocks.simulate).toHaveBeenCalledTimes(4)
     expect(mocks.review).not.toHaveBeenCalled()
@@ -248,10 +250,8 @@ describe('Safe queue Relayr execution', () => {
 
     await selectPayment(1)
     await click(/Pay once and execute 2/)
-    expect(mocks.pay).toHaveBeenCalledWith(
-      expect.objectContaining({ chain: 10 }), OWNER, BUNDLE, [1, 10],
-      expect.any(Function), expect.any(Function), expect.any(Function), true,
-    )
+    expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 10 }),
+      account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [1, 10], reverifyBeforeSendOnly: true }))
     expect(mocks.session).toMatchObject({
       bundleUuid: BUNDLE, paymentStatus: 'sending', paymentHash: null,
       expectedCount: 2, chainIds: [1, 10],
@@ -271,10 +271,8 @@ describe('Safe queue Relayr execution', () => {
     await click(/Execute 2 ready/)
     expect(renderer.root.findByType('select').props.value).toBe(1)
     await click(/Pay once and execute 2/)
-    expect(mocks.pay).toHaveBeenCalledWith(
-      expect.objectContaining({ chain: 10 }), OWNER, BUNDLE, [1, 10],
-      expect.any(Function), expect.any(Function), expect.any(Function), true,
-    )
+    expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 10 }),
+      account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [1, 10], reverifyBeforeSendOnly: true }))
   })
 
   it('asks for another pay click when the ISO deadline refreshes the quote, preselecting a lone offer', async () => {
@@ -332,10 +330,12 @@ describe('Safe queue Relayr execution', () => {
   })
 
   it('keeps a confirmed payment and every chain outcome when Relayr reports a partial failure', async () => {
-    mocks.pay.mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-      args[6]?.()
-      args[4]?.(HASH)
-      return HASH
+    mocks.pay.mockImplementation(async ({ payment, bundleUuid, destinationChainIds, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+      onSending?.(details)
+      const payments = [sentRelayrPayment(details, HASH)]
+      onSent?.(payments)
+      return { hash: HASH, payments }
     })
     mocks.poll.mockImplementation(async (_bundle, _count, onUpdate) => {
       onUpdate([

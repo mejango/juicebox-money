@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     getTransactionReceipt: vi.fn(),
     getBlock: vi.fn(),
     getBlockNumber: vi.fn(),
+    getCode: vi.fn(),
   },
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
@@ -88,6 +89,7 @@ const CONTROLLER = '0x5555555555555555555555555555555555555555' as Address
 const OTHER_CONTROLLER = '0x6666666666666666666666666666666666666666' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const DESTINATION_HASH = `0x${'cd'.repeat(32)}` as Hex
+const SECOND_DESTINATION_HASH = `0x${'ef'.repeat(32)}` as Hex
 const BUNDLE_UUID = '01234567-89ab-cdef-0123-456789abcdef'
 const TX_UUIDS = [
   'fedcba98-7654-3210-fedc-ba9876543210',
@@ -166,12 +168,17 @@ beforeEach(() => {
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
   let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
-  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
-    const entry = entries[hash === DESTINATION_HASH ? 0 : 1]
-    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n }
-  })
+  // A destination hash holds its signed call; any other hash, the transaction the wallet last sent.
+  const transactionOf = (hash: Hex) => {
+    const entry = entries[[DESTINATION_HASH, SECOND_DESTINATION_HASH].indexOf(hash)]
+    if (entry) return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n }
+    const [sent] = mocks.wallet.sendTransaction.mock.calls.at(-1) ?? []
+    return { hash, chainId: 1, from: sent?.account, to: sent?.to, input: sent?.data, value: sent?.value, blockHash: HASH, blockNumber: 1n }
+  }
+  mocks.client.getCode.mockResolvedValue(PAYMENT_RUNTIME)
+  mocks.client.getTransaction.mockImplementation(async ({ hash }) => transactionOf(hash))
   mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
-    to: entries[hash === DESTINATION_HASH ? 0 : 1]?.target, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
+    to: transactionOf(hash).to, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
   mocks.client.getBlock.mockResolvedValue({ hash: HASH })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
@@ -198,7 +205,7 @@ beforeEach(() => {
         bundle_uuid: BUNDLE_UUID,
         transactions: [
           { chain: 1, tx_uuid: TX_UUIDS[0], status: { state: 'success', data: { hash: DESTINATION_HASH } } },
-          { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: HASH } } },
+          { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: SECOND_DESTINATION_HASH } } },
         ],
       })
     }

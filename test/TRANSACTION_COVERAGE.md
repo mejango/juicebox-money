@@ -173,7 +173,13 @@ and the check fails on a missing marker.
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
-  `transactions/relayr-orchestration.test.ts`.
+  `transactions/relayr-orchestration.test.ts`. Quotes bind each posted call to
+  the quoted ID whose record carries its exact request, with records exactly
+  the quoted IDs and the bundle read echoing its ID
+  (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the
+  chain under the hash it was mined: sender, payment contract, calldata, value,
+  chain and canonical block, and the session saves it as relayrPaymentDetails
+  authenticated it.
 - Funding-chain selection is quote-bound and confirmed by the person. It
   preselects the wallet's chain from before any switch when quoted, else a
   lone quote, else nothing. Published authorizations

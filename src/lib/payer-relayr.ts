@@ -13,6 +13,7 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, withRelayrScopeLock } from '@/lib/relayr'
+import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
@@ -63,6 +64,8 @@ export type PayerDeploymentSession = {
   quote?: RelayrQuote
   paymentHash?: Hex
   paymentChainId?: number
+  /** Every payment sent for the quote, as relayrPaymentDetails authenticated it, under the hash it was mined. */
+  payments?: RelayrSentPayment[]
   records: RelayrTransactionRecord[]
 }
 
@@ -108,6 +111,10 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
   }
   if ((value.phase === 'quoted' || value.phase === 'publishing') && value.paymentHash) {
     throw new Error('The original payer payment state is inconsistent. Keep it pending.')
+  }
+  if (value.payments !== undefined && (!Array.isArray(value.payments) || value.payments.length > 16 ||
+      !value.payments.every(payment => relayrSentPaymentSnapshot(payment)))) {
+    throw new Error('The saved payer payments are malformed. Keep it pending.')
   }
   for (let index = 0; index < value.calls.length; index++) {
     const outcome = value.outcomes[index]
@@ -429,14 +436,20 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           for (const call of session.calls) await preflight(call, zeroAddress)
         }
         try {
-          const hash = await relayrPay(payment, session.account, session.quote.bundle_uuid, session.calls.map(call => call.chainId), hash => {
-            session.paymentHash = hash
-            session.phase = 'executing'
-            persist()
-          }, reverify, () => {
-            session.phase = 'payment-sending'
-            session.paymentChainId = payment.chain
-            persist(true)
+          const { hash } = await relayrPay({
+            payment, account: session.account, bundleUuid: session.quote.bundle_uuid,
+            destinationChainIds: session.calls.map(call => call.chainId), reverify,
+            onSending: () => {
+              session.phase = 'payment-sending'
+              session.paymentChainId = payment.chain
+              persist(true)
+            },
+            onSent: payments => {
+              session.payments = payments
+              session.paymentHash = payments[payments.length - 1].hash
+              session.phase = 'executing'
+              persist()
+            },
           })
           session.paymentHash = hash
           session.phase = 'executing'

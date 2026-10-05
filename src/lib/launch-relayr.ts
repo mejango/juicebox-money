@@ -32,6 +32,7 @@ import {
   relayrPoll,
   relayrPostBundle,
 } from '@/lib/relayr'
+import type { RelayrSentPayment } from '@/lib/relayr-payments'
 import {
   RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
@@ -81,6 +82,8 @@ export type LaunchRelayrJournal = {
   retryNonces?: Record<number, string>
   quote?: RelayrQuote
   paymentHash?: Hex
+  /** Every payment sent for the quote, as relayrPaymentDetails authenticated it, under the hash it was mined. */
+  payments?: RelayrSentPayment[]
   paymentDeadline?: string
   records: RelayrTransactionRecord[]
   published?: true
@@ -529,8 +532,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     requireQuoteBindings()
     // The chooser has no time limit. An expired offer must never reach the
     // wallet; retry refreshes it and asks for another explicit funding choice.
-    const details = relayrPaymentDetails(payment, journal.quote!.bundle_uuid)
-    if (details.chainId !== paymentChainId || !relayrPaymentChains(destinations).includes(details.chainId)) {
+    const details = relayrPaymentDetails(payment, { bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations })
+    if (details.chainId !== paymentChainId) {
       throw new Error('The launch funding option changed. Review the quote again.')
     }
     journal.paymentChainId = paymentChainId
@@ -539,14 +542,20 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, hash => {
-        journal!.paymentHash = hash
-        journal!.phase = 'submitted'
-        persist()
-      }, verifySigned, () => {
-        journal!.phase = 'payment-signing'
-        persist() // reload during the wallet prompt cannot silently pay again
-      })
+      ;({ hash: journal.paymentHash } = await relayrPay({
+        payment, account, bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations,
+        reverify: verifySigned,
+        onSending: () => {
+          journal!.phase = 'payment-signing'
+          persist() // reload during the wallet prompt cannot silently pay again
+        },
+        onSent: payments => {
+          journal!.payments = payments
+          journal!.paymentHash = payments[payments.length - 1].hash
+          journal!.phase = 'submitted'
+          persist()
+        },
+      }))
     } catch (error) {
       if (journal.phase === 'payment-signing' && !journal.paymentHash && isDefiniteWalletRejection(error)) {
         journal.phase = 'quoted'
