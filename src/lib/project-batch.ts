@@ -42,6 +42,8 @@ type CallSubmission = {
   hash?: Hex
   safeTx?: SafeQueuedTransaction
   fromBlock?: bigint
+  /** The last block a Safe submission's execution scan has read, so the next look starts after it. */
+  scannedTo?: bigint
 }
 
 export type ProjectBatch = {
@@ -199,17 +201,32 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
   return receipt
 }
 
-async function safeExecution(call: ProjectBatchCall, submission: CallSubmission): Promise<Hex | null> {
+/** JB Center's RPC answers eth_getLogs over at most this many blocks. */
+const LOG_WINDOW_BLOCKS = 500n
+/**
+ * One look scans at most this many windows (50,000 blocks). Past that it
+ * stops, records how far it read, and the next resume continues from there.
+ */
+const LOG_WINDOWS_PER_LOOK = 100
+
+async function safeExecution(
+  call: ProjectBatchCall,
+  submission: CallSubmission,
+  recordScan: (scannedTo: bigint) => void,
+): Promise<Hex | null> {
   if (!submission.hash || submission.fromBlock === undefined) return null
   const client = clientFor(call.chainId)
   const latest = await client.getBlockNumber()
   // Event provenance is the Safe contract itself; a service status cannot complete a call.
-  for (let start = submission.fromBlock; start <= latest; start += 10_000n) {
-    const end = start + 9_999n < latest ? start + 9_999n : latest
+  let start = submission.scannedTo !== undefined ? submission.scannedTo + 1n : submission.fromBlock
+  for (let window = 0; window < LOG_WINDOWS_PER_LOOK && start <= latest; window += 1) {
+    const end = start + LOG_WINDOW_BLOCKS - 1n < latest ? start + LOG_WINDOW_BLOCKS - 1n : latest
     const logs = await client.getLogs({ address: call.authority, fromBlock: start, toBlock: end })
     // Its ExecutionFailure is a result too: a failed call is settled, never left pending.
     const log = logs.find(log => isSafeExecutionLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
+    recordScan(end)
+    start = end + 1n
   }
   return null
 }
@@ -371,10 +388,14 @@ export async function runProjectBatch({
         if (saved) {
           if (!saved.hash) throw new Error('A wallet submission may still be pending. Check the original wallet activity; do not submit this call again.')
           let execution: Hex | null = null
+          const recordScan = (scannedTo: bigint) => {
+            journal.submissions[call.id] = { ...journal.submissions[call.id], scannedTo }
+            persist(journal)
+          }
           if (saved.kind === 'direct') execution = saved.hash
-          else if (saved.kind === 'safe') execution = await safeExecution(call, saved)
+          else if (saved.kind === 'safe') execution = await safeExecution(call, saved, recordScan)
           else {
-            execution = await safeExecution(call, saved)
+            execution = await safeExecution(call, saved, recordScan)
             try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
             catch (error) {
               // Safe's service saw it run and fail: settled. Anything else may still execute.

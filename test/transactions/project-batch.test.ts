@@ -472,6 +472,28 @@ describe('durable project batches', () => {
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
+  it('scans for a later execution in windows the RPC accepts, and resumes a long scan where it stopped', async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    // JB Center's RPC refuses an eth_getLogs range over 500 blocks.
+    mocks.client.getLogs.mockImplementation(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      if (toBlock - fromBlock + 1n > 500n) throw new Error('Block range exceeds the 500 block limit (-32005)')
+      return toBlock >= 60_000n && fromBlock <= 60_000n ? [executionSuccess(SAFE_TX, HASH)] : []
+    })
+    mocks.client.getBlockNumber.mockResolvedValue(60_100n)
+    mocks.waitForExecution.mockRejectedValue(new DOMException('Safe execution wait aborted', 'AbortError'))
+    executedBy(HASH, execTransaction(), [executionSuccess(SAFE_TX, HASH)])
+
+    // One look scans at most 100 windows (50,000 blocks) from where the last stopped.
+    expect((await run()).status).toBe('pending')
+    expect(mocks.client.getLogs).toHaveBeenCalledTimes(100)
+    expect(mocks.client.getLogs.mock.calls.every(([range]) => range.toBlock - range.fromBlock < 500n)).toBe(true)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ scannedTo: 50_009n })
+
+    expect((await run()).status).toBe('complete')
+    expect(mocks.client.getLogs.mock.calls[100][0]).toMatchObject({ fromBlock: 50_010n, toBlock: 50_509n })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
   it('recovers an execution Safe{Wallet} returned at once only when it ran the saved call', async () => {
     // Safe{Wallet} executed at once and returned the execution's own hash; the
     // Safe's ExecutionSuccess names its safeTxHash, which the app never saw.
