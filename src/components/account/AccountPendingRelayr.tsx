@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { ChainIcon } from '@/components/ChainIcon'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import {
   relayrDestinationHash,
@@ -114,6 +115,13 @@ export function AccountPendingRelayr({ address }: { address: string }) {
   return (
     <div className="mb-4 space-y-3">
       {bundles.map(({ scope, session }) => {
+        if (session.discardable) {
+          return (
+            <div key={scope} className="card p-4">
+              <RelayrDiscard scope={scope} onDiscarded={refresh} />
+            </div>
+          )
+        }
         if (relayrQuoteReleased(session)) {
           return (
             <div key={scope} className="card p-4">

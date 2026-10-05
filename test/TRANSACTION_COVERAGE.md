@@ -200,6 +200,12 @@ and the check fails on a missing marker.
   block, with that nonce, and after one uncached read reports the old bundle
   unpaid and unrun; an old request that may still run, or may have run
   outside Relayr, keeps it pending, for unpaid and R104 releases alike. A
+  saved nonce the forwarder already used at a finalized block ends the session
+  instead: one line and Discard, on its editor and the account card and only
+  in that state, after which a fresh review signs at the live nonce
+  (`components/queue-ruleset-multichain.test.tsx`,
+  `components/edit-splits-multichain.test.tsx`,
+  `components/metadata-editor.test.tsx`). A
   payer deployment quotes its raw calls again only after that read
   (`transactions/relayr-orchestration.test.ts`,
   `transactions/payer-relayr.test.ts`, `components/account-view.test.tsx`). A

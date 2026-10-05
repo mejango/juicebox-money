@@ -86,6 +86,7 @@ import { MetadataEditor } from '@/components/project/AuthorityEditsCard'
 import type { AuthorityCall } from '@/lib/authority'
 import {
   clearRelayrPendingSession,
+  loadRelayrPendingSession,
   relayrCallsScope,
   saveRelayrPendingSession,
   type RelayrPendingSession,
@@ -666,6 +667,39 @@ describe('metadata editor per-chain review and recovery', () => {
     expect(submittedCalls().map(call => call.data)).toEqual(originalData)
     expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
     expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
+    clearRelayrPendingSession(scope)
+    await act(async () => renderer.unmount())
+  })
+
+  it('offers Discard instead of a retry once the earlier signature may already have run, then reviews afresh', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: true })
+      throw new Error('This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    const text = renderedText(renderer.root)
+    expect(text.match(/may already have run/g)).toHaveLength(1)
+    expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBe(true)
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(loadRelayrPendingSession(scope)).toBeNull()
+    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(false)
+    expect(renderedText(renderer.root)).toContain('Save project details')
+    expect(renderedText(renderer.root)).not.toContain('may already have run')
+    await act(async () => renderer.unmount())
+  })
+
+  it('never offers Discard for a saved review whose signature could still run', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      throw new Error('Payment canceled')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    expect(buttonWith(renderer, 'Discard')).toBeUndefined()
     clearRelayrPendingSession(scope)
     await act(async () => renderer.unmount())
   })

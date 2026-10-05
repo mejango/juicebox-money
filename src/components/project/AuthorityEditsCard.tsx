@@ -48,6 +48,7 @@ import {
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
 import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -699,6 +700,16 @@ export function MetadataEditor({
   )
 
   const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
+  // Its signature may already have run: only Discard ends it, and the form is reviewed afresh.
+  const discardable = !!frozen && !!loadRelayrPendingSession(frozen.scope)?.discardable
+  const discarded = () => {
+    if (frozen) removeMetadataReview(frozen)
+    setFrozen(null)
+    setReviewed(false)
+    setDone(false)
+    setStatus(null)
+    setError(null)
+  }
 
   const invalidate = async () => {
     if (locked) return
@@ -1089,13 +1100,16 @@ export function MetadataEditor({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discardable ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
+          actionDisabled={discardable}
           onConfirm={() => void submit()}
           onClose={closeReview}
-        />
+        >
+          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} onDiscarded={discarded} /> : null}
+        </TxConfirmDialog>
       ) : null}
     </div>
   )

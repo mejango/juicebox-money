@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   clientFor: vi.fn(),
   runAuthorityCalls: vi.fn(),
   loadSession: vi.fn(),
+  discard: vi.fn(),
   resume: vi.fn(),
   current: vi.fn(),
   identity: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/lib/relayr', async original => ({
   ...await original<typeof import('@/lib/relayr')>(),
   loadRelayrPendingSession: mocks.loadSession,
   resumeRelayrSession: mocks.resume,
+  discardRelayrSession: mocks.discard,
 }))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
@@ -403,13 +405,32 @@ describe('split replacement recovery', () => {
     const restored = readSplitJournal(journalKey(8453, 303))!
     expect(restored).not.toBeNull()
     const completed = vi.fn()
+    const discarded = vi.fn()
     let renderer!: ReactTestRenderer
     await act(async () => {
-      renderer = create(<SplitRecovery journal={restored} onComplete={completed} />)
+      renderer = create(<SplitRecovery journal={restored} onComplete={completed} onDiscard={discarded} />)
     })
     renderers.push(renderer)
-    return { journal, restored, renderer, completed }
+    return { journal, restored, renderer, completed, discarded }
   }
+
+  it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: true })
+    const { journal, renderer, completed, discarded } = await mountSaved()
+    expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
+    expect(renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))).toEqual(['"Discard"'])
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
+    expect(storage.size).toBe(0)
+    expect(discarded).toHaveBeenCalledOnce()
+    expect(completed).not.toHaveBeenCalled()
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+  })
+
+  it('never offers Discard while the saved signature could still run', async () => {
+    const { renderer } = await mountSaved()
+    expect(renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))).toEqual(['"Resume split update"'])
+  })
 
   it('reloads the exact unpaid review from either project and validates every original call', async () => {
     const { restored, renderer, completed } = await mountSaved()
@@ -481,7 +502,7 @@ describe('split replacement recovery', () => {
     mocks.current.mockRejectedValue(new Error('Live reads are unavailable'))
     const completed = vi.fn()
     let renderer!: ReactTestRenderer
-    await act(async () => { renderer = create(<SplitRecovery journal={restored} onComplete={completed} />) })
+    await act(async () => { renderer = create(<SplitRecovery journal={restored} onComplete={completed} onDiscard={vi.fn()} />) })
     renderers.push(renderer)
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
     expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({ scope: journal.scope, account: ACCOUNT }))
@@ -494,7 +515,7 @@ describe('split replacement recovery', () => {
     const { renderer, completed } = await mountSaved()
     mocks.wallet.address = OTHER
     await act(async () => {
-      renderer.update(<SplitRecovery journal={readSplitJournal(journalKey(1, 101))!} onComplete={completed} />)
+      renderer.update(<SplitRecovery journal={readSplitJournal(journalKey(1, 101))!} onComplete={completed} onDiscard={vi.fn()} />)
     })
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()

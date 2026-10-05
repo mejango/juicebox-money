@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getProjectsOwnedBy: vi.fn(),
   fetchRelayrBundlesByAccount: vi.fn(),
   resumeRelayrSession: vi.fn(),
+  discardRelayrSession: vi.fn(),
   safeService: vi.fn(),
   fetchSafeInfo: vi.fn(),
 }))
@@ -55,6 +56,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   fetchRelayrBundlesByAccount: mocks.fetchRelayrBundlesByAccount,
   resumeRelayrSession: mocks.resumeRelayrSession,
+  discardRelayrSession: mocks.discardRelayrSession,
 }))
 vi.mock('@/lib/safe', () => ({
   fetchSafeInfo: mocks.fetchSafeInfo,
@@ -434,6 +436,44 @@ describe('AccountPendingRelayr', () => {
     expect(text).toContain('The payment reverted and its quote expired. Resume it from the original project action to release it.')
     expect(text).not.toContain('Check the original bundle')
     expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+  })
+
+  it('ends a session whose earlier signature may already have run with one line and Discard', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'unpaid', discardable: true, records: [],
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain(
+      'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+    expect(renderedText(renderer.root)).not.toContain('earlier signature')
+  })
+
+  it.each<[string, Partial<RelayrPendingSession>]>([
+    ['an in-flight paid bundle', {}],
+    ['an unpaid quote that expired', { paymentStatus: 'unpaid', paymentOptions: [] }],
+    ['a reverted payment', { paymentStatus: 'reverted' }],
+    ['a released reverted quote', { paymentStatus: 'reverted', released: true }],
+  ])('never offers Discard for %s', async (_, overrides) => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession(overrides) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(buttonWith(renderer, 'Discard')).toBeUndefined()
   })
 
   it('reads a released quote whose payment reverted as expired, with nothing to check', async () => {

@@ -40,6 +40,7 @@ import { usePublicClient, useReadContract } from "wagmi";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import { TxError } from "@/components/ui/TxError";
+import { RelayrDiscard } from "@/components/RelayrDiscard";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
@@ -439,7 +440,7 @@ export function QueueRulesetFlow({
     body = <QueueRecovery journal={pendingScope} onComplete={() => {
       setRecovered(true);
       void refreshRecovery();
-    }} />;
+    }} onDiscard={() => void refreshRecovery()} />;
   } else if (recovered) {
     body = <p className="text-sm text-smoke-700">The saved ruleset update is confirmed on every destination. Reload the project to see the new queue.</p>;
   } else if (!knownController) {
@@ -706,11 +707,14 @@ function clearQueueJournal(journal: QueueRecoveryJournal): void {
   }
 }
 
-export function QueueRecovery({ journal, onComplete }: { journal: QueueRecoveryJournal; onComplete: () => void }) {
+export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules.");
+  if (loadRelayrPendingSession(journal.scope)?.discardable) {
+    return <RelayrDiscard scope={journal.scope} onDiscarded={() => { clearQueueJournal(journal); onDiscard(); }} />;
+  }
   return <div className="space-y-3">
     <p className="text-sm text-smoke-700">{status}</p>
     <TxError error={error} />

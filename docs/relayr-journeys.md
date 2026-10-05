@@ -121,6 +121,14 @@ atomic.
   outside Relayr. One uncached read of the old bundle must also report it
   unpaid with every call pending. A payer deployment's raw calls carry no
   nonce, so it quotes them again only after that same read.
+- When the forwarder has already used a saved nonce at a canonical finalized
+  block, another action used it or someone ran the old request outside
+  Relayr, and the app cannot tell which. None of the session's requests can run
+  again, so it ends with one line: "This action's earlier signature may already
+  have run. Check the project, then discard it to review it again." Its editor
+  and account card then offer Discard, and only in that state. Discard removes
+  the session, and a fresh review signs at the live nonce, which no old request
+  can use.
 - Funding options must match the validated Relayr payment contract, native token,
   bundle identity, deadline, and destination network family. An unavailable
   selected chain cannot silently become another funding chain. Testnet calls

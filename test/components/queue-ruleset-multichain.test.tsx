@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true },
-  clientFor: vi.fn(), runAuthorityCalls: vi.fn(), loadSession: vi.fn(), resume: vi.fn(),
+  clientFor: vi.fn(), runAuthorityCalls: vi.fn(), loadSession: vi.fn(), resume: vi.fn(), discard: vi.fn(),
   current: vi.fn(), upcoming: vi.fn(), contexts: vi.fn(), identity: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
@@ -24,7 +24,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
   useHoldEnclosingModal: () => {},
 }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor, runAuthorityCalls: mocks.runAuthorityCalls, safeOutcomeMessage: (_result: unknown, message: string) => message }))
-vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), loadRelayrPendingSession: mocks.loadSession, resumeRelayrSession: mocks.resume }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), loadRelayrPendingSession: mocks.loadSession, resumeRelayrSession: mocks.resume, discardRelayrSession: mocks.discard }))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readAuthorityIdentity: mocks.identity,
@@ -235,10 +235,30 @@ describe('queue recovery after cancellation or partial execution', () => {
     const peer = currentReview.destinations.at(-1)!
     const reloaded = readQueueJournal(`jbm:queue-rulesets:${peer.chainId}:${peer.projectId}`)!
     const completed = vi.fn()
+    const discarded = vi.fn()
     let renderer!: ReactTestRenderer
-    await act(async () => { renderer = create(<QueueRecovery journal={reloaded} onComplete={completed} />) })
-    return { renderer, completed, journal }
+    await act(async () => { renderer = create(<QueueRecovery journal={reloaded} onComplete={completed} onDiscard={discarded} />) })
+    return { renderer, completed, discarded, journal }
   }
+  const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
+  it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: true })
+    const { renderer, completed, discarded, journal } = await mountSaved()
+    expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
+    expect(labels(renderer)).toEqual(['"Discard"'])
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
+    expect(storage.size).toBe(0)
+    expect(discarded).toHaveBeenCalledOnce()
+    expect(completed).not.toHaveBeenCalled()
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+  it('never offers Discard while the saved signature could still run', async () => {
+    const { renderer } = await mountSaved()
+    expect(labels(renderer)).toEqual(['"Resume ruleset update"'])
+    await act(async () => renderer.unmount())
+  })
   it('reloads the exact unpaid review from either peer and resumes original calls after live validation', async () => {
     const { renderer, completed } = await mountSaved()
     expect(storage.has('jbm:queue-rulesets:1:101')).toBe(true)

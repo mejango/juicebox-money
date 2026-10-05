@@ -116,6 +116,12 @@ export function relayrCallsScope(calls: RelayrCall[]): string {
   return `authority:${keccak256(stringToHex(JSON.stringify(stableCalls)))}`
 }
 
+/**
+ * The one line a discardable session shows, and the error its action throws
+ * until it is discarded.
+ */
+export const RELAYR_DISCARDABLE = 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.'
+
 export type RelayrPendingSession = {
   bundleUuid: string
   paymentHash: Hex | null
@@ -148,6 +154,12 @@ export type RelayrPendingSession = {
   paymentOptions?: RelayrPayment[]
   /** A reverted quote nothing can fund any more (ruling R104): its action quotes its calls again. */
   released?: true
+  /**
+   * The forwarder already used a nonce one of its requests was signed with, at
+   * a canonical finalized block: none of them can run again, though one may
+   * have run, and the app cannot tell. Only discardRelayrSession ends it.
+   */
+  discardable?: true
 }
 
 /**
@@ -483,6 +495,7 @@ export function saveRelayrPendingSession(
     ...(payments ? { payments } : {}),
     ...(paymentOptions ? { paymentOptions } : {}),
     ...(session.released === true && session.paymentStatus === 'reverted' ? { released: true as const } : {}),
+    ...(session.discardable === true && relayrSessionAwaitsPayment(session) ? { discardable: true as const } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -596,6 +609,8 @@ export function loadRelayrPendingSession(
       payments: Array.isArray(value.payments) ? value.payments : undefined,
       paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
       ...(value.released === true && value.paymentStatus === 'reverted' ? { released: true as const } : {}),
+      ...(value.discardable === true && (value.paymentStatus === 'unpaid' || value.paymentStatus === 'reverted')
+        ? { discardable: true as const } : {}),
     }
     // Reading a tolerant UI view must not erase malformed durable evidence before
     // the authorization path can inspect the original record strictly.
@@ -652,7 +667,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           !['unpaid', 'sending', 'submitted', 'confirmed', 'reverted'].includes(value.paymentStatus) ||
           (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
           (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1)) ||
-          (value.released !== undefined && (value.released !== true || value.paymentStatus !== 'reverted'))) throw new Error()
+          (value.released !== undefined && (value.released !== true || value.paymentStatus !== 'reverted')) ||
+          (value.discardable !== undefined && (value.discardable !== true || !relayrSessionAwaitsPayment(value)))) throw new Error()
       for (const entries of [value.publishedEntries, value.expectedEntries]) {
         if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
             !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
@@ -666,8 +682,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
       if ((value.payments !== undefined && !relayrSentPaymentsSnapshot(value.payments)) ||
           (value.paymentOptions !== undefined && !(Array.isArray(value.paymentOptions) && !value.paymentOptions.length) &&
             !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
-      // A quote nothing can fund reserves no forwarder nonce.
-      return relayrQuoteReleased(value) ? [] : [{ scope, session: value }]
+      // A quote nothing can fund, or whose requests can never run again, reserves no forwarder nonce.
+      return relayrQuoteReleased(value) || value.discardable ? [] : [{ scope, session: value }]
     })
   } catch {
     throw new Error('Saved Relayr authorization records could not be read completely. Restore browser storage and recover the original actions before signing or paying for another.')
@@ -688,6 +704,21 @@ export async function fetchRelayrBundlesByAccount(
         entry.session?.account?.toLowerCase() === wanted,
     )
     .sort((a, b) => b.session.createdAt - a.session.createdAt)
+}
+
+/**
+ * Discard a session whose requests can never run again (see `discardable`),
+ * so its action can be reviewed afresh. A fresh review signs at the live
+ * nonce, which no old request can use. Every other session is refused.
+ */
+export async function discardRelayrSession(scope: string): Promise<void> {
+  return withRelayrScopeLock(scope, async () => {
+    const saved = loadRelayrPendingSession(scope)
+    if (!saved?.discardable || !relayrSessionAwaitsPayment(saved)) {
+      throw new Error('Only an action whose earlier signature may already have run can be discarded.')
+    }
+    clearRelayrPendingSession(scope)
+  })
 }
 
 export function clearRelayrPendingSession(scope: string): void {
@@ -1101,6 +1132,20 @@ export async function relayrRequestExpiredUnused({ chainId, account, nonce, dead
   try {
     return !!finalized && finalized.timestamp > BigInt(deadline) && finalized.nonce === BigInt(nonce)
   } catch { return false }
+}
+
+/**
+ * Whether the forwarder, at a canonical finalized block, already used the
+ * nonce one of these requests was signed with: none of them can run again,
+ * though one may have run. False while that cannot be read, or without nonces.
+ */
+async function relayrNoncesUsed(entries: readonly RelayrEntry[], nonces: readonly string[] | undefined, account: Address): Promise<boolean> {
+  if (!nonces || nonces.length !== entries.length) return false
+  for (let index = 0; index < entries.length; index++) {
+    const finalized = await finalizedForwarderNonce(entries[index].chain, account)
+    if (finalized && finalized.nonce > BigInt(nonces[index])) return true
+  }
+  return false
 }
 
 /** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
@@ -1687,6 +1732,7 @@ async function executeRelayrCalls({
   let saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
+    if (saved.discardable) throw new Error(RELAYR_DISCARDABLE)
     if (!relayrSessionAwaitsPayment(saved)) return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
     if (saved.paymentStatus === 'reverted' && !saved.released) {
       // Another payment may have funded the quote: what Relayr ran is proven, never paid again.
@@ -1739,6 +1785,14 @@ async function executeRelayrCalls({
       entries.push(...published)
       nonces = saved.publishedNonces
     } catch (error) {
+      // The forwarder already used one of their nonces: another action used it,
+      // or anyone holding the signed request ran it outside Relayr, and the
+      // app cannot tell which. None of them can run again, so the session ends
+      // and only Discard clears it.
+      if (pendingScope && await relayrNoncesUsed(published, saved.publishedNonces, account)) {
+        saveRelayrPendingSession(pendingScope, { ...saved, discardable: true })
+        throw new Error(RELAYR_DISCARDABLE)
+      }
       // Nothing can fund a released quote, but anyone holding one of its
       // signed requests can still run it at the forwarder, outside Relayr. So
       // its calls are signed again, with the same nonces, only once each

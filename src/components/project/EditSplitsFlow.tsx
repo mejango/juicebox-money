@@ -37,6 +37,7 @@ import {
 } from '@/components/create/SplitsEditor'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -407,11 +408,16 @@ async function withSplitLocks<T>(destinations: SplitReview['destinations'], run:
   return next(0)
 }
 
-export function SplitRecovery({ journal, onComplete }: { journal: SplitJournal; onComplete: () => void }) {
+export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState('A split update is saved. Resume it before editing these recipients again.')
+  if (loadRelayrPendingSession(journal.scope)?.discardable) {
+    return <div className="mt-3 rounded-xl border border-smoke-200 p-4">
+      <RelayrDiscard scope={journal.scope} onDiscarded={() => { clearSplitJournal(journal); onDiscard() }} />
+    </div>
+  }
   return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4">
     <p className="text-sm text-smoke-700">{status}</p>
     <TxError error={error} />
@@ -573,7 +579,8 @@ export function EditSplitsFlow({
     queryFn: () => pendingSplitJournal(splitJournalKey(chainId, projectId, groupId)),
   })
   const [recovered, setRecovered] = useState(false)
-  if (pending) return <SplitRecovery journal={pending} onComplete={() => { setRecovered(true); void refreshPending() }} />
+  if (pending) return <SplitRecovery journal={pending} onComplete={() => { setRecovered(true); void refreshPending() }}
+    onDiscard={() => void refreshPending()} />
   if (recovered) return <p className="mt-3 text-sm text-smoke-700">The saved split update is confirmed on every destination. Reload to see the recipients.</p>
 
   if (

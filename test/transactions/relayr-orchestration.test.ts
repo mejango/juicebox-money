@@ -77,6 +77,7 @@ import {
   loadRelayrPendingSession,
   listRelayrPendingScopes,
   clearRelayrPendingSession,
+  discardRelayrSession,
   readRelayrPendingSessionsForAuthorization,
   relayrQuoteReleased,
   resumeRelayrSession,
@@ -102,6 +103,8 @@ const DESTINATION_UUIDS = [OTHER_UUID, THIRD_UUID, 'bbbbbbbb-cccc-dddd-eeee-ffff
 const TESTNETS = [11155111, 11155420, 84532, 421614] as const
 const PAYMENT_DEADLINE = 4_000_000_000
 const KEEP_PENDING = 'A relay request this action published may still run, or may have run outside Relayr. Keep it pending and check its destination before signing again.'
+const DISCARDABLE = 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.'
+const DISCARD_REFUSED = 'Only an action whose earlier signature may already have run can be discarded.'
 const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
 
 function paymentCalldata(
@@ -1733,7 +1736,7 @@ describe('paying a reverted Relayr payment again', () => {
       expect(posts).toHaveLength(1)
     })
 
-    it('keeps a released quote pending when its old request ran outside Relayr', async () => {
+    it('ends a released quote whose old request ran outside Relayr, and after Discard a fresh review signs at the live nonce', async () => {
       const { posts } = await expired()
       // Anyone holding the old signed request ran it at the forwarder: its nonce
       // moved to 5, while Relayr, which never ran it, still reports the bundle
@@ -1743,14 +1746,18 @@ describe('paying a reverted Relayr payment again', () => {
       mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n
         : input.functionName === 'verify' ? ++verifies > 1 : read(input))
       mocks.wallet.sendTransaction.mockResolvedValue(SECOND_PAYMENT)
-      await expect(runRelayrCalls(options)).rejects.toThrow(KEEP_PENDING)
+      await expect(runRelayrCalls(options)).rejects.toThrow(DISCARDABLE)
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
       expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
       expect(posts).toHaveLength(1)
-      expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted', released: true })
+      expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted', released: true, discardable: true })
+      await discardRelayrSession(options.pendingScope)
+      await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+      expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => request.message.nonce)).toEqual([4n, 5n])
+      expect(posts).toHaveLength(2)
     })
 
-    it('keeps a released quote pending while its old request can still run', async () => {
+    it('keeps a released quote pending, with nothing to discard, while its old request can still run', async () => {
       const { posts } = await expired()
       // The forwarder answers verify falsely once, while the old request is still live.
       let verifies = 0
@@ -1758,6 +1765,8 @@ describe('paying a reverted Relayr payment again', () => {
       mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? ++verifies > 1 : read(input))
       mocks.wallet.sendTransaction.mockResolvedValue(SECOND_PAYMENT)
       await expect(runRelayrCalls(options)).rejects.toThrow(KEEP_PENDING)
+      expect(loadRelayrPendingSession(options.pendingScope)?.discardable).toBeUndefined()
+      await expect(discardRelayrSession(options.pendingScope)).rejects.toThrow(DISCARD_REFUSED)
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
       expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
       expect(posts).toHaveLength(1)
@@ -1928,22 +1937,29 @@ describe('unpaid Relayr quotes', () => {
     await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
   })
 
-  it('keep a released quote pending when a request it published may have run outside Relayr', async () => {
+  it('end a released quote whose nonce the forwarder already used, and after Discard a fresh review signs at the live nonce', async () => {
     installSuccessfulBundle(quotes)
     unrunUntilPaid()
     await unpaidQuote()
     now.mockReturnValue(REQUESTS_EXPIRED)
     finalizedAt(REQUESTS_EXPIRED / 1_000)
-    // Anyone holding the signed request can run it at the forwarder: its nonce moved on.
+    // Another action used the nonce, or anyone holding the signed request ran
+    // it at the forwarder; the app cannot tell which.
     const read = mocks.client.readContract.getMockImplementation()!
     mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n : read(input))
-    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(KEEP_PENDING)
+    const scope = { calls, account: ALICE, pendingScope: 'abandoned' }
+    await expect(runRelayrCalls(scope)).rejects.toThrow(DISCARDABLE)
+    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid', discardable: true })
+    expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+    await expect(runRelayrCalls(scope)).rejects.toThrow(DISCARDABLE)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
-    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
-    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID })
+    await discardRelayrSession('abandoned')
+    expect(loadRelayrPendingSession('abandoned')).toBeNull()
+    await expect(runRelayrCalls(scope)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => request.message.nonce)).toEqual([4n, 5n])
   })
 
-  it('keep a released quote pending while a request it published can still run', async () => {
+  it('keep a released quote pending, with nothing to discard, while a request it published can still run', async () => {
     installSuccessfulBundle(quotes)
     unrunUntilPaid()
     await unpaidQuote()
@@ -1954,6 +1970,9 @@ describe('unpaid Relayr quotes', () => {
     const read = mocks.client.readContract.getMockImplementation()!
     mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? ++verifies > 1 : read(input))
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(KEEP_PENDING)
+    expect(loadRelayrPendingSession('abandoned')?.discardable).toBeUndefined()
+    await expect(discardRelayrSession('abandoned')).rejects.toThrow(DISCARD_REFUSED)
+    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid' })
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
