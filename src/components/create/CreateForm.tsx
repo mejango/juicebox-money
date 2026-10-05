@@ -138,7 +138,7 @@ import {
   type ChainEnvironment,
 } from "@/lib/chains";
 import { itemOk, type DraftItem } from "./store-draft";
-import { relayrSupportsChains } from "@/lib/relayr-chains";
+import { relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,

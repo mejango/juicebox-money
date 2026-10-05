@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import type { RelayrEntry, RelayrQuote } from '@/lib/relayr'
-import { relayrPaymentChains } from '@/lib/relayr-chains'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPaymentChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrQuote } from '@/lib/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -67,7 +67,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
   payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPay, relayrPoll } from '@/lib/relayr'
+import { relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 

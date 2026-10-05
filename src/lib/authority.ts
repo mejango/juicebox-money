@@ -28,16 +28,18 @@ import {
   simulateStateChangingTransaction,
   waitForTrackedReceipt,
 } from '@bananapus/nana-sdk-core/review'
-import { relayrSupportsChains } from '@/lib/relayr-chains'
+import {
+  relayrRecordChain,
+  relayrSupportsChains,
+  type RelayrTransactionRecord,
+} from '@bananapus/nana-sdk-core/review/relayr'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
-  relayrRecordChain,
   relayrTargetSupportsForwarder,
   runRelayrCalls,
   type RelayrCall,
   type RelayrProgress,
-  type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import {
   hasSafeService,

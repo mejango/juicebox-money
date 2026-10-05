@@ -4,7 +4,8 @@ import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId
 import { CREATE_BATCH_ABI, MULTICALL3, SAFE_FACTORY, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import type { LaunchPlan } from '@/lib/launch'
-import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
+import type { RelayrEntry, RelayrPayment, RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrQuote } from '@/lib/relayr'
 import safeArtifacts from '../fixtures/safe-1.4.1.json'
 
 const m = vi.hoisted(() => ({
@@ -45,18 +46,15 @@ vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectCreationFee: m.fee }))
 vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId }))
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
-  TRUSTED_FORWARDER_ABI: [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
-    inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }],
   buildForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
   relayrPoll: m.poll,
-  relayrDestinationHash: (record: RelayrTransactionRecord) => record.status?.data?.hash ?? null,
   readRelayrPendingSessionsForAuthorization: () => {
     const session = m.pending()
     return session ? [{ scope: 'another-action', session }] : []
   },
 }))
 
-import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@bananapus/nana-sdk-core/review/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 

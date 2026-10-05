@@ -1,7 +1,8 @@
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeFunctionData, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RelayrEntry, RelayrPendingSession } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrPendingSession } from '@/lib/relayr'
 
 const mocks = vi.hoisted(() => ({ launch: vi.fn() }))
 vi.mock('@/lib/launch-session', () => ({ loadLaunchSession: mocks.launch }))

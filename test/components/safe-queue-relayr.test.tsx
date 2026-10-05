@@ -4,7 +4,8 @@ import { zeroAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
-import type { RelayrEntry, RelayrPendingSession } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrPendingSession } from '@/lib/relayr'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -90,6 +91,8 @@ import {
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
+} from '@bananapus/nana-sdk-core/review/relayr'
+import {
   RelayrPaymentSendingError,
   relayrPay,
   relayrPaymentLabel,

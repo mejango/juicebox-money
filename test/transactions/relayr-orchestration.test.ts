@@ -56,6 +56,10 @@ import {
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_CODE_HASH,
   RELAYR_PAYMENT_SELECTOR,
+  type RelayrEntry,
+  type RelayrPayment,
+} from '@bananapus/nana-sdk-core/review/relayr'
+import {
   buildForwardedTx,
   relayrPay,
   relayrPaymentDetails,
@@ -67,8 +71,6 @@ import {
   listRelayrPendingScopes,
   clearRelayrPendingSession,
   type RelayrCall,
-  type RelayrEntry,
-  type RelayrPayment,
 } from '@/lib/relayr'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 

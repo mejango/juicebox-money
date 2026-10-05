@@ -39,8 +39,6 @@ vi.mock('@/lib/relayr', () => ({
   relayrTargetSupportsForwarder: async () => true,
   runRelayrCalls: mocks.relayr,
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
-  relayrDestinationHash: (record: { hash: string }) => record.hash,
-  relayrRecordChain: (record: { chain: number }) => record.chain,
 }))
 
 import { loadProjectBatch, projectBatchRounds, projectBatchScope, runProjectBatch,
@@ -102,7 +100,8 @@ beforeEach(() => {
     const saved = mocks.pending.get(options.pendingScope) as { paid?: boolean } | undefined
     if (!saved?.paid) await options.reverify()
     mocks.pending.set(options.pendingScope, { paid: true })
-    await options.onComplete(options.calls.map((item: ProjectBatchCall) => ({ chain: item.chainId, hash: HASH })))
+    await options.onComplete(options.calls.map((item: ProjectBatchCall) =>
+      ({ chain: item.chainId, status: { state: 'success', data: { hash: HASH } } })))
     mocks.pending.delete(options.pendingScope)
   })
 })

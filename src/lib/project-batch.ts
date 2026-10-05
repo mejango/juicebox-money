@@ -22,12 +22,11 @@ import {
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
-  relayrDestinationHash, relayrRecordChain,
 } from '@/lib/relayr'
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { relayrPaymentChains, relayrSupportsChain } from '@/lib/relayr-chains'
+import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type ProjectBatchCall = AuthorityCall & {
   id: string

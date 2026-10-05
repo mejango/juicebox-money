@@ -24,7 +24,27 @@ import { fundingChainLabel, requireFundingChainSelection, requireTransactionRevi
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
-import { relayrSupportsChain, relayrSupportsChains, relayrPaymentChains } from '@/lib/relayr-chains'
+import {
+  FORWARD_REQUEST_TYPES,
+  RELAYR_API,
+  RELAYR_FORWARDER_DEADLINE_SECONDS,
+  RELAYR_NATIVE_TOKEN,
+  RELAYR_PAYMENT_ADDRESS,
+  RELAYR_PAYMENT_CODE_HASH,
+  RELAYR_PAYMENT_GAS,
+  RELAYR_PAYMENT_SELECTOR,
+  TRUSTED_FORWARDER_ABI,
+  relayrDestinationHash,
+  relayrPaymentChains,
+  relayrProgress,
+  relayrRecordChain,
+  relayrStateIsSuccess,
+  relayrSupportsChain,
+  relayrSupportsChains,
+  type RelayrEntry,
+  type RelayrPayment,
+  type RelayrTransactionRecord,
+} from '@bananapus/nana-sdk-core/review/relayr'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -35,27 +55,12 @@ import {
   publicClient,
 } from '@/lib/wallet-core'
 
-const RELAYR_API = 'https://api.relayr.ba5ed.com'
 const RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:'
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
 /** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
 const RELAYR_NOT_FOUND_ATTEMPTS = 3
 
-/**
- * Relayr's immutable prepaid-native payment endpoint. A quote is untrusted
- * HTTP input, so accepting an arbitrary target and calldata here would turn
- * the quote service into a wallet transaction oracle.
- */
-export const RELAYR_PAYMENT_ADDRESS =
-  '0x1c05f7841379d4393574c0ffa17908ec40ffd97d' as Address
-export const RELAYR_PAYMENT_SELECTOR = '0x103903a7'
-export const RELAYR_PAYMENT_CODE_HASH =
-  '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6' as Hex
-export const RELAYR_NATIVE_TOKEN =
-  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
-export const TRUSTED_FORWARDER_ABI = [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
-  inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }] as const
 const activeRelayrScopes = new Set<string>()
 
 /** Serialize payment and recovery for one saved action across tabs as well as components. */
@@ -72,17 +77,8 @@ export async function withRelayrScopeLock<T>(scope: string, execute: () => Promi
     return await execute()
   } finally { activeRelayrScopes.delete(scope) }
 }
-const RELAYR_PAYMENT_GAS = 150_000n
 const RELAYR_PAYMENT_CODE_MAX_BYTES = 2_048
 const RELAYR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
-
-export type RelayrEntry = {
-  chain: number
-  target: Address
-  data: Hex
-  value: string
-  virtual_nonce?: number
-}
 
 export type RelayrCall = {
   chainId: JBChainId
@@ -109,15 +105,6 @@ export function relayrCallsScope(calls: RelayrCall[]): string {
   return `authority:${keccak256(stringToHex(JSON.stringify(stableCalls)))}`
 }
 
-export type RelayrPayment = {
-  chain: number
-  amount: string
-  calldata: Hex
-  target: Address
-  token?: Address
-  payment_deadline?: number | string
-}
-
 export type RelayrPaymentDetails = {
   chainId: JBChainId
   target: Address
@@ -125,21 +112,6 @@ export type RelayrPaymentDetails = {
   calldata: Hex
   bundleUuid: string
   deadline: bigint
-}
-
-type RelayrTransactionStatus = {
-  state?: string
-  data?: {
-    hash?: Hex
-    transaction?: { hash?: Hex }
-  }
-}
-
-export type RelayrTransactionRecord = {
-  chain?: number
-  tx_uuid?: string
-  request?: RelayrEntry
-  status?: RelayrTransactionStatus
 }
 
 export type RelayrQuote = {
@@ -152,13 +124,6 @@ export type RelayrQuote = {
     chain: number
     entry: RelayrEntry
   }[]
-}
-
-export type RelayrProgressSummary = {
-  confirmed: number
-  failed: number
-  pending: number
-  total: number
 }
 
 export type RelayrPendingSession = {
@@ -238,42 +203,6 @@ class RelayrPaymentRevertedError extends Error {
   constructor() { super('Relayr payment reverted onchain.') }
 }
 
-export function relayrStateIsSuccess(state?: string): boolean {
-  const normalized = state?.trim().toLowerCase()
-  return normalized === 'success' || normalized === 'completed'
-}
-
-export function relayrStateIsFailed(state?: string): boolean {
-  return state?.trim().toLowerCase() === 'failed'
-}
-
-export function relayrProgress(
-  records: RelayrTransactionRecord[],
-  expectedCount = records.length,
-): RelayrProgressSummary {
-  const total = Math.max(expectedCount, records.length)
-  const confirmed = records.filter(record =>
-    relayrStateIsSuccess(record.status?.state),
-  ).length
-  const failed = records.filter(record =>
-    relayrStateIsFailed(record.status?.state),
-  ).length
-
-  return {
-    confirmed,
-    failed,
-    pending: Math.max(total - confirmed - failed, 0),
-    total,
-  }
-}
-
-/**
- * How long a signed ERC-2771 ForwardRequest stays valid. The forwarder rejects the request
- * after this, and pending sessions persist in localStorage indefinitely — so a bundle resumed
- * days later fails at the forwarder with the payment already made. {@link relayrSessionExpired}
- * lets the resume UI say so instead of offering a retry that cannot succeed.
- */
-const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
 const relayrPendingMemory = new Map<string, RelayrPendingSession>()
 /** Prevent a failed localStorage removal from resurrecting a cleared bundle. */
 const relayrClearedMemory = new Set<string>()
@@ -297,9 +226,13 @@ export function relayrSessionExpired(
   return nowMs >= relayrSessionExpiresAt(session)
 }
 
-/** When a session's signatures stop being executable, in milliseconds. */
+/**
+ * When a session's signatures stop being executable, in milliseconds. Pending
+ * sessions persist in localStorage indefinitely, so a bundle resumed days later
+ * would fail at the forwarder; the resume UI says so instead.
+ */
 export function relayrSessionExpiresAt(session: { createdAt: number }): number {
-  return session.createdAt + FORWARDER_DEADLINE_SECONDS * 1000
+  return session.createdAt + RELAYR_FORWARDER_DEADLINE_SECONDS * 1000
 }
 
 /** A timeout means Relayr may still execute a paid bundle. Do not submit it again blindly. */
@@ -716,18 +649,6 @@ export type RelayrProgress =
       paymentHash: Hex | null
     }
 
-const FORWARD_REQUEST_TYPES = {
-  ForwardRequest: [
-    { name: 'from', type: 'address' },
-    { name: 'to', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'gas', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint48' },
-    { name: 'data', type: 'bytes' },
-  ],
-} as const
-
 function connectedWallet(chainId: JBChainId) {
   return connectedWalletCore(chainId, {
     requireUnchanged: true,
@@ -816,7 +737,7 @@ export async function buildForwardedTx(
     value,
     gas: call.gas ?? 500_000n,
     nonce,
-    deadline: Math.floor(Date.now() / 1000) + FORWARDER_DEADLINE_SECONDS,
+    deadline: Math.floor(Date.now() / 1000) + RELAYR_FORWARDER_DEADLINE_SECONDS,
     data: call.data,
   }
   const typedDomain = {
@@ -1341,20 +1262,6 @@ export async function relayrPoll(
     }
     await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
-}
-
-export function relayrDestinationHash(
-  record: RelayrTransactionRecord,
-): Hex | null {
-  return record.status?.data?.hash ?? record.status?.data?.transaction?.hash ?? null
-}
-
-/** Relayr's live status schema nests the destination chain under request. */
-export function relayrRecordChain(
-  record: RelayrTransactionRecord,
-): number | null {
-  const chain = record.request?.chain ?? record.chain
-  return Number.isSafeInteger(chain) && Number(chain) > 0 ? Number(chain) : null
 }
 
 function relayrSessionFinished(

@@ -3,7 +3,8 @@
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { decodeFunctionData, isAddressEqual, type Address } from 'viem'
 import { loadLaunchSession } from '@/lib/launch-session'
-import type { RelayrEntry, RelayrPendingSession } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrPendingSession } from '@/lib/relayr'
 
 type Pending = { scope: string; session: RelayrPendingSession | null }
 

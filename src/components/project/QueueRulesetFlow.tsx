@@ -46,7 +46,7 @@ import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
-import { relayrSupportsChain, relayrSupportsChains } from "@/lib/relayr-chains";
+import { relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
   etherscanTxUrl,

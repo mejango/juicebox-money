@@ -59,37 +59,6 @@ vi.mock('@/lib/relayr', () => ({
     nowMs >= session.createdAt + 47 * 60 * 60 * 1000,
   relayrSessionExpiresAt: (session: { createdAt: number }) =>
     session.createdAt + 47 * 60 * 60 * 1000,
-  relayrDestinationHash: (record: {
-    status?: { data?: { hash?: string } }
-  }) => record.status?.data?.hash ?? null,
-  relayrRecordChain: (record: {
-    chain?: number
-    request?: { chain?: number }
-  }) => record.request?.chain ?? record.chain ?? null,
-  relayrStateIsSuccess: (state?: string) =>
-    ['success', 'completed'].includes((state ?? '').trim().toLowerCase()),
-  relayrStateIsFailed: (state?: string) =>
-    (state ?? '').trim().toLowerCase() === 'failed',
-  relayrProgress: (
-    records: { status?: { state?: string } }[],
-    expected = records.length,
-  ) => {
-    const confirmed = records.filter(record =>
-      ['success', 'completed'].includes(
-        (record.status?.state ?? '').trim().toLowerCase(),
-      ),
-    ).length
-    const failed = records.filter(
-      record => (record.status?.state ?? '').trim().toLowerCase() === 'failed',
-    ).length
-    const total = Math.max(expected, records.length)
-    return {
-      confirmed,
-      failed,
-      pending: Math.max(total - confirmed - failed, 0),
-      total,
-    }
-  },
 }))
 vi.mock('@/lib/safe', () => ({
   fetchSafeInfo: mocks.fetchSafeInfo,
