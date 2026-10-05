@@ -9,7 +9,7 @@ import { SafeBatchPresetDialog } from '@/components/project/SafeBatchPresetDialo
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
-import { fetchSafeInfo, readSafeQueue, type SafeInfo } from '@/lib/safe'
+import { fetchSafeInfo, readSafeQueue } from '@/lib/safe'
 import { MULTI_SEND_CALL_ONLY, multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
 import {
   hasSafeService,
@@ -37,30 +37,37 @@ function callsKey(calls: readonly BatchCall[]): string {
  */
 function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: BatchStep[]) {
   const key = steps.length ? callsKey(composeBatch(steps).calls) : null
-  return useQuery({
-    queryKey: ['safeBatchProposed', chainId, authority, key],
+  // The Safe's owners and threshold change rarely; the queue is polled.
+  const info = useQuery({
+    queryKey: ['safeBatchPolicy', chainId, authority],
     enabled: !!authority && !!key && hasSafeService(chainId),
+    staleTime: 60_000,
+    queryFn: () => fetchSafeInfo(chainId, authority!),
+  }).data
+  const tx = useQuery({
+    queryKey: ['safeBatchProposed', chainId, authority, key],
+    enabled: !!info,
     staleTime: 15_000,
     refetchInterval: 15_000,
-    queryFn: async (): Promise<{ tx: SafeQueuedTransaction; info: SafeInfo } | null> => {
-      const info = await fetchSafeInfo(chainId, authority!)
-      if (!info) return null
+    queryFn: async (): Promise<SafeQueuedTransaction | null> => {
       const { pending } = await readSafeQueue(chainId, authority!)
-      const tx = pending.find(candidate => {
-        const calls = multiSendCallsOf(candidate)
-        return (
-          !!calls &&
-          callsKey(calls) === key &&
-          safeTransactionMatchesCall(candidate, {
-            to: MULTI_SEND_CALL_ONLY,
-            data: candidate.data ?? '0x',
-            operation: 1,
-          })
-        )
-      })
-      return tx ? { tx, info } : null
+      return (
+        pending.find(candidate => {
+          const calls = multiSendCallsOf(candidate)
+          return (
+            !!calls &&
+            callsKey(calls) === key &&
+            safeTransactionMatchesCall(candidate, {
+              to: MULTI_SEND_CALL_ONLY,
+              data: candidate.data ?? '0x',
+              operation: 1,
+            })
+          )
+        }) ?? null
+      )
     },
-  }).data ?? null
+  }).data
+  return info && tx ? { tx, info } : null
 }
 
 function QueuedChainPanel({
