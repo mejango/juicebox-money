@@ -97,10 +97,14 @@ enables the full artifact comparison; it does not trust the fixture alone.
   the gate requires one record per send, exact request/calldata coverage, and a
   dedicated test reference beyond the shared wrapper test. Every test file an
   action lists must carry the action's marker in the title of an `it` or `test`
-  (`.each` included) that proves the action: `wallet-action:` plus the action's
-  name in lowercase with hyphens (`wallet-action:approve-an-erc-20`). A
-  `describe` or `suite` title does not count, and nothing under `.skip`,
-  `.todo`, `.skipIf`, `.runIf`, `.fails` or a bracketed modifier
+  that runs and proves the action: `wallet-action:` plus the action's name in
+  lowercase with hyphens (`wallet-action:approve-an-erc-20`). A marker counts
+  only on a test written directly in a `describe` body or at the top of the file
+  (not inside an `if`, a loop or a function, and not after a `return`), with an
+  inline callback, no `skip` taken from its context by the test or by a hook of
+  its suite, and, for `.each` and `.for`, a table written as an array literal
+  with a row; a `describe` or `suite` title does not count, and nothing under
+  `.skip`, `.todo`, `.skipIf`, `.runIf`, `.fails` or a bracketed modifier
   (`describe['skip']`) counts, so a broad test file cannot make a new operation
   look covered.
 - Every review call that carries an ABI must decode with the SDK's
