@@ -104,8 +104,13 @@ atomic.
   An unpaid project action stops reserving once nothing can fund it: its quote
   can no longer be paid, or every request it published is past its deadline.
   The same action then quotes again with the requests it published, or signs
-  again once they can no longer run. One that ever sent a payment keeps its
-  reservation; only the retry rule below clears it. A launch keeps its
+  again once they can no longer run, and only after one uncached read of its
+  bundle reports it unpaid with every call pending. One whose payments
+  reverted keeps its reservation until the retry rule below clears it, or
+  until nothing can fund it (ruling R104): every payment it sent proven
+  canonically reverted, the deadline of each of those payments and of each of
+  the quote's options past at a canonical finalized block, and the bundle
+  unpaid with every call pending and no destination hash. A launch keeps its
   reservation until its requests expire unused, since it quotes again on its
   own.
 - Funding options must match the validated Relayr payment contract, native token,
@@ -119,10 +124,14 @@ atomic.
   payment might have been broadcast, a timeout or missing hash requires
   reconciliation of that attempt, never an automatic second payment. A payment
   is proven from the chain under the hash it was mined. One proven reverted
-  leaves its quote to be paid once more, never replaced, and only when the
-  SDK's retry rule clears every payment sent for it: each reverted, the quote
-  still open, and Relayr's bundle, read without a cache, unpaid with every call
-  pending.
+  leaves its quote to be paid once more, never replaced, with exactly the
+  option it used (chain, calldata and amount), and only when the SDK's retry
+  rule clears every payment sent for it: each reverted, the quote still open,
+  and Relayr's bundle, read without a cache, unpaid with every call pending.
+  Before that, one read of the bundle decides: a payment or a call running or
+  run means another payment funded it, so its destinations are proven and it
+  is never paid again. Once its quote expires, it is released as above, and
+  until then every flow asks to try again later.
 - Relayr's response supplies candidate transaction hashes. Completion requires
   checking the exact destination transaction and its canonical receipt. Safe
   execution additionally needs its Safe transaction proof.

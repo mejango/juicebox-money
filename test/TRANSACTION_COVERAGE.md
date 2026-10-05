@@ -174,11 +174,17 @@ and the check fails on a missing marker.
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
   `transactions/relayr-orchestration.test.ts`. A payment proven reverted
-  onchain leaves its quote to be paid once more, on the same chain, and only
-  when the SDK's retry rule clears every payment the session sent for it: each
-  reverted, the quote still open, and Relayr's uncached bundle unpaid with every
-  call pending. A declined retry stays on that rule. Covered for authority
-  actions, payer deployments and launches in
+  onchain leaves its quote to be paid once more, with exactly the option it
+  used, and only when the SDK's retry rule clears every payment the session
+  sent for it: each reverted, the quote still open, and Relayr's uncached
+  bundle unpaid with every call pending. A declined retry stays on that rule,
+  and no payment hash is saved while the wallet holds a retry. One read of the
+  bundle comes first: a bundle another payment funded is proven, never paid
+  again. Once the quote expired it is released (ruling R104) only when every
+  payment is proven reverted, every deadline is past a canonical finalized
+  block and Relayr reports it unpaid with every call pending; each of those
+  failing keeps it. Covered for authority actions, payer deployments and
+  launches in
   `transactions/relayr-orchestration.test.ts`,
   `transactions/payer-relayr.test.ts` and `transactions/launch-relayr.test.ts`;
   the editors route such a bundle back to its original calls
@@ -187,9 +193,12 @@ and the check fails on a missing marker.
   `components/queue-ruleset-multichain.test.tsx`). An unpaid quote that nothing
   can fund (its options expired, or every request it published did) stops
   reserving the forwarder nonce, the same action quotes or signs again, a payer
-  deployment quotes its raw calls again, and the account view reads it as
-  expired (`transactions/relayr-orchestration.test.ts`,
-  `transactions/payer-relayr.test.ts`, `components/account-view.test.tsx`). Quotes bind each posted call to
+  deployment quotes its raw calls again, each after Relayr confirms the old
+  bundle unpaid and unrun, and the account view reads it as expired
+  (`transactions/relayr-orchestration.test.ts`,
+  `transactions/payer-relayr.test.ts`, `components/account-view.test.tsx`). A
+  session refuses to save payments or payment options it cannot keep exactly,
+  and saves only the options it authenticated. Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
   (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the
