@@ -56,8 +56,6 @@ vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
 vi.mock('@/lib/safe', () => ({
   deploySafeSameAddress: vi.fn(),
   SAFE_SERVICE: {},
-  safeQueueLink: (_chainId: number, safe: Address) =>
-    `https://app.safe.global/transactions/queue?safe=eth:${safe}`,
 }))
 
 import { ProjectHandleCard } from '@/components/project/ProjectHandleCard'
