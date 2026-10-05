@@ -13,7 +13,3 @@
 !scripts/
 !scripts/**
 .env*
-
-!vendor/
-!vendor/*.tgz
-!vendor/sdk-snapshot.json

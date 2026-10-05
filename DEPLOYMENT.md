@@ -122,8 +122,6 @@ Bendystraw endpoint from each operation's chain ID.
 
 ## Shared SDK deployment checks
 
-The app pins its SDK to the archive in `vendor/` so `npm ci` and container builds include the shared deployment checks before the next public SDK release. `vendor/sdk-snapshot.json` records its source commit, source-file hashes, artifact SHA-256 and npm integrity. The SDK source remains the owner of these checks.
+The app pins `@bananapus/nana-sdk-core` to the published npm release `2.19.0`. The lockfile records the registry archive and integrity for reproducible installs and container builds. The SDK remains the owner of shared deployment checks.
 
-The matching SDK changes are in [Juice SDK PR #168](https://github.com/Bananapus/juice-sdk-v4/pull/168). The preview preserves existing omitted-config deployment defaults; this app passes its selected shop settings explicitly.
-
-To regenerate, run `node scripts/pack-deployment-preview.mjs . <output-directory>` in the matching Juice SDK checkout. Use the same generated archive in Revnet Money and Juicebox Money, update the dependency and lockfile, and verify the artifact integrity before building. This script rebuilds both module formats from clean output. Registry migration can use the equivalent released version; no source copy belongs in this app.
+The deployment helpers and diagnostics shipped in [Juice SDK PR #168](https://github.com/Bananapus/juice-sdk-v4/pull/168). This release preserves existing omitted-config deployment defaults; this app passes its selected shop settings explicitly.

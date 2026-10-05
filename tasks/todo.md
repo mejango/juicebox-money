@@ -110,3 +110,12 @@ stage 1 starts at the deploy block, so "N cycles" is exact as long as the tx lan
 ruleset-1 duration of clicking Launch (deriveStartFrom snaps up otherwise → one extra cycle).
 The notice gate also catches the pre-existing silent failure where a Wait/Terminate closing ruleset
 started sooner than the deadline hook allowed. Not committed — awaiting go-ahead.
+
+# Published SDK switch (2026-10-05)
+- [x] Inspect PR, dependency references, and failing CI.
+- [x] Replace preview SDK with published core 2.19.0 and remove preview artifacts.
+- [x] Regenerate lockfile and investigate the existing production audit failure: node-forge has no patched release; preserve the audit gate.
+- [x] Run CI-equivalent verification and review the final diff.
+- [x] Prepare the verified change for the existing PR branch and update its release-integration description.
+
+Review: published core 2.19.0 has identical distributed SDK code to the preview. Locked install, 1,979 unit tests with coverage, 57 browser tests, production build, client budgets, lint, typecheck, dependency/source/container/schema/transaction/dead-code checks, and 252 pinned protocol entries across eight chains passed with Node 26.7.0 / npm 12.0.1. Production audit still fails on inherited node-forge GHSA-86w9-cpqp-85rv; npm reports no patched release. No audit exceptions or gate changes. Original working checkout remains untouched.
