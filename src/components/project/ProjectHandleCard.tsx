@@ -42,6 +42,7 @@ import { safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
 import {
   readCrossChainHandleAuthority,
   readSafeCreation,
+  UnprovenSafeError,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
 
@@ -572,7 +573,7 @@ export function ProjectHandleCard({
           live.authority,
         )
         if (handleAuthority?.status === 'unproven-creation') {
-          throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID))
+          throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
         }
         if (
           deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
@@ -630,7 +631,7 @@ export function ProjectHandleCard({
             current.authority,
           )
           if (handleAuthority?.status === 'unproven-creation') {
-            throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID))
+            throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
           }
           if (
             deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
@@ -689,7 +690,7 @@ export function ProjectHandleCard({
           confirmed.authority,
         )
         if (handleAuthority?.status === 'unproven-creation') {
-          throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID))
+          throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
         }
         if (
           deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
@@ -799,7 +800,7 @@ export function ProjectHandleCard({
         return
       }
       if (before.status === 'unproven-creation') {
-        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID))
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
       }
       if (before.mainnet?.kind !== 'eoa') {
         throw new Error(
@@ -845,7 +846,7 @@ export function ProjectHandleCard({
       )
       const confirmed = await readHandleAuthority(deployment, authority)
       if (confirmed?.status === 'unproven-creation') {
-        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID))
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
       }
       if (!confirmed?.allowed) {
         throw new Error(

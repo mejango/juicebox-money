@@ -21,6 +21,14 @@ export function unprovenSafeLine(chainId: number): string {
   return `Can't verify this Safe is the same on ${chainName(chainId)}.`
 }
 
+/** A refusal because a Safe's creation can't be proven on `chainId`; its message is the R90 line. */
+export class UnprovenSafeError extends Error {
+  constructor(chainId: number) {
+    super(unprovenSafeLine(chainId))
+    this.name = 'UnprovenSafeError'
+  }
+}
+
 /** A record that proves a Safe's address never changes; a missing one is asked for again soon. */
 const PROVEN_CREATION_TTL_MS = 24 * 60 * 60_000
 const UNPROVEN_CREATION_TTL_MS = 60_000

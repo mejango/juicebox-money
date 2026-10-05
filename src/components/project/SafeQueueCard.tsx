@@ -105,7 +105,7 @@ import {
   readDirectEnsProjectRecord,
   readDirectEnsText,
 } from '@/lib/project-handles'
-import { readMatchingAuthorityIdentities, unprovenSafeLine } from '@/lib/cross-chain-authority'
+import { readMatchingAuthorityIdentities, UnprovenSafeError } from '@/lib/cross-chain-authority'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import { rolloutContractName } from '@/lib/protocol-rollout'
@@ -126,6 +126,8 @@ type ChainQueue = SafeQueueChain & {
   info: SafeInfo | null;
   currentNonce: number | null;
   transactions: SafeQueuedTransaction[];
+  /** Why a shown row can't be signed or executed here, by safeTxHash. */
+  blocked: Record<string, string>;
   error: string | null;
 };
 
@@ -461,7 +463,7 @@ export async function assertQueuedProjectHandleContext(
         service: SAFE_SERVICE,
       });
       if (identities?.creationUnproven) {
-        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID);
       }
       if (!identities?.matches) {
         throw new Error(
@@ -568,7 +570,7 @@ export async function assertQueuedProjectHandleContext(
       service: SAFE_SERVICE,
     });
     if (identities?.creationUnproven) {
-      throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+      throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID);
     }
     if (!identities?.matches) {
       throw new Error(
@@ -673,7 +675,7 @@ async function assertRelayrProjectHandlePostcondition(
         service: SAFE_SERVICE,
       });
       if (identities?.creationUnproven) {
-        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID);
       }
       if (!identities?.matches) {
         throw new Error(
@@ -745,7 +747,7 @@ async function assertRelayrProjectHandlePostcondition(
       service: SAFE_SERVICE,
     });
     if (identities?.creationUnproven) {
-      throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+      throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID);
     }
     if (!identities?.matches) {
       throw new Error(
@@ -920,6 +922,8 @@ function executionPlan(
    * policy immediately before execution.
    */
   info: SafeInfo | null,
+  /** Rows that can't be executed here, by safeTxHash. */
+  blocked: Record<string, string>,
 ): {
   direct: Set<SafeQueuedTransaction>;
   batch: SafeQueuedTransaction[];
@@ -945,9 +949,10 @@ function executionPlan(
     const rows = byNonce.get(next) ?? [];
     if (rows.length !== 1) break;
     const transaction = rows[0];
-    // A refund is never executed here, so it ends the run of executable nonces.
+    // A refund or a blocked row is never executed here, so it ends the run of executable nonces.
     if (
       safeTransactionHasRefund(transaction) ||
+      blocked[transaction.safeTxHash?.toLowerCase() ?? ""] ||
       usableSafeConfirmations(transaction, info.owners).length < info.threshold
     ) {
       break;
@@ -1041,6 +1046,7 @@ export function SafeQueueCard({
                 info: null,
                 currentNonce: null,
                 transactions: [],
+                blocked: {},
                 error: null,
               };
             }
@@ -1050,6 +1056,7 @@ export function SafeQueueCard({
                 info,
                 currentNonce: await getSafeNextNonce(chain.chainId, safe),
                 transactions: [],
+                blocked: {},
                 error: null,
               };
             }
@@ -1058,6 +1065,7 @@ export function SafeQueueCard({
               safe,
             );
             const visibleTransactions: SafeQueuedTransaction[] = [];
+            const blocked: Record<string, string> = {};
             for (const transaction of pending) {
               if (!chain.handleOnly) {
                 visibleTransactions.push(transaction);
@@ -1074,9 +1082,15 @@ export function SafeQueueCard({
                 ) {
                   visibleTransactions.push(transaction);
                 }
-              } catch {
+              } catch (handleError) {
+                // A claim whose Safe can't be proven the same on Ethereum is
+                // shown with that line, and is never actionable here.
+                if (handleError instanceof UnprovenSafeError && transaction.safeTxHash) {
+                  visibleTransactions.push(transaction);
+                  blocked[transaction.safeTxHash.toLowerCase()] = handleError.message;
+                }
                 // A stale or malformed handle proposal stays hidden and can
-                // only be managed in the Safe app; it is never actionable here.
+                // only be managed in the Safe app.
               }
             }
             return {
@@ -1084,6 +1098,7 @@ export function SafeQueueCard({
               info,
               currentNonce,
               transactions: visibleTransactions,
+              blocked,
               error: null,
             };
           } catch (queueError) {
@@ -1092,6 +1107,7 @@ export function SafeQueueCard({
               info: null,
               currentNonce: null,
               transactions: [],
+              blocked: {},
               error:
                 queueError instanceof Error
                   ? queueError.message
@@ -1109,6 +1125,7 @@ export function SafeQueueCard({
         chain.currentNonce,
         chain.transactions,
         chain.info,
+        chain.blocked,
       );
       for (const transaction of plan.batch) rows.push({ chain, tx: transaction });
     }
@@ -1893,6 +1910,7 @@ export function SafeQueueCard({
               chain.currentNonce,
               chain.transactions,
               chain.info,
+              chain.blocked,
             );
             const owners = chain.info?.owners ?? [];
             const required = chain.info?.threshold ?? 1;
@@ -1948,6 +1966,7 @@ export function SafeQueueCard({
                       const usable = usableSafeConfirmations(tx, owners);
                       const count = usable.length;
                       const refund = safeTransactionHasRefund(tx);
+                      const blockedLine = chain.blocked[tx.safeTxHash?.toLowerCase() ?? ""];
                       const signed =
                         !!address &&
                         usable.some(
@@ -1956,7 +1975,7 @@ export function SafeQueueCard({
                             address.toLowerCase(),
                         );
                       const thresholdMet = count >= required;
-                      const readyToExecute = thresholdMet && !refund;
+                      const readyToExecute = thresholdMet && !refund && !blockedLine;
                       const confirmedOwners = new Set(
                         usable.map((confirmation) =>
                           confirmation.owner.toLowerCase(),
@@ -2036,6 +2055,10 @@ export function SafeQueueCard({
                               {refund ? (
                                 <p className="text-xs text-smoke-700">
                                   {SAFE_REFUND_REFUSAL}
+                                </p>
+                              ) : blockedLine ? (
+                                <p className="text-xs text-smoke-700">
+                                  {blockedLine}
                                 </p>
                               ) : isSigner && !signed && !readyToExecute ? (
                                 <button

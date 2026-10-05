@@ -54,7 +54,7 @@ import {
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   readMatchingAuthorityIdentities,
-  unprovenSafeLine,
+  UnprovenSafeError,
 } from '@/lib/cross-chain-authority'
 import {
   isSafeConnection,
@@ -379,7 +379,7 @@ export async function runAuthorityCalls({
         throw new Error('Could not verify the cross-chain authority policy.')
       }
       if (identities.creationUnproven) {
-        throw new Error(unprovenSafeLine(call.chainId))
+        throw new UnprovenSafeError(call.chainId)
       }
       if (!identities.matches) {
         const sourceName =

@@ -55,7 +55,7 @@ import {
 import {
   readMatchingAuthorityIdentities,
   readSafeCreation,
-  unprovenSafeLine,
+  UnprovenSafeError,
 } from "@/lib/cross-chain-authority";
 import { buildStep } from "@/lib/safe-batch";
 import {
@@ -510,7 +510,7 @@ function DeploySafeButtons({
             service: SAFE_SERVICE,
           });
           if (identities?.creationUnproven) {
-            throw new Error(unprovenSafeLine(candidate.chainId));
+            throw new UnprovenSafeError(candidate.chainId);
           }
           if (!identities?.matches) {
             throw new Error(

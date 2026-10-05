@@ -487,7 +487,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       runAuthorityCalls({
         calls: [{ chainId: 1, detectionChainId: 10, authority: SAFE, target: TARGET, data: '0x1234' }],
       }),
-    ).rejects.toThrow(new Error("Can't verify this Safe is the same on Ethereum."))
+    ).rejects.toThrow("Can't verify this Safe is the same on Ethereum.")
     expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
       expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
     )

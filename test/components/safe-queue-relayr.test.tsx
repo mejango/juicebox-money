@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     info: { owners: Address[]; threshold: number }
     currentNonce: number
     transactions: SafeQueuedTransaction[]
+    blocked: Record<string, string>
     error: null
   }>,
   session: null as RelayrPendingSession | null,
@@ -120,6 +121,7 @@ function chain(chainId: JBChainId, nonces: number[]) {
     info: { owners: [OWNER], threshold: 1 },
     currentNonce: nonces[0],
     transactions: nonces.map(queued),
+    blocked: {},
     error: null,
   }
 }

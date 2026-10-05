@@ -3,7 +3,7 @@ import { createElement } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { safeProposalFor, safeTransactionHash } from '@bananapus/nana-sdk-core/safe-service'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import type { Address, Hex } from 'viem'
+import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The queue card's own reads, through React Query: which chains it asks
@@ -18,6 +18,7 @@ const TARGET = '0x5555555555555555555555555555555555555555' as Address
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   info: { owners: [] as Address[], threshold: 1 },
+  readMatchingAuthorityIdentities: vi.fn(),
 }))
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OWNER }) }))
@@ -34,12 +35,17 @@ vi.mock('@/lib/wallet-core', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/wallet-core')>()),
   publicClient: () => ({}),
 }))
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
+  readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
+}))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: async () => 5n,
 }))
 
-import { SafeQueueCard } from '@/components/project/SafeQueueCard'
+import { SafeQueueCard, type SafeQueueChain } from '@/components/project/SafeQueueCard'
+import { jbProjectHandlesAbi, PROJECT_HANDLES_ADDRESS } from '@/lib/project-handles'
 
 function textOf(node: ReactTestInstance): string {
   return node.children.map(child => (typeof child === 'string' ? child : textOf(child))).join('')
@@ -47,7 +53,13 @@ function textOf(node: ReactTestInstance): string {
 
 let renderer: TestRenderer.ReactTestRenderer
 
-async function renderQueue(chainId: JBChainId, name: string) {
+async function renderQueue(
+  chainId: JBChainId,
+  name: string,
+  chains: SafeQueueChain[] = [
+    { chainId, name, projectId: 42, isRevnet: false, handleTuples: [{ chainId, projectId: 42 }] },
+  ],
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => {
     renderer = TestRenderer.create(
@@ -56,7 +68,7 @@ async function renderQueue(chainId: JBChainId, name: string) {
         { client },
         createElement(SafeQueueCard, {
           safe: SAFE,
-          chains: [{ chainId, name, projectId: 42, isRevnet: false, handleTuples: [{ chainId, projectId: 42 }] }],
+          chains,
           authorityLabel: 'Project owner',
         }),
       ),
@@ -114,5 +126,59 @@ describe('Safe queue and the transaction service', () => {
     expect(text).toContain('1/2 signatures')
     expect(text).not.toContain('| ready')
     expect(text).toContain('Still needs 1 of:')
+  })
+})
+
+describe("a queued handle claim on Ethereum", () => {
+  it("shows the line for a Safe it can't prove is the same there, with nothing to sign or execute", async () => {
+    // The project is on Base; its Safe's claim of the Ethereum handle is queued there.
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: { kind: 'safe' },
+      destination: { kind: 'safe' },
+      matches: false,
+      creationUnproven: true,
+    })
+    const claim = safeProposalFor(
+      {
+        to: PROJECT_HANDLES_ADDRESS,
+        data: encodeFunctionData({
+          abi: jbProjectHandlesAbi,
+          functionName: 'setEnsNamePartsFor',
+          args: [8453n, 42n, ['myproject']],
+        }),
+      },
+      5,
+    )
+    const row = {
+      ...claim,
+      safe: SAFE,
+      safeTxHash: safeTransactionHash(1, SAFE, claim),
+      confirmationsRequired: 1,
+      confirmations: [],
+      isExecuted: false,
+    }
+    mocks.fetch.mockImplementation(async (input: string) =>
+      String(input).startsWith(`https://api.safe.global/tx-service/eth/api/v1/safes/${SAFE}/multisig-transactions/`)
+        ? new Response(JSON.stringify({ results: [row], next: null }), { status: 200 })
+        : new Response('{}', { status: 404 }),
+    )
+
+    await renderQueue(1, 'Ethereum', [
+      {
+        chainId: 1,
+        name: 'Ethereum',
+        projectId: 42,
+        isRevnet: false,
+        handleOnly: true,
+        handleTuples: [{ chainId: 8453, projectId: 42 }],
+      },
+    ])
+
+    const text = textOf(renderer.root)
+    expect(text).toContain('#5')
+    expect(text).toContain("Can't verify this Safe is the same on Ethereum.")
+    const labels = renderer.root.findAllByType('button').map(button => textOf(button))
+    expect(labels).not.toContain('Sign')
+    expect(labels).not.toContain('Execute')
   })
 })

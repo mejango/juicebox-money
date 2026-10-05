@@ -268,7 +268,7 @@ describe('Safe queue project authority', () => {
         queued(call.target, call.data),
         [{ chainId: 10, projectId: 42 }],
       ),
-    ).rejects.toThrow(new Error("Can't verify this Safe is the same on Ethereum."))
+    ).rejects.toThrow("Can't verify this Safe is the same on Ethereum.")
     expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
       expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
     )

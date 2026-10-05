@@ -56,7 +56,7 @@ import {
 } from '@bananapus/nana-sdk-core/safe-service'
 import {
   readMatchingAuthorityIdentities,
-  unprovenSafeLine,
+  UnprovenSafeError,
 } from '@/lib/cross-chain-authority'
 import {
   connectedWallet as connectedWalletCore,
@@ -1356,7 +1356,7 @@ export async function deploySafeSameAddress(
         authority: expectedSafe,
         service: SAFE_SERVICE,
       })
-      if (confirmed?.creationUnproven) throw new Error(unprovenSafeLine(chainId))
+      if (confirmed?.creationUnproven) throw new UnprovenSafeError(chainId)
       if (!confirmed?.matches) {
         throw new Error(
           'The Safe deployed, but its destination policy does not match the live source Safe.',
