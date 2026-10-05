@@ -101,6 +101,7 @@ const DESTINATION_HASHES = [DESTINATION_HASH, SECOND_DESTINATION_HASH, `0x${'12'
 const DESTINATION_UUIDS = [OTHER_UUID, THIRD_UUID, 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa']
 const TESTNETS = [11155111, 11155420, 84532, 421614] as const
 const PAYMENT_DEADLINE = 4_000_000_000
+const KEEP_PENDING = 'A relay request this action published may still run, or may have run outside Relayr. Keep it pending and check its destination before signing again.'
 const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
 
 function paymentCalldata(
@@ -1725,6 +1726,49 @@ describe('paying a reverted Relayr payment again', () => {
       expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
     })
 
+    it('keeps a released quote pending when its old request ran outside Relayr', async () => {
+      const { posts } = await expired()
+      // Anyone holding the old signed request ran it at the forwarder: its nonce
+      // moved to 5, while Relayr, which never ran it, still reports the bundle
+      // unpaid with its call pending.
+      let verifies = 0
+      const read = mocks.client.readContract.getMockImplementation()!
+      mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n
+        : input.functionName === 'verify' ? ++verifies > 1 : read(input))
+      mocks.wallet.sendTransaction.mockResolvedValue(SECOND_PAYMENT)
+      await expect(runRelayrCalls(options)).rejects.toThrow(KEEP_PENDING)
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+      expect(posts).toHaveLength(1)
+      expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted', released: true })
+    })
+
+    it('keeps a released quote pending while its old request can still run', async () => {
+      const { posts } = await expired()
+      // The forwarder answers verify falsely once, while the old request is still live.
+      let verifies = 0
+      const read = mocks.client.readContract.getMockImplementation()!
+      mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? ++verifies > 1 : read(input))
+      mocks.wallet.sendTransaction.mockResolvedValue(SECOND_PAYMENT)
+      await expect(runRelayrCalls(options)).rejects.toThrow(KEEP_PENDING)
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+      expect(posts).toHaveLength(1)
+    })
+
+    it('signs the calls again with their own nonce once the old request expired unused at a finalized block', async () => {
+      const { posts } = await expired()
+      const requestsExpired = START / 1_000 + RELAYR_FORWARDER_DEADLINE_SECONDS + 60
+      vi.mocked(Date.now).mockReturnValue(requestsExpired * 1_000)
+      finalizedAt = requestsExpired
+      mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+      await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+      expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => request.message.nonce)).toEqual([4n, 4n])
+      expect(posts).toHaveLength(2)
+      expect(posts[1][0].data).not.toBe(posts[0][0].data)
+      expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
+    })
+
     it('keeps the quote while another of its options is still open at the finalized block of its chain', async () => {
       const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ chain: 10 }, DEADLINE + 3_600)])
       await expect(runRelayrCalls(options)).rejects.toThrow(WAITING)
@@ -1799,6 +1843,13 @@ describe('unpaid Relayr quotes', () => {
     return reads
   }
 
+  /** The finalized block, still canonical, is at `seconds`. */
+  function finalizedAt(seconds: number) {
+    mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
+      ? { number: 200n, hash: BLOCK_HASH, timestamp: BigInt(seconds) }
+      : { hash: BLOCK_HASH })
+  }
+
   /** Sign and publish `calls`, then close the funding choice without paying. */
   async function unpaidQuote(scope = 'abandoned') {
     mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('Funding chain selection cancelled. Nothing was sent.'))
@@ -1832,8 +1883,10 @@ describe('unpaid Relayr quotes', () => {
     const reads = unrunUntilPaid()
     await unpaidQuote()
     now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).resolves.toMatchObject({ paymentHash: HASH })
-    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+    // Signed again with the nonce the expired request never used.
+    expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => request.message.nonce)).toEqual([4n, 4n])
     expect(posts).toHaveLength(2)
     expect(posts[1][0].data).not.toBe(posts[0][0].data)
     expect(reads).toHaveBeenCalledTimes(1)
@@ -1851,6 +1904,7 @@ describe('unpaid Relayr quotes', () => {
     unrunUntilPaid(body)
     await unpaidQuote()
     now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(
       'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
@@ -1865,6 +1919,36 @@ describe('unpaid Relayr quotes', () => {
     await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
     now.mockReturnValue(REQUESTS_EXPIRED)
     await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
+  })
+
+  it('keep a released quote pending when a request it published may have run outside Relayr', async () => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid()
+    await unpaidQuote()
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    // Anyone holding the signed request can run it at the forwarder: its nonce moved on.
+    const read = mocks.client.readContract.getMockImplementation()!
+    mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n : read(input))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(KEEP_PENDING)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID })
+  })
+
+  it('keep a released quote pending while a request it published can still run', async () => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid()
+    await unpaidQuote()
+    now.mockReturnValue(EXPIRED)
+    finalizedAt(EXPIRED / 1_000)
+    // The forwarder answers verify falsely once, while the request is still live.
+    let verifies = 0
+    const read = mocks.client.readContract.getMockImplementation()!
+    mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? ++verifies > 1 : read(input))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(KEEP_PENDING)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
   it('are not released once a payment was sent', async () => {

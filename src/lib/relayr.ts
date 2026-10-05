@@ -136,6 +136,8 @@ export type RelayrPendingSession = {
   expectedTransactions?: RelayrQuote['expectedTransactions']
   /** Preserve published signatures even when the quote response is lost or payment is canceled. */
   publishedEntries?: RelayrEntry[]
+  /** The forwarder nonce each published request was signed with, in order, in decimal. */
+  publishedNonces?: string[]
   /** Every payment sent for this bundle, as relayrPaymentDetails authenticated it, under the hash it was mined. */
   payments?: RelayrSentPayment[]
   /** The quote's payment options that passed relayrPaymentDetails when it was quoted, authenticated again whenever one is used. */
@@ -392,6 +394,10 @@ function exactSnapshots<T>(
     : undefined
 }
 
+function relayrNonceSnapshot(nonce: string): string | null {
+  return typeof nonce === 'string' && /^\d{1,78}$/u.test(nonce) ? nonce : null
+}
+
 function relayrPaymentOptionSnapshot(payment: RelayrPayment): RelayrPayment | null {
   if (!payment || typeof payment !== 'object' || !Number.isSafeInteger(payment.chain) ||
       typeof payment.amount !== 'string' || typeof payment.calldata !== 'string' || typeof payment.target !== 'string' ||
@@ -434,6 +440,7 @@ export function saveRelayrPendingSession(
   )
   const expectedTransactions = exactSnapshots(session.expectedTransactions, relayrBindingSnapshot)
   const publishedEntries = exactSnapshots(session.publishedEntries, relayrEntrySnapshot)
+  const publishedNonces = exactSnapshots(session.publishedNonces, relayrNonceSnapshot)
   // The retry rule and the release read these, so either is kept exactly or the save fails.
   const payments = session.payments?.length ? relayrSentPaymentsSnapshot(session.payments) : undefined
   if (payments === null) {
@@ -467,6 +474,7 @@ export function saveRelayrPendingSession(
     ...(expectedSafeExecutions ? { expectedSafeExecutions } : {}),
     ...(expectedTransactions ? { expectedTransactions } : {}),
     ...(publishedEntries ? { publishedEntries } : {}),
+    ...(publishedNonces ? { publishedNonces } : {}),
     ...(payments ? { payments } : {}),
     ...(paymentOptions ? { paymentOptions } : {}),
     ...(session.released === true && session.paymentStatus === 'reverted' ? { released: true as const } : {}),
@@ -511,6 +519,7 @@ export function saveRelayrPendingSessionDurably(scope: string, session: RelayrPe
 function persistRelayrPublication(scope: string, session: RelayrPendingSession): RelayrPendingSession {
   const saved = saveRelayrPendingSessionDurably(scope, session)
   if (saved.publishedEntries?.length !== saved.expectedCount ||
+      (session.publishedNonces && saved.publishedNonces?.length !== saved.expectedCount) ||
       (session.expectedTransactions && saved.expectedTransactions?.length !== saved.expectedCount)) {
     throw new Error('This Relayr action is too large to save its exact recovery information. No further transaction was sent.')
   }
@@ -578,6 +587,7 @@ export function loadRelayrPendingSession(
         ? value.expectedTransactions
         : undefined,
       publishedEntries: Array.isArray(value.publishedEntries) ? value.publishedEntries : undefined,
+      publishedNonces: Array.isArray(value.publishedNonces) ? value.publishedNonces : undefined,
       payments: Array.isArray(value.payments) ? value.payments : undefined,
       paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
       ...(value.released === true && value.paymentStatus === 'reverted' ? { released: true as const } : {}),
@@ -642,6 +652,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
         if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
             !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
       }
+      if (value.publishedNonces !== undefined && (!Array.isArray(value.publishedNonces) ||
+          value.publishedNonces.length !== value.expectedCount || !value.publishedNonces.every(relayrNonceSnapshot))) throw new Error()
       if (value.expectedTransactions !== undefined && (!Array.isArray(value.expectedTransactions) ||
           value.expectedTransactions.length !== value.expectedCount || !value.expectedTransactions.every(binding => relayrBindingSnapshot(binding) && value.chainIds.includes(binding.chain)))) throw new Error()
       if (value.expectedSafeExecutions !== undefined && (!Array.isArray(value.expectedSafeExecutions) ||
@@ -755,13 +767,41 @@ async function verifyForwardedEntries(entries: RelayrEntry[], account: Address):
   }
 }
 
+/**
+ * The nonces a released session's calls are signed again with: each request
+ * it published is proven expired and unused at a canonical finalized block,
+ * so neither it nor its replacement can run twice. Throws otherwise, and the
+ * session stays pending.
+ */
+async function requireReleasedRequestsUnused(
+  published: readonly RelayrEntry[],
+  nonces: readonly string[] | undefined,
+  account: Address,
+): Promise<readonly string[]> {
+  let unused = !!nonces && nonces.length === published.length
+  for (let index = 0; unused && index < published.length; index++) {
+    const request = relayrForwardRequest(published[index])
+    unused = !!request && await relayrRequestExpiredUnused({ chainId: published[index].chain, account,
+      nonce: nonces![index], deadline: request.deadline })
+  }
+  if (!unused || !nonces) {
+    throw new Error('A relay request this action published may still run, or may have run outside Relayr. Keep it pending and check its destination before signing again.')
+  }
+  return nonces
+}
+
 /** Sign one EIP-2771 request for a Relayr destination transaction. */
-export async function buildForwardedTx(
+export async function buildForwardedTx(...args: Parameters<typeof signForwardedRequest>): Promise<RelayrEntry> {
+  return (await signForwardedRequest(...args)).entry
+}
+
+/** Sign one EIP-2771 request for a Relayr destination transaction, with the forwarder nonce it was signed with. */
+async function signForwardedRequest(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
   context?: { description: string; calls: readonly TransactionReviewCall[] },
-): Promise<RelayrEntry> {
+): Promise<{ entry: RelayrEntry; nonce: bigint }> {
   const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][
     call.chainId
   ] as Address | undefined
@@ -855,22 +895,25 @@ export async function buildForwardedTx(
   }
 
   return {
-    chain: call.chainId,
-    target: forwarder,
-    data: encodeFunctionData({
-      abi: erc2771ForwarderAbi,
-      functionName: 'execute',
-      args: [{
-        from: request.from,
-        to: request.to,
-        value: request.value,
-        gas: request.gas,
-        deadline: request.deadline,
-        data: request.data,
-        signature,
-      }],
-    }),
-    value: value.toString(),
+    entry: {
+      chain: call.chainId,
+      target: forwarder,
+      data: encodeFunctionData({
+        abi: erc2771ForwarderAbi,
+        functionName: 'execute',
+        args: [{
+          from: request.from,
+          to: request.to,
+          value: request.value,
+          gas: request.gas,
+          deadline: request.deadline,
+          data: request.data,
+          signature,
+        }],
+      }),
+      value: value.toString(),
+    },
+    nonce,
   }
 }
 
@@ -1645,6 +1688,10 @@ async function executeRelayrCalls({
   }
   assertAuthorizationAvailable()
   const entries: RelayrEntry[] = []
+  /** The forwarder nonce each request in `entries` was signed with, when known. */
+  let nonces: string[] | undefined = []
+  /** A released session's nonces, which its calls are signed again with. */
+  let releasedNonces: readonly string[] | undefined
   if (saved) {
     const published = saved.publishedEntries ?? []
     if (published.length !== calls.length) throw new Error('The saved relay publication is incomplete. Keep the original action pending.')
@@ -1660,12 +1707,16 @@ async function executeRelayrCalls({
     try {
       await verifyForwardedEntries(published, account)
       entries.push(...published)
+      nonces = saved.publishedNonces
     } catch (error) {
-      // Nothing can fund a released quote, so requests of it that can no
-      // longer run are signed again, once Relayr confirms that none of them
-      // ran. A publication whose quote never arrived has no bundle to read.
-      // Any other publication stays as it is.
+      // Nothing can fund a released quote, but anyone holding one of its
+      // signed requests can still run it at the forwarder, outside Relayr. So
+      // its calls are signed again, with the same nonces, only once each
+      // request is proven expired and unused at a canonical finalized block
+      // and Relayr confirms that none of them ran. A publication whose quote
+      // never arrived has no bundle to read. Any other publication stays as it is.
       if (!relayrQuoteReleased(saved)) throw error
+      releasedNonces = await requireReleasedRequestsUnused(published, saved.publishedNonces, account)
       if (RELAYR_UUID_RE.test(saved.bundleUuid)) await requireRelayrBundleUnrun(saved.bundleUuid)
     }
   }
@@ -1684,7 +1735,10 @@ async function executeRelayrCalls({
       chainId: calls[index].chainId,
     })
     await reverify?.()
-    entries.push(await buildForwardedTx(calls[index], account))
+    const signed = await signForwardedRequest(calls[index], account,
+      releasedNonces ? BigInt(releasedNonces[index]) : undefined)
+    entries.push(signed.entry)
+    nonces?.push(signed.nonce.toString())
     await reverify?.()
   }
   const repaying = saved?.paymentStatus === 'reverted' && !saved.released ? saved : null
@@ -1706,6 +1760,7 @@ async function executeRelayrCalls({
       bundleUuid: 'publication-pending', paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
       chainIds: calls.map(call => call.chainId), expectedCount: calls.length, records: [], itemCount: calls.length,
       account, createdAt: signedAt, publishedEntries: entries,
+      ...(nonces?.length === entries.length ? { publishedNonces: nonces } : {}),
     }
     // Posting exposes executable signatures, even when the server's response never arrives.
     assertAuthorizationAvailable()
