@@ -243,8 +243,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         return true
       } catch { return false }
     }
-    const originalPaymentExpired = async (): Promise<boolean> =>
-      !!journal?.paymentDeadline && relayrDeadlinePassed(journal.paymentChainId!, journal.paymentDeadline)
+    const originalPaymentExpired = async (): Promise<boolean> => !!journal?.paymentDeadline &&
+      journal.paymentChainId !== undefined && relayrDeadlinePassed(journal.paymentChainId, journal.paymentDeadline)
     if (journal?.published && !journal.abandonable &&
         ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) &&
         await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])])) {
@@ -545,8 +545,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     const destinations = journal.signed.map(item => item.chainId)
     let payment: RelayrPayment | undefined
     if (journal.phase === 'payment-reverted') {
-      // A quote that was paid before is paid again on the same chain, and
-      // only when the SDK's retry rule clears it.
+      // A quote that was paid before is paid again with exactly the option it
+      // used, and only when the SDK's retry rule clears it.
       requireQuoteBindings()
       payment = relayrRetryOption(journal.payments, journal.quote?.payment_info)
     } else {

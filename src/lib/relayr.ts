@@ -1668,8 +1668,8 @@ async function executeRelayrCalls({
   let quote: RelayrQuote
   let payment: RelayrPayment
   if (repaying) {
-    // A quote that was paid before is never replaced: it is paid again, on
-    // the chain it was paid on, and only when the SDK's retry rule clears it.
+    // A quote that was paid before is never replaced: it is paid again, with
+    // exactly the option it used, and only when the SDK's retry rule clears it.
     payment = relayrRetryOption(repaying.payments, repaying.paymentOptions)
     if (!repaying.paymentOptions || !repaying.expectedTransactions) {
       throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')

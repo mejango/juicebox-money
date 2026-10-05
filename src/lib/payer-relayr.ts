@@ -460,8 +460,8 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {
         let payment: RelayrPayment | undefined
         if (session.phase === 'payment-reverted') {
-          // A quote that was paid before is paid again on the same chain, and
-          // only when the SDK's retry rule clears it.
+          // A quote that was paid before is paid again with exactly the option it
+          // used, and only when the SDK's retry rule clears it.
           payment = relayrRetryOption(session.payments, quote.payment_info)
         } else {
           const payments = relayrPaymentOptions(quote, chains)
