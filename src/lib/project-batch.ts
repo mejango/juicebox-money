@@ -15,6 +15,7 @@ import {
   isSafeConnection,
   readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
+  SAFE_PROPOSAL_UNCONFIRMED,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import {
@@ -148,6 +149,13 @@ async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Pr
   return withRelayrScopeLock(`project-batch:${scopes[index]}`, () => locked(scopes, run, index + 1))
 }
 
+/**
+ * The Safe ran a saved proposal's execution and it failed, or ran something
+ * this app can't prove is that proposal: the result is final, so the call is
+ * no longer held as submitted.
+ */
+class SafeSubmissionSettled extends Error {}
+
 async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, acceptReverted = false): Promise<TransactionReceipt> {
   const client = clientFor(call.chainId)
   const [tx, receipt] = await Promise.all([
@@ -167,7 +175,9 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
       calls: [{ to: call.target, data: call.data, value: call.value }],
     })
     if (execution.status !== 'success') {
-      throw new Error('This receipt does not prove execution of the exact saved Safe proposal.')
+      throw new SafeSubmissionSettled(execution.status === 'failed'
+        ? 'The saved Safe proposal ran, and its call failed. Review it again.'
+        : SAFE_PROPOSAL_UNCONFIRMED)
     }
   } else if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
       !isAddressEqual(tx.to, call.target) || tx.input.toLowerCase() !== call.data.toLowerCase() ||
@@ -280,6 +290,19 @@ export async function runProjectBatch({
     }
     const report = (message: string, round: number) => onProgress?.({ message,
       completed: journal.completedIds.length, total: journal.calls.length, round: round + 1, rounds: journal.rounds.length })
+    // A Safe submission whose result is final but not this call's success never
+    // holds the batch: the call is released, and the next resume reviews it again.
+    const verifySubmitted = async (call: ProjectBatchCall, execution: Hex, safeHash?: Hex) => {
+      try {
+        return await verifyReceipt(call, execution, safeHash, acceptRevertedTransactions)
+      } catch (error) {
+        if (error instanceof SafeSubmissionSettled) {
+          delete journal.submissions[call.id]
+          persist(journal)
+        }
+        throw error
+      }
+    }
 
     for (let round = 0; round < journal.rounds.length; round++) {
       let pending = journal.rounds[round].filter(id => !journal.completedIds.includes(id))
@@ -347,7 +370,7 @@ export async function runProjectBatch({
             catch { report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round); return journal }
           }
           if (execution) {
-            const receipt = await verifyReceipt(call, execution, saved.kind === 'direct' ? undefined : saved.hash, acceptRevertedTransactions)
+            const receipt = await verifySubmitted(call, execution, saved.kind === 'direct' ? undefined : saved.hash)
             await verifyCompletion?.(call, receipt)
             complete([call.id])
             continue
@@ -402,7 +425,7 @@ export async function runProjectBatch({
         const safeResult = result.safeResults[0]
         const execution = result.directResults[0] ?? (safeResult?.status === 'executed' ? safeResult.transactionHash : undefined)
         if (execution) {
-          const receipt = await verifyReceipt(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined, acceptRevertedTransactions)
+          const receipt = await verifySubmitted(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined)
           await verifyCompletion?.(call, receipt)
           complete([call.id])
         } else {

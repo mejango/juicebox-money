@@ -502,7 +502,7 @@ describe('useSafeTx', () => {
     })
   })
 
-  it('ends a Safe proposal it lost track of in a dismissible state, and never sends it again', async () => {
+  it('ends a Safe proposal it lost track of in a dismissible state, refusing it until dismissed', async () => {
     mocks.safeConnection = true
     mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
       new Error('Safe service unavailable'),
@@ -524,10 +524,12 @@ describe('useSafeTx', () => {
     })
     expect(hook.ref.current!.notice).toBe(`${SAFE_PROPOSAL_UNCONFIRMED_LINE} Safe service unavailable`)
     await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
-    await act(async () => { hook.ref.current!.reset() })
-    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
-    expect(hook.ref.current).toMatchObject({ phase: 'submitted', busy: false })
     expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+    // Dismissed after the line, the request is the user's again.
+    await act(async () => { hook.ref.current!.reset() })
+    expect(hook.ref.current).toMatchObject({ phase: 'idle', notice: null })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
   })
 
   it('ends a proposal awaiting the Safe\'s other signers on Done, keeps it locked, and settles it once executed', async () => {
@@ -775,13 +777,10 @@ describe('useSafeTx', () => {
       notice: SAFE_PROPOSAL_UNCONFIRMED_LINE,
     })
     await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
-    // Dismissed, the same request stays locked; another request can be sent.
-    await act(async () => { hook.ref.current!.reset() })
-    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
     expect(mocks.writeContract).toHaveBeenCalledTimes(1)
-    await act(async () => {
-      await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, reviewedByAlice)
-    })
+    // Dismissed after the line, the same request can be sent again.
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
   })
 
