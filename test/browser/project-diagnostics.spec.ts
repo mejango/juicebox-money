@@ -70,9 +70,14 @@ for (const width of [390, 1280]) {
     await expect(dialog).toContainText('Project 45')
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
 
-    // The production project page exposes the same opt-in checker.
+    // The production project page keeps its opt-in checker in Extras.
     await page.goto('/eth:1')
     await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Check deployment', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: /^More project sections/ }).click()
+    await page.getByRole('tab', { name: 'Extras', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Deployment', exact: true })).toBeVisible()
+    await page.screenshot({ path: `test-results/deployment-extras-${width}.png`, fullPage: true })
     await page.getByRole('button', { name: 'Check deployment', exact: true }).click()
     await expect(dialog).toContainText('Project 1')
   })
