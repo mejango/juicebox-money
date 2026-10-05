@@ -1018,6 +1018,30 @@ export function relayrPaymentAttemptOutcome(
   return null
 }
 
+/**
+ * Whether a signed forward request can no longer run and never ran: at a
+ * canonical finalized block its deadline has passed and the forwarder still
+ * expects its nonce. Wall-clock expiry alone proves neither. False while that
+ * cannot be read.
+ */
+export async function relayrRequestExpiredUnused({ chainId, account, nonce, deadline }: {
+  chainId: number
+  account: Address
+  nonce: string | bigint
+  deadline: number | bigint
+}): Promise<boolean> {
+  try {
+    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
+    if (!forwarder) return false
+    const client = publicClient(chainId as JBChainId)
+    const block = await client.getBlock({ blockTag: 'finalized' })
+    const expected = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces',
+      args: [account], blockNumber: block.number })
+    const canonical = await client.getBlock({ blockNumber: block.number })
+    return canonical.hash === block.hash && block.timestamp > BigInt(deadline) && expected === BigInt(nonce)
+  } catch { return false }
+}
+
 /** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
 export async function relayrDeadlinePassed(chainId: number, deadline: string | bigint): Promise<boolean> {
   try {

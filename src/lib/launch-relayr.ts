@@ -34,6 +34,7 @@ import {
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
+  relayrRequestExpiredUnused,
   relayrRetryOption,
   revertedRelayrQuote,
 } from '@/lib/relayr'
@@ -230,18 +231,11 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     for (const signed of journal?.superseded ?? []) pinnedRequest(signed)
     const unusedSignaturesExpired = async (signed: SignedLaunch[]): Promise<boolean> => {
       if (!signed.length) return false
-      try {
-        for (const item of signed) {
-          if (current.statuses[item.chainId]?.phase === 'done') continue
-          const client = publicClient(item.chainId as JBChainId)
-          const block = await client.getBlock({ blockTag: 'finalized' })
-          const nonce = await client.readContract({ address: forwarderFor(item.chainId), abi: erc2771ForwarderAbi,
-            functionName: 'nonces', args: [account], blockNumber: block.number })
-          const canonical = await client.getBlock({ blockNumber: block.number })
-          if (canonical.hash !== block.hash || block.timestamp <= BigInt(item.deadline) || nonce !== BigInt(item.nonce)) return false
-        }
-        return true
-      } catch { return false }
+      for (const item of signed) {
+        if (current.statuses[item.chainId]?.phase === 'done') continue
+        if (!await relayrRequestExpiredUnused({ chainId: item.chainId, account, nonce: item.nonce, deadline: item.deadline })) return false
+      }
+      return true
     }
     const originalPaymentExpired = async (): Promise<boolean> => !!journal?.paymentDeadline &&
       journal.paymentChainId !== undefined && relayrDeadlinePassed(journal.paymentChainId, journal.paymentDeadline)
@@ -325,19 +319,12 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
               error: error instanceof Error ? error.message : 'Destination confirmation is unavailable.' })
           }
         } else {
-          // At a canonical block after expiry, an unchanged nonce proves this authorization
-          // never succeeded and can no longer do so. Wall-clock expiry alone proves neither.
-          try {
-            const block = await client.getBlock({ blockTag: 'finalized' })
-            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-              functionName: 'nonces', args: [account], blockNumber: block.number })
-            const canonical = await client.getBlock({ blockNumber: block.number })
-            if (block.hash === canonical.hash && block.timestamp > BigInt(request.deadline) && nonce === BigInt(signed.nonce)) {
-              status(signed.chainId, { phase: 'failed', error: 'The unexecuted launch authorization expired.' })
-              allDone = false
-              continue
-            }
-          } catch { /* An unavailable RPC cannot prove absence of execution. */ }
+          // An unavailable RPC cannot prove absence of execution.
+          if (await relayrRequestExpiredUnused({ chainId: signed.chainId, account, nonce: signed.nonce, deadline: request.deadline })) {
+            status(signed.chainId, { phase: 'failed', error: 'The unexecuted launch authorization expired.' })
+            allDone = false
+            continue
+          }
           status(signed.chainId, { phase: 'uncertain', error: 'Waiting for the original Relayr destination transaction.' })
         }
         allDone = false
