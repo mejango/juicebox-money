@@ -1068,6 +1068,24 @@ export function relayrPaymentAttemptOutcome(
 }
 
 /**
+ * The nonce the forwarder expects next from `account` at the chain's finalized
+ * block, still canonical, with that block's timestamp. Null while that cannot
+ * be read.
+ */
+async function finalizedForwarderNonce(chainId: number, account: Address): Promise<{ nonce: bigint; timestamp: bigint } | null> {
+  try {
+    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
+    if (!forwarder) return null
+    const client = publicClient(chainId as JBChainId)
+    const block = await client.getBlock({ blockTag: 'finalized' })
+    const nonce = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces',
+      args: [account], blockNumber: block.number })
+    const canonical = await client.getBlock({ blockNumber: block.number })
+    return canonical.hash === block.hash ? { nonce, timestamp: block.timestamp } : null
+  } catch { return null }
+}
+
+/**
  * Whether a signed forward request can no longer run and never ran: at a
  * canonical finalized block its deadline has passed and the forwarder still
  * expects its nonce. Wall-clock expiry alone proves neither. False while that
@@ -1079,15 +1097,9 @@ export async function relayrRequestExpiredUnused({ chainId, account, nonce, dead
   nonce: string | bigint
   deadline: number | bigint
 }): Promise<boolean> {
+  const finalized = await finalizedForwarderNonce(chainId, account)
   try {
-    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
-    if (!forwarder) return false
-    const client = publicClient(chainId as JBChainId)
-    const block = await client.getBlock({ blockTag: 'finalized' })
-    const expected = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces',
-      args: [account], blockNumber: block.number })
-    const canonical = await client.getBlock({ blockNumber: block.number })
-    return canonical.hash === block.hash && block.timestamp > BigInt(deadline) && expected === BigInt(nonce)
+    return !!finalized && finalized.timestamp > BigInt(deadline) && finalized.nonce === BigInt(nonce)
   } catch { return false }
 }
 
