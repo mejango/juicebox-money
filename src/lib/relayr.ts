@@ -56,8 +56,9 @@ import {
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
+  MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_UUID_RE,
-  relayrSentPaymentSnapshot,
+  relayrSentPaymentsSnapshot,
   sentRelayrPayment,
   type RelayrSentPayment,
 } from '@/lib/relayr-payments'
@@ -137,7 +138,7 @@ export type RelayrPendingSession = {
   publishedEntries?: RelayrEntry[]
   /** Every payment sent for this bundle, as relayrPaymentDetails authenticated it, under the hash it was mined. */
   payments?: RelayrSentPayment[]
-  /** The quote's payment options as Relayr returned them, authenticated again whenever one is used. */
+  /** The quote's payment options that passed relayrPaymentDetails when it was quoted, authenticated again whenever one is used. */
   paymentOptions?: RelayrPayment[]
 }
 
@@ -430,8 +431,17 @@ export function saveRelayrPendingSession(
   )
   const expectedTransactions = exactSnapshots(session.expectedTransactions, relayrBindingSnapshot)
   const publishedEntries = exactSnapshots(session.publishedEntries, relayrEntrySnapshot)
-  const payments = exactSnapshots(session.payments, relayrSentPaymentSnapshot)
-  const paymentOptions = exactSnapshots(session.paymentOptions, relayrPaymentOptionSnapshot)
+  // The retry rule and the release read these, so either is kept exactly or the save fails.
+  const payments = session.payments?.length ? relayrSentPaymentsSnapshot(session.payments) : undefined
+  if (payments === null) {
+    throw new Error('The payments sent for this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.')
+  }
+  const paymentOptions = session.paymentOptions?.length
+    ? exactSnapshots(session.paymentOptions, relayrPaymentOptionSnapshot) ?? null
+    : undefined
+  if (paymentOptions === null) {
+    throw new Error('The payment options of this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.')
+  }
   const safeSession: RelayrPendingSession = {
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
@@ -630,7 +640,7 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           value.expectedTransactions.length !== value.expectedCount || !value.expectedTransactions.every(binding => relayrBindingSnapshot(binding) && value.chainIds.includes(binding.chain)))) throw new Error()
       if (value.expectedSafeExecutions !== undefined && (!Array.isArray(value.expectedSafeExecutions) ||
           value.expectedSafeExecutions.length !== value.expectedCount || !value.expectedSafeExecutions.every(relayrSafeExecutionSnapshot))) throw new Error()
-      if ((value.payments !== undefined && !exactSnapshots(value.payments, relayrSentPaymentSnapshot)) ||
+      if ((value.payments !== undefined && !relayrSentPaymentsSnapshot(value.payments)) ||
           (value.paymentOptions !== undefined && !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
       // A quote nothing can fund reserves no forwarder nonce.
       return relayrQuoteReleased(value) ? [] : [{ scope, session: value }]
@@ -1053,6 +1063,9 @@ export async function relayrPay({
   // A Safe pays through its own execution, which no proof can read as this payment.
   if (isSafeConnection(wagmiConfig)) {
     throw new Error('Pay for relayed transactions from an ordinary wallet. Nothing was sent.')
+  }
+  if (sent.length >= MAX_RELAYR_SENT_PAYMENTS) {
+    throw new Error('This Relayr quote was paid too many times to pay again. Keep it pending; do not pay again.')
   }
   const reviewed = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
   const readReviewed = () => {
@@ -1575,10 +1588,10 @@ async function executeRelayrCalls({
     if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     onProgress?.({ phase: 'quoting' })
     quote = await relayrPostBundle(entries)
-    session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
-      paymentOptions: quote.payment_info }
-    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     const options = relayrPaymentOptions(quote, destinations)
+    session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
+      paymentOptions: options }
+    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
     const selectedChain = paymentChainId ?? await requireFundingChainSelection(
       options.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })),

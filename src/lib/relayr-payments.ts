@@ -20,7 +20,7 @@ export function sentRelayrPayment(details: RelayrPaymentDetails, hash: Hex): Rel
 }
 
 /** A saved sent payment, read strictly, or null. */
-export function relayrSentPaymentSnapshot(value: unknown): RelayrSentPayment | null {
+function relayrSentPaymentSnapshot(value: unknown): RelayrSentPayment | null {
   if (!value || typeof value !== 'object') return null
   const { hash, chainId, target, calldata, amount, deadline, bundleUuid } = value as Record<string, unknown>
   return typeof hash === 'string' && isHash(hash) &&
@@ -32,4 +32,14 @@ export function relayrSentPaymentSnapshot(value: unknown): RelayrSentPayment | n
     typeof bundleUuid === 'string' && RELAYR_UUID_RE.test(bundleUuid)
     ? { hash, chainId, target, calldata: calldata as Hex, amount, deadline, bundleUuid }
     : null
+}
+
+/** The most payments one quote's journal keeps. No payment is sent beyond them. */
+export const MAX_RELAYR_SENT_PAYMENTS = 16
+
+/** A saved list of sent payments, read strictly, or null. */
+export function relayrSentPaymentsSnapshot(values: unknown): RelayrSentPayment[] | null {
+  if (!Array.isArray(values) || values.length > MAX_RELAYR_SENT_PAYMENTS) return null
+  const payments = values.map(relayrSentPaymentSnapshot)
+  return payments.every((payment): payment is RelayrSentPayment => payment !== null) ? payments : null
 }

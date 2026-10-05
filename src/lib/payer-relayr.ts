@@ -13,7 +13,7 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
-import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
+import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
@@ -113,8 +113,7 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
   if ((value.phase === 'quoted' || value.phase === 'publishing') && value.paymentHash) {
     throw new Error('The original payer payment state is inconsistent. Keep it pending.')
   }
-  if (value.payments !== undefined && (!Array.isArray(value.payments) || value.payments.length > 16 ||
-      !value.payments.every(payment => relayrSentPaymentSnapshot(payment)))) {
+  if (value.payments !== undefined && !relayrSentPaymentsSnapshot(value.payments)) {
     throw new Error('The saved payer payments are malformed. Keep it pending.')
   }
   for (let index = 0; index < value.calls.length; index++) {

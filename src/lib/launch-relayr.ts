@@ -37,7 +37,7 @@ import {
   relayrRetryOption,
   revertedRelayrQuote,
 } from '@/lib/relayr'
-import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
+import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import {
   RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
@@ -200,8 +200,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         new Set(journal.signed.map(item => item.chainId)).size !== journal.signed.length ||
         journal.signed.some(item => !current.chains.includes(item.chainId)) ||
         !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase) ||
-        (journal.payments !== undefined && (!Array.isArray(journal.payments) || journal.payments.length > 16 ||
-          !journal.payments.every(payment => relayrSentPaymentSnapshot(payment)))))) {
+        (journal.payments !== undefined && !relayrSentPaymentsSnapshot(journal.payments)))) {
       throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
     }
     if (journal && ['payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase)) {

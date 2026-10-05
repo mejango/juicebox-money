@@ -80,7 +80,9 @@ import {
   relayrQuoteReleased,
   resumeRelayrSession,
   type RelayrCall,
+  type RelayrPendingSession,
 } from '@/lib/relayr'
+import { sentRelayrPayment, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -487,6 +489,30 @@ describe('Relayr quote and payment boundaries', () => {
     expect(payments).toEqual([remembered])
     expect(sent).toHaveBeenCalledWith([remembered])
     expect(JSON.parse(JSON.stringify(payments))).toEqual(payments)
+  })
+
+  it('refuses to send a payment beyond the 16 a journal keeps for one quote', async () => {
+    const details = relayrPaymentDetails(payment, { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] })
+    const sent = Array.from({ length: 16 }, () => sentRelayrPayment(details, HASH))
+    await expect(pay(payment, [1], { sent })).rejects.toThrow(
+      'This Relayr quote was paid too many times to pay again. Keep it pending; do not pay again.')
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, (sent: RelayrSentPayment) => Record<string, unknown>, string]>([
+    ['more payments than a journal keeps', sent => ({ payments: Array.from({ length: 17 }, () => sent) }),
+      'The payments sent for this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.'],
+    ['a malformed payment', sent => ({ payments: [{ ...sent, hash: '0x1234' }] }),
+      'The payments sent for this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.'],
+    ['a malformed payment option', () => ({ paymentOptions: [{ chain: '1' }] }),
+      'The payment options of this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.'],
+  ])('refuses to save a session with %s, never dropping it', (_, field, message) => {
+    const sent = sentRelayrPayment(relayrPaymentDetails(payment, { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] }), HASH)
+    expect(() => saveRelayrPendingSession('kept-exactly', { bundleUuid: BUNDLE_UUID, paymentHash: HASH, paymentChainId: 1,
+      paymentStatus: 'reverted', chainIds: [1], expectedCount: 1, records: [], itemCount: 1, account: ALICE, createdAt: 1,
+      ...field(sent) } as RelayrPendingSession)).toThrow(message)
+    expect(loadRelayrPendingSession('kept-exactly')).toBeNull()
   })
 
   it('proves a sped-up payment under the hash it was mined, and remembers that hash', async () => {
@@ -1055,6 +1081,13 @@ describe('Relayr funding choice and exact execution proof', () => {
       account: ALICE, paymentChainId: 1, pendingScope: 'wrong-family' })).rejects.toThrow(/same network family/)
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('saves only the payment options it authenticated', async () => {
+    installSuccessfulBundle([paymentFor({ chain: 11155111 }), payment])
+    mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('Funding chain selection cancelled. Nothing was sent.'))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'authenticated-options' })).rejects.toThrow(/cancelled/)
+    expect(loadRelayrPendingSession('authenticated-options')?.paymentOptions).toEqual([payment])
   })
 
   it('keeps an unpaid testnet authorization when Relayr offers only mainnet funding', async () => {
