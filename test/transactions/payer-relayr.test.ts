@@ -184,8 +184,15 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
+  /** Relayr reports the bundle as `body` says, by default unpaid with every call pending. */
+  function relayrReports(body: Record<string, unknown> = {}) {
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
+      transactions: records().map(({ status: _, ...record }) => ({ ...record, status: { state: 'Pending' } })), ...body }), { status: 200 }))
+  }
+
   it('asks once more, then keeps the raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
     review = makeReview([11155111, 11155420])
+    relayrReports()
     mocks.post.mockImplementation(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
       payment_info: quoteFor([{ ...entries[0], chain: 1 }]).payment_info,
     }))
@@ -196,16 +203,35 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.pay).not.toHaveBeenCalled()
   })
 
-  it('quotes the same raw calls again once the saved unpaid quote can no longer be paid', async () => {
+  it('quotes the same raw calls again once the saved unpaid quote can no longer be paid, after Relayr confirms none ran', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
     await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    relayrReports()
     const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
     expect(result.phase).toBe('complete')
     expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['reports a payment', { payment_received: true }],
+    ['does not say whether it was paid', { payment_received: null }],
+    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }],
+    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }],
+  ])('keeps an unpaid quote that can no longer be paid while Relayr %s', async (_, body) => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    relayrReports(body)
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(
+      'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.paymentSent).not.toHaveBeenCalled()
   })
 
   it('uses each linked project ID and the explicit admin/beneficiary in raw factory calls with one chosen funding payment', async () => {

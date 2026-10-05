@@ -12,7 +12,7 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, requireRelayrBundleUnrun, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -447,8 +447,10 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       }
       if (session.quote && session.phase === 'quoted' && !session.payments?.length &&
           !relayrPaymentOptions(session.quote, chains).length) {
-        // Nothing can fund an unpaid quote past its deadline, so the same raw
-        // calls are quoted again.
+        // No option of the unpaid quote passes relayrPaymentDetails any more,
+        // so nothing here can fund it. Once Relayr confirms it unpaid with
+        // every call pending, the same raw calls are quoted again.
+        await requireRelayrBundleUnrun(session.quote.bundle_uuid)
         await requestQuote()
       }
       const quote = session.quote

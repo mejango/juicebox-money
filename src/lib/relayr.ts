@@ -1194,6 +1194,16 @@ async function readRelayrBundle(
     : null
 }
 
+/** One read of the bundle, or null when Relayr cannot be read or does not name exactly this bundle. */
+async function readRelayrBundleIfNamed(uuid: string): Promise<RelayrBundleRead | null> {
+  try {
+    const read = await readRelayrBundle(uuid)
+    return read === 'not-found' ? null : read
+  } catch {
+    return null
+  }
+}
+
 /** Relayr has not run the call: `pending` in any case, with no destination hash. */
 function relayrRecordPending(record: RelayrTransactionRecord): boolean {
   const state = record?.status?.state
@@ -1208,6 +1218,18 @@ function relayrBundleFunded(read: RelayrBundleRead): boolean {
 /** Relayr reports the bundle unpaid, with every call pending and no destination hash. */
 function relayrBundleUnrun(read: RelayrBundleRead): boolean {
   return read.paymentReceived === false && read.records.length > 0 && read.records.every(relayrRecordPending)
+}
+
+/**
+ * One uncached, echo-checked read of the bundle must report a released quote
+ * unpaid with every call pending and no destination hash before its calls are
+ * signed or quoted again.
+ */
+export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void> {
+  const bundle = await readRelayrBundleIfNamed(bundleUuid)
+  if (!bundle || !relayrBundleUnrun(bundle)) {
+    throw new Error('Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+  }
 }
 
 /**
@@ -1281,17 +1303,10 @@ export async function revertedRelayrQuote(quote: {
   destinationChainIds: readonly number[]
   account: string
 }): Promise<{ state: 'funded' | 'payable' | 'released'; records: RelayrTransactionRecord[] | null }> {
-  const { bundleUuid, payments } = quote
-  let read: Awaited<ReturnType<typeof readRelayrBundle>>
-  try {
-    read = await readRelayrBundle(bundleUuid)
-  } catch {
-    read = null
-  }
-  const bundle = read && read !== 'not-found' ? read : null
+  const bundle = await readRelayrBundleIfNamed(quote.bundleUuid)
   const records = bundle?.records ?? null
   if (bundle && relayrBundleFunded(bundle)) return { state: 'funded', records }
-  if (relayrPaidQuoteOpen(payments)) return { state: 'payable', records }
+  if (relayrPaidQuoteOpen(quote.payments)) return { state: 'payable', records }
   if (bundle && relayrBundleUnrun(bundle) && await relayrQuoteUnfundable(quote)) return { state: 'released', records }
   throw new Error('This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.')
 }
@@ -1623,8 +1638,11 @@ async function executeRelayrCalls({
       entries.push(...published)
     } catch (error) {
       // Nothing can fund a released quote, so requests of it that can no
-      // longer run are signed again. Any other publication stays as it is.
+      // longer run are signed again, once Relayr confirms that none of them
+      // ran. A publication whose quote never arrived has no bundle to read.
+      // Any other publication stays as it is.
       if (!relayrQuoteReleased(saved)) throw error
+      if (RELAYR_UUID_RE.test(saved.bundleUuid)) await requireRelayrBundleUnrun(saved.bundleUuid)
     }
   }
   // The ForwardRequest deadlines start at SIGNING, not at payment — stamping

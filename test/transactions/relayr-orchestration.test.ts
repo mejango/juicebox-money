@@ -1786,6 +1786,19 @@ describe('unpaid Relayr quotes', () => {
     now = vi.spyOn(Date, 'now').mockReturnValue(START)
   })
 
+  /**
+   * Relayr reports the bundle unpaid with its call pending until the wallet
+   * sends a payment, unless `body` says otherwise; then it runs the bundle.
+   */
+  function unrunUntilPaid(body: Record<string, unknown> = {}) {
+    const relayr = vi.mocked(fetch).getMockImplementation()!
+    const reads = vi.fn(async () => response({ bundle_uuid: BUNDLE_UUID, payment_received: false,
+      transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending' } }], ...body }))
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      init?.method !== 'POST' && !mocks.wallet.sendTransaction.mock.calls.length ? reads() : relayr(input, init))
+    return reads
+  }
+
   /** Sign and publish `calls`, then close the funding choice without paying. */
   async function unpaidQuote(scope = 'abandoned') {
     mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('Funding chain selection cancelled. Nothing was sent.'))
@@ -1814,14 +1827,34 @@ describe('unpaid Relayr quotes', () => {
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
   })
 
-  it('sign the same calls again once every request they published expired unpaid', async () => {
+  it('sign the same calls again once every request they published expired unpaid, after Relayr confirms none ran', async () => {
     const posts = installSuccessfulBundle(quotes)
+    const reads = unrunUntilPaid()
     await unpaidQuote()
     now.mockReturnValue(REQUESTS_EXPIRED)
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).resolves.toMatchObject({ paymentHash: HASH })
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
     expect(posts).toHaveLength(2)
     expect(posts[1][0].data).not.toBe(posts[0][0].data)
+    expect(reads).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE_UUID}`, expect.objectContaining({ cache: 'no-store' }))
+    expect(reads.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[1])
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['reports a payment', { payment_received: true }],
+    ['does not say whether it was paid', { payment_received: null }],
+    ['reports a call running', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] }],
+    ['names another bundle', { bundle_uuid: OTHER_UUID }],
+  ])('do not sign again while Relayr %s', async (_, body) => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid(body)
+    await unpaidQuote()
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(
+      'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID })
   })
 
   it('release a publication whose quote response was lost once every request it published expired', async () => {
