@@ -1096,7 +1096,7 @@ export async function runSafeCalls({
       // The pending list is load-bearing twice over: it dedupes against an
       // existing proposal and it picks a free nonce. Swallowing a failure
       // makes an outage read as an empty queue, so this proposal lands at the
-      // Safe's nonce on top of whatever is really queued — one of the two is
+      // Safe's nonce on top of whatever is really queued, and one of the two is
       // then stranded. If the listing fails, stop.
       const nextNonce = await getSafeNextNonce(call.chainId, call.safe)
       if (nextNonce === null) throw new Error('Could not read the Safe nonce.')
@@ -1107,7 +1107,7 @@ export async function runSafeCalls({
         SAFE_SERVICE,
       ).catch(() => {
         throw new Error(
-          `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed — try again shortly.`,
+          `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed. Try again shortly.`,
         )
       })
       const matching = pending.find(tx =>
