@@ -36,7 +36,8 @@ vi.mock('@/components/project/SafeQueueCard', () => ({ SafeQueueCard: () => null
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 
-import { AuthorityOverview } from '@/components/project/AuthorityOverview'
+// The page keeps creation records per chain and Safe; each test starts with none.
+let AuthorityOverview: typeof import('@/components/project/AuthorityOverview').AuthorityOverview
 
 const answer = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -44,7 +45,9 @@ const answer = (body: unknown, status = 200) =>
 let container: HTMLDivElement
 let root: Root
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules()
+  ;({ AuthorityOverview } = await import('@/components/project/AuthorityOverview'))
   mocks.clients = {
     1: provenSafeChain(),
     10: provenSafeChain(),
@@ -104,8 +107,8 @@ describe("deploying a project's Safe on another chain", () => {
     expect(mocks.deploySafeSameAddress).not.toHaveBeenCalled()
   })
 
-  it("deploys once Ethereum's Safe service proves how the Safe was made", async () => {
-    await deployOnBase(() => answer(creationRecord()))
+  it("deploys once Ethereum's Safe service proves how the Safe was made, asking it once", async () => {
+    const fetch = await deployOnBase(() => answer(creationRecord()))
 
     await vi.waitFor(() => expect(container.textContent).toContain('Safe deployed on Base.'))
     expect(mocks.deploySafeSameAddress).toHaveBeenCalledExactlyOnceWith(
@@ -114,5 +117,7 @@ describe("deploying a project's Safe on another chain", () => {
       PROVEN_SAFE,
       expect.objectContaining({ sourceChainId: 1 }),
     )
+    // The proof before the deployment and the deployment read one record.
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(creationUrl('eth'), expect.anything())
   })
 })

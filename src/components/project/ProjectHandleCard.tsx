@@ -38,9 +38,10 @@ import {
   isDeployableSafeAuthority,
   validateSafeCreationForCurrentPolicy,
 } from '@bananapus/nana-sdk-core/safe'
-import { fetchSafeCreation, safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
+import { safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
 import {
   readCrossChainHandleAuthority,
+  readSafeCreation,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
 
@@ -806,9 +807,9 @@ export function ProjectHandleCard({
         )
       }
       setProgress('Reading the Safe’s canonical creation…')
-      const creation = await fetchSafeCreation(
-        authority,
+      const creation = await readSafeCreation(
         deployment.chainId,
+        authority,
         SAFE_SERVICE,
       )
       if (!creation) {

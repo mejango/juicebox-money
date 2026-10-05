@@ -11,12 +11,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { describe, expect, it, vi } from 'vitest'
-import {
-  readCrossChainHandleAuthority,
-  readMatchingAuthorityIdentities,
-  unprovenSafeLine,
-} from '@/lib/cross-chain-authority'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   creationRecord,
   creationUrl,
@@ -34,6 +29,17 @@ import {
 // The SDK's own tests prove each identity rule; these prove this app's layer
 // over it: both chains reach the SDK, with the creation record from the
 // source chain's Safe service, for every Safe release the SDK recognizes.
+
+// The module keeps creation records per chain and Safe; each test starts with none.
+let readCrossChainHandleAuthority: typeof import('@/lib/cross-chain-authority').readCrossChainHandleAuthority
+let readMatchingAuthorityIdentities: typeof import('@/lib/cross-chain-authority').readMatchingAuthorityIdentities
+let unprovenSafeLine: typeof import('@/lib/cross-chain-authority').unprovenSafeLine
+beforeEach(async () => {
+  vi.resetModules()
+  ;({ readCrossChainHandleAuthority, readMatchingAuthorityIdentities, unprovenSafeLine } = await import(
+    '@/lib/cross-chain-authority'
+  ))
+})
 
 const AUTHORITY = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -176,6 +182,46 @@ describe('the creation proof cross-chain trust needs', () => {
     expect(fetch).toHaveBeenCalledOnce()
   })
 
+  it('reads a proven creation record once a day, and a missing one again after a minute', async () => {
+    vi.useFakeTimers()
+    const read = () =>
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: provenSafeChain(),
+        destinationClient: provenSafeChain(),
+        authority: PROVEN_SAFE,
+        service: { fetch: proven },
+      })
+    const proven = vi.fn(async () => answer(creationRecord()))
+
+    // Read together, as a queue's rows are: one request answers them all.
+    await Promise.all([read(), read(), read()])
+    // The record proves the Safe's address, which never changes.
+    await vi.advanceTimersByTimeAsync(23 * 60 * 60_000)
+    await expect(read()).resolves.toMatchObject({ matches: true })
+    expect(proven).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000)
+    await read()
+    expect(proven).toHaveBeenCalledTimes(2)
+
+    const eip155 = eip155Safe(SAFE_130_SINGLETON)
+    const missing = vi.fn(async () => answer({}, 404))
+    const readMissing = () =>
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: eip155.chain(),
+        destinationClient: eip155.chain(),
+        authority: eip155.address,
+        service: { fetch: missing },
+      })
+    await readMissing()
+    await expect(readMissing()).resolves.toMatchObject({ creationUnproven: true })
+    expect(missing).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(61_000)
+    await readMissing()
+    expect(missing).toHaveBeenCalledTimes(2)
+  })
+
   it('asks no Safe service about an EOA', async () => {
     const fetch = vi.fn()
 
@@ -202,14 +248,18 @@ describe('cross-chain handle authority', () => {
       service: { fetch },
     })
 
-  it('trusts a Safe on Ethereum only with the proof of how it was made', async () => {
+  it('trusts a Safe on Ethereum with the proof of how it was made', async () => {
     await expect(handleAuthority(vi.fn(async () => answer(creationRecord())))).resolves.toMatchObject({
       status: 'valid-safe',
       allowed: true,
     })
-    await expect(handleAuthority(vi.fn(async () => answer({}, 404))).then(result => result.status)).resolves.toBe(
-      'unproven-creation',
-    )
+  })
+
+  it('does not trust it without that proof', async () => {
+    await expect(handleAuthority(vi.fn(async () => answer({}, 404)))).resolves.toMatchObject({
+      status: 'unproven-creation',
+      allowed: false,
+    })
   })
 
   it("trusts a Safe from Safe 1.3.0's EIP-155 deployment on Ethereum once its creation is proven", async () => {

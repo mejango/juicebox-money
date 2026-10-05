@@ -52,9 +52,9 @@ import {
   SAFE_SERVICE,
   type SafeInfo,
 } from "@/lib/safe";
-import { fetchSafeCreation } from "@bananapus/nana-sdk-core/safe-service";
 import {
   readMatchingAuthorityIdentities,
+  readSafeCreation,
   unprovenSafeLine,
 } from "@/lib/cross-chain-authority";
 import { buildStep } from "@/lib/safe-batch";
@@ -520,7 +520,7 @@ function DeploySafeButtons({
         }
       };
       await reverifyAuthority();
-      const creation = await fetchSafeCreation(safe, source.chainId, SAFE_SERVICE);
+      const creation = await readSafeCreation(source.chainId, safe, SAFE_SERVICE);
       if (!creation)
         throw new Error("Could not read the Safe’s creation config.");
       setMessage(`Deploying the same Safe address on ${row.name}…`);

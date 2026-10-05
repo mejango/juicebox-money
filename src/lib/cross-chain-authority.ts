@@ -1,5 +1,6 @@
 import {
   isEip7702DelegatedEoaRuntime,
+  proveSafeCreation,
   readCrossChainHandleAuthority as readSdkHandleAuthority,
   readMatchingAuthorityIdentities as readSdkMatchingIdentities,
   type AuthorityIdentity,
@@ -18,6 +19,46 @@ type AuthorityClient = Parameters<typeof readSdkMatchingIdentities>[0]['sourceCl
 /** The line shown when a Safe's creation can't be proven (Ruling R90). */
 export function unprovenSafeLine(chainId: number): string {
   return `Can't verify this Safe is the same on ${chainName(chainId)}.`
+}
+
+/** A record that proves a Safe's address never changes; a missing one is asked for again soon. */
+const PROVEN_CREATION_TTL_MS = 24 * 60 * 60_000
+const UNPROVEN_CREATION_TTL_MS = 60_000
+const MAX_CACHED_CREATIONS = 500
+
+/** Each Safe's creation record per chain, kept for the life of the page or the server process. */
+const creations = new Map<string, { read: Promise<SafeCreation | null>; expires: number }>()
+
+/**
+ * The record of how the Safe at `safe` was made, from `chainId`'s Safe service
+ * only, or null. Reads of one Safe share a request; a record that proves the
+ * Safe's address is kept for a day, anything else (no record, a failed
+ * request) for a minute.
+ */
+export function readSafeCreation(
+  chainId: number,
+  safe: Address,
+  service?: SafeServiceOptions,
+): Promise<SafeCreation | null> {
+  const key = `${chainId}:${safe.toLowerCase()}`
+  const cached = creations.get(key)
+  if (cached && cached.expires > Date.now()) return cached.read
+  const entry = {
+    read: fetchSafeCreation(safe, chainId, service),
+    expires: Date.now() + UNPROVEN_CREATION_TTL_MS,
+  }
+  creations.delete(key)
+  creations.set(key, entry)
+  // ponytail: oldest-first eviction at 500 Safes; an LRU if one page ever reads more
+  if (creations.size > MAX_CACHED_CREATIONS) {
+    creations.delete(creations.keys().next().value!)
+  }
+  void entry.read.then(creation => {
+    if (creation && proveSafeCreation(creation, safe).valid) {
+      entry.expires = Date.now() + PROVEN_CREATION_TTL_MS
+    }
+  })
+  return entry.read
 }
 
 /**
@@ -44,7 +85,7 @@ async function creationRecordOf(
   ) {
     return null
   }
-  return fetchSafeCreation(authority, chainId, service)
+  return readSafeCreation(chainId, authority, service)
 }
 
 /**
