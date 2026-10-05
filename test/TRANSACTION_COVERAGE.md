@@ -184,7 +184,12 @@ and the check fails on a missing marker.
   the editors route such a bundle back to its original calls
   (`components/metadata-editor.test.tsx`,
   `components/edit-splits-multichain.test.tsx`,
-  `components/queue-ruleset-multichain.test.tsx`). Quotes bind each posted call to
+  `components/queue-ruleset-multichain.test.tsx`). An unpaid quote that nothing
+  can fund (its options expired, or every request it published did) stops
+  reserving the forwarder nonce, the same action quotes or signs again, a payer
+  deployment quotes its raw calls again, and the account view reads it as
+  expired (`transactions/relayr-orchestration.test.ts`,
+  `transactions/payer-relayr.test.ts`, `components/account-view.test.tsx`). Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
   (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the

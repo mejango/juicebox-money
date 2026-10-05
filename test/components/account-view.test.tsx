@@ -51,14 +51,10 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
     getProjectsOwnedBy: mocks.getProjectsOwnedBy,
   }
 })
-vi.mock('@/lib/relayr', () => ({
+vi.mock('@/lib/relayr', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/relayr')>()),
   fetchRelayrBundlesByAccount: mocks.fetchRelayrBundlesByAccount,
   resumeRelayrSession: mocks.resumeRelayrSession,
-  // Expiry does not establish whether a destination already executed.
-  relayrSessionExpired: (session: { createdAt: number }, nowMs = Date.now()) =>
-    nowMs >= session.createdAt + 47 * 60 * 60 * 1000,
-  relayrSessionExpiresAt: (session: { createdAt: number }) =>
-    session.createdAt + 47 * 60 * 60 * 1000,
 }))
 vi.mock('@/lib/safe', () => ({
   fetchSafeInfo: mocks.fetchSafeInfo,
@@ -373,6 +369,28 @@ describe('AccountPendingRelayr', () => {
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({ scope: 'authority:0xaaa', account: ALICE })
   })
 
+  it('reads an unpaid quote nothing can fund any more as expired, with nothing to check', async () => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) - 60
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      bundleUuid, paymentStatus: 'unpaid', paymentChainId: null, records: [],
+      paymentOptions: [{ chain: 1, amount: '100', target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d',
+        token: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', payment_deadline: deadline,
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    expect(text).not.toContain('in flight')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+  })
+
   it('shows the account its in-flight legs and resumes by session', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
@@ -394,8 +412,8 @@ describe('AccountPendingRelayr', () => {
     const text = renderedText(renderer.root)
     expect(text).toContain('Cross-chain action in flight')
     expect(text).toContain('1/2 Relayr-reported; onchain proof pending')
-    expect(text).toContain('Ethereum — Relayr-reported; verification pending')
-    expect(text).toContain('Optimism — pending')
+    expect(text).toContain('Ethereum: Relayr-reported; verification pending')
+    expect(text).toContain('Optimism: pending')
 
     await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({
@@ -431,7 +449,7 @@ describe('AccountPendingRelayr', () => {
     const text = renderedText(renderer.root)
     expect(text).toContain('Relayr-reported; onchain proof pending')
     expect(text).toContain('Owner/Operator tab')
-    expect(text).not.toContain('Ethereum — confirmed')
+    expect(text).not.toContain('Ethereum: confirmed')
     expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
   })
 

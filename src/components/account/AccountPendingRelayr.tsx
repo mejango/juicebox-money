@@ -13,6 +13,7 @@ import {
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   fetchRelayrBundlesByAccount,
+  relayrQuoteReleased,
   relayrSessionExpired,
   relayrSessionExpiresAt,
   resumeRelayrSession,
@@ -112,6 +113,15 @@ export function AccountPendingRelayr({ address }: { address: string }) {
   return (
     <div className="mb-4 space-y-3">
       {bundles.map(({ scope, session }) => {
+        if (relayrQuoteReleased(session)) {
+          return (
+            <div key={scope} className="card p-4">
+              <p className="text-sm text-smoke-700">
+                This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.
+              </p>
+            </div>
+          )
+        }
         const progress = relayrProgress(session.records, session.expectedCount)
         const projectSafeProof = requiresProjectSafeProof(scope, session)
         return (
@@ -120,7 +130,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
               <div className="text-sm font-medium text-ink">
                 Cross-chain action in flight
                 <span className="ml-2 text-xs font-normal text-smoke-500">
-                  {formatDate(Math.floor(session.createdAt / 1000))} —{' '}
+                  {formatDate(Math.floor(session.createdAt / 1000))},{' '}
                   {`${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`}
                 </span>
               </div>
@@ -166,7 +176,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${LEG_STYLE[state]}`}
                   >
                     <ChainIcon chainId={chainId} size={14} />
-                    {chainName(chainId)} —{' '}
+                    {chainName(chainId)}:{' '}
                     {reportedState === 'confirmed'
                       ? 'Relayr-reported; verification pending'
                       : state}

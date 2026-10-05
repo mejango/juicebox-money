@@ -184,17 +184,28 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
-  it('retains the original raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
+  it('asks once more, then keeps the raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
     review = makeReview([11155111, 11155420])
-    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
+    mocks.post.mockImplementation(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
       payment_info: quoteFor([{ ...entries[0], chain: 1 }]).payment_info,
     }))
     await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/network family/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.funding).not.toHaveBeenCalled()
     expect(mocks.pay).not.toHaveBeenCalled()
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(/network family/)
-    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('quotes the same raw calls again once the saved unpaid quote can no longer be paid', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    expect(result.phase).toBe('complete')
+    expect(mocks.post).toHaveBeenCalledTimes(2)
+    expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
+    expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
   })
 
   it('uses each linked project ID and the explicit admin/beneficiary in raw factory calls with one chosen funding payment', async () => {

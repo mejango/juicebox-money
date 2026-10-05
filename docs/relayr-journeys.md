@@ -101,6 +101,13 @@ atomic.
   different project actions and launches. Browser locks cover authorization and
   payment, and published recovery records preserve the reservation after a reload.
   Another action must resolve that reservation before funding conflicting calls.
+  An unpaid project action stops reserving once nothing can fund it: its quote
+  can no longer be paid, or every request it published is past its deadline.
+  The same action then quotes again with the requests it published, or signs
+  again once they can no longer run. One that ever sent a payment keeps its
+  reservation; only the retry rule below clears it. A launch keeps its
+  reservation until its requests expire unused, since it quotes again on its
+  own.
 - Funding options must match the validated Relayr payment contract, native token,
   bundle identity, deadline, and destination network family. An unavailable
   selected chain cannot silently become another funding chain. Testnet calls
@@ -152,7 +159,8 @@ successful live Relayr deployment.
 
 ## Implementation references
 
-- Money: `src/lib/authority.ts`, `src/lib/relayr.ts`,
+- Money: `src/lib/authority.ts`, `src/lib/relayr.ts`, `src/lib/relayr-payments.ts`
+  (on the SDK's `@bananapus/nana-sdk-core/review/relayr`),
   `src/lib/project-batch.ts`, `src/lib/payer-relayr.ts`,
   `src/lib/project-distributions.ts`, `src/lib/project-token-batch.ts`,
   `src/lib/shop-batch.ts`,

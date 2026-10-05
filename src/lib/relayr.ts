@@ -150,6 +150,23 @@ export function relayrSessionAwaitsPayment(session: Pick<RelayrPendingSession, '
   return session.paymentStatus === 'unpaid' || session.paymentStatus === 'reverted'
 }
 
+/**
+ * An unpaid quote stops reserving its calls once nothing can fund it: none of
+ * its saved payment options passes relayrPaymentDetails any more (the SDK
+ * expires a quote 15 seconds before its deadline), or every request it
+ * published is past its deadline, which also releases a publication whose
+ * quote response was lost. A session that ever sent a payment is never
+ * released here; only the SDK's retry rule clears it.
+ */
+export function relayrQuoteReleased(session: RelayrPendingSession, nowMs = Date.now()): boolean {
+  if (session.paymentStatus !== 'unpaid' || session.payments?.length) return false
+  const nowSeconds = nowMs / 1_000
+  const requests = (session.publishedEntries ?? []).map(entry => relayrForwardRequest(entry))
+  if (requests.length && requests.every(request => request && request.deadline <= nowSeconds)) return true
+  return !!session.paymentOptions?.length && !relayrPaymentOptions(
+    { bundle_uuid: session.bundleUuid, payment_info: session.paymentOptions }, session.chainIds, nowSeconds).length
+}
+
 export type RelayrSafeExecutionProof = {
   chainId: number
   safe: Address
@@ -576,7 +593,10 @@ export function listRelayrPendingScopes(): string[] {
   }
 }
 
-/** Unlike UI reads, a nonce reservation scan must never interpret unreadable storage as empty. */
+/**
+ * The saved sessions that reserve the wallet's forwarder nonce. Unlike UI
+ * reads, this scan never reads unreadable storage as empty.
+ */
 export function readRelayrPendingSessionsForAuthorization(): { scope: string; session: RelayrPendingSession }[] {
   try {
     if (typeof window === 'undefined') throw new Error()
@@ -612,7 +632,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           value.expectedSafeExecutions.length !== value.expectedCount || !value.expectedSafeExecutions.every(relayrSafeExecutionSnapshot))) throw new Error()
       if ((value.payments !== undefined && !exactSnapshots(value.payments, relayrSentPaymentSnapshot)) ||
           (value.paymentOptions !== undefined && !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))) throw new Error()
-      return [{ scope, session: value }]
+      // A quote nothing can fund reserves no forwarder nonce.
+      return relayrQuoteReleased(value) ? [] : [{ scope, session: value }]
     })
   } catch {
     throw new Error('Saved Relayr authorization records could not be read completely. Restore browser storage and recover the original actions before signing or paying for another.')
@@ -896,8 +917,9 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
 export function relayrPaymentOptions(
   quote: Pick<RelayrQuote, 'bundle_uuid' | 'payment_info'>,
   destinationChainIds: readonly number[],
+  nowSeconds?: number,
 ): RelayrPayment[] {
-  return authenticatedRelayrPaymentOptions(quote, destinationChainIds)
+  return authenticatedRelayrPaymentOptions(quote, destinationChainIds, nowSeconds)
     .filter(option => isAddress(option.target) && isAddress(option.token ?? ''))
 }
 
@@ -1375,26 +1397,34 @@ async function executeRelayrCalls({
     }
   }
   assertAuthorizationAvailable()
-  // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
-  // the session when the payment lands would report a bundle as still valid
-  // for however long the wallet sat on the signatures, and a "not yet expired"
-  // resume would then die at the forwarder. Taken before the first signature,
-  // so it can only understate the remaining validity.
-  const signedAt = saved?.createdAt ?? Date.now()
-  const entries: RelayrEntry[] = saved?.publishedEntries ?? []
+  const entries: RelayrEntry[] = []
   if (saved) {
-    if (entries.length !== calls.length) throw new Error('The saved relay publication is incomplete. Keep the original action pending.')
+    const published = saved.publishedEntries ?? []
+    if (published.length !== calls.length) throw new Error('The saved relay publication is incomplete. Keep the original action pending.')
     for (let index = 0; index < calls.length; index++) {
-      const request = relayrForwardRequest(entries[index])
-      if (!request || entries[index].chain !== calls[index].chainId ||
+      const request = relayrForwardRequest(published[index])
+      if (!request || published[index].chain !== calls[index].chainId ||
           !isAddressEqual(request.from, account) || !isAddressEqual(request.to, calls[index].target) ||
           request.data !== calls[index].data || request.value !== (calls[index].value ?? 0n)) {
         throw new Error('The original published Relayr calls changed. Keep the original action pending.')
       }
     }
     await reverify?.()
-    await verifyForwardedEntries(entries, account)
+    try {
+      await verifyForwardedEntries(published, account)
+      entries.push(...published)
+    } catch (error) {
+      // Nothing can fund a released quote, so requests of it that can no
+      // longer run are signed again. Any other publication stays as it is.
+      if (!relayrQuoteReleased(saved)) throw error
+    }
   }
+  // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
+  // the session when the payment lands would report a bundle as still valid
+  // for however long the wallet sat on the signatures, and a "not yet expired"
+  // resume would then die at the forwarder. Taken before the first signature,
+  // so it can only understate the remaining validity.
+  const signedAt = saved && entries.length ? saved.createdAt : Date.now()
   for (let index = entries.length; index < calls.length; index++) {
     assertAuthorizationAvailable()
     onProgress?.({

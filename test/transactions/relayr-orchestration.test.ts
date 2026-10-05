@@ -59,6 +59,7 @@ import {
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_CODE_HASH,
+  RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_SELECTOR,
   relayrPaymentDetails as sdkRelayrPaymentDetails,
   type RelayrEntry,
@@ -76,6 +77,7 @@ import {
   loadRelayrPendingSession,
   listRelayrPendingScopes,
   clearRelayrPendingSession,
+  relayrQuoteReleased,
   resumeRelayrSession,
   type RelayrCall,
 } from '@/lib/relayr'
@@ -179,7 +181,8 @@ function pay(option: RelayrPayment, destinationChainIds: readonly number[], opti
   return relayrPay({ payment: option, account: ALICE, bundleUuid: BUNDLE_UUID, destinationChainIds, ...options })
 }
 
-function installSuccessfulBundle(payments = [payment]) {
+/** Relayr quotes `payments`, or `payments(n)` for its nth quote from 0, and runs every bundle. */
+function installSuccessfulBundle(payments: RelayrPayment[] | ((post: number) => RelayrPayment[]) = [payment]) {
   const posts: RelayrEntry[][] = []
   installChain(() => posts.at(-1) ?? [])
   vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -187,7 +190,7 @@ function installSuccessfulBundle(payments = [payment]) {
     if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
       const entries = (JSON.parse(String(init.body)) as { transactions: RelayrEntry[] }).transactions
       posts.push(entries)
-      return response({ bundle_uuid: BUNDLE_UUID, payment_info: payments,
+      return response({ bundle_uuid: BUNDLE_UUID, payment_info: typeof payments === 'function' ? payments(posts.length - 1) : payments,
         txn_uuids: entries.map((_, index) => DESTINATION_UUIDS[index]),
         transactions: successfulRecords(entries) })
     }
@@ -1541,5 +1544,90 @@ describe('paying a reverted Relayr payment again', () => {
     await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).resolves.toMatchObject({ paymentHash: HASH })
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('unpaid Relayr quotes', () => {
+  const START = 1_900_000_000_000
+  // The first quote is payable until DEADLINE, so it is dead from DEADLINE - 15.
+  const DEADLINE = START / 1_000 + 600
+  const LAST_PAYABLE = (DEADLINE - 16) * 1_000
+  const EXPIRED = (DEADLINE - 15) * 1_000
+  const REQUESTS_EXPIRED = START + (RELAYR_FORWARDER_DEADLINE_SECONDS + 60) * 1_000
+  const calls: RelayrCall[] = [{ chainId: 1, target: TARGET, data: '0x1234', value: 5n }]
+  const next = { calls: [{ chainId: 1 as const, target: BOB, data: '0x5678' as Hex }], account: ALICE, pendingScope: 'next-action' }
+  const quotes = (post: number) => [paymentFor({}, post === 0 ? DEADLINE : PAYMENT_DEADLINE)]
+  let now: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    vi.stubGlobal('window', localStorageWindow().window)
+    now = vi.spyOn(Date, 'now').mockReturnValue(START)
+  })
+
+  /** Sign and publish `calls`, then close the funding choice without paying. */
+  async function unpaidQuote(scope = 'abandoned') {
+    mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('Funding chain selection cancelled. Nothing was sent.'))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: scope })).rejects.toThrow(/cancelled/)
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID })
+  }
+
+  it('stop reserving the wallet\'s forwarder nonce at their payment deadline, and not before', async () => {
+    installSuccessfulBundle(quotes)
+    await unpaidQuote()
+    now.mockReturnValue(LAST_PAYABLE)
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    now.mockReturnValue(EXPIRED)
+    await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+  })
+
+  it('quote the same calls again, with the requests they published, once the saved quote can no longer be paid', async () => {
+    const posts = installSuccessfulBundle(quotes)
+    await unpaidQuote()
+    now.mockReturnValue(EXPIRED)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).resolves.toMatchObject({ paymentHash: HASH })
+    expect(posts).toHaveLength(2)
+    expect(posts[1]).toEqual(posts[0])
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+  })
+
+  it('sign the same calls again once every request they published expired unpaid', async () => {
+    const posts = installSuccessfulBundle(quotes)
+    await unpaidQuote()
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+    expect(posts).toHaveLength(2)
+    expect(posts[1][0].data).not.toBe(posts[0][0].data)
+  })
+
+  it('release a publication whose quote response was lost once every request it published expired', async () => {
+    installSuccessfulBundle()
+    vi.mocked(fetch).mockImplementationOnce(async () => { throw new DOMException('quote response lost', 'TimeoutError') })
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'lost' })).rejects.toThrow(/did not return a quote/)
+    expect(loadRelayrPendingSession('lost')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: 'publication-pending' })
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
+  })
+
+  it('are not released once a payment was sent', async () => {
+    installSuccessfulBundle(quotes)
+    mocks.paymentStatuses.set(HASH, 'reverted')
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
+    now.mockReturnValue(EXPIRED)
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    expect(relayrQuoteReleased(loadRelayrPendingSession('abandoned')!)).toBe(false)
+  })
+
+  it('keep a saved publication whose requests cannot run while its quote can still be paid', async () => {
+    installSuccessfulBundle(quotes)
+    await unpaidQuote()
+    const read = mocks.client.readContract.getMockImplementation()!
+    mocks.client.readContract.mockImplementation(async input => input.functionName === 'verify' ? false : read(input))
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'abandoned' })).rejects.toThrow(/authorization or trusted forwarder changed/)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession('abandoned')).toMatchObject({ paymentStatus: 'unpaid' })
   })
 })

@@ -413,20 +413,28 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       return session
     }
     if (session.transport === 'relayr') {
-      if (session.phase === 'reviewed') {
+      const requestQuote = async () => {
         for (const call of session.calls) await preflight(call, zeroAddress)
         assertAccount(session)
         session.phase = 'publishing'
+        delete session.quote
         persist(true)
-        const quote = await relayrPostBundle(session.calls.map(entryOf))
-        session.quote = quote
+        session.quote = await relayrPostBundle(session.calls.map(entryOf))
         assertQuoteBindings(session)
         session.phase = 'quoted'
         persist()
       }
-      if (!session.quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
-      assertQuoteBindings(session)
+      if (session.phase === 'reviewed') await requestQuote()
+      const chains = session.calls.map(call => call.chainId)
+      if (session.quote && session.phase === 'quoted' && !session.payments?.length &&
+          !relayrPaymentOptions(session.quote, chains).length) {
+        // Nothing can fund an unpaid quote past its deadline, so the same raw
+        // calls are quoted again.
+        await requestQuote()
+      }
       const quote = session.quote
+      if (!quote) throw new Error('The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.')
+      assertQuoteBindings(session)
       let paidNow = false
       if (session.phase === 'quoted' || session.phase === 'payment-reverted') {
         let payment: RelayrPayment | undefined
@@ -437,7 +445,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           payment = latest && quote.payment_info.find(item => item.chain === latest.chainId)
           if (!payment) throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
         } else {
-          const payments = relayrPaymentOptions(quote, session.calls.map(call => call.chainId))
+          const payments = relayrPaymentOptions(quote, chains)
           if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
           const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
           payment = payments.find(item => item.chain === fundingChain)
@@ -453,7 +461,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         try {
           const { hash } = await relayrPay({
             payment: chosen, account: session.account, bundleUuid: quote.bundle_uuid,
-            destinationChainIds: session.calls.map(call => call.chainId), sent: session.payments ?? [], reverify,
+            destinationChainIds: chains, sent: session.payments ?? [], reverify,
             onSending: () => {
               session.phase = 'payment-sending'
               session.paymentChainId = chosen.chain
