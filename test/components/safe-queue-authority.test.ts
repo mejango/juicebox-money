@@ -33,7 +33,8 @@ vi.mock('@/lib/project-handles', async (importOriginal) => ({
   readDirectEnsText: mocks.readDirectEnsText,
   readBoundedProjectHandle: mocks.readBoundedProjectHandle,
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
@@ -243,6 +244,34 @@ describe('Safe queue project authority', () => {
         [{ chainId: 10, projectId: 42 }],
       ),
     ).rejects.toThrow(/no longer the owner/i)
+  })
+
+  it("refuses a queued handle claim whose Safe can't be proven on Ethereum", async () => {
+    const call = buildSetProjectHandleCall({
+      chainId: 10,
+      projectId: 42,
+      parts: ['juicebox', 'design'],
+    })
+    mocks.readContract.mockResolvedValueOnce(SAFE)
+    mocks.readMatchingAuthorityIdentities.mockResolvedValueOnce({
+      source: { kind: 'safe' },
+      destination: { kind: 'safe' },
+      matches: false,
+      creationUnproven: true,
+    })
+
+    await expect(
+      assertQueuedProjectHandleContext(
+        1,
+        SAFE,
+        queued(call.target, call.data),
+        [{ chainId: 10, projectId: 42 }],
+      ),
+    ).rejects.toThrow(new Error("Can't verify this Safe is the same on Ethereum."))
+    expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
+    )
+    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
   })
 
   it('rejects handle calldata on another queue chain and before oversized decode', async () => {

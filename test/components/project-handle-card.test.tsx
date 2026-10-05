@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   readBoundedProjectHandle: vi.fn(),
   readBoundedProjectHandleParts: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
+  readCrossChainHandleAuthority: vi.fn(),
 }))
 
 vi.mock('@/hooks/useWallet', () => ({
@@ -47,15 +48,14 @@ vi.mock('@/lib/project-fallback', () => ({
   revnetOperatorFromPermissionHistory: vi.fn().mockResolvedValue(null),
 }))
 
-vi.mock('@/lib/cross-chain-authority', () => ({
-  isDeployableSafeAuthority: () => false,
-  readMatchingAuthorityIdentities: vi.fn(),
-  safeCreationMatchesAuthorityIdentity: () => false,
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
+  readCrossChainHandleAuthority: mocks.readCrossChainHandleAuthority,
 }))
 
 vi.mock('@/lib/safe', () => ({
   deploySafeSameAddress: vi.fn(),
-  fetchSafeCreation: vi.fn(),
+  SAFE_SERVICE: {},
   safeQueueLink: (_chainId: number, safe: Address) =>
     `https://app.safe.global/transactions/queue?safe=eth:${safe}`,
 }))
@@ -276,6 +276,50 @@ describe('ProjectHandleCard', () => {
         ],
       }),
     )
+  })
+
+  it("names a project-chain Safe that can't be proven on Ethereum, and publishes nothing", async () => {
+    // The ENS step is done, so the next step is the cross-chain authority claim.
+    liveTextRecord = '10:42'
+    const safe = { kind: 'safe', owners: [OWNER], threshold: 1 }
+    mocks.readCrossChainHandleAuthority.mockResolvedValue({
+      status: 'unproven-creation',
+      allowed: false,
+      source: safe,
+      mainnet: safe,
+    })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(ProjectHandleCard, {
+            deployment: { chainId: 10, projectId: 42, indexedAuthority: OWNER },
+            isRevnet: false,
+          }),
+        ),
+      )
+    })
+    await flushQueries()
+    clickButton(renderer, 'Set handle')
+    act(() =>
+      renderer.root
+        .findByProps({ placeholder: 'banny.eth' })
+        .props.onChange({ target: { value: 'banny.eth' } }),
+    )
+    await flushQueries()
+
+    expect(textOf(renderer.root)).toContain("Can't verify this Safe is the same on Ethereum.")
+    const publish = renderer.root
+      .findAllByType('button')
+      .find(button => textOf(button) === 'Resume: publish handle')
+    expect(publish?.props.disabled).toBe(true)
+    expect(mocks.readCrossChainHandleAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceChainId: 10, authority: OWNER }),
+    )
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
   })
 
   it('shows completed ENS progress before the reverse claim without submitting', async () => {

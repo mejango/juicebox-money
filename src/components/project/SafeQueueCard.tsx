@@ -71,6 +71,7 @@ import {
   safeQueueLink,
   simulateSafeExecution,
   safeUsableConfirmationCount,
+  SAFE_SERVICE,
   type SafeInfo,
   type SafeExecutionSnapshot,
   type SafeQueuedTx,
@@ -100,7 +101,7 @@ import {
   readDirectEnsProjectRecord,
   readDirectEnsText,
 } from '@/lib/project-handles'
-import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
+import { readMatchingAuthorityIdentities, unprovenSafeLine } from '@/lib/cross-chain-authority'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import { rolloutContractName } from '@/lib/protocol-rollout'
@@ -502,10 +503,15 @@ export async function assertQueuedProjectHandleContext(
     const client = clientFor(PROJECT_HANDLES_CHAIN_ID);
     if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
       const identities = await readMatchingAuthorityIdentities({
+        sourceChainId: targetChainId,
         sourceClient: clientFor(targetChainId),
         destinationClient: client,
         authority: safe,
+        service: SAFE_SERVICE,
       });
+      if (identities?.creationUnproven) {
+        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+      }
       if (!identities?.matches) {
         throw new Error(
           "The Safe control policy no longer matches between the project chain and Ethereum.",
@@ -604,10 +610,15 @@ export async function assertQueuedProjectHandleContext(
   const mainnetClient = clientFor(PROJECT_HANDLES_CHAIN_ID);
   if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
     const identities = await readMatchingAuthorityIdentities({
+      sourceChainId: targetChainId,
       sourceClient: clientFor(targetChainId),
       destinationClient: mainnetClient,
       authority: safe,
+      service: SAFE_SERVICE,
     });
+    if (identities?.creationUnproven) {
+      throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+    }
     if (!identities?.matches) {
       throw new Error(
         "The Safe control policy no longer matches between the project chain and Ethereum.",
@@ -704,10 +715,15 @@ async function assertRelayrProjectHandlePostcondition(
     );
     if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
       const identities = await readMatchingAuthorityIdentities({
+        sourceChainId: targetChainId,
         sourceClient: clientFor(targetChainId),
         destinationClient: mainnetClient,
         authority: safe,
+        service: SAFE_SERVICE,
       });
+      if (identities?.creationUnproven) {
+        throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+      }
       if (!identities?.matches) {
         throw new Error(
           "The project and Ethereum Safe policies changed after Relayr execution.",
@@ -771,10 +787,15 @@ async function assertRelayrProjectHandlePostcondition(
   );
   if (targetChainId !== PROJECT_HANDLES_CHAIN_ID) {
     const identities = await readMatchingAuthorityIdentities({
+      sourceChainId: targetChainId,
       sourceClient: clientFor(targetChainId),
       destinationClient: mainnetClient,
       authority: safe,
+      service: SAFE_SERVICE,
     });
+    if (identities?.creationUnproven) {
+      throw new Error(unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID));
+    }
     if (!identities?.matches) {
       throw new Error(
         "The project and Ethereum Safe policies changed after Relayr execution.",

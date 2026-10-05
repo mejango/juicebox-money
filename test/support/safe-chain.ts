@@ -150,3 +150,42 @@ export function emptyChain(code: Hex | undefined = undefined): SafeChain {
     request: vi.fn(),
   } as unknown as SafeChain
 }
+
+/**
+ * Answers JB Center's JSON-RPC (`/v1/rpc/{chainId}`, one request per POST)
+ * from one fake chain per chain ID, or null for any other URL.
+ */
+export async function rpcAnswer(
+  chains: Readonly<Record<number, SafeChain>>,
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response | null> {
+  const match = /\/v1\/rpc\/(\d+)$/u.exec(String(input))
+  if (!match) return null
+  const { id, method, params } = JSON.parse(String(init?.body)) as {
+    id: number
+    method: string
+    params: unknown[]
+  }
+  const chain = chains[Number(match[1])]
+  const reply = (payload: object) =>
+    new Response(JSON.stringify({ jsonrpc: '2.0', id, ...payload }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  try {
+    if (!chain) throw new Error(`No chain ${match[1]}`)
+    if (method === 'eth_getCode') {
+      return reply({ result: (await chain.getCode({ address: params[0] })) ?? '0x' })
+    }
+    if (method === 'eth_getStorageAt') {
+      return reply({ result: await chain.getStorageAt({ address: params[0], slot: params[1] }) })
+    }
+    if (method === 'eth_call') {
+      return reply({ result: await chain.request({ method, params }) })
+    }
+    throw new Error(`Unexpected ${method}`)
+  } catch (error) {
+    return reply({ error: { code: -32000, message: (error as Error).message } })
+  }
+}

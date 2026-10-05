@@ -29,10 +29,12 @@ import {
   type SafeCreation,
   type SafeSameAddressDeploymentRefusal,
 } from '@bananapus/nana-sdk-core/safe'
+import type { SafeServiceOptions } from '@bananapus/nana-sdk-core/safe-service'
 import {
   isCanonicalSafeCreation,
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
+  unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
 import {
   simulateStateChangingTransaction,
@@ -293,7 +295,10 @@ async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-function safeFetchOnce(url: string, init?: RequestInit): Promise<Response> {
+function safeFetchOnce(
+  input: Parameters<typeof fetch>[0],
+  init?: RequestInit,
+): Promise<Response> {
   return new Promise((resolve, reject) => {
     const release = () => {
       safeActive -= 1
@@ -301,7 +306,7 @@ function safeFetchOnce(url: string, init?: RequestInit): Promise<Response> {
     }
     const run = () => {
       safeActive += 1
-      fetch(url, init).then(
+      fetch(input, init).then(
         response => {
           release()
           resolve(response)
@@ -316,6 +321,9 @@ function safeFetchOnce(url: string, init?: RequestInit): Promise<Response> {
     else safeWaiters.push(run)
   })
 }
+
+/** The SDK's Safe service calls, at most SAFE_MAX_CONCURRENT at a time. */
+export const SAFE_SERVICE: SafeServiceOptions = { fetch: safeFetchOnce }
 
 function connectedWallet(chainId: JBChainId, expected?: Address) {
   return connectedWalletCore(chainId, {
@@ -1742,10 +1750,13 @@ export async function deploySafeSameAddress(
     if (code && code !== '0x') {
       await reverifyAuthority()
       const confirmed = await readMatchingAuthorityIdentities({
+        sourceChainId,
         sourceClient,
         destinationClient: client,
         authority: expectedSafe,
+        service: SAFE_SERVICE,
       })
+      if (confirmed?.creationUnproven) throw new Error(unprovenSafeLine(chainId))
       if (!confirmed?.matches) {
         throw new Error(
           'The Safe deployed, but its destination policy does not match the live source Safe.',

@@ -49,10 +49,14 @@ import {
 import {
   deploySafeSameAddress,
   fetchSafeInfo,
+  SAFE_SERVICE,
   type SafeInfo,
 } from "@/lib/safe";
 import { fetchSafeCreation } from "@bananapus/nana-sdk-core/safe-service";
-import { readMatchingAuthorityIdentities } from "@/lib/cross-chain-authority";
+import {
+  readMatchingAuthorityIdentities,
+  unprovenSafeLine,
+} from "@/lib/cross-chain-authority";
 import { buildStep } from "@/lib/safe-batch";
 import {
   buildPermissionsAuthorityCall,
@@ -499,10 +503,15 @@ function DeploySafeButtons({
         }
         for (const candidate of sourceRows.slice(1)) {
           const identities = await readMatchingAuthorityIdentities({
+            sourceChainId: source.chainId,
             sourceClient: clientFor(source.chainId),
             destinationClient: clientFor(candidate.chainId),
             authority: safe,
+            service: SAFE_SERVICE,
           });
+          if (identities?.creationUnproven) {
+            throw new Error(unprovenSafeLine(candidate.chainId));
+          }
           if (!identities?.matches) {
             throw new Error(
               "This Safe has different policies across source chains. Choose and deploy the intended policy in the Safe app instead.",
@@ -511,7 +520,7 @@ function DeploySafeButtons({
         }
       };
       await reverifyAuthority();
-      const creation = await fetchSafeCreation(safe, source.chainId);
+      const creation = await fetchSafeCreation(safe, source.chainId, SAFE_SERVICE);
       if (!creation)
         throw new Error("Could not read the Safe’s creation config.");
       setMessage(`Deploying the same Safe address on ${row.name}…`);

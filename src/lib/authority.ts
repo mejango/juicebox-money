@@ -43,12 +43,14 @@ import {
   canonicalSafeTxHash,
   findPendingSafeCall,
   runSafeCalls,
+  SAFE_SERVICE,
   type SafeCallResult,
   type SafeQueuedTx,
 } from '@/lib/safe'
 import {
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
+  unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
 import {
   isSafeConnection,
@@ -363,12 +365,17 @@ export async function runAuthorityCalls({
         throw new Error('Could not verify the cross-chain authority policy.')
       }
       const identities = await readMatchingAuthorityIdentities({
+        sourceChainId: call.detectionChainId,
         sourceClient,
         destinationClient,
         authority,
+        service: SAFE_SERVICE,
       })
       if (!identities) {
         throw new Error('Could not verify the cross-chain authority policy.')
+      }
+      if (identities.creationUnproven) {
+        throw new Error(unprovenSafeLine(call.chainId))
       }
       if (!identities.matches) {
         const sourceName =

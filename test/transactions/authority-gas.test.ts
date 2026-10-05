@@ -52,8 +52,10 @@ vi.mock('@/lib/safe', () => ({
   findPendingSafeCall: mocks.findPendingSafeCall,
   receiptHasSafeExecutionSuccess: () => true,
   runSafeCalls: mocks.runSafeCalls,
+  SAFE_SERVICE: {},
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
@@ -456,6 +458,28 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       }),
     )
     expect(mocks.connectedWallet).not.toHaveBeenCalled()
+  })
+
+  it("refuses a Safe whose creation can't be proven on the call's chain, in one line", async () => {
+    const safe = { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] }
+    mocks.readAuthorityIdentity.mockResolvedValue(safe)
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: safe,
+      destination: safe,
+      matches: false,
+      creationUnproven: true,
+    })
+
+    await expect(
+      runAuthorityCalls({
+        calls: [{ chainId: 1, detectionChainId: 10, authority: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).rejects.toThrow(new Error("Can't verify this Safe is the same on Ethereum."))
+    expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
+    )
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.runSafeCalls).not.toHaveBeenCalled()
   })
 
   it('rejects divergent cross-chain Safe control before review', async () => {
