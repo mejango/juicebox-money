@@ -276,6 +276,43 @@ describe('ProjectHandleCard', () => {
     )
   })
 
+  it.each([
+    ['links it when its Safe is trusted on Ethereum', 'valid-safe', true],
+    ["marks it not verified when its Safe can't be proven the same on Ethereum", 'unproven-creation', false],
+  ] as const)("shows a project chain's verified handle: %s", async (_, status, trusted) => {
+    liveParts = ['banny']
+    liveHandle = 'banny'
+    const safe = { kind: 'safe', owners: [OWNER], threshold: 1 }
+    mocks.readCrossChainHandleAuthority.mockResolvedValue({
+      status,
+      allowed: trusted,
+      source: safe,
+      mainnet: safe,
+    })
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(
+          QueryClientProvider,
+          { client: queryClient },
+          createElement(ProjectHandleCard, {
+            deployment: { chainId: 10, projectId: 42, indexedAuthority: OWNER },
+            isRevnet: false,
+          }),
+        ),
+      )
+    })
+    for (let attempt = 0; attempt < 20 && mocks.readCrossChainHandleAuthority.mock.calls.length === 0; attempt += 1) {
+      await flushQueries()
+    }
+    await flushQueries()
+
+    const links = renderer.root.findAllByType('a').map(link => link.props.href)
+    expect(links.includes('/@banny')).toBe(trusted)
+    if (!trusted) expect(textOf(renderer.root)).toContain('@banny (not verified)')
+  })
+
   it("names a project-chain Safe that can't be proven on Ethereum, and publishes nothing", async () => {
     // The ENS step is done, so the next step is the cross-chain authority claim.
     liveTextRecord = '10:42'

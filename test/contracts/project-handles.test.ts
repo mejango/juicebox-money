@@ -23,6 +23,7 @@ import {
   PROJECT_HANDLE_TEXT_KEY,
   buildSetEnsProjectRecordCall,
   buildSetProjectHandleCall,
+  canonicalHandleOf,
   canonicalProjectHandle,
   continueProjectHandleSetup,
   decodeProjectRouteSegment,
@@ -257,6 +258,39 @@ describe('project handle normalization and routing', () => {
       }),
     ).resolves.toEqual({ authority: CURRENT_OPERATOR, isRevnet: true })
     expect(recoverAuthority).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("a project's canonical handle", () => {
+  // Base 42 and Optimism 43 are one project; each deployment may carry a handle.
+  const deployments = [[8453, 42], [10, 43]] as const
+  const read = (handles: Record<string, string>) =>
+    vi.fn(async (chainId: number, projectId: number) => handles[`${chainId}:${projectId}`] ?? null)
+
+  it('counts a handle only when its own route resolves back to that deployment', async () => {
+    const resolveHandle = vi.fn(async (handle: string) =>
+      // The Base claim's Safe can't be proven the same on Ethereum: its route resolves nothing.
+      handle === 'banny' ? null : { chainId: 10, projectId: 43 },
+    )
+
+    await expect(
+      canonicalHandleOf({
+        deployments,
+        readHandle: read({ '8453:42': 'banny', '10:43': 'banny-op' }),
+        resolveHandle,
+      }),
+    ).resolves.toBe('banny-op')
+    expect(resolveHandle.mock.calls).toEqual([['banny'], ['banny-op']])
+  })
+
+  it('names no handle when none resolves back to its own deployment', async () => {
+    await expect(
+      canonicalHandleOf({
+        deployments,
+        readHandle: read({ '8453:42': 'banny' }),
+        resolveHandle: async () => ({ chainId: 10, projectId: 43 }),
+      }),
+    ).resolves.toBeNull()
   })
 })
 

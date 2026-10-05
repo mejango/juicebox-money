@@ -304,8 +304,10 @@ export function ProjectHandleCard({
       deployment.chainId,
       stateQuery.data?.authority,
     ],
+    // Also read for a handle already published, which links only once its
+    // authority is trusted on Ethereum.
     enabled:
-      editing &&
+      (editing || !!stateQuery.data?.verifiedHandle) &&
       deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
       !!stateQuery.data?.authority,
     staleTime: 15_000,
@@ -878,6 +880,13 @@ export function ProjectHandleCard({
     : null
   const alreadyVerified = setupPhase === 'verified'
   const handleAuthority = safeDeploymentQuery.data
+  // A published handle resolves only while its authority is trusted on Ethereum.
+  const handleTrust =
+    deployment.chainId === PROJECT_HANDLES_CHAIN_ID || handleAuthority?.allowed
+      ? 'trusted'
+      : handleAuthority || safeDeploymentQuery.isError
+        ? 'refused'
+        : 'checking'
   const needsMainnetSafe = handleAuthority?.status === 'missing-mainnet-safe'
   const unprovenSafe = handleAuthority?.status === 'unproven-creation'
   const safePolicyMismatch =
@@ -941,7 +950,13 @@ export function ProjectHandleCard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs text-smoke-500">Current</p>
-              {current?.verifiedHandle ? (
+              {current?.verifiedHandle && handleTrust === 'checking' ? (
+                <p className="mt-1 text-sm text-ink">@{current.verifiedHandle}</p>
+              ) : current?.verifiedHandle && handleTrust === 'refused' ? (
+                <p className="mt-1 text-sm text-amber-700">
+                  @{current.verifiedHandle} (not verified)
+                </p>
+              ) : current?.verifiedHandle ? (
                 <a
                   href={`/@${encodeURIComponent(current.verifiedHandle)}`}
                   onClick={event => {

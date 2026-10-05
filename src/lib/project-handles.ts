@@ -447,6 +447,33 @@ export async function verifyProjectHandleAuthorityWithFallback({
 }
 
 /**
+ * The handle a project's URLs name as canonical: one its authority published
+ * for one of its deployments, counted only when the handle's own route
+ * resolves back to that deployment, as a visit to /@handle checks it: the ENS
+ * link both ways, the live authority, and that authority trusted on Ethereum.
+ */
+export async function canonicalHandleOf({
+  deployments,
+  readHandle,
+  resolveHandle,
+}: {
+  deployments: readonly (readonly [chainId: number, projectId: number])[]
+  readHandle: (chainId: number, projectId: number) => Promise<string | null>
+  resolveHandle: (handle: string) => Promise<{ chainId: number; projectId: number } | null>
+}): Promise<string | null> {
+  const handles = await Promise.all(
+    deployments.map(([chainId, projectId]) => readHandle(chainId, projectId)),
+  )
+  for (const [index, handle] of handles.entries()) {
+    if (!handle) continue
+    const [chainId, projectId] = deployments[index]
+    const route = await resolveHandle(handle)
+    if (route?.chainId === chainId && route.projectId === projectId) return handle
+  }
+  return null
+}
+
+/**
  * Shape of the one resolver call whose semantics must match
  * JBProjectHandles. `ccipRead` is applied to an isolated Viem client below;
  * `gas` prevents a resolver from doing more work than the registry contract
