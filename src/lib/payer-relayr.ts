@@ -12,9 +12,9 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
-import { RelayrPaymentRevertedError, RelayrProofError, relayrDestinationHash, relayrRecordChain, relayrSupportsChains, verifyRelayrPayment, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -441,9 +441,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         if (session.phase === 'payment-reverted') {
           // A quote that was paid before is paid again on the same chain, and
           // only when the SDK's retry rule clears it.
-          const latest = session.payments?.at(-1)
-          payment = latest && quote.payment_info.find(item => item.chain === latest.chainId)
-          if (!payment) throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+          payment = relayrRetryOption(session.payments, quote.payment_info)
         } else {
           const payments = relayrPaymentOptions(quote, chains)
           if (!payments.length) throw new Error('Relayr returned no payment option in the payer destinations’ network family.')
@@ -481,30 +479,21 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           persist()
           paidNow = true
         } catch (error) {
-          if (error instanceof RelayrPaymentRevertedError) {
-            session.phase = 'payment-reverted'
-            persist()
-          } else if (sending && isDefiniteWalletRejection(error)) {
-            // A declined payment sent nothing, but a quote paid before stays on the retry rule.
-            session.phase = session.payments?.length ? 'payment-reverted' : 'quoted'
+          const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!session.payments?.length })
+          if (outcome) {
+            session.phase = outcome === 'reverted' ? 'payment-reverted' : 'quoted'
             persist()
           }
           throw error
         }
       }
-      const latest = session.payments?.at(-1)
-      if (!paidNow && latest && session.phase === 'executing') {
+      if (!paidNow && session.phase === 'executing') {
         // A payment that reverted funded nothing: the quote waits on the retry rule.
         // A send with no hash yet stays as it is, since it may still land.
-        try {
-          await verifyRelayrPayment(publicClient(latest.chainId as JBChainId), { hash: latest.hash, from: session.account, payment: latest })
-        } catch (error) {
-          if (error instanceof RelayrPaymentRevertedError) {
-            session.phase = 'payment-reverted'
-            persist()
-          }
-          if (error instanceof RelayrProofError) throw error
-        }
+        await proveSavedRelayrPayment(session.payments, session.account, () => {
+          session.phase = 'payment-reverted'
+          persist()
+        })
       }
       let pollError: unknown
       try {

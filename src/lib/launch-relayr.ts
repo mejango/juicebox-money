@@ -21,29 +21,30 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { gasWithHeadroom, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   buildForwardedTx,
+  proveSavedRelayrPayment,
   readRelayrPendingSessionsForAuthorization,
+  relayrDeadlinePassed,
   relayrPay,
+  relayrPaymentAttemptOutcome,
   relayrPaymentDetails,
   relayrPaymentOptions,
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
+  relayrRetryOption,
 } from '@/lib/relayr'
 import { relayrSentPaymentSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import {
   RelayrDestinationRevertedError,
-  RelayrPaymentRevertedError,
-  RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   relayrDestinationHash,
   relayrForwardRequest,
   relayrPaymentChains,
   relayrSupportsChains,
   verifyRelayrDestination,
-  verifyRelayrPayment,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrQuote,
@@ -242,15 +243,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         return true
       } catch { return false }
     }
-    const originalPaymentExpired = async (): Promise<boolean> => {
-      if (!journal?.paymentDeadline) return false
-      try {
-        const client = publicClient(journal.paymentChainId as JBChainId)
-        const block = await client.getBlock({ blockTag: 'finalized' })
-        const canonical = await client.getBlock({ blockNumber: block.number })
-        return canonical.hash === block.hash && block.timestamp > BigInt(journal.paymentDeadline)
-      } catch { return false }
-    }
+    const originalPaymentExpired = async (): Promise<boolean> =>
+      !!journal?.paymentDeadline && relayrDeadlinePassed(journal.paymentChainId!, journal.paymentDeadline)
     if (journal?.published && !journal.abandonable &&
         ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) &&
         await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])])) {
@@ -367,19 +361,14 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
 
     if (journal && ['payment-signing', 'submitted', 'executing'].includes(journal.phase)) {
-      const latest = journal.payments?.at(-1)
-      if (latest && journal.phase !== 'payment-signing') {
-        // A payment that reverted funded nothing: the quote waits on the retry rule.
-        // A send with no hash yet stays as it is, since it may still land.
-        try {
-          await verifyRelayrPayment(publicClient(latest.chainId as JBChainId), { hash: latest.hash, from: account, payment: latest })
-        } catch (error) {
-          if (error instanceof RelayrPaymentRevertedError) {
-            journal.phase = 'payment-reverted'
-            persist()
-          }
-          if (error instanceof RelayrProofError) throw error
-        }
+      // A payment that reverted funded nothing: the quote waits on the retry rule.
+      // A send with no hash yet stays as it is, since it may still land.
+      if (journal.phase !== 'payment-signing') {
+        const resumed = journal
+        await proveSavedRelayrPayment(resumed.payments, account, () => {
+          resumed.phase = 'payment-reverted'
+          persist()
+        })
       }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
       try {
@@ -539,9 +528,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // A quote that was paid before is paid again on the same chain, and
       // only when the SDK's retry rule clears it.
       requireQuoteBindings()
-      const latest = journal.payments?.at(-1)
-      payment = latest && journal.quote?.payment_info.find(option => option.chain === latest.chainId)
-      if (!payment) throw new Error('This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+      payment = relayrRetryOption(journal.payments, journal.quote?.payment_info)
     } else {
       if (!journal.quote) await requestQuote()
       requireQuoteBindings()
@@ -594,21 +581,15 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         },
       }))
     } catch (error) {
-      if (error instanceof RelayrPaymentRevertedError) {
-        journal.phase = 'payment-reverted'
-        persist()
-      } else if (sending && isDefiniteWalletRejection(error)) {
-        if (journal.payments?.length) {
-          // A declined payment sent nothing, but a quote paid before stays on the retry rule.
-          journal.phase = 'payment-reverted'
-        } else {
-          journal.phase = 'quoted'
-          delete journal.paymentChainId
-          delete journal.paymentDeadline
-          delete current.paymentChainId
-        }
-        persist()
+      const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!journal.payments?.length })
+      if (outcome === 'reverted') journal.phase = 'payment-reverted'
+      if (outcome === 'unpaid') {
+        journal.phase = 'quoted'
+        delete journal.paymentChainId
+        delete journal.paymentDeadline
+        delete current.paymentChainId
       }
+      if (outcome) persist()
       throw error
     }
     journal.phase = 'executing'
