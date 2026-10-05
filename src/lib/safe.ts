@@ -4,11 +4,7 @@ import { getAccount } from '@wagmi/core'
 import {
   decodeFunctionResult,
   encodeFunctionData,
-  getAddress,
-  hashTypedData,
   isAddressEqual,
-  keccak256,
-  stringToHex,
   zeroAddress,
   type Abi,
   type Address,
@@ -19,8 +15,13 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import type { RelayrEntry } from '@/lib/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { gasWithinCap } from '@bananapus/nana-sdk-core/review'
 import {
+  gasWithinCap,
+  simulateStateChangingTransaction,
+  TRANSACTION_SIMULATION_GAS,
+} from '@bananapus/nana-sdk-core/review'
+import {
+  multiSendCallsOf,
   prepareSafeSameAddressDeployment,
   readBoundedSafeApprovedHash,
   readBoundedSafeNonce,
@@ -29,17 +30,35 @@ import {
   type SafeCreation,
   type SafeSameAddressDeploymentRefusal,
 } from '@bananapus/nana-sdk-core/safe'
-import type { SafeServiceOptions } from '@bananapus/nana-sdk-core/safe-service'
+import {
+  canonicalSafeTxHash,
+  hasSafeService,
+  listPendingSafeTransactions,
+  nextProposalNonce,
+  onchainApprovalStep,
+  proposeSafeTransaction,
+  SAFE_EXEC_ABI,
+  SAFE_TX_TYPES,
+  safeBatchProposalFor,
+  safeExecutionArgs,
+  safeExecutionResult,
+  safeProposalFor,
+  safeTransactionHash,
+  safeTransactionHasRefund,
+  safeTransactionMatchesCall,
+  safeTransactionMessage,
+  submitSafeConfirmation,
+  usableSafeConfirmations,
+  type SafeConfirmation,
+  type SafeQueuedTransaction,
+  type SafeServiceOptions,
+} from '@bananapus/nana-sdk-core/safe-service'
 import {
   isCanonicalSafeCreation,
   readAuthorityIdentity,
   readMatchingAuthorityIdentities,
   unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
-import {
-  simulateStateChangingTransaction,
-  TRANSACTION_SIMULATION_GAS,
-} from '@bananapus/nana-sdk-core/review'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
@@ -52,39 +71,14 @@ import {
 } from '@/lib/transaction-review'
 import {
   isSafeConnection,
-  safeExecutionFailed,
-  safeServiceBase,
+  requireSafeProposalSuccess,
   SAFE_NONCE_GUIDANCE,
-  SAFE_PREFIX,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
 export type SafeInfo = {
   owners: Address[]
   threshold: number
-}
-
-type SafeConfirmation = {
-  owner: Address
-  signature?: Hex | null
-}
-
-export type SafeQueuedTx = {
-  to: Address
-  value: string | number
-  data: Hex | null
-  operation: number
-  safeTxGas: string | number
-  baseGas: string | number
-  gasPrice: string | number
-  gasToken: Address
-  refundReceiver: Address
-  nonce: number
-  safeTxHash?: Hex
-  contractTransactionHash?: Hex
-  confirmationsRequired?: number
-  confirmations?: SafeConfirmation[]
-  isExecuted?: boolean
 }
 
 export type SafeCall = {
@@ -103,7 +97,7 @@ export type SafeCall = {
   /** The inner calls of a MultiSend batch, for the review. */
   calls?: readonly TransactionReviewCall[]
   reverifyAuthority?: () => Promise<void>
-  onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
+  onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
 }
 
 export type SafeCallResult = {
@@ -120,140 +114,13 @@ export type ConfirmedContractWrite = {
   status: 'confirmed' | 'submitted'
 }
 
-const SAFE_ABI = [
-  {
-    type: 'function',
-    name: 'getThreshold',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-  {
-    type: 'function',
-    name: 'getOwners',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'address[]' }],
-  },
-  {
-    type: 'function',
-    name: 'nonce',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
-  },
-] as const
-
-export const SAFE_EXEC_ABI = [
-  {
-    type: 'function',
-    name: 'execTransaction',
-    stateMutability: 'payable',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'value', type: 'uint256' },
-      { name: 'data', type: 'bytes' },
-      { name: 'operation', type: 'uint8' },
-      { name: 'safeTxGas', type: 'uint256' },
-      { name: 'baseGas', type: 'uint256' },
-      { name: 'gasPrice', type: 'uint256' },
-      { name: 'gasToken', type: 'address' },
-      { name: 'refundReceiver', type: 'address' },
-      { name: 'signatures', type: 'bytes' },
-    ],
-    outputs: [{ type: 'bool' }],
-  },
-] as const
-
-const SAFE_EXECUTION_SUCCESS_TOPIC = keccak256(
-  stringToHex('ExecutionSuccess(bytes32,uint256)'),
-)
-
-export function receiptHasSafeExecutionSuccess(
-  receipt: {
-    logs?: readonly {
-      address: Address
-      data: Hex
-      topics: readonly Hex[]
-    }[]
-  },
-  safe: Address,
-  safeTxHash: Hex,
-): boolean {
-  const expectedHash = safeTxHash.toLowerCase()
-  return receipt.logs?.some(log => {
-    if (
-      !isAddressEqual(log.address, safe) ||
-      log.topics[0]?.toLowerCase() !== SAFE_EXECUTION_SUCCESS_TOPIC.toLowerCase()
-    ) {
-      return false
-    }
-    // Safe 1.3 stores txHash in data; Safe 1.4 indexes it.
-    if (log.topics.length === 2 && log.data.length === 66) {
-      return log.topics[1]?.toLowerCase() === expectedHash
-    }
-    return (
-      log.topics.length === 1 &&
-      log.data.length === 130 &&
-      `0x${log.data.slice(2, 66)}`.toLowerCase() === expectedHash
-    )
-  }) ?? false
-}
-
-const SAFE_ONCHAIN_ABI = [
-  ...SAFE_ABI,
-  {
-    type: 'function',
-    name: 'approveHash',
-    stateMutability: 'nonpayable',
-    inputs: [{ name: 'hashToApprove', type: 'bytes32' }],
-    outputs: [],
-  },
-  {
-    type: 'function',
-    name: 'approvedHashes',
-    stateMutability: 'view',
-    inputs: [
-      { name: 'owner', type: 'address' },
-      { name: 'hash', type: 'bytes32' },
-    ],
-    outputs: [{ type: 'uint256' }],
-  },
-] as const
-
-const SAFE_TX_TYPES = {
-  SafeTx: [
-    { name: 'to', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'data', type: 'bytes' },
-    { name: 'operation', type: 'uint8' },
-    { name: 'safeTxGas', type: 'uint256' },
-    { name: 'baseGas', type: 'uint256' },
-    { name: 'gasPrice', type: 'uint256' },
-    { name: 'gasToken', type: 'address' },
-    { name: 'refundReceiver', type: 'address' },
-    { name: 'nonce', type: 'uint256' },
-  ],
-} as const
-
-const SAFE_TX_BASE: Partial<Record<number, string>> = {
-  1: 'https://safe-transaction-mainnet.safe.global',
-  10: 'https://safe-transaction-optimism.safe.global',
-  8453: 'https://safe-transaction-base.safe.global',
-  42161: 'https://safe-transaction-arbitrum.safe.global',
-  11155111: 'https://safe-transaction-sepolia.safe.global',
-}
-
-// `SAFE_SERVICE_PREFIX` (hosted-service chains, the smaller set) and
-// `SAFE_PREFIX` (app.safe.global URLs, the wider set) both live in
-// safe-connector.ts — the split is deliberate; conflating the two is what
-// made service calls fire at chains with none.
+/** The line a Safe transaction that pays a gas refund is refused with (Ruling R93). */
+export const SAFE_REFUND_REFUSAL =
+  "This transaction pays a gas refund, so it can't be executed here."
 
 let safeActive = 0
 const safeWaiters: (() => void)[] = []
 const SAFE_MAX_CONCURRENT = 3
-const SAFE_PENDING_PAGE_SIZE = 50
-const MAX_PENDING_SAFE_TXS = 250
 const nonceInflight = new Map<string, Promise<number | null>>()
 
 const SAFE_APPROVAL_WRITE_GAS = 500_000n
@@ -263,36 +130,6 @@ const SAFE_DEPLOY_WRITE_GAS = 3_000_000n
 type LiveSafeState = {
   identity: SafeAuthorityIdentity
   nonce: number
-}
-
-const txBase = safeServiceBase
-
-function legacyBase(chainId: number): string | null {
-  return SAFE_TX_BASE[chainId] ?? null
-}
-
-function requestHeaders(json = false): Record<string, string> {
-  const headers: Record<string, string> = {}
-  if (json) headers['Content-Type'] = 'application/json'
-  try {
-    const apiKey = window.localStorage.getItem('jb-safe-api-key')
-    if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-  } catch {
-    // Public Safe endpoints do not require a key.
-  }
-  return headers
-}
-
-/** One Safe service request; a 429 (rejected before processing, so safe to repeat) waits and tries again. */
-async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    const response = await safeFetchOnce(url, init)
-    if (response.status !== 429 || attempt >= 3) return response
-    const retryAfter = Number(response.headers.get('retry-after'))
-    await new Promise(resolve =>
-      setTimeout(resolve, Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * (attempt + 1)),
-    )
-  }
 }
 
 function safeFetchOnce(
@@ -330,58 +167,6 @@ function connectedWallet(chainId: JBChainId, expected?: Address) {
     expected,
     changedError: 'Connected account changed. Review the Safe transaction again.',
   })
-}
-
-export function hasSafeService(chainId: number): boolean {
-  return !!txBase(chainId)
-}
-
-export function safeQueueLink(chainId: number, safe: Address): string | null {
-  const prefix = SAFE_PREFIX[chainId]
-  return prefix
-    ? `https://app.safe.global/transactions/queue?safe=${prefix}:${safe}`
-    : null
-}
-
-export function safeTxLink(
-  chainId: number,
-  safe: Address,
-  safeTxHash: Hex,
-): string | null {
-  const prefix = SAFE_PREFIX[chainId]
-  return prefix
-    ? `https://app.safe.global/transactions/tx?safe=${prefix}:${safe}&id=multisig_${safe}_${safeTxHash}`
-    : null
-}
-
-/**
- * Every Safe the address signs for on one chain, from the hosted Safe
- * Transaction Service. Chains without a service (and service errors) resolve
- * to an empty list — the account view degrades to EOA-owned projects only.
- */
-export async function safesForOwner(
-  address: Address,
-  chainId: number,
-): Promise<Address[]> {
-  const base = txBase(chainId)
-  if (!base) return []
-  try {
-    const response = await safeFetch(
-      `${base}/api/v1/owners/${getAddress(address)}/safes/`,
-      { headers: requestHeaders() },
-    )
-    if (!response.ok) return []
-    const data = (await response.json()) as { safes?: string[] }
-    return (data.safes ?? []).flatMap(safe => {
-      try {
-        return [getAddress(safe)]
-      } catch {
-        return []
-      }
-    })
-  } catch {
-    return []
-  }
 }
 
 export async function fetchSafeInfo(
@@ -473,82 +258,33 @@ function assertCurrentSafeSigner(
   }
 }
 
-function safeMessage(tx: SafeQueuedTx) {
-  return {
-    to: tx.to,
-    value: BigInt(tx.value ?? 0),
-    data: tx.data ?? '0x',
-    operation: Number(tx.operation ?? 0),
-    safeTxGas: BigInt(tx.safeTxGas ?? 0),
-    baseGas: BigInt(tx.baseGas ?? 0),
-    gasPrice: BigInt(tx.gasPrice ?? 0),
-    gasToken: tx.gasToken ?? zeroAddress,
-    refundReceiver: tx.refundReceiver ?? zeroAddress,
-    nonce: BigInt(tx.nonce),
-  }
-}
-
-export function safeTxHashOf(
-  chainId: number,
-  safe: Address,
-  tx: SafeQueuedTx,
-): Hex {
-  return hashTypedData({
-    domain: { chainId, verifyingContract: safe },
-    types: SAFE_TX_TYPES,
-    primaryType: 'SafeTx',
-    message: safeMessage(tx),
-  })
-}
-
-export function canonicalSafeTxHash(
-  chainId: JBChainId,
-  safe: Address,
-  tx: SafeQueuedTx,
-): Hex {
-  let computed: Hex
-  try {
-    const nonce = Number(tx.nonce)
-    if (!Number.isSafeInteger(nonce) || nonce < 0) {
-      throw new Error('Invalid nonce')
-    }
-    computed = safeTxHashOf(chainId, safe, tx)
-  } catch {
-    throw new Error('The queued Safe transaction fields are invalid.')
-  }
-  for (const advertised of [tx.safeTxHash, tx.contractTransactionHash]) {
-    if (advertised && advertised.toLowerCase() !== computed.toLowerCase()) {
-      throw new Error(
-        'The queued Safe transaction hash does not match its exact fields.',
-      )
-    }
-  }
-  return computed
-}
-
 export type SafeExecutionSnapshot = {
-  tx: SafeQueuedTx
+  tx: SafeQueuedTransaction
   safeTxHash: Hex
   policyFingerprint: string
+  /** The Safe's current owners, whose confirmations sign the execution. */
+  owners: Address[]
 }
 
-function currentOwnerConfirmations(
-  tx: SafeQueuedTx,
-  owners: readonly Address[],
-): SafeConfirmation[] {
-  const ownerSet = new Set(owners.map(owner => owner.toLowerCase()))
-  const seen = new Set<string>()
-  return usableConfirmations(tx).filter(confirmation => {
-    const key = confirmation.owner.toLowerCase()
-    if (!ownerSet.has(key) || seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+/** Throws SAFE_REFUND_REFUSAL for a transaction that pays its executor a gas refund. */
+function refuseRefund(tx: SafeQueuedTransaction): void {
+  if (safeTransactionHasRefund(tx)) throw new Error(SAFE_REFUND_REFUSAL)
+}
+
+/**
+ * An onchain approval: no signature, or Safe's v = 1 form naming the owner.
+ * It counts only while `approvedHashes` holds it.
+ */
+function isApprovedHashConfirmation(confirmation: SafeConfirmation): boolean {
+  return (
+    !confirmation.signature ||
+    confirmation.signature.slice(130, 132).toLowerCase() === '01'
+  )
 }
 
 function assertSafeTxNonce(
   state: LiveSafeState,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   mode: 'pending' | 'execute',
 ): void {
   const nonce = Number(tx.nonce)
@@ -566,7 +302,7 @@ function assertSafeTxNonce(
 async function signSafeTx(
   chainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   signer: Address,
   label?: string,
   reviewCall?: Pick<
@@ -585,7 +321,7 @@ async function signSafeTx(
   assertCurrentSafeSigner(before, signer)
   assertSafeTxNonce(before, tx, 'pending')
   const domain = { chainId, verifyingContract: safe } as const
-  const message = safeMessage(tx)
+  const message = safeTransactionMessage(tx)
   await requireTransactionReview({
     kind: 'authorization',
     title: 'Review Safe transaction',
@@ -602,9 +338,9 @@ async function signSafeTx(
       {
         chainId,
         from: signer,
-        to: tx.to,
-        value: BigInt(tx.value ?? 0),
-        data: tx.data ?? '0x',
+        to: message.to,
+        value: message.value,
+        data: message.data,
         safeTxGas: message.safeTxGas,
         label: label ?? `Safe transaction #${tx.nonce}`,
         abi: reviewCall?.abi,
@@ -649,6 +385,7 @@ async function signSafeTx(
   return signature
 }
 
+/** The Safe's nonce onchain, one read at a time per Safe, or null when it cannot be read. */
 export function getSafeNextNonce(
   chainId: JBChainId,
   safe: Address,
@@ -656,108 +393,58 @@ export function getSafeNextNonce(
   const key = `${chainId}:${safe.toLowerCase()}`
   const existing = nonceInflight.get(key)
   if (existing) return existing
-  const request = (async () => {
-    const base = txBase(chainId)
-    if (base) {
-      try {
-        const response = await safeFetch(
-          `${base}/api/v1/safes/${getAddress(safe)}/`,
-          { headers: requestHeaders() },
-        )
-        if (response.ok) {
-          const data = (await response.json()) as { nonce?: number }
-          if (data.nonce !== undefined) return Number(data.nonce)
-        }
-      } catch {
-        // Fall through to the authoritative onchain nonce.
-      }
-    }
-    try {
-      const nonce = await readBoundedSafeNonce(publicClient(chainId), safe)
+  const request = readBoundedSafeNonce(publicClient(chainId), safe).then(
+    nonce => {
       const value = nonce === null ? NaN : Number(nonce)
       return Number.isSafeInteger(value) && value >= 0 ? value : null
-    } catch {
-      return null
-    }
-  })()
+    },
+    () => null,
+  )
   nonceInflight.set(key, request)
   request.finally(() => nonceInflight.delete(key))
   return request
 }
 
-export async function listPendingSafeTxs(
+/**
+ * The Safe's onchain nonce and its queued transactions from that nonce on,
+ * from its chain's Safe service. Throws on a chain without one
+ * (hasSafeService), or when either cannot be read.
+ */
+export async function readSafeQueue(
   chainId: JBChainId,
   safe: Address,
-): Promise<SafeQueuedTx[]> {
-  const base = txBase(chainId)
-  if (!base) return []
-  const current = await getSafeNextNonce(chainId, safe).catch(() => null)
-  const path =
-    '/api/v1/safes/' + `${getAddress(safe)}/multisig-transactions/`
-  const bases = [...new Set([base, legacyBase(chainId)].filter(Boolean))] as string[]
-  let lastError: Error | null = null
-  for (const candidate of bases) {
-    try {
-      const rows: SafeQueuedTx[] = []
-      for (
-        let offset = 0;
-        offset < MAX_PENDING_SAFE_TXS;
-        offset += SAFE_PENDING_PAGE_SIZE
-      ) {
-        const query =
-          '?executed=false&trusted=true&ordering=nonce' +
-          `&limit=${SAFE_PENDING_PAGE_SIZE}&offset=${offset}` +
-          (current !== null ? `&nonce__gte=${current}` : '')
-        let response: Response | null = null
-        for (let attempt = 0; attempt < 2; attempt++) {
-          response = await safeFetch(`${candidate}${path}${query}`, {
-            headers: requestHeaders(),
-          })
-          if (response.ok) break
-          lastError = new Error(`Safe service ${response.status}`)
-          if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500))
-        }
-        if (!response?.ok) throw lastError ?? new Error('Safe service unavailable')
-        const body = (await response.json()) as {
-          next?: string | null
-          results?: SafeQueuedTx[]
-        }
-        const page = Array.isArray(body.results) ? body.results : []
-        rows.push(...page)
-        if (page.length < SAFE_PENDING_PAGE_SIZE || body.next === null) {
-          return current === null
-            ? rows
-            : rows.filter(tx => Number(tx.nonce) >= current)
-        }
-      }
-      throw new Error(
-        `The Safe has more than ${MAX_PENDING_SAFE_TXS} pending transactions. Nothing was proposed; resolve or replace older transactions first.`,
-      )
-    } catch (error) {
-      lastError =
-        error instanceof Error ? error : new Error('Safe service unavailable')
-    }
+): Promise<{ nonce: number; pending: SafeQueuedTransaction[] }> {
+  const nonce = await getSafeNextNonce(chainId, safe)
+  if (nonce === null) throw new Error('Could not read the Safe nonce.')
+  return {
+    nonce,
+    pending: await listPendingSafeTransactions(chainId, safe, nonce, SAFE_SERVICE),
   }
-  throw lastError ?? new Error('Safe service unavailable')
 }
 
-/** Find the exact zero-refund proposal before a Safe-app retry can duplicate it. */
-export async function findPendingSafeCall(
-  chainId: JBChainId,
-  safe: Address,
+/**
+ * The zero-refund proposal of `call`: one CALL, or one DELEGATECALL into
+ * MultiSendCallOnly with a canonical batch, never another DELEGATECALL.
+ */
+function proposalFor(
   call: Pick<SafeCall, 'target' | 'data' | 'value' | 'operation'>,
-): Promise<SafeQueuedTx | null> {
-  const pending = await listPendingSafeTxs(chainId, safe)
-  return pending.find(tx => safeCallMatches(tx, call)) ?? null
+  nonce: number,
+): SafeQueuedTransaction {
+  const to = call.target
+  const value = call.value ?? 0n
+  if ((call.operation ?? 0) === 0) {
+    return safeProposalFor({ to, data: call.data, value }, nonce)
+  }
+  const calls = multiSendCallsOf({ to, data: call.data, operation: 1 })
+  if (!calls || value !== 0n) {
+    throw new Error('A Safe DELEGATECALL must be a MultiSendCallOnly batch.')
+  }
+  return safeBatchProposalFor(calls, nonce)
 }
 
 async function proposeSafeTx({
   chainId,
   safe,
-  target,
-  data,
-  value = 0n,
-  operation = 0,
   signer,
   nonce,
   label,
@@ -768,26 +455,14 @@ async function proposeSafeTx({
   calls,
   reverifyAuthority,
   onSafePrepared,
-}: SafeCall & { signer: Address; nonce?: number }): Promise<SafeQueuedTx> {
+  ...call
+}: SafeCall & { signer: Address; nonce: number }): Promise<SafeQueuedTransaction & { safeTxHash: Hex }> {
   assertNoViewAs()
-  const base = txBase(chainId)
-  if (!base) throw new Error('No hosted Safe service is configured for this chain.')
-  const selectedNonce = nonce ?? (await getSafeNextNonce(chainId, safe))
-  if (selectedNonce === null) throw new Error('Could not read the Safe nonce.')
-  const tx: SafeQueuedTx = {
-    to: target,
-    value: value.toString(),
-    data,
-    operation,
-    safeTxGas: '0',
-    baseGas: '0',
-    gasPrice: '0',
-    gasToken: zeroAddress,
-    refundReceiver: zeroAddress,
-    nonce: selectedNonce,
-    confirmations: [],
+  if (!hasSafeService(chainId)) {
+    throw new Error('No hosted Safe service is configured for this chain.')
   }
-  const safeTxHash = safeTxHashOf(chainId, safe, tx)
+  const tx = proposalFor(call, nonce)
+  const safeTxHash = safeTransactionHash(chainId, safe, tx)
   await onSafePrepared?.({ ...tx, safeTxHash })
   const signature = await signSafeTx(chainId, safe, tx, signer, label, {
     abi,
@@ -796,35 +471,13 @@ async function proposeSafeTx({
     contractName,
     calls,
   }, reverifyAuthority)
-  const response = await safeFetch(
-    `${base}/api/v1/safes/${getAddress(safe)}/multisig-transactions/`,
-    {
-      method: 'POST',
-      headers: requestHeaders(true),
-      body: JSON.stringify({
-        to: getAddress(target),
-        value: value.toString(),
-        data,
-        operation,
-        safeTxGas: '0',
-        baseGas: '0',
-        gasPrice: '0',
-        gasToken: zeroAddress,
-        refundReceiver: zeroAddress,
-        nonce: String(selectedNonce),
-        contractTransactionHash: safeTxHash,
-        sender: getAddress(signer),
-        signature,
-        origin: 'Juicebox V6 explorer',
-      }),
-    },
+  await proposeSafeTransaction(
+    chainId,
+    safe,
+    tx,
+    { sender: signer, signature, origin: 'Juicebox V6 explorer' },
+    SAFE_SERVICE,
   )
-  if (!response.ok && response.status !== 201) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(
-      `Safe service ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
-    )
-  }
   return {
     ...tx,
     safeTxHash,
@@ -836,7 +489,7 @@ async function proposeSafeTx({
 export async function confirmSafeTx(
   chainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   signer: Address,
   reviewCall?: Pick<
     SafeCall,
@@ -845,9 +498,11 @@ export async function confirmSafeTx(
   reverifyAuthority?: () => Promise<void>,
 ): Promise<void> {
   assertNoViewAs()
-  const base = txBase(chainId)
-  if (!base) throw new Error('No hosted Safe service is configured for this chain.')
-  const hash = canonicalSafeTxHash(chainId, safe, tx)
+  refuseRefund(tx)
+  if (!hasSafeService(chainId)) {
+    throw new Error('No hosted Safe service is configured for this chain.')
+  }
+  canonicalSafeTxHash(chainId, safe, tx)
   const signature = await signSafeTx(
     chainId,
     safe,
@@ -857,67 +512,12 @@ export async function confirmSafeTx(
     reviewCall,
     reverifyAuthority,
   )
-  const response = await safeFetch(
-    `${base}/api/v1/multisig-transactions/${hash}/confirmations/`,
-    {
-      method: 'POST',
-      headers: requestHeaders(true),
-      body: JSON.stringify({ signature }),
-    },
-  )
-  if (!response.ok && response.status !== 201) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(
-      `Safe service ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`,
-    )
-  }
-}
-
-function confirmationBytes(confirmation: SafeConfirmation): string | null {
-  const signature = confirmation.signature?.replace(/^0x/, '')
-  if (signature) return signature
-  if (!confirmation.owner) return null
-  return (
-    confirmation.owner.replace(/^0x/, '').toLowerCase().padStart(64, '0') +
-    '0'.repeat(64) +
-    '01'
-  )
-}
-
-function usableConfirmations(tx: SafeQueuedTx): SafeConfirmation[] {
-  return [...(tx.confirmations ?? [])]
-    .filter(confirmation => !!confirmation.owner && !!confirmationBytes(confirmation))
-    .sort((a, b) =>
-      a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1,
-    )
-}
-
-export function safeUsableConfirmationCount(tx: SafeQueuedTx): number {
-  return usableConfirmations(tx).length
-}
-
-export function safeExecSignatures(tx: SafeQueuedTx): Hex {
-  return `0x${usableConfirmations(tx).map(confirmationBytes).join('')}` as Hex
-}
-
-export function safeExecArgs(tx: SafeQueuedTx, signatures: Hex) {
-  return [
-    getAddress(tx.to),
-    BigInt(tx.value ?? 0),
-    tx.data ?? '0x',
-    Number(tx.operation ?? 0),
-    BigInt(tx.safeTxGas ?? 0),
-    BigInt(tx.baseGas ?? 0),
-    BigInt(tx.gasPrice ?? 0),
-    tx.gasToken ?? zeroAddress,
-    tx.refundReceiver ?? zeroAddress,
-    signatures,
-  ] as const
+  await submitSafeConfirmation(chainId, safe, tx, signature, SAFE_SERVICE)
 }
 
 type SafeWriteContext =
-  | { mode: 'approve'; tx: SafeQueuedTx; hash: Hex }
-  | { mode: 'execute'; tx: SafeQueuedTx }
+  | { mode: 'approve'; tx: SafeQueuedTransaction; hash: Hex }
+  | { mode: 'execute'; tx: SafeQueuedTransaction }
 
 async function verifySafeWriteContext(
   chainId: JBChainId,
@@ -936,7 +536,7 @@ async function verifySafeWriteContext(
     return state
   }
   assertSafeTxNonce(state, context.tx, 'execute')
-  const confirmations = currentOwnerConfirmations(
+  const confirmations = usableSafeConfirmations(
     context.tx,
     state.identity.owners,
   )
@@ -1122,22 +722,23 @@ async function sendContractAndConfirm({
   if (receipt.status !== 'success') {
     throw new Error(`${functionName} reverted onchain (tx ${hash}).`)
   }
-  if (proposal && safeExecutionFailed(receipt, account, proposal)) {
-    throw new Error(`${functionName} reverted after Safe execution (tx ${hash}).`)
+  if (proposal) {
+    requireSafeProposalSuccess(
+      receipt,
+      account,
+      proposal,
+      `${functionName} reverted after Safe execution (tx ${hash}).`,
+    )
   }
+  // An executed Safe transaction is confirmed only by the Safe's own
+  // ExecutionSuccess for its exact hash, never by the receipt's status.
   if (
     safeContext?.mode === 'execute' &&
-    !receiptHasSafeExecutionSuccess(
-      receipt as {
-        logs?: readonly {
-          address: Address
-          data: Hex
-          topics: readonly Hex[]
-        }[]
-      },
+    safeExecutionResult(
+      receipt,
       address,
       canonicalSafeTxHash(chainId, address, safeContext.tx),
-    )
+    ).status !== 'success'
   ) {
     throw new Error(
       `Safe transaction ${hash} was mined, but its exact inner call did not execute successfully.`,
@@ -1196,17 +797,18 @@ async function safeFeeOverrides(client: PublicClient): Promise<SafeFeeOverrides>
 export async function executeSafeTx(
   chainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<ConfirmedContractWrite> {
   assertNoViewAs()
+  refuseRefund(tx)
   await reverifyAuthority?.()
   const expectedAccount = getAccount(wagmiConfig).address
   if (!expectedAccount) throw new Error('Connect a wallet first.')
   const state = await readLiveSafeState(chainId, safe)
   canonicalSafeTxHash(chainId, safe, tx)
   assertSafeTxNonce(state, tx, 'execute')
-  const confirmations = currentOwnerConfirmations(tx, state.identity.owners)
+  const confirmations = usableSafeConfirmations(tx, state.identity.owners)
   if (confirmations.length < state.identity.threshold) {
     throw new Error(
       `This transaction needs ${state.identity.threshold} current-owner signature${
@@ -1215,7 +817,7 @@ export async function executeSafeTx(
     )
   }
   const verifiedTx = { ...tx, confirmations }
-  const args = safeExecArgs(verifiedTx, safeExecSignatures(verifiedTx))
+  const args = safeExecutionArgs(verifiedTx, state.identity.owners)
   const data = encodeFunctionData({
     abi: SAFE_EXEC_ABI,
     functionName: 'execTransaction',
@@ -1273,14 +875,16 @@ export async function executeSafeTx(
 export async function simulateSafeExecution(
   chainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<SafeExecutionSnapshot> {
+  refuseRefund(tx)
   await reverifyAuthority?.()
   const state = await readLiveSafeState(chainId, safe)
   const safeTxHash = canonicalSafeTxHash(chainId, safe, tx)
   assertSafeTxNonce(state, tx, 'execute')
-  const confirmations = currentOwnerConfirmations(tx, state.identity.owners)
+  const owners = state.identity.owners
+  const confirmations = usableSafeConfirmations(tx, owners)
   if (confirmations.length < state.identity.threshold) {
     throw new Error(
       `Safe transaction #${tx.nonce} has ${confirmations.length}/${state.identity.threshold} current-owner signatures.`,
@@ -1288,15 +892,14 @@ export async function simulateSafeExecution(
   }
   const verifiedTx = { ...tx, confirmations }
   // The Safe service represents approveHash confirmations without a signature
-  // and safeExecSignatures encodes those as v=1 prevalidated signatures. A
+  // and safeExecutionSignatures encodes those as v=1 prevalidated signatures. A
   // simulation sent from that owner would pass through msg.sender even after
   // the onchain approval was revoked, while Relayr's executor would revert.
   // Prove every v=1 approval directly (including a service which supplied the
   // 65-byte value explicitly), then simulate from address(0), which Safe
   // forbids as an owner, so the approvedHashes path is always exercised.
   for (const confirmation of confirmations) {
-    const encoded = confirmationBytes(confirmation)
-    if (!encoded?.endsWith('01')) continue
+    if (!isApprovedHashConfirmation(confirmation)) continue
     const approval = await readBoundedSafeApprovedHash(
       publicClient(chainId),
       safe,
@@ -1319,7 +922,7 @@ export async function simulateSafeExecution(
       data: encodeFunctionData({
         abi: SAFE_EXEC_ABI,
         functionName: 'execTransaction',
-        args: safeExecArgs(verifiedTx, safeExecSignatures(verifiedTx)),
+        args: safeExecutionArgs(verifiedTx, owners),
       }),
       gas: SAFE_EXECUTION_WRITE_GAS,
     },
@@ -1347,22 +950,26 @@ export async function simulateSafeExecution(
     tx: verifiedTx,
     safeTxHash,
     policyFingerprint: safePolicyFingerprint(after.identity),
+    owners: after.identity.owners,
   }
 }
 
+/** The exact `execTransaction` a Relayr bundle sends, signed by `owners`' usable confirmations. */
 export function safeExecRelayrEntry(
   chainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
+  owners: readonly Address[],
 ): RelayrEntry {
   canonicalSafeTxHash(chainId, safe, tx)
+  refuseRefund(tx)
   return {
     chain: chainId,
     target: safe,
     data: encodeFunctionData({
       abi: SAFE_EXEC_ABI,
       functionName: 'execTransaction',
-      args: safeExecArgs(tx, safeExecSignatures(tx)),
+      args: safeExecutionArgs(tx, owners),
     }),
     value: '0',
   }
@@ -1401,21 +1008,21 @@ async function approveSafeHashOnChain(
   chainId: JBChainId,
   safe: Address,
   hash: Hex,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<ConfirmedContractWrite> {
   const expectedAccount = getAccount(wagmiConfig).address
   if (!expectedAccount) throw new Error('Connect a wallet first.')
   const args = [hash] as const
   const data = encodeFunctionData({
-    abi: SAFE_ONCHAIN_ABI,
+    abi: SAFE_EXEC_ABI,
     functionName: 'approveHash',
     args,
   })
   return sendContractAndConfirm({
     chainId,
     address: safe,
-    abi: SAFE_ONCHAIN_ABI,
+    abi: SAFE_EXEC_ABI,
     functionName: 'approveHash',
     args,
     review: {
@@ -1443,7 +1050,7 @@ async function approveSafeHashOnChain(
           to: safe,
           value: 0n,
           data,
-          abi: SAFE_ONCHAIN_ABI,
+          abi: SAFE_EXEC_ABI,
           functionName: 'approveHash',
           args,
           label: `Approve Safe transaction #${tx.nonce}`,
@@ -1488,20 +1095,29 @@ export async function runSafeCalls({
       onProgress?.(`Signing ${index + 1}/${calls.length} Safe proposal…`)
       // The pending list is load-bearing twice over: it dedupes against an
       // existing proposal and it picks a free nonce. Swallowing a failure
-      // makes an outage read as an empty queue, so this proposal lands at
-      // `nextNonce` on top of whatever is really queued — one of the two is
-      // then stranded. The listing already retries across two hosts; if it
-      // still fails, stop.
-      const [nextNonce, pending] = await Promise.all([
-        getSafeNextNonce(call.chainId, call.safe),
-        listPendingSafeTxs(call.chainId, call.safe).catch(() => {
-          throw new Error(
-            `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed — try again shortly.`,
-          )
-        }),
-      ])
+      // makes an outage read as an empty queue, so this proposal lands at the
+      // Safe's nonce on top of whatever is really queued — one of the two is
+      // then stranded. If the listing fails, stop.
+      const nextNonce = await getSafeNextNonce(call.chainId, call.safe)
       if (nextNonce === null) throw new Error('Could not read the Safe nonce.')
-      const matching = pending.find(tx => safeCallMatches(tx, call))
+      const pending = await listPendingSafeTransactions(
+        call.chainId,
+        call.safe,
+        nextNonce,
+        SAFE_SERVICE,
+      ).catch(() => {
+        throw new Error(
+          `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed — try again shortly.`,
+        )
+      })
+      const matching = pending.find(tx =>
+        safeTransactionMatchesCall(tx, {
+          to: call.target,
+          data: call.data,
+          value: call.value,
+          operation: call.operation,
+        }),
+      )
       if (matching) {
         await call.onSafePrepared?.(matching)
         const matchingHash = canonicalSafeTxHash(
@@ -1509,10 +1125,10 @@ export async function runSafeCalls({
           call.safe,
           matching,
         )
-        const alreadyConfirmed = (matching.confirmations ?? []).some(
-          confirmation =>
-            confirmation.owner.toLowerCase() === signer.toLowerCase(),
-        )
+        const alreadyConfirmed = usableSafeConfirmations(
+          matching,
+          info.owners,
+        ).some(confirmation => isAddressEqual(confirmation.owner, signer))
         if (!alreadyConfirmed) {
           onProgress?.(`Signing existing Safe proposal ${index + 1}/${calls.length}…`)
           await confirmSafeTx(
@@ -1533,21 +1149,17 @@ export async function runSafeCalls({
         })
         continue
       }
-      const highest = pending.reduce(
-        (value, tx) => Math.max(value, Number(tx.nonce)),
-        nextNonce - 1,
-      )
       const proposed = await proposeSafeTx({
         ...call,
         signer,
-        nonce: Math.max(nextNonce, highest + 1),
+        nonce: nextProposalNonce(nextNonce, pending),
       })
       results.push({
         chainId: call.chainId,
         mode: 'service',
         status: 'queued',
         nonce: proposed.nonce,
-        safeTxHash: proposed.safeTxHash!,
+        safeTxHash: proposed.safeTxHash,
       })
       continue
     }
@@ -1557,27 +1169,23 @@ export async function runSafeCalls({
     const safeKey = `${call.chainId}:${call.safe.toLowerCase()}`
     const nonce = Math.max(context.nonce, provisionalNonce.get(safeKey) ?? 0)
     provisionalNonce.set(safeKey, nonce + 1)
-    const queued: SafeQueuedTx = {
-      to: call.target,
-      value: (call.value ?? 0n).toString(),
-      data: call.data,
-      operation: call.operation ?? 0,
-      safeTxGas: '0',
-      baseGas: '0',
-      gasPrice: '0',
-      gasToken: zeroAddress,
-      refundReceiver: zeroAddress,
-      nonce,
-    }
-    const hash = safeTxHashOf(call.chainId, call.safe, queued)
+    const queued = proposalFor(call, nonce)
+    const hash = safeTransactionHash(call.chainId, call.safe, queued)
     await call.onSafePrepared?.({ ...queued, safeTxHash: hash })
-    let approvals = await safeApprovalsOf(
+    const approvals = await safeApprovalsOf(
       call.chainId,
       call.safe,
       hash,
       context.owners,
     )
-    if (!approvals.some(owner => owner.toLowerCase() === signer.toLowerCase())) {
+    // The owner who completes the threshold executes rather than approving
+    // first: Safe counts the executing owner as a signature.
+    const step = onchainApprovalStep({
+      account: signer,
+      approved: approvals,
+      threshold: context.threshold,
+    })
+    if (step.kind === 'approve') {
       onProgress?.(`Approving onchain ${index + 1}/${calls.length}…`)
       const approval = await approveSafeHashOnChain(
         call.chainId,
@@ -1586,35 +1194,18 @@ export async function runSafeCalls({
         queued,
         call.reverifyAuthority,
       )
-      if (approval.status === 'submitted') {
-        results.push({
-          chainId: call.chainId,
-          mode: 'onchain',
-          status: 'submitted',
-          nonce,
-          safeTxHash: hash,
-          transactionHash: approval.hash,
-        })
-        continue
-      }
-      approvals = [...approvals, signer]
-    }
-    if (approvals.length >= context.threshold) {
-      onProgress?.(`Executing Safe transaction ${index + 1}/${calls.length}…`)
-      const execution = await executeSafeTx(call.chainId, call.safe, {
-        ...queued,
-        confirmations: approvals.map(owner => ({ owner })),
-      }, call.reverifyAuthority)
       results.push({
         chainId: call.chainId,
         mode: 'onchain',
-        status:
-          execution.status === 'confirmed' ? 'executed' : 'submitted',
         nonce,
         safeTxHash: hash,
-        transactionHash: execution.hash,
+        ...(approval.status === 'submitted'
+          ? { status: 'submitted', transactionHash: approval.hash }
+          : { status: 'waiting' }),
       })
-    } else {
+      continue
+    }
+    if (step.kind === 'waiting') {
       results.push({
         chainId: call.chainId,
         mode: 'onchain',
@@ -1622,30 +1213,39 @@ export async function runSafeCalls({
         nonce,
         safeTxHash: hash,
       })
+      continue
     }
+    onProgress?.(`Executing Safe transaction ${index + 1}/${calls.length}…`)
+    const execution = await executeSafeTx(call.chainId, call.safe, {
+      ...queued,
+      confirmations: step.signers.map(owner => ({ owner })),
+    }, call.reverifyAuthority)
+    results.push({
+      chainId: call.chainId,
+      mode: 'onchain',
+      status: execution.status === 'confirmed' ? 'executed' : 'submitted',
+      nonce,
+      safeTxHash: hash,
+      transactionHash: execution.hash,
+    })
   }
   return results
 }
 
-function safeCallMatches(
-  tx: SafeQueuedTx,
-  call: Pick<SafeCall, 'target' | 'data' | 'value' | 'operation'>,
+/**
+ * Whether `log` is `safe`'s ExecutionSuccess for `safeTxHash`, read as the SDK
+ * reads a receipt: a way to find the execution, whose whole receipt is then
+ * proved.
+ */
+export function isSafeExecutionSuccessLog(
+  log: { address: Address; topics: readonly Hex[]; data: Hex },
+  safe: Address,
+  safeTxHash: Hex,
 ): boolean {
-  try {
-    return (
-      getAddress(tx.to) === getAddress(call.target) &&
-      BigInt(tx.value ?? 0) === (call.value ?? 0n) &&
-      (tx.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
-      Number(tx.operation ?? 0) === (call.operation ?? 0) &&
-      BigInt(tx.safeTxGas ?? 0) === 0n &&
-      BigInt(tx.baseGas ?? 0) === 0n &&
-      BigInt(tx.gasPrice ?? 0) === 0n &&
-      isAddressEqual(tx.gasToken ?? zeroAddress, zeroAddress) &&
-      isAddressEqual(tx.refundReceiver ?? zeroAddress, zeroAddress)
-    )
-  } catch {
-    return false
-  }
+  return (
+    safeExecutionResult({ status: 'success', logs: [log] }, safe, safeTxHash)
+      .status === 'success'
+  )
 }
 
 const SAME_ADDRESS_INELIGIBLE =

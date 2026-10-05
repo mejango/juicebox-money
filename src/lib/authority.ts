@@ -41,11 +41,15 @@ import {
 } from '@/lib/relayr'
 import {
   canonicalSafeTxHash,
-  findPendingSafeCall,
+  findPendingSafeTransaction,
+  hasSafeService,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
+import {
+  getSafeNextNonce,
   runSafeCalls,
   SAFE_SERVICE,
   type SafeCallResult,
-  type SafeQueuedTx,
 } from '@/lib/safe'
 import {
   readAuthorityIdentity,
@@ -54,8 +58,8 @@ import {
 } from '@/lib/cross-chain-authority'
 import {
   isSafeConnection,
+  requireSafeProposalSuccess,
   SAFE_NONCE_GUIDANCE,
-  safeExecutionFailed,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -84,7 +88,7 @@ export type AuthorityCall = {
   /** Persist recovery information before exposing a wallet submission. */
   onSending?: (kind: 'direct' | 'safe-connector') => Promise<void>
   onSubmitted?: (hash: Hex, kind: 'direct' | 'safe-connector') => Promise<void>
-  onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
+  onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
 }
 
 export type AuthorityProgress = {
@@ -643,18 +647,27 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'safe-connector') {
       const call = group[0]
       await call.reverifyAuthority?.()
-      const existing = await findPendingSafeCall(
-        call.chainId,
-        call.authority,
-        call,
-      )
+      // A retry confirms the exact proposal already queued instead of
+      // proposing it twice; a chain without Safe's service has no queue.
+      let existing: SafeQueuedTransaction | null = null
+      if (hasSafeService(call.chainId)) {
+        const nonce = await getSafeNextNonce(call.chainId, call.authority)
+        if (nonce === null) throw new Error('Could not read the Safe nonce.')
+        existing = await findPendingSafeTransaction(
+          call.chainId,
+          call.authority,
+          nonce,
+          { to: call.target, data: call.data, value: call.value },
+          SAFE_SERVICE,
+        )
+      }
       if (existing) {
         await call.onSafePrepared?.(existing)
         safeResults.push({
           chainId: call.chainId,
           mode: 'service',
           status: 'queued',
-          nonce: Number(existing.nonce),
+          nonce: existing.nonce,
           safeTxHash: canonicalSafeTxHash(
             call.chainId,
             call.authority,
@@ -714,14 +727,9 @@ export async function runAuthorityCalls({
         clientFor(call.chainId),
         executionHash,
       )
-      if (
-        receipt.status !== 'success' ||
-        safeExecutionFailed(receipt, call.authority, safeTxHash)
-      ) {
-        throw new Error(
-          `${call.label ?? 'Project action'} reverted after Safe execution.`,
-        )
-      }
+      const failure = `${call.label ?? 'Project action'} reverted after Safe execution.`
+      if (receipt.status !== 'success') throw new Error(failure)
+      requireSafeProposalSuccess(receipt, call.authority, safeTxHash, failure)
       directResults.push(executionHash)
       continue
     }

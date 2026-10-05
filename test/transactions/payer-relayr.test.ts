@@ -68,7 +68,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
   payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
 import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPay, relayrPoll } from '@/lib/relayr'
-import { SAFE_EXEC_ABI } from '@/lib/safe'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 
 let review: PayerDeploymentSession

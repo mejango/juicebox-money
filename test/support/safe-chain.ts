@@ -13,7 +13,7 @@ import { vi, type Mock } from 'vitest'
 // eth_calls into the proxy.
 
 /** The Safe getters the SDK calls through the proxy. */
-export const SAFE_READ_ABI = [
+const SAFE_READ_ABI = [
   { type: 'function', name: 'masterCopy', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { type: 'function', name: 'VERSION', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
   { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },

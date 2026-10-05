@@ -6,7 +6,8 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
-import { hasSafeService, runSafeCalls, type SafeCallResult } from '@/lib/safe'
+import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
+import { runSafeCalls, type SafeCallResult } from '@/lib/safe'
 import {
   encodeMultiSend,
   MULTI_SEND_ABI,

@@ -5,7 +5,13 @@ import { isAddress, isAddressEqual, type Address, type Hex, type TransactionRece
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
-import { canonicalSafeTxHash, receiptHasSafeExecutionSuccess, type SafeQueuedTx } from '@/lib/safe'
+import {
+  canonicalSafeTxHash,
+  safeExecutionResult,
+  safeTransactionMatchesCall,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
+import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
@@ -29,7 +35,7 @@ export type ProjectBatchCall = AuthorityCall & {
 type CallSubmission = {
   kind: 'direct' | 'safe-connector' | 'safe'
   hash?: Hex
-  safeTx?: SafeQueuedTx
+  safeTx?: SafeQueuedTransaction
   fromBlock?: bigint
 }
 
@@ -149,7 +155,7 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
     throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
   }
   if (safeHash) {
-    if (!receiptHasSafeExecutionSuccess(receipt, call.authority, safeHash)) {
+    if (safeExecutionResult(receipt, call.authority, safeHash).status !== 'success') {
       throw new Error('This receipt does not prove execution of the exact saved Safe proposal.')
     }
   } else if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
@@ -172,7 +178,7 @@ async function safeExecution(call: ProjectBatchCall, submission: CallSubmission)
   for (let start = submission.fromBlock; start <= latest; start += 10_000n) {
     const end = start + 9_999n < latest ? start + 9_999n : latest
     const logs = await client.getLogs({ address: call.authority, fromBlock: start, toBlock: end })
-    const log = logs.find(log => receiptHasSafeExecutionSuccess({ logs: [log] }, call.authority, submission.hash!))
+    const log = logs.find(log => isSafeExecutionSuccessLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
   }
   return null
@@ -192,7 +198,7 @@ export async function runProjectBatch({
   /** Permissionless actions may change elsewhere. Never applies to a submitted call. */
   reconcileUnsubmitted?: (call: ProjectBatchCall) => Promise<boolean>
   /** Retain the authenticated proposal while marking an irrevocably resolved payment obsolete. */
-  reconcileObsoleteSafe?: (call: ProjectBatchCall, proposal: SafeQueuedTx) => Promise<boolean>
+  reconcileObsoleteSafe?: (call: ProjectBatchCall, proposal: SafeQueuedTransaction) => Promise<boolean>
   /** Finish canonical, exact direct attempts that reverted; callers must display that outcome. */
   acceptRevertedTransactions?: boolean
   /** Application events may report a failed distribution despite a successful outer receipt. */
@@ -337,8 +343,7 @@ export async function runProjectBatch({
           }
           const proposal = saved.safeTx
           if (saved.kind === 'safe' && proposal && reconcileObsoleteSafe &&
-            isAddressEqual(proposal.to, call.target) && (proposal.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
-            BigInt(proposal.value) === (call.value ?? 0n) && proposal.operation === 0 &&
+            safeTransactionMatchesCall(proposal, { to: call.target, data: call.data, value: call.value }) &&
             canonicalSafeTxHash(call.chainId, call.authority, proposal).toLowerCase() === saved.hash.toLowerCase() &&
             await reconcileObsoleteSafe(call, { ...proposal, safeTxHash: saved.hash })) {
             complete([call.id])

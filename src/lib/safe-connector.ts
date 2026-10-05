@@ -1,11 +1,12 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
-import type { Hex } from 'viem'
+import type { Address, Hex } from 'viem'
 import type { Config } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import {
   isSafeWalletPeer,
+  safeExecutionResult,
   waitForSafeExecutionHash as waitForExecution,
 } from '@bananapus/nana-sdk-core/safe-service'
 import {
@@ -17,8 +18,6 @@ import {
 export {
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
-  SAFE_SERVICE_PREFIX,
-  safeServiceBase,
   swapDeadline,
 } from '@bananapus/nana-sdk-core/safe-service'
 
@@ -47,41 +46,26 @@ export function useSafeConnection(config: Config): boolean {
   )
 }
 
-/** ExecutionFailure(bytes32,uint256), the same topic in Safe 1.3 and 1.4. */
-const SAFE_EXECUTION_FAILURE_TOPIC =
-  '0x23428b18acfb3ea64b08dc0c1d296ea9c09702c09083ca5272e64d115b687d23'
+/** What a Safe app flow says when it cannot confirm its proposal ran. */
+export const SAFE_PROPOSAL_UNCONFIRMED =
+  'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
 
 /**
- * Whether a Safe execution's receipt shows `safe` failing the proposal. A Safe
- * signed with a nonzero safeTxGas or gasPrice logs ExecutionFailure instead of
- * reverting, so the receipt itself reads success. `proposalHash` is what the
- * wallet returned: the safeTxHash, or, when Safe{Wallet} executed at once,
- * this execution's own hash. A receipt can execute several of the Safe's
- * transactions, so a safeTxHash must match the failure's own.
+ * Throws unless the execution's receipt proves `safe` ran the proposal the
+ * wallet returned and its call succeeded ({@link safeExecutionResult}):
+ * `failure` when the Safe ran it and it failed, and SAFE_PROPOSAL_UNCONFIRMED
+ * when the receipt does not show this proposal ran. `proposalHash` is the
+ * safeTxHash, or, when Safe{Wallet} executed at once, the execution's own hash.
  */
-export function safeExecutionFailed(
-  receipt: {
-    transactionHash: Hex
-    logs: readonly { address: string; topics: readonly Hex[]; data: Hex }[]
-  },
-  safe: string,
+export function requireSafeProposalSuccess(
+  receipt: Parameters<typeof safeExecutionResult>[0],
+  safe: Address,
   proposalHash: Hex,
-): boolean {
-  const safeTxHash =
-    receipt.transactionHash.toLowerCase() === proposalHash.toLowerCase()
-      ? null
-      : proposalHash.toLowerCase()
-  return receipt.logs.some(log => {
-    if (
-      log.address.toLowerCase() !== safe.toLowerCase() ||
-      log.topics[0]?.toLowerCase() !== SAFE_EXECUTION_FAILURE_TOPIC
-    ) {
-      return false
-    }
-    // Safe 1.4 indexes the safeTxHash; Safe 1.3 logs it as the first data word.
-    const failed = log.topics.length > 1 ? log.topics[1] : `0x${log.data.slice(2, 66)}`
-    return !safeTxHash || failed?.toLowerCase() === safeTxHash
-  })
+  failure: string,
+): void {
+  const { status } = safeExecutionResult(receipt, safe, proposalHash)
+  if (status === 'unproven') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
+  if (status !== 'success') throw new Error(failure)
 }
 
 /**

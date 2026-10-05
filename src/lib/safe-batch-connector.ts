@@ -8,8 +8,8 @@ import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import {
+  requireSafeProposalSuccess,
   SAFE_NONCE_GUIDANCE,
-  safeExecutionFailed,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import { requireTransactionReview } from '@/lib/transaction-review'
@@ -100,8 +100,8 @@ export async function proposeSafeBatch({
   if (!awaitExecution) return { safeTxHash, executionHash: null }
   const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash)
   const receipt = await waitForTrackedReceipt(client, executionHash)
-  if (receipt.status !== 'success' || safeExecutionFailed(receipt, safe, safeTxHash)) {
-    throw new Error('The batch reverted after Safe execution.')
-  }
+  const failure = 'The batch reverted after Safe execution.'
+  if (receipt.status !== 'success') throw new Error(failure)
+  requireSafeProposalSuccess(receipt, safe, safeTxHash, failure)
   return { safeTxHash, executionHash }
 }

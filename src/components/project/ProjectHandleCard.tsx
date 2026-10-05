@@ -33,12 +33,12 @@ import {
 import { chainName } from '@/lib/urn'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
-import { deploySafeSameAddress, SAFE_SERVICE, safeQueueLink } from '@/lib/safe'
+import { deploySafeSameAddress, SAFE_SERVICE } from '@/lib/safe'
 import {
   isDeployableSafeAuthority,
   validateSafeCreationForCurrentPolicy,
 } from '@bananapus/nana-sdk-core/safe'
-import { fetchSafeCreation } from '@bananapus/nana-sdk-core/safe-service'
+import { fetchSafeCreation, safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
 import {
   isCanonicalSafeCreation,
   readCrossChainHandleAuthority,
@@ -903,7 +903,7 @@ export function ProjectHandleCard({
       safeDeploymentQuery.isError ||
       !handleAuthority?.allowed)
   const pendingSafeUrl = pendingSafe
-    ? safeQueueLink(PROJECT_HANDLES_CHAIN_ID, pendingSafe)
+    ? safeQueueUrl(PROJECT_HANDLES_CHAIN_ID, pendingSafe)
     : null
   const dialogLocked = sequenceRunning || !!busy
   const setupDisabled =

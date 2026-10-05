@@ -22,9 +22,7 @@ import {
   encodeFunctionData,
   getAbiItem,
   isAddressEqual,
-  keccak256,
   stringToBytes,
-  stringToHex,
   toFunctionSelector,
   zeroAddress,
   type Abi,
@@ -61,22 +59,28 @@ import {
 import { relayrSupportsChains } from "@/lib/relayr-chains";
 import {
   confirmSafeTx,
-  canonicalSafeTxHash,
   executeSafeTx,
   fetchSafeInfo,
   getSafeNextNonce,
-  hasSafeService,
-  listPendingSafeTxs,
+  readSafeQueue,
   safeExecRelayrEntry,
-  safeQueueLink,
   simulateSafeExecution,
-  safeUsableConfirmationCount,
+  SAFE_REFUND_REFUSAL,
   SAFE_SERVICE,
   type SafeInfo,
   type SafeExecutionSnapshot,
-  type SafeQueuedTx,
-  SAFE_EXEC_ABI,
 } from "@/lib/safe";
+import {
+  canonicalSafeTxHash,
+  hasSafeService,
+  SAFE_EXEC_ABI,
+  safeExecutionResult,
+  safeQueueUrl,
+  safeTransactionHasRefund,
+  safeTransactionMatchesCall,
+  usableSafeConfirmations,
+  type SafeQueuedTransaction,
+} from "@bananapus/nana-sdk-core/safe-service";
 import { truncateAddress } from "@/lib/format";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useSafeConnection } from "@/lib/safe-connector";
@@ -121,13 +125,13 @@ export type SafeQueueChain = {
 type ChainQueue = SafeQueueChain & {
   info: SafeInfo | null;
   currentNonce: number | null;
-  transactions: SafeQueuedTx[];
+  transactions: SafeQueuedTransaction[];
   error: string | null;
 };
 
 type ReadyTx = {
   chain: ChainQueue;
-  tx: SafeQueuedTx;
+  tx: SafeQueuedTransaction;
 };
 
 type VerifiedReadyTx = ReadyTx & {
@@ -187,42 +191,17 @@ const SET_PROJECT_HANDLE_SELECTOR = encodeFunctionData({
   functionName: "setEnsNamePartsFor",
   args: [1n, 1n, ["fixture"]],
 }).slice(0, 10);
-const SAFE_EXECUTION_SUCCESS_TOPIC = keccak256(
-  stringToHex("ExecutionSuccess(bytes32,uint256)"),
-);
-
-function hasExactSafeExecutionSuccess(
-  logs: readonly {
-    address: Address;
-    data: Hex;
-    topics: readonly Hex[];
-  }[],
+/**
+ * Whether the receipt proves `safe` ran exactly `safeTxHash` and its call
+ * succeeded, paying no gas refund out of the Safe.
+ */
+function executedWithoutRefund(
+  receipt: Parameters<typeof safeExecutionResult>[0],
   safe: Address,
   safeTxHash: Hex,
 ): boolean {
-  const expectedHash = safeTxHash.toLowerCase();
-  return logs.some((log) => {
-    if (
-      !isAddressEqual(log.address, safe) ||
-      log.topics[0]?.toLowerCase() !== SAFE_EXECUTION_SUCCESS_TOPIC.toLowerCase()
-    ) {
-      return false;
-    }
-    // Safe 1.3 emits txHash in data; Safe 1.4 indexes it. Support both
-    // canonical layouts while rejecting any loosely-shaped lookalike log.
-    if (log.topics.length === 2 && log.data.length === 66) {
-      return (
-        log.topics[1]?.toLowerCase() === expectedHash &&
-        log.data === `0x${"00".repeat(32)}`
-      );
-    }
-    return (
-      log.topics.length === 1 &&
-      log.data.length === 130 &&
-      `0x${log.data.slice(2, 66)}`.toLowerCase() === expectedHash &&
-      log.data.slice(66) === "00".repeat(32)
-    );
-  });
+  const result = safeExecutionResult(receipt, safe, safeTxHash);
+  return result.status === "success" && result.payment === 0n;
 }
 
 /**
@@ -331,15 +310,7 @@ export async function verifyRelayrSafeBatchLanding(
       transactionInput?.toLowerCase() !== entry.data.toLowerCase() ||
       nonceRaw === null ||
       nonceRaw <= BigInt(proof.nonce) ||
-      !hasExactSafeExecutionSuccess(
-        receipt.logs as readonly {
-          address: Address;
-          data: Hex;
-          topics: readonly Hex[];
-        }[],
-        safe,
-        proof.safeTxHash,
-      )
+      !executedWithoutRefund(receipt, safe, proof.safeTxHash)
     ) {
       throw new Error(
         `Could not prove the exact Safe execution landed successfully on chain ${entry.chain}. Keep the paid bundle pending.`,
@@ -359,28 +330,8 @@ export async function verifyRelayrSafeBatchLanding(
   }
 }
 
-function exactPlainSafeCall(tx: SafeQueuedTx): void {
-  let value: bigint;
-  let safeTxGas: bigint;
-  let baseGas: bigint;
-  let gasPrice: bigint;
-  try {
-    value = BigInt(tx.value ?? 0);
-    safeTxGas = BigInt(tx.safeTxGas ?? 0);
-    baseGas = BigInt(tx.baseGas ?? 0);
-    gasPrice = BigInt(tx.gasPrice ?? 0);
-  } catch {
-    throw new Error("The queued Safe transaction has invalid payment fields.");
-  }
-  if (
-    Number(tx.operation ?? 0) !== 0 ||
-    value !== 0n ||
-    safeTxGas !== 0n ||
-    baseGas !== 0n ||
-    gasPrice !== 0n ||
-    !isAddressEqual(tx.gasToken, zeroAddress) ||
-    !isAddressEqual(tx.refundReceiver, zeroAddress)
-  ) {
+function exactPlainSafeCall(tx: SafeQueuedTransaction): void {
+  if (!safeTransactionMatchesCall(tx, { to: tx.to, data: tx.data ?? "0x" })) {
     throw new Error(
       "Project handle transactions must be zero-value direct Safe calls without gas reimbursement.",
     );
@@ -448,7 +399,7 @@ async function assertSafeControlsProjectTuple(
 export async function assertQueuedProjectHandleContext(
   queueChainId: JBChainId,
   safe: Address,
-  tx: SafeQueuedTx,
+  tx: SafeQueuedTransaction,
   allowedTuples: readonly { chainId: number; projectId: number }[],
 ): Promise<boolean> {
   const data = tx.data ?? "0x";
@@ -860,11 +811,11 @@ export async function assertSafeProjectAuthority(
 async function freshCanonicalQueuedTx(
   chain: SafeQueueChain,
   safe: Address,
-  tx: SafeQueuedTx,
-): Promise<SafeQueuedTx> {
+  tx: SafeQueuedTransaction,
+): Promise<SafeQueuedTransaction> {
   if (!chain.handleOnly) await assertSafeProjectAuthority(chain, safe);
   const expectedHash = canonicalSafeTxHash(chain.chainId, safe, tx);
-  const pending = await listPendingSafeTxs(chain.chainId, safe);
+  const { pending } = await readSafeQueue(chain.chainId, safe);
   const fresh = pending.find((candidate) => {
     try {
       return (
@@ -948,13 +899,13 @@ function callLabel(chainId: JBChainId, to: Address, data: Hex | null | undefined
 }
 
 /** The labelled inner calls of a queued operator batch, or null for any other row. */
-export function batchCallLabels(chainId: JBChainId, tx: SafeQueuedTx): string[] | null {
+export function batchCallLabels(chainId: JBChainId, tx: SafeQueuedTransaction): string[] | null {
   const calls = multiSendCallsOf(tx);
   return calls ? calls.map(call => callLabel(chainId, call.to, call.data)) : null;
 }
 
 /** The queue row's label: a known action and target, or a decoded operator batch. */
-export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
+export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTransaction): string {
   const batch = batchCallLabels(chainId, tx);
   if (batch) return `Batch (${batch.length} call${batch.length === 1 ? "" : "s"}) | MultiSendCallOnly`;
   return callLabel(chainId, tx.to, tx.data);
@@ -962,27 +913,26 @@ export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTx): string {
 
 function executionPlan(
   currentNonce: number | null,
-  transactions: SafeQueuedTx[],
+  transactions: SafeQueuedTransaction[],
   /**
-   * The Safe's on-chain threshold, for transactions the service returned
-   * without a `confirmationsRequired`. Each selected transaction is also
-   * rechecked against the live policy immediately before execution.
+   * The Safe's live owners and threshold: only current owners' confirmations
+   * count. Each selected transaction is also rechecked against the live
+   * policy immediately before execution.
    */
-  threshold: number | undefined,
+  info: SafeInfo | null,
 ): {
-  direct: Set<SafeQueuedTx>;
-  batch: SafeQueuedTx[];
-  alternatives: Set<SafeQueuedTx>;
+  direct: Set<SafeQueuedTransaction>;
+  batch: SafeQueuedTransaction[];
+  alternatives: Set<SafeQueuedTransaction>;
 } {
-  const direct = new Set<SafeQueuedTx>();
-  const alternatives = new Set<SafeQueuedTx>();
-  const batch: SafeQueuedTx[] = [];
-  if (currentNonce === null) return { direct, batch, alternatives };
+  const direct = new Set<SafeQueuedTransaction>();
+  const alternatives = new Set<SafeQueuedTransaction>();
+  const batch: SafeQueuedTransaction[] = [];
+  if (currentNonce === null || !info) return { direct, batch, alternatives };
 
-  const byNonce = new Map<number, SafeQueuedTx[]>();
+  const byNonce = new Map<number, SafeQueuedTransaction[]>();
   for (const transaction of transactions) {
-    const nonce = Number(transaction.nonce);
-    byNonce.set(nonce, [...(byNonce.get(nonce) ?? []), transaction]);
+    byNonce.set(transaction.nonce, [...(byNonce.get(transaction.nonce) ?? []), transaction]);
   }
   for (const transaction of byNonce.get(currentNonce) ?? [])
     direct.add(transaction);
@@ -995,8 +945,13 @@ function executionPlan(
     const rows = byNonce.get(next) ?? [];
     if (rows.length !== 1) break;
     const transaction = rows[0];
-    const required = transaction.confirmationsRequired ?? threshold ?? 1;
-    if (safeUsableConfirmationCount(transaction) < required) break;
+    // A refund is never executed here, so it ends the run of executable nonces.
+    if (
+      safeTransactionHasRefund(transaction) ||
+      usableSafeConfirmations(transaction, info.owners).length < info.threshold
+    ) {
+      break;
+    }
     batch.push(transaction);
     next += 1;
   }
@@ -1086,7 +1041,7 @@ export function SafeQueueCard({
                 info: null,
                 currentNonce: null,
                 transactions: [],
-                error: "Safe is not deployed on this chain.",
+                error: null,
               };
             }
             if (!hasSafeService(chain.chainId)) {
@@ -1098,20 +1053,12 @@ export function SafeQueueCard({
                 error: null,
               };
             }
-            const [currentNonce, transactions] = await Promise.all([
-              getSafeNextNonce(chain.chainId, safe),
-              listPendingSafeTxs(chain.chainId, safe),
-            ]);
-            const canonicalTransactions = transactions.filter((transaction) => {
-              try {
-                canonicalSafeTxHash(chain.chainId, safe, transaction);
-                return true;
-              } catch {
-                return false;
-              }
-            });
-            const visibleTransactions: SafeQueuedTx[] = [];
-            for (const transaction of canonicalTransactions) {
+            const { nonce: currentNonce, pending } = await readSafeQueue(
+              chain.chainId,
+              safe,
+            );
+            const visibleTransactions: SafeQueuedTransaction[] = [];
+            for (const transaction of pending) {
               if (!chain.handleOnly) {
                 visibleTransactions.push(transaction);
                 continue;
@@ -1161,7 +1108,7 @@ export function SafeQueueCard({
       const plan = executionPlan(
         chain.currentNonce,
         chain.transactions,
-        chain.info?.threshold,
+        chain.info,
       );
       for (const transaction of plan.batch) rows.push({ chain, tx: transaction });
     }
@@ -1217,6 +1164,7 @@ export function SafeQueueCard({
       current.chain.chainId,
       safe,
       current.snapshot.tx,
+      current.snapshot.owners,
     );
     if (
       frozen.snapshot.safeTxHash.toLowerCase() !==
@@ -1305,7 +1253,7 @@ export function SafeQueueCard({
     if (session) void recoverPaidBundle(session);
   }, [pendingScope, recoverPaidBundle]);
 
-  const sign = async (chain: ChainQueue, tx: SafeQueuedTx) => {
+  const sign = async (chain: ChainQueue, tx: SafeQueuedTransaction) => {
     if (!address) return;
     const key = `sign:${chain.chainId}:${tx.nonce}`;
     setBusy(key);
@@ -1335,7 +1283,7 @@ export function SafeQueueCard({
     }
   };
 
-  const execute = async (chain: ChainQueue, tx: SafeQueuedTx) => {
+  const execute = async (chain: ChainQueue, tx: SafeQueuedTransaction) => {
     const key = `execute:${chain.chainId}:${tx.nonce}`;
     setBusy(key);
     setError(null);
@@ -1355,7 +1303,7 @@ export function SafeQueueCard({
         await assertRelayrProjectHandlePostcondition(
           chain.chainId,
           safe,
-          safeExecRelayrEntry(chain.chainId, safe, fresh),
+          safeExecRelayrEntry(chain.chainId, safe, fresh, chain.info?.owners ?? []),
         );
       }
       setNotice(
@@ -1419,7 +1367,7 @@ export function SafeQueueCard({
           await assertRelayrProjectHandlePostcondition(
             row.chain.chainId,
             safe,
-            safeExecRelayrEntry(row.chain.chainId, safe, fresh),
+            safeExecRelayrEntry(row.chain.chainId, safe, fresh, row.chain.info?.owners ?? []),
           );
         }
         setNotice(
@@ -1451,7 +1399,7 @@ export function SafeQueueCard({
       }
       setNotice("Getting one Relayr quote for every chain…");
       const entries = verifiedRows.map((row) =>
-        safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx),
+        safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx, row.snapshot.owners),
       );
       const quote = await relayrPostBundle(entries);
       const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
@@ -1944,9 +1892,11 @@ export function SafeQueueCard({
             const plan = executionPlan(
               chain.currentNonce,
               chain.transactions,
-              chain.info?.threshold,
+              chain.info,
             );
-            const queueUrl = safeQueueLink(chain.chainId, safe);
+            const owners = chain.info?.owners ?? [];
+            const required = chain.info?.threshold ?? 1;
+            const queueUrl = safeQueueUrl(chain.chainId, safe);
             return (
               <div
                 key={chain.chainId}
@@ -1974,20 +1924,17 @@ export function SafeQueueCard({
                   ) : null}
                 </div>
 
-                {!chain.info ? (
+                {chain.error ? (
+                  <p className="px-4 py-4 text-sm text-red-700">
+                    {chain.error}
+                  </p>
+                ) : !chain.info ? (
                   <p className="px-4 py-4 text-sm text-smoke-500">
                     Safe is not deployed on {chain.name}.
                   </p>
                 ) : !hasSafeService(chain.chainId) ? (
-                  <p className="px-4 py-4 text-sm leading-relaxed text-smoke-700">
-                    No hosted Safe queue is available on this chain. Each signer
-                    can reopen the same action to approve its exact hash
-                    onchain; the app executes it automatically when the Safe’s
-                    threshold is met.
-                  </p>
-                ) : chain.error ? (
-                  <p className="px-4 py-4 text-sm text-red-700">
-                    {chain.error}
+                  <p className="px-4 py-4 text-sm text-smoke-700">
+                    {`Safe queue isn't available on ${chain.name}.`}
                   </p>
                 ) : chain.transactions.length === 0 ? (
                   <p className="px-4 py-4 text-sm text-smoke-500">
@@ -1996,22 +1943,26 @@ export function SafeQueueCard({
                 ) : (
                   <ul className="divide-y divide-smoke-100">
                     {chain.transactions.map((tx) => {
-                      const count = safeUsableConfirmationCount(tx);
-                      const required =
-                        tx.confirmationsRequired ?? chain.info?.threshold ?? 1;
-                      const signed = tx.confirmations?.some(
-                        (confirmation) =>
-                          !!address &&
-                          confirmation.owner.toLowerCase() ===
+                      // Only the Safe's current owners' well-formed
+                      // confirmations count toward its live threshold.
+                      const usable = usableSafeConfirmations(tx, owners);
+                      const count = usable.length;
+                      const refund = safeTransactionHasRefund(tx);
+                      const signed =
+                        !!address &&
+                        usable.some(
+                          (confirmation) =>
+                            confirmation.owner.toLowerCase() ===
                             address.toLowerCase(),
-                      );
-                      const readyToExecute = count >= required;
+                        );
+                      const thresholdMet = count >= required;
+                      const readyToExecute = thresholdMet && !refund;
                       const confirmedOwners = new Set(
-                        (tx.confirmations ?? []).map((confirmation) =>
+                        usable.map((confirmation) =>
                           confirmation.owner.toLowerCase(),
                         ),
                       );
-                      const missingOwners = (chain.info?.owners ?? []).filter(
+                      const missingOwners = owners.filter(
                         (owner) => !confirmedOwners.has(owner.toLowerCase()),
                       );
                       const isCurrent = plan.direct.has(tx);
@@ -2051,16 +2002,16 @@ export function SafeQueueCard({
                                 ) : null}
                                 <p className="mt-1 text-xs text-smoke-500">
                                   Signed:{" "}
-                                  {tx.confirmations?.length ? (
+                                  {usable.length ? (
                                     <SignerList
-                                      owners={tx.confirmations.map((item) => item.owner)}
+                                      owners={usable.map((item) => item.owner)}
                                       you={address}
                                     />
                                   ) : (
                                     "none"
                                   )}
                                 </p>
-                                {!readyToExecute && missingOwners.length ? (
+                                {!thresholdMet && missingOwners.length ? (
                                   <p className="mt-1 text-xs text-smoke-500">
                                     Still needs {required - count} of:{" "}
                                     <SignerList owners={missingOwners} you={address} />
@@ -2082,7 +2033,11 @@ export function SafeQueueCard({
                               </div>
                             </details>
                             <div className="flex shrink-0 flex-wrap items-center gap-2">
-                              {isSigner && !signed && !readyToExecute ? (
+                              {refund ? (
+                                <p className="text-xs text-smoke-700">
+                                  {SAFE_REFUND_REFUSAL}
+                                </p>
+                              ) : isSigner && !signed && !readyToExecute ? (
                                 <button
                                   type="button"
                                   onClick={() => sign(chain, tx)}

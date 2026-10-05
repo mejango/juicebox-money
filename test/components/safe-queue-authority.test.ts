@@ -59,7 +59,8 @@ import {
   buildSetEnsProjectRecordCall,
   buildSetProjectHandleCall,
 } from '@/lib/project-handles'
-import { safeExecRelayrEntry, type SafeQueuedTx } from '@/lib/safe'
+import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
+import { safeExecRelayrEntry } from '@/lib/safe'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const OTHER = '0x2222222222222222222222222222222222222222' as Address
@@ -73,7 +74,7 @@ const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
 )
 
-function queued(to: Address, data: Hex): SafeQueuedTx {
+function queued(to: Address, data: Hex): SafeQueuedTransaction {
   return {
     to,
     value: '0',
@@ -340,6 +341,7 @@ describe('Relayr Safe destination proof', () => {
     CHAIN_ID,
     SAFE,
     queued(OTHER, '0x1234'),
+    [],
   )
   const record = {
     tx_uuid: TX_UUID,
@@ -523,6 +525,7 @@ describe('Relayr Safe destination proof', () => {
       CHAIN_ID,
       SAFE,
       queued(call.target, call.data),
+      [],
     )
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,
@@ -570,6 +573,7 @@ describe('Relayr Safe destination proof', () => {
       CHAIN_ID,
       SAFE,
       queued(call.target, call.data),
+      [],
     )
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,

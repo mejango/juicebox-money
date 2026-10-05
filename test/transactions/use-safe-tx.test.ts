@@ -47,7 +47,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
-  safeExecutionFailed: (await importOriginal<typeof import('@/lib/safe-connector')>()).safeExecutionFailed,
+  SAFE_PROPOSAL_UNCONFIRMED: (await importOriginal<typeof import('@/lib/safe-connector')>()).SAFE_PROPOSAL_UNCONFIRMED,
   isSafeConnection: () => mocks.safeConnection,
   SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
   useSafeConnection: () => mocks.safeConnection,
@@ -64,6 +64,7 @@ const reviewedByAlice = { reviewedAccount: ALICE }
 const HASH = `0x${'ab'.repeat(32)}` as const
 const EXECUTION_HASH = `0x${'cd'.repeat(32)}` as const
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
+const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
 const PAYMENT_WORD = `0x${'00'.repeat(32)}` as const
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
@@ -672,7 +673,7 @@ describe('useSafeTx', () => {
     },
   )
 
-  it("succeeds when the execution's only ExecutionFailure belongs to another proposal or Safe", async () => {
+  it("keeps a Safe proposal unconfirmed when its execution's events all belong to another proposal or Safe", async () => {
     mocks.safeConnection = true
     const hook = await renderHook()
     await act(async () => {
@@ -690,6 +691,32 @@ describe('useSafeTx', () => {
           // Another Safe's failure for the same hash.
           { address: BOB, topics: [EXECUTION_FAILURE, HASH], data: PAYMENT_WORD },
         ],
+      },
+      isError: false,
+    }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current).toMatchObject({
+      phase: 'pending',
+      busy: true,
+      confirmationUncertain: true,
+      error: 'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    })
+    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
+  })
+
+  it('settles a Safe proposal once its execution logs ExecutionSuccess for it', async () => {
+    mocks.safeConnection = true
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    mocks.receipt = {
+      data: {
+        status: 'success',
+        transactionHash: EXECUTION_HASH,
+        logs: [{ address: ALICE, topics: [EXECUTION_SUCCESS, HASH], data: PAYMENT_WORD }],
       },
       isError: false,
     }

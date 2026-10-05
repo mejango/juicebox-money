@@ -68,18 +68,22 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 
 import {
-  canonicalSafeTxHash,
   confirmSafeTx,
   executeSafeTx,
   deploySafeSameAddress,
-  findPendingSafeCall,
   getSafeNextNonce,
+  readSafeQueue,
   runSafeCalls,
   simulateSafeExecution,
-  type SafeQueuedTx,
   SAFE_EXECUTION_WRITE_GAS,
 } from '@/lib/safe'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
+import {
+  canonicalSafeTxHash,
+  safeProposalFor,
+  safeTransactionHash,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -115,9 +119,20 @@ function safeIdentity(owners = [ALICE], threshold = 1) {
   }
 }
 
+const success = (hash: Hex) => ({
+  address: SAFE,
+  topics: [EXECUTION_SUCCESS_TOPIC, hash],
+  data: `0x${'00'.repeat(32)}` as Hex,
+})
+const failure = (hash: Hex) => ({
+  address: SAFE,
+  topics: [EXECUTION_FAILURE_TOPIC, hash],
+  data: `0x${'00'.repeat(32)}` as Hex,
+})
+
 function queued(
-  confirmations: SafeQueuedTx['confirmations'] = [{ owner: ALICE }],
-): SafeQueuedTx {
+  confirmations: SafeQueuedTransaction['confirmations'] = [{ owner: ALICE }],
+): SafeQueuedTransaction {
   return {
     to: TARGET,
     value: '5',
@@ -175,7 +190,7 @@ beforeEach(() => {
       return { status: 'success', transactionHash: hash, logs: [] }
     }
     const args = write.args as readonly unknown[]
-    const executed: SafeQueuedTx = {
+    const executed: SafeQueuedTransaction = {
       to: args[0] as Address,
       value: String(args[1]),
       data: args[2] as Hex,
@@ -450,6 +465,16 @@ describe('Safe execution boundary', () => {
   it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe = true
     mocks.waitSafe.mockResolvedValue(HASH)
+    // The connected Safe app executed its proposal at once: its own event and
+    // the queued Safe's, in one receipt.
+    mocks.client.waitForTransactionReceipt.mockImplementationOnce(async ({ hash }: { hash: Hex }) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [
+        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, hash], data: `0x${'00'.repeat(32)}` },
+        success(canonicalSafeTxHash(1, SAFE, queued())),
+      ],
+    }))
 
     await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({ hash: HASH, status: 'confirmed' })
 
@@ -467,6 +492,9 @@ describe('Safe execution boundary', () => {
     const proposal = `0x${'cd'.repeat(32)}` as Hex
     const execution = `0x${'ef'.repeat(32)}` as Hex
     mocks.safe = true
+    // A 2-of-2 Safe, so the connected owner approves rather than executes.
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
     mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.wallet.writeContract.mockResolvedValue(proposal)
     mocks.waitSafe.mockResolvedValue(execution)
@@ -503,11 +531,15 @@ describe('Safe execution boundary', () => {
     mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.wallet.writeContract.mockResolvedValueOnce(proposal)
     mocks.waitSafe.mockResolvedValueOnce(execution)
-    // The same execution also ran another of the connected Safe's proposals, which failed.
+    // The same execution also ran another of the connected Safe's proposals,
+    // which failed, while this proposal succeeded.
     mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: execution,
-      logs: [{ address: ALICE, ...failure(other) }],
+      logs: [
+        { address: ALICE, ...failure(other) },
+        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, proposal], data: `0x${'00'.repeat(32)}` as Hex },
+      ],
     })
 
     await expect(
@@ -518,6 +550,38 @@ describe('Safe execution boundary', () => {
     ).resolves.toEqual([expect.objectContaining({ mode: 'onchain', status: 'waiting' })])
     expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ functionName: 'approveHash' }),
+    )
+  })
+
+  it("refuses to sign, simulate or execute a transaction that pays a gas refund", async () => {
+    const refund = { ...queued(), gasPrice: '1' }
+    for (const run of [
+      () => executeSafeTx(1, SAFE, refund),
+      () => simulateSafeExecution(1, SAFE, refund),
+      () => confirmSafeTx(1, SAFE, refund, ALICE),
+    ]) {
+      await expect(run()).rejects.toThrow(
+        new Error("This transaction pays a gas refund, so it can't be executed here."),
+      )
+    }
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['logs ExecutionSuccess for it twice', (hash: Hex) => [success(hash), success(hash)]],
+    ['logs both ExecutionSuccess and ExecutionFailure for it', (hash: Hex) => [success(hash), failure(hash)]],
+    ['logs ExecutionSuccess only for another Safe transaction', () => [success(`0x${'ef'.repeat(32)}` as Hex)]],
+  ] as const)('does not confirm an execution whose receipt %s', async (_, logs) => {
+    mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
+      status: 'success',
+      transactionHash: HASH,
+      logs: logs(canonicalSafeTxHash(1, SAFE, queued())),
+    })
+
+    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+      /inner call did not execute successfully/i,
     )
   })
 
@@ -553,7 +617,7 @@ describe('Safe execution boundary', () => {
   it('rejects a service hash that does not match the exact queued fields', async () => {
     await expect(
       executeSafeTx(1, SAFE, { ...queued(), safeTxHash: HASH }),
-    ).rejects.toThrow(/hash does not match its exact fields/i)
+    ).rejects.toThrow(/does not match its fields/i)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
   })
@@ -691,7 +755,7 @@ describe('Safe execution boundary', () => {
 })
 
 describe('Safe retry and terminal-state orchestration', () => {
-  it('deduplicates concurrent nonce reads and falls back to onchain truth', async () => {
+  it('deduplicates concurrent onchain nonce reads', async () => {
     let resolveNonce!: (value: bigint) => void
     mocks.readSafeNonce.mockImplementationOnce(
       () => new Promise<bigint>(resolve => (resolveNonce = resolve)),
@@ -707,6 +771,9 @@ describe('Safe retry and terminal-state orchestration', () => {
   })
 
   it('stops after an unconfirmed onchain approval instead of executing again', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.client.waitForTransactionReceipt.mockRejectedValueOnce(
       new Error('receipt unavailable'),
     )
@@ -731,7 +798,36 @@ describe('Safe retry and terminal-state orchestration', () => {
         transactionHash: HASH,
       }),
     ])
-    expect(mocks.wallet.writeContract).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'approveHash' }),
+    )
+  })
+
+  it('lets the owner who completes the threshold execute without approving first', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockImplementation(
+      async (_client, _safe, owner) => (owner === BOB ? 1n : 0n),
+    )
+    const executed = safeProposalFor({ to: TARGET, data: '0x1234' }, 7)
+    mocks.client.waitForTransactionReceipt.mockImplementationOnce(async ({ hash }: { hash: Hex }) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [success(safeTransactionHash(999, SAFE, executed))],
+    }))
+
+    await expect(
+      runSafeCalls({
+        signer: ALICE,
+        calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ mode: 'onchain', status: 'executed', transactionHash: HASH }),
+    ])
+    // Safe counts the executing owner as a signature: no approveHash first.
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'execTransaction' }),
+    )
   })
 
   it('waits without writing while onchain approvals remain below threshold', async () => {
@@ -802,50 +898,32 @@ describe('Safe retry and terminal-state orchestration', () => {
     }
   })
 
-  it('paginates the hosted queue before deciding an exact proposal is absent', async () => {
+  it("reads the whole hosted queue from the Safe's onchain nonce", async () => {
     const previousFetch = globalThis.fetch
-    const firstPage = Array.from({ length: 50 }, (_, index) => ({
-      ...queued(),
-      value: '0',
-      data: '0xaaaa' as Hex,
-      nonce: 7 + index,
-    }))
-    const exact = {
-      ...queued(),
-      value: '0',
-      data: '0xbeef' as Hex,
-      nonce: 57,
+    const row = (nonce: number, data: Hex) => {
+      const tx = { ...queued(), value: '0', data, nonce }
+      return { ...tx, safe: SAFE, safeTxHash: safeTransactionHash(1, SAFE, tx) }
     }
+    const firstPage = Array.from({ length: 50 }, (_, index) => row(7 + index, '0xaaaa'))
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
-      if (!url.includes('multisig-transactions')) {
-        return new Response(JSON.stringify({ nonce: 7 }), { status: 200 })
+      if (!url.includes(`/api/v1/safes/${SAFE}/multisig-transactions/`) || !url.includes('nonce__gte=7')) {
+        throw new Error(`Unexpected Safe request ${url}`)
       }
       if (url.includes('offset=0')) {
-        return new Response(
-          JSON.stringify({ results: firstPage, next: 'page-2' }),
-          { status: 200 },
-        )
+        return new Response(JSON.stringify({ results: firstPage, next: 'page-2' }), { status: 200 })
       }
       if (url.includes('offset=50')) {
-        return new Response(JSON.stringify({ results: [exact], next: null }), {
-          status: 200,
-        })
+        return new Response(JSON.stringify({ results: [row(57, '0xbeef')], next: null }), { status: 200 })
       }
       throw new Error(`Unexpected Safe request ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
     try {
-      await expect(
-        findPendingSafeCall(1, SAFE, {
-          target: TARGET,
-          data: '0xbeef',
-          value: 0n,
-        }),
-      ).resolves.toMatchObject({ nonce: 57, data: '0xbeef' })
-      expect(
-        fetchMock.mock.calls.some(([input]) => String(input).includes('offset=50')),
-      ).toBe(true)
+      const { nonce, pending } = await readSafeQueue(1, SAFE)
+      expect(nonce).toBe(7)
+      expect(pending).toHaveLength(51)
+      expect(pending.at(-1)).toMatchObject({ nonce: 57, data: '0xbeef' })
     } finally {
       vi.stubGlobal('fetch', previousFetch)
     }

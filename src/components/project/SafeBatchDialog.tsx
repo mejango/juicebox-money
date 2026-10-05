@@ -21,7 +21,7 @@ import {
   submitSafeBatch,
   type SafeBatchRoute,
 } from '@/lib/safe-batch-submit'
-import { hasSafeService } from '@/lib/safe'
+import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { chainName } from '@/lib/urn'
 
 function routeDescription(route: SafeBatchRoute, count: number, chainId: JBChainId): string {

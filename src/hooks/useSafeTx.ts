@@ -12,6 +12,7 @@ import {
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
   requestContractTransactionReview,
@@ -22,7 +23,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
-  safeExecutionFailed,
+  SAFE_PROPOSAL_UNCONFIRMED,
   useSafeConnection,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
@@ -215,7 +216,7 @@ export function useSafeTx(chainId: number) {
         } else {
           // Losing access to Safe's service does not undo a signed proposal.
           // Keep its send lock until execution can be checked externally.
-          setError(`Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. ${message}`)
+          setError(`${SAFE_PROPOSAL_UNCONFIRMED} ${message}`)
           setSafeConfirmationUncertain(true)
           setPhase('pending')
         }
@@ -225,29 +226,36 @@ export function useSafeTx(chainId: number) {
 
   // A successful receipt *query* can still contain an onchain revert. Only the
   // receipt's status is authoritative, and for a Safe execution, the Safe's own
-  // ExecutionFailure. A receipt RPC error leaves the already submitted
-  // transaction pending/unknown so the UI never invites a duplicate submission
-  // merely because confirmation could not be read.
-  const safeExecutionReverted =
-    phase === 'pending' &&
-    receiptData?.status === 'success' &&
-    !!safeExecution &&
-    safeExecutionFailed(receiptData, safeExecution.safe, safeExecution.proposalHash)
+  // event for this proposal: ExecutionSuccess settles it, ExecutionFailure fails
+  // it, and a receipt with neither leaves it unconfirmed. A receipt RPC error
+  // leaves the already submitted transaction pending/unknown so the UI never
+  // invites a duplicate submission merely because confirmation could not be read.
+  const safeOutcome =
+    phase === 'pending' && receiptData?.status === 'success' && safeExecution
+      ? safeExecutionResult(receiptData, safeExecution.safe, safeExecution.proposalHash).status
+      : null
+  const safeExecutionReverted = safeOutcome === 'failed' || safeOutcome === 'reverted'
+  const safeExecutionUnproven = safeOutcome === 'unproven'
   const receiptReverted =
     phase === 'pending' && (receiptData?.status === 'reverted' || safeExecutionReverted)
   const effectivePhase: TxPhase =
-    phase === 'pending' && receiptData?.status === 'success' && !safeExecutionReverted
+    phase === 'pending' &&
+    receiptData?.status === 'success' &&
+    !safeExecutionReverted &&
+    !safeExecutionUnproven
       ? 'success'
       : receiptReverted
         ? 'error'
         : phase
   const effectiveError = safeExecutionReverted
     ? `Safe executed the proposal, but the onchain transaction failed${hash ? ` (${hash})` : ''}.`
-    : receiptReverted
-      ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-      : phase === 'pending' && receipt.isError && !receiptData
-        ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
-        : error
+    : safeExecutionUnproven
+      ? SAFE_PROPOSAL_UNCONFIRMED
+      : receiptReverted
+        ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
+        : phase === 'pending' && receipt.isError && !receiptData
+          ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
+          : error
 
   useEffect(() => {
     if (effectivePhase === 'success' || effectivePhase === 'error') {
@@ -409,7 +417,9 @@ export function useSafeTx(chainId: number) {
     safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
     receipt: receiptData ?? null,
     /** The transaction has a hash, but the current RPC could not confirm it. */
-    confirmationUncertain: phase === 'pending' && (safeConfirmationUncertain || (receipt.isError && !receiptData)),
+    confirmationUncertain:
+      phase === 'pending' &&
+      (safeConfirmationUncertain || safeExecutionUnproven || (receipt.isError && !receiptData)),
     send,
     reset,
   }

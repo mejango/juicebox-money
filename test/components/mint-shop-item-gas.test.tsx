@@ -18,6 +18,7 @@ const HOOK = '0x2222222222222222222222222222222222222222' as Address
 const STORE = '0x3333333333333333333333333333333333333333' as Address
 const PROPOSAL = `0x${'ab'.repeat(32)}` as Hex
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
+const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
 
 vi.mock('wagmi', () => ({
   useConfig: () => ({}),
@@ -120,6 +121,12 @@ describe('free mint gas', () => {
 
   it('wallet-action:mint-shop-tiers-without-payment proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe = true
+    // Safe{Wallet} executed at once and returned the execution's own hash.
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` }],
+    }))
     await mint()
     expect(mocks.review).toHaveBeenCalledWith(
       expect.objectContaining({ address: HOOK, functionName: 'mintFor', safeTxGas: 0n }),
@@ -142,6 +149,18 @@ describe('free mint gas', () => {
     }))
     await mint()
     expect(text()).toContain('The mint failed.')
+    expect(text()).not.toContain('Items minted')
+  })
+
+  it("does not report a Safe app mint whose receipt doesn't show its proposal ran", async () => {
+    mocks.safe = true
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [],
+    }))
+    await mint()
+    expect(text()).toContain('Mint submitted')
     expect(text()).not.toContain('Items minted')
   })
 
