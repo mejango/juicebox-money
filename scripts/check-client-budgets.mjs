@@ -123,7 +123,8 @@ const budgets = {
   // a quote another payment funded, the exact retry option, the bundle read
   // before a release, and the strict session saves) measure 2495.0 KiB (+1.2),
   // in the shared Relayr chunk, the launch and payer flows and the account
-  // card. Allow 2 KiB of headroom.
+  // card. The second review's nonce proof before signing a released quote
+  // again brings it to 2495.4 KiB. Allow 1.6 KiB of headroom.
   allScripts: 2497 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
