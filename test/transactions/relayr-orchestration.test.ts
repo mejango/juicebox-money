@@ -2332,6 +2332,30 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
     await expect(action()).rejects.toMatchObject({ name: 'RelayrDiscardError', reason: 'ran', message: DISCARDABLE })
   })
 
+  it('holds, offering no Discard, while a reorg leaves a finalized nonce below the saved one, and signs again once it catches up (ruling R114, known limit)', async () => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid()
+    await unpaidQuote()
+    // Every request is past its deadline at a finalized block, but a reorg dropped an earlier forwarded
+    // transaction: Ethereum's finalized nonce is below the one its request was signed with, so that
+    // request is neither unused nor moved. Optimism's is still the saved one.
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    nonces = { 1: 3n, 10: 4n }
+    await expect(action()).rejects.toThrow(HELD_UNCONFIRMED)
+    // The account view classifies it the same way: it holds, with nothing to discard.
+    await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toThrow(HELD_UNCONFIRMED)
+    expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    await expect(discardRelayrSession('r114')).rejects.toThrow(DISCARD_REFUSED)
+    expect(reverify).not.toHaveBeenCalled()
+    expect(signed()).toEqual([[1, 4n], [10, 4n]])
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    // Once the finalized nonce catches up, every request is dead and unused, and the recheck passes.
+    nonces = { 1: 4n, 10: 4n }
+    await expect(action()).resolves.toMatchObject({ paymentHash: HASH })
+    expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
+  })
+
   it('holds a reverted quote while Relayr cannot be read and another chain\'s old request can still run', async () => {
     installSuccessfulBundle([payment])
     mocks.paymentStatuses.set(HASH, 'reverted')
