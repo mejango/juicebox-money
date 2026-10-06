@@ -63,6 +63,7 @@ import {
   lookupVerifiedProjectHandle,
 } from "@/lib/ens";
 import {
+  canonicalHandleOf,
   decodeProjectRouteSegment,
   projectHandleFromRoute,
   verifyProjectHandleAuthorityWithFallback,
@@ -85,8 +86,9 @@ const getSuckerGroupProjectsCached = cache(getSuckerGroupProjects);
  * route that reaches it — each chain's URN and the handle itself. The registry
  * keys handles by (chainId, projectId), so every deployment in the group is
  * checked; the authority (owner, or operator for revnets) is the only trusted
- * setter. Cached across requests: one registry read outage or slow read must
- * not tax every page render.
+ * setter, and a handle counts only when its own route resolves back to its
+ * deployment. Cached across requests: one registry read outage or slow read
+ * must not tax every page render.
  */
 const lookupCanonicalHandleCached = cache(
   unstable_cache(
@@ -115,16 +117,17 @@ const lookupCanonicalHandleCached = cache(
           }
         }
       }
-      const handles = await Promise.all(
-        deployments.map(([chain, id]) =>
+      return canonicalHandleOf({
+        deployments,
+        readHandle: (chainId, projectId) =>
           lookupVerifiedProjectHandle({
-            chainId: chain,
-            projectId: id,
+            chainId,
+            projectId,
             setter: authority as Address,
           }),
-        ),
-      );
-      return handles.find(handle => handle) ?? null;
+        resolveHandle: handle =>
+          resolveProjectRouteCached(`@${encodeURIComponent(handle)}`),
+      });
     },
     ["project-canonical-handle"],
     { revalidate: 900 },

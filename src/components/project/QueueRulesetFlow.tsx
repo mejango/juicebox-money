@@ -44,7 +44,7 @@ import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
-import { readAuthorityIdentity } from "@/lib/cross-chain-authority";
+import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
 import { relayrSupportsChain, relayrSupportsChains } from "@/lib/relayr-chains";
 import {

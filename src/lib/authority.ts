@@ -40,20 +40,24 @@ import {
   type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import {
-  canonicalSafeTxHash,
-  findPendingSafeCall,
-  runSafeCalls,
-  type SafeCallResult,
-  type SafeQueuedTx,
-} from '@/lib/safe'
+  hasSafeService,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
 import {
-  readAuthorityIdentity,
+  runSafeCalls,
+  SAFE_SERVICE,
+  type SafeCallResult,
+} from '@/lib/safe'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
+import {
   readMatchingAuthorityIdentities,
+  UnprovenSafeError,
 } from '@/lib/cross-chain-authority'
 import {
+  findPendingSafeAppProposal,
   isSafeConnection,
+  requireSafeProposalSuccess,
   SAFE_NONCE_GUIDANCE,
-  safeExecutionFailed,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 
@@ -82,7 +86,7 @@ export type AuthorityCall = {
   /** Persist recovery information before exposing a wallet submission. */
   onSending?: (kind: 'direct' | 'safe-connector') => Promise<void>
   onSubmitted?: (hash: Hex, kind: 'direct' | 'safe-connector') => Promise<void>
-  onSafePrepared?: (tx: SafeQueuedTx) => Promise<void>
+  onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
 }
 
 export type AuthorityProgress = {
@@ -363,12 +367,17 @@ export async function runAuthorityCalls({
         throw new Error('Could not verify the cross-chain authority policy.')
       }
       const identities = await readMatchingAuthorityIdentities({
+        sourceChainId: call.detectionChainId,
         sourceClient,
         destinationClient,
         authority,
+        service: SAFE_SERVICE,
       })
       if (!identities) {
         throw new Error('Could not verify the cross-chain authority policy.')
+      }
+      if (identities.creationUnproven) {
+        throw new UnprovenSafeError(call.chainId)
       }
       if (!identities.matches) {
         const sourceName =
@@ -636,23 +645,25 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'safe-connector') {
       const call = group[0]
       await call.reverifyAuthority?.()
-      const existing = await findPendingSafeCall(
-        call.chainId,
-        call.authority,
-        call,
-      )
+      // A retry confirms the exact proposal already queued instead of
+      // proposing it twice; a chain without Safe's service has no queue.
+      const existing = hasSafeService(call.chainId)
+        ? await findPendingSafeAppProposal(
+            clientFor(call.chainId),
+            call.chainId,
+            call.authority,
+            { to: call.target, data: call.data, value: call.value },
+            SAFE_SERVICE,
+          )
+        : null
       if (existing) {
-        await call.onSafePrepared?.(existing)
+        await call.onSafePrepared?.(existing.tx)
         safeResults.push({
           chainId: call.chainId,
           mode: 'service',
           status: 'queued',
-          nonce: Number(existing.nonce),
-          safeTxHash: canonicalSafeTxHash(
-            call.chainId,
-            call.authority,
-            existing,
-          ),
+          nonce: existing.tx.nonce,
+          safeTxHash: existing.proposalHash,
         })
         onProgress?.({
           kind: 'safe',
@@ -707,14 +718,18 @@ export async function runAuthorityCalls({
         clientFor(call.chainId),
         executionHash,
       )
-      if (
-        receipt.status !== 'success' ||
-        safeExecutionFailed(receipt, call.authority, safeTxHash)
-      ) {
-        throw new Error(
-          `${call.label ?? 'Project action'} reverted after Safe execution.`,
-        )
-      }
+      const failure = `${call.label ?? 'Project action'} reverted after Safe execution.`
+      if (receipt.status !== 'success') throw new Error(failure)
+      await requireSafeProposalSuccess(
+        {
+          client: clientFor(call.chainId),
+          receipt,
+          safe: call.authority,
+          proposalHash: safeTxHash,
+          calls: [{ to: call.target, data: call.data, value: call.value }],
+        },
+        failure,
+      )
       directResults.push(executionHash)
       continue
     }

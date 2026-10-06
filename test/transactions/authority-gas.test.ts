@@ -1,4 +1,4 @@
-import { decodeFunctionData, toEventSelector, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireReview: vi.fn(),
   chooseFunding: vi.fn(),
   runSafeCalls: vi.fn(),
-  findPendingSafeCall: vi.fn(),
+  listPendingSafeTransactions: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
   isSafeConnection: vi.fn(),
@@ -47,15 +47,23 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
   requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.chooseFunding,
 }))
-vi.mock('@/lib/safe', () => ({
-  canonicalSafeTxHash: () => HASH,
-  findPendingSafeCall: mocks.findPendingSafeCall,
-  receiptHasSafeExecutionSuccess: () => true,
+vi.mock('@/lib/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe')>()),
   runSafeCalls: mocks.runSafeCalls,
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
-  readAuthorityIdentity: mocks.readAuthorityIdentity,
+vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
+  listPendingSafeTransactions: mocks.listPendingSafeTransactions,
+}))
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
+  // The Safe's onchain nonce, as the pending-proposal lookup reads it.
+  readBoundedSafeNonce: async () => 7n,
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
@@ -66,6 +74,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
+import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -89,6 +98,12 @@ const NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
 const PAYMENT_DEADLINE = 4_000_000_000
 const PAYMENT_CALLDATA = `0x103903a7${BUNDLE_UUID.replaceAll('-', '').padEnd(64, '0')}${BigInt(PAYMENT_DEADLINE).toString(16).padStart(64, '0')}` as Hex
 const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
+
+const SAFE_PROPOSAL_SUCCESS = {
+  address: SAFE,
+  topics: [toEventSelector('ExecutionSuccess(bytes32,uint256)'), HASH],
+  data: `0x${'00'.repeat(32)}` as Hex,
+}
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -121,7 +136,7 @@ beforeEach(() => {
   mocks.chooseFunding.mockResolvedValue(1)
   mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'eoa' })
   mocks.isSafeConnection.mockReturnValue(false)
-  mocks.findPendingSafeCall.mockResolvedValue(null)
+  mocks.listPendingSafeTransactions.mockResolvedValue([])
   mocks.waitForSafeExecutionHash.mockResolvedValue(DESTINATION_HASH)
   mocks.readMatchingAuthorityIdentities.mockResolvedValue({
     source: { kind: 'eoa' },
@@ -142,10 +157,11 @@ beforeEach(() => {
     if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
+  // A Safe app's execution logs the Safe's ExecutionSuccess for its proposal.
   mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
     transactionHash: hash,
     status: 'success',
-    logs: [],
+    logs: [SAFE_PROPOSAL_SUCCESS],
   }))
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
@@ -154,7 +170,7 @@ beforeEach(() => {
     const entry = entries[hash === DESTINATION_HASH ? 0 : 1]
     return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH }
   })
-  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: 'success', blockHash: HASH, blockNumber: 1n }))
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
   mocks.client.getBlock.mockResolvedValue({ hash: HASH })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
@@ -458,6 +474,28 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(mocks.connectedWallet).not.toHaveBeenCalled()
   })
 
+  it("refuses a Safe whose creation can't be proven on the call's chain, in one line", async () => {
+    const safe = { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] }
+    mocks.readAuthorityIdentity.mockResolvedValue(safe)
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: safe,
+      destination: safe,
+      matches: false,
+      creationUnproven: true,
+    })
+
+    await expect(
+      runAuthorityCalls({
+        calls: [{ chainId: 1, detectionChainId: 10, authority: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).rejects.toThrow("Can't verify this Safe is the same on Ethereum.")
+    expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
+    )
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.runSafeCalls).not.toHaveBeenCalled()
+  })
+
   it('rejects divergent cross-chain Safe control before review', async () => {
     mocks.readAuthorityIdentity.mockResolvedValue({
       kind: 'safe',
@@ -597,6 +635,68 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     ).rejects.toThrow('Set the terminal reverted after Safe execution.')
   })
 
+  it("does not report a Safe app proposal whose execution doesn't show it ran", async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash,
+      status: 'success',
+      logs: [],
+    }))
+
+    await expect(
+      runAuthorityCalls({
+        calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234', label: 'Set the terminal' }],
+      }),
+    ).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
+  })
+
+  it.each([
+    ['ran the reviewed call', '0x1234', true],
+    ['ran another call', '0xdead', false],
+  ] as const)('confirms a proposal Safe{Wallet} executed at once only when the execution %s', async (_, ran, confirmed) => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 1, owners: [ALICE] })
+    mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names a safeTxHash this app never saw.
+    mocks.waitForSafeExecutionHash.mockResolvedValue(HASH)
+    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+      transactionHash: hash,
+      status: 'success',
+      logs: [{ ...SAFE_PROPOSAL_SUCCESS, topics: [SAFE_PROPOSAL_SUCCESS.topics[0], `0x${'ef'.repeat(32)}`] }],
+    }))
+    mocks.client.getTransaction.mockImplementation(async ({ hash }) => ({
+      hash,
+      from: ALICE,
+      to: SAFE,
+      input: encodeFunctionData({
+        abi: SAFE_EXEC_ABI,
+        functionName: 'execTransaction',
+        args: [TARGET, 0n, ran, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+      }),
+    }))
+
+    const sent = runAuthorityCalls({
+      calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234', label: 'Set the terminal' }],
+    })
+
+    if (confirmed) await expect(sent).resolves.toMatchObject({ directResults: [HASH] })
+    else {
+      await expect(sent).rejects.toThrow(
+        'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+      )
+    }
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+  })
+
   it('reuses an exact pending Safe app proposal without sending a duplicate', async () => {
     mocks.account = SAFE
     mocks.isSafeConnection.mockReturnValue(true)
@@ -605,18 +705,19 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       threshold: 2,
       owners: [ALICE],
     })
-    mocks.findPendingSafeCall.mockResolvedValue({
+    const pending = {
       to: TARGET,
       value: '0',
-      data: '0x1234',
+      data: '0x1234' as Hex,
       operation: 0,
       safeTxGas: '0',
       baseGas: '0',
       gasPrice: '0',
-      gasToken: '0x0000000000000000000000000000000000000000',
-      refundReceiver: '0x0000000000000000000000000000000000000000',
+      gasToken: '0x0000000000000000000000000000000000000000' as Address,
+      refundReceiver: '0x0000000000000000000000000000000000000000' as Address,
       nonce: 7,
-    })
+    }
+    mocks.listPendingSafeTransactions.mockResolvedValue([pending])
 
     const result = await runAuthorityCalls({
       calls: [
@@ -629,8 +730,18 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       ],
     })
 
+    expect(mocks.listPendingSafeTransactions).toHaveBeenCalledWith(
+      1,
+      SAFE,
+      7,
+      expect.objectContaining({ fetch: expect.any(Function) }),
+    )
     expect(result.safeResults).toEqual([
-      expect.objectContaining({ status: 'queued', nonce: 7, safeTxHash: HASH }),
+      expect.objectContaining({
+        status: 'queued',
+        nonce: 7,
+        safeTxHash: canonicalSafeTxHash(1, SAFE, pending),
+      }),
     ])
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()

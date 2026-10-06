@@ -121,11 +121,16 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
         setStatus('A saved batch was found with different calls. Review its original amounts and recipients before continuing.')
         return
       }
+      // The batch's last line says why it is still pending, such as a scan still reading.
+      const reported = { line: null as string | null }
       const result = await runProjectBatch({
         scope, action, account, title, calls: review,
         expectedBatchId: saved?.id ?? reviewBatchId,
         reverify: isClaim ? reverifyClaimCall : reverifyAutoIssueCall,
-        onProgress: progress => setStatus(progress.message),
+        onProgress: progress => {
+          reported.line = progress.message
+          setStatus(progress.message)
+        },
       })
       setReview(result.calls)
       setReviewBatchId(result.id)
@@ -138,7 +143,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
           queryClient.invalidateQueries({ queryKey: ['autoIssuancesAll'] }),
         ])
         onDone?.()
-      } else setStatus('The original batch is saved. Resume it to verify and finish the remaining calls.')
+      } else setStatus(reported.line ?? 'The original batch is saved. Resume it to verify and finish the remaining calls.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the original batch.')
       try {

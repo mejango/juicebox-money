@@ -1,34 +1,45 @@
+import { SAFE_SETUP_ABI } from '@bananapus/nana-sdk-core/safe'
 import {
-  decodeFunctionData,
+  concatHex,
   encodeFunctionData,
-  encodeFunctionResult,
+  encodePacked,
   getAddress,
+  getContractAddress,
   keccak256,
+  toHex,
   zeroAddress,
   type Address,
   type Hex,
-  type PublicClient,
 } from 'viem'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  authorityIdentitiesMatch,
-  isDeployableSafeAuthority,
-  MAX_SAFE_OWNERS,
-  SAFE_OWNERS_READ_GAS,
-  readAuthorityIdentity,
-  readMatchingAuthorityIdentities,
-  safeCreationMatchesAuthorityIdentity,
-  safeSingletonsAreEquivalent,
-  SAFE_CANONICAL_PAYMENT_RECEIVER,
-  SAFE_L1_L2_SINGLETON_PAIRS,
-  SAFE_TO_L2_SETUP_ADDRESS,
-  type AuthorityIdentity,
-} from '@/lib/cross-chain-authority'
+  creationRecord,
+  creationUrl,
+  OWNERS,
+  PROVEN_SAFE,
+  provenSafeChain,
+} from '../support/proven-safe'
 import {
-  readBoundedSafeApprovedHash,
-  SAFE_READ_ABI,
-  SAFE_SCALAR_READ_GAS,
-} from '@/lib/safe-reads'
+  emptyChain,
+  SAFE_130_EIP155_SINGLETON,
+  SAFE_130_SINGLETON,
+  safeChain,
+} from '../support/safe-chain'
+
+// The SDK's own tests prove each identity rule; these prove this app's layer
+// over it: both chains reach the SDK, with the creation record from the
+// source chain's Safe service, for every Safe release the SDK recognizes.
+
+// The module keeps creation records per chain and Safe; each test starts with none.
+let readCrossChainHandleAuthority: typeof import('@/lib/cross-chain-authority').readCrossChainHandleAuthority
+let readMatchingAuthorityIdentities: typeof import('@/lib/cross-chain-authority').readMatchingAuthorityIdentities
+let unprovenSafeLine: typeof import('@/lib/cross-chain-authority').unprovenSafeLine
+beforeEach(async () => {
+  vi.resetModules()
+  ;({ readCrossChainHandleAuthority, readMatchingAuthorityIdentities, unprovenSafeLine } = await import(
+    '@/lib/cross-chain-authority'
+  ))
+})
 
 const AUTHORITY = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -36,601 +47,34 @@ const BOB = '0x3333333333333333333333333333333333333333' as Address
 const FALLBACK = '0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4' as Address
 const DELEGATION = getAddress('0x63c0c19a282a1b52b07dd5a65b58948a07dae32b')
 const EIP_7702_CODE = `0xef0100${DELEGATION.slice(2)}` as Hex
-const SINGLETON = '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552' as Address
-const OTHER_SINGLETON =
-  '0x41675C099F32341bf84BFc5382aF534df5C7461a' as Address
-const SENTINEL = '0x0000000000000000000000000000000000000001' as Address
-const FACTORY = '0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2' as Address
-const SINGLETON_SLOT = `0x${'0'.repeat(64)}` as Hex
-const GUARD_SLOT =
-  '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8' as Hex
-const FALLBACK_SLOT =
-  '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5' as Hex
-const SINGLETON_CODE = '0x60006000' as Hex
-const FALLBACK_CODE = '0x60016000' as Hex
 
-const safeSetupAbi = [
-  {
-    type: 'function',
-    name: 'setup',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: '_owners', type: 'address[]' },
-      { name: '_threshold', type: 'uint256' },
-      { name: 'to', type: 'address' },
-      { name: 'data', type: 'bytes' },
-      { name: 'fallbackHandler', type: 'address' },
-      { name: 'paymentToken', type: 'address' },
-      { name: 'payment', type: 'uint256' },
-      { name: 'paymentReceiver', type: 'address' },
-    ],
-    outputs: [],
-  },
-] as const
+const safe = (options: Partial<Parameters<typeof safeChain>[0]> = {}) =>
+  safeChain({ authority: AUTHORITY, owners: [ALICE, BOB], ...options })
 
-function safeCreation({
-  owners = [ALICE, BOB],
-  threshold = 2n,
-  to = zeroAddress,
-  data = '0x' as Hex,
-  factory = FACTORY,
-}: {
-  owners?: Address[]
-  threshold?: bigint
-  to?: Address
-  data?: Hex
-  factory?: Address
-} = {}) {
-  return {
-    factory,
-    singleton: SINGLETON,
-    saltNonce: 7n,
-    initializer: encodeFunctionData({
-      abi: safeSetupAbi,
-      functionName: 'setup',
-      args: [
-        owners,
-        threshold,
-        to,
-        data,
-        FALLBACK,
-        zeroAddress,
-        0n,
-        zeroAddress,
-      ],
-    }),
-  }
-}
-
-// Runtime returned by the canonical Safe v1.3.0 proxy factory's
-// proxyCreationCode(). This is deliberately real proxy code: a small fake
-// contract must not pass the production recognizer in these tests either.
-const SAFE_PROXY_RUNTIME =
-  '0x608060405273ffffffffffffffffffffffffffffffffffffffff600054167fa619486e0000000000000000000000000000000000000000000000000000000060003514156050578060005260206000f35b3660008037600080366000845af43d6000803e60008114156070573d6000fd5b3d6000f3fea2646970667358221220d1429297349653a4918076d650332de1a1068c5f3e07c5c82360c277770b955264736f6c63430007060033' as Hex
-
-function storageAddress(address: Address): Hex {
-  return `0x${'0'.repeat(24)}${address.slice(2)}` as Hex
-}
-
-type SafeClientOptions = {
-  owners?: Address[]
-  threshold?: bigint
-  modules?: Address[]
-  moduleNext?: Address
-  singleton?: Address
-  masterCopy?: Address
-  singletonCode?: Hex
-  version?: string
-  guard?: Address
-  fallbackHandler?: Address
-  fallbackHandlerCode?: Hex
-  proxyCode?: Hex
-  contractOwners?: Address[]
-  ownerBytecodes?: Readonly<Record<string, Hex>>
-  rejectRead?: boolean
-  rejectBytecodeFor?: Address
-}
-
-function safeClient({
-  owners = [ALICE, BOB],
-  threshold = 2n,
-  modules = [],
-  moduleNext = SENTINEL,
-  singleton = SINGLETON,
-  masterCopy = singleton,
-  singletonCode = SINGLETON_CODE,
-  version = singleton.toLowerCase() === OTHER_SINGLETON.toLowerCase()
-    ? '1.4.1'
-    : '1.3.0',
-  guard = zeroAddress,
-  fallbackHandler = FALLBACK,
-  fallbackHandlerCode = FALLBACK_CODE,
-  proxyCode = SAFE_PROXY_RUNTIME,
-  contractOwners = [],
-  ownerBytecodes = {},
-  rejectRead = false,
-  rejectBytecodeFor,
-}: SafeClientOptions = {}): PublicClient {
-  const contractOwnerSet = new Set(
-    contractOwners.map(owner => owner.toLowerCase()),
-  )
-  return {
-    getBytecode: vi.fn(async ({ address }: { address: Address }) => {
-      if (
-        rejectBytecodeFor &&
-        address.toLowerCase() === rejectBytecodeFor.toLowerCase()
-      ) {
-        throw new Error('RPC unavailable')
-      }
-      if (address.toLowerCase() === AUTHORITY.toLowerCase()) return proxyCode
-      if (address.toLowerCase() === singleton.toLowerCase()) return singletonCode
-      if (
-        address.toLowerCase() === fallbackHandler.toLowerCase() &&
-        fallbackHandler.toLowerCase() !== zeroAddress
-      ) {
-        return fallbackHandlerCode
-      }
-      const ownerBytecode = ownerBytecodes[address.toLowerCase()]
-      if (ownerBytecode) return ownerBytecode
-      if (contractOwnerSet.has(address.toLowerCase())) return '0x6002'
-      return undefined
-    }),
-    getStorageAt: vi.fn(async ({ slot }: { slot: Hex }) => {
-      if (rejectRead) throw new Error('RPC unavailable')
-      if (slot === SINGLETON_SLOT) return storageAddress(singleton)
-      if (slot === GUARD_SLOT) return storageAddress(guard)
-      if (slot === FALLBACK_SLOT) return storageAddress(fallbackHandler)
-      throw new Error('Unexpected storage slot')
-    }),
-    request: vi.fn(async ({ method, params }) => {
-      if (rejectRead) throw new Error('RPC unavailable')
-      if (method !== 'eth_call') throw new Error('Unexpected RPC method')
-      const request = params?.[0] as { data?: Hex }
-      if (!request.data) throw new Error('Missing call data')
-      const decoded = decodeFunctionData({
-        abi: SAFE_READ_ABI,
-        data: request.data,
-      })
-      if (decoded.functionName === 'getThreshold') {
-        return encodeFunctionResult({
-          abi: SAFE_READ_ABI,
-          functionName: 'getThreshold',
-          result: threshold,
-        })
-      }
-      if (decoded.functionName === 'getOwners') {
-        return encodeFunctionResult({
-          abi: SAFE_READ_ABI,
-          functionName: 'getOwners',
-          result: owners,
-        })
-      }
-      if (decoded.functionName === 'getModulesPaginated') {
-        return encodeFunctionResult({
-          abi: SAFE_READ_ABI,
-          functionName: 'getModulesPaginated',
-          result: [modules, moduleNext],
-        })
-      }
-      if (decoded.functionName === 'masterCopy') {
-        return encodeFunctionResult({
-          abi: SAFE_READ_ABI,
-          functionName: 'masterCopy',
-          result: masterCopy,
-        })
-      }
-      if (decoded.functionName === 'VERSION') {
-        return encodeFunctionResult({
-          abi: SAFE_READ_ABI,
-          functionName: 'VERSION',
-          result: version,
-        })
-      }
-      throw new Error('Unexpected Safe read')
-    }),
-  } as unknown as PublicClient
-}
-
-function safeIdentity(
-  overrides: Partial<Extract<AuthorityIdentity, { kind: 'safe' }>> = {},
-): Extract<AuthorityIdentity, { kind: 'safe' }> {
-  return {
-    kind: 'safe',
-    owners: [ALICE, BOB],
-    threshold: 2,
-    ownersAreEoas: true,
-    hasModules: false,
-    modules: [],
-    proxyCodeHash: keccak256(SAFE_PROXY_RUNTIME),
-    singleton: SINGLETON,
-    singletonCodeHash: keccak256(SINGLETON_CODE),
-    version: '1.3.0',
-    guard: zeroAddress,
-    fallbackHandler: FALLBACK,
-    fallbackHandlerCodeHash: keccak256(FALLBACK_CODE),
-    ...overrides,
-  }
-}
-
-describe('cross-chain authority identity', () => {
-  it('reads Safe approvals through a gas- and returndata-bounded raw call', async () => {
-    const hash = `0x${'ab'.repeat(32)}` as Hex
-    const request = vi.fn(async () =>
-      encodeFunctionResult({
-        abi: SAFE_READ_ABI,
-        functionName: 'approvedHashes',
-        result: 1n,
-      }),
-    )
-    const client = { request } as unknown as PublicClient
-
-    await expect(
-      readBoundedSafeApprovedHash(client, AUTHORITY, ALICE, hash),
-    ).resolves.toBe(1n)
-    expect(request).toHaveBeenCalledWith({
-      method: 'eth_call',
-      params: [
-        expect.objectContaining({
-          to: AUTHORITY,
-          gas: `0x${SAFE_SCALAR_READ_GAS.toString(16)}`,
-        }),
-        'latest',
-      ],
-    })
-  })
-
-  it('bounds Safe-owner identity reads before nested bytecode fan-out', async () => {
-    const owners = Array.from({ length: MAX_SAFE_OWNERS + 1 }, (_, index) =>
-      getAddress(`0x${(index + 10).toString(16).padStart(40, '0')}`),
-    )
-    const atLimit = safeClient({
-      owners: owners.slice(0, MAX_SAFE_OWNERS),
-      threshold: 1n,
-    })
-    const atLimitIdentity = await readAuthorityIdentity(atLimit, AUTHORITY)
-    expect(atLimitIdentity).toMatchObject({ kind: 'safe' })
-    expect(
-      atLimitIdentity?.kind === 'safe' ? atLimitIdentity.owners : [],
-    ).toHaveLength(MAX_SAFE_OWNERS)
-    expect(atLimit.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        method: 'eth_call',
-        params: [
-          expect.objectContaining({
-            gas: `0x${SAFE_OWNERS_READ_GAS.toString(16)}`,
-            to: AUTHORITY,
-          }),
-          'latest',
-        ],
-      }),
-    )
-
-    const overLimit = safeClient({ owners, threshold: 1n })
-    await expect(readAuthorityIdentity(overLimit, AUTHORITY)).resolves.toEqual({
-      kind: 'contract',
-    })
-    // Only the authority proxy itself is inspected. The oversized owner list
-    // is rejected before singleton/fallback/owner bytecode fan-out begins.
-    expect(overLimit.getBytecode).toHaveBeenCalledTimes(2)
-  })
-
-  it('replays only a recognized zero-side-effect initializer matching current policy', () => {
-    const identity = safeIdentity()
-    expect(isDeployableSafeAuthority(identity)).toBe(true)
-    expect(safeCreationMatchesAuthorityIdentity(safeCreation(), identity)).toBe(
-      true,
-    )
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        safeCreation({ owners: [ALICE], threshold: 1n }),
-        identity,
-      ),
-    ).toBe(false)
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        safeCreation({ to: AUTHORITY, data: '0x1234' }),
-        identity,
-      ),
-    ).toBe(false)
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        safeCreation({ factory: AUTHORITY }),
-        identity,
-      ),
-    ).toBe(false)
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        safeCreation(),
-        safeIdentity({ hasModules: true }),
-      ),
-    ).toBe(false)
-  })
-
-  it('matches only EOAs or plain canonical Safes with identical policy', () => {
-    const eoa: AuthorityIdentity = { kind: 'eoa' }
-    const delegatedEoa: AuthorityIdentity = {
-      kind: 'delegated-eoa',
-      delegation: DELEGATION,
-    }
-    const safe = safeIdentity()
-    expect(authorityIdentitiesMatch(eoa, eoa)).toBe(true)
-    expect(authorityIdentitiesMatch(eoa, delegatedEoa)).toBe(true)
-    expect(authorityIdentitiesMatch(delegatedEoa, eoa)).toBe(true)
-    expect(authorityIdentitiesMatch(delegatedEoa, delegatedEoa)).toBe(true)
-    expect(
-      authorityIdentitiesMatch(safe, safeIdentity({ owners: [BOB, ALICE] })),
-    ).toBe(true)
-    expect(authorityIdentitiesMatch(safe, safeIdentity({ threshold: 1 }))).toBe(
-      false,
-    )
-    expect(
-      authorityIdentitiesMatch(safe, safeIdentity({ hasModules: true })),
-    ).toBe(false)
-    expect(
-      authorityIdentitiesMatch(safe, safeIdentity({ ownersAreEoas: false })),
-    ).toBe(false)
-    expect(
-      authorityIdentitiesMatch(safe, safeIdentity({ guard: ALICE })),
-    ).toBe(false)
-    expect(authorityIdentitiesMatch(safe, eoa)).toBe(false)
-    expect(authorityIdentitiesMatch(safe, delegatedEoa)).toBe(false)
-    expect(authorityIdentitiesMatch({ kind: 'contract' }, eoa)).toBe(false)
-  })
-
-  it('classifies only the exact EIP-7702 delegation runtime as an EOA', async () => {
-    const exactClient = {
-      getBytecode: vi.fn().mockResolvedValue(EIP_7702_CODE),
-    } as unknown as PublicClient
-    await expect(
-      readAuthorityIdentity(exactClient, AUTHORITY),
-    ).resolves.toEqual({
-      kind: 'delegated-eoa',
-      delegation: DELEGATION,
-    })
-
-    for (const code of [
-      '0xef0100',
-      `${EIP_7702_CODE}00`,
-      `0xef0101${EIP_7702_CODE.slice(8)}`,
-      `0x00${EIP_7702_CODE.slice(2)}`,
-      `0xef0100${'11'.repeat(19)}`,
-      `0xef0100${'11'.repeat(21)}`,
-      `0xef0100${'zz'.repeat(20)}`,
-      '0x6000',
-    ]) {
-      const client = {
-        getBytecode: vi.fn().mockResolvedValue(code),
-        getStorageAt: vi.fn(),
-        request: vi.fn(),
-      } as unknown as PublicClient
-      await expect(readAuthorityIdentity(client, AUTHORITY)).resolves.toEqual({
-        kind: 'contract',
-      })
-      expect(client.getStorageAt).not.toHaveBeenCalled()
-      expect(client.request).not.toHaveBeenCalled()
-    }
-  })
-
-  it('accepts exact delegated Safe owners but rejects prefix lookalikes', async () => {
-    const exact = await readAuthorityIdentity(
-      safeClient({
-        ownerBytecodes: { [ALICE.toLowerCase()]: EIP_7702_CODE },
-      }),
-      AUTHORITY,
-    )
-    expect(exact).toMatchObject({ kind: 'safe', ownersAreEoas: true })
-
-    const lookalike = await readAuthorityIdentity(
-      safeClient({
-        ownerBytecodes: {
-          [ALICE.toLowerCase()]: `${EIP_7702_CODE}00` as Hex,
-        },
-      }),
-      AUTHORITY,
-    )
-    expect(lookalike).toMatchObject({ kind: 'safe', ownersAreEoas: false })
-  })
-
-  it('rejects delegated Safe fallback handlers instead of trusting the marker hash', async () => {
-    const source = safeClient({
-      fallbackHandlerCode: EIP_7702_CODE,
-      ownerBytecodes: { [DELEGATION.toLowerCase()]: '0x6000' },
-    })
-    const destination = safeClient({
-      fallbackHandlerCode: EIP_7702_CODE,
-      ownerBytecodes: { [DELEGATION.toLowerCase()]: '0x6001' },
-    })
-
-    await expect(
-      readMatchingAuthorityIdentities({
-        sourceClient: source,
-        destinationClient: destination,
-        authority: AUTHORITY,
-      }),
-    ).resolves.toEqual({
-      source: { kind: 'contract' },
-      destination: { kind: 'contract' },
-      matches: false,
-    })
-
-    for (const client of [source, destination]) {
-      expect(client.getBytecode).not.toHaveBeenCalledWith({
-        address: DELEGATION,
-      })
-    }
-  })
-
-  it('keeps a prefix-plus-extra fallback on the ordinary code-hash path', async () => {
-    const sourceCode = `${EIP_7702_CODE}00` as Hex
-    const destinationCode = `${EIP_7702_CODE}01` as Hex
-    const [source, destination] = await Promise.all([
-      readAuthorityIdentity(
-        safeClient({ fallbackHandlerCode: sourceCode }),
-        AUTHORITY,
-      ),
-      readAuthorityIdentity(
-        safeClient({ fallbackHandlerCode: destinationCode }),
-        AUTHORITY,
-      ),
-    ])
-
-    expect(source).toMatchObject({
-      kind: 'safe',
-      fallbackHandlerCodeHash: keccak256(sourceCode),
-    })
-    expect(destination).toMatchObject({
-      kind: 'safe',
-      fallbackHandlerCodeHash: keccak256(destinationCode),
-    })
-    expect(source && destination && authorityIdentitiesMatch(source, destination)).toBe(
-      false,
-    )
-  })
-
-  it('reads the canonical proxy, implementation, guard, fallback, and owner posture', async () => {
-    const client = safeClient()
-    await expect(readAuthorityIdentity(client, AUTHORITY)).resolves.toEqual(safeIdentity())
-    const requestCalls = (
-      client.request as unknown as {
-        mock: { calls: Array<[{ params?: readonly unknown[] }]> }
-      }
-    ).mock.calls
-    const delegatedReads = requestCalls.map(call =>
-      decodeFunctionData({
-        abi: SAFE_READ_ABI,
-        data: (call[0].params?.[0] as { data: Hex }).data,
-      }).functionName,
-    )
-    expect(delegatedReads[0]).toBe('masterCopy')
-  })
-
-  it('does not recognize a contract which only imitates the Safe owner API', async () => {
-    await expect(
-      readAuthorityIdentity(safeClient({ proxyCode: '0x1234' }), AUTHORITY),
-    ).resolves.toEqual({ kind: 'contract' })
-    const untrustedSingleton = safeClient({
-      singleton: '0x4444444444444444444444444444444444444444',
-    })
-    const fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    await expect(
-      readAuthorityIdentity(untrustedSingleton, AUTHORITY),
-    ).resolves.toEqual({ kind: 'contract' })
-    expect(untrustedSingleton.request).not.toHaveBeenCalled()
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('treats every failed authority, storage, and nested-code read as unknown', async () => {
-    await expect(
-      readAuthorityIdentity(
-        {
-          getBytecode: vi.fn().mockRejectedValue(new Error('RPC unavailable')),
-        } as unknown as PublicClient,
-        AUTHORITY,
-      ),
-    ).resolves.toBeNull()
-    await expect(
-      readAuthorityIdentity(safeClient({ rejectRead: true }), AUTHORITY),
-    ).resolves.toBeNull()
-    await expect(
-      readAuthorityIdentity(
-        safeClient({ rejectBytecodeFor: SINGLETON }),
-        AUTHORITY,
-      ),
-    ).resolves.toBeNull()
-  })
-
-  it('fails parity for owner rotation, modules, guards, and contract owners', async () => {
-    for (const destinationClient of [
-      safeClient({ owners: [ALICE], threshold: 1n }),
-      safeClient({ modules: [AUTHORITY] }),
-      safeClient({ guard: ALICE }),
-      safeClient({ contractOwners: [ALICE] }),
-    ]) {
-      await expect(
-        readMatchingAuthorityIdentities({
-          sourceClient: safeClient(),
-          destinationClient,
-          authority: AUTHORITY,
-        }),
-      ).resolves.toMatchObject({ matches: false })
-    }
-  })
-
-  it('fails parity for implementation, version, proxy, or fallback divergence', async () => {
-    for (const destinationClient of [
-      safeClient({ singletonCode: '0x6003' }),
-      safeClient({ version: '1.4.1' }),
-      safeClient({
-        singleton: OTHER_SINGLETON,
-        singletonCode: SINGLETON_CODE,
-      }),
-      safeClient({ fallbackHandler: zeroAddress }),
-      safeClient({ fallbackHandlerCode: '0x6004' }),
-    ]) {
-      await expect(
-        readMatchingAuthorityIdentities({
-          sourceClient: safeClient(),
-          destinationClient,
-          authority: AUTHORITY,
-        }),
-      ).resolves.toMatchObject({ matches: false })
-    }
-  })
-
-  it('returns unknown instead of a mismatch when either chain cannot be read', async () => {
-    await expect(
-      readMatchingAuthorityIdentities({
-        sourceClient: safeClient(),
-        destinationClient: safeClient({ rejectRead: true }),
-        authority: AUTHORITY,
-      }),
-    ).resolves.toBeNull()
-  })
-
-  it('accepts the same plain EOA when both chains positively report no code', async () => {
-    const eoaClient = {
-      getBytecode: vi.fn().mockResolvedValue(undefined),
-    } as unknown as PublicClient
-    await expect(
-      readMatchingAuthorityIdentities({
-        sourceClient: eoaClient,
-        destinationClient: eoaClient,
-        authority: getAddress(AUTHORITY),
-      }),
-    ).resolves.toEqual({
-      source: { kind: 'eoa' },
-      destination: { kind: 'eoa' },
-      matches: true,
-    })
-  })
-
-  it('matches delegated and plain EOAs but never a Safe to an occupied marker', async () => {
-    const emptyClient = {
-      getBytecode: vi.fn().mockResolvedValue('0x'),
-    } as unknown as PublicClient
-    const delegatedClient = {
-      getBytecode: vi.fn().mockResolvedValue(EIP_7702_CODE),
-    } as unknown as PublicClient
-
+describe('authority matching across chains', () => {
+  it('matches the same EOA, plain or delegated, on both chains', async () => {
     for (const [sourceClient, destinationClient] of [
-      [emptyClient, delegatedClient],
-      [delegatedClient, emptyClient],
-      [delegatedClient, delegatedClient],
-    ] as const) {
+      [emptyChain(), emptyChain()],
+      [emptyChain('0x'), emptyChain(EIP_7702_CODE)],
+      [emptyChain(EIP_7702_CODE), emptyChain()],
+    ]) {
       await expect(
         readMatchingAuthorityIdentities({
+          sourceChainId: 8453,
           sourceClient,
           destinationClient,
           authority: AUTHORITY,
         }),
       ).resolves.toMatchObject({ matches: true })
     }
+  })
 
+  it('never matches a Safe to a delegated EOA at its address', async () => {
     await expect(
       readMatchingAuthorityIdentities({
-        sourceClient: safeClient(),
-        destinationClient: delegatedClient,
+        sourceChainId: 8453,
+        sourceClient: safe(),
+        destinationClient: emptyChain(EIP_7702_CODE),
         authority: AUTHORITY,
       }),
     ).resolves.toMatchObject({
@@ -639,132 +83,232 @@ describe('cross-chain authority identity', () => {
       matches: false,
     })
   })
+
+  it('does not match Safes whose live policies differ', async () => {
+    for (const destinationClient of [
+      safe({ owners: [ALICE], threshold: 1n }),
+      safe({ modules: [BOB] }),
+      safe({ guard: ALICE }),
+      safe({ codes: { [ALICE]: '0x6002' } }),
+      safe({ fallbackHandlerCode: '0x6004' }),
+    ]) {
+      await expect(
+        readMatchingAuthorityIdentities({
+          sourceChainId: 8453,
+          sourceClient: safe(),
+          destinationClient,
+          authority: AUTHORITY,
+        }),
+      ).resolves.toMatchObject({ matches: false })
+    }
+  })
+
+  it('returns unknown rather than a mismatch when either chain cannot be read', async () => {
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: safe(),
+        destinationClient: safe({ unavailable: true }),
+        authority: AUTHORITY,
+      }),
+    ).resolves.toBeNull()
+  })
 })
 
-describe('canonical SafeToL2Setup deployments', () => {
-  const L1_SINGLETON = SAFE_L1_L2_SINGLETON_PAIRS[0][0]
-  const L2_SINGLETON = SAFE_L1_L2_SINGLETON_PAIRS[0][1]
-  const L1_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as Address
-  const L1_CODE = '0x60106000' as Hex
-  const L2_CODE = '0x60116000' as Hex
+const answer = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
-  const safeToL2SetupAbi = [
-    {
-      type: 'function',
-      name: 'setupToL2',
-      stateMutability: 'nonpayable',
-      inputs: [{ name: 'l2Singleton', type: 'address' }],
-      outputs: [],
-    },
-  ] as const
+describe('the creation proof cross-chain trust needs', () => {
+  it("matches a Safe once its source chain's Safe service proves how it was made", async () => {
+    const fetch = vi.fn(async () => answer(creationRecord()))
 
-  function setupToL2(l2Singleton: Address = L2_SINGLETON): Hex {
-    return encodeFunctionData({
-      abi: safeToL2SetupAbi,
-      functionName: 'setupToL2',
-      args: [l2Singleton],
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: provenSafeChain(),
+        destinationClient: provenSafeChain(),
+        authority: PROVEN_SAFE,
+        service: { fetch },
+      }),
+    ).resolves.toMatchObject({ matches: true, creationUnproven: false })
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(creationUrl('base'), expect.anything())
+  })
+
+  it.each([
+    ['its chain has no Safe service', 11155420, () => answer(creationRecord())],
+    ['the service fails', 8453, () => answer({}, 500)],
+    ['the service has no record', 8453, () => answer({}, 404)],
+    ['the record makes another address', 8453, () => answer(creationRecord(8n))],
+  ] as const)('never matches a Safe whose creation is unproven: %s', async (_, sourceChainId, reply) => {
+    const fetch = vi.fn(async () => reply())
+
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceChainId,
+        sourceClient: provenSafeChain(),
+        destinationClient: provenSafeChain(),
+        authority: PROVEN_SAFE,
+        service: { fetch },
+      }),
+    ).resolves.toMatchObject({
+      source: { kind: 'safe' },
+      destination: { kind: 'safe' },
+      matches: false,
+      creationUnproven: true,
     })
-  }
+    if (sourceChainId === 11155420) expect(fetch).not.toHaveBeenCalled()
+  })
 
-  function l2Creation({
-    to = SAFE_TO_L2_SETUP_ADDRESS,
-    data = setupToL2(),
-    paymentReceiver = SAFE_CANONICAL_PAYMENT_RECEIVER,
-    payment = 0n,
-  }: {
-    to?: Address
-    data?: Hex
-    paymentReceiver?: Address
-    payment?: bigint
-  } = {}) {
-    return {
-      factory: L1_FACTORY,
-      singleton: L1_SINGLETON,
-      saltNonce: 0n,
-      initializer: encodeFunctionData({
-        abi: safeSetupAbi,
-        functionName: 'setup',
-        args: [
-          [ALICE, BOB],
-          2n,
-          to,
-          data,
-          FALLBACK,
-          zeroAddress,
-          payment,
-          paymentReceiver,
-        ],
+  it.each([
+    ['the canonical singleton', SAFE_130_SINGLETON],
+    ['its own EIP-155 singleton', SAFE_130_EIP155_SINGLETON],
+  ])("takes a record from Safe 1.3.0's EIP-155 factory on %s as proof", async (_, singleton) => {
+    const safe130 = eip155Safe(singleton)
+    const fetch = vi.fn(async () => answer(safe130.record))
+
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: safe130.chain(),
+        destinationClient: safe130.chain(),
+        authority: safe130.address,
+        service: { fetch },
       }),
-    }
-  }
-
-  // The source Safe lives on an L2, where SafeToL2Setup already repointed slot
-  // zero at SafeL2 while the creation record still names the Ethereum singleton.
-  const l2Safe = safeIdentity({
-    singleton: L2_SINGLETON,
-    singletonCodeHash: keccak256(L2_CODE),
-    version: '1.4.1',
-  })
-  const ethereumSafe = safeIdentity({
-    singleton: L1_SINGLETON,
-    singletonCodeHash: keccak256(L1_CODE),
-    version: '1.4.1',
+    ).resolves.toMatchObject({
+      source: { kind: 'safe', singleton },
+      matches: true,
+      creationUnproven: false,
+    })
+    expect(fetch).toHaveBeenCalledOnce()
   })
 
-  it('accepts the initializer the Safe interface deploys on an L2', () => {
-    expect(safeCreationMatchesAuthorityIdentity(l2Creation(), l2Safe)).toBe(true)
+  it('reads a proven creation record once a day, and a missing one again after a minute', async () => {
+    vi.useFakeTimers()
+    const read = () =>
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: provenSafeChain(),
+        destinationClient: provenSafeChain(),
+        authority: PROVEN_SAFE,
+        service: { fetch: proven },
+      })
+    const proven = vi.fn(async () => answer(creationRecord()))
+
+    // Read together, as a queue's rows are: one request answers them all.
+    await Promise.all([read(), read(), read()])
+    // The record proves the Safe's address, which never changes.
+    await vi.advanceTimersByTimeAsync(23 * 60 * 60_000)
+    await expect(read()).resolves.toMatchObject({ matches: true })
+    expect(proven).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000)
+    await read()
+    expect(proven).toHaveBeenCalledTimes(2)
+
+    const eip155 = eip155Safe(SAFE_130_SINGLETON)
+    const missing = vi.fn(async () => answer({}, 404))
+    const readMissing = () =>
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: eip155.chain(),
+        destinationClient: eip155.chain(),
+        authority: eip155.address,
+        service: { fetch: missing },
+      })
+    await readMissing()
+    await expect(readMissing()).resolves.toMatchObject({ creationUnproven: true })
+    expect(missing).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(61_000)
+    await readMissing()
+    expect(missing).toHaveBeenCalledTimes(2)
   })
 
-  it('matches a Safe deployed the canonical way on both chains', () => {
-    expect(authorityIdentitiesMatch(l2Safe, ethereumSafe)).toBe(true)
-    expect(safeSingletonsAreEquivalent(L1_SINGLETON, L2_SINGLETON)).toBe(true)
-    expect(safeSingletonsAreEquivalent(L1_SINGLETON, SINGLETON)).toBe(false)
-  })
+  it('asks no Safe service about an EOA', async () => {
+    const fetch = vi.fn()
 
-  it('still requires identical runtime when the singleton address is shared', () => {
-    expect(
-      authorityIdentitiesMatch(ethereumSafe, {
-        ...ethereumSafe,
-        singletonCodeHash: keccak256(L2_CODE),
+    await expect(
+      readMatchingAuthorityIdentities({
+        sourceChainId: 8453,
+        sourceClient: emptyChain(),
+        destinationClient: emptyChain(EIP_7702_CODE),
+        authority: AUTHORITY,
+        service: { fetch },
       }),
-    ).toBe(false)
-  })
-
-  it('does not let a paired singleton excuse divergent control', () => {
-    expect(
-      authorityIdentitiesMatch(l2Safe, { ...ethereumSafe, threshold: 1 }),
-    ).toBe(false)
-  })
-
-  it('rejects a foreign delegatecall target or tampered calldata', () => {
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        l2Creation({ to: ALICE, data: setupToL2() }),
-        l2Safe,
-      ),
-    ).toBe(false)
-    for (const data of [setupToL2(ALICE), '0x' as Hex, `${setupToL2()}00` as Hex]) {
-      expect(
-        safeCreationMatchesAuthorityIdentity(l2Creation({ data }), l2Safe),
-      ).toBe(false)
-    }
-  })
-
-  it('still rejects a setup payment', () => {
-    expect(
-      safeCreationMatchesAuthorityIdentity(l2Creation({ payment: 1n }), l2Safe),
-    ).toBe(false)
-    expect(
-      safeCreationMatchesAuthorityIdentity(
-        l2Creation({ paymentReceiver: ALICE }),
-        l2Safe,
-      ),
-    ).toBe(false)
-  })
-
-  it('rejects a singleton outside the creation release', () => {
-    expect(safeCreationMatchesAuthorityIdentity(l2Creation(), safeIdentity())).toBe(
-      false,
-    )
+    ).resolves.toMatchObject({ matches: true, creationUnproven: false })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
+
+describe('cross-chain handle authority', () => {
+  const handleAuthority = (fetch: typeof globalThis.fetch, sourceClient = provenSafeChain()) =>
+    readCrossChainHandleAuthority({
+      sourceChainId: 8453,
+      sourceClient,
+      mainnetClient: provenSafeChain(),
+      authority: PROVEN_SAFE,
+      service: { fetch },
+    })
+
+  it('trusts a Safe on Ethereum with the proof of how it was made', async () => {
+    await expect(handleAuthority(vi.fn(async () => answer(creationRecord())))).resolves.toMatchObject({
+      status: 'valid-safe',
+      allowed: true,
+    })
+  })
+
+  it('does not trust it without that proof', async () => {
+    await expect(handleAuthority(vi.fn(async () => answer({}, 404)))).resolves.toMatchObject({
+      status: 'unproven-creation',
+      allowed: false,
+    })
+  })
+
+  it("trusts a Safe from Safe 1.3.0's EIP-155 deployment on Ethereum once its creation is proven", async () => {
+    const safe130 = eip155Safe(SAFE_130_EIP155_SINGLETON)
+
+    await expect(
+      readCrossChainHandleAuthority({
+        sourceChainId: 8453,
+        sourceClient: safe130.chain(),
+        mainnetClient: safe130.chain(),
+        authority: safe130.address,
+        service: { fetch: vi.fn(async () => answer(safe130.record)) },
+      }),
+    ).resolves.toMatchObject({ status: 'valid-safe', allowed: true })
+  })
+
+  it("says it can't verify the Safe on the chain that would trust it", () => {
+    expect(unprovenSafeLine(1)).toBe("Can't verify this Safe is the same on Ethereum.")
+    expect(unprovenSafeLine(8453)).toBe("Can't verify this Safe is the same on Base.")
+  })
+})
+
+/**
+ * A Safe 1.3.0 that the EIP-155 factory made on `singleton`, owned by OWNERS
+ * 2 of 2, with the creation record that proves its address.
+ */
+function eip155Safe(singleton: Address) {
+  const factory = '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC' as Address
+  const initializer = encodeFunctionData({
+    abi: SAFE_SETUP_ABI,
+    functionName: 'setup',
+    args: [OWNERS, 2n, zeroAddress, '0x', FALLBACK, zeroAddress, 0n, zeroAddress],
+  })
+  const address = getContractAddress({
+    opcode: 'CREATE2',
+    from: factory,
+    salt: keccak256(encodePacked(['bytes32', 'uint256'], [keccak256(initializer), 7n])),
+    bytecode: concatHex([SAFE_130_PROXY_CREATION_CODE, toHex(BigInt(singleton), { size: 32 })]),
+  })
+  return {
+    address,
+    chain: () => safeChain({ authority: address, owners: OWNERS, singleton }),
+    record: { factoryAddress: factory, masterCopy: singleton, setupData: initializer, saltNonce: '7' },
+  }
+}
+
+// `GnosisSafeProxyFactory.proxyCreationCode()` of the 1.3.0 factories.
+const SAFE_130_PROXY_CREATION_CODE =
+  '0x608060405234801561001057600080fd5b506040516101e63803806101e68339818101604052602081101561003357600080fd5b8101908080519060200190929190505050600073ffffffffffffffffffffffffffffffffffffffff168173ffffffffffffffffffffffffffffffffffffffff1614156100ca576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004018080602001828103825260228152602001806101c46022913960400191505060405180910390fd5b806000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff1602179055505060ab806101196000396000f3fe608060405273ffffffffffffffffffffffffffffffffffffffff600054167fa619486e0000000000000000000000000000000000000000000000000000000060003514156050578060005260206000f35b3660008037600080366000845af43d6000803e60008114156070573d6000fd5b3d6000f3fea2646970667358221220d1429297349653a4918076d650332de1a1068c5f3e07c5c82360c277770b955264736f6c63430007060033496e76616c69642073696e676c65746f6e20616464726573732070726f7669646564' as Hex
+
+// The fake chains are plain objects; only an explicit `service.fetch` answers.
+vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('No network in this test'))))

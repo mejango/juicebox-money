@@ -1,18 +1,18 @@
 import { jbBuybackHookRegistryAbi } from '@bananapus/nana-sdk-core'
-import { decodeFunctionData, encodeFunctionData, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  encodeMultiSend,
+  MULTI_SEND_CALL_ONLY,
+  multiSendCallsOf,
+} from '@bananapus/nana-sdk-core/safe'
 import {
   buildStep,
   checkBatchOrder,
   composeBatch,
-  decodeMultiSend,
   dependsOnPrior,
-  encodeMultiSend,
   mirrorBatch,
   moveStep,
-  MULTI_SEND_CALL_ONLY,
-  multiSendAbi,
-  packMultiSend,
   powerStepValues,
   readSafeBatch,
   removeStep,
@@ -227,59 +227,15 @@ describe('Safe batch ordering', () => {
   })
 })
 
-describe('MultiSend encoding', () => {
-  it('packs op byte, address, value, length and data, and round-trips', () => {
-    const calls = composeBatch([hookStep(), poolStep(), terminalStep()]).calls
-    const packed = packMultiSend(calls)
-    const encoded = encodeMultiSend(calls)
-    expect(encoded.slice(0, 10)).toBe('0x8d80ff0a')
-    expect(MULTI_SEND_CALL_ONLY).toBe('0x40A2aCCbd92BCA938b02010E17A5b8929b49130D')
-    expect(decodeFunctionData({ abi: multiSendAbi, data: encoded })).toEqual({
-      functionName: 'multiSend',
-      args: [packed],
-    })
+// The SDK's own tests prove the MultiSend codec; this proves the calls jbm hands it.
+describe('Safe batch calls', () => {
+  it("composes the steps' calls in order, as the SDK reads a MultiSendCallOnly batch back", () => {
+    const steps = [hookStep(), poolStep(), terminalStep()]
+    const { calls } = composeBatch(steps)
+    expect(calls).toEqual(steps.map(step => ({ to: step.to, data: step.data, value: step.value })))
     expect(
-      encodeFunctionData({ abi: multiSendAbi, functionName: 'multiSend', args: [packed] }),
-    ).toBe(encoded)
-
-    // Layout of the first packed transaction.
-    const body = packed.slice(2)
-    const hookLength = (SET_HOOK_DATA.length - 2) / 2
-    expect(body.slice(0, 2)).toBe('00')
-    expect(body.slice(2, 42)).toBe(REGISTRY.slice(2).toLowerCase())
-    expect(body.slice(42, 106)).toBe('0'.repeat(64))
-    expect(body.slice(106, 170)).toBe(hookLength.toString(16).padStart(64, '0'))
-    expect(body.slice(170, 170 + hookLength * 2)).toBe(SET_HOOK_DATA.slice(2))
-    const first = 170 + hookLength * 2
-    expect(body.slice(first, first + 2)).toBe('00')
-    expect(body.slice(first + 2, first + 42)).toBe(REGISTRY.slice(2).toLowerCase())
-    expect(body.length).toBe(
-      3 * 170 + hookLength * 2 + (SET_POOL_DATA.length - 2) + (SET_TERMINAL_DATA.length - 2),
-    )
-
-    expect(decodeMultiSend(encoded)).toEqual(calls)
-  })
-
-  it('refuses delegatecall entries, truncated bodies and foreign selectors', () => {
-    const calls = composeBatch([hookStep()]).calls
-    const encoded = encodeMultiSend(calls)
-    const packed = packMultiSend(calls)
-    const delegate = encodeFunctionData({
-      abi: multiSendAbi,
-      functionName: 'multiSend',
-      args: [`0x01${packed.slice(4)}` as Hex],
-    })
-    expect(decodeMultiSend(delegate)).toBeNull()
-    const truncated = encodeFunctionData({
-      abi: multiSendAbi,
-      functionName: 'multiSend',
-      args: [packed.slice(0, -8) as Hex],
-    })
-    expect(decodeMultiSend(truncated)).toBeNull()
-    expect(decodeMultiSend(SET_HOOK_DATA)).toBeNull()
-    expect(decodeMultiSend(null)).toBeNull()
-    expect(decodeMultiSend(encoded)).toHaveLength(1)
-    expect(() => encodeMultiSend([])).toThrow(/at least one/)
+      multiSendCallsOf({ to: MULTI_SEND_CALL_ONLY, operation: 1, data: encodeMultiSend(calls) }),
+    ).toEqual(calls)
   })
 })
 

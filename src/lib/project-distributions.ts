@@ -1,8 +1,8 @@
-import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbFundAccessLimitsAbi, jbMultiTerminalAbi, jbProjectsAbi, jbSplitsAbi, jbTerminalStoreAbi, jbTokensAbi, type JBChainId } from '@bananapus/nana-sdk-core'
-import { JBPermissionIdsV6, RESERVED_TOKEN_SPLIT_GROUP_ID, getAccountingContexts, getCurrentRuleset, getTokenAddress, hasPermissions, payoutSplitGroupId, type JBAccountingContext } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionResult, encodeFunctionData, isAddressEqual, zeroAddress, type Address, type TransactionReceipt } from 'viem'
+import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbFundAccessLimitsAbi, jbMultiTerminalAbi, jbProjectsAbi, jbSplitsAbi, jbTerminalStoreAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBPermissionIdsV6, RESERVED_TOKEN_SPLIT_GROUP_ID, getAccountingContexts, getCurrentRuleset, getTokenAddress, hasPermissions, payoutSplitGroupId, verifyPayoutReceipt, verifyReservedDistributionReceipt, type JBAccountingContext } from '@bananapus/nana-sdk-core/v6'
+import { decodeFunctionResult, encodeFunctionData, isAddressEqual, zeroAddress, type Address, type TransactionReceipt } from 'viem'
 import { clientFor, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { isKnownController } from '@/lib/manage'
@@ -147,44 +147,40 @@ export function distributionCall(snapshot: Distribution): AuthorityCall {
     contractName: payout ? 'JBMultiTerminal' : 'JBController' }
 }
 
-/** A successful EVM receipt can still contain individual payout/hook failures. */
+/**
+ * A successful receipt can still hide a recipient or hook that failed or took
+ * less than its share: the SDK proves every reviewed split received exactly
+ * its share, in the reviewed ruleset, from the reviewed sender.
+ */
 export function verifyDistributionCompletion(snapshot: Distribution, receipt: TransactionReceipt): void {
-  const target = snapshot.kind === 'payouts' ? snapshot.terminal : snapshot.controller
-  let confirmed = false, burned = 0n
-  for (const log of receipt.logs) {
-    if (snapshot.kind === 'reserved' && isAddressEqual(log.address, jbContractAddress['6'][JBCoreContracts.JBTokens][snapshot.chainId])) {
-      try {
-        const event = decodeEventLog({ abi: jbTokensAbi, data: log.data, topics: log.topics })
-        if (event.eventName === 'Burn' && event.args.projectId === BigInt(snapshot.projectId) && isAddressEqual(event.args.holder, snapshot.controller)) burned += event.args.count
-      } catch { /* Other token events do not describe this distribution. */ }
-    }
-    if (!isAddressEqual(log.address, target)) continue
-    let event: { eventName: string; args: unknown }
-    try { event = decodeEventLog({ abi: snapshot.kind === 'payouts' ? jbMultiTerminalAbi : jbControllerAbi, data: log.data, topics: log.topics }) }
-    catch { continue }
-    const args = event.args as { projectId?: bigint; rulesetId?: bigint; rulesetCycleNumber?: bigint; caller?: Address; amount?: bigint; amountPaidOut?: bigint; netAmount?: bigint; tokenCount?: bigint; split?: { hook: Address } }
-    if (args.projectId !== BigInt(snapshot.projectId)) continue
-    if (['PayoutReverted', 'PayoutTransferReverted', 'ReservedDistributionReverted', 'SplitHookReverted'].includes(event.eventName)) {
-      throw new Error(`${chainName(snapshot.chainId)} confirmed the transaction, but a recipient or hook failed. Keep this saved result; distributing again could pay successful recipients twice.`)
-    }
-    if (snapshot.kind === 'payouts' && event.eventName === 'SendPayoutToSplit' && typeof args.amount === 'bigint' && typeof args.netAmount === 'bigint') {
-      const feeless = args.split && snapshot.hookFeeless[args.split.hook.toLowerCase()] === true
-      const minimumNet = args.amount - (feeless ? 0n : args.amount / 40n)
-      if (args.netAmount < minimumNet) throw new Error(`${chainName(snapshot.chainId)} confirmed a partial payout to a recipient. Keep this saved result and inspect the transaction before another distribution.`)
-    }
-    const successName = snapshot.kind === 'payouts' ? 'SendPayouts' : 'SendReservedTokensToSplits'
-    if (event.eventName !== successName) continue
-    if (args.rulesetId !== BigInt(snapshot.current.ruleset.id) || args.rulesetCycleNumber !== BigInt(snapshot.current.ruleset.cycleNumber) || !args.caller || !isAddressEqual(args.caller, snapshot.authority)) {
-      throw new Error(`${chainName(snapshot.chainId)} executed with a different ruleset or caller. Keep the original transaction saved and inspect its recipients.`)
-    }
-    if (snapshot.kind === 'payouts' ? typeof args.amountPaidOut !== 'bigint' || args.amountPaidOut < snapshot.min : args.tokenCount !== snapshot.pending) {
-      throw new Error(`${chainName(snapshot.chainId)} did not emit the reviewed distribution amount. Keep the original transaction saved.`)
-    }
-    confirmed = true
+  const reviewed = {
+    projectId: snapshot.projectId,
+    rulesetId: snapshot.current.ruleset.id,
+    cycleNumber: snapshot.current.ruleset.cycleNumber,
+    owner: snapshot.owner,
+    caller: snapshot.authority,
   }
-  if (snapshot.kind === 'reserved') {
-    const intentionalBurn = snapshot.splits.filter(split => split.projectId === 0n && isAddressEqual(split.hook, zeroAddress) && isAddressEqual(split.beneficiary, '0x000000000000000000000000000000000000dEaD')).reduce((total, split) => total + snapshot.pending * BigInt(split.percent) / 1_000_000_000n, 0n)
-    if (burned > intentionalBurn) throw new Error(`${chainName(snapshot.chainId)} burned reserved tokens that a hook did not consume. Keep this saved transaction; do not distribute the same batch again.`)
+  try {
+    if (snapshot.kind === 'payouts') {
+      verifyPayoutReceipt(receipt, {
+        ...reviewed,
+        terminal: snapshot.terminal,
+        token: snapshot.context.token,
+        amount: snapshot.amount,
+        minimum: snapshot.min,
+        // A split's hook the terminal pays without its fee must receive its gross.
+        splits: snapshot.splits.map(split => ({ ...split, feeless: snapshot.hookFeeless[split.hook.toLowerCase()] === true })),
+      })
+    } else {
+      verifyReservedDistributionReceipt(receipt, {
+        ...reviewed,
+        controller: snapshot.controller,
+        tokens: jbContractAddress['6'][JBCoreContracts.JBTokens][snapshot.chainId],
+        tokenCount: snapshot.pending,
+        splits: snapshot.splits,
+      })
+    }
+  } catch (error) {
+    throw new Error(`${chainName(snapshot.chainId)}: ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (!confirmed) throw new Error(`${chainName(snapshot.chainId)} has no matching distribution event. Keep checking the saved transaction.`)
 }

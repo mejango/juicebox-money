@@ -1,7 +1,9 @@
 import {
+  encodeFunctionData,
   keccak256,
   stringToHex,
   zeroAddress,
+  type Abi,
   type Address,
   type Hex,
 } from 'viem'
@@ -16,7 +18,8 @@ const mocks = vi.hoisted(() => ({
     estimateGas: vi.fn(),
     getBlock: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
-    getBytecode: vi.fn(),
+    getCode: vi.fn(),
+    getTransaction: vi.fn(),
   },
   wallet: { writeContract: vi.fn(), signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -29,10 +32,7 @@ const mocks = vi.hoisted(() => ({
   readSafeApprovedHash: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
-  isEip7702DelegatedEoaRuntime: vi.fn(),
-  isDeployableSafeAuthority: vi.fn(),
-  safeCreationMatchesAuthorityIdentity: vi.fn(),
-  initializerUsesSafeToL2Setup: vi.fn(),
+  prepareDeployment: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
   safe: false,
   waitSafe: vi.fn(),
@@ -49,22 +49,16 @@ vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
   requireContractTransactionReview: mocks.requireContractReview,
 }))
-vi.mock('@/lib/safe-reads', () => ({
-  readBoundedSafeThreshold: mocks.readSafeThreshold,
-  readBoundedSafeOwners: mocks.readSafeOwners,
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
   readBoundedSafeApprovedHash: mocks.readSafeApprovedHash,
-}))
-vi.mock('@/lib/cross-chain-authority', () => ({
+  prepareSafeSameAddressDeployment: mocks.prepareDeployment,
   readAuthorityIdentity: mocks.readAuthorityIdentity,
+}))
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
-  isEip7702DelegatedEoaRuntime: mocks.isEip7702DelegatedEoaRuntime,
-  isDeployableSafeAuthority: mocks.isDeployableSafeAuthority,
-  safeCreationMatchesAuthorityIdentity: mocks.safeCreationMatchesAuthorityIdentity,
-  initializerUsesSafeToL2Setup: mocks.initializerUsesSafeToL2Setup,
-  SAFE_TO_L2_SETUP_ADDRESS: '0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54',
-  SAFE_TO_L2_SETUP_CODE_HASH:
-    '0x2f25df28caf984366ee584e13241707e85dcd5a6ea0c14267928dafc1fd6274b',
 }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
@@ -77,18 +71,23 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 
 import {
-  canonicalSafeTxHash,
   confirmSafeTx,
   executeSafeTx,
   deploySafeSameAddress,
-  findPendingSafeCall,
   getSafeNextNonce,
+  readSafeQueue,
   runSafeCalls,
   simulateSafeExecution,
-  type SafeQueuedTx,
   SAFE_EXECUTION_WRITE_GAS,
 } from '@/lib/safe'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
+import {
+  canonicalSafeTxHash,
+  SAFE_EXEC_ABI,
+  safeProposalFor,
+  safeTransactionHash,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -98,7 +97,6 @@ const TARGET = '0x4444444444444444444444444444444444444444' as Address
 const FACTORY = '0x5555555555555555555555555555555555555555' as Address
 const SINGLETON = '0x6666666666666666666666666666666666666666' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
-const EIP_7702_CODE = `0xef0100${ALICE.slice(2)}` as Hex
 const TRUE_RESULT = `0x${'0'.repeat(63)}1` as Hex
 const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
@@ -125,9 +123,20 @@ function safeIdentity(owners = [ALICE], threshold = 1) {
   }
 }
 
+const success = (hash: Hex) => ({
+  address: SAFE,
+  topics: [EXECUTION_SUCCESS_TOPIC, hash],
+  data: `0x${'00'.repeat(32)}` as Hex,
+})
+const failure = (hash: Hex) => ({
+  address: SAFE,
+  topics: [EXECUTION_FAILURE_TOPIC, hash],
+  data: `0x${'00'.repeat(32)}` as Hex,
+})
+
 function queued(
-  confirmations: SafeQueuedTx['confirmations'] = [{ owner: ALICE }],
-): SafeQueuedTx {
+  confirmations: SafeQueuedTransaction['confirmations'] = [{ owner: ALICE }],
+): SafeQueuedTransaction {
   return {
     to: TARGET,
     value: '5',
@@ -167,13 +176,6 @@ beforeEach(() => {
     destination: safeIdentity(),
     matches: true,
   })
-  mocks.isEip7702DelegatedEoaRuntime.mockImplementation(
-    code => typeof code === 'string' && /^0xef0100[0-9a-f]{40}$/iu.test(code),
-  )
-  mocks.isDeployableSafeAuthority.mockImplementation(
-    identity => identity?.kind === 'safe',
-  )
-  mocks.safeCreationMatchesAuthorityIdentity.mockReturnValue(true)
   mocks.simulateStateChangingTransaction.mockResolvedValue(TRUE_RESULT)
   mocks.client.readContract.mockImplementation(async input => {
     if (input.functionName === 'approvedHashes') return 0n
@@ -192,7 +194,7 @@ beforeEach(() => {
       return { status: 'success', transactionHash: hash, logs: [] }
     }
     const args = write.args as readonly unknown[]
-    const executed: SafeQueuedTx = {
+    const executed: SafeQueuedTransaction = {
       to: args[0] as Address,
       value: String(args[1]),
       data: args[2] as Hex,
@@ -219,15 +221,11 @@ beforeEach(() => {
       ],
     }
   })
-  mocks.client.getBytecode.mockImplementation(
-    async ({ address }: { address: Address }) =>
-      address === SAFE
-        ? mocks.wallet.writeContract.mock.calls.length
-          ? ('0x6000' as Hex)
-          : undefined
-        : address === ALICE || address === BOB
-          ? undefined
-          : ('0x6000' as Hex),
+  // The deployed Safe has code once the wallet has sent its deployment.
+  mocks.client.getCode.mockImplementation(async ({ address }: { address: Address }) =>
+    address === SAFE && mocks.wallet.writeContract.mock.calls.length
+      ? ('0x6000' as Hex)
+      : undefined,
   )
   mocks.wallet.writeContract.mockResolvedValue(HASH)
 })
@@ -276,324 +274,124 @@ describe('Safe execution boundary', () => {
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
 
-  it('proves the destination code and CREATE2 result before replaying a Safe', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${SAFE.slice(2)}` as Hex,
-    )
-    const reverifyAuthority = vi.fn().mockResolvedValue(undefined)
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        { sourceChainId: 10, reverifyAuthority },
-      ),
-    ).resolves.toBe(HASH)
-
-    expect(mocks.simulateStateChangingTransaction).toHaveBeenCalledWith(
-      mocks.client,
-      expect.objectContaining({
-        to: FACTORY,
-        gas: 3_000_000n,
-      }),
-    )
-    expect(reverifyAuthority).toHaveBeenCalled()
-    // The node could not measure, so the cap is both reviewed and sent.
-    expect(mocks.requireContractReview).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
-      expect.objectContaining({ label: 'Deploy Safe on this chain' }),
-    )
-    expect(mocks.wallet.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
-    )
-  })
-
-  it('does not write when Safe replay predicts another address', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${TARGET.slice(2)}` as Hex,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/would deploy.*not the expected project authority/i)
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects destination contract owners before irreversible Safe deployment', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === FACTORY || address === SINGLETON
-          ? ('0x6000' as Hex)
-          : undefined,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/owner is a contract on the destination chain/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('allows an exact delegated EOA owner through destination replay checks', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE
-          ? EIP_7702_CODE
-          : address === SAFE
-            ? undefined
-            : ('0x6000' as Hex),
-    )
-    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(
-      `0x${'0'.repeat(24)}${TARGET.slice(2)}` as Hex,
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/would deploy.*not the expected project authority/i)
-    expect(mocks.simulateStateChangingTransaction).toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects a 7702-prefixed contract owner before Safe deployment', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? safeIdentity() : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE
-          ? (`${EIP_7702_CODE}00` as Hex)
-          : address === SAFE
-            ? undefined
-            : ('0x6000' as Hex),
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/owner is a contract on the destination chain/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('treats a delegated EOA at the target address as occupied', async () => {
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1
-        ? safeIdentity()
-        : { kind: 'delegated-eoa', delegation: ALICE },
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/destination state is no longer eligible/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects a destination fallback handler with different runtime code', async () => {
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256('0x6000'),
+  describe('same-address Safe deployment', () => {
+    // The SDK proves the deployment itself (its tests cover each refusal);
+    // these prove this app sends only what it proved, and names each refusal.
+    const CANONICAL_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67' as Address
+    const CANONICAL_SINGLETON = '0x41675C099F32341bf84BFc5382aF534df5C7461a' as Address
+    const creation = {
+      factory: CANONICAL_FACTORY,
+      singleton: CANONICAL_SINGLETON,
+      initializer: '0x1234' as Hex,
+      saltNonce: 7n,
     }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? ('0x6001' as Hex)
-            : ('0x6000' as Hex),
-    )
-
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('rejects an exact delegated fallback even when its marker hash matches', async () => {
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256(EIP_7702_CODE),
+    const call = {
+      target: CANONICAL_FACTORY,
+      data: '0xabcd' as Hex,
+      abi: [],
+      functionName: 'createProxyWithNonce' as const,
+      args: [CANONICAL_SINGLETON, '0x1234' as Hex, 7n] as const,
     }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? EIP_7702_CODE
-            : ('0x6000' as Hex),
-    )
+    const deploy = (reverifyAuthority = vi.fn().mockResolvedValue(undefined)) =>
+      deploySafeSameAddress(1, creation, SAFE, { sourceChainId: 10, reverifyAuthority })
 
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
+    beforeEach(() => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: true, call, source: safeIdentity() })
+    })
+
+    it('reviews and sends exactly the factory call the SDK proved, proving it again first', async () => {
+      const reverifyAuthority = vi.fn().mockResolvedValue(undefined)
+
+      await expect(deploy(reverifyAuthority)).resolves.toBe(HASH)
+
+      expect(mocks.prepareDeployment).toHaveBeenCalledWith({
+        sourceClient: mocks.client,
+        destinationClient: mocks.client,
+        creation,
+        safe: SAFE,
+        from: ALICE,
+      })
+      // Once before the review, and again before the wallet sends.
+      expect(mocks.prepareDeployment.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(reverifyAuthority).toHaveBeenCalled()
+      // The node could not measure, so the cap is both reviewed and sent.
+      expect(mocks.requireContractReview).toHaveBeenCalledWith(
+        expect.objectContaining({ functionName: 'createProxyWithNonce', gas: 3_000_000n }),
+        expect.objectContaining({ label: 'Deploy Safe on this chain' }),
+      )
+      expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          address: CANONICAL_FACTORY,
+          functionName: 'createProxyWithNonce',
+          args: call.args,
+          gas: 3_000_000n,
+        }),
+      )
+      expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+        expect.objectContaining({ authority: SAFE }),
+      )
+    })
+
+    it.each([
+      ['address-occupied', /already has code on this chain/],
+      ['contract-owner', /owner is a contract on the destination chain/],
+      ['fallback-handler-mismatch', /fallback handler bytecode does not match/],
+      ['delegated-fallback-handler', /fallback handler bytecode does not match/],
+      ['factory-mismatch', /factory or singleton bytecode does not match/],
+      ['singleton-unavailable', /factory or singleton bytecode does not match/],
+      ['setup-library-mismatch', /SafeToL2Setup library is missing or altered/],
+      ['unexpected-address', /would not deploy/],
+      ['simulation-failed', /would not deploy/],
+      ['initializer-policy-mismatch', /no longer eligible for same-address deployment/],
+      ['not-a-safe', /no longer eligible for same-address deployment/],
+      ['rpc-error', /Could not verify this Safe onchain/],
+    ] as const)('names the SDK refusal %s and sends nothing', async (reason, message) => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: false, reason })
+
+      await expect(deploy()).rejects.toThrow(message)
+      expect(mocks.requireContractReview).not.toHaveBeenCalled()
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it("deploys a Safe that Safe 1.3.0's EIP-155 factory made, as the SDK proves it", async () => {
+      const eip155 = { ...creation, factory: '0xC22834581EbC8527d974F8a1c97E1bEA4EF910BC' as Address }
+
+      await expect(
+        deploySafeSameAddress(1, eip155, SAFE, {
           sourceChainId: 10,
           reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
-  })
+        }),
+      ).resolves.toBe(HASH)
+      expect(mocks.prepareDeployment).toHaveBeenCalledWith(
+        expect.objectContaining({ creation: eip155, safe: SAFE }),
+      )
+    })
 
-  it('fails closed on a 7702-prefix-plus-extra fallback mismatch', async () => {
-    const sourceCode = `${EIP_7702_CODE}00` as Hex
-    const destinationCode = `${EIP_7702_CODE}01` as Hex
-    const source = {
-      ...safeIdentity(),
-      fallbackHandler: TARGET,
-      fallbackHandlerCodeHash: keccak256(sourceCode),
-    }
-    let identityRead = 0
-    mocks.readAuthorityIdentity.mockImplementation(async () =>
-      ++identityRead % 2 === 1 ? source : { kind: 'eoa' },
-    )
-    mocks.client.getBytecode.mockImplementation(
-      async ({ address }: { address: Address }) =>
-        address === ALICE || address === SAFE
-          ? undefined
-          : address === TARGET
-            ? destinationCode
-            : ('0x6000' as Hex),
-    )
+    it('refuses a wallet that does not sign for the source Safe', async () => {
+      mocks.prepareDeployment.mockResolvedValue({ valid: true, call, source: safeIdentity([BOB]) })
 
-    await expect(
-      deploySafeSameAddress(
-        1,
-        {
-          factory: FACTORY,
-          singleton: SINGLETON,
-          initializer: '0x1234',
-          saltNonce: 7n,
-        },
-        SAFE,
-        {
-          sourceChainId: 10,
-          reverifyAuthority: vi.fn().mockResolvedValue(undefined),
-        },
-      ),
-    ).rejects.toThrow(/fallback handler bytecode does not match/i)
-    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
-    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+      await expect(deploy()).rejects.toThrow(`Switch to a current signer of ${SAFE}.`)
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it('sends nothing when the source policy changes before the wallet sends', async () => {
+      mocks.prepareDeployment
+        .mockResolvedValueOnce({ valid: true, call, source: safeIdentity() })
+        .mockResolvedValue({ valid: true, call, source: safeIdentity([ALICE, BOB], 2) })
+
+      await expect(deploy()).rejects.toThrow(/policy or nonce changed/i)
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    })
+
+    it('does not report a deployment whose Safe does not match the source', async () => {
+      mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+        source: safeIdentity(),
+        destination: safeIdentity([BOB]),
+        matches: false,
+      })
+
+      await expect(deploy()).rejects.toThrow(/does not match the live source Safe/)
+    })
   })
 
   it('refuses to run or execute Safe calls while view-as is active', async () => {
@@ -670,9 +468,41 @@ describe('Safe execution boundary', () => {
     )
   })
 
+  /** The connected Safe app's own execTransaction of the call its wallet was asked to send, or of `data` instead. */
+  function connectedSafeRan(data?: Hex) {
+    mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      const sent = mocks.wallet.writeContract.mock.calls[0][0] as {
+        address: Address; abi: Abi; functionName: string; args: readonly unknown[]
+      }
+      return {
+        hash,
+        from: BOB,
+        to: ALICE,
+        input: encodeFunctionData({
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args: [sent.address, 0n, data ?? encodeFunctionData(sent), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+        }),
+      }
+    })
+  }
+  /** The connected Safe app executed its proposal at once: its own event, for a safeTxHash it never returned, and the queued Safe's. */
+  function executedAtOnce() {
+    mocks.client.waitForTransactionReceipt.mockImplementationOnce(async ({ hash }: { hash: Hex }) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [
+        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, `0x${'ee'.repeat(32)}`], data: `0x${'00'.repeat(32)}` },
+        success(canonicalSafeTxHash(1, SAFE, queued())),
+      ],
+    }))
+  }
+
   it('proposes through a Safe app with gas 0 and reviews it as Safe gas 0', async () => {
     mocks.safe = true
     mocks.waitSafe.mockResolvedValue(HASH)
+    executedAtOnce()
+    connectedSafeRan()
 
     await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({ hash: HASH, status: 'confirmed' })
 
@@ -686,10 +516,25 @@ describe('Safe execution boundary', () => {
     expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH)
   })
 
+  it('does not confirm a proposal Safe{Wallet} executed at once when the execution ran another call', async () => {
+    mocks.safe = true
+    mocks.waitSafe.mockResolvedValue(HASH)
+    executedAtOnce()
+    connectedSafeRan('0xdeadbeef')
+
+    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+  })
+
   it('fails a Safe app approval whose execution logged ExecutionFailure', async () => {
     const proposal = `0x${'cd'.repeat(32)}` as Hex
     const execution = `0x${'ef'.repeat(32)}` as Hex
     mocks.safe = true
+    // A 2-of-2 Safe, so the connected owner approves rather than executes.
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
     mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.wallet.writeContract.mockResolvedValue(proposal)
     mocks.waitSafe.mockResolvedValue(execution)
@@ -726,11 +571,15 @@ describe('Safe execution boundary', () => {
     mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.wallet.writeContract.mockResolvedValueOnce(proposal)
     mocks.waitSafe.mockResolvedValueOnce(execution)
-    // The same execution also ran another of the connected Safe's proposals, which failed.
+    // The same execution also ran another of the connected Safe's proposals,
+    // which failed, while this proposal succeeded.
     mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: execution,
-      logs: [{ address: ALICE, ...failure(other) }],
+      logs: [
+        { address: ALICE, ...failure(other) },
+        { address: ALICE, topics: [EXECUTION_SUCCESS_TOPIC, proposal], data: `0x${'00'.repeat(32)}` as Hex },
+      ],
     })
 
     await expect(
@@ -741,6 +590,38 @@ describe('Safe execution boundary', () => {
     ).resolves.toEqual([expect.objectContaining({ mode: 'onchain', status: 'waiting' })])
     expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ functionName: 'approveHash' }),
+    )
+  })
+
+  it("refuses to sign, simulate or execute a transaction that pays a gas refund", async () => {
+    const refund = { ...queued(), gasPrice: '1' }
+    for (const run of [
+      () => executeSafeTx(1, SAFE, refund),
+      () => simulateSafeExecution(1, SAFE, refund),
+      () => confirmSafeTx(1, SAFE, refund, ALICE),
+    ]) {
+      await expect(run()).rejects.toThrow(
+        new Error("This transaction pays a gas refund, so it can't be executed here."),
+      )
+    }
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['logs ExecutionSuccess for it twice', (hash: Hex) => [success(hash), success(hash)]],
+    ['logs both ExecutionSuccess and ExecutionFailure for it', (hash: Hex) => [success(hash), failure(hash)]],
+    ['logs ExecutionSuccess only for another Safe transaction', () => [success(`0x${'ef'.repeat(32)}` as Hex)]],
+  ] as const)('does not confirm an execution whose receipt %s', async (_, logs) => {
+    mocks.client.waitForTransactionReceipt.mockResolvedValueOnce({
+      status: 'success',
+      transactionHash: HASH,
+      logs: logs(canonicalSafeTxHash(1, SAFE, queued())),
+    })
+
+    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+      /inner call did not execute successfully/i,
     )
   })
 
@@ -776,7 +657,7 @@ describe('Safe execution boundary', () => {
   it('rejects a service hash that does not match the exact queued fields', async () => {
     await expect(
       executeSafeTx(1, SAFE, { ...queued(), safeTxHash: HASH }),
-    ).rejects.toThrow(/hash does not match its exact fields/i)
+    ).rejects.toThrow(/does not match its fields/i)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
   })
@@ -914,7 +795,7 @@ describe('Safe execution boundary', () => {
 })
 
 describe('Safe retry and terminal-state orchestration', () => {
-  it('deduplicates concurrent nonce reads and falls back to onchain truth', async () => {
+  it('deduplicates concurrent onchain nonce reads', async () => {
     let resolveNonce!: (value: bigint) => void
     mocks.readSafeNonce.mockImplementationOnce(
       () => new Promise<bigint>(resolve => (resolveNonce = resolve)),
@@ -930,6 +811,9 @@ describe('Safe retry and terminal-state orchestration', () => {
   })
 
   it('stops after an unconfirmed onchain approval instead of executing again', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockResolvedValue(0n)
     mocks.client.waitForTransactionReceipt.mockRejectedValueOnce(
       new Error('receipt unavailable'),
     )
@@ -954,7 +838,36 @@ describe('Safe retry and terminal-state orchestration', () => {
         transactionHash: HASH,
       }),
     ])
-    expect(mocks.wallet.writeContract).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'approveHash' }),
+    )
+  })
+
+  it('lets the owner who completes the threshold execute without approving first', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockImplementation(
+      async (_client, _safe, owner) => (owner === BOB ? 1n : 0n),
+    )
+    const executed = safeProposalFor({ to: TARGET, data: '0x1234' }, 7)
+    mocks.client.waitForTransactionReceipt.mockImplementationOnce(async ({ hash }: { hash: Hex }) => ({
+      status: 'success',
+      transactionHash: hash,
+      logs: [success(safeTransactionHash(999, SAFE, executed))],
+    }))
+
+    await expect(
+      runSafeCalls({
+        signer: ALICE,
+        calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ mode: 'onchain', status: 'executed', transactionHash: HASH }),
+    ])
+    // Safe counts the executing owner as a signature: no approveHash first.
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ functionName: 'execTransaction' }),
+    )
   })
 
   it('waits without writing while onchain approvals remain below threshold', async () => {
@@ -1025,50 +938,32 @@ describe('Safe retry and terminal-state orchestration', () => {
     }
   })
 
-  it('paginates the hosted queue before deciding an exact proposal is absent', async () => {
+  it("reads the whole hosted queue from the Safe's onchain nonce", async () => {
     const previousFetch = globalThis.fetch
-    const firstPage = Array.from({ length: 50 }, (_, index) => ({
-      ...queued(),
-      value: '0',
-      data: '0xaaaa' as Hex,
-      nonce: 7 + index,
-    }))
-    const exact = {
-      ...queued(),
-      value: '0',
-      data: '0xbeef' as Hex,
-      nonce: 57,
+    const row = (nonce: number, data: Hex) => {
+      const tx = { ...queued(), value: '0', data, nonce }
+      return { ...tx, safe: SAFE, safeTxHash: safeTransactionHash(1, SAFE, tx) }
     }
+    const firstPage = Array.from({ length: 50 }, (_, index) => row(7 + index, '0xaaaa'))
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input)
-      if (!url.includes('multisig-transactions')) {
-        return new Response(JSON.stringify({ nonce: 7 }), { status: 200 })
+      if (!url.includes(`/api/v1/safes/${SAFE}/multisig-transactions/`) || !url.includes('nonce__gte=7')) {
+        throw new Error(`Unexpected Safe request ${url}`)
       }
       if (url.includes('offset=0')) {
-        return new Response(
-          JSON.stringify({ results: firstPage, next: 'page-2' }),
-          { status: 200 },
-        )
+        return new Response(JSON.stringify({ results: firstPage, next: 'page-2' }), { status: 200 })
       }
       if (url.includes('offset=50')) {
-        return new Response(JSON.stringify({ results: [exact], next: null }), {
-          status: 200,
-        })
+        return new Response(JSON.stringify({ results: [row(57, '0xbeef')], next: null }), { status: 200 })
       }
       throw new Error(`Unexpected Safe request ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
     try {
-      await expect(
-        findPendingSafeCall(1, SAFE, {
-          target: TARGET,
-          data: '0xbeef',
-          value: 0n,
-        }),
-      ).resolves.toMatchObject({ nonce: 57, data: '0xbeef' })
-      expect(
-        fetchMock.mock.calls.some(([input]) => String(input).includes('offset=50')),
-      ).toBe(true)
+      const { nonce, pending } = await readSafeQueue(1, SAFE)
+      expect(nonce).toBe(7)
+      expect(pending).toHaveLength(51)
+      expect(pending.at(-1)).toMatchObject({ nonce: 57, data: '0xbeef' })
     } finally {
       vi.stubGlobal('fetch', previousFetch)
     }

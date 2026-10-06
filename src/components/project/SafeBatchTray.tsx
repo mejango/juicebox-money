@@ -9,8 +9,16 @@ import { SafeBatchPresetDialog } from '@/components/project/SafeBatchPresetDialo
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
-import { listPendingSafeTxs, safeTxLink, safeUsableConfirmationCount, type SafeQueuedTx } from '@/lib/safe'
-import { composeBatch, decodeMultiSend, mirrorBatch, MULTI_SEND_CALL_ONLY, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
+import { fetchSafeInfo, readSafeQueue } from '@/lib/safe'
+import { MULTI_SEND_CALL_ONLY, multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
+import {
+  hasSafeService,
+  safeTransactionMatchesCall,
+  safeTransactionUrl,
+  usableSafeConfirmations,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
+import { composeBatch, mirrorBatch, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
 import { presetInfraAvailable, resolveMirrorValues } from '@/lib/safe-batch-presets'
 import { chainName } from '@/lib/urn'
 
@@ -22,25 +30,44 @@ function callsKey(calls: readonly BatchCall[]): string {
     .join('|')
 }
 
-/** The pending Safe proposal whose MultiSend holds exactly these queued calls, if one is already queued. */
+/**
+ * The pending zero-refund Safe proposal whose MultiSend holds exactly these
+ * queued calls, with the Safe's live policy, if one is already queued. Only
+ * a Safe on a chain with Safe's transaction service has a queue to read.
+ */
 function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: BatchStep[]) {
   const key = steps.length ? callsKey(composeBatch(steps).calls) : null
-  return useQuery({
+  // The Safe's owners and threshold change rarely; the queue is polled.
+  const info = useQuery({
+    queryKey: ['safeBatchPolicy', chainId, authority],
+    enabled: !!authority && !!key && hasSafeService(chainId),
+    staleTime: 60_000,
+    queryFn: () => fetchSafeInfo(chainId, authority!),
+  }).data
+  const tx = useQuery({
     queryKey: ['safeBatchProposed', chainId, authority, key],
-    enabled: !!authority && !!key,
+    enabled: !!info,
     staleTime: 15_000,
     refetchInterval: 15_000,
-    queryFn: async (): Promise<SafeQueuedTx | null> => {
-      const pending = await listPendingSafeTxs(chainId, authority!)
+    queryFn: async (): Promise<SafeQueuedTransaction | null> => {
+      const { pending } = await readSafeQueue(chainId, authority!)
       return (
-        pending.find(tx => {
-          if (tx.to.toLowerCase() !== MULTI_SEND_CALL_ONLY.toLowerCase() || Number(tx.operation) !== 1) return false
-          const calls = decodeMultiSend(tx.data)
-          return !!calls && callsKey(calls) === key
+        pending.find(candidate => {
+          const calls = multiSendCallsOf(candidate)
+          return (
+            !!calls &&
+            callsKey(calls) === key &&
+            safeTransactionMatchesCall(candidate, {
+              to: MULTI_SEND_CALL_ONLY,
+              data: candidate.data ?? '0x',
+              operation: 1,
+            })
+          )
         }) ?? null
       )
     },
-  }).data ?? null
+  }).data
+  return info && tx ? { tx, info } : null
 }
 
 function QueuedChainPanel({
@@ -57,8 +84,8 @@ function QueuedChainPanel({
   onRemove: () => void
 }) {
   const proposed = useProposedBatch(chainId, authority, steps)
-  const link = proposed && authority && proposed.safeTxHash
-    ? safeTxLink(chainId, authority, proposed.safeTxHash)
+  const link = proposed && authority && proposed.tx.safeTxHash
+    ? safeTransactionUrl(chainId, authority, proposed.tx.safeTxHash)
     : null
   return (
     <>
@@ -85,10 +112,8 @@ function QueuedChainPanel({
       {proposed ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" role="status">
           <span className="text-bluebs-700">
-            Already proposed on {chainName(chainId)} as Safe transaction #{proposed.nonce}
-            {proposed.confirmationsRequired
-              ? ` (${safeUsableConfirmationCount(proposed)}/${proposed.confirmationsRequired} signatures)`
-              : ''}
+            Already proposed on {chainName(chainId)} as Safe transaction #{proposed.tx.nonce}
+            {` (${usableSafeConfirmations(proposed.tx, proposed.info.owners).length}/${proposed.info.threshold} signatures)`}
             . Sign or execute it under Pending multisig transactions.
           </span>
           {link ? (

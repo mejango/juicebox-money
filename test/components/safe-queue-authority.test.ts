@@ -33,15 +33,16 @@ vi.mock('@/lib/project-handles', async (importOriginal) => ({
   readDirectEnsText: mocks.readDirectEnsText,
   readBoundedProjectHandle: mocks.readBoundedProjectHandle,
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
+vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulateStateChangingTransaction,
 }))
-vi.mock('@/lib/safe-reads', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/safe-reads')>()),
+vi.mock('@bananapus/nana-sdk-core/safe', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
 }))
 
@@ -58,7 +59,8 @@ import {
   buildSetEnsProjectRecordCall,
   buildSetProjectHandleCall,
 } from '@/lib/project-handles'
-import { safeExecRelayrEntry, type SafeQueuedTx } from '@/lib/safe'
+import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
+import { safeExecRelayrEntry } from '@/lib/safe'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const OTHER = '0x2222222222222222222222222222222222222222' as Address
@@ -72,7 +74,7 @@ const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
 )
 
-function queued(to: Address, data: Hex): SafeQueuedTx {
+function queued(to: Address, data: Hex): SafeQueuedTransaction {
   return {
     to,
     value: '0',
@@ -245,6 +247,34 @@ describe('Safe queue project authority', () => {
     ).rejects.toThrow(/no longer the owner/i)
   })
 
+  it("refuses a queued handle claim whose Safe can't be proven on Ethereum", async () => {
+    const call = buildSetProjectHandleCall({
+      chainId: 10,
+      projectId: 42,
+      parts: ['juicebox', 'design'],
+    })
+    mocks.readContract.mockResolvedValueOnce(SAFE)
+    mocks.readMatchingAuthorityIdentities.mockResolvedValueOnce({
+      source: { kind: 'safe' },
+      destination: { kind: 'safe' },
+      matches: false,
+      creationUnproven: true,
+    })
+
+    await expect(
+      assertQueuedProjectHandleContext(
+        1,
+        SAFE,
+        queued(call.target, call.data),
+        [{ chainId: 10, projectId: 42 }],
+      ),
+    ).rejects.toThrow("Can't verify this Safe is the same on Ethereum.")
+    expect(mocks.readMatchingAuthorityIdentities).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceChainId: 10, authority: SAFE }),
+    )
+    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
+  })
+
   it('rejects handle calldata on another queue chain and before oversized decode', async () => {
     const call = buildSetProjectHandleCall({
       chainId: 10,
@@ -311,6 +341,7 @@ describe('Relayr Safe destination proof', () => {
     CHAIN_ID,
     SAFE,
     queued(OTHER, '0x1234'),
+    [],
   )
   const record = {
     tx_uuid: TX_UUID,
@@ -494,6 +525,7 @@ describe('Relayr Safe destination proof', () => {
       CHAIN_ID,
       SAFE,
       queued(call.target, call.data),
+      [],
     )
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,
@@ -541,6 +573,7 @@ describe('Relayr Safe destination proof', () => {
       CHAIN_ID,
       SAFE,
       queued(call.target, call.data),
+      [],
     )
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,

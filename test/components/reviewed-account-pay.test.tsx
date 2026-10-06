@@ -13,7 +13,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -23,7 +23,16 @@ const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
 const CHANGED = 'The connected account changed. Review again.'
 
-const m = vi.hoisted(() => ({ token: 'native' as 'native' | 'erc20' }))
+const m = vi.hoisted(() => ({
+  token: 'native' as 'native' | 'erc20',
+  /** Connected as a Safe app, whose Safe is the account. */
+  safe: false,
+  waitForSafeExecutionHash: (() => Promise.reject(new Error('unset'))) as (...args: unknown[]) => Promise<unknown>,
+  /** Ends nothing unless a test says so. */
+  watchSafeProposal: (() => new Promise(() => {})) as (...args: unknown[]) => Promise<unknown>,
+  /** Query answers a test sets in place of the defaults, by key. */
+  queries: {} as Record<string, unknown>,
+}))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
@@ -54,8 +63,13 @@ vi.mock('@/lib/transaction-review', async importOriginal => {
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
-  isSafeConnection: () => false,
-  useSafeConnection: () => false,
+  isSafeConnection: () => m.safe,
+  useSafeConnection: () => m.safe,
+  findPendingSafeAppProposal: async () => null,
+  // The reply is the Safe app's proposal, never an execution.
+  atOnceExecution: async () => null,
+  waitForSafeExecutionHash: (...args: unknown[]) => m.waitForSafeExecutionHash(...args),
+  watchSafeProposal: (...args: unknown[]) => m.watchSafeProposal(...args),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -84,10 +98,12 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, error, status }: {
+  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status }: {
     open: boolean
     action: string
     onConfirm: () => void
+    onClose: () => void
+    complete?: boolean
     error?: ReactNode
     status?: ReactNode
   }) =>
@@ -95,7 +111,11 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
       <section data-tx-confirm>
         <p data-status>{status}</p>
         <p data-error>{error}</p>
-        <button type="button" onClick={onConfirm}>{action}</button>
+        {complete ? (
+          <button type="button" onClick={onClose}>Done</button>
+        ) : (
+          <button type="button" onClick={onConfirm}>{action}</button>
+        )}
       </section>
     ) : null,
 }))
@@ -106,6 +126,7 @@ const contextFor = (token: 'native' | 'erc20') =>
     : { token: USDC, decimals: 6, currency: 909516616, symbol: 'USDC', terminal: TERMINAL, viaRouter: false }
 
 function query(key: string) {
+  if (key in m.queries) return m.queries[key]
   switch (key) {
     case 'paySurface':
       return {
@@ -141,6 +162,9 @@ beforeEach(() => {
   wallet.reset()
   wallet.connect(ALICE)
   m.token = 'native'
+  m.safe = false
+  m.queries = {}
+  m.watchSafeProposal = () => new Promise(() => {})
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -170,14 +194,18 @@ async function click(label: string) {
   await act(async () => button(label).click())
 }
 
-/** Review a payment as Alice: the sequence dialog opens on its frozen actions. */
-async function reviewPayment() {
+/**
+ * Review a payment of `amount` as Alice: the sequence dialog opens on its
+ * frozen actions. Proposals stay with the Safe for the page, so each Safe test
+ * pays its own amount.
+ */
+async function reviewPayment(amount = '1') {
   await act(async () =>
     root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
   )
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, amount)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
   // The panel debounces the amount for 400 ms before it previews and quotes.
@@ -189,6 +217,7 @@ async function reviewPayment() {
 }
 
 const dialogError = () => host.querySelector('[data-error]')?.textContent
+const dialogStatus = () => host.querySelector('[data-status]')?.textContent
 
 describe('a payment reviewed for one account', () => {
   it('wallet-action:pay-a-project never pays from an account switched to before confirming', async () => {
@@ -238,5 +267,169 @@ describe('a payment reviewed for one account', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[3]).toBe(ALICE)
+  })
+})
+
+describe('a payment from a Safe', () => {
+  /** Two pay panels for the same project, as when one is open beside another. */
+  async function reviewInTwoPanels() {
+    await act(async () =>
+      root.render(
+        <>
+          {['first', 'second'].map(name => (
+            <div key={name} data-panel={name}>
+              <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+            </div>
+          ))}
+        </>,
+      ),
+    )
+    for (const name of ['first', 'second']) {
+      const input = panel(name).querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '3')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 450))
+    })
+  }
+  const panel = (name: string) => host.querySelector<HTMLElement>(`[data-panel="${name}"]`)!
+  const panelButton = (name: string, label: string) =>
+    [...panel(name).querySelectorAll('button')].find(item => item.textContent === label)
+  const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
+
+  const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
+  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const UNCONFIRMED =
+    'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
+  const panelSays = (line: string) => host.textContent?.includes(line) ?? false
+
+  it("keeps a proposed payment's line on the panel after Done, and frees the panel by Dismiss once it can't be proven", async () => {
+    m.safe = true
+    let lose!: (reason: Error) => void
+    m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
+    await reviewPayment('2')
+    await click('Confirm & Pay')
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    // The dialog says what the panel will.
+    expect(dialogStatus()).toBe(AWAITING)
+
+    await click('Done')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    // The signers decide: the payment stays held, with its line, and nothing to dismiss.
+    await waitUntil(() => panelSays(AWAITING))
+    expect(panelSays(AWAITING)).toBe(true)
+    expect(button('Pay').disabled).toBe(true)
+    expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Dismiss')).toBe(false)
+
+    // Safe's service is lost before its execution can be read.
+    await act(async () => lose(new Error('Safe service unavailable')))
+    await waitUntil(() => panelSays('Safe service unavailable'))
+    expect(panelSays(`${UNCONFIRMED} Safe service unavailable`)).toBe(true)
+    expect(button('Pay').disabled).toBe(true)
+
+    await click('Dismiss')
+    expect(panelSays(UNCONFIRMED)).toBe(false)
+    expect(button('Pay').disabled).toBe(false)
+  })
+
+  it('frees a panel whose proposed payment another panel dismissed, by its own Dismiss', async () => {
+    m.safe = true
+    let lose!: (reason: Error) => void
+    m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
+    await reviewInTwoPanels()
+    await clickIn('first', 'Pay')
+    await clickIn('first', 'Confirm & Pay')
+    await waitUntil(() => !!panelButton('first', 'Done'))
+    await clickIn('first', 'Done')
+
+    // The second panel's same payment is the first's proposal, never a second one.
+    await clickIn('second', 'Pay')
+    await clickIn('second', 'Confirm & Pay')
+    await waitUntil(() => !!panelButton('second', 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await act(async () => lose(new Error('Safe service unavailable')))
+    await waitUntil(() => panel('second').textContent?.includes('Safe service unavailable') ?? false)
+    await clickIn('second', 'Done')
+    expect(panelButton('second', 'Pay')!.disabled).toBe(false)
+
+    // Released there, the first panel's stage is lost: its line says so, and Dismiss frees it.
+    await waitUntil(() => !!panelButton('first', 'Dismiss'))
+    expect(panel('first').textContent).toContain(UNCONFIRMED)
+    expect(panelButton('first', 'Pay')!.disabled).toBe(true)
+    await clickIn('first', 'Dismiss')
+    expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+  })
+
+  it("shows on the panel why a router authorization proposed to the Safe ended after Done", async () => {
+    m.safe = true
+    m.token = 'erc20'
+    // A direct swap from USDC, which Permit2 has not authorized the router to spend.
+    const poolKey = { currency0: USDC, currency1: TERMINAL, fee: 3000, tickSpacing: 60, hooks: zeroAddress }
+    const quote = {
+      kind: 'direct-swap',
+      poolKey,
+      zeroForOne: true,
+      quotedTokenCount: 10n ** 21n,
+      minimumTokenCount: 10n ** 21n,
+      beneficiaryTokenCount: 10n ** 21n,
+      reservedTokenCount: 0n,
+      inputRoute: { kind: 'single-v4' },
+    }
+    m.queries = {
+      payMarket: { data: { status: 'pool', poolId: `0x${'12'.repeat(32)}`, key: poolKey, pairIsC0: true } },
+      directPaySwapQuote: {
+        data: quote, isFetching: false, isError: false, isPlaceholderData: false, isStale: false,
+        refetch: vi.fn(async () => ({ data: quote })),
+      },
+      payAllowance: { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) },
+      payPermit2Allowance: { data: [0n, 0, 0], isFetched: true, refetch: vi.fn(async () => ({ data: [0n, 0, 0] })) },
+      payWalletBytecode: { data: '0x1234', isFetched: true, isError: false },
+    }
+    m.waitForSafeExecutionHash = () => new Promise(() => {})
+    let end!: (outcome: string) => void
+    m.watchSafeProposal = () => new Promise(resolve => (end = resolve))
+    await reviewPayment('4')
+    await click('Confirm & Pay')
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    await click('Done')
+    await waitUntil(() => panelSays(AWAITING))
+
+    // The Safe moved past the authorization without running it.
+    await act(async () => end('replaced'))
+    await waitUntil(() => panelSays(REPLACED))
+    expect(panelSays(REPLACED)).toBe(true)
+    expect(button('Pay').disabled).toBe(false)
+  })
+
+  it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
+    m.safe = true
+    m.token = 'erc20'
+    // Safe's service is lost before the approval's execution can be read.
+    m.waitForSafeExecutionHash = () => Promise.reject(new Error('Safe service unavailable'))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => dialogStatus()?.includes('Safe service unavailable') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(dialogStatus()).toBe(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. Safe service unavailable',
+    )
+
+    await click('Done')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(button('Pay').disabled).toBe(false)
+
+    // Dismissed after its line, the same approval can be proposed again.
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
+    expect(wallet.writes()).toEqual([
+      { functionName: 'approve', account: ALICE },
+      { functionName: 'approve', account: ALICE },
+    ])
   })
 })

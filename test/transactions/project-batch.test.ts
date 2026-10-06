@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address, Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
+import {
+  SAFE_EXEC_ABI,
+  safeProposalFor,
+  safeTransactionHash,
+} from '@bananapus/nana-sdk-core/safe-service'
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
-  relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), safeSuccess: vi.fn(),
+  relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
+  readRecord: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -12,15 +18,19 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/authority', () => ({ clientFor: () => mocks.client, runAuthorityCalls: mocks.authority }))
-vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.identity }))
-vi.mock('@/lib/safe', () => ({
-  canonicalSafeTxHash: (_chain: number, _safe: string, tx: { safeTxHash: string }) => tx.safeTxHash,
-  receiptHasSafeExecutionSuccess: mocks.safeSuccess,
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.identity,
 }))
-vi.mock('@/lib/safe-connector', () => ({
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: () => mocks.safe,
   SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.',
-  waitForSafeExecutionHash: vi.fn(),
+  waitForSafeExecutionHash: mocks.waitForExecution,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
+  readSafeTransaction: mocks.readRecord,
 }))
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
@@ -40,6 +50,21 @@ const ACCOUNT = mocks.account as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const BLOCK = `0x${'cd'.repeat(32)}` as Hex
+const SUCCESS_TOPIC = toEventSelector('ExecutionSuccess(bytes32,uint256)')
+/** The Safe's ExecutionSuccess for `safeTxHash`, in the transaction `transactionHash`. */
+const executionSuccess = (safeTxHash: Hex, transactionHash: Hex) => ({
+  address: ACCOUNT, topics: [SUCCESS_TOPIC, safeTxHash], data: `0x${'00'.repeat(32)}`, transactionHash,
+})
+/** The Safe's execTransaction of one call, as an owner sends it. */
+const execTransaction = (data: Hex = '0x1234') => encodeFunctionData({
+  abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
+  args: [TARGET, 3n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+})
+/** The queued proposal of call() at `nonce`, with its real hash. */
+const proposal = (nonce = 3, data: Hex = '0x1234') => {
+  const tx = safeProposalFor({ to: TARGET, data, value: 3n }, nonce)
+  return { ...tx, safeTxHash: safeTransactionHash(1, ACCOUNT, tx) }
+}
 const action = 'test-distribute'
 const scope = projectBatchScope(action, 1, 7)
 const call = (chainId = 1, suffix = ''): ProjectBatchCall => ({
@@ -60,7 +85,6 @@ beforeEach(() => {
   } })
   vi.stubGlobal('navigator', { locks: {} })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
-  mocks.safeSuccess.mockReturnValue(false)
   mocks.client.getBlock.mockResolvedValue({ hash: BLOCK })
   mocks.client.getBlockNumber.mockResolvedValue(10n)
   mocks.client.getLogs.mockResolvedValue([])
@@ -356,43 +380,46 @@ describe('durable project batches', () => {
   })
 
   it('retains a Safe proposal and refuses to advance to a replacement nonce', async () => {
-    const safeTx = { safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3' }
+    const safeTx = proposal(3)
     mocks.authority.mockImplementation(async ({ calls }) => {
       await calls[0].onSafePrepared(safeTx)
-      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: HASH }], relayrGroups: 0, relayrResults: [] }
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: safeTx.safeTxHash }], relayrGroups: 0, relayrResults: [] }
     })
     const first = await run([call()])
     expect(first.status).toBe('pending')
     expect(first.completedIds).toEqual([])
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
-      await calls[0].onSafePrepared({ ...safeTx, safeTxHash: BLOCK, nonce: 4 })
+      await calls[0].onSafePrepared(proposal(4))
     })
     await expect(run()).rejects.toThrow('Safe nonce changed')
-    expect(loadProjectBatch(scope)?.submissions[call().id].hash).toBe(HASH)
+    expect(loadProjectBatch(scope)?.submissions[call().id].hash).toBe(safeTx.safeTxHash)
   })
 
   it('marks a proven obsolete Safe proposal without claiming execution or discarding its nonce/hash', async () => {
-    const safeTx = { safeTxHash: HASH, nonce: 3, to: TARGET, data: '0x1234', value: '3', operation: 0 }
+    const safeTx = proposal(3)
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
       await calls[0].onSafePrepared(safeTx)
-      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: HASH }], relayrGroups: 0, relayrResults: [] }
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: safeTx.safeTxHash }], relayrGroups: 0, relayrResults: [] }
     })
     expect((await run([call()])).status).toBe('pending')
     const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
     const verifyCompletion = vi.fn()
     const result = await run(undefined, { reconcileObsoleteSafe, verifyCompletion })
     expect(result.status).toBe('complete')
-    expect(result.submissions['1:']).toMatchObject({ hash: HASH, safeTx: { nonce: 3, safeTxHash: HASH } })
+    expect(result.submissions['1:']).toMatchObject({
+      hash: safeTx.safeTxHash,
+      safeTx: { nonce: 3, safeTxHash: safeTx.safeTxHash },
+    })
     expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(1)
     expect(verifyCompletion).not.toHaveBeenCalled()
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
   it.each(['still pending', 'different proposal', 'different hash'])('keeps a Safe proposal when %s', async condition => {
-    const safeTx = { safeTxHash: HASH, nonce: 3, to: TARGET, data: condition === 'different proposal' ? '0xabcd' : '0x1234', value: '3', operation: 0 }
+    const safeTx = proposal(3, condition === 'different proposal' ? '0xabcd' : '0x1234')
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
       await calls[0].onSafePrepared(safeTx)
-      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: HASH }], relayrGroups: 0, relayrResults: [] }
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: safeTx.safeTxHash }], relayrGroups: 0, relayrResults: [] }
     })
     expect((await run([call()])).status).toBe('pending')
     if (condition === 'different hash') {
@@ -403,26 +430,244 @@ describe('durable project batches', () => {
       window.localStorage.setItem(key, JSON.stringify(journal))
     }
     const reconcileObsoleteSafe = vi.fn().mockResolvedValue(condition !== 'still pending')
-    await expect(run(undefined, { reconcileObsoleteSafe, reverify: vi.fn().mockRejectedValue(new Error('payment changed')) })).rejects.toThrow('payment changed')
+    // A saved proposal whose fields no longer hash to its hash is refused outright.
+    await expect(run(undefined, { reconcileObsoleteSafe, reverify: vi.fn().mockRejectedValue(new Error('payment changed')) })).rejects.toThrow(
+      condition === 'different hash' ? /does not match its fields/ : /payment changed/,
+    )
     expect(loadProjectBatch(scope)?.status).toBe('pending')
     expect(reconcileObsoleteSafe).toHaveBeenCalledTimes(condition === 'still pending' ? 1 : 0)
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
-  it('finds a connector execution from canonical Safe logs without a hosted service', async () => {
+  /** A Safe app call whose wallet returned `returned`, then lost track of it before its receipt. */
+  async function interruptedConnectorCall(returned: Hex) {
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
       await calls[0].onSending('safe-connector')
-      await calls[0].onSubmitted(HASH, 'safe-connector')
+      await calls[0].onSubmitted(returned, 'safe-connector')
       throw new Error('Safe service unavailable')
     })
     await expect(run([call()])).rejects.toThrow('Safe service unavailable')
     expect(loadProjectBatch(scope)?.submissions[call().id].fromBlock).toBe(10n)
+  }
+  /** The chain's view of the execution `hash`: an owner's execTransaction to the Safe. */
+  function executedBy(hash: Hex, input: Hex, logs: unknown[], chainId = 1) {
+    mocks.client.getTransaction.mockResolvedValue({ hash, chainId, from: TARGET, to: ACCOUNT,
+      input, value: 0n, blockHash: BLOCK })
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: hash,
+      blockHash: BLOCK, blockNumber: 10n, status: 'success', logs })
+  }
+  const SAFE_TX = `0x${'ef'.repeat(32)}` as Hex
+  const FAILED = 'The saved Safe proposal failed onchain. Review it again.'
+  /** The Safe's ExecutionFailure for `safeTxHash`, in the transaction `transactionHash`. */
+  const executionFailure = (safeTxHash: Hex, transactionHash: Hex) => ({
+    ...executionSuccess(safeTxHash, transactionHash),
+    topics: [toEventSelector('ExecutionFailure(bytes32,uint256)'), safeTxHash],
+  })
+
+  it('finds a connector execution from canonical Safe logs without a hosted service', async () => {
+    // The Safe app returned its proposal's safeTxHash; an owner executed it later.
+    await interruptedConnectorCall(SAFE_TX)
+    const success = executionSuccess(SAFE_TX, HASH)
     mocks.client.getBlockNumber.mockResolvedValueOnce(11n)
-    mocks.client.getLogs.mockResolvedValueOnce([{ transactionHash: HASH }])
-    mocks.safeSuccess.mockReturnValue(true)
+    mocks.client.getLogs.mockResolvedValueOnce([success])
+    executedBy(HASH, execTransaction(), [success])
     expect((await run()).status).toBe('complete')
     expect(mocks.client.getLogs).toHaveBeenCalledWith({ address: ACCOUNT, fromBlock: 10n, toBlock: 11n })
+    expect(mocks.waitForExecution).not.toHaveBeenCalled()
     expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it('scans for a later execution in windows the RPC accepts, and resumes a long scan where it stopped', async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    // JB Center's RPC refuses an eth_getLogs range over 500 blocks.
+    mocks.client.getLogs.mockImplementation(async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      if (toBlock - fromBlock + 1n > 500n) throw new Error('Block range exceeds the 500 block limit (-32005)')
+      return toBlock >= 60_000n && fromBlock <= 60_000n ? [executionSuccess(SAFE_TX, HASH)] : []
+    })
+    mocks.client.getBlockNumber.mockResolvedValue(60_100n)
+    mocks.waitForExecution.mockRejectedValue(new DOMException('Safe execution wait aborted', 'AbortError'))
+    executedBy(HASH, execTransaction(), [executionSuccess(SAFE_TX, HASH)])
+
+    // One look scans at most 100 windows (50,000 blocks) from where the last stopped.
+    expect((await run()).status).toBe('pending')
+    expect(mocks.client.getLogs).toHaveBeenCalledTimes(100)
+    expect(mocks.client.getLogs.mock.calls.every(([range]) => range.toBlock - range.fromBlock < 500n)).toBe(true)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ scannedTo: 50_009n })
+
+    expect((await run()).status).toBe('complete')
+    expect(mocks.client.getLogs.mock.calls[100][0]).toMatchObject({ fromBlock: 50_010n, toBlock: 50_509n })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  /** A Safe proposal the queue holds, saved by a first run at block 10. */
+  async function queuedProposal() {
+    const safeTx = proposal(3)
+    mocks.authority.mockImplementation(async ({ calls }) => {
+      await calls[0].onSafePrepared(safeTx)
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: safeTx.safeTxHash }], relayrGroups: 0, relayrResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    return safeTx
+  }
+
+  it('records a scan only to 500 blocks behind the latest, so the next look reads the newest blocks again', async () => {
+    await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(1_000n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(false)
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ fromBlock: 10n, scannedTo: 500n })
+    mocks.client.getLogs.mockClear()
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(mocks.client.getLogs.mock.calls[0][0]).toMatchObject({ fromBlock: 501n, toBlock: 1_000n })
+  })
+
+  it("keeps a saved proposal's scan when the queue offers the same proposal again", async () => {
+    const safeTx = await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(2_010n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(false)
+    expect((await run(undefined, { reconcileObsoleteSafe })).status).toBe('pending')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({
+      hash: safeTx.safeTxHash,
+      fromBlock: 10n,
+      scannedTo: 1_510n,
+    })
+    mocks.client.getLogs.mockClear()
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(mocks.client.getLogs.mock.calls[0][0]).toMatchObject({ fromBlock: 1_511n })
+  })
+
+  it('stops a resume whose scan reached its bound before the obsolete and queue checks', async () => {
+    await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(60_100n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
+    const onProgress = vi.fn()
+    expect((await run(undefined, { reconcileObsoleteSafe, onProgress })).status).toBe('pending')
+    expect(reconcileObsoleteSafe).not.toHaveBeenCalled()
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({
+      message: "This Safe proposal's history is still being read. Check this batch again to continue.",
+    }))
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ scannedTo: 50_009n })
+  })
+
+  it('recovers an execution Safe{Wallet} returned at once only when it ran the saved call', async () => {
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's ExecutionSuccess names its safeTxHash, which the app never saw.
+    await interruptedConnectorCall(HASH)
+    const success = executionSuccess(SAFE_TX, HASH)
+    mocks.client.getLogs.mockResolvedValue([success])
+    mocks.waitForExecution.mockResolvedValue(HASH)
+    executedBy(HASH, execTransaction(), [success])
+    expect((await run()).status).toBe('complete')
+    expect(mocks.waitForExecution).toHaveBeenCalledWith(1, HASH, expect.anything())
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['ran another call', () => executedBy(HASH, execTransaction('0xdead'), [executionSuccess(SAFE_TX, HASH)]),
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
+    ['cannot be read as an execution', () => executedBy(HASH, '0xdeadbeef', [executionSuccess(SAFE_TX, HASH)]),
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
+    ['ran the call, and it failed', () => executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)]),
+      FAILED],
+    ['reverted', () => {
+      executedBy(HASH, execTransaction(), [])
+      mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+        blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
+    }, FAILED],
+  ] as const)('releases a saved call whose execution %s, so it never holds the batch', async (_, executed, line) => {
+    await interruptedConnectorCall(HASH)
+    mocks.waitForExecution.mockResolvedValue(HASH)
+    executed()
+    await expect(run()).rejects.toThrow(line)
+    // The call is no longer held as submitted: with nothing else in flight,
+    // no saved batch holds it, in this tab or after a reload.
+    expect(loadProjectBatch(scope)).toBeNull()
+
+    // Once Safe has been checked, the same call can be reviewed and sent again.
+    mocks.client.getTransaction.mockResolvedValue({ hash: HASH, chainId: 1, from: ACCOUNT,
+      to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK })
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
+      blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [] })
+    expect((await run([call()])).status).toBe('complete')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
+  it('finds a proposal executed later whose call failed, and releases it', async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    const failure = executionFailure(SAFE_TX, HASH)
+    mocks.client.getBlockNumber.mockResolvedValueOnce(11n)
+    mocks.client.getLogs.mockResolvedValueOnce([failure])
+    // The service would report it failed; the chain already shows it.
+    mocks.waitForExecution.mockRejectedValue(new DOMException('Safe execution wait aborted', 'AbortError'))
+    executedBy(HASH, execTransaction(), [failure])
+    await expect(run()).rejects.toThrow(FAILED)
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it("releases a proposal Safe's service reports executed and failed, once its own receipt shows the failure", async () => {
+    await interruptedConnectorCall(SAFE_TX)
+    mocks.waitForExecution.mockRejectedValue(
+      new Error('Safe executed the proposal, but the onchain transaction failed.'),
+    )
+    mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+    executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
+    await expect(run()).rejects.toThrow(FAILED)
+    expect(mocks.readRecord).toHaveBeenCalledWith(1, ACCOUNT, SAFE_TX, expect.anything())
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it.each([
+    ['names no transaction', () => mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true })],
+    ['cannot be read', () => mocks.readRecord.mockRejectedValue(new Error('Safe service unavailable'))],
+    ['names a receipt that is not canonical', () => {
+      mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+      executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
+      mocks.client.getBlock.mockResolvedValue({ hash: `0x${'99'.repeat(32)}` })
+    }],
+  ] as const)("keeps a proposal the service reports failed while its record %s", async (_, setup) => {
+    await interruptedConnectorCall(SAFE_TX)
+    mocks.waitForExecution.mockRejectedValue(
+      new Error('Safe executed the proposal, but the onchain transaction failed.'),
+    )
+    setup()
+    await run().catch(() => undefined)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: SAFE_TX })
+  })
+
+  it('keeps a saved Safe call while the receipt that would release it is not canonical', async () => {
+    await interruptedConnectorCall(HASH)
+    mocks.waitForExecution.mockResolvedValue(HASH)
+    executedBy(HASH, execTransaction('0xdead'), [executionSuccess(SAFE_TX, HASH)])
+    mocks.client.getBlock.mockResolvedValue({ hash: `0x${'99'.repeat(32)}` })
+    await expect(run()).rejects.toThrow('The original project receipt is no longer canonical. Check it again before continuing.')
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: HASH })
+  })
+
+  it('keeps the rest of a batch when it releases one saved Safe call', async () => {
+    const calls = [call(1, 'a'), call(10, 'b')].map(item => ({ ...item, relayr: false as const }))
+    mocks.authority.mockImplementationOnce(async ({ calls: [first] }) => {
+      await first.onSending('direct')
+      await first.onSubmitted(HASH, 'direct')
+      return { directResults: [HASH], safeResults: [], relayrGroups: 0, relayrResults: [] }
+    }).mockImplementationOnce(async ({ calls: [second] }) => {
+      await second.onSending('safe-connector')
+      await second.onSubmitted(SAFE_TX, 'safe-connector')
+      throw new Error('Safe service unavailable')
+    })
+    await expect(run(calls)).rejects.toThrow('Safe service unavailable')
+    expect(loadProjectBatch(scope)?.completedIds).toEqual(['1:a'])
+
+    // The Safe app's proposal turns out to have run another call.
+    mocks.waitForExecution.mockResolvedValue(SAFE_TX)
+    executedBy(SAFE_TX, execTransaction('0xdead'), [executionSuccess(SAFE_TX, SAFE_TX)], 10)
+    await expect(run()).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
+    expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: ['1:a'] })
+    expect(loadProjectBatch(scope)?.submissions['10:b']).toBeUndefined()
+    expect(loadProjectBatch(scope)?.submissions['1:a']).toBeDefined()
   })
 
   it('lets the batch review cover each send, but reviews a resumed batch’s sends again', async () => {

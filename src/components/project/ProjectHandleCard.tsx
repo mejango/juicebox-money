@@ -33,15 +33,17 @@ import {
 import { chainName } from '@/lib/urn'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
-import {
-  deploySafeSameAddress,
-  fetchSafeCreation,
-  safeQueueLink,
-} from '@/lib/safe'
+import { deploySafeSameAddress, SAFE_SERVICE } from '@/lib/safe'
 import {
   isDeployableSafeAuthority,
-  readMatchingAuthorityIdentities,
-  safeCreationMatchesAuthorityIdentity,
+  validateSafeCreationForCurrentPolicy,
+} from '@bananapus/nana-sdk-core/safe'
+import { safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
+import {
+  readCrossChainHandleAuthority,
+  readSafeCreation,
+  UnprovenSafeError,
+  unprovenSafeLine,
 } from '@/lib/cross-chain-authority'
 
 type ProjectHandleState = {
@@ -130,15 +132,21 @@ function dedupeAddresses(addresses: readonly Address[]): Address[] {
   })
 }
 
-async function readHandleAuthorityIdentities(
+/**
+ * Whether the project's authority on `deployment`'s chain may publish its
+ * Ethereum handle, or null on Ethereum, where it always may.
+ */
+async function readHandleAuthority(
   deployment: AuthorityDeployment,
   authority: Address,
 ) {
   if (deployment.chainId === PROJECT_HANDLES_CHAIN_ID) return null
-  return readMatchingAuthorityIdentities({
+  return readCrossChainHandleAuthority({
+    sourceChainId: deployment.chainId,
     sourceClient: clientFor(deployment.chainId),
-    destinationClient: clientFor(PROJECT_HANDLES_CHAIN_ID),
+    mainnetClient: clientFor(PROJECT_HANDLES_CHAIN_ID),
     authority,
+    service: SAFE_SERVICE,
   })
 }
 
@@ -296,22 +304,23 @@ export function ProjectHandleCard({
       deployment.chainId,
       stateQuery.data?.authority,
     ],
+    // Also read for a handle already published, which links only once its
+    // authority is trusted on Ethereum.
     enabled:
-      editing &&
+      (editing || !!stateQuery.data?.verifiedHandle) &&
       deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
       !!stateQuery.data?.authority,
     staleTime: 15_000,
     retry: 1,
     queryFn: async () => {
-      const authority = stateQuery.data!.authority!
-      const identities = await readHandleAuthorityIdentities(
+      const authority = await readHandleAuthority(
         deployment,
-        authority,
+        stateQuery.data!.authority!,
       )
-      if (!identities) {
+      if (!authority || authority.status === 'unknown') {
         throw new Error('Could not verify the cross-chain authority policy.')
       }
-      return identities
+      return authority
     },
   })
 
@@ -345,7 +354,7 @@ export function ProjectHandleCard({
     const storedHandle = stored ? normalizeProjectHandle(stored)?.handle : null
     const crossChainPolicyVerified =
       deployment.chainId === PROJECT_HANDLES_CHAIN_ID ||
-      safeDeploymentQuery.data?.matches === true
+      safeDeploymentQuery.data?.allowed === true
     if (
       stored &&
       storedHandle &&
@@ -363,7 +372,7 @@ export function ProjectHandleCard({
     deployment.chainId,
     draftKey,
     memoryDraft,
-    safeDeploymentQuery.data?.matches,
+    safeDeploymentQuery.data?.allowed,
     stateQuery.data?.verifiedHandle,
   ])
 
@@ -561,13 +570,16 @@ export function ProjectHandleCard({
       }
 
       if (live.verifiedHandle === normalized.handle) {
-        const identities = await readHandleAuthorityIdentities(
+        const handleAuthority = await readHandleAuthority(
           deployment,
           live.authority,
         )
+        if (handleAuthority?.status === 'unproven-creation') {
+          throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
+        }
         if (
           deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
-          (!identities || !identities.matches)
+          !handleAuthority?.allowed
         ) {
           throw new Error(
             'The handle claim exists, but source-chain and Ethereum control of the authority no longer match.',
@@ -616,13 +628,16 @@ export function ProjectHandleCard({
           )
         }
         if (current.verifiedHandle === normalized.handle) {
-          const identities = await readHandleAuthorityIdentities(
+          const handleAuthority = await readHandleAuthority(
             deployment,
             current.authority,
           )
+          if (handleAuthority?.status === 'unproven-creation') {
+            throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
+          }
           if (
             deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
-            (!identities || !identities.matches)
+            !handleAuthority?.allowed
           ) {
             throw new Error(
               'The handle claim completed, but source-chain and Ethereum control of the authority no longer match.',
@@ -672,13 +687,16 @@ export function ProjectHandleCard({
         )
       }
       if (confirmed.authority) {
-        const identities = await readHandleAuthorityIdentities(
+        const handleAuthority = await readHandleAuthority(
           deployment,
           confirmed.authority,
         )
+        if (handleAuthority?.status === 'unproven-creation') {
+          throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
+        }
         if (
           deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
-          (!identities || !identities.matches)
+          !handleAuthority?.allowed
         ) {
           throw new Error(
             'The handle was published, but source-chain and Ethereum control of the authority no longer match.',
@@ -760,8 +778,8 @@ export function ProjectHandleCard({
     setError(null)
     setProgress('Rechecking the project Safe…')
     try {
-      const before = await readHandleAuthorityIdentities(deployment, authority)
-      if (!before || before.source.kind !== 'safe') {
+      const before = await readHandleAuthority(deployment, authority)
+      if (!before?.source || before.source.kind !== 'safe') {
         throw new Error(
           'The current project authority is no longer readable as a Safe.',
         )
@@ -778,22 +796,29 @@ export function ProjectHandleCard({
       ) {
         throw new Error(`Switch to a signer of the project Safe ${authority}.`)
       }
-      if (before.destination.kind === 'safe' && before.matches) {
+      if (before.status === 'valid-safe') {
         setProgress('The same-address Safe is already deployed on Ethereum.')
         await safeDeploymentQuery.refetch()
         return
       }
-      if (before.destination.kind !== 'eoa') {
+      if (before.status === 'unproven-creation') {
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
+      }
+      if (before.mainnet?.kind !== 'eoa') {
         throw new Error(
           'The same address on Ethereum is already a different contract and cannot be deployed as this project Safe.',
         )
       }
       setProgress('Reading the Safe’s canonical creation…')
-      const creation = await fetchSafeCreation(authority, deployment.chainId)
+      const creation = await readSafeCreation(
+        deployment.chainId,
+        authority,
+        SAFE_SERVICE,
+      )
       if (!creation) {
         throw new Error('Could not read the Safe’s canonical creation config.')
       }
-      if (!safeCreationMatchesAuthorityIdentity(creation, before.source)) {
+      if (!validateSafeCreationForCurrentPolicy(creation, before.source).valid) {
         throw new Error(
           'This Safe’s original initializer no longer matches its current owners, threshold, fallback handler, or supported implementation. Deploy and align the Ethereum Safe in Safe before publishing.',
         )
@@ -821,11 +846,11 @@ export function ProjectHandleCard({
           },
         },
       )
-      const confirmed = await readHandleAuthorityIdentities(
-        deployment,
-        authority,
-      )
-      if (!confirmed || !confirmed.matches) {
+      const confirmed = await readHandleAuthority(deployment, authority)
+      if (confirmed?.status === 'unproven-creation') {
+        throw new UnprovenSafeError(PROJECT_HANDLES_CHAIN_ID)
+      }
+      if (!confirmed?.allowed) {
         throw new Error(
           'The Safe was deployed, but its current Ethereum owners, threshold, or modules do not match the project-chain Safe. Align the policies before publishing.',
         )
@@ -854,30 +879,38 @@ export function ProjectHandleCard({
       })
     : null
   const alreadyVerified = setupPhase === 'verified'
-  const needsMainnetSafe =
-    !!safeDeploymentQuery.data &&
-    isDeployableSafeAuthority(safeDeploymentQuery.data.source) &&
-    safeDeploymentQuery.data.destination.kind === 'eoa'
+  const handleAuthority = safeDeploymentQuery.data
+  // A published handle resolves only while its authority is trusted on Ethereum.
+  const handleTrust =
+    deployment.chainId === PROJECT_HANDLES_CHAIN_ID || handleAuthority?.allowed
+      ? 'trusted'
+      : handleAuthority || safeDeploymentQuery.isError
+        ? 'refused'
+        : 'checking'
+  const needsMainnetSafe = handleAuthority?.status === 'missing-mainnet-safe'
+  const unprovenSafe = handleAuthority?.status === 'unproven-creation'
   const safePolicyMismatch =
-    safeDeploymentQuery.data?.source.kind === 'safe' &&
-    safeDeploymentQuery.data.destination.kind === 'safe' &&
-    !safeDeploymentQuery.data.matches
+    handleAuthority?.source?.kind === 'safe' &&
+    handleAuthority.mainnet?.kind === 'safe' &&
+    !handleAuthority.allowed &&
+    !unprovenSafe
   const delegatedSafeCollision =
-    safeDeploymentQuery.data?.source.kind === 'safe' &&
-    safeDeploymentQuery.data.destination.kind === 'delegated-eoa'
+    handleAuthority?.source?.kind === 'safe' &&
+    handleAuthority.mainnet?.kind === 'delegated-eoa'
   const unsupportedCrossChainAuthority =
-    !!safeDeploymentQuery.data &&
-    !safeDeploymentQuery.data.matches &&
+    !!handleAuthority &&
+    !handleAuthority.allowed &&
     !needsMainnetSafe &&
+    !unprovenSafe &&
     !safePolicyMismatch &&
     !delegatedSafeCollision
   const crossChainAuthorityBlocked =
     deployment.chainId !== PROJECT_HANDLES_CHAIN_ID &&
     (safeDeploymentQuery.isLoading ||
       safeDeploymentQuery.isError ||
-      !safeDeploymentQuery.data?.matches)
+      !handleAuthority?.allowed)
   const pendingSafeUrl = pendingSafe
-    ? safeQueueLink(PROJECT_HANDLES_CHAIN_ID, pendingSafe)
+    ? safeQueueUrl(PROJECT_HANDLES_CHAIN_ID, pendingSafe)
     : null
   const dialogLocked = sequenceRunning || !!busy
   const setupDisabled =
@@ -917,7 +950,13 @@ export function ProjectHandleCard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs text-smoke-500">Current</p>
-              {current?.verifiedHandle ? (
+              {current?.verifiedHandle && handleTrust === 'checking' ? (
+                <p className="mt-1 text-sm text-ink">@{current.verifiedHandle}</p>
+              ) : current?.verifiedHandle && handleTrust === 'refused' ? (
+                <p className="mt-1 text-sm text-amber-700">
+                  @{current.verifiedHandle} (not verified)
+                </p>
+              ) : current?.verifiedHandle ? (
                 <a
                   href={`/@${encodeURIComponent(current.verifiedHandle)}`}
                   onClick={event => {
@@ -1098,6 +1137,12 @@ export function ProjectHandleCard({
                         ? 'Deploying Safe…'
                         : 'Deploy same Safe on Ethereum'}
                   </button>
+                </div>
+              ) : null}
+
+              {unprovenSafe ? (
+                <div className="callout callout-warning mt-3 text-xs leading-relaxed">
+                  {unprovenSafeLine(PROJECT_HANDLES_CHAIN_ID)}
                 </div>
               ) : null}
 

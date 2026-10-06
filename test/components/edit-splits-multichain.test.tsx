@@ -26,7 +26,8 @@ vi.mock('@/lib/relayr', async original => ({
   loadRelayrPendingSession: mocks.loadSession,
   resumeRelayrSession: mocks.resume,
 }))
-vi.mock('@/lib/cross-chain-authority', () => ({
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readAuthorityIdentity: mocks.identity,
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   getProjectsOwnedBy: vi.fn(),
   fetchRelayrBundlesByAccount: vi.fn(),
   resumeRelayrSession: vi.fn(),
-  safesForOwner: vi.fn(),
+  safeService: vi.fn(),
   fetchSafeInfo: vi.fn(),
 }))
 
@@ -92,9 +92,8 @@ vi.mock('@/lib/relayr', () => ({
   },
 }))
 vi.mock('@/lib/safe', () => ({
-  safesForOwner: mocks.safesForOwner,
   fetchSafeInfo: mocks.fetchSafeInfo,
-  hasSafeService: (chainId: number) => chainId === 1,
+  SAFE_SERVICE: { fetch: mocks.safeService },
 }))
 vi.mock('@/providers/Providers', () => ({
   wagmiConfig: {},
@@ -222,7 +221,7 @@ function pendingSession(
 beforeEach(() => {
   mocks.connectedAddress = undefined
   mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
-  mocks.safesForOwner.mockResolvedValue([])
+  mocks.safeService.mockImplementation(async () => new Response(JSON.stringify({ safes: [] })))
   mocks.getProjectsOwnedBy.mockResolvedValue([])
   mocks.fetchSafeInfo.mockResolvedValue(null)
 })
@@ -487,7 +486,7 @@ describe('AccountPendingRelayr', () => {
 
 describe('AccountSafeProjects', () => {
   it('adds deduped Safe-owned cards with threshold badges', async () => {
-    mocks.safesForOwner.mockResolvedValue([SAFE])
+    mocks.safeService.mockImplementation(async () => new Response(JSON.stringify({ safes: [SAFE] })))
     mocks.getProjectsOwnedBy.mockResolvedValue([
       project({ projectId: 7, name: 'Safe project' }),
       project({ projectId: 8, name: 'Already owned' }),
@@ -514,8 +513,10 @@ describe('AccountSafeProjects', () => {
     expect(text).toContain('(2/3)')
     expect(text).not.toContain('Already owned')
     // Only the chain with a hosted Safe service is queried.
-    expect(mocks.safesForOwner).toHaveBeenCalledTimes(1)
-    expect(mocks.safesForOwner).toHaveBeenCalledWith(ALICE, 1)
+    expect(mocks.safeService).toHaveBeenCalledExactlyOnceWith(
+      `https://api.safe.global/tx-service/eth/api/v1/owners/${ALICE}/safes/`,
+      expect.anything(),
+    )
   })
 
   it('reports an empty account only after the Safe check settles', async () => {

@@ -4,9 +4,21 @@ import { getAccount } from '@wagmi/core'
 import { isAddress, isAddressEqual, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
-import { canonicalSafeTxHash, receiptHasSafeExecutionSuccess, type SafeQueuedTx } from '@/lib/safe'
-import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
+import {
+  canonicalSafeTxHash,
+  safeTransactionMatchesCall,
+  type SafeQueuedTransaction,
+} from '@bananapus/nana-sdk-core/safe-service'
+import { isSafeExecutionLog, SAFE_SERVICE } from '@/lib/safe'
+import {
+  isSafeConnection,
+  readSafeAppExecution,
+  reportedSafeExecution,
+  SAFE_NONCE_GUIDANCE,
+  SAFE_PROPOSAL_UNCONFIRMED,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
@@ -29,8 +41,10 @@ export type ProjectBatchCall = AuthorityCall & {
 type CallSubmission = {
   kind: 'direct' | 'safe-connector' | 'safe'
   hash?: Hex
-  safeTx?: SafeQueuedTx
+  safeTx?: SafeQueuedTransaction
   fromBlock?: bigint
+  /** The last block a Safe submission's execution scan has read, so the next look starts after it. */
+  scannedTo?: bigint
 }
 
 export type ProjectBatch = {
@@ -138,44 +152,99 @@ async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Pr
   return withRelayrScopeLock(`project-batch:${scopes[index]}`, () => locked(scopes, run, index + 1))
 }
 
+/**
+ * The Safe ran a saved proposal's execution and it failed, or ran something
+ * this app can't prove is that proposal: the result is final, so the call is
+ * no longer held as submitted.
+ */
+class SafeSubmissionSettled extends Error {}
+
+/** A saved Safe proposal the Safe ran without effect: its call failed, or its execution reverted. */
+const SAFE_SUBMISSION_FAILED = 'The saved Safe proposal failed onchain. Review it again.'
+
 async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, acceptReverted = false): Promise<TransactionReceipt> {
   const client = clientFor(call.chainId)
   const [tx, receipt] = await Promise.all([
     client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
   ])
   if (tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== call.chainId ||
-      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
-      tx.blockHash !== receipt.blockHash || (receipt.status !== 'success' && !(acceptReverted && !safeHash && receipt.status === 'reverted'))) {
+      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() || tx.blockHash !== receipt.blockHash) {
     throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
   }
-  if (safeHash) {
-    if (!receiptHasSafeExecutionSuccess(receipt, call.authority, safeHash)) {
-      throw new Error('This receipt does not prove execution of the exact saved Safe proposal.')
-    }
-  } else if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
-      !isAddressEqual(tx.to, call.target) || tx.input.toLowerCase() !== call.data.toLowerCase() ||
-      tx.value !== (call.value ?? 0n)) {
-    throw new Error('The receipt belongs to a different project transaction. Keep the original action pending.')
-  }
+  // Only a canonical receipt decides a saved call, a release included.
   const block = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (!block.hash || block.hash !== receipt.blockHash) {
     throw new Error('The original project receipt is no longer canonical. Check it again before continuing.')
   }
+  if (safeHash) {
+    // An execution that reverted ran nothing; the Safe's result decides anything else.
+    if (receipt.status !== 'success') throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
+    const execution = await readSafeAppExecution({
+      client: { getTransaction: async () => tx },
+      receipt,
+      safe: call.authority,
+      proposalHash: safeHash,
+      calls: [{ to: call.target, data: call.data, value: call.value }],
+    })
+    if (execution.status !== 'success') {
+      throw new SafeSubmissionSettled(execution.status === 'unproven' ? SAFE_PROPOSAL_UNCONFIRMED : SAFE_SUBMISSION_FAILED)
+    }
+    return receipt
+  }
+  if (receipt.status !== 'success' && !(acceptReverted && receipt.status === 'reverted')) {
+    throw new Error('The original transaction has not proven successful. Keep its saved recovery record.')
+  }
+  if (!tx.to || !isAddressEqual(tx.from, call.authority) ||
+      !isAddressEqual(tx.to, call.target) || tx.input.toLowerCase() !== call.data.toLowerCase() ||
+      tx.value !== (call.value ?? 0n)) {
+    throw new Error('The receipt belongs to a different project transaction. Keep the original action pending.')
+  }
   return receipt
 }
 
-async function safeExecution(call: ProjectBatchCall, submission: CallSubmission): Promise<Hex | null> {
+/** JB Center's RPC answers eth_getLogs over at most this many blocks. */
+const LOG_WINDOW_BLOCKS = 500n
+/**
+ * One look scans at most this many windows (50,000 blocks). Past that it
+ * stops, records how far it read, and the next resume continues from there.
+ */
+const LOG_WINDOWS_PER_LOOK = 100
+/**
+ * A scan records blocks as read only this far behind the latest one: a reorg
+ * there could still add the execution, so every look reads them again. One
+ * window (one more request a look) is deeper than Ethereum's 64-block finality
+ * and minutes of blocks on the L2s.
+ */
+const SCAN_SETTLED_DEPTH = LOG_WINDOW_BLOCKS
+
+/**
+ * The Safe's execution of `submission` in its logs since the submission,
+ * null when the scan read up to the latest block and found none, or
+ * 'unfinished' when it stopped at its bound first, so its absence proves
+ * nothing yet.
+ */
+async function safeExecution(
+  call: ProjectBatchCall,
+  submission: CallSubmission,
+  recordScan: (scannedTo: bigint) => void,
+): Promise<Hex | null | 'unfinished'> {
   if (!submission.hash || submission.fromBlock === undefined) return null
   const client = clientFor(call.chainId)
   const latest = await client.getBlockNumber()
+  const settled = latest - SCAN_SETTLED_DEPTH
   // Event provenance is the Safe contract itself; a service status cannot complete a call.
-  for (let start = submission.fromBlock; start <= latest; start += 10_000n) {
-    const end = start + 9_999n < latest ? start + 9_999n : latest
+  let start = submission.scannedTo !== undefined ? submission.scannedTo + 1n : submission.fromBlock
+  for (let window = 0; window < LOG_WINDOWS_PER_LOOK && start <= latest; window += 1) {
+    const end = start + LOG_WINDOW_BLOCKS - 1n < latest ? start + LOG_WINDOW_BLOCKS - 1n : latest
     const logs = await client.getLogs({ address: call.authority, fromBlock: start, toBlock: end })
-    const log = logs.find(log => receiptHasSafeExecutionSuccess({ logs: [log] }, call.authority, submission.hash!))
+    // Its ExecutionFailure is a result too: a failed call is settled, never left pending.
+    const log = logs.find(log => isSafeExecutionLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
+    const read = end < settled ? end : settled
+    if (read >= start) recordScan(read)
+    start = end + 1n
   }
-  return null
+  return start <= latest ? 'unfinished' : null
 }
 
 export async function runProjectBatch({
@@ -192,7 +261,7 @@ export async function runProjectBatch({
   /** Permissionless actions may change elsewhere. Never applies to a submitted call. */
   reconcileUnsubmitted?: (call: ProjectBatchCall) => Promise<boolean>
   /** Retain the authenticated proposal while marking an irrevocably resolved payment obsolete. */
-  reconcileObsoleteSafe?: (call: ProjectBatchCall, proposal: SafeQueuedTx) => Promise<boolean>
+  reconcileObsoleteSafe?: (call: ProjectBatchCall, proposal: SafeQueuedTransaction) => Promise<boolean>
   /** Finish canonical, exact direct attempts that reverted; callers must display that outcome. */
   acceptRevertedTransactions?: boolean
   /** Application events may report a failed distribution despite a successful outer receipt. */
@@ -263,6 +332,19 @@ export async function runProjectBatch({
     }
     const report = (message: string, round: number) => onProgress?.({ message,
       completed: journal.completedIds.length, total: journal.calls.length, round: round + 1, rounds: journal.rounds.length })
+    // A Safe submission whose result is final but not this call's success never
+    // holds the batch: the call is released, and the next resume reviews it again.
+    const verifySubmitted = async (call: ProjectBatchCall, execution: Hex, safeHash?: Hex) => {
+      try {
+        return await verifyReceipt(call, execution, safeHash, acceptRevertedTransactions)
+      } catch (error) {
+        if (error instanceof SafeSubmissionSettled) {
+          delete journal.submissions[call.id]
+          persist(journal)
+        }
+        throw error
+      }
+    }
 
     for (let round = 0; round < journal.rounds.length; round++) {
       let pending = journal.rounds[round].filter(id => !journal.completedIds.includes(id))
@@ -322,23 +404,43 @@ export async function runProjectBatch({
         if (saved) {
           if (!saved.hash) throw new Error('A wallet submission may still be pending. Check the original wallet activity; do not submit this call again.')
           let execution: Hex | null = null
+          const recordScan = (scannedTo: bigint) => {
+            journal.submissions[call.id] = { ...journal.submissions[call.id], scannedTo }
+            persist(journal)
+          }
           if (saved.kind === 'direct') execution = saved.hash
-          else if (saved.kind === 'safe') execution = await safeExecution(call, saved)
-          else {
-            execution = await safeExecution(call, saved)
+          else if (saved.kind === 'safe') {
+            const scanned = await safeExecution(call, saved, recordScan)
+            // A scan stopped at its bound proves no absence: neither obsolete nor still queued yet.
+            if (scanned === 'unfinished') {
+              report("This Safe proposal's history is still being read. Check this batch again to continue.", round)
+              return journal
+            }
+            execution = scanned
+          } else {
+            const scanned = await safeExecution(call, saved, recordScan)
+            execution = scanned === 'unfinished' ? null : scanned
             try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
-            catch { report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round); return journal }
+            catch (error) {
+              // Safe's service says it ran and failed: its own receipt decides.
+              // Anything else may still execute.
+              const recorded = await reportedSafeExecution(error, call.chainId, call.authority, saved.hash, SAFE_SERVICE)
+              if (recorded) execution = recorded
+              else {
+                report('The saved Safe proposal is still pending. Execute it in Safe, then check this batch again.', round)
+                return journal
+              }
+            }
           }
           if (execution) {
-            const receipt = await verifyReceipt(call, execution, saved.kind === 'direct' ? undefined : saved.hash, acceptRevertedTransactions)
+            const receipt = await verifySubmitted(call, execution, saved.kind === 'direct' ? undefined : saved.hash)
             await verifyCompletion?.(call, receipt)
             complete([call.id])
             continue
           }
           const proposal = saved.safeTx
           if (saved.kind === 'safe' && proposal && reconcileObsoleteSafe &&
-            isAddressEqual(proposal.to, call.target) && (proposal.data ?? '0x').toLowerCase() === call.data.toLowerCase() &&
-            BigInt(proposal.value) === (call.value ?? 0n) && proposal.operation === 0 &&
+            safeTransactionMatchesCall(proposal, { to: call.target, data: call.data, value: call.value }) &&
             canonicalSafeTxHash(call.chainId, call.authority, proposal).toLowerCase() === saved.hash.toLowerCase() &&
             await reconcileObsoleteSafe(call, { ...proposal, safeTxHash: saved.hash })) {
             complete([call.id])
@@ -365,7 +467,8 @@ export async function runProjectBatch({
             if (saved?.hash && hash.toLowerCase() !== saved.hash.toLowerCase()) {
               throw new Error('The Safe nonce changed. Keep checking the exact original proposal before creating another one.')
             }
-            journal.submissions[call.id] = { kind: 'safe', hash, safeTx: tx,
+            // The same proposal again keeps what its submission already holds, its scan included.
+            journal.submissions[call.id] = { ...journal.submissions[call.id], kind: 'safe', hash, safeTx: tx,
               fromBlock }
             persist(journal)
           },
@@ -386,7 +489,7 @@ export async function runProjectBatch({
         const safeResult = result.safeResults[0]
         const execution = result.directResults[0] ?? (safeResult?.status === 'executed' ? safeResult.transactionHash : undefined)
         if (execution) {
-          const receipt = await verifyReceipt(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined, acceptRevertedTransactions)
+          const receipt = await verifySubmitted(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined)
           await verifyCompletion?.(call, receipt)
           complete([call.id])
         } else {

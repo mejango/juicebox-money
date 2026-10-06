@@ -11,7 +11,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: mocks.options, isLoading: false }), useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, runProjectBatch: mocks.run, projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}` }))
 vi.mock('@/lib/project-distributions', async original => ({ ...await original<typeof import('@/lib/project-distributions')>(), reviewPayout: mocks.payout, reviewReserved: mocks.reserved, reverifyDistribution: mocks.reverify }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; error: string | null; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.error}<button onClick={props.onConfirm}>Confirm test distributions</button></div> }))
+vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; status?: string | null; error: string | null; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.status}{props.error}<button onClick={props.onConfirm}>Confirm test distributions</button></div> }))
 
 import { DistributionBatchFlow, distributionBatchCalls } from '@/components/project/DistributionBatchFlow'
 import type { Distribution, PayoutDistribution, ReservedDistribution } from '@/lib/project-distributions'
@@ -136,6 +136,21 @@ describe('distribution batch reviews and recovery', () => {
     expect(mocks.reserved).not.toHaveBeenCalled()
     expect(text(renderer)).toContain('pending amount changed')
     expect(text(renderer)).toContain('BBB')
+  })
+
+  it("keeps the batch's own line when it comes back pending, so a scan still reading says so", async () => {
+    const calls = distributionBatchCalls([reserved(1)])
+    const saved = { id: 'scanning-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    const line = "This Safe proposal's history is still being read. Check this batch again to continue."
+    mocks.load.mockReturnValue(saved)
+    mocks.run.mockImplementation(async ({ onProgress }) => {
+      onProgress({ message: line, completed: 0, total: 1, round: 1, rounds: 1 })
+      return saved
+    })
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    expect(text(renderer)).toContain(line)
+    expect(text(renderer)).not.toContain('Some distributions are still pending')
   })
 
   it('returns to a fresh review if the runner abandons an unsubmitted stale recovery', async () => {
