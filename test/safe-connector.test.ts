@@ -171,10 +171,10 @@ describe('Safe execution wait', () => {
       client: expect.objectContaining({ getTransaction: expect.any(Function) }),
       signal,
     })
-    // The SDK reads the chain's own client.
+    // The SDK reads the chain's own client: it tells a not-found from a node
+    // that can't answer itself.
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
-    await options.client.getTransaction({ hash: HASH })
-    expect(chainClient.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+    expect(options.client).toBe(chainClient)
 
     await waitForSafeExecutionHash(1, HASH)
     expect(runtime.getPublicClient).toHaveBeenLastCalledWith(config, { chainId: 1 })
@@ -186,45 +186,44 @@ describe('Safe execution wait', () => {
 
     await waitForSafeExecutionHash(10, HASH, { client })
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
-    await expect(options.client.getTransaction({ hash: HASH })).resolves.toEqual({ hash: HASH })
-    expect(client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+    expect(options.client).toBe(client)
     expect(runtime.getPublicClient).not.toHaveBeenCalled()
   })
 
-  it("hands the SDK only a real not-found: a node that can't answer is asked again", async () => {
-    vi.useFakeTimers()
-    const client = {
-      getTransaction: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('fetch failed'))
-        .mockRejectedValueOnce(new Error('HTTP 503'))
-        .mockResolvedValueOnce({ hash: HASH })
-        .mockRejectedValue(new TransactionNotFoundError({ hash: HASH })),
-    }
-    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
-    await waitForSafeExecutionHash(11155420, HASH, { client })
-    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+  describe("on a chain without Safe's service, with the SDK's wait", () => {
+    beforeEach(async () => {
+      vi.useFakeTimers()
+      const sdk = await vi.importActual<typeof import('@bananapus/nana-sdk-core/safe-service')>(
+        '@bananapus/nana-sdk-core/safe-service',
+      )
+      runtime.waitForSafeExecutionHash.mockImplementation(sdk.waitForSafeExecutionHash)
+    })
 
-    const look = options.client.getTransaction({ hash: HASH })
-    await vi.advanceTimersByTimeAsync(10_000)
-    await expect(look).resolves.toEqual({ hash: HASH })
-    expect(client.getTransaction).toHaveBeenCalledTimes(3)
-    // A real not-found reaches the SDK at once.
-    await expect(options.client.getTransaction({ hash: HASH })).rejects.toBeInstanceOf(TransactionNotFoundError)
-  })
+    it("keeps looking while the node can't answer, and ends when its signal aborts", async () => {
+      const client = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) }
+      const flow = new AbortController()
+      const wait = waitForSafeExecutionHash(11155420, HASH, { client, signal: flow.signal })
+      const settled = vi.fn()
+      wait.then(settled, settled)
 
-  it('stops asking when its wait is aborted', async () => {
-    vi.useFakeTimers()
-    const client = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) }
-    const controller = new AbortController()
-    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
-    await waitForSafeExecutionHash(11155420, HASH, { client, signal: controller.signal })
-    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(settled).not.toHaveBeenCalled()
+      expect(client.getTransaction.mock.calls.length).toBeGreaterThan(12)
 
-    const look = options.client.getTransaction({ hash: HASH })
-    const settled = expect(look).rejects.toThrow(/aborted/i)
-    controller.abort()
-    await settled
+      flow.abort()
+      await expect(wait).rejects.toMatchObject({ name: 'AbortError' })
+    })
+
+    it('gives up after twelve answers that the chain has no such transaction', async () => {
+      const client = {
+        getTransaction: vi.fn().mockRejectedValue(new TransactionNotFoundError({ hash: HASH })),
+      }
+      const wait = waitForSafeExecutionHash(11155420, HASH, { client, signal: new AbortController().signal })
+      const failed = expect(wait).rejects.toThrow(/does not host a transaction service/)
+      await vi.advanceTimersByTimeAsync(120_000)
+      await failed
+      expect(client.getTransaction).toHaveBeenCalledTimes(12)
+    })
   })
 })
 
