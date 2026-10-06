@@ -118,7 +118,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
         if (session.discardable) {
           return (
             <div key={scope} className="card p-4">
-              <RelayrDiscard scope={scope} onDiscarded={refresh} />
+              <RelayrDiscard scope={scope} reason={session.discardable} onDiscarded={refresh} />
             </div>
           )
         }

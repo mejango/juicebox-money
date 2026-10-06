@@ -701,7 +701,7 @@ export function MetadataEditor({
 
   const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
   // Its signature may already have run: only Discard ends it, and the form is reviewed afresh.
-  const discardable = !!frozen && !!loadRelayrPendingSession(frozen.scope)?.discardable
+  const discardable = frozen ? loadRelayrPendingSession(frozen.scope)?.discardable : undefined
   const discarded = () => {
     if (frozen) removeMetadataReview(frozen)
     setFrozen(null)
@@ -1104,11 +1104,11 @@ export function MetadataEditor({
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
-          actionDisabled={discardable}
+          actionDisabled={!!discardable}
           onConfirm={() => void submit()}
           onClose={closeReview}
         >
-          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} onDiscarded={discarded} /> : null}
+          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} onDiscarded={discarded} /> : null}
         </TxConfirmDialog>
       ) : null}
     </div>

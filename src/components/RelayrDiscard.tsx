@@ -1,19 +1,23 @@
 'use client'
 
 import { useState } from 'react'
-import { discardRelayrSession, RELAYR_DISCARDABLE } from '@/lib/relayr'
+import { discardRelayrSession, relayrDiscardLine, type RelayrDiscardReason } from '@/lib/relayr'
 
 /**
- * The one line and the Discard of a saved Relayr session whose requests can
- * never run again, though one may have run. `onDiscarded` clears what the
- * action itself saved, so it can be reviewed afresh.
+ * The one line and the Discard of a saved Relayr session whose requests are
+ * all dead (ruling R114). Discard removes only the session; `onDiscarded`
+ * lets the action review it again.
  */
-export function RelayrDiscard({ scope, onDiscarded }: { scope: string; onDiscarded: () => void | Promise<void> }) {
+export function RelayrDiscard({ scope, reason, onDiscarded }: {
+  scope: string
+  reason: RelayrDiscardReason
+  onDiscarded: () => void | Promise<void>
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
     <div className="space-y-2">
-      <p className="text-sm text-smoke-700">{RELAYR_DISCARDABLE}</p>
+      <p className="text-sm text-smoke-700">{relayrDiscardLine(reason)}</p>
       <button
         type="button"
         className="btn-secondary min-h-[36px] px-4 text-sm"

@@ -441,7 +441,7 @@ describe('AccountPendingRelayr', () => {
   it('ends a session whose earlier signature may already have run with one line and Discard', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
-      paymentStatus: 'unpaid', discardable: true, records: [],
+      paymentStatus: 'unpaid', discardable: 'ran', records: [],
     }) }])
     mocks.discardRelayrSession.mockResolvedValue(undefined)
 

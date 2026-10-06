@@ -712,8 +712,9 @@ export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: Que
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules.");
-  if (loadRelayrPendingSession(journal.scope)?.discardable) {
-    return <RelayrDiscard scope={journal.scope} onDiscarded={() => { clearQueueJournal(journal); onDiscard(); }} />;
+  const discardable = loadRelayrPendingSession(journal.scope)?.discardable;
+  if (discardable) {
+    return <RelayrDiscard scope={journal.scope} reason={discardable} onDiscarded={() => { clearQueueJournal(journal); onDiscard(); }} />;
   }
   return <div className="space-y-3">
     <p className="text-sm text-smoke-700">{status}</p>

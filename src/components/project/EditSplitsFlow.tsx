@@ -413,9 +413,10 @@ export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: Spl
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState('A split update is saved. Resume it before editing these recipients again.')
-  if (loadRelayrPendingSession(journal.scope)?.discardable) {
+  const discardable = loadRelayrPendingSession(journal.scope)?.discardable
+  if (discardable) {
     return <div className="mt-3 rounded-xl border border-smoke-200 p-4">
-      <RelayrDiscard scope={journal.scope} onDiscarded={() => { clearSplitJournal(journal); onDiscard() }} />
+      <RelayrDiscard scope={journal.scope} reason={discardable} onDiscarded={() => { clearSplitJournal(journal); onDiscard() }} />
     </div>
   }
   return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4">

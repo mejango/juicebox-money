@@ -242,7 +242,7 @@ describe('queue recovery after cancellation or partial execution', () => {
   }
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
-    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: true })
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: 'ran' })
     const { renderer, completed, discarded, journal } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
     expect(labels(renderer)).toEqual(['"Discard"'])

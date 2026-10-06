@@ -675,7 +675,7 @@ describe('metadata editor per-chain review and recovery', () => {
     let scope = ''
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
       scope = saveSession(calls, 'unpaid')
-      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: true })
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: 'ran' })
       throw new Error('This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
     })
     const renderer = await renderEditor()

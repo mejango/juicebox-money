@@ -341,6 +341,35 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     } finally { clearRelayrPendingSession(scope) }
   })
 
+  it('classifies a saved session before its action\'s own recheck, so one whose requests ran ends with Discard', async () => {
+    let ran = false
+    const reverifyAuthority = vi.fn(async () => {
+      if (ran) throw new Error('The authority, queue, or rules changed on Ethereum. Reload and review before sending.')
+    })
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', reverifyAuthority },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678', reverifyAuthority },
+    ]
+    const scope = relayrCallsScope(calls)
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow('Selection canceled')
+      // Anyone holding the signed requests ran them at the forwarder, so the queue changed.
+      ran = true
+      reverifyAuthority.mockClear()
+      const read = mocks.client.readContract.getMockImplementation()!
+      mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n
+        : input.functionName === 'verify' ? false : read(input))
+      mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
+        ? { number: 200n, hash: HASH, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: HASH })
+      await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
+      expect(reverifyAuthority).not.toHaveBeenCalled()
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
   it('routes a matching delegated EOA project-handle claim as a direct EOA call', async () => {
     const delegated = {
       kind: 'delegated-eoa' as const,

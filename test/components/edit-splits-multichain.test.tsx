@@ -415,7 +415,7 @@ describe('split replacement recovery', () => {
   }
 
   it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
-    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: true })
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'ran' })
     const { journal, renderer, completed, discarded } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
     expect(renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))).toEqual(['"Discard"'])

@@ -320,7 +320,10 @@ export async function runAuthorityCalls({
       continue
     }
     const authority = group[0].authority
-    await Promise.all(group.map(call => call.reverifyAuthority?.()))
+    // A saved session's action rechecks only after the requests it published
+    // are classified (ruling R114), in runRelayrCalls: a request that ran
+    // would make the recheck refuse first.
+    if (!saved) await Promise.all(group.map(call => call.reverifyAuthority?.()))
     onProgress?.({
       kind: 'checking',
       message: `Checking authority on ${group.length} chain${
