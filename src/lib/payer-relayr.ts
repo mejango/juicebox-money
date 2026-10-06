@@ -12,9 +12,9 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPoll, relayrPostBundle, relayrRetryOption, requireRelayrBundleUnrun, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
-import { relayrDestinationHash, relayrPaymentOptions, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrDestinationHash, relayrPaymentOptions, relayrRecordChain, relayrSupportsChains, requireRelayrBundleUnpaid, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -456,8 +456,10 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           !relayrPaymentOptions(session.quote, chains).length) {
         // No option of the unpaid quote passes relayrPaymentDetails any more,
         // so nothing here can fund it. Once Relayr confirms it unpaid with
-        // every call pending, the same raw calls are quoted again.
-        await requireRelayrBundleUnrun(session.quote.bundle_uuid)
+        // every call pending (ruling R104; its raw calls carry no forwarder
+        // nonce or deadline for a chain read to show they cannot run), the
+        // same raw calls are quoted again.
+        await requireRelayrBundleUnpaid(session.quote.bundle_uuid)
         await requestQuote()
       }
       const quote = session.quote

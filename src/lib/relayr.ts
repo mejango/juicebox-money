@@ -46,6 +46,7 @@ import {
   relayrRecordChain,
   relayrStateIsSuccess,
   relayrSupportsChain,
+  requireRelayrBundleUnpaid,
   requireRelayrPaymentRetry,
   requireRelayrPaymentRuntime,
   simulateRelayrPayment,
@@ -1392,24 +1393,6 @@ function relayrBundleFunded(read: RelayrBundleRead): boolean {
   return read.paymentReceived === true || read.records.some(record => !relayrRecordPending(record))
 }
 
-/** Relayr reports the bundle unpaid, with every call pending and no destination hash. */
-function relayrBundleUnrun(read: RelayrBundleRead): boolean {
-  return read.paymentReceived === false && read.records.length > 0 && read.records.every(relayrRecordPending)
-}
-
-/**
- * One uncached, echo-checked read of the bundle must report a released quote
- * unpaid with every call pending and no destination hash before a payer
- * deployment quotes its raw calls again (ruling R104). Its raw calls carry no
- * forwarder nonce or deadline, so no chain read can show they cannot run.
- */
-export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void> {
-  const bundle = await readRelayrBundleIfNamed(bundleUuid)
-  if (!bundle || !relayrBundleUnrun(bundle)) {
-    throw new Error('Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
-  }
-}
-
 /**
  * Ruling R114 for a saved session: the requests it published, each at a
  * canonical finalized block on its chain, with the nonces it saved. Null
@@ -1583,7 +1566,9 @@ export async function revertedRelayrQuote(quote: {
   const records = bundle?.records ?? null
   if (bundle && relayrBundleFunded(bundle)) return { state: 'funded', records }
   if (relayrPaidQuoteOpen(quote.payments)) return { state: 'payable', records }
-  if (bundle && relayrBundleUnrun(bundle) && await relayrQuoteUnfundable(quote)) return { state: 'released', records }
+  // The SDK's guard reads the bundle once more, right before the release.
+  if (bundle && await relayrQuoteUnfundable(quote) &&
+      await requireRelayrBundleUnpaid(quote.bundleUuid).then(() => true, () => false)) return { state: 'released', records }
   throw new Error('This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.')
 }
 

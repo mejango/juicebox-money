@@ -220,18 +220,22 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
   })
 
-  it.each<[string, Record<string, unknown>]>([
-    ['reports a payment', { payment_received: true }],
-    ['does not say whether it was paid', { payment_received: null }],
-    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }],
-    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }],
-  ])('keeps an unpaid quote that can no longer be paid while Relayr %s', async (_, body) => {
+  it.each<[string, Record<string, unknown>, string, string]>([
+    ['reports a payment', { payment_received: true }, 'paid',
+      'Relayr already reports a payment for this bundle. Do not pay again.'],
+    ['does not say whether it was paid', { payment_received: null }, 'unknown',
+      'Relayr has not said whether this bundle is paid. Do not pay again yet; check it later.'],
+    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }, 'running',
+      'Relayr reports a transaction of this bundle as running or run. Do not pay again.'],
+    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }, 'unknown',
+      'Relayr has not said whether this bundle is paid. Do not pay again yet; check it later.'],
+  ])('keeps an unpaid quote that can no longer be paid while Relayr %s, saying why', async (_, body, reason, message) => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
     relayrReports(body)
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(
-      'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({
+      name: 'RelayrPaymentRetryError', reason, message })
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).not.toHaveBeenCalled()

@@ -1781,6 +1781,18 @@ describe('paying a reverted Relayr payment again', () => {
         .rejects.toThrow('Another published action')
     })
 
+    it("keeps the quote when the SDK's bundle read right before the release reports a payment", async () => {
+      const { posts, reads } = await expired()
+      const answer = reads.getMockImplementation()!
+      let read = 0
+      reads.mockImplementation(async signal => ++read === 1 ? answer(signal)
+        : response({ bundle_uuid: BUNDLE_UUID, payment_received: true, transactions: [] }))
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
+      expect(read).toBe(2)
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+    })
+
     it('keeps the quote while another option on the paid chain is still open at its finalized block', async () => {
       const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ amount: '200' }, DEADLINE + 3_600)])
       await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
