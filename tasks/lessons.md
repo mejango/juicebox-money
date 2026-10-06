@@ -28,3 +28,6 @@ Separate local intent from potentially exposed execution using the journal owner
 
 ## 2026-10-06 — Recovery restrictions need observable reasons
 Explain the persisted state that requires resume, rather than repeating zero completed attempts. Offer a read-only recheck through the owning release proof when safely available; never infer that the actual user batch is unfunded.
+
+## 2026-10-06 — Pace egress, not response completion
+A two-worker chain-check limit makes unrelated chains wait for slow responses. Pace actual browser RPC request starts in the shared transport, let independent checks overlap, and still drain every check before quote/payment decisions.

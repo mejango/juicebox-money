@@ -1,6 +1,7 @@
 import { createJBCenterRpcProvider } from '@bananapus/nana-sdk-core/jbcenter'
 import { custom, http, type Transport } from 'viem'
 import { jbCenterAppOrigin, jbCenterBaseUrl } from '@/lib/jbcenter-config'
+import { createPacedRpcFetch } from '@/lib/rpc-request-pacing'
 
 const FIXTURE_NETWORKS: Record<number, string> = {
   1: 'mainnet',
@@ -19,7 +20,8 @@ const serverFetch: typeof fetch = (input, init) => {
   return fetch(input, { ...init, headers })
 }
 
-const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
+// One queue per browser module, shared by every chain and provider retry.
+const browserFetch = createPacedRpcFetch((input, init) => window.fetch(input, init))
 
 /** Center's RPC for `chainId`. Center load balances reads across nodes that
  * import blocks at slightly different times, so a read pinned to a block one

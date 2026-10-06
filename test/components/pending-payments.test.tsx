@@ -215,7 +215,7 @@ describe('pending payment review above activity', () => {
     expect(text(tree!.root)).not.toContain('0 payments awaiting routing')
   })
 
-  it('finishes discovery independently of delayed live verification and paces checks', async () => {
+  it('finishes discovery independently and starts all live checks without waiting for responses', async () => {
     mocks.rows = Array.from({ length: 3 }, (_, index) => {
       const item = row()
       item.payment.pendingCallId = `0x${(index + 1).toString(16).padStart(64, '0')}`
@@ -231,7 +231,7 @@ describe('pending payment review above activity', () => {
     expect(await mocks.queryFn!({ signal: mocks.query.signal })).toHaveLength(3)
     expect(mocks.review).not.toHaveBeenCalled()
     const checking = mocks.verifyFn!()
-    expect(mocks.review).toHaveBeenCalledTimes(2)
+    expect(mocks.review).toHaveBeenCalledTimes(3)
     expect(tree!.root.findAllByType('li')).toHaveLength(3)
     releases[0]()
     await new Promise(resolve => setTimeout(resolve, 0))

@@ -269,7 +269,10 @@ describe('the split editor\'s recheck', () => {
     const viaCenter = createPublicClient({ chain: base, transport: jbCenterRpcTransport(8453) })
     mocks.clients.set(8453, { ...baseClient, readContract: (request: { functionName: string }) =>
       request.functionName === 'splitsOf' ? viaCenter.readContract(request as never) : baseClient.readContract(request as never) })
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    // RPC start pacing uses elapsed wall time as well as timers. Advance both.
+    vi.mocked(Date.now).mockRestore()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.setSystemTime(NOW * 1_000)
     /** Runs the action through every wait Center's transport makes, and resolves with how it ended. */
     const action = async () => {
       let ended = false

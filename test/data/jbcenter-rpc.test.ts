@@ -8,6 +8,7 @@ import {
 } from '@/lib/jbcenter-config'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -91,4 +92,33 @@ describe('Juicebox Center RPC transport', () => {
     expect(url).toBe('https://dev.juicebox.center/v1/rpc/1')
     expect(new Headers(init.headers).get('origin')).toBe(siteUrl)
   })
+
+  it('shares browser request-start pacing across chain transports while responses remain pending', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const { jbCenterRpcTransport: transport } = await import('@/lib/jbcenter-rpc')
+    const releases: (() => void)[] = []
+    const browserWindow = {
+      fetch: vi.fn((input: RequestInfo | URL) => new Promise<Response>(resolve => {
+        const chainId = Number(String(input).split('/').at(-1))
+        releases.push(() => resolve(new Response(JSON.stringify({
+          jsonrpc: '2.0', id: 1, result: `0x${chainId.toString(16)}`,
+        }), { headers: { 'content-type': 'application/json' } })))
+      })),
+    }
+    vi.stubGlobal('window', browserWindow)
+    const chains = [1, 10, 8453, 42161]
+    const requests = chains.map(chainId =>
+      createPublicClient({ transport: transport(chainId) }).getChainId(),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(browserWindow.fetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(374)
+    expect(browserWindow.fetch).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(browserWindow.fetch).toHaveBeenCalledTimes(4)
+    releases.reverse().forEach(release => release())
+    await expect(Promise.all(requests)).resolves.toEqual(chains)
+  })
+
 })

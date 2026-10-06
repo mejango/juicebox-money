@@ -224,3 +224,12 @@ Review: an untouched saved selection now reviews all currently eligible payments
 Plan review: rechecking never quotes, signs or pays. Only a quote with authenticated payment options whose deadlines are past at canonical finalized blocks and whose SDK bundle read proves unpaid/pending permits abandoning the old project intent. Paid, unknown-send, malformed, and forwarded records retain recovery.
 
 Review: saved recovery now explains its evidence and offers Re-check saved batch without starting any signature or payment. The shared raw lifecycle release predicate verifies every authenticated payment deadline on finalized canonical blocks and then SDK unpaid/pending proof; both fresh re-quoting and recovery release use it. Advanced local clocks and unsupported quote options cannot authorize release. 155 focused tests, typecheck, changed-file ESLint, source invariants and diff check pass. No push.
+
+## 2026-10-06 — Pace RPC starts instead of waiting for chain checks
+- [x] Inspect shared browser transport and independent-check owner.
+- [x] Start all independent checks and pace actual browser RPC fetch starts.
+- [x] Verify slow-response overlap, order, error drain, aborts and rate-limit cooldown.
+
+Plan review: keep wallet submissions sequential and all-check gates intact. One browser scheduler serves every chain; server requests do not share a process-wide queue.
+
+Review: browser RPC requests now start at least 125ms apart across every chain and provider retry, independent of response completion. Abort removes unsent work and HTTP429 cooldown applies across chains. Independent checks start together and drain before quote/payment decisions. Full unit suite passes 2,576 tests across 191 files, including real SDK browser transport overlap; full typecheck, changed-file ESLint, source invariants and diff check pass. The existing Center retry fixture now advances fake wall time with timers so pacing can progress. No commit or push.

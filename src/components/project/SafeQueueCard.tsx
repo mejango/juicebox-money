@@ -1324,8 +1324,8 @@ export function SafeQueueCard({
 
       // Check 1 of 2: every chain's current transaction is re-fetched and
       // simulated before quoting. Later nonces need a new review after these
-      // land. Bound independent chain checks because their RPC reads share
-      // one rate-limited JB Center host.
+      // land. Independent checks overlap while the shared RPC transport
+      // paces request starts to the rate-limited JB Center host.
       setBatchRows(relayrRows.map(batchDialogRow));
       setBatchStatus({});
       setBatchDone(false);
