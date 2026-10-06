@@ -225,9 +225,12 @@ if (
   process.exit(1);
 }
 
+const rank = (severity) => severities.indexOf(severity);
 const memo = new Map();
 // The Para advisories a finding reaches, or null when any of its paths leads
-// to another advisory, or when npm rates it at a severity none of them has.
+// to another advisory, or when npm rates it above the most severe of them.
+// npm can rate a dependent below them: @getpara/react-core is low although
+// it reaches node-forge.
 const paraAdvisoriesOf = (name, active = new Set()) => {
   if (memo.has(name)) return memo.get(name);
   const vulnerability = vulnerabilities[name];
@@ -245,7 +248,8 @@ const paraAdvisoriesOf = (name, active = new Set()) => {
     }
     for (const advisory of advisories) reached.add(advisory);
   }
-  if (reached && ![...reached].some((advisory) => PARA_ADVISORIES.get(advisory).severity === vulnerability.severity)) {
+  if (reached && rank(vulnerability.severity) >
+    Math.max(...[...reached].map((advisory) => rank(PARA_ADVISORIES.get(advisory).severity)))) {
     reached = null;
   }
   memo.set(name, reached);

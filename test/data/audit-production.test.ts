@@ -157,6 +157,16 @@ describe('production audit gate', () => {
     expect(result.output).toContain(Object.keys(change)[0])
   })
 
+  // npm rates some dependents below what they reach: @getpara/react-core is low although it reaches node-forge.
+  it('accepts a Para package rated below the only advisory it reaches', () => {
+    const result = audit(report({
+      'node-forge': { severity: 'high', via: [{ severity: 'high', url: NODE_FORGE }] },
+      '@getpara/web-sdk': { severity: 'low', via: ['node-forge'] },
+    }), 1)
+    expect(result.status).toBe(0)
+    expect(result.output).toContain('GHSA-86w9-cpqp-85rv')
+  })
+
   it('rejects a valid audit containing an unexpected vulnerability', () => {
     const result = audit(report({ unsafe: { severity: 'high', via: [{ severity: 'high', url: 'https://example.com/advisory' }] } }), 1)
     expect(result.status).toBe(1)
