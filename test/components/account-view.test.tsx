@@ -483,6 +483,26 @@ describe('AccountPendingRelayr', () => {
     expect(renderedText(renderer.root)).not.toContain('earlier signature')
   })
 
+  it('says the saved payment could not be matched, with Discard, once every request expired unused', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'submitted', discardable: 'expired', paymentUnmatched: true, records: [],
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.')
+    expect(text).not.toContain('expired without running')
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+  })
+
   it('shows the changed line with Discard when the project changed since the review', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({

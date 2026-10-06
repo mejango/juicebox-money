@@ -53,6 +53,7 @@ const CONTROLLER = '0x5555555555555555555555555555555555555555' as Address
 const TOKEN = '0x6666666666666666666666666666666666666666' as Address
 const SCOPE = 'authority:0xabc'
 const LINE = 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.'
+const UNMATCHED = 'The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.'
 const PROJECTS = [{ chainId: 1 as const, projectId: 42, name: 'Ethereum' }, { chainId: 10 as const, projectId: 91, name: 'Optimism' }]
 let renderer: ReactTestRenderer | undefined
 
@@ -76,12 +77,12 @@ async function render(element: React.ReactElement) {
  * have no recheck of their own, so their calls go out again only after a
  * fresh review (ruling R114 (f)).
  */
-async function discardsInPlaceOfTheError() {
-  expect(text(renderer!.root).split(LINE)).toHaveLength(2)
+async function discardsInPlaceOfTheError(line = LINE) {
+  expect(text(renderer!.root).split(line)).toHaveLength(2)
   expect(button('Confirm dialog')!.props.disabled).toBe(true)
   await click('Discard')
   expect(mocks.discard).toHaveBeenCalledWith(SCOPE)
-  expect(text(renderer!.root)).not.toContain(LINE)
+  expect(text(renderer!.root)).not.toContain(line)
   expect(button('Confirm dialog')).toBeUndefined()
 }
 
@@ -108,6 +109,21 @@ describe('owner actions whose saved Relayr session can only be discarded', () =>
     await click('Confirm dialog')
     expect(mocks.run).toHaveBeenCalledOnce()
     await discardsInPlaceOfTheError()
+  })
+
+  it('says the saved payment could not be matched, in place of the error, when its session ended that way', async () => {
+    mocks.run.mockRejectedValue(new RelayrDiscardError(SCOPE, 'expired', undefined, true))
+    const rows: ComponentProps<typeof BuybackActionForm>['rows'] = PROJECTS.map(project => ({
+      ...project, indexedAuthority: ALICE, authority: ALICE, buybackRegistry: REGISTRY, routerRegistry: null,
+      buybackAvailable: true, routerAvailable: false, hook: null, terminal: null, defaultHook: HOOK, defaultTerminal: null,
+      pools: [], poolSummary: '', readError: null,
+    }))
+    await render(<BuybackActionForm kind="hook" rows={rows} onDone={vi.fn()} />)
+    await check()
+    await click('Set buyback hook')
+    await click('Confirm dialog')
+    expect(text(renderer!.root)).not.toContain('expired without running')
+    await discardsInPlaceOfTheError(UNMATCHED)
   })
 
   it('shows Discard in the ownership transfer review', async () => {

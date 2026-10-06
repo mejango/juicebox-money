@@ -33,6 +33,7 @@ import {
   RELAYR_PAYMENT_GAS,
   RELAYR_UUID_RE,
   RelayrDestinationRevertedError,
+  RelayrPaymentRevertedError,
   RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   bindRelayrQuote,
@@ -140,9 +141,19 @@ const RELAYR_DISCARD_LINES: Record<RelayrDiscardReason, string> = {
   expired: 'This action\'s earlier signatures expired without running.',
 }
 
-/** The one line a discardable session shows, and the error its action throws until it is discarded. */
-export function relayrDiscardLine(reason: RelayrDiscardReason): string {
-  return RELAYR_DISCARD_LINES[reason]
+/** What a session whose requests all expired unused shows when its saved payment proved to be another transaction. */
+const RELAYR_PAYMENT_UNMATCHED_LINE = 'The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.'
+
+/** The line a new payment's review shows when it replaces a payment that was never matched to its quote. */
+const RELAYR_PAYMENT_UNMATCHED_NOTE = 'The earlier payment couldn\'t be matched to this action and isn\'t refunded.'
+
+/**
+ * The one line a discardable session shows, and the error its action throws
+ * until it is discarded. `paymentUnmatched`: its saved payment proved to be
+ * another transaction, which matters once none of its requests ran.
+ */
+export function relayrDiscardLine(reason: RelayrDiscardReason, paymentUnmatched = false): string {
+  return reason === 'expired' && paymentUnmatched ? RELAYR_PAYMENT_UNMATCHED_LINE : RELAYR_DISCARD_LINES[reason]
 }
 
 /** A saved session none of whose requests can run again: Discard ends it. `cause` is why its calls were not proven. */
@@ -153,8 +164,9 @@ export class RelayrDiscardError extends Error {
     readonly scope: string,
     readonly reason: RelayrDiscardReason,
     cause?: unknown,
+    readonly paymentUnmatched = false,
   ) {
-    super(RELAYR_DISCARD_LINES[reason], cause === undefined ? undefined : { cause })
+    super(relayrDiscardLine(reason, paymentUnmatched), cause === undefined ? undefined : { cause })
   }
 }
 
@@ -208,6 +220,12 @@ export type RelayrPendingSession = {
    * run, so a paid bundle that ran still completes.
    */
   discardable?: RelayrDiscardReason
+  /**
+   * Its latest saved payment proved to be another transaction: it was never
+   * matched to this quote, so nothing here pays or polls on it, and nothing
+   * refunds it. Its Discard line says so once every request expired unused.
+   */
+  paymentUnmatched?: true
 }
 
 /**
@@ -545,6 +563,7 @@ export function saveRelayrPendingSession(
     ...(paymentOptions ? { paymentOptions } : {}),
     ...(session.released === true && session.paymentStatus === 'reverted' ? { released: true as const } : {}),
     ...(isRelayrDiscardReason(session.discardable) ? { discardable: session.discardable } : {}),
+    ...(session.paymentUnmatched === true ? { paymentUnmatched: true as const } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -659,6 +678,7 @@ export function loadRelayrPendingSession(
       paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
       ...(value.released === true && value.paymentStatus === 'reverted' ? { released: true as const } : {}),
       ...(isRelayrDiscardReason(value.discardable) ? { discardable: value.discardable } : {}),
+      ...(value.paymentUnmatched === true ? { paymentUnmatched: true as const } : {}),
     }
     // Reading a tolerant UI view must not erase malformed durable evidence before
     // the authorization path can inspect the original record strictly.
@@ -719,7 +739,8 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
           (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1)) ||
           (value.released !== undefined && (value.released !== true || value.paymentStatus !== 'reverted')) ||
-          (value.discardable !== undefined && !isRelayrDiscardReason(value.discardable))) throw new Error()
+          (value.discardable !== undefined && !isRelayrDiscardReason(value.discardable)) ||
+          (value.paymentUnmatched !== undefined && value.paymentUnmatched !== true)) throw new Error()
       for (const entries of [value.publishedEntries, value.expectedEntries]) {
         if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
             !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
@@ -1218,7 +1239,7 @@ async function savedRequestsVerdict(saved: RelayrPendingSession): Promise<Relayr
 /** Mark a session for Discard (ruling R114), and the error its action throws until it is discarded. */
 function discardableSession(scope: string, saved: RelayrPendingSession, reason: RelayrDiscardReason, cause?: unknown): RelayrDiscardError {
   saveRelayrPendingSession(scope, { ...saved, discardable: reason })
-  return new RelayrDiscardError(scope, reason, cause)
+  return new RelayrDiscardError(scope, reason, cause, saved.paymentUnmatched === true)
 }
 
 /**
@@ -1427,10 +1448,19 @@ async function resumeSavedRelayrSession(
     const submitted = saved
     // A success confirms the payment; a canonical revert leaves the quote to
     // the retry rule; while the proof is unavailable it stays submitted.
-    if (await proveSavedRelayrPayment(relayrChainClient, submitted.payments, submitted.account,
-      () => saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'reverted' }))) {
-      saved = saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'confirmed' })
+    let confirmed = false
+    try {
+      confirmed = await proveSavedRelayrPayment(relayrChainClient, submitted.payments, submitted.account,
+        () => saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'reverted' }))
+    } catch (error) {
+      if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
+      // The saved hash is another transaction, which no later resume can change.
+      // While a request can still run, or its state is unknown, the refusal
+      // stands; once every one is dead the session can be discarded (ruling R114).
+      await liveSessionVerdict(pendingScope, saveRelayrPendingSession(pendingScope, { ...submitted, paymentUnmatched: true }), error)
+      throw error
     }
+    if (confirmed) saved = saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'confirmed' })
   }
   let records = saved.records
   let verified = false
@@ -1580,7 +1610,7 @@ async function executeRelayrCalls({
   let saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   /** Ruling R114: the requests a saved session published, each at a canonical finalized block on its chain. */
   let verdict: RelayrRequestsVerdict | null = null
-  /** The line a new payment's review shows when it replaces a paid bundle whose calls ran and reverted. */
+  /** The line a new payment's review shows when it replaces a paid bundle whose calls ran and reverted, or whose payment was never matched. */
   let paidBefore: string | undefined
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
@@ -1591,6 +1621,7 @@ async function executeRelayrCalls({
         // Every request it published expired unused, whatever Relayr reports: signed again below.
         if (!(error instanceof RelayrDiscardError && error.reason === 'expired')) throw error
         if (error.cause instanceof RelayrDestinationRevertedError) paidBefore = 'The earlier payment can\'t be reused: its bundle ran and reverted.'
+        else if (error.paymentUnmatched) paidBefore = RELAYR_PAYMENT_UNMATCHED_NOTE
       }
     }
     // Classified before the action's own recheck, which a request that ran would make refuse.

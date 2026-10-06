@@ -7,18 +7,20 @@ import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError } from '@/l
 /**
  * The one line and the Discard of a saved Relayr session whose requests are
  * all dead (ruling R114). Discard removes only the session; `onDiscarded`
- * lets the action review it again.
+ * lets the action review it again. `paymentUnmatched`: its saved payment
+ * proved to be another transaction, which the line says.
  */
-export function RelayrDiscard({ scope, reason, onDiscarded }: {
+export function RelayrDiscard({ scope, reason, paymentUnmatched, onDiscarded }: {
   scope: string
   reason: RelayrDiscardReason
+  paymentUnmatched?: boolean
   onDiscarded: () => void | Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
     <div className="space-y-2">
-      <p className="text-sm text-smoke-700">{relayrDiscardLine(reason)}</p>
+      <p className="text-sm text-smoke-700">{relayrDiscardLine(reason, paymentUnmatched)}</p>
       <button
         type="button"
         className="btn-secondary min-h-[36px] px-4 text-sm"
@@ -62,7 +64,7 @@ export function useRelayrDiscard(clearError: () => void, closeReview?: () => voi
       setFailure(null)
     },
     element: failure ? (
-      <RelayrDiscard scope={failure.scope} reason={failure.reason} onDiscarded={() => { setFailure(null); clearError(); closeReview?.() }} />
+      <RelayrDiscard scope={failure.scope} reason={failure.reason} paymentUnmatched={failure.paymentUnmatched} onDiscarded={() => { setFailure(null); clearError(); closeReview?.() }} />
     ) : null,
   }
 }

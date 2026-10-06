@@ -766,7 +766,7 @@ export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: Que
   if (session?.discardable) {
     // Resuming stays beside Discard: a paid bundle that ran completes, and the recheck refuses calls that ran.
     return <div className="space-y-3">
-      <RelayrDiscard scope={journal.scope} reason={session.discardable} onDiscarded={() => { setDiscards(count => count + 1); onDiscard(); }} />
+      <RelayrDiscard scope={journal.scope} reason={session.discardable} paymentUnmatched={session.paymentUnmatched} onDiscarded={() => { setDiscards(count => count + 1); onDiscard(); }} />
       {status ? <p className="text-sm text-smoke-700">{status}</p> : null}
       <TxError error={error} />
       <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>

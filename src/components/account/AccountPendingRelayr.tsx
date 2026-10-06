@@ -133,7 +133,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
         if (session.discardable) {
           return (
             <div key={scope} className="card space-y-2 p-4">
-              <RelayrDiscard scope={scope} reason={session.discardable} onDiscarded={refresh} />
+              <RelayrDiscard scope={scope} reason={session.discardable} paymentUnmatched={session.paymentUnmatched} onDiscarded={refresh} />
               {check}
               {notice}
             </div>
