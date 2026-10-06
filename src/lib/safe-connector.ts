@@ -255,12 +255,12 @@ type SafeQueueClient = Parameters<typeof readBoundedSafeNonce>[0] & {
 /**
  * A pending proposal of the action `call` makes in `safe`'s queue (its
  * service record, its safeTxHash and the call it runs), read from Safe's
- * service at the Safe's onchain nonce, or null: a Safe app never proposes an
- * action that is already queued, whoever queued it, whatever its stamp
- * ({@link heldCall}). A queued call the contract refuses once its deadline
- * passed is passed over once the latest block is past that deadline: it can
- * no longer run. Throws when the nonce, the queue or the latest block can't
- * be read.
+ * service from the Safe's nonce in the latest block, or null: a Safe app
+ * never proposes an action that is already queued, whoever queued it,
+ * whatever its stamp ({@link heldCall}). A queued call the contract refuses
+ * once its deadline passed is passed over when that block is past the
+ * deadline: it can no longer run. Throws when the block, the nonce or the
+ * queue can't be read.
  */
 export async function findPendingSafeAppProposal(
   client: SafeQueueClient,
@@ -269,7 +269,13 @@ export async function findPendingSafeAppProposal(
   call: SafeAppCall,
   service?: SafeServiceOptions,
 ): Promise<{ tx: SafeQueuedTransaction; proposalHash: Hex; call: SafeAppCall } | null> {
-  const nonce = await readBoundedSafeNonce(client, safe).catch(() => null)
+  // One block's view: its time, and the Safe's nonce in it. A proposal listed
+  // from that nonce had not run by that block, so a deadline already past then
+  // proves it never will.
+  const block = await client.getBlock()
+  const nonce = await readBoundedSafeNonce(client, safe, { blockNumber: block.number ?? undefined }).catch(
+    () => null,
+  )
   if (nonce === null || nonce > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('Could not read the Safe nonce.')
   }
@@ -280,11 +286,7 @@ export async function findPendingSafeAppProposal(
       ? [{ tx, call: proposed, deadline: stampedDeadline(proposed) }]
       : []
   })
-  if (!queued.length) return null
-  const latest = queued.some(({ deadline }) => deadline !== null)
-    ? (await client.getBlock()).timestamp
-    : 0n
-  const live = queued.find(({ deadline }) => deadline === null || deadline >= latest)
+  const live = queued.find(({ deadline }) => deadline === null || deadline >= block.timestamp)
   return live
     ? { tx: live.tx, proposalHash: canonicalSafeTxHash(chainId, safe, live.tx), call: live.call }
     : null

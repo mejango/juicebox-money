@@ -395,6 +395,35 @@ describe("the Safe's queue, asked before a proposal", () => {
     },
   )
 
+  it('reads the queue as of one block: its time, and the Safe nonce in it', async () => {
+    // The proposal executes, before its deadline, while the queue is being read;
+    // the chain then moves past that deadline.
+    const [, sale] = STAMPED_SITES[0]
+    const queued = callOf(sale(NOW + 60n))
+    let executed = false
+    const client = {
+      request: vi.fn(async ({ method }: { method: string }) => {
+        if (method !== 'eth_call') throw new Error(`unexpected ${method}`)
+        return word(executed ? 6n : 5n)
+      }),
+      getBlock: vi.fn(async () => ({ number: 100n, timestamp: executed ? NOW + 120n : NOW })),
+    }
+    const service = queue([queued])
+    service.fetch.mockImplementation(async () => {
+      executed = true
+      const tx = safeProposalFor(queued, 5)
+      return new Response(
+        JSON.stringify({ next: null, results: [{ ...tx, safeTxHash: canonicalSafeTxHash(STAMPED_CHAIN, SAFE, tx) }] }),
+      )
+    })
+    // The proposal the queue listed is found, never passed over and proposed again.
+    await expect(
+      findPendingSafeAppProposal(client as never, STAMPED_CHAIN, SAFE, callOf(sale(LATER)), service),
+    ).resolves.toMatchObject({ tx: { nonce: 5 } })
+    expect(client.getBlock.mock.invocationCallOrder[0]).toBeLessThan(client.request.mock.invocationCallOrder[0])
+    expect((client.request.mock.calls[0][0] as unknown as { params: unknown[] }).params[1]).toBe('0x64')
+  })
+
   it.each(STAMPED_SITES)('never finds %s queued with any other field changed', async (_, build) => {
     await expect(lookup(callOf(build(LATER)), [callOf(build(NOW + 600n, 1n))])).resolves.toBeNull()
   })
