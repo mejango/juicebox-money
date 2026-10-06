@@ -1099,21 +1099,34 @@ export function relayrPaymentAttemptOutcome(
 }
 
 /**
+ * `read` at the chain's finalized block, with that block's timestamp, once
+ * the block is still canonical after the read. Null while any of it cannot be
+ * read. The one home for chain state at a canonical finalized block.
+ */
+async function atCanonicalFinalizedBlock<T>(
+  chainId: number,
+  read: (client: ReturnType<typeof publicClient>, blockNumber: bigint) => Promise<T>,
+): Promise<{ value: T; timestamp: bigint } | null> {
+  try {
+    const client = publicClient(chainId as JBChainId)
+    const block = await client.getBlock({ blockTag: 'finalized' })
+    const value = await read(client, block.number)
+    const canonical = await client.getBlock({ blockNumber: block.number })
+    return canonical.hash === block.hash ? { value, timestamp: block.timestamp } : null
+  } catch { return null }
+}
+
+/**
  * The nonce the forwarder expects next from `account` at the chain's finalized
  * block, still canonical, with that block's timestamp. Null while that cannot
  * be read.
  */
 async function finalizedForwarderNonce(chainId: number, account: Address): Promise<{ nonce: bigint; timestamp: bigint } | null> {
-  try {
-    const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
-    if (!forwarder) return null
-    const client = publicClient(chainId as JBChainId)
-    const block = await client.getBlock({ blockTag: 'finalized' })
-    const nonce = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces',
-      args: [account], blockNumber: block.number })
-    const canonical = await client.getBlock({ blockNumber: block.number })
-    return canonical.hash === block.hash ? { nonce, timestamp: block.timestamp } : null
-  } catch { return null }
+  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
+  if (!forwarder) return null
+  const finalized = await atCanonicalFinalizedBlock(chainId, (client, blockNumber) => client.readContract({
+    address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account], blockNumber }))
+  return finalized && { nonce: finalized.value, timestamp: finalized.timestamp }
 }
 
 /**
@@ -1150,11 +1163,9 @@ async function relayrNoncesUsed(entries: readonly RelayrEntry[], nonces: readonl
 
 /** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
 export async function relayrDeadlinePassed(chainId: number, deadline: string | bigint): Promise<boolean> {
+  const finalized = await atCanonicalFinalizedBlock(chainId, async () => undefined)
   try {
-    const client = publicClient(chainId as JBChainId)
-    const block = await client.getBlock({ blockTag: 'finalized' })
-    const canonical = await client.getBlock({ blockNumber: block.number })
-    return canonical.hash === block.hash && block.timestamp > BigInt(deadline)
+    return !!finalized && finalized.timestamp > BigInt(deadline)
   } catch { return false }
 }
 
