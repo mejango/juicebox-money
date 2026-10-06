@@ -60,8 +60,17 @@ describe('test titles that can prove a wallet action', () => {
     }
   })
 
-  it('counts a test or suite whose options leave it running: a timeout, a retry, a number after the callback', () => {
+  it('counts a test or suite whose arguments leave it running: harmless options, a timeout after the callback, any suite name', () => {
     for (const source of [
+      `it('${marker} proves', () => {}, TIMEOUT)`,
+      `test('${marker} proves', async () => {}, LIMITS_TIMEOUT)`,
+      `describe(name, () => { it('${marker} proves', () => {}) })`,
+      `describe(\`suite \${name}\`, () => { it('${marker} proves', () => {}) })`,
+      `describe(Foo.name, () => { it('${marker} proves', () => {}) })`,
+      `describe(String(chain), () => { it('${marker} proves', () => {}) })`,
+      `describe(Foo, () => { it('${marker} proves', () => {}) })`,
+      `suite(name, () => { it('${marker} proves', () => {}) })`,
+      `describe.each([1])(name, () => { it('${marker} proves', () => {}) })`,
       `it('${marker} proves', { retry: 2, timeout: 1000 }, () => {})`,
       `it('${marker} proves', { timeout: LIMIT }, () => {})`,
       `it('${marker} proves', { timeout }, () => {})`,
@@ -92,6 +101,10 @@ describe('test titles that can prove a wallet action', () => {
       `it('${marker} proves', (ctx) => { run(ctx.expect) })`,
       `it('${marker} proves', ({ task: { meta } }) => { expect(meta).toBeDefined() })`,
       `it('${marker} proves', ({ expect = fallback }) => { expect(1).toBe(1) })`,
+      // `arguments` of a test function is its context, so only `arguments.name` reads count; an arrow's `arguments` is not its own, and .each passes row values.
+      `it('${marker} proves', function () { expect(arguments.length).toBe(1) })`,
+      `describe.each([1])('suite %s', function () { it('${marker} proves', () => { expect(arguments[0]).toBe(1) }) })`,
+      `it.each([1])('${marker} proves %s', function () { expect(arguments[0]).toBe(1) })`,
       // A member or a key that merely shares the context's name is not the context.
       `it('${marker} proves', (ctx) => { expect(page.ctx).toBe(1) })`,
       `it('${marker} proves', (ctx) => { render({ ctx: 1 }) })`,
@@ -236,15 +249,18 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', { todo: true }, () => { it('${marker} proves', () => {}) })`,
       `suite('suite', { skip: true }, () => { it('${marker} proves', () => {}) })`,
       `describe.each([1])('suite %s', { skip: true }, () => { it('${marker} proves', () => {}) })`,
-      // Options that cannot be read: a spread, a variable, a computed key, a title that is not a literal.
+      // Options that cannot be read: a spread, a variable, a computed key.
       `it('${marker} proves', { ...options }, () => {})`,
       `it('${marker} proves', { timeout: 1000, ...options }, () => {})`,
       `it('${marker} proves', options, () => {})`,
       `it('${marker} proves', { ['skip']: true }, () => {})`,
       `it('${marker} proves', { [name]: true }, () => {})`,
       `describe('suite', options, () => { it('${marker} proves', () => {}) })`,
-      `describe(name, () => { it('${marker} proves', () => {}) })`,
-      `describe(\`suite \${name}\`, () => { it('${marker} proves', () => {}) })`,
+      // After the callback only a number or a constant is a timeout.
+      `it('${marker} proves', TIMEOUT, () => {})`,
+      `it('${marker} proves', () => {}, ...limits)`,
+      `it('${marker} proves', () => {}, config.timeout)`,
+      `it('${marker} proves', () => {}, { timeout: 1000, skip: true })`,
     ]) {
       expect(proves(source), source).toBe(false)
     }
@@ -267,6 +283,14 @@ describe('test titles that can prove a wallet action', () => {
       `it('${marker} proves', (ctx) => { ctx['expect'] })`,
       `it('${marker} proves', (ctx) => { ctx[key]() })`,
       `it('${marker} proves', (ctx) => { const key = 'skip'; ctx[key]() })`,
+      // A function's `arguments` holds the context too.
+      `it('${marker} proves', function () { arguments[0].skip() })`,
+      `it('${marker} proves', function () { Array.from(arguments)[0].skip() })`,
+      `it('${marker} proves', function () { const [ctx] = arguments; ctx.skip() })`,
+      `it('${marker} proves', function () { run(arguments) })`,
+      `it('${marker} proves', function () { [...arguments][0].skip() })`,
+      `it('${marker} proves', function (other = arguments[0].skip()) {})`,
+      `it.for([1])('${marker} proves %s', function (row) { arguments[1].skip() })`,
       // A default value runs with the test.
       `it('${marker} proves', (ctx, other = ctx.skip()) => {})`,
       `it('${marker} proves', (ctx, other = gate(ctx)) => {})`,
@@ -309,6 +333,8 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', () => { afterEach((...args) => { args[0].skip() }); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { aroundEach((runTest, ctx) => { gate(ctx) }); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { aroundEach((...args) => { args[1].skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(function () { arguments[0].skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundEach(function () { arguments[1].skip() }); it('${marker} proves', () => {}) })`,
       `describe('outer', () => { beforeEach((ctx) => { ctx.skip() }); describe('inner', () => { it('${marker} proves', () => {}) }) })`,
     ]) {
       expect(proves(source), source).toBe(false)
@@ -328,6 +354,12 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', () => { vi.stubEnv('MODE', 'test'); it('${marker} proves', () => {}) })`,
       `expect.extend({}); it('${marker} proves', () => {})`,
       `describe('suite', () => { expect.hasAssertions(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { vitest.useFakeTimers(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(vitest.clearAllMocks); it('${marker} proves', () => {}) })`,
+      // A table written as a tagged template is not read as a test, but it is Vitest's own call and taints nothing.
+      `describe('suite', () => { it.each\`a\n\${1}\`('other', () => {}); it('${marker} proves', () => {}) })`,
+      `describe('outer', () => { describe.each\`a\n\${1}\`('inner', () => {}); it('${marker} proves', () => {}) })`,
+      `it.each\`a\n\${1}\`('other', () => {}); it('${marker} proves', () => {})`,
       `describe('suite', () => { expect(setup).toBeDefined(); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { vi.mocked(fetchThing).mockResolvedValue(1); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { vi['useFakeTimers'](); it('${marker} proves', () => {}) })`,
@@ -368,6 +400,7 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', async () => { await (installGate() as Promise<void>); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { installGate?.(); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { helpers.install(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { installGate\`a\n\${1}\`('x', () => {}); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { if (ready) { installGate() } it('${marker} proves', () => {}) })`,
       `describe('suite', () => { for (const row of rows) installGate(row); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { try { installGate() } finally {} it('${marker} proves', () => {}) })`,

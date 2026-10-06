@@ -23,8 +23,11 @@ const HOOKS = new Map([
 /** Hooks that get no test context. None can skip a test: one that fails, or never runs its callback, fails the suite. */
 const OTHER_HOOKS = new Set(['beforeAll', 'afterAll', 'aroundAll'])
 
+/** `vi`, and `vitest`, which is another name for it. */
+const VITEST_OBJECT = new Set(['vi', 'vitest'])
+
 /** Vitest's own APIs, which register no hook that can skip a test. */
-const VITEST_API = new Set(['vi', 'expect'])
+const VITEST_API = new Set([...VITEST_OBJECT, 'expect'])
 
 /** An expression without the wrappers that leave its value alone: parentheses, `as`, `satisfies`, `<T>` and `!`. */
 function unwrap(node) {
@@ -84,13 +87,16 @@ function inlineCallback(call) {
 }
 
 /**
- * Whether a call's arguments leave its test or suite running as written. Besides the callback, each is a string or a
- * number, or an options object of plain keys without `skip`, `todo` or `fails` (`{ timeout: 5_000 }`). A spread, a
- * variable, a computed key or any other argument is not read, so it counts as one that can skip.
+ * Whether a call's arguments leave its test or suite running as written. The name, the first argument, is not read.
+ * Besides the callback, each other argument is a number, a constant after the callback (a timeout), or an options
+ * object of plain keys without `skip`, `todo` or `fails` (`{ timeout: 5_000 }`). A spread, a variable before the
+ * callback, a computed key or any other argument is not read, so it counts as one that can skip.
  */
 function runsAsWritten(call, callback) {
-  return call.arguments.every(argument => {
-    if (argument === callback || ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument)) return true
+  const callbackAt = call.arguments.indexOf(callback)
+  return call.arguments.every((argument, position) => {
+    if (position === 0 || argument === callback || ts.isNumericLiteral(argument)) return true
+    if (position > callbackAt && ts.isIdentifier(argument)) return true
     const options = unwrap(argument)
     return (
       ts.isObjectLiteralExpression(options) &&
@@ -145,13 +151,14 @@ function escapes(root, name) {
 function skipsItself(callback, index) {
   if (index < 0) return false
   const { parameters } = callback
+  const code = [callback.body, ...parameters.map(parameter => parameter.initializer)].filter(Boolean)
+  // A function's own `arguments` holds the context too; an arrow function has none of its own.
+  if (ts.isFunctionExpression(callback) && code.some(node => escapes(node, 'arguments'))) return true
   if (parameters.slice(0, index + 1).some(parameter => parameter.dotDotDotToken)) return true
   const context = parameters[index]
   if (!context) return false
   if (!ts.isIdentifier(context.name)) return holdsSkip(context.name)
-  return [callback.body, ...parameters.map(parameter => parameter.initializer)].some(
-    node => node && escapes(node, context.name.text),
-  )
+  return code.some(node => escapes(node, context.name.text))
 }
 
 /** Whether a statement can end its enclosing body early: a return or throw, outside any nested function. */
@@ -176,21 +183,21 @@ function callOf(node) {
   return ts.isCallExpression(expression) ? expression : null
 }
 
-/** Whether a call statement is one this check can see into: a test, suite or hook of Vitest's, or its own `vi` or `expect`. Any other call may register a hook that skips, and so does a hook hung off the test API (`test.beforeEach`). */
+/** Whether a call statement is one this check can see into: a test, suite or hook of Vitest's, or its own `vi`, `vitest` or `expect`; a table written as a tagged template is read by its tag. Any other call may register a hook that skips, and so does a hook hung off the test API (`test.beforeEach`). */
 function seesInto(call) {
-  const callee = call.expression
+  const callee = ts.isTaggedTemplateExpression(call.expression) ? call.expression.tag : call.expression
   const name = ts.isIdentifier(callee) ? callee.text : null
   const test = testCall(callee)
   const hooksOffTestApi = test?.modifiers.some(modifier => HOOKS.has(modifier) || OTHER_HOOKS.has(modifier))
   return (!!test && !hooksOffTestApi) || HOOKS.has(name) || OTHER_HOOKS.has(name) || VITEST_API.has(rootName(callee))
 }
 
-/** Whether a hook can skip its tests as far as this check can tell: an inline callback that skips, or any callback it cannot read. Only a direct `vi.name` is taken as safe. */
+/** Whether a hook can skip its tests as far as this check can tell: an inline callback that skips, or any callback it cannot read. Only a direct `vi.name` (or `vitest.name`) is taken as safe. */
 function hookMaySkip(call) {
   const callback = inlineCallback(call)
   if (callback) return skipsItself(callback, HOOKS.get(call.expression.text))
   const [hook] = call.arguments
-  return !(hook && ts.isPropertyAccessExpression(hook) && ts.isIdentifier(hook.expression) && hook.expression.text === 'vi')
+  return !(hook && ts.isPropertyAccessExpression(hook) && ts.isIdentifier(hook.expression) && VITEST_OBJECT.has(hook.expression.text))
 }
 
 /**
