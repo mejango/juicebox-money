@@ -47,7 +47,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   }, [chainId, projectId, chains])
 
   const pending = useQuery({
-    queryKey: ['pendingPayments', 'destination', chainId, projectId, chains],
+    queryKey: ['pendingPayments', 'destination-inventory', chainId, projectId, chains],
     enabled: hydrated,
     staleTime: 15_000, refetchInterval: 30_000, retry: 1,
     queryFn: async ({ signal }) => {
@@ -56,17 +56,29 @@ export function PendingPayments({ chainId, projectId, chains }: {
         if (deployments.has(chain) && deployments.get(chain) !== project) throw new Error('Conflicting project deployments. Reload the project.')
         deployments.set(chain, project)
       }
-      const payments = (await mapConcurrentChecks([...deployments], ([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal }))).flat()
-      const reviewed = await mapConcurrentChecks(payments, async payment => {
+      return (await mapConcurrentChecks([...deployments], ([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal }))).flat()
+    },
+  })
+  const verification = useQuery({
+    queryKey: ['pendingPayments', 'verification', chainId, projectId, chains, pending.data],
+    enabled: hydrated && !!pending.data?.length,
+    staleTime: 15_000, refetchInterval: 30_000, retry: 1,
+    queryFn: async () => {
+      return mapConcurrentChecks(pending.data ?? [], async payment => {
         try { return { payment, review: await reviewPendingPayment(payment), error: null } }
         catch (failure) { return { payment, review: null, error: failure instanceof Error ? failure.message : 'Could not verify this payment.' } }
       })
-      return reviewed.filter(item => item.review || item.error)
     },
   })
-  const rows = pending.data ?? []
+  const verified = new Map((verification.data ?? []).map(item => [pendingPaymentId(item.payment), item]))
+  const rows = (pending.data ?? []).flatMap(payment => {
+    const item = verified.get(pendingPaymentId(payment))
+    // A null live review means another attempt has already resolved this indexed payment.
+    return item ? item.review || item.error ? [item] : [] : [{ payment, review: null, error: null }]
+  })
+  const checking = rows.some(item => !verified.has(pendingPaymentId(item.payment)))
   const available = rows.flatMap(item => item.review?.ready ? [item.review] : [])
-  const unreadable = !!pending.error || rows.some(item => item.error)
+  const unreadable = !!pending.error || !!verification.error || rows.some(item => item.error)
 
   const begin = (payments: ReviewedPayment[]) => {
     if (!isConnected || !address) { openSignIn(); return }
@@ -121,6 +133,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
 
   if (!hydrated) return null
   if (!rows.length && !saved && !open) {
+    if (pending.isPending) return <p className="mb-5 text-sm text-smoke-500" role="status">Loading pending payments…</p>
     return pending.error || error ? <p className="mb-5 text-sm text-smoke-500" role="status">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void pending.refetch()}>Retry</button></p> : null
   }
   const reviewedRows: TxConfirmRow[] = (calls ?? []).flatMap(call => {
@@ -142,17 +155,21 @@ export function PendingPayments({ chainId, projectId, chains }: {
   return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments awaiting routing">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="font-agrandir text-lg">Payments awaiting routing</h2>
-      <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || (!saved && (unreadable || !available.length))} onClick={() => begin(available)}>
-        {saved ? 'Resume saved attempts' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
+      <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || (!saved && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
+        {saved ? 'Resume saved batch' : checking && !verification.error ? 'Checking pending payments…' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
       </button>
     </div>
     <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments through Relayr and pay the quoted fees once.</p>
-    {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments.</p> : null}
+    {saved ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {saved.completedIds.length} of {saved.calls.length} attempts handled. This selection is separate from the full pending list. Finish it before starting another batch.</p> : null}
+    <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing · ${available.length} ready`}</p>
+    {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
+    {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
     <ul className="mt-3 divide-y divide-smoke-200">
       {rows.map(item => <li key={pendingPaymentId(item.payment)} className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0 text-sm">
           <p className="font-medium">{item.review ? amountLabel(item.review) : `${item.payment.amount} base units of ${truncateAddress(item.payment.token)}`}</p>
           <p className="text-smoke-500">{chainName(item.payment.chainId)} · project #{item.payment.sourceProjectId} → #{item.payment.projectId}</p>
+          {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500">{verification.error ? 'Could not check this payment.' : 'Checking availability…'}</p> : null}
           {item.error ? <p className="mt-1 text-red-600">{item.error}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
         </div>
         <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>

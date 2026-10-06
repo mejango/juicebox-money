@@ -19,3 +19,6 @@ Show payments awaiting routing on the destination project, not the source that i
 
 ## 2026-10-06 — Destination changes include saved recovery discovery
 When moving an action between project pages, migrate discovery of durable recovery state too. Authenticate the destination from immutable call data, hide source-only saved batches, and retain original scope/action/transaction hashes for resume. Give fresh destination actions a separate namespace so legacy source aliases cannot capture them. Completed calls must not keep an unrelated page's recovery card visible.
+
+## 2026-10-06 — Saved progress is not the pending inventory
+Show indexed pending payments while RPC checks run; state loading/errors explicitly. Label saved batch counts as saved selections and never imply they represent every pending payment.

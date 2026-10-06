@@ -10,8 +10,9 @@ import type { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 type Row = { payment: ReviewedPayment['payment']; review: ReviewedPayment | null; error: string | null }
 const mocks = vi.hoisted(() => ({
   connected: true, address: '0x1111111111111111111111111111111111111111' as Address,
-  rows: [] as Row[], error: null as Error | null,
-  queryFn: null as ((context: { signal: AbortSignal }) => Promise<Row[]>) | null,
+  rows: [] as Row[], error: null as Error | null, checking: false, loading: false, verificationError: null as Error | null,
+  verifyFn: null as (() => Promise<Row[]>) | null,
+  queryFn: null as ((context: { signal: AbortSignal }) => Promise<ReviewedPayment['payment'][]>) | null,
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
@@ -19,9 +20,13 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
-  useQuery: ({ queryFn }: { queryFn: (context: { signal: AbortSignal }) => Promise<Row[]> }) => {
-    mocks.queryFn = queryFn
-    return { data: mocks.rows, error: mocks.error, refetch: mocks.refetch }
+  useQuery: ({ queryKey, queryFn }: { queryKey: string[]; queryFn: (context: { signal: AbortSignal }) => Promise<unknown> }) => {
+    if (queryKey[1] === 'verification') {
+      mocks.verifyFn = queryFn as unknown as typeof mocks.verifyFn
+      return { data: mocks.checking ? undefined : mocks.rows, error: mocks.verificationError }
+    }
+    mocks.queryFn = queryFn as typeof mocks.queryFn
+    return { data: mocks.loading ? undefined : mocks.rows.map(item => item.payment), error: mocks.error, isPending: mocks.loading, refetch: mocks.refetch }
   },
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, isConnected: mocks.connected, openSignIn: mocks.openSignIn }) }))
@@ -68,7 +73,7 @@ const dialog = () => tree!.root.findByType('review-dialog' as never).props as Co
 
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.connected = true; mocks.rows = []; mocks.error = null
+  mocks.connected = true; mocks.rows = []; mocks.error = null; mocks.checking = false; mocks.loading = false; mocks.verificationError = null
   mocks.address = '0x1111111111111111111111111111111111111111'
   mocks.load.mockReturnValue(null)
   mocks.invalidate.mockResolvedValue(undefined)
@@ -91,10 +96,80 @@ describe('pending payment review above activity', () => {
     const first = row(), second = row(10)
     mocks.fetch.mockImplementation(async (chain: number) => [chain === 1 ? first.payment : second.payment])
     mocks.review.mockImplementation(async (payment: ReviewedPayment['payment']) => payment.chainId === 1 ? null : second.review)
-    expect(await mocks.queryFn!({ signal: mocks.query.signal })).toEqual([second])
+    expect(await mocks.queryFn!({ signal: mocks.query.signal })).toEqual([first.payment, second.payment])
+    mocks.rows = [first, second]
+    await render()
+    expect(await mocks.verifyFn!()).toEqual([{ ...first, review: null }, second])
     // Each chain's indexed read takes the query's signal.
     expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }], [10, 42, { signal: mocks.query.signal }]])
     expect(mocks.review).toHaveBeenCalledTimes(2)
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('shows the complete inventory while checking, separately from a saved three-payment selection', async () => {
+    mocks.rows = Array.from({ length: 7 }, (_, index) => {
+      const item = row()
+      item.payment.pendingCallId = `0x${(index + 1).toString(16).padStart(64, '0')}`
+      return item
+    })
+    mocks.checking = true
+    mocks.load.mockReturnValue({ calls: [{}, {}, {}], completedIds: [], status: 'pending' })
+    await render()
+    expect(tree!.root.findAllByType('li')).toHaveLength(7)
+    expect(text(tree!.root)).toContain('Found 7 payments. Checking current status…')
+    expect(text(tree!.root)).toContain('Saved batch: 0 of 3 attempts handled')
+    expect(button('Resume saved batch').props.disabled).toBe(false)
+    expect(tree!.root.findAllByType('button').filter(item => text(item) === 'Retry payment').every(item => item.props.disabled)).toBe(true)
+    expect(text(tree!.root)).toContain('Checking availability')
+  })
+
+  it('keeps discovered rows visible and prevents submitting when live verification fails', async () => {
+    mocks.rows = [row(), row(10)]
+    mocks.checking = true
+    mocks.verificationError = new Error('RPC unavailable')
+    await render()
+    expect(tree!.root.findAllByType('li')).toHaveLength(2)
+    expect(text(tree!.root)).toContain('Could not check this payment.')
+    expect(text(tree!.root)).not.toContain('Checking availability')
+    expect(button('Batch 0 available').props.disabled).toBe(true)
+    await act(async () => button('Retry checks').props.onClick())
+    expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['pendingPayments'] })
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('shows loading before discovering any payments, including beside saved recovery', async () => {
+    mocks.loading = true
+    await render()
+    expect(text(tree!.root)).toContain('Loading pending payments')
+    mocks.load.mockReturnValue({ calls: [{}, {}, {}], completedIds: [], status: 'pending' })
+    await render()
+    expect(text(tree!.root)).toContain('Loading pending payments')
+    expect(text(tree!.root)).not.toContain('0 payments awaiting routing')
+  })
+
+  it('finishes discovery independently of delayed live verification and paces checks', async () => {
+    mocks.rows = Array.from({ length: 3 }, (_, index) => {
+      const item = row()
+      item.payment.pendingCallId = `0x${(index + 1).toString(16).padStart(64, '0')}`
+      return item
+    })
+    mocks.checking = true
+    mocks.fetch.mockResolvedValue(mocks.rows.map(item => item.payment))
+    const releases: (() => void)[] = []
+    mocks.review.mockImplementation((payment: ReviewedPayment['payment']) => new Promise(resolve => {
+      releases.push(() => resolve({ ...row().review!, payment }))
+    }))
+    await render([])
+    expect(await mocks.queryFn!({ signal: mocks.query.signal })).toHaveLength(3)
+    expect(mocks.review).not.toHaveBeenCalled()
+    const checking = mocks.verifyFn!()
+    expect(mocks.review).toHaveBeenCalledTimes(2)
+    expect(tree!.root.findAllByType('li')).toHaveLength(3)
+    releases[0]()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mocks.review).toHaveBeenCalledTimes(3)
+    releases[1](); releases[2]()
+    expect(await checking).toHaveLength(3)
     expect(mocks.run).not.toHaveBeenCalled()
   })
 
@@ -154,7 +229,7 @@ describe('pending payment review above activity', () => {
     await act(async () => button('Batch all pending').props.onClick())
     mocks.run.mockImplementation(async options => {
       expect(await options.reconcileObsoleteSafe(options.calls[0], { nonce: 3, safeTxHash: zeroHash })).toBe(false)
-      return { status: 'pending' }
+      return { status: 'pending', calls: options.calls, completedIds: [] }
     })
     await act(async () => dialog().onConfirm())
     expect(dialog().complete).toBe(false)
@@ -227,7 +302,7 @@ describe('pending payment review above activity', () => {
     const saved = { id: 'original-batch', scope: 'route-pending-payments:1:6', action: 'route-pending-payments', calls, account: mocks.address, completedIds: [], status: 'pending' } as unknown as ProjectBatch
     mocks.load.mockReturnValue(saved)
     await render()
-    await act(async () => button('Resume saved attempts').props.onClick())
+    await act(async () => button('Resume saved batch').props.onClick())
     mocks.run.mockResolvedValue(saved)
     await act(async () => dialog().onConfirm())
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: 'route-pending-payments:1:6', action: 'route-pending-payments', expectedBatchId: 'original-batch', calls })
