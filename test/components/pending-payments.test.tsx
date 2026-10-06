@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   rows: [] as Row[], error: null as Error | null,
   queryFn: null as (() => Promise<Row[]>) | null,
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
-  run: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(),
+  run: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
@@ -34,12 +34,15 @@ vi.mock('@/lib/pending-payments', () => ({
     data: '0x1234', label: 'Retry pending payment', context: review,
   }),
 }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
   loadProjectBatch: mocks.load, runProjectBatch: mocks.run,
 }))
 
 import { PendingPayments } from '@/components/project/PendingPayments'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { RelayrDiscardError } from '@/lib/relayr'
 
 function row(chainId: 1 | 10 = 1, ready = true): Row {
   const payment: ReviewedPayment['payment'] = { chainId, version: 6, gateway: '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901',
@@ -177,6 +180,35 @@ describe('pending payment review above activity', () => {
     expect(mocks.openSignIn).toHaveBeenCalledTimes(1)
     expect(tree!.root.findAllByType('review-dialog' as never)).toHaveLength(0)
     expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('shows the line and Discard in place of the error when its Relayr round can only be discarded', async () => {
+    mocks.rows = [row(), row(10)]
+    await render()
+    await act(async () => button('Batch all pending').props.onClick())
+    mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'changed'))
+    await act(async () => dialog().onConfirm())
+    expect(dialog().error).toBeNull()
+    expect(dialog().actionDisabled).toBe(true)
+    const discard = tree!.root.findByType(RelayrDiscard)
+    expect(discard.props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'changed' })
+    expect(text(discard)).toContain('The project changed since this review.')
+    mocks.discard.mockResolvedValue(undefined)
+    await act(async () => button('Discard').props.onClick())
+    expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved:0')
+    expect(tree!.root.findAllByType(RelayrDiscard)).toHaveLength(0)
+    expect(dialog().actionDisabled).toBe(false)
+  })
+
+  it('drops the line with its review when the review closes, so it never shows without Discard', async () => {
+    mocks.rows = [row(), row(10)]
+    await render()
+    await act(async () => button('Batch all pending').props.onClick())
+    mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'ran'))
+    await act(async () => dialog().onConfirm())
+    expect(tree!.root.findAllByType(RelayrDiscard)).toHaveLength(1)
+    await act(async () => dialog().onClose())
+    expect(text(tree!.root)).not.toContain('may already have run')
   })
 
   it('resumes the immutable saved call set even when the refreshed inventory is empty', async () => {

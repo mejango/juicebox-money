@@ -7,6 +7,7 @@ import { isAddressEqual, type Address } from 'viem'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { chainName } from '@/lib/urn'
@@ -71,6 +72,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
   const [busy, setBusy] = useState(false)
   const [complete, setComplete] = useState(false)
   const [error, setError] = useState<string | null>(initial.error)
+  const discard = useRelayrDiscard(() => setError(null))
   const [status, setStatus] = useState<string | null>(null)
   const isClaim = action === 'claim-credits'
   const title = isClaim ? 'Claim credits as ERC-20' : allocation ? 'Distribute' : 'Distribute unlocked allocations'
@@ -111,6 +113,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
     if (!review || busy) return
     setBusy(true)
     setError(null)
+    discard.capture(null)
     try {
       const account = requireAccount()
       const saved = loadProjectBatch(scope)
@@ -146,6 +149,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
       } else setStatus(reported.line ?? 'The original batch is saved. Resume it to verify and finish the remaining calls.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the original batch.')
+      discard.capture(failure)
       try {
         if (!loadProjectBatch(scope)) {
           setReview(null)
@@ -188,12 +192,14 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
         open title={complete ? 'Completed' : review ? `Confirm ${isClaim ? 'claims' : allocation && review.length === 1 ? 'distribution' : 'auto issuance'}` : title}
         rows={confirmation}
         steps={(review ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
-        activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={error}
+        activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
         action={review ? error || savedForDisplay ? 'Resume original batch' : isClaim ? 'Confirm claims' : 'Confirm & distribute' : allocation ? 'Review allocation' : 'Review selected chains'}
+        actionDisabled={discard.active}
         onConfirm={() => void (review ? submit() : prepare())}
         onClose={() => {
           if (busy) return
           setOpen(false)
+          discard.reset()
           try {
             if (!loadProjectBatch(scope)) { setReview(null); setReviewBatchId(undefined) }
           } catch { /* Keep the original review recoverable. */ }
@@ -206,6 +212,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
             : allocation && !savedForDisplay ? 'Distributes this stage’s unlocked allocation to its original beneficiary.'
               : 'Includes every unlocked stage and beneficiary allocation on the selected chains. Recipients remain unchanged.'}
         </p>
+        {discard.element}
       </TxConfirmDialog> : null}
     </div>
   )

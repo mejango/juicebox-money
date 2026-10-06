@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { discardRelayrSession, relayrDiscardLine, type RelayrDiscardReason } from '@/lib/relayr'
+import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError, type RelayrDiscardReason } from '@/lib/relayr'
 
 /**
  * The one line and the Discard of a saved Relayr session whose requests are
@@ -40,4 +40,25 @@ export function RelayrDiscard({ scope, reason, onDiscarded }: {
       {error ? <p className="text-xs text-red-700">{error}</p> : null}
     </div>
   )
+}
+
+/**
+ * For an action that shows its own error: the session its last attempt said
+ * to discard (ruling R114). `capture` takes each attempt's error, `element` is
+ * the line and Discard to show in place of that error, and `reset` drops both
+ * when the review closes. `clearError` clears the action's copy of the line.
+ */
+export function useRelayrDiscard(clearError: () => void) {
+  const [failure, setFailure] = useState<RelayrDiscardError | null>(null)
+  return {
+    active: failure !== null,
+    capture: (error: unknown) => setFailure(error instanceof RelayrDiscardError ? error : null),
+    reset: () => {
+      if (failure) clearError()
+      setFailure(null)
+    },
+    element: failure ? (
+      <RelayrDiscard scope={failure.scope} reason={failure.reason} onDiscarded={() => { setFailure(null); clearError() }} />
+    ) : null,
+  }
 }

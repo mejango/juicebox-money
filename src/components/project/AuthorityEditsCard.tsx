@@ -48,7 +48,7 @@ import {
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
 import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
-import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { RelayrDiscard, useRelayrDiscard } from '@/components/RelayrDiscard'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -1136,7 +1136,7 @@ export function tokenDeploySalt(
   )
 }
 
-function TokenEditor({
+export function TokenEditor({
   rows,
   fallbackName,
   onCancel,
@@ -1160,11 +1160,13 @@ function TokenEditor({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const discard = useRelayrDiscard(() => setError(null))
 
   const invalidate = () => {
     setReview(null)
     setDone(false)
     setError(null)
+    discard.reset()
   }
 
   const buildReview = () => {
@@ -1224,6 +1226,7 @@ function TokenEditor({
     if (!review || busy) return
     setBusy(true)
     setError(null)
+    discard.capture(null)
     try {
       const result = await runAuthorityCalls({
         calls: review,
@@ -1245,6 +1248,7 @@ function TokenEditor({
           ? submitError.message
           : 'Could not update token metadata.',
       )
+      discard.capture(submitError)
     } finally {
       setBusy(false)
     }
@@ -1351,13 +1355,15 @@ function TokenEditor({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discard.active ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
+          actionDisabled={discard.active}
           onConfirm={() => void submit()}
           onClose={invalidate}
         >
+          {discard.element}
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
             {review.some(call => call.functionName === 'deployERC20For')

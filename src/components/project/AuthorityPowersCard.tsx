@@ -20,6 +20,7 @@ import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import {
   POWERS,
   initialFieldValue,
@@ -307,6 +308,7 @@ export function PowerActionForm({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const discard = useRelayrDiscard(() => setError(null))
 
   useEffect(() => {
     if (!address) return
@@ -504,6 +506,7 @@ export function PowerActionForm({
     if (!review || !ack || (power.extreme && !ackExtreme) || busy) return
     setBusy(true)
     setError(null)
+    discard.capture(null)
     try {
       const result = await runAuthorityCalls({
         calls: review.calls,
@@ -525,6 +528,7 @@ export function PowerActionForm({
           ? submitError.message
           : 'Could not complete this owner action.',
       )
+      discard.capture(submitError)
     } finally {
       setBusy(false)
     }
@@ -703,11 +707,11 @@ export function PowerActionForm({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discard.active ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : power.actionLabel}
-          actionDisabled={!ack || (power.extreme && !ackExtreme)}
+          actionDisabled={!ack || (power.extreme && !ackExtreme) || discard.active}
           onConfirm={() => void submit()}
           onClose={() => {
             if (done) {
@@ -718,8 +722,10 @@ export function PowerActionForm({
             setAck(false)
             setAckExtreme(false)
             setError(null)
+            discard.reset()
           }}
         >
+          {discard.element}
           <label className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
             <input
               type="checkbox"

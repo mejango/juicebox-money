@@ -24,6 +24,7 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import {
   clientFor,
   readAuthorityOf,
@@ -515,7 +516,7 @@ function ActionRow({
   )
 }
 
-function BuybackActionForm({
+export function BuybackActionForm({
   kind,
   rows,
   onDone,
@@ -561,6 +562,7 @@ function BuybackActionForm({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const discard = useRelayrDiscard(() => setError(null))
   const [done, setDone] = useState(false)
 
   useEffect(() => {
@@ -572,6 +574,7 @@ function BuybackActionForm({
     if (busy) return
     setReview(null)
     setError(null)
+    discard.reset()
     if (done) onDone()
   }
 
@@ -834,6 +837,7 @@ function BuybackActionForm({
     if (!review || !ack || busy) return
     setBusy(true)
     setError(null)
+    discard.capture(null)
     try {
       const result = await runAuthorityCalls({
         calls: review.calls,
@@ -854,6 +858,7 @@ function BuybackActionForm({
           ? submitError.message
           : 'Could not complete this action.',
       )
+      discard.capture(submitError)
     } finally {
       setBusy(false)
     }
@@ -984,13 +989,16 @@ function BuybackActionForm({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discard.active ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : action.title}
+          actionDisabled={discard.active}
           onConfirm={() => void submit()}
           onClose={closeReview}
-        />
+        >
+          {discard.element}
+        </TxConfirmDialog>
       ) : null}
     </div>
   )

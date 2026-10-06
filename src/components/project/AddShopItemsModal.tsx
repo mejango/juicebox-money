@@ -7,6 +7,7 @@ import type { Address } from 'viem'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
 import { shortError } from '@/lib/errors'
@@ -36,6 +37,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
   const [batch, setBatch] = useState<ProjectBatch | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'review' | 'pinning' | 'writing' | 'failed' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
+  const discard = useRelayrDiscard(() => setMessage(null))
   const pinnedRef = useRef<PinnedStoreItemDraft[] | null>(null)
   const busy = phase === 'checking' || phase === 'pinning' || phase === 'writing'
   const hasSubmittedTransactions = !!batch
@@ -90,6 +92,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
     if (expectedAccount.toLowerCase() !== address.toLowerCase()) { setMessage('Reconnect the wallet that reviewed this shop update.'); return }
     let scope = batch?.scope
     setMessage(null)
+    discard.capture(null)
     try {
       let calls
       if (!batch) {
@@ -112,6 +115,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       try { if (scope) setBatch(loadProjectBatch(scope)) }
       catch (recoveryError) { detail = shortError(recoveryError, detail) }
       setMessage(detail); setPhase('failed')
+      discard.capture(error)
     }
   }
   const backToForm = () => {
@@ -280,7 +284,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                 ? undefined
                 : message
           }
-          error={phase === 'failed' ? message : undefined}
+          error={phase === 'failed' && !discard.active ? message : undefined}
+          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
@@ -301,7 +306,9 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
           onClose={
             phase === 'done' || hasSubmittedTransactions ? close : backToForm
           }
-        />
+        >
+          {discard.element}
+        </TxConfirmDialog>
       ) : null}
     </ModalShell>
   )
