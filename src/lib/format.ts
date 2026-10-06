@@ -68,6 +68,14 @@ export function formatDate(timestamp: number): string {
   })
 }
 
+/** A unix timestamp as a local date and time, e.g. "Oct 7, 2026, 3:04 PM". */
+export function formatDateTime(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleString('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
+}
+
 /**
  * A unix timestamp → the `YYYY-MM-DDTHH:mm` string a `datetime-local` input
  * expects. Those inputs are LOCAL wall clock in both directions — the browser

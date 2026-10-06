@@ -36,6 +36,7 @@ import {
   fmtPct,
   formatCountdown,
   formatDate,
+  formatDateTime,
   formatDuration,
   formatTokenAmount,
   truncateAddress,
@@ -66,13 +67,6 @@ type Entry = {
   data: JBRulesetWithMetadata;
   tag: "Past" | "Current" | "Upcoming";
 };
-
-function formatDateTime(sec: number): string {
-  return new Date(sec * 1000).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
 
 /** Ruleset percents are basis points of 10,000: 3800 → "38%". */
 function basisPoints(bp: number): string {
