@@ -1105,6 +1105,24 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(loadRelayrPendingSession('authenticated-options')?.paymentOptions).toEqual([payment])
   })
 
+  it('refuses, unpaid and saved exactly, a quote offering more options than a session keeps, and quotes again', async () => {
+    // Seventeen authenticated options: one more than a session can keep exactly.
+    const many = Array.from({ length: 17 }, (_, index) => paymentFor({ amount: String(100 + index) }))
+    installSuccessfulBundle(post => post === 0 ? many : [payment])
+    const options = { calls, account: ALICE, pendingScope: 'many-options' }
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'Relayr offered more payment options than this action can keep. Nothing was paid; try again for a new quote.')
+    const saved = loadRelayrPendingSession(options.pendingScope)!
+    expect(saved).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID, paymentOptions: [] })
+    expect(relayrQuoteReleased(saved)).toBe(true)
+    expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+    expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    // The same signed calls are quoted again, and that quote is paid.
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps an unpaid testnet authorization when Relayr offers only mainnet funding', async () => {
     installSuccessfulBundle([payment])
     await expect(runRelayrCalls({ calls: TESTNETS.map(chainId => ({ ...calls[0], chainId })),

@@ -1966,10 +1966,16 @@ async function executeRelayrCalls({
     if (pendingScope) session = persistRelayrPublication(pendingScope, session)
     onProgress?.({ phase: 'quoting' })
     quote = await relayrPostBundle(entries)
-    const options = relayrPaymentOptions(quote, destinations)
+    // The session keeps every option it authenticated, each of which the
+    // release proof checks (ruling R104). A quote offering more than it can
+    // keep exactly is never paid: it is saved with none, which releases it.
+    const quoted = relayrQuotedOptions(quote, destinations)
+    const unkept = quoted.length > MAX_RELAYR_SESSION_ENTRIES
     session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
-      paymentOptions: relayrQuotedOptions(quote, destinations).map(({ option }) => option) }
+      paymentOptions: unkept ? [] : quoted.map(({ option }) => option) }
     if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    if (unkept) throw new Error('Relayr offered more payment options than this action can keep. Nothing was paid; try again for a new quote.')
+    const options = relayrPaymentOptions(quote, destinations)
     if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
     const selectedChain = paymentChainId ?? await requireFundingChainSelection(
       options.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })),
