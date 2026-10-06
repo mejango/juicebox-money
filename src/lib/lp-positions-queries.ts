@@ -56,19 +56,23 @@ const LP_POSITIONS_QUERY = `
 export async function fetchIndexedLpPositions({
   chainId,
   poolId,
+  signal,
 }: {
   chainId: number
   poolId: string
+  /** The caller's: when it aborts, the read stops, and the abort is thrown rather than read as nothing indexed. */
+  signal?: AbortSignal
 }): Promise<BsLpPosition[] | null> {
   try {
     const page = await getPagedItems<BsLpPosition>(
       LP_POSITIONS_QUERY,
       'buybackPoolPositions',
       { chainId, poolId },
-      { pageSize: 250 },
+      { pageSize: 250, signal },
     )
     return page.items.length ? page.items : null
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     return null
   }
 }
@@ -114,19 +118,23 @@ const POOL_LIQUIDITY_EVENTS_QUERY = `
 export async function fetchIndexedPoolLiquidityEvents({
   chainId,
   poolId,
+  signal,
 }: {
   chainId: number
   poolId: string
+  /** The caller's: when it aborts, the read stops, and the abort is thrown rather than read as a failed query. */
+  signal?: AbortSignal
 }): Promise<BsPoolLiquidityEvent[] | null> {
   try {
     const page = await getPagedItems<BsPoolLiquidityEvent>(
       POOL_LIQUIDITY_EVENTS_QUERY,
       'buybackPoolLiquidityEvents',
       { chainId, poolId },
-      { pageSize: 250 },
+      { pageSize: 250, signal },
     )
     return page.items
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     return null
   }
 }

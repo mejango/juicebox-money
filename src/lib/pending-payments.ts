@@ -62,23 +62,26 @@ function validatePayment(payment: PendingPayment, chainId: number, sourceProject
   }
 }
 
-/** Complete source-project inventory, independent of its current terminal selection. */
-export async function fetchPendingPayments(chainId: JBChainId, sourceProjectId: number): Promise<PendingPayment[]> {
+/**
+ * Complete source-project inventory, independent of its current terminal
+ * selection. `signal` is the caller's, for every page's request.
+ */
+export async function fetchPendingPayments(chainId: JBChainId, sourceProjectId: number, { signal }: { signal?: AbortSignal } = {}): Promise<PendingPayment[]> {
   const chain = rolloutChain(chainId)
   const gateways = [...new Set([chain?.contracts.JBRouterTerminalGateway, ...Object.values(chain?.history.JBRouterTerminalGateway ?? {})]
     .filter((address): address is string => !!address).map(address => address.toLowerCase()))]
-  return (await Promise.all(gateways.map(gateway => fetchGatewayPayments(chainId, sourceProjectId, gateway)))).flat()
+  return (await Promise.all(gateways.map(gateway => fetchGatewayPayments(chainId, sourceProjectId, gateway, signal)))).flat()
 }
 
 // Pending IDs are monotonic within one gateway; gateway-scoped pagination also
 // stays deterministic when a previous generation still holds payments.
-async function fetchGatewayPayments(chainId: JBChainId, sourceProjectId: number, gateway: string): Promise<PendingPayment[]> {
+async function fetchGatewayPayments(chainId: JBChainId, sourceProjectId: number, gateway: string, signal?: AbortSignal): Promise<PendingPayment[]> {
   const items: PendingPayment[] = []
   const seen = new Set<string>()
   let total: number | undefined
   do {
     const { routerPendingCalls: page } = await bendystraw<{ routerPendingCalls: { items: PendingPayment[]; totalCount: number } }>(
-      PENDING_PAYMENTS_QUERY, { chainId, sourceProjectId, gateway, limit: 100, offset: items.length }, { policy: 'live' })
+      PENDING_PAYMENTS_QUERY, { chainId, sourceProjectId, gateway, limit: 100, offset: items.length }, { policy: 'live', signal })
     if (!page || !Array.isArray(page.items) || !Number.isSafeInteger(page.totalCount) || page.totalCount < 0 ||
       (total !== undefined && total !== page.totalCount) || page.items.length > 100 ||
       (page.items.length === 0 && items.length !== page.totalCount)) {
