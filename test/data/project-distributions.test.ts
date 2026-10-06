@@ -167,7 +167,7 @@ describe('selected destination distributions', () => {
 
   it('proves a payout from its receipt, and refuses one missing a split’s event', async () => {
     const { review, split, total } = await payoutReceipt()
-    expect(() => verifyDistributionCompletion(review, receipt([split, total]))).not.toThrow()
+    expect(verifyDistributionCompletion(review, receipt([split, total]))).toBeNull()
     expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow("Base: Project 303's payouts")
     expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow('the receipt pays 0 splits, not the reviewed 1')
     expect(() => verifyDistributionCompletion(review, receipt([]))).toThrow('0 SendPayouts events')
@@ -208,7 +208,9 @@ describe('selected destination distributions', () => {
       eventLog(jbControllerAbi, 'SendReservedTokensToSplits', review.controller, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, owner: ACCOUNT, tokenCount, leftoverAmount: tokenCount - share, caller: ACCOUNT }),
     ])
     const more = review.pending + 10n ** 18n
-    expect(() => verifyDistributionCompletion(review, distributed(more))).not.toThrow()
+    // What went out is the count the receipt distributed.
+    expect(verifyDistributionCompletion(review, distributed(more))).toBe(more)
+    expect(verifyDistributionCompletion(review, distributed(review.pending))).toBe(review.pending)
     // The split's share is half of what was distributed, not of what was reviewed.
     expect(() => verifyDistributionCompletion(review, distributed(more, review.pending / 2n))).toThrow('was sent')
     expect(() => verifyDistributionCompletion(review, distributed(review.pending - 2n))).toThrow('fewer than the reviewed')
