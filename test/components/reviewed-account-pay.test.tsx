@@ -13,7 +13,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -28,6 +28,10 @@ const m = vi.hoisted(() => ({
   /** Connected as a Safe app, whose Safe is the account. */
   safe: false,
   waitForSafeExecutionHash: (() => Promise.reject(new Error('unset'))) as (...args: unknown[]) => Promise<unknown>,
+  /** Ends nothing unless a test says so. */
+  watchSafeProposal: (() => new Promise(() => {})) as (...args: unknown[]) => Promise<unknown>,
+  /** Query answers a test sets in place of the defaults, by key. */
+  queries: {} as Record<string, unknown>,
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -65,6 +69,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   // The reply is the Safe app's proposal, never an execution.
   executedAtOnce: async () => false,
   waitForSafeExecutionHash: (...args: unknown[]) => m.waitForSafeExecutionHash(...args),
+  watchSafeProposal: (...args: unknown[]) => m.watchSafeProposal(...args),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -121,6 +126,7 @@ const contextFor = (token: 'native' | 'erc20') =>
     : { token: USDC, decimals: 6, currency: 909516616, symbol: 'USDC', terminal: TERMINAL, viaRouter: false }
 
 function query(key: string) {
+  if (key in m.queries) return m.queries[key]
   switch (key) {
     case 'paySurface':
       return {
@@ -157,6 +163,8 @@ beforeEach(() => {
   wallet.connect(ALICE)
   m.token = 'native'
   m.safe = false
+  m.queries = {}
+  m.watchSafeProposal = () => new Promise(() => {})
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -293,6 +301,7 @@ describe('a payment from a Safe', () => {
   const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
 
   const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
+  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
   const UNCONFIRMED =
     'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
   const panelSays = (line: string) => host.textContent?.includes(line) ?? false
@@ -353,6 +362,48 @@ describe('a payment from a Safe', () => {
     expect(panelButton('first', 'Pay')!.disabled).toBe(true)
     await clickIn('first', 'Dismiss')
     expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+  })
+
+  it("shows on the panel why a router authorization proposed to the Safe ended after Done", async () => {
+    m.safe = true
+    m.token = 'erc20'
+    // A direct swap from USDC, which Permit2 has not authorized the router to spend.
+    const poolKey = { currency0: USDC, currency1: TERMINAL, fee: 3000, tickSpacing: 60, hooks: zeroAddress }
+    const quote = {
+      kind: 'direct-swap',
+      poolKey,
+      zeroForOne: true,
+      quotedTokenCount: 10n ** 21n,
+      minimumTokenCount: 10n ** 21n,
+      beneficiaryTokenCount: 10n ** 21n,
+      reservedTokenCount: 0n,
+      inputRoute: { kind: 'single-v4' },
+    }
+    m.queries = {
+      payMarket: { data: { status: 'pool', poolId: `0x${'12'.repeat(32)}`, key: poolKey, pairIsC0: true } },
+      directPaySwapQuote: {
+        data: quote, isFetching: false, isError: false, isPlaceholderData: false, isStale: false,
+        refetch: vi.fn(async () => ({ data: quote })),
+      },
+      payAllowance: { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) },
+      payPermit2Allowance: { data: [0n, 0, 0], isFetched: true, refetch: vi.fn(async () => ({ data: [0n, 0, 0] })) },
+      payWalletBytecode: { data: '0x1234', isFetched: true, isError: false },
+    }
+    m.waitForSafeExecutionHash = () => new Promise(() => {})
+    let end!: (outcome: string) => void
+    m.watchSafeProposal = () => new Promise(resolve => (end = resolve))
+    await reviewPayment('4')
+    await click('Confirm & Pay')
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    await click('Done')
+    await waitUntil(() => panelSays(AWAITING))
+
+    // The Safe moved past the authorization without running it.
+    await act(async () => end('replaced'))
+    await waitUntil(() => panelSays(REPLACED))
+    expect(panelSays(REPLACED)).toBe(true)
+    expect(button('Pay').disabled).toBe(false)
   })
 
   it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {

@@ -2395,9 +2395,9 @@ export function PayPanel({
           . This form only sends to a recognized Juicebox payment contract.
         </p>
       ) : null}
-      {(approveTx.error ?? tx.error) ? (
+      {(approveTx.error ?? routerApproveTx.error ?? tx.error) ? (
         <p className="mt-3 text-sm text-red-600">
-          {approveTx.error ?? tx.error}
+          {approveTx.error ?? routerApproveTx.error ?? tx.error}
         </p>
       ) : null}
       {/* A Safe stage outlives its dialog: its line stays until it ends or is dismissed. */}
