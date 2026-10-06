@@ -751,6 +751,38 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
+  it.each<[string, bigint, bigint[]]>([
+    ['a nonce moves past the saved one', 0n, [0n, 1n]],
+    ['the finalized nonce falls below the saved one, as after a reorg', 1n, [1n, 0n]],
+  ])('keeps ambiguous funding blocked, with both deadlines passed, when %s between the two reads of its requests', async (_, saved, reads) => {
+    // The launch signed at the nonce `saved`, and the wallet sent a payment without returning its hash.
+    for (const client of clients.values()) client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? saved : true)
+    m.forward.mockImplementation(async (call, account) => ({ chain: call.chainId,
+      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
+      data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: account, to: call.target,
+        value: call.value, gas: call.gas, deadline: NOW + 3600, data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }))
+    m.pay.mockImplementation(async ({ reverify, onSending }) => {
+      await reverify(); onSending(); throw new Error('no hash returned')
+    })
+    await expect(run()).rejects.toThrow('no hash returned')
+    m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
+    // The requests' deadline (NOW + 3600) and the payment's (NOW + 600) have both passed at a finalized block. Each
+    // chain's nonce is read twice: by the reconcile, which finds the request expired unused, and then for the
+    // outstanding requests, which find it has moved. The payment may have been sent, so the project may exist.
+    for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    const asked: Record<number, number> = { 1: 0, 10: 0 }
+    for (const chainId of [1, 10]) {
+      clients.get(chainId)!.readContract.mockImplementation(async ({ functionName }) =>
+        functionName === 'nonces' ? reads[Math.min(asked[chainId]++, reads.length - 1)] : true)
+    }
+    await expect(run()).rejects.toThrow('may have sent')
+    expect(asked).toEqual({ 1: 2, 10: 2 })
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+  })
+
   it('ends a paid launch whose forwarder nonces moved, with no destination hash, with cancelling only, never a retry', async () => {
     m.poll.mockImplementation(async () => { records = []; throw new Error('provider unavailable') })
     await expect(run()).rejects.toThrow('unfinished')

@@ -136,9 +136,12 @@ atomic.
   bundle. When the old bundle was paid and its calls reverted, the new
   payment's review says "The earlier payment can't be reused: its bundle ran
   and reverted." If no nonce moved and the recheck fails, it offers Discard
-  after "The project changed since this review." A recheck that cannot reach
-  the chain decides nothing: it says "Couldn't check the project. Try again."
-  and keeps the session. If a nonce moved, or the session saved no nonces,
+  after "The project changed since this review." A recheck the node could not
+  answer decides nothing (ruling R118): a transport failure, or a JSON-RPC
+  error that is not an execution revert, such as JB Center's -32001 while its
+  node is behind. It says "Couldn't check the project. Try again." and keeps
+  the session; a revert with data is the chain answering, and reads as the
+  project having changed. If a nonce moved, or the session saved no nonces,
   another action used the nonce or anyone holding the request ran it outside
   Relayr, and the app cannot tell which, so it offers Discard after "This
   action's earlier signature may already have run. Check the project, then
@@ -153,6 +156,10 @@ atomic.
 - Known limit: a reorg that drops an earlier forwarded transaction can leave
   the forwarder's finalized nonce below a saved one. Such a request is neither
   unused nor moved, so the session holds until the nonce catches up.
+- The classification, the verdict and what a session does next are the SDK's
+  (`@bananapus/nana-sdk-core/review/relayr`: `relayrRequestStates`,
+  `relayrRequestsVerdict` and `relayrSessionOutcome`). This app supplies the
+  clients, the lines, the storage and each action's recheck.
 - Every flow that can show one of these lines shows Discard with it, in place
   of its error: the editors, the owner actions, the project batches and the
   account view. Discard removes the session. A fresh review signs at the live

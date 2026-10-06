@@ -1,32 +1,12 @@
 'use client'
 
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
-import { relayrForwardRequest, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrForwardRequest, relayrSignedRequests, type RelayrEntry, type RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import { isAddressEqual, type Address } from 'viem'
 import { loadLaunchSession } from '@/lib/launch-session'
 import type { RelayrPendingSession } from '@/lib/relayr'
 
 type Pending = { scope: string; session: RelayrPendingSession | null }
-
-/** A signed forward request as ruling R114 classifies it: its chain, deadline and, when saved, the nonce it was signed with. */
-export type SignedForwardRequest = { chainId: number; deadline: number | bigint; nonce?: string | bigint }
-
-/**
- * The forward requests a saved session published, each with the nonce it
- * was signed with when the session saved one for every request. Null when
- * it published none, or one is not a forwarder execute this app can read.
- */
-export function savedForwardRequests(
-  session: Pick<RelayrPendingSession, 'publishedEntries' | 'publishedNonces'>,
-): SignedForwardRequest[] | null {
-  const published = session.publishedEntries ?? []
-  const nonces = session.publishedNonces?.length === published.length ? session.publishedNonces : undefined
-  const requests = published.flatMap((entry, index) => {
-    const request = relayrForwardRequest(entry)
-    return request ? [{ chainId: entry.chain, deadline: request.deadline, nonce: nonces?.[index] }] : []
-  })
-  return published.length && requests.length === published.length ? requests : null
-}
 
 /** Only forwarded authorizations consume this nonce; raw payer and Safe calls do not. */
 function authorizes(entry: RelayrEntry, account: Address, chains: Set<number>): boolean {
@@ -40,7 +20,7 @@ function authorizes(entry: RelayrEntry, account: Address, chains: Set<number>): 
 }
 
 /** A saved session or launch whose signed requests would use a nonce this action needs. */
-type Reservation = { key: string; requests: SignedForwardRequest[] | null }
+type Reservation = { key: string; requests: RelayrSignedRequest[] | null }
 
 /**
  * Project-action locks alone do not protect ERC2771's account-wide nonce. Hold
@@ -57,7 +37,7 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
   owner: `relayr:${string}` | `launch:${string}`
   pendingSessions: () => Pending[]
   /** Whether every given request is dead by ruling R114's classification, anything unknown counting as live. */
-  requestsDead: (requests: readonly SignedForwardRequest[]) => Promise<boolean>
+  requestsDead: (requests: readonly RelayrSignedRequest[]) => Promise<boolean>
   execute: (assertAvailable: (destinations?: number[]) => void) => Promise<T>
 }): Promise<T> {
   if (typeof navigator === 'undefined' || !navigator.locks) {
@@ -72,7 +52,7 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
       const entries = [...(session.publishedEntries ?? []), ...(session.expectedEntries ?? []),
         ...(session.expectedTransactions?.map(item => item.entry) ?? [])]
       const key = JSON.stringify(['relayr', scope, entries, session.publishedNonces ?? null])
-      if (entries.some(entry => authorizes(entry, account, wanted))) found.push({ key, requests: savedForwardRequests(session) })
+      if (entries.some(entry => authorizes(entry, account, wanted))) found.push({ key, requests: relayrSignedRequests(session.publishedEntries, session.publishedNonces) })
       // Legacy authority sessions without exact entries still reserve their account/chain.
       // Safe execution journals have a different nonce and are deliberately excluded.
       else if (!entries.length && !scope.startsWith('safe-queue:') && !session.expectedSafeExecutions?.length &&
@@ -86,7 +66,7 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
         .filter(signed => launch.statuses[signed.chainId]?.phase !== 'done')
       if (outstanding.some(signed => authorizes(signed.entry, account, wanted))) {
         found.push({ key: JSON.stringify(['launch', launch.salt, outstanding]),
-          requests: outstanding.map(({ chainId, deadline, nonce }) => ({ chainId, deadline, nonce })) })
+          requests: outstanding.map(({ chainId, deadline, nonce }) => ({ chainId, signer: account, deadline, nonce })) })
       }
     }
     return found

@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError, type RelayrDiscardReason } from '@/lib/relayr'
+import type { RelayrDiscardReason } from '@bananapus/nana-sdk-core/review/relayr'
+import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError } from '@/lib/relayr'
 
 /**
  * The one line and the Discard of a saved Relayr session whose requests are

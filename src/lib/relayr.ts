@@ -24,7 +24,7 @@ import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { savedForwardRequests, withForwarderAuthorizationLock, type SignedForwardRequest } from '@/lib/forwarder-authorization'
+import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import {
   FORWARD_REQUEST_TYPES,
   RELAYR_API,
@@ -35,7 +35,9 @@ import {
   RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   bindRelayrQuote,
+  isRelayrDiscardReason,
   relayrBundleRequest,
+  relayrDeadlinePassed,
   relayrDestinationHash,
   relayrForwardRequest,
   quoteExpired,
@@ -44,6 +46,11 @@ import {
   relayrPaymentOptions,
   relayrProgress,
   relayrRecordChain,
+  relayrRequestStates,
+  relayrRequestsDead,
+  relayrRequestsVerdict,
+  relayrSessionOutcome,
+  relayrSignedRequests,
   relayrStateIsSuccess,
   relayrSupportsChain,
   requireRelayrBundleUnpaid,
@@ -52,10 +59,13 @@ import {
   simulateRelayrPayment,
   verifyRelayrDestinations,
   verifyRelayrPayment,
+  type RelayrDiscardReason,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrPaymentDetails,
   type RelayrQuote,
+  type RelayrRequestsVerdict,
+  type RelayrSessionOutcome,
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
@@ -121,15 +131,10 @@ export function relayrCallsScope(calls: RelayrCall[]): string {
 }
 
 /**
- * Why a saved session can be discarded (ruling R114): every request it
- * published is dead at a canonical finalized block, and one may have run
- * (`ran`: a nonce moved, or the session saved none), or none ran and the
- * action's own recheck refuses it (`changed`), or none ran and the account
- * view, which cannot run that recheck, found them so (`expired`). Opening
- * the action still signs `expired` requests again at their saved nonces.
+ * The line each reason a saved session can be discarded shows (ruling R114,
+ * the SDK's RelayrDiscardReason). Opening the action still signs `expired`
+ * requests again at their saved nonces.
  */
-export type RelayrDiscardReason = 'ran' | 'changed' | 'expired'
-
 const RELAYR_DISCARD_LINES: Record<RelayrDiscardReason, string> = {
   ran: 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.',
   changed: 'The project changed since this review.',
@@ -139,10 +144,6 @@ const RELAYR_DISCARD_LINES: Record<RelayrDiscardReason, string> = {
 /** The one line a discardable session shows, and the error its action throws until it is discarded. */
 export function relayrDiscardLine(reason: RelayrDiscardReason): string {
   return RELAYR_DISCARD_LINES[reason]
-}
-
-function relayrDiscardReason(value: unknown): value is RelayrDiscardReason {
-  return value === 'ran' || value === 'changed' || value === 'expired'
 }
 
 /** A saved session none of whose requests can run again: Discard ends it. `cause` is why its calls were not proven. */
@@ -544,7 +545,7 @@ export function saveRelayrPendingSession(
     ...(payments ? { payments } : {}),
     ...(paymentOptions ? { paymentOptions } : {}),
     ...(session.released === true && session.paymentStatus === 'reverted' ? { released: true as const } : {}),
-    ...(relayrDiscardReason(session.discardable) ? { discardable: session.discardable } : {}),
+    ...(isRelayrDiscardReason(session.discardable) ? { discardable: session.discardable } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -658,7 +659,7 @@ export function loadRelayrPendingSession(
       payments: Array.isArray(value.payments) ? value.payments : undefined,
       paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
       ...(value.released === true && value.paymentStatus === 'reverted' ? { released: true as const } : {}),
-      ...(relayrDiscardReason(value.discardable) ? { discardable: value.discardable } : {}),
+      ...(isRelayrDiscardReason(value.discardable) ? { discardable: value.discardable } : {}),
     }
     // Reading a tolerant UI view must not erase malformed durable evidence before
     // the authorization path can inspect the original record strictly.
@@ -719,7 +720,7 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
           (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1)) ||
           (value.released !== undefined && (value.released !== true || value.paymentStatus !== 'reverted')) ||
-          (value.discardable !== undefined && !relayrDiscardReason(value.discardable))) throw new Error()
+          (value.discardable !== undefined && !isRelayrDiscardReason(value.discardable))) throw new Error()
       for (const entries of [value.publishedEntries, value.expectedEntries]) {
         if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
             !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
@@ -1100,106 +1101,16 @@ export function relayrPaymentAttemptOutcome(
 }
 
 /**
- * `read` at the chain's finalized block, with that block's timestamp, once
- * the block is still canonical after the read. Null while any of it cannot be
- * read. The one home for chain state at a canonical finalized block.
+ * The client the SDK's session rules read a chain's finalized block through
+ * (relayrRequestStates, relayrRequestsDead and relayrDeadlinePassed). None
+ * while the chain has no client here, which those rules read as unknown.
  */
-async function atCanonicalFinalizedBlock<T>(
-  chainId: number,
-  read: (client: ReturnType<typeof publicClient>, blockNumber: bigint) => Promise<T>,
-): Promise<{ value: T; timestamp: bigint } | null> {
+export function relayrChainClient(chainId: number): ReturnType<typeof publicClient> | undefined {
   try {
-    const client = publicClient(chainId as JBChainId)
-    const block = await client.getBlock({ blockTag: 'finalized' })
-    const value = await read(client, block.number)
-    const canonical = await client.getBlock({ blockNumber: block.number })
-    return canonical.hash === block.hash ? { value, timestamp: block.timestamp } : null
-  } catch { return null }
-}
-
-/**
- * The nonce the forwarder expects next from `account` at the chain's finalized
- * block, still canonical, with that block's timestamp. Null while that cannot
- * be read.
- */
-async function finalizedForwarderNonce(chainId: number, account: Address): Promise<{ nonce: bigint; timestamp: bigint } | null> {
-  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
-  if (!forwarder) return null
-  const finalized = await atCanonicalFinalizedBlock(chainId, (client, blockNumber) => client.readContract({
-    address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account], blockNumber }))
-  return finalized && { nonce: finalized.value, timestamp: finalized.timestamp }
-}
-
-/**
- * A signed forward request as the forwarder sees it at a canonical finalized
- * block on its chain (ruling R114). It is dead once the forwarder's nonce for
- * its signer moved past the nonce it was signed with, when it may have run,
- * or once its deadline is strictly earlier than that block's timestamp, since
- * the forwarder runs a request only while its deadline is at least the
- * block's timestamp. `unused`: the nonce still equals the saved one. Anything
- * unknown is live: a failed read, no finalized block, a block no longer
- * canonical, and a request saved without its nonce until its deadline passes.
- */
-export type RelayrRequestState =
-  | { live: true; deadline: number }
-  | { live: false; mayHaveRun: boolean; unused: boolean }
-
-/**
- * The one classification of signed forward requests (ruling R114): each one
- * at one canonical finalized block on its chain, read once per chain.
- */
-export async function relayrRequestStates(
-  account: Address,
-  requests: readonly { chainId: number; deadline: number | bigint; nonce?: string | bigint }[],
-): Promise<RelayrRequestState[]> {
-  const finalized = new Map<number, ReturnType<typeof finalizedForwarderNonce>>()
-  return Promise.all(requests.map(async ({ chainId, deadline, nonce }): Promise<RelayrRequestState> => {
-    if (!finalized.has(chainId)) finalized.set(chainId, finalizedForwarderNonce(chainId, account))
-    const block = await finalized.get(chainId)
-    try {
-      const saved = nonce === undefined ? null : BigInt(nonce)
-      if (block && saved !== null && block.nonce > saved) return { live: false, mayHaveRun: true, unused: false }
-      if (block && BigInt(deadline) < block.timestamp) {
-        return { live: false, mayHaveRun: saved === null, unused: block.nonce === saved }
-      }
-    } catch { /* An unreadable nonce or deadline is unknown. */ }
-    return { live: true, deadline: Number(deadline) }
-  }))
-}
-
-/**
- * Ruling R117: whether every given request is dead at a canonical finalized
- * block on its chain, anything unknown counting as live. A saved session or
- * launch reserves the signer's forwarder nonces exactly while one is live.
- */
-export async function relayrRequestsDead(account: Address, requests: readonly SignedForwardRequest[]): Promise<boolean> {
-  return requests.length > 0 && !relayrRequestsVerdict(await relayrRequestStates(account, requests)).live
-}
-
-/**
- * What a set of requests allows together (ruling R114). While any one is
- * live the set holds until `until`, the deadline of its last live request.
- * `mayHaveRun` says whether a dead one's nonce moved or was never saved, and
- * once every one is dead, `unused` whether every nonce still equals the saved
- * one.
- */
-export type RelayrRequestsVerdict =
-  | { live: true; until: number; mayHaveRun: boolean }
-  | { live: false; mayHaveRun: boolean; unused: boolean }
-
-export function relayrRequestsVerdict(states: readonly RelayrRequestState[]): RelayrRequestsVerdict {
-  const deadlines = states.flatMap(state => state.live ? [state.deadline] : [])
-  const mayHaveRun = states.some(state => !state.live && state.mayHaveRun)
-  if (deadlines.length) return { live: true, until: Math.max(...deadlines), mayHaveRun }
-  return { live: false, mayHaveRun, unused: states.every(state => !state.live && state.unused) }
-}
-
-/** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
-export async function relayrDeadlinePassed(chainId: number, deadline: string | bigint): Promise<boolean> {
-  const finalized = await atCanonicalFinalizedBlock(chainId, async () => undefined)
-  try {
-    return !!finalized && finalized.timestamp > BigInt(deadline)
-  } catch { return false }
+    return publicClient(chainId as JBChainId)
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -1398,9 +1309,9 @@ function relayrBundleFunded(read: RelayrBundleRead): boolean {
  * canonical finalized block on its chain, with the nonces it saved. Null
  * when one of them is not a forwarder request it can read.
  */
-async function savedRequestsVerdict(saved: RelayrPendingSession, account: Address): Promise<RelayrRequestsVerdict | null> {
-  const requests = savedForwardRequests(saved)
-  return requests && relayrRequestsVerdict(await relayrRequestStates(account, requests))
+async function savedRequestsVerdict(saved: RelayrPendingSession): Promise<RelayrRequestsVerdict | null> {
+  const requests = relayrSignedRequests(saved.publishedEntries, saved.publishedNonces)
+  return requests && relayrRequestsVerdict(await relayrRequestStates(relayrChainClient, requests))
 }
 
 /** Mark a session for Discard (ruling R114), and the error its action throws until it is discarded. */
@@ -1409,51 +1320,45 @@ function discardableSession(scope: string, saved: RelayrPendingSession, reason: 
   return new RelayrDiscardError(scope, reason, cause)
 }
 
-/** The recheck could not reach the chain, so it says nothing about the project. */
-function failedToCheck(error: unknown): boolean {
-  let link = error
-  for (let depth = 0; depth < 8 && link instanceof Error; depth++, link = link.cause) {
-    if (['HttpRequestError', 'TimeoutError', 'WebSocketRequestError'].includes(link.name)) return true
-  }
-  return false
-}
-
 /**
- * Ruling R114 once every request a saved session published is dead, whatever
- * Relayr reports of its bundle, paid, reverted or unreadable: Discard after
- * the "may already have run" line when a nonce moved or the session saved
- * none. Otherwise none ran and none can, and the action's recheck decides:
- * Discard after the "changed" line when it refuses, and otherwise the nonces
- * its calls are signed again with (ruling R104). A recheck that cannot reach
- * the chain decides nothing. Without a recheck, as in the account view, the
- * session can be discarded after the "expired" line (ruling R114 (e)), and
- * its action still signs them again. Known limit: a reorg that drops an
- * earlier forwarded transaction can leave a finalized nonce below a saved
- * one, and the session holds until the nonce catches up. `cause` is why the
- * session's calls were not proven.
+ * What ruling R114 lets a saved session do next, whatever Relayr reports of
+ * its bundle, paid, reverted or unreadable: the SDK's relayrSessionOutcome,
+ * with this app's marks and lines. It returns while a request can still run
+ * (`hold`, or `refresh` while none moved) and when the calls are signed
+ * again at the nonces they were signed with (`re-sign`, ruling R104). Once
+ * every request is dead it throws: Discard after the "may already have run"
+ * line when a nonce moved or the session saved none; otherwise the action's
+ * recheck decides, Discard after the "changed" line when it refuses, and
+ * without a recheck, as in the account view, Discard after the "expired"
+ * line (ruling R114 (e)), whose action still signs them again. A recheck the
+ * node could not answer decides nothing (ruling R118). Known limit: a reorg
+ * that drops an earlier forwarded transaction can leave a finalized nonce
+ * below a saved one, and the session holds until the nonce catches up.
+ * `cause` is why the session's calls were not proven.
  */
-async function deadSessionNonces(
+async function savedSessionOutcome(
   scope: string,
   saved: RelayrPendingSession,
-  verdict: Extract<RelayrRequestsVerdict, { live: false }>,
+  verdict: RelayrRequestsVerdict,
   recheck?: () => Promise<void>,
   cause?: unknown,
-): Promise<string[]> {
-  if (verdict.mayHaveRun) throw discardableSession(scope, saved, 'ran', cause)
-  if (!verdict.unused || !saved.publishedNonces) throw new Error(relayrHeldMessage(0), cause === undefined ? undefined : { cause })
-  if (!recheck) throw discardableSession(scope, saved, 'expired', cause)
-  try {
-    await recheck()
-  } catch (error) {
-    if (failedToCheck(error)) throw new Error('Couldn\'t check the project. Try again.', { cause: error })
-    throw discardableSession(scope, saved, 'changed', error)
+): Promise<Extract<RelayrSessionOutcome, { kind: 'hold' | 'refresh' | 're-sign' }>> {
+  const outcome = await relayrSessionOutcome(verdict, { nonces: saved.publishedNonces, recheck })
+  switch (outcome.kind) {
+    case 'discard':
+      throw discardableSession(scope, saved, outcome.reason, outcome.reason === 'changed' ? outcome.error : cause)
+    case 'unchecked':
+      throw new Error('Couldn\'t check the project. Try again.', { cause: outcome.error })
+    case 'reorg-hold':
+      throw new Error(relayrHeldMessage(0), cause === undefined ? undefined : { cause })
+    default:
+      return outcome
   }
-  return saved.publishedNonces
 }
 
 /**
  * Ruling R114 where the action's recheck is not run: once every request a
- * saved session published is dead, deadSessionNonces ends it. Otherwise the
+ * saved session published is dead, savedSessionOutcome ends it. Otherwise the
  * verdict while one can still run, or null when its requests cannot be
  * classified.
  */
@@ -1462,8 +1367,8 @@ async function liveSessionVerdict(
   saved: RelayrPendingSession,
   cause?: unknown,
 ): Promise<Extract<RelayrRequestsVerdict, { live: true }> | null> {
-  const verdict = saved.account && isAddress(saved.account) ? await savedRequestsVerdict(saved, saved.account) : null
-  if (verdict?.live === false) await deadSessionNonces(scope, saved, verdict, undefined, cause)
+  const verdict = await savedRequestsVerdict(saved)
+  if (verdict?.live === false) await savedSessionOutcome(scope, saved, verdict, undefined, cause)
   return verdict?.live ? verdict : null
 }
 
@@ -1472,7 +1377,7 @@ async function liveSessionVerdict(
  * which `error` says: while one of its requests can still run it holds,
  * saying until when. A forwarder execute that reverts leaves its nonce
  * unused, so a paid bundle whose calls reverted holds too. Once every
- * request is dead, deadSessionNonces ends it.
+ * request is dead, savedSessionOutcome ends it.
  */
 async function holdUnprovenSession(scope: string, saved: RelayrPendingSession, error: unknown): Promise<never> {
   const live = await liveSessionVerdict(scope, saved, error)
@@ -1536,7 +1441,8 @@ async function relayrQuoteUnfundable({ payments, options, bundleUuid, destinatio
     deadlines.set(`${details.chainId}:${details.deadline}`, { chainId: details.chainId, deadline: details.deadline.toString() })
   }
   for (const { chainId, deadline } of deadlines.values()) {
-    if (!await relayrDeadlinePassed(chainId, deadline)) return false
+    const client = relayrChainClient(chainId)
+    if (!client || !await relayrDeadlinePassed(client, deadline)) return false
   }
   return true
 }
@@ -1830,7 +1736,7 @@ export async function runRelayrCalls(options: Parameters<typeof executeRelayrCal
   return withRelayrScopeLock(pendingScope, () => withForwarderAuthorizationLock({
     account: options.account, chainIds: options.calls.map(call => call.chainId), owner: `relayr:${pendingScope}`,
     pendingSessions: readRelayrPendingSessionsForAuthorization,
-    requestsDead: requests => relayrRequestsDead(options.account, requests),
+    requestsDead: requests => relayrRequestsDead(relayrChainClient, requests),
     execute: assertAvailable => executeRelayrCalls({ ...options, pendingScope }, assertAvailable),
   }))
 }
@@ -1881,7 +1787,7 @@ async function executeRelayrCalls({
       }
     }
     // Classified before the action's own recheck, which a request that ran would make refuse.
-    verdict = await savedRequestsVerdict(saved, account)
+    verdict = await savedRequestsVerdict(saved)
     if (verdict?.live !== false && saved.paymentStatus === 'reverted' && !saved.released) {
       // While a request can still run, another payment may have funded the
       // quote: what Relayr ran is proven, never paid again.
@@ -1932,23 +1838,23 @@ async function executeRelayrCalls({
       requests.push(request)
     }
     if (!verdict) throw new Error('The original published Relayr calls changed. Keep the original action pending.')
-    if (verdict.live) {
+    const outcome = await savedSessionOutcome(pendingScope, saved, verdict, async () => { await reverify?.() })
+    if (outcome.kind === 'hold') throw new Error(relayrHeldMessage(outcome.until))
+    if (outcome.kind === 'refresh') {
       // An old request can still run: no new signature and no Discard. Its
       // own requests may be quoted or paid again while every one still
       // verifies, since their nonces let at most one bundle run.
-      if (verdict.mayHaveRun) throw new Error(relayrHeldMessage(verdict.until))
       try {
         await reverify?.()
         await verifyForwardedEntries(published, account)
       } catch (error) {
-        throw new Error(relayrHeldMessage(verdict.until), { cause: error })
+        throw new Error(relayrHeldMessage(outcome.until), { cause: error })
       }
       entries.push(...published)
-      nonces = saved.publishedNonces
+      nonces = outcome.nonces ?? undefined
     } else {
       // Every request is dead, so none can run again whatever Relayr reports.
-      const again = await deadSessionNonces(pendingScope, saved, verdict, async () => { await reverify?.() })
-      resigning = again.map((nonce, index) => ({ nonce, gas: requests[index].gas }))
+      resigning = outcome.nonces.map((nonce, index) => ({ nonce, gas: requests[index].gas }))
     }
   }
   if (entries.length < calls.length) {

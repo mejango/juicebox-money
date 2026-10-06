@@ -136,3 +136,11 @@ Review: Para's own JavaScript is identical in jbm and revnet, so one audit cover
 - [x] Hand every page's Bendystraw read its signal, and the relay the browser request's.
 
 Review: refactors first, behavior changes tests first. Budgets measured on the same toolchain: main 434.4/502.1/2507.0 KiB (home/create/all), SDK 2.21.0 alone 435.1/503.0/2508.2, this branch 435.3/503.3/2509.0; caps 436/504/2510. Gate: lint, types, knip, audit, container, source, protocol, schema, transaction inventory, 2,461 unit tests with coverage, 57 browser tests in the shared gate lock, production build last.
+
+# SDK 2.22.0 Relayr session rules (2026-10-06)
+- [x] Take @bananapus/nana-sdk-core 2.22.0 exactly; the lockfile changes only the SDK.
+- [x] Delete jbm's copies of the finalized-block reads, the request classification, the verdict, the deadline check, the discard-reason guard and the dead-session decision, and call the SDK's, in relayr.ts, launch-relayr.ts and forwarder-authorization.ts.
+- [x] Keep what the SDK leaves to the app: saved sessions, lines and errors, the forwarder lock, the R104 quote-release helpers.
+- [x] Pin the differences the SDK states: a block that is not a block reads as unknown, each request is read for its own signer, and a recheck the node could not answer holds (ruling R118), JB Center's -32001 after its retries included.
+
+Review: no jbm test called a moved function by itself, so none was deleted. Seven tests fail on the old copies and pass on the SDK's: the lock's two reservation cases, which now expect each request's signer, the new two-signer case, the three unknown-block cases, and the R118 case. Budgets on the same toolchain: main 435.3/503.3/2508.9 KiB (home/create/all), SDK 2.22.0 alone 435.3/503.3/2508.9, this branch 435.3/503.3/2509.4; caps 436/504/2510. Gate: lint, types, knip, source, transaction inventory, 2,466 unit tests with coverage, 57 browser tests in the shared gate lock, production build last.

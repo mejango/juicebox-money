@@ -137,6 +137,11 @@ const budgets = {
   // bundle guard. Deleting jbm's copies of those, and every Safe wait and Bendystraw
   // read taking its flow's signal (a hook in each waiting component, the signal
   // through each reader), measures 2509.0. Round up to the next KiB.
+  // SDK 2.22.0 alone leaves 2508.9 (its Relayr session rules are unused until
+  // called). Calling them in place of jbm's copies (the finalized-block reads,
+  // the request classification, the session outcome and ruling R118's recheck
+  // rule) measures 2509.4, with home (435.3) and create (503.3) unchanged.
+  // The cap stays.
   allScripts: 2510 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
