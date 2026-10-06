@@ -17,6 +17,7 @@ import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import {
   getProjectActivity,
   getProjectActivityByProject,
@@ -1146,6 +1147,8 @@ export function ActivityList({
   const [liveError, setLiveError] = useState(error)
   const [liveTotal, setLiveTotal] = useState(total ?? events.length)
   const [loadingMore, setLoadingMore] = useState(false)
+  // Older pages load while the list is shown; leaving it stops the one under way.
+  const listSignal = useUnmountSignal()
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
   const [selectedCategories, setSelectedCategories] =
     useState<Set<ActivityCategory> | null>(null)
@@ -1159,13 +1162,16 @@ export function ActivityList({
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
     let stopped = false
+    // The poll's reads stop with it.
+    const polling = new AbortController()
+    const { signal } = polling
 
     const refresh = async () => {
       if (document.visibilityState === 'hidden') return
       try {
         const incoming = await (suckerGroupId
-          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId)
-          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE))
+          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, 0, { signal })
+          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE, 0, { signal }))
         if (stopped) return
         // Poll the newest page only; merging keeps whatever "Load more" has already pulled in.
         setLiveEvents(current => mergeActivityEvents(current, incoming.items))
@@ -1184,6 +1190,7 @@ export function ActivityList({
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       stopped = true
+      polling.abort()
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
@@ -1193,13 +1200,15 @@ export function ActivityList({
     setLoadingMore(true)
     setLoadMoreError(null)
     try {
+      const signal = listSignal()
       const page = await (suckerGroupId
-        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, liveEvents.length)
+        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, liveEvents.length, { signal })
         : getProjectActivityByProject(
             chainId,
             projectId,
             ACTIVITY_PAGE,
             liveEvents.length,
+            { signal },
           ))
       setLiveEvents(current => mergeActivityEvents(current, page.items))
       setLiveTotal(page.totalCount)

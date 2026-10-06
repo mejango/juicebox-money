@@ -714,6 +714,8 @@ export async function readLpPositions(
   client: PublicClient,
   chainId: JBChainId,
   pool: Extract<MarketResult, { status: 'pool' }>,
+  /** The page's: it stops the indexed read. */
+  signal?: AbortSignal,
 ): Promise<LpPositionsResult> {
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
@@ -722,7 +724,7 @@ export async function readLpPositions(
   // One indexed query replaces the walk back to the pool's Initialize. Nothing
   // indexed reads the same as a pool with no positions, so it falls through to
   // the scan rather than rendering an empty pool.
-  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId })
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal })
   const details: PositionDetail[] = indexed
     ? indexed.map(row => ({
         tokenId: BigInt(row.tokenId),
@@ -858,12 +860,14 @@ export async function readUserLpPositions(
   chainId: JBChainId,
   pool: Extract<MarketResult, { status: 'pool' }>,
   owner: Address,
+  /** The page's: it stops the indexed read. */
+  signal?: AbortSignal,
 ): Promise<UserLpPosition[]> {
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return []
 
-  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId })
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal })
   if (indexed) {
     return indexed
       .filter(row => lc(row.owner) === lc(owner))
@@ -968,11 +972,12 @@ export function MarketSection({
       enabled: !!publicClient && hasPool,
       staleTime: 60_000,
       retry: 0,
-      queryFn: () =>
+      queryFn: ({ signal }) =>
         readLpPositions(
           publicClient!,
           chainId,
           market as Extract<MarketResult, { status: 'pool' }>,
+          signal,
         ),
     }),
   )

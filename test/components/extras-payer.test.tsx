@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   reset: vi.fn(),
   refetchPayers: vi.fn(),
   getProjectPayers: vi.fn(),
+  /** The payer list query's own, which react-query aborts once no page shows it. */
+  query: new AbortController(),
   buildProjectDraftExport: vi.fn(),
   payerRows: [] as BsProjectPayer[],
   payersLoading: false,
@@ -70,12 +72,12 @@ vi.mock('@tanstack/react-query', () => ({
     queryFn,
   }: {
     queryKey: readonly unknown[]
-    queryFn: () => unknown
+    queryFn: (context: { signal: AbortSignal }) => unknown
   }) => {
     if (queryKey[0] === 'projectPayers') {
       // Run the wired query function so a wrong argument list is a test
       // failure rather than an untested detail of the hook call.
-      void queryFn()
+      void queryFn({ signal: mocks.query.signal })
       return {
         data: mocks.payerRows,
         isLoading: mocks.payersLoading,
@@ -198,7 +200,7 @@ beforeEach(() => {
 describe('payer deploy input validation', () => {
   it('reads the indexed payer list for this project on every deployed chain', async () => {
     await openDialog()
-    expect(mocks.getProjectPayers).toHaveBeenCalledWith(props.chains)
+    expect(mocks.getProjectPayers).toHaveBeenCalledWith(props.chains, { signal: mocks.query.signal })
   })
 
   it('refuses a beneficiary that is neither an address nor a resolved name', async () => {
@@ -389,6 +391,6 @@ describe('payer deployment recovery', () => {
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
     await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
     expect(mocks.runPayerDeployments.mock.calls[0][0].calls[0].projectId).toBe(42)
-    expect(mocks.getProjectPayers).toHaveBeenCalledWith([[1, 42], [10, 84]])
+    expect(mocks.getProjectPayers).toHaveBeenCalledWith([[1, 42], [10, 84]], { signal: mocks.query.signal })
   })
 })

@@ -261,9 +261,12 @@ export type SplitReview = {
 
 type SplitJournal = { scope: string; review: SplitReview }
 
-/** Resolve this project's current group and permission from its own chain. */
-export async function readSplitDestination({ chainId, projectId, groupId, account, rulesetId }: {
-  chainId: JBChainId; projectId: number; groupId: bigint; account: Address; rulesetId?: bigint
+/**
+ * Resolve this project's current group and permission from its own chain.
+ * `signal` stops the indexed revnet operator read, the one Bendystraw read.
+ */
+export async function readSplitDestination({ chainId, projectId, groupId, account, rulesetId, signal }: {
+  chainId: JBChainId; projectId: number; groupId: bigint; account: Address; rulesetId?: bigint; signal?: AbortSignal
 }): Promise<SplitSnapshot> {
   const client = clientFor(chainId)
   const addresses = jbContractAddress['6']
@@ -292,7 +295,7 @@ export async function readSplitDestination({ chainId, projectId, groupId, accoun
     // candidate: live Safe membership and the owner's permission must agree.
     const revOwner = addresses[RevnetCoreContracts.REVOwner][chainId]
     if (revOwner && owner.toLowerCase() === revOwner.toLowerCase()) {
-      const operator = await getRevnetOperator(chainId, projectId)
+      const operator = await getRevnetOperator(chainId, projectId, { signal })
       if (operator && isAddress(operator)) {
         const identity = await readAuthorityIdentity(client, operator)
         if (identity?.kind === 'safe' && identity.owners.some(signer => signer.toLowerCase() === account.toLowerCase()) && await permitted(operator)) authority = operator
@@ -549,7 +552,7 @@ export function EditSplitsFlow({
     queryKey: ['editSplitsRevnetOperator', chainId, projectId],
     enabled: mounted && isRevnet,
     staleTime: 30_000,
-    queryFn: () => getRevnetOperator(chainId, projectId),
+    queryFn: ({ signal }) => getRevnetOperator(chainId, projectId, { signal }),
   })
   const projectAuthority = (isRevnet ? revnetOperator : owner) as
     | Address
@@ -712,9 +715,9 @@ function EditSplitsModal({
     queryKey: ['editSplitsDestinations', projectChains.map(([id, pid]) => `${id}:${pid}`).join('|'), rulesetId.toString(), groupId.toString(), address],
     enabled: open && isReserved && !!address && projectChains.length > 1,
     staleTime: 0,
-    queryFn: () => Promise.all(projectChains.map(async ([id, pid]) => {
+    queryFn: ({ signal }) => Promise.all(projectChains.map(async ([id, pid]) => {
       try {
-        const snapshot = await readSplitDestination({ chainId: id, projectId: pid, groupId, account: address!, ...(id === chainId ? { rulesetId } : {}) })
+        const snapshot = await readSplitDestination({ chainId: id, projectId: pid, groupId, account: address!, signal, ...(id === chainId ? { rulesetId } : {}) })
         return { chainId: id, snapshot, error: null }
       } catch (err) {
         return { chainId: id, snapshot: null, error: err instanceof Error ? err.message : 'Could not verify this chain.' }
@@ -849,7 +852,7 @@ function EditSplitsModal({
           throw new Error(`Resume the pending split update on ${chainName(id)} first.`)
         }
       }
-      const snapshots = await Promise.all(chosen.map(([id, pid]) => readSplitDestination({ chainId: id, projectId: pid, groupId, account: address, ...(id === chainId ? { rulesetId } : {}) })))
+      const snapshots = await Promise.all(chosen.map(([id, pid]) => readSplitDestination({ chainId: id, projectId: pid, groupId, account: address, signal: flowSignal(), ...(id === chainId ? { rulesetId } : {}) })))
       const home = snapshots.find(snapshot => snapshot.chainId === chainId)!
       if (!home || fingerprint(home.currentSplits) !== baseline || home.controller.toLowerCase() !== controller.toLowerCase() || home.authority.toLowerCase() !== authority.toLowerCase() || (initialFallback.current !== null && fingerprint(home.fallbackSplits) !== initialFallback.current)) {
         throw new Error('The authority, current ruleset, or splits changed while you were editing. Reopen to review the current recipients.')

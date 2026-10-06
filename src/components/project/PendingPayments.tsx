@@ -50,13 +50,13 @@ export function PendingPayments({ chainId, projectId, chains }: {
     queryKey: ['pendingPayments', chainId, projectId, chains],
     enabled: hydrated,
     staleTime: 15_000, refetchInterval: 30_000, retry: 1,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const deployments = new Map<number, number>([[chainId, projectId]])
       for (const [chain, project] of chains) {
         if (deployments.has(chain) && deployments.get(chain) !== project) throw new Error('Conflicting project deployments. Reload the project.')
         deployments.set(chain, project)
       }
-      const payments = (await Promise.all([...deployments].map(([chain, project]) => fetchPendingPayments(chain as JBChainId, project)))).flat()
+      const payments = (await Promise.all([...deployments].map(([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal })))).flat()
       const reviewed = await Promise.all(payments.map(async payment => {
         try { return { payment, review: await reviewPendingPayment(payment), error: null } }
         catch (failure) { return { payment, review: null, error: failure instanceof Error ? failure.message : 'Could not verify this payment.' } }

@@ -194,6 +194,26 @@ beforeEach(() => {
 })
 
 describe('AccountActivity', () => {
+  it('stops a page it is loading when the list is left', async () => {
+    let loading: AbortSignal | undefined
+    mocks.getAccountActivity.mockImplementation((_address: string, { signal }: { signal: AbortSignal }) => {
+      loading = signal
+      return new Promise(() => {})
+    })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(AccountActivity, { address: ALICE, initialEvents: [activityEvent({ id: 'pay' })], totalCount: 3 }),
+      )
+    })
+    // The page never answers: the click's own promise is left pending.
+    await act(async () => { void buttonWith(renderer, 'Load more').props.onClick() })
+    expect(loading?.aborted).toBe(false)
+
+    await act(async () => renderer.unmount())
+    expect(loading?.aborted).toBe(true)
+  })
+
   it('renders interpreted rows and loads the next page on demand', async () => {
     const first = activityEvent({
       id: 'pay',
@@ -247,6 +267,7 @@ describe('AccountActivity', () => {
     expect(mocks.getAccountActivity).toHaveBeenCalledWith(ALICE, {
       limit: 25,
       offset: 2,
+      signal: expect.any(AbortSignal),
     })
     expect(renderedText(renderer.root)).toContain('deployed token $JBX')
     // All three rows are present; the load-more affordance is gone.
@@ -296,6 +317,7 @@ describe('AccountActivity', () => {
     expect(mocks.getAccountActivity).toHaveBeenCalledWith(ALICE, {
       limit: 25,
       offset: 1000,
+      signal: expect.any(AbortSignal),
     })
     expect(renderedText(renderer.root)).toContain('1025 of 1500')
   })

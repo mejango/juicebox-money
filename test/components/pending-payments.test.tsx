@@ -11,13 +11,15 @@ type Row = { payment: ReviewedPayment['payment']; review: ReviewedPayment | null
 const mocks = vi.hoisted(() => ({
   connected: true, address: '0x1111111111111111111111111111111111111111' as Address,
   rows: [] as Row[], error: null as Error | null,
-  queryFn: null as (() => Promise<Row[]>) | null,
+  queryFn: null as ((context: { signal: AbortSignal }) => Promise<Row[]>) | null,
+  /** The inventory query's own, which react-query aborts once no page shows it. */
+  query: new AbortController(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
   run: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
-  useQuery: ({ queryFn }: { queryFn: () => Promise<Row[]> }) => {
+  useQuery: ({ queryFn }: { queryFn: (context: { signal: AbortSignal }) => Promise<Row[]> }) => {
     mocks.queryFn = queryFn
     return { data: mocks.rows, error: mocks.error, refetch: mocks.refetch }
   },
@@ -87,15 +89,16 @@ describe('pending payment review above activity', () => {
     const first = row(), second = row(10)
     mocks.fetch.mockImplementation(async (chain: number) => [chain === 1 ? first.payment : second.payment])
     mocks.review.mockImplementation(async (payment: ReviewedPayment['payment']) => payment.chainId === 1 ? null : second.review)
-    expect(await mocks.queryFn!()).toEqual([second])
-    expect(mocks.fetch.mock.calls).toEqual([[1, 17], [10, 42]])
+    expect(await mocks.queryFn!({ signal: mocks.query.signal })).toEqual([second])
+    // Each chain's indexed read takes the query's signal.
+    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }], [10, 42, { signal: mocks.query.signal }]])
     expect(mocks.review).toHaveBeenCalledTimes(2)
     expect(mocks.run).not.toHaveBeenCalled()
   })
 
   it('rejects conflicting peer IDs before loading a partial inventory', async () => {
     await render([[1, 99]])
-    await expect(mocks.queryFn!()).rejects.toThrow('Conflicting project deployments')
+    await expect(mocks.queryFn!({ signal: mocks.query.signal })).rejects.toThrow('Conflicting project deployments')
     expect(mocks.fetch).not.toHaveBeenCalled()
   })
 

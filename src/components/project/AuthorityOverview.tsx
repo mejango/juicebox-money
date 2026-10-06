@@ -875,7 +875,7 @@ function PermissionsAcrossChains({
     queryKey: ["permissionHoldersAcrossDeployments", deploymentKey, authorityKey],
     enabled: deployments.some((row) => row.projectId > 0),
     staleTime: 30_000,
-    queryFn: () => getPermissionHoldersAcrossDeployments(withAuthority),
+    queryFn: ({ signal }) => getPermissionHoldersAcrossDeployments(withAuthority, { signal }),
   });
   const grants = useMemo(
     () => aggregateGrants(query.data ?? [], deployments, authorityRows),

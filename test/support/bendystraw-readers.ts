@@ -16,7 +16,7 @@ import ts from 'typescript'
 export type Source = { path: string; text: string }
 
 export const SRC = resolve('src')
-const LIB = join(SRC, 'lib')
+export const LIB = join(SRC, 'lib')
 
 /** Every .ts and .tsx file under `dir`, declarations aside. */
 export function sourcesUnder(dir: string): Source[] {

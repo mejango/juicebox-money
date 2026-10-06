@@ -384,11 +384,12 @@ export function RevnetPriceCard({
       enabled: !!publicClient && !!pool,
       staleTime: 60_000,
       retry: 0,
-      queryFn: () =>
+      queryFn: ({ signal }) =>
         readLpPositions(
           publicClient!,
           chainId,
           pool as Extract<MarketResult, { status: 'pool' }>,
+          signal,
         ),
     }),
   )
@@ -408,8 +409,8 @@ export function RevnetPriceCard({
       enabled: !!pool,
       staleTime: 60_000,
       retry: 0,
-      queryFn: () =>
-        fetchIndexedPoolLiquidityEvents({ chainId, poolId: pool!.poolId }),
+      queryFn: ({ signal }) =>
+        fetchIndexedPoolLiquidityEvents({ chainId, poolId: pool!.poolId, signal }),
     }),
   )
 

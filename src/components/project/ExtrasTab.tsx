@@ -199,7 +199,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   const { data: payerRows = [], isLoading: payersLoading, isError: payersError,
     isFetching: payersFetching, refetch: refetchPayers } = useQuery({
     queryKey: ['projectPayers', ...projects.flat()],
-    queryFn: () => getProjectPayers(projects), enabled: projects.length > 0, staleTime: 30_000, retry: 1,
+    queryFn: ({ signal }) => getProjectPayers(projects, { signal }), enabled: projects.length > 0, staleTime: 30_000, retry: 1,
   })
 
   useEffect(() => {

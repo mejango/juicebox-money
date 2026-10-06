@@ -86,7 +86,7 @@ export function useUserLpSummary(
     enabled: !!client && !!pool && !!holder,
     retry: 0,
     staleTime: 30_000,
-    queryFn: () => readUserLpPositions(client!, chainId, pool!, holder!),
+    queryFn: ({ signal }) => readUserLpPositions(client!, chainId, pool!, holder!, signal),
   })
 
   const fees = useQuery({
