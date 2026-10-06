@@ -146,7 +146,13 @@ const budgets = {
   // copies (the release and retry rules, the sent-payment record and its snapshot):
   // 2509.7 KiB against 2509.5 on main with the same toolchain, with home (435.3), the
   // project route (168.5) and create (503.3) unchanged. The cap stays.
-  allScripts: 2510 * KIB,
+  // A launch or saved session whose payment the chain shows to be another transaction
+  // classifies its requests and ends with a line that says so (the launch's cancelling
+  // lines and their pass through friendlyError, the session's Discard line and payment
+  // note, its mark and the account view's one line): 2510.02 KiB against 2509.7 on main
+  // with the same toolchain, with home (435.3), the project route (168.5) and create
+  // (503.3) unchanged. Round up to the next KiB.
+  allScripts: 2511 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
