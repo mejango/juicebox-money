@@ -5,6 +5,7 @@ import { getAccount } from '@wagmi/core'
 import {
   BaseError,
   encodeFunctionData,
+  isHash,
   type Abi,
   type Address,
   type Hex,
@@ -192,6 +193,8 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
 }
 
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
+/** What a Safe app replied in place of a proposal or execution hash. */
+const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 const SAFE_PROPOSAL_REPLACED = 'Safe moved past this proposal without running it. Review it again.'
 /** A receipt still missing this long after its execution was first seen is not coming. */
@@ -655,6 +658,8 @@ export function useSafeTx(chainId: number) {
           onPhase: setPhase,
         })
         if (viaSafe) {
+          // A reply that is not a 32-byte hash names no proposal and no execution.
+          if (!isHash(txHash)) throw new Error(SAFE_REPLY_UNREADABLE)
           // The registry holds the call from here; this flow only shows it.
           inFlightRef.current = false
           setShownKey(

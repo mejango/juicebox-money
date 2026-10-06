@@ -867,3 +867,20 @@ describe("a Safe proposal's last look at the chain", () => {
     })
   })
 })
+
+describe("a Safe app's reply", () => {
+  it('ends one that is not a 32-byte hash as an error, holding nothing', async () => {
+    mocks.writeContract.mockResolvedValueOnce('0x1234').mockResolvedValueOnce(PROPOSAL)
+    const flow = await mount()
+    await expect(flow.send()).resolves.toBeNull()
+    expect(flow.tx).toMatchObject({
+      phase: 'error',
+      busy: false,
+      error: 'Safe did not return a proposal hash. Check Safe before sending this again.',
+    })
+    expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
+    await act(async () => flow.tx.reset())
+    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+})
