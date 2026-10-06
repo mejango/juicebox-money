@@ -201,7 +201,7 @@ type SafeProposal = {
   phase: ProposalPhase
   executionHash: Hex | null
   receipt: TransactionReceipt | null
-  /** The line for a failed or unproven result. */
+  /** The line for an end other than success: failed, unproven, expired or replaced. */
   message: string | null
 }
 
