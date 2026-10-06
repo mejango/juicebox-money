@@ -15,6 +15,12 @@ import type { useSafeTx } from '@/hooks/useSafeTx'
  * sends it again. A failed step stops the run the same way. A stopped run
  * belongs to the steps it started with: `stoppedOn` and `resume` answer only
  * for those, so a plan reviewed since can never continue an older one.
+ *
+ * A step proposed to a Safe ends the run on Done. When the Safe executes it
+ * while the engine still shows it, it counts as that step's confirmation: the
+ * run finishes after the last step, and otherwise stops at the next step,
+ * which `resume` sends for review. A proposal that ends without running
+ * leaves the run stopped on its step.
  */
 export function useStepRun<Step>({
   tx,
@@ -45,6 +51,8 @@ export function useStepRun<Step>({
     /** The last confirmation counted: one still showing is never counted again. */
     counted: null as Hex | null,
     confirmedAt: undefined as bigint | undefined,
+    /** The step the run ended on as a Safe proposal, until the Safe executes it. */
+    proposed: null as number | null,
   })
 
   const halt = useCallback(() => {
@@ -65,39 +73,52 @@ export function useStepRun<Step>({
   )
 
   useEffect(() => {
-    if (!running || run.current.holding) return
-    if (tx.phase === 'error') {
+    const current = run.current
+    if (!running && current.proposed !== null && tx.phase === 'error') {
+      // The proposal ended without running: the run stays stopped on its step.
+      current.proposed = null
+      setProposed(false)
+      return
+    }
+    // The step the run ended on as a Safe proposal, which the Safe executed.
+    const executed = !running && current.proposed !== null && tx.phase === 'success'
+    if ((!running && !executed) || current.holding) return
+    if (running && tx.phase === 'error') {
       setAccepted(null)
       halt()
       return
     }
-    // A step proposed to a Safe ends the run: its confirm ends on Done, and
-    // the steps after it are reviewed again once the Safe executes it.
-    if (tx.phase === 'submitted') {
+    // A step proposed to a Safe ends the run: its confirm ends on Done.
+    if (running && tx.phase === 'submitted') {
+      current.proposed = current.index
       setAccepted(null)
       setProposed(true)
       halt()
       return
     }
-    const current = run.current
-    if (tx.phase !== 'success' || accepted === null || !tx.hash || tx.hash === current.counted) {
+    const at = executed ? current.proposed : accepted
+    if (tx.phase !== 'success' || at === null || !tx.hash || tx.hash === current.counted) {
       return
     }
     current.counted = tx.hash
+    current.proposed = null
     setAccepted(null)
+    setProposed(false)
     const block = tx.receipt?.blockNumber
     if (block !== undefined && (current.confirmedAt === undefined || block > current.confirmedAt)) {
       current.confirmedAt = block
     }
-    if (accepted >= current.steps.length - 1) {
+    if (at >= current.steps.length - 1) {
       current.index = current.steps.length
       setIndex(current.index)
       halt()
       onFinish(tx.hash)
       return
     }
-    current.index = accepted + 1
+    current.index = at + 1
     setIndex(current.index)
+    // The step after an executed proposal is reviewed again: the run stops at it.
+    if (executed) return
     tx.reset()
     sendAt(current.index)
   }, [running, accepted, tx, sendAt, halt, onFinish])
@@ -113,6 +134,7 @@ export function useStepRun<Step>({
         holding: false,
         counted: null,
         confirmedAt: undefined,
+        proposed: null,
       }
       setIndex(0)
       setRunSteps(steps)
@@ -136,6 +158,7 @@ export function useStepRun<Step>({
         return false
       }
       current.running = true
+      current.proposed = null
       setAccepted(null)
       setProposed(false)
       setRunning(true)
@@ -176,6 +199,7 @@ export function useStepRun<Step>({
       holding: false,
       counted: null,
       confirmedAt: undefined,
+      proposed: null,
     }
     setIndex(0)
     setRunSteps(null)

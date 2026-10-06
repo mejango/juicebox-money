@@ -174,7 +174,7 @@ describe('useStepRun', () => {
     expect(run.send).toHaveBeenCalledTimes(2)
   })
 
-  it('ends on a step proposed to a Safe, and sends no later step once the Safe executes it', async () => {
+  it('ends on a step proposed to a Safe, and stops at the next step for review once the Safe executes it', async () => {
     const run = await renderRun()
     const plan = ['approve', 'mint']
     await act(async () => run.ref.current!.start(plan))
@@ -182,11 +182,62 @@ describe('useStepRun', () => {
     await run.engine({ phase: 'submitted' })
     expect(run.ref.current).toMatchObject({ running: false, proposed: true, index: 0 })
 
-    await run.confirm(H1, 10n)
+    // Its signers execute it: the engine shows the execution, then its receipt.
+    await run.engine({ phase: 'pending', hash: H2 })
+    await run.confirm(H2, 10n)
     expect(run.send).toHaveBeenCalledTimes(1)
     expect(run.onFinish).not.toHaveBeenCalled()
+    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 1 })
+    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
+
+    await act(async () => {
+      run.ref.current!.resume(plan)
+    })
+    expect(run.send).toHaveBeenLastCalledWith('mint', 10n)
     await act(async () => run.ref.current!.clear())
     expect(run.ref.current!.proposed).toBe(false)
+  })
+
+  it('finishes a run whose last step was proposed once the Safe executes it, at once or later', async () => {
+    const run = await renderRun()
+    const plan = ['mint']
+    await act(async () => run.ref.current!.start(plan))
+    await run.answer(H1)
+    await run.engine({ phase: 'submitted' })
+    expect(run.ref.current).toMatchObject({ running: false, proposed: true })
+
+    await run.engine({ phase: 'pending', hash: H2 })
+    await run.confirm(H2, 12n)
+    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
+    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 1 })
+    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
+  })
+
+  it('stops on a proposed step that ends without running, so it can be sent again', async () => {
+    const run = await renderRun()
+    const plan = ['mint']
+    await act(async () => run.ref.current!.start(plan))
+    await run.answer(H1)
+    await run.engine({ phase: 'submitted' })
+    // Its deadline passed before the Safe ran it.
+    await run.engine({ phase: 'error' })
+    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 0 })
+    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
+    await act(async () => {
+      run.ref.current!.resume(plan)
+    })
+    expect(run.send).toHaveBeenCalledTimes(2)
+  })
+
+  it('counts nothing for a proposed step once the flow resets its engine', async () => {
+    const run = await renderRun()
+    const plan = ['mint']
+    await act(async () => run.ref.current!.start(plan))
+    await run.answer(H1)
+    await run.engine({ phase: 'submitted' })
+    await act(async () => run.ref.current!.clear())
+    await run.confirm(H2, 12n)
+    expect(run.onFinish).not.toHaveBeenCalled()
   })
 
   it('stops on a failed step and sends that step again on resume', async () => {
