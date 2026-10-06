@@ -697,3 +697,22 @@ describe("a send that asks Safe's queue first", () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 })
+
+describe('a Safe proposal another flow dismissed', () => {
+  it('leaves this flow idle, not pending, and the action free', async () => {
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    const first = await mount()
+    await first.send()
+    await settle()
+    const second = await mount()
+    await second.send()
+    expect(second.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+
+    // The flow that proposed it is the one left showing it.
+    await act(async () => second.tx.dismiss())
+    expect(first.tx).toMatchObject({ phase: 'idle', busy: false, settled: false, notice: null, hash: null })
+    await act(async () => first.tx.reset())
+    await first.send()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+})

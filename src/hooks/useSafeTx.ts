@@ -442,9 +442,12 @@ export function useSafeTx(chainId: number) {
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
-  // result after its line.
-  const effectivePhase: TxPhase = proposal
-    ? SHOWN_AS[proposal.phase]
+  // result after its line. One the registry no longer holds (dismissed in
+  // another flow) shows nothing.
+  const effectivePhase: TxPhase = shownKey
+    ? proposal
+      ? SHOWN_AS[proposal.phase]
+      : 'idle'
     : phase === 'pending' && receiptData?.status === 'success'
       ? 'success'
       : receiptReverted
@@ -458,8 +461,8 @@ export function useSafeTx(chainId: number) {
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null
-  const effectiveError = proposal
-    ? SHOWN_AS[proposal.phase] === 'error'
+  const effectiveError = shownKey
+    ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
       : null
     : receiptReverted
@@ -677,13 +680,13 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
-    hash: proposal ? proposal.executionHash : hash,
+    hash: shownKey ? (proposal?.executionHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: proposal ? proposal.receipt : (receiptData ?? null),
+    receipt: shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
     /** The transaction has a hash, but its result could not be confirmed here. */
-    confirmationUncertain: proposal
-      ? proposal.phase === 'unproven'
+    confirmationUncertain: shownKey
+      ? proposal?.phase === 'unproven'
       : phase === 'pending' && receipt.isError && !receiptData,
     send,
     reset,
