@@ -7,6 +7,7 @@ import {
   encodeAbiParameters,
   isAddressEqual,
   TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
   type AbiParameter,
   type Address,
   type Hex,
@@ -383,6 +384,25 @@ export async function executedAtOnce(
       if (look >= AT_ONCE_LOOKS) return false
     }
     await abortable(AT_ONCE_LOOK_MS)
+  }
+}
+
+/**
+ * The chain's last word before a proposal ends unproven: what `read` returns,
+ * or null when the chain says there is none (viem's transaction or receipt
+ * not-found). A node that can't answer says nothing, so it is asked again a
+ * minute later, for as long as it takes.
+ */
+export async function chainAnswer<T>(read: () => Promise<T>): Promise<T | null> {
+  for (;;) {
+    try {
+      return await read()
+    } catch (error) {
+      if (error instanceof TransactionNotFoundError || error instanceof TransactionReceiptNotFoundError) {
+        return null
+      }
+    }
+    await abortable(SAFE_LOOK_MS)
   }
 }
 
