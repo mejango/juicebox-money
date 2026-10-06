@@ -4,6 +4,7 @@ import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { formatUnits, isAddressEqual, parseUnits, zeroAddress, type Address } from 'viem'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
@@ -53,6 +54,8 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   kind: 'payouts' | 'reserved'; chainId: JBChainId; projectId: number; chains: readonly (readonly [number, number])[]; homeToken?: Address; onDone?: () => void
 }) {
   const { address, isConnected, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const action = kind === 'payouts' ? 'distribute-payouts' : 'distribute-reserved'
   const scope = projectBatchScope(action, chainId, projectId)
@@ -150,6 +153,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
         ...(batch ? { calls: batch.calls, expectedBatchId: batch.id } : { calls: distributionBatchCalls(review!), title: kind === 'payouts' ? 'Distribute payouts' : 'Distribute reserved tokens' }),
         reverify: call => reverifyDistribution(call.context as Distribution, address),
         verifyCompletion: async (call, receipt) => verifyDistributionCompletion(call.context as Distribution, receipt),
+        signal: flowSignal(),
         onProgress: progress => { reported.line = progress.message; setStatus(progress.message) },
       })
       setBatch(result)

@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { type Abi, type AbiFunction, type Hex } from 'viem'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { clientFor, readAuthorityOf } from '@/lib/authority'
@@ -114,6 +115,9 @@ export function SafeBatchDialog({
   const [activeIndex, setActiveIndex] = useState(-1)
   const [proposalHash, setProposalHash] = useState<Hex | null>(null)
   const { address: connected } = useWallet()
+  // Closing the dialog ends its wait for the Safe to execute the batch; the
+  // proposal stays queued, and Pending multisig transactions shows it.
+  const flowSignal = useUnmountSignal()
 
   const routeQuery = useQuery({
     queryKey: [
@@ -188,6 +192,7 @@ export function SafeBatchDialog({
         route,
         onProgress: setStatus,
         onStep: setActiveIndex,
+        signal: flowSignal(),
         onProposed: hash => {
           // The queue card does not poll; show the new proposal there now.
           void queryClient.invalidateQueries({ queryKey: ['safeQueues'] })

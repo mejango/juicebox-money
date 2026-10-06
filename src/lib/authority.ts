@@ -278,8 +278,14 @@ export async function runAuthorityCalls({
   onProgress,
   paymentChainId,
   reviewedInParent = false,
+  signal,
 }: {
   calls: AuthorityCall[]
+  /**
+   * The flow's: when it aborts, the wait for a Safe to execute what the run
+   * proposed ends, and the proposal stays submitted.
+   */
+  signal: AbortSignal
   onProgress?: (progress: AuthorityProgress) => void
   /** Omit to ask the user to choose from the authenticated quote options. */
   paymentChainId?: number
@@ -716,6 +722,7 @@ export async function runAuthorityCalls({
       const executionHash = await waitForSafeExecutionHash(
         call.chainId,
         safeTxHash,
+        { signal },
       )
       const receipt = await waitForTrackedReceipt(
         clientFor(call.chainId),
@@ -755,6 +762,7 @@ export async function runAuthorityCalls({
             onSafePrepared: call.onSafePrepared,
           })),
           onProgress: message => onProgress?.({ kind: 'safe', message }),
+          signal,
         })),
       )
       continue

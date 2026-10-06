@@ -257,11 +257,14 @@ export async function submitSafeBatch({
   onProgress,
   onStep,
   onProposed,
+  signal,
 }: {
   chainId: JBChainId
   authority: Address
   steps: readonly BatchStep[]
   route: SafeBatchRoute
+  /** The flow's: when it aborts, the wait for the Safe to execute the batch ends, and the proposal stays queued. */
+  signal: AbortSignal
   onProgress?: (message: string) => void
   /** The step whose wallet prompt is next (EOA route). */
   onStep?: (index: number) => void
@@ -287,6 +290,7 @@ export async function submitSafeBatch({
       const result = await runAuthorityCalls({
         calls: [authorityCallForStep(steps[index], authority)],
         onProgress: progress => onProgress?.(progress.message),
+        signal,
       })
       hashes.push(...result.directResults)
     }
@@ -304,7 +308,7 @@ export async function submitSafeBatch({
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
-    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash)
+    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
     const receipt = await waitForTrackedReceipt(client, executionHash)
     const failure = 'The batch reverted after Safe execution.'
     if (receipt.status !== 'success') throw new Error(failure)
@@ -354,6 +358,7 @@ export async function submitSafeBatch({
       },
     ],
     onProgress,
+    signal,
   })
   await onProposed?.(result.safeTxHash)
   return { kind: 'safe-owner', result }

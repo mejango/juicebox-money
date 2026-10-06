@@ -44,6 +44,9 @@ vi.mock('@/lib/relayr', () => ({
 import { loadProjectBatch, projectBatchRounds, projectBatchScope, runProjectBatch,
   type ProjectBatchCall } from '@/lib/project-batch'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 const ACCOUNT = mocks.account as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
@@ -69,7 +72,7 @@ const call = (chainId = 1, suffix = ''): ProjectBatchCall => ({
   id: `${chainId}:${suffix}`, projectId: 7, chainId: chainId as 1, authority: ACCOUNT,
   target: TARGET, data: '0x1234', value: 3n, context: { amount: 6n, recipient: TARGET },
 })
-const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ scope, action, account: ACCOUNT, calls, ...extra })
+const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ signal: flow, scope, action, account: ACCOUNT, calls, ...extra })
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -315,7 +318,7 @@ describe('durable project batches', () => {
       throw new Error('pending')
     })
     await expect(run([call(), call(10)])).rejects.toThrow('pending')
-    await expect(runProjectBatch({ scope: projectBatchScope(action, 10, 7), action,
+    await expect(runProjectBatch({ signal: flow, scope: projectBatchScope(action, 10, 7), action,
       account: ACCOUNT, calls: [call(10), { ...call(8453), data: '0xffff' }] })).rejects.toThrow('different reviewed settings')
     expect(mocks.relayr).toHaveBeenCalledTimes(1)
   })
@@ -584,6 +587,19 @@ describe('durable project batches', () => {
       message: "This Safe proposal's history is still being read. Check this batch again to continue.",
     }))
     expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ scannedTo: 50_009n })
+  })
+
+  it("looks for a saved Safe app proposal's execution with the flow's signal for 15 seconds at most, and a look that ends keeps it submitted", async () => {
+    const page = new AbortController()
+    await interruptedConnectorCall(SAFE_TX)
+    expect(mocks.authority).toHaveBeenCalledWith(expect.objectContaining({ signal: flow }))
+    mocks.waitForExecution.mockRejectedValue(new DOMException('Safe execution wait aborted', 'AbortError'))
+
+    const resumed = await run(undefined, { signal: page.signal })
+    expect(resumed.status).toBe('pending')
+    expect(mocks.waitForExecution).toHaveBeenCalledWith(1, SAFE_TX, { signal: page.signal, lookMs: 15_000 })
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: SAFE_TX })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
   it('recovers an execution Safe{Wallet} returned at once only when it ran the saved call', async () => {

@@ -6,6 +6,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatUnits, isAddressEqual, type Address } from 'viem'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
@@ -24,6 +25,8 @@ export function PendingPayments({ chainId, projectId, chains }: {
   chainId: JBChainId; projectId: number; chains: readonly (readonly [number, number])[]
 }) {
   const { address, isConnected, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated)
   const scope = projectBatchScope(ACTION, chainId, projectId)
@@ -82,7 +85,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     setBusy(true); setError(null); discard.capture(null)
     try {
       const result = await runProjectBatch({ scope, action: ACTION, account: address, calls, expectedBatchId: saved?.id,
-        title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true,
+        title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
           if (outcome) setOutcomes(previous => ({ ...previous, [call.id]: outcome }))

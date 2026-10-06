@@ -49,6 +49,7 @@ import {
 } from '@/lib/project-metadata'
 import { loadRelayrPendingSession, relayrCallsScope, withRelayrScopeLock } from '@/lib/relayr'
 import { RelayrDiscard, useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -638,6 +639,8 @@ export function MetadataEditor({
   onCancel: () => void
   onDone: () => void
 }) {
+  // Leaving the editor ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const [selected, setSelected] = useState<Set<number>>(
     // Metadata-only delegates need not be the indexed full revnet operator.
     // The live setter-specific permission check runs while building the review.
@@ -866,7 +869,7 @@ export function MetadataEditor({
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
         saveMetadataReview(frozen)
         const calls = metadataReviewCalls(frozen)
-        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
+        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message), signal: flowSignal() })
         setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         removeMetadataReview(frozen)
         setDone(true)
@@ -1155,6 +1158,8 @@ export function TokenEditor({
   const [error, setError] = useState<string | null>(null)
   // The token calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
   const discard = useRelayrDiscard(() => setError(null), () => setReview(null))
+  // Leaving the editor ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
 
   const invalidate = () => {
     setReview(null)
@@ -1225,6 +1230,7 @@ export function TokenEditor({
       const result = await runAuthorityCalls({
         calls: review,
         onProgress: progress => setStatus(progress.message),
+        signal: flowSignal(),
       })
       setStatus(
         outcomeMessage(

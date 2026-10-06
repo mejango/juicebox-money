@@ -45,6 +45,12 @@ type PrepareOptions = {
   writeContract: (request: LaunchMultisigSetupRequest) => Promise<Hex>
   onProgress: (message: string) => void
   onSetup?: (setup: Setup) => void
+  /**
+   * The page's: when it aborts, the wait for a Safe to execute the setup ends,
+   * the setup stays confirming with its proposal, and the launch lock is let
+   * go.
+   */
+  signal: AbortSignal
 }
 
 function fingerprint(value: unknown): string {
@@ -195,7 +201,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
     }
     if (proposal) {
       onProgress('Waiting for Safe owners to approve creation')
-      hash = await waitForSafeExecutionHash(chainId, proposal)
+      hash = await waitForSafeExecutionHash(chainId, proposal, { signal: options.signal })
       persist({ phase: 'confirming', txHash: hash, safe: true })
     }
     onProgress('Confirming Safe creation')

@@ -9,6 +9,7 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { shortError } from '@/lib/errors'
 import { pinStoreItemDrafts, type PinnedStoreItemDraft } from '@/lib/store-items'
@@ -29,6 +30,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
 }) {
   const queryClient = useQueryClient()
   const { isConnected, address, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const compatibleTargets = useMemo(() => targets.filter(target => target.hook && target.pricing && !target.error && target.pricing.currency === activePricing.currency), [targets, activePricing.currency])
   const [selected, setSelected] = useState<JBChainId[]>(() => compatibleTargets.map(target => target.chainId))
   const [items, setItems] = useState<DraftItem[]>(() => [newDraftItem()])
@@ -108,7 +111,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
         scope = projectBatchScope('shop-add-items', calls[0].chainId, calls[0].projectId)
       }
       setPhase('writing')
-      const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
+      const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
       setBatch(result)
       await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
       setPhase(result.status === 'complete' ? 'done' : 'failed')

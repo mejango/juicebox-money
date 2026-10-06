@@ -176,7 +176,7 @@ describe('Safe execution wait', () => {
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
     expect(options.client).toBe(chainClient)
 
-    await waitForSafeExecutionHash(1, HASH)
+    await waitForSafeExecutionHash(1, HASH, { signal })
     expect(runtime.getPublicClient).toHaveBeenLastCalledWith(config, { chainId: 1 })
   })
 
@@ -184,10 +184,54 @@ describe('Safe execution wait', () => {
     const client = { getTransaction: vi.fn(async () => ({ hash: HASH })) }
     runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
 
-    await waitForSafeExecutionHash(10, HASH, { client })
+    await waitForSafeExecutionHash(10, HASH, { client, signal: new AbortController().signal })
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
     expect(options.client).toBe(client)
     expect(runtime.getPublicClient).not.toHaveBeenCalled()
+  })
+
+  describe('a look of a set length', () => {
+    /** The SDK's wait as far as these cases need it: it ends when its signal aborts. */
+    const untilAborted = (_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) =>
+      new Promise<Hex>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      })
+
+    it('ends after lookMs while its flow goes on', async () => {
+      vi.useFakeTimers()
+      runtime.waitForSafeExecutionHash.mockImplementation(untilAborted)
+      const flow = new AbortController()
+      const look = waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 15_000 })
+      const ended = expect(look).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(14_999)
+      const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+      expect(options.signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await ended
+      expect(flow.signal.aborted).toBe(false)
+    })
+
+    it('ends at once when its flow does', async () => {
+      vi.useFakeTimers()
+      runtime.waitForSafeExecutionHash.mockImplementation(untilAborted)
+      const flow = new AbortController()
+      const look = waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 60_000 })
+      const ended = expect(look).rejects.toMatchObject({ name: 'AbortError' })
+      flow.abort()
+      await ended
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('hands back what the SDK found before either', async () => {
+      runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
+      const flow = new AbortController()
+      await expect(
+        waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 15_000 }),
+      ).resolves.toBe(HASH)
+      const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+      expect(options).not.toHaveProperty('lookMs')
+      expect(options.signal).not.toBe(flow.signal)
+    })
   })
 
   describe("on a chain without Safe's service, with the SDK's wait", () => {

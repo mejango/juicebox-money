@@ -8,6 +8,7 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import {
   clientFor,
@@ -232,6 +233,8 @@ export function ProjectHandleCard({
   revnetOperatorCandidates?: readonly Address[]
 }) {
   const { address, openSignIn } = useWallet()
+  // Leaving the card ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const liveOperatorCandidates = useMemo(
     () =>
       dedupeAddresses([
@@ -483,6 +486,7 @@ export function ProjectHandleCard({
         })
       }
       const result = await runAuthorityCalls({
+        signal: flowSignal(),
         calls: [
           {
             chainId: PROJECT_HANDLES_CHAIN_ID,
@@ -652,6 +656,7 @@ export function ProjectHandleCard({
         }
       }
       const result = await runAuthorityCalls({
+        signal: flowSignal(),
         calls: [
           {
             chainId: PROJECT_HANDLES_CHAIN_ID,
@@ -850,6 +855,7 @@ export function ProjectHandleCard({
               )
             }
           },
+          signal: flowSignal(),
         },
       )
       const confirmed = await readHandleAuthority(deployment, authority)

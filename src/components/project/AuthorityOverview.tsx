@@ -27,6 +27,7 @@ import { ChainPicker } from "@/components/ui/ChainPicker";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { ErrorNote } from "@/components/ui/TxError";
 import { useRelayrDiscard } from "@/components/RelayrDiscard";
+import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { replaceTabHash } from "@/components/project/Tabs";
 import {
   clientFor,
@@ -477,6 +478,8 @@ function DeploySafeButtons({
 }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal();
 
   const deploy = async (row: AuthorityRow) => {
     setBusy(row.chainId);
@@ -528,6 +531,7 @@ function DeploySafeButtons({
       await deploySafeSameAddress(row.chainId, creation, safe, {
         sourceChainId: source.chainId,
         reverifyAuthority,
+        signal: flowSignal(),
       });
       setMessage(`Safe deployed on ${row.name}.`);
       onDone();
@@ -578,6 +582,8 @@ export function TransferAuthorityFlow({
   onDone: () => void;
 }) {
   const batch = useSafeBatch();
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal();
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState("");
   const [ack, setAck] = useState(false);
@@ -663,6 +669,7 @@ export function TransferAuthorityFlow({
     try {
       const result = await runAuthorityCalls({
         calls: plan.calls,
+        signal: flowSignal(),
         onProgress: (progress) => {
           setStatus(progress.message);
           // Progress names the chain it is on (JB_CHAINS name); that names the step.
@@ -1098,6 +1105,8 @@ export function PermissionEditor({
   onDone: () => void;
 }) {
   const [operatorInput, setOperatorInput] = useState(grant?.operator ?? "");
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal();
   // The granted set is PER CHAIN. Seeding from the cross-chain union and writing it back to every chain
   // silently widens the grant wherever it was narrower, so a non-uniform operator starts scoped to one
   // chain, seeded from what that chain actually holds.
@@ -1221,6 +1230,7 @@ export function PermissionEditor({
     try {
       const result = await runAuthorityCalls({
         calls: plan.calls,
+        signal: flowSignal(),
         onProgress: (progress) => {
           setStatus(progress.message);
           // Progress names the chain it is on (JB_CHAINS name); that names the step.

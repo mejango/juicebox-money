@@ -38,6 +38,7 @@ import {
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -412,8 +413,10 @@ async function withSplitLocks<T>(destinations: SplitReview['destinations'], run:
  * Send a reviewed split update under its destinations' locks. A multichain
  * update is saved before any signature can be published, so it can be
  * resumed, and cleared once it completes or when it published nothing.
+ * `signal` is the flow's: when it aborts, a Safe app proposal's wait for its
+ * execution ends.
  */
-export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void): Promise<AuthorityResult> {
+export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void, signal: AbortSignal): Promise<AuthorityResult> {
   const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
   return withSplitLocks(plan.destinations, async () => {
     for (const destination of plan.destinations) {
@@ -421,7 +424,7 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
     }
     if (plan.destinations.length > 1) saveSplitJournal(journal)
     try {
-      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message) })
+      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message), signal })
       clearSplitJournal(journal)
       return result
     } catch (error) {
@@ -440,6 +443,8 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
  */
 export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet()
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -456,7 +461,7 @@ export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: Spl
           if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
         }
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
+        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal() })
         clearSplitJournal(journal)
       })
       onComplete()
@@ -683,6 +688,8 @@ function EditSplitsModal({
   const initialFallback = useRef<string | null>(null)
   const [lockSnapshotAt, setLockSnapshotAt] = useState<number | null>(null)
   const { address } = useWallet()
+  // Closing the editor ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const [selectedChains, setSelectedChains] = useState<Set<number>>(() => new Set([chainId]))
   const projectScope = useMemo(() => {
     const destinations = new Map<number, readonly [JBChainId, number]>([[chainId, [chainId, projectId]]])
@@ -886,7 +893,7 @@ function EditSplitsModal({
     }
     setFlowError(null); setBusy(true); setStatus('Rechecking the split recipients…')
     try {
-      const result = await submitSplitReview(plan, setStatus)
+      const result = await submitSplitReview(plan, setStatus, flowSignal())
       setStatus(safeOutcomeMessage(result, `${title} updated. This page picks it up in about a minute.`))
       setSuccess(true)
     } catch (err) {

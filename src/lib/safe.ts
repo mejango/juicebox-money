@@ -571,6 +571,7 @@ async function sendContractAndConfirm({
   safeContext,
   reverifyAuthority,
   expectedAccount,
+  signal,
 }: {
   chainId: JBChainId
   address: Address
@@ -581,6 +582,8 @@ async function sendContractAndConfirm({
   safeContext?: SafeWriteContext
   reverifyAuthority?: () => Promise<void>
   expectedAccount: Address
+  /** The flow's: when it aborts, a Safe app's wait for its proposal's execution ends, and the proposal stays submitted. */
+  signal: AbortSignal
 }): Promise<ConfirmedContractWrite> {
   assertNoViewAs()
   await reverifyAuthority?.()
@@ -715,7 +718,7 @@ async function sendContractAndConfirm({
   })
   // A Safe app replies with its proposal; its execution is what lands.
   const proposal = viaSafe ? hash : null
-  if (proposal) hash = await waitForSafeExecutionHash(chainId, proposal)
+  if (proposal) hash = await waitForSafeExecutionHash(chainId, proposal, { signal })
   let receipt
   try {
     receipt = await client.waitForTransactionReceipt({ hash })
@@ -807,7 +810,14 @@ export async function executeSafeTx(
   chainId: JBChainId,
   safe: Address,
   tx: SafeQueuedTransaction,
-  reverifyAuthority?: () => Promise<void>,
+  {
+    reverifyAuthority,
+    signal,
+  }: {
+    reverifyAuthority?: () => Promise<void>
+    /** The flow's: when it aborts, a Safe app's wait for its proposal's execution ends. */
+    signal: AbortSignal
+  },
 ): Promise<ConfirmedContractWrite> {
   assertNoViewAs()
   refuseRefund(tx)
@@ -874,6 +884,7 @@ export async function executeSafeTx(
     safeContext: { mode: 'execute', tx: verifiedTx },
     reverifyAuthority,
     expectedAccount,
+    signal,
   })
 }
 
@@ -1018,6 +1029,7 @@ async function approveSafeHashOnChain(
   safe: Address,
   hash: Hex,
   tx: SafeQueuedTransaction,
+  signal: AbortSignal,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<ConfirmedContractWrite> {
   const expectedAccount = getAccount(wagmiConfig).address
@@ -1070,6 +1082,7 @@ async function approveSafeHashOnChain(
     safeContext: { mode: 'approve', tx, hash },
     reverifyAuthority,
     expectedAccount,
+    signal,
   })
 }
 
@@ -1078,10 +1091,13 @@ export async function runSafeCalls({
   calls,
   signer,
   onProgress,
+  signal,
 }: {
   calls: SafeCall[]
   signer: Address
   onProgress?: (message: string) => void
+  /** The flow's: when it aborts, a Safe app's wait for a proposal's execution ends. */
+  signal: AbortSignal
 }): Promise<SafeCallResult[]> {
   assertNoViewAs()
   const results: SafeCallResult[] = []
@@ -1201,6 +1217,7 @@ export async function runSafeCalls({
         call.safe,
         hash,
         queued,
+        signal,
         call.reverifyAuthority,
       )
       results.push({
@@ -1228,7 +1245,7 @@ export async function runSafeCalls({
     const execution = await executeSafeTx(call.chainId, call.safe, {
       ...queued,
       confirmations: step.signers.map(owner => ({ owner })),
-    }, call.reverifyAuthority)
+    }, { reverifyAuthority: call.reverifyAuthority, signal })
     results.push({
       chainId: call.chainId,
       mode: 'onchain',
@@ -1313,9 +1330,12 @@ export async function deploySafeSameAddress(
   {
     sourceChainId,
     reverifyAuthority,
+    signal,
   }: {
     sourceChainId: JBChainId
     reverifyAuthority: () => Promise<void>
+    /** The flow's: when it aborts, a Safe app's wait for its proposal's execution ends. */
+    signal: AbortSignal
   },
 ): Promise<Hex> {
   const client = publicClient(chainId)
@@ -1360,6 +1380,7 @@ export async function deploySafeSameAddress(
       assertSafeStateUnchanged(before.state, (await prepare()).state)
     },
     expectedAccount: signer,
+    signal,
   })
   for (let attempt = 0; attempt < 6; attempt++) {
     const code = await client.getCode({ address: expectedSafe }).catch(() => null)

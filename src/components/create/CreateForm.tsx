@@ -25,6 +25,7 @@ import {
 } from "wagmi/actions";
 import { AddressLabel } from "@/components/ui/AddressLabel";
 import { ProjectLink } from "@/components/ProjectLink";
+import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
@@ -298,6 +299,9 @@ export function CreateForm() {
   const safeConnection = useSafeConnection(config);
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
+  // Leaving the page ends a launch's waits for a Safe to execute what it
+  // proposed; the saved launch keeps each proposal for a later visit.
+  const pageSignal = useUnmountSignal();
 
   // Wallet state only exists client-side; render the signed-out shell on the
   // server so hydration always matches.
@@ -1498,6 +1502,7 @@ export function CreateForm() {
    */
   const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase("launching");
+    const signal = pageSignal();
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
       if (priorStatus?.phase === "done") continue;
@@ -1518,6 +1523,7 @@ export function CreateForm() {
             hash = await waitForSafeExecutionHash(
               chainId,
               priorSafeProposalHash,
+              { signal },
             );
             updateStatus(chainId, {
               phase: "confirming",
@@ -1537,6 +1543,7 @@ export function CreateForm() {
               writeContract: request => writeContractAsync(request as unknown as Parameters<typeof writeContractAsync>[0]),
               onProgress: setRelayrProgress,
               onSetup: multisigSetup => updateStatus(chainId, { multisigSetup }),
+              signal,
             });
           }
           updateStatus(chainId, { phase: "signing", error: undefined });
@@ -1621,7 +1628,7 @@ export function CreateForm() {
               txHash: hash,
               safeProposalHash: hash,
             });
-            hash = await waitForSafeExecutionHash(chainId, hash);
+            hash = await waitForSafeExecutionHash(chainId, hash, { signal });
             updateStatus(chainId, {
               phase: "confirming",
               txHash: hash,

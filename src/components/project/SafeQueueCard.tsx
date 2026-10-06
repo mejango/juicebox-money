@@ -32,6 +32,7 @@ import {
 import { ChainIcon } from "@/components/ChainIcon";
 import { SafeQueueSkeleton } from "@/components/LoadingSkeletons";
 import { TxError } from "@/components/ui/TxError";
+import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import {
   clearRelayrPendingSession,
@@ -982,6 +983,8 @@ export function SafeQueueCard({
   authorityLabel: "Project owner" | "Revnet operator";
 }) {
   const { address } = useWallet();
+  // Leaving ends a Safe app's wait for the execution it proposed.
+  const flowSignal = useUnmountSignal();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1312,12 +1315,10 @@ export function SafeQueueCard({
       const reverifyAuthority = async () => {
         await freshCanonicalQueuedTx(chain, safe, fresh);
       };
-      const result = await executeSafeTx(
-        chain.chainId,
-        safe,
-        fresh,
+      const result = await executeSafeTx(chain.chainId, safe, fresh, {
         reverifyAuthority,
-      );
+        signal: flowSignal(),
+      });
       if (result.status === "confirmed") {
         await assertRelayrProjectHandlePostcondition(
           chain.chainId,
@@ -1368,14 +1369,12 @@ export function SafeQueueCard({
             `Executing ${index + 1}/${ordered.length} directly on ${row.chain.name}…`,
           );
           const fresh = await freshCanonicalQueuedTx(row.chain, safe, row.tx);
-          const result = await executeSafeTx(
-            row.chain.chainId,
-            safe,
-            fresh,
-            async () => {
+          const result = await executeSafeTx(row.chain.chainId, safe, fresh, {
+            reverifyAuthority: async () => {
               await freshCanonicalQueuedTx(row.chain, safe, fresh);
             },
-          );
+            signal: flowSignal(),
+          });
           if (result.status !== "confirmed") {
             setNotice(
               `Execution ${result.hash} was submitted for transaction #${row.tx.nonce}. Confirmation is still pending, so later nonces were not submitted.`,
