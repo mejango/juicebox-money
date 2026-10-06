@@ -159,7 +159,7 @@ beforeEach(() => {
     expect(nonce).toBe(0n)
     return { chain: call.chainId, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
-        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: NOW + 3600,
+        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + 3600,
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }
   })
   entries = []
@@ -170,7 +170,7 @@ beforeEach(() => {
     expect(loadLaunchSession()?.relayr?.signed).toHaveLength(signed.length)
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
-      payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
+      payment_info: offeredPaymentChains.map(chain => paymentFor(chain, Math.floor(Date.now() / 1000) + 600)),
       transactions: signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, request: entry })),
       expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry })) }
     records = signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { state: 'Confirmed', data: { hash: hashFor(entry.chain) } } }))
@@ -582,6 +582,23 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.statuses[10].phase).toBe('uncertain')
   })
 
+  it('signs a paid launch again whose Relayr record names another transaction, once that request expired unused', async () => {
+    m.poll.mockImplementationOnce(async (_uuid, _count, update) => {
+      // Relayr names Ethereum's transaction for Optimism's call.
+      const named = records.map((record, index) => index === 1 ? { ...record, status: { state: 'Confirmed', data: { hash: hashFor(1) } } } : record)
+      update(named); return named
+    })
+    await expect(run()).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'uncertain' } })
+    // Optimism's request expired unused at its finalized block, whatever Relayr names (amended ruling R114).
+    vi.mocked(Date.now).mockReturnValue((NOW + 3_601) * 1_000)
+    clients.get(10)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3_601) })
+    await run()
+    expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[10, 0n]])
+    expect(m.pay).toHaveBeenCalledTimes(2)
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
+  })
+
   it('keeps successful chains and retries a proven revert using the original forwarder nonce', async () => {
     failed.add(10)
     await expect(run()).rejects.toThrow('unfinished')
@@ -785,14 +802,30 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).not.toHaveBeenCalled()
   })
 
-  it('holds a published launch whose creation fee changed while its requests can still run, instead of signing again', async () => {
+  it('refreshes a published launch whose creation fee changed at the same nonces while its requests can still run', async () => {
     m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
     await expect(run()).rejects.toThrow('cancelled')
     m.fee.mockResolvedValue(18n)
-    await expect(run()).rejects.toThrow(relayrHeldMessage(NOW + 3600))
-    expect(m.forward).toHaveBeenCalledTimes(2)
-    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'quoted', signed: [expect.anything(), expect.anything()] })
-    expect(m.pay).not.toHaveBeenCalled()
+    // The forwarder runs one request per nonce, so the old and new signatures cannot both run (amended ruling R114).
+    await expect(run()).rejects.toThrow('creation fee changed')
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+    await run()
+    expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, call.value, nonce])).toEqual([[1, 18n, 0n], [10, 18n, 0n]])
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes a published launch at the same nonces once one request expired unused while another can still run', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    // Ethereum's request expired unused at its finalized block; Optimism's can still run until NOW + 3600.
+    vi.mocked(Date.now).mockReturnValue((NOW + 3_601) * 1_000)
+    clients.get(1)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3_601) })
+    await expect(run()).rejects.toThrow('about to expire')
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+    await run()
+    expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[1, 0n], [10, 0n]])
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
   })
 
   it('retains independently observed destination hashes when a later provider response omits them', async () => {
@@ -964,6 +997,15 @@ describe('paying a reverted launch quote again', () => {
       await expect(run()).rejects.toThrow(WAITING)
       expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', payments: [expect.objectContaining({ hash: HASH })] })
       expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('lets the launch sign again or be cancelled once every request expired unused, while the release is unproven', async () => {
+      await expired(NOW + 3_601)
+      relayrReports({ payment_received: null })
+      // Relayr's state matters only while a request can still run (amended ruling R114).
+      await expect(run()).rejects.toThrow('expired unused')
+      expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
       expect(m.pay).toHaveBeenCalledTimes(1)
     })
   })

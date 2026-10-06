@@ -1188,23 +1188,20 @@ export async function relayrRequestStates(
 
 /**
  * What a set of requests allows together (ruling R114). While any one is
- * live the set holds until `until`, the deadline of its last live request,
- * and `spent` says whether another one is already dead. Once every one is
- * dead, `mayHaveRun` says whether a nonce moved or was never saved, and
- * `unused` whether every nonce still equals the saved one.
+ * live the set holds until `until`, the deadline of its last live request.
+ * `mayHaveRun` says whether a dead one's nonce moved or was never saved, and
+ * once every one is dead, `unused` whether every nonce still equals the saved
+ * one.
  */
 export type RelayrRequestsVerdict =
-  | { live: true; until: number; spent: boolean }
+  | { live: true; until: number; mayHaveRun: boolean }
   | { live: false; mayHaveRun: boolean; unused: boolean }
 
 export function relayrRequestsVerdict(states: readonly RelayrRequestState[]): RelayrRequestsVerdict {
   const deadlines = states.flatMap(state => state.live ? [state.deadline] : [])
-  if (deadlines.length) return { live: true, until: Math.max(...deadlines), spent: deadlines.length < states.length }
-  return {
-    live: false,
-    mayHaveRun: states.some(state => !state.live && state.mayHaveRun),
-    unused: states.every(state => !state.live && state.unused),
-  }
+  const mayHaveRun = states.some(state => !state.live && state.mayHaveRun)
+  if (deadlines.length) return { live: true, until: Math.max(...deadlines), mayHaveRun }
+  return { live: false, mayHaveRun, unused: states.every(state => !state.live && state.unused) }
 }
 
 /** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
@@ -1882,7 +1879,7 @@ async function executeRelayrCalls({
       // may be quoted or paid again while every one still verifies, since
       // their nonces let at most one bundle run.
       if (!verdict.live) throw new Error(RELAYR_UNCONFIRMED)
-      if (verdict.spent) throw new Error(relayrHeldMessage(verdict.until))
+      if (verdict.mayHaveRun) throw new Error(relayrHeldMessage(verdict.until))
       try {
         await reverify?.()
         await verifyForwardedEntries(published, account)
