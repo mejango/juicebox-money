@@ -20,7 +20,8 @@ Every indexed read follows one production pattern:
    and aggregates; `stable` (60 seconds) for metadata and historical records.
 6. Give every browser read its page's signal: react-query's, or one the page
    aborts when it is left. The request under way then stops, is not retried,
-   and none is sent after. `test/components/bendystraw-page-signals.test.ts`
+   and none is sent after; the relay hands its own indexer request the browser
+   request's signal, so that stops too. `test/components/bendystraw-page-signals.test.ts`
    checks every use of a reader in `src/components` and `src/hooks`.
 
 The Bendystraw transport does not cache. Writes invalidate or bypass affected

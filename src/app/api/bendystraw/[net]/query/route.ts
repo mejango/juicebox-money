@@ -78,11 +78,12 @@ export async function POST(
 
   try {
     // Uncached: Next's fetch cache would keep a disk file for every distinct
-    // client query.
+    // client query. The browser's request signal ends the indexer read when
+    // the page that asked is left, with no retry.
     const data = await bendystraw(
       persisted.query,
       persisted.variables,
-      { network: net, policy: 'no-store' },
+      { network: net, policy: 'no-store', signal: request.signal },
     )
     return Response.json(
       { data },
@@ -96,11 +97,14 @@ export async function POST(
   } catch (error) {
     // The cause is logged, on one line, and never sent: the answer is the same
     // whatever failed. Control characters go too, so an indexer's text cannot
-    // start a terminal sequence or forge a log line.
-    console.error(
-      'Bendystraw relay failed:',
-      String(error).replace(/[\p{Cc}\s]+/gu, ' '),
-    )
+    // start a terminal sequence or forge a log line. A read the browser ended
+    // by leaving did not fail, so it is not logged.
+    if (!request.signal.aborted) {
+      console.error(
+        'Bendystraw relay failed:',
+        String(error).replace(/[\p{Cc}\s]+/gu, ' '),
+      )
+    }
     return Response.json(
       { error: 'Bendystraw unavailable' },
       { status: 502 },
