@@ -12,9 +12,8 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
-import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
-import { relayrDestinationHash, relayrPaymentOptions, relayrRecordChain, relayrSupportsChains, requireRelayrBundleUnpaid, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrDestinationHash, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRecordChain, relayrRetryOption, relayrSentPaymentsSnapshot, relayrSupportsChains, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -436,7 +435,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       // what Relayr ran is proven below, never paid again.
       let fundedElsewhere = false
       if (session.phase === 'payment-reverted' && session.quote) {
-        const reverted = await revertedRelayrQuote({ bundleUuid: session.quote.bundle_uuid, payments: session.payments ?? [],
+        const reverted = await revertedRelayrQuote(relayrChainClient, { bundleUuid: session.quote.bundle_uuid, payments: session.payments ?? [],
           options: session.quote.payment_info, destinationChainIds: chains, account: session.account })
         if (reverted.records) {
           session.records = reverted.records
@@ -522,7 +521,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       if (!paidNow && session.phase === 'executing') {
         // A payment that reverted funded nothing: the quote waits on the retry rule.
         // A send with no hash yet stays as it is, since it may still land.
-        await proveSavedRelayrPayment(session.payments, session.account, () => {
+        await proveSavedRelayrPayment(relayrChainClient, session.payments, session.account, () => {
           session.phase = 'payment-reverted'
           persist()
         })

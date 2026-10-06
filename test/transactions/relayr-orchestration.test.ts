@@ -65,8 +65,10 @@ import {
   RELAYR_PAYMENT_SELECTOR,
   relayrPaymentDetails,
   relayrPaymentOptions,
+  sentRelayrPayment,
   type RelayrEntry,
   type RelayrPayment,
+  type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   buildForwardedTx,
@@ -85,7 +87,6 @@ import {
   type RelayrCall,
   type RelayrPendingSession,
 } from '@/lib/relayr'
-import { sentRelayrPayment, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { formatDateTime } from '@/lib/format'
 

@@ -92,13 +92,13 @@ import {
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
   relayrPaymentDetails,
+  sentRelayrPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   RelayrPaymentSendingError,
   relayrPay,
   relayrPaymentLabel,
 } from '@/lib/relayr'
-import { sentRelayrPayment } from '@/lib/relayr-payments'
 
 function queued(nonce: number): SafeQueuedTransaction {
   return {
