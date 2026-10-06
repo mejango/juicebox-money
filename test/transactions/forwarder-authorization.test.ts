@@ -112,6 +112,16 @@ describe('shared forwarder nonce ownership', () => {
       requestsDead, execute: async assertAvailable => { assertAvailable(); return 'signed' } })).rejects.toThrow('Another published action')
   })
 
+  it('classifies each request of a reservation for the signer that signed it', async () => {
+    pending = [{ scope: 'earlier', session: { ...session([entry(1), entry(10, BOB)]), chainIds: [1, 10], expectedCount: 2, itemCount: 2,
+      publishedNonces: ['4', '7'] } }]
+    await expect(run()).rejects.toThrow('Another published action')
+    expect(requestsDead).toHaveBeenCalledWith([
+      { chainId: 1, signer: ALICE, deadline: 4_000_000_000, nonce: '4' },
+      { chainId: 10, signer: BOB, deadline: 4_000_000_000, nonce: '7' },
+    ])
+  })
+
   it('reserves a launch exactly while one of its outstanding requests is live (ruling R117)', async () => {
     const launch = { salt: 'launch-salt', statuses: { 1: { phase: 'pending' } },
       relayr: { published: true, signed: [{ chainId: 1, entry: entry(), nonce: '0', deadline: 4_000_000_000 }], superseded: [] } }

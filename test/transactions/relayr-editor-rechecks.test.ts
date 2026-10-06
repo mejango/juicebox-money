@@ -1,6 +1,7 @@
-import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { encodeFunctionData, parseEther, toFunctionSelector, zeroAddress, type Address, type Hex } from 'viem'
+import { createPublicClient, decodeFunctionData, encodeFunctionData, encodeFunctionResult, parseEther, toFunctionSelector, zeroAddress, type Address, type Hex } from 'viem'
+import { base } from 'viem/chains'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The split, ruleset-queue and metadata editors' own recheck callbacks, run by
@@ -65,6 +66,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 }))
 
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { clearRelayrPendingSession, listRelayrPendingScopes, loadRelayrPendingSession, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
 import { assembleReservedDestination, reviewedSplitCalls, type SplitReview, type SplitSnapshot } from '@/components/project/EditSplitsFlow'
 import { buildQueueDestinationConfig, reviewedQueueCalls } from '@/components/project/QueueRulesetFlow'
@@ -244,6 +246,51 @@ describe('the split editor\'s recheck', () => {
     const calls = reviewedSplitCalls(review())
     saveUnpaidSession(calls)
     await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Relayr quote unavailable')
+    expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
+      .toEqual([[1, 4n], [8453, 4n]])
+  })
+
+  it('holds, and never offers Discard, when JB Center\'s node cannot answer the recipients read (ruling R118)', async () => {
+    const calls = reviewedSplitCalls(review())
+    const scope = saveUnpaidSession(calls)
+    // Base's splits are read through the app's own Center transport. Center's node answers JSON-RPC -32001
+    // ("Requested resource not found.") until it has imported the block, and the transport asks again
+    // after 250, 500, 1,000, 2,000 and 2,000 ms before it gives up.
+    let caughtUp = false
+    const center = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const { id, params } = JSON.parse(String(init?.body)) as { id: number; params: [{ data: Hex }] }
+      const envelope = (body: object) => new Response(JSON.stringify({ jsonrpc: '2.0', id, ...body }), { headers: { 'content-type': 'application/json' } })
+      if (!caughtUp) return envelope({ error: { code: -32001, message: 'Requested resource not found.' } })
+      const { args } = decodeFunctionData({ abi: jbSplitsAbi, data: params[0].data })
+      return envelope({ result: encodeFunctionResult({ abi: jbSplitsAbi, functionName: 'splitsOf', result: args![1] === 0n ? [] : current[8453] }) })
+    })
+    Object.assign(window, { fetch: center })
+    const baseClient = mocks.clients.get(8453) as ReturnType<typeof chainClient>
+    const viaCenter = createPublicClient({ chain: base, transport: jbCenterRpcTransport(8453) })
+    mocks.clients.set(8453, { ...baseClient, readContract: (request: { functionName: string }) =>
+      request.functionName === 'splitsOf' ? viaCenter.readContract(request as never) : baseClient.readContract(request as never) })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    /** Runs the action through every wait Center's transport makes, and resolves with how it ended. */
+    const action = async () => {
+      let ended = false
+      const result = runAuthorityCalls({ signal: flow, calls }).then(() => null, (error: unknown) => error).finally(() => { ended = true })
+      for (let waits = 0; !ended && waits < 40; waits++) await vi.advanceTimersByTimeAsync(500)
+      return result
+    }
+
+    const held = await action()
+    expect(held).toMatchObject({ message: 'Couldn\'t check the project. Try again.' })
+    expect((held as Error).name).not.toBe('RelayrDiscardError')
+    // The first read and its five retries all came back -32001 before the recheck gave up.
+    expect(center.mock.calls.length).toBeGreaterThanOrEqual(6)
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid' })
+    expect(loadRelayrPendingSession(scope)?.discardable).toBeUndefined()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+
+    // Nothing was decided, so the next run classifies again: once Center answers, the recheck passes
+    // and the calls are signed again at the saved nonces.
+    caughtUp = true
+    expect(await action()).toMatchObject({ message: 'Relayr quote unavailable' })
     expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
       .toEqual([[1, 4n], [8453, 4n]])
   })

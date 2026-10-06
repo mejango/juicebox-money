@@ -192,9 +192,10 @@ function installChain(entries: () => readonly RelayrEntry[]) {
     return { transactionHash: hash, to: transaction.to, blockHash: BLOCK_HASH, blockNumber: transaction.blockNumber,
       status: DESTINATION_HASHES.includes(hash) ? 'success' : mocks.paymentStatuses.get(hash) ?? mocks.paymentStatus }
   })
-  // The finalized block has a number, so its reads are told apart from the latest block's.
+  // The finalized block has what the SDK reads of one, a number, a 32-byte hash and a timestamp, which comes
+  // before every deadline here; the latest block has only a hash, so their reads are told apart.
   mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
-    ? { number: 200n, hash: BLOCK_HASH } : { hash: BLOCK_HASH })
+    ? { number: 200n, hash: BLOCK_HASH, timestamp: 1n } : { hash: BLOCK_HASH })
 }
 
 /** Pay `option` for BUNDLE_UUID's destinations from Alice. */
@@ -2100,6 +2101,8 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
   let verifies: Record<number, boolean>
   /** Each chain's finalized block timestamp in seconds, or null while it cannot be read. */
   let finalized: Record<number, number | null>
+  /** What every chain answers for its finalized block instead, while a test arranges one. */
+  let malformed: Record<string, unknown> | null
   /** The action's own recheck, as an editor passes it. */
   let reverify: Mock<() => Promise<void>>
   const action = () => runRelayrCalls({ calls, account: ALICE, pendingScope: 'r114', reverify })
@@ -2112,12 +2115,15 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
     nonces = { 1: 4n, 10: 4n }
     verifies = { 1: true, 10: true }
     finalized = { 1: START / 1_000, 10: START / 1_000 }
+    malformed = null
     reverify = vi.fn(async () => {})
     mocks.clientOn = chainId => ({
       ...mocks.client,
       readContract: async (input: { functionName: string }) => input.functionName === 'nonces' ? nonces[chainId]
         : input.functionName === 'verify' ? verifies[chainId] : mocks.client.readContract(input),
       getBlock: async (input: { blockTag?: string; blockNumber?: bigint }) => {
+        // The node answers the block at its number with the same hash, so only the block itself is malformed.
+        if (malformed) return input.blockTag === 'finalized' ? malformed : { hash: malformed.hash }
         if (input.blockTag !== 'finalized') return mocks.client.getBlock(input)
         const timestamp = finalized[chainId]
         if (timestamp === null) throw new Error('No finalized block')
@@ -2304,6 +2310,26 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
     finalizedAt(REQUEST_DEADLINE + 1)
     await expect(action()).resolves.toMatchObject({ paymentHash: HASH })
     expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
+  })
+
+  it.each<[string, () => Record<string, unknown>]>([
+    ['without a timestamp', () => ({ number: 200n, hash: BLOCK_HASH })],
+    ['without a number', () => ({ hash: BLOCK_HASH, timestamp: BigInt(REQUESTS_EXPIRED / 1_000) })],
+    ['whose hash is not 32 bytes', () => ({ number: 200n, hash: '0x4545', timestamp: BigInt(REQUESTS_EXPIRED / 1_000) })],
+  ])('reads a finalized block %s as unknown: a request whose nonce moved holds until the block is read', async (_, block) => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid()
+    await unpaidQuote()
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    nonces = { 1: 5n, 10: 5n }
+    malformed = block()
+    await expect(action()).rejects.toThrow(HELD_UNCONFIRMED)
+    expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    expect(signed()).toEqual([[1, 4n], [10, 4n]])
+    // Read properly, the same chains say that both nonces moved.
+    malformed = null
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    await expect(action()).rejects.toMatchObject({ name: 'RelayrDiscardError', reason: 'ran', message: DISCARDABLE })
   })
 
   it('holds a reverted quote while Relayr cannot be read and another chain\'s old request can still run', async () => {

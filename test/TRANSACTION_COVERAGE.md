@@ -232,18 +232,22 @@ and the check fails on a missing marker.
   for a new quote, whose payment review says why a paid bundle's payment
   can't be reused; none moved and the recheck failing offers Discard after
   "The project changed since this review.", unless the recheck could not
-  reach the chain; a moved nonce or no saved nonces offers Discard after the
-  "may already have run" line; and the account view, which cannot recheck,
-  offers Discard after "This action's earlier signatures expired without
-  running." (ruling R114 (e)) while the action still signs them again. A
+  reach the chain or its node could not answer (ruling R118); a moved nonce
+  or no saved nonces offers Discard after the "may already have run" line;
+  and the account view, which cannot recheck, offers Discard after "This
+  action's earlier signatures expired without running." (ruling R114 (e))
+  while the action still signs them again. A
   marked session that ran still completes when its action runs again. Covered for two-chain
   sessions, sessions saved without nonces, a deadline equal to the block's
-  timestamp, paid bundles whose calls reverted, quotes whose release is
+  timestamp, a finalized block that is not a block (unknown, so live), paid
+  bundles whose calls reverted, quotes whose release is
   unproven or that another payment funded, and the account view in
   `transactions/relayr-orchestration.test.ts`; through the real authority
   router, before the review pass's recheck, in
   `transactions/authority-gas.test.ts`; with the split, ruleset-queue and
-  metadata editors' own recheck callbacks, paid sessions included, in
+  metadata editors' own recheck callbacks, paid sessions included, and a
+  recheck that JB Center's node answers -32001 until its retries run out,
+  which holds and offers no Discard (ruling R118), in
   `transactions/relayr-editor-rechecks.test.ts`; and for launches, which
   refresh at the saved nonces while none moved, in
   `transactions/launch-relayr.test.ts`, a launch whose finalized nonce fell
