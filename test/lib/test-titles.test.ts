@@ -29,7 +29,7 @@ describe('test titles that can prove a wallet action', () => {
       `it(\`${marker} proves\`, () => {})`,
       // A setup statement, an if without an early exit, or a return inside a helper function does not end the suite body.
       `describe('suite', () => { const helper = () => { return 1 }; it('${marker} proves', () => { helper() }) })`,
-      `describe('suite', () => { if (ready) { prepare() } it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { if (ready) { vi.stubEnv('MODE', 'test') } it('${marker} proves', () => {}) })`,
       `describe('suite', () => { beforeEach(() => { reset() }); it('${marker} proves', () => {}) })`,
       // Tables with at least one row, wrapped as TypeScript allows.
       `it.each([1, 2] as const)('${marker} proves %s', () => {})`,
@@ -52,7 +52,6 @@ describe('test titles that can prove a wallet action', () => {
       `it('${marker} proves', () => { const { skip } = helpers; expect(skip).toBeDefined() })`,
       `describe('suite', () => { beforeEach((ctx) => { ctx.task.meta.ran = true }); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { if (ready) { beforeEach(() => { reset() }) } it('${marker} proves', () => {}) })`,
-      `describe('suite', () => { beforeEach(setup); it('${marker} proves', () => {}) })`,
       // A skipping hook belongs to its own suite: it takes that suite's tests, not the tests beside or above it.
       `describe('outer', () => { describe('inner', () => { beforeEach((ctx) => { ctx.skip() }) }); it('${marker} proves', () => {}) })`,
       `describe('a', () => { beforeEach((ctx) => { ctx.skip() }) }); describe('b', () => { it('${marker} proves', () => {}) })`,
@@ -311,6 +310,77 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', () => { aroundEach((runTest, ctx) => { gate(ctx) }); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { aroundEach((...args) => { args[1].skip() }); it('${marker} proves', () => {}) })`,
       `describe('outer', () => { beforeEach((ctx) => { ctx.skip() }); describe('inner', () => { it('${marker} proves', () => {}) }) })`,
+    ]) {
+      expect(proves(source), source).toBe(false)
+    }
+  })
+
+  it('counts a test whose suite has only setup that cannot skip it: Vitest vi and expect, inline hooks, hooks without a test context', () => {
+    for (const source of [
+      `describe('suite', () => { beforeEach(vi.clearAllMocks); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { afterEach(vi.restoreAllMocks); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(vi.clearAllMocks, 5_000); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { if (ready) { beforeEach(vi.resetAllMocks) } it('${marker} proves', () => {}) })`,
+      `afterEach(vi.restoreAllMocks); it('${marker} proves', () => {})`,
+      `vi.mock('./wallet', () => ({})); it('${marker} proves', () => {})`,
+      `await vi.hoisted(async () => {}); it('${marker} proves', () => {})`,
+      `describe('suite', () => { vi.useFakeTimers(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { vi.stubEnv('MODE', 'test'); it('${marker} proves', () => {}) })`,
+      `expect.extend({}); it('${marker} proves', () => {})`,
+      `describe('suite', () => { expect.hasAssertions(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { expect(setup).toBeDefined(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { vi.mocked(fetchThing).mockResolvedValue(1); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { vi['useFakeTimers'](); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeAll(setup); afterAll(teardown); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundAll(wrap); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(async function () { await reset() }); it('${marker} proves', () => {}) })`,
+      // Helpers that run inside a function, or in a suite that is not this one or one around it, do not reach this test.
+      `describe('suite', () => { const gate = () => installGate(); it('${marker} proves', () => { gate() }) })`,
+      `describe('a', () => { installGate() }); describe('b', () => { it('${marker} proves', () => {}) })`,
+      `describe('outer', () => { describe('inner', () => { installGate() }); it('${marker} proves', () => {}) })`,
+      `describe('outer', () => { describe('inner', () => { beforeEach(setup) }); it('${marker} proves', () => {}) })`,
+    ]) {
+      expect(proves(source), source).toBe(true)
+    }
+  })
+
+  it('ignores every test under a hook it cannot read, or a call statement it cannot see into that may register one', () => {
+    for (const source of [
+      // A hook passed by name, built by a call or reached through a member is not read. Only a direct vi.name is safe.
+      `describe('suite', () => { beforeEach(setup); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { afterEach(teardown); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundEach(wrap); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(helpers.setup); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(makeHook()); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(vi.fn()); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(vi.mocked.thing); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { const hook = () => {}; beforeEach(hook); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { if (ready) { beforeEach(setup) } it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { it('${marker} proves', () => {}); afterEach(teardown) })`,
+      `beforeEach(setup); it('${marker} proves', () => {})`,
+      `describe('outer', () => { beforeEach(setup); describe('inner', () => { it('${marker} proves', () => {}) }) })`,
+      // A call statement the check cannot see into may register a hook that skips.
+      `describe('suite', () => { installGate(); it('${marker} proves', () => {}) })`,
+      `describe('suite', async () => { await installGate(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { void installGate(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { (installGate()); it('${marker} proves', () => {}) })`,
+      `describe('suite', async () => { await (installGate() as Promise<void>); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { installGate?.(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { helpers.install(); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { if (ready) { installGate() } it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { for (const row of rows) installGate(row); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { try { installGate() } finally {} it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { it('${marker} proves', () => {}); installGate() })`,
+      `installGate(); it('${marker} proves', () => {})`,
+      `await installGate(); it('${marker} proves', () => {})`,
+      `describe('outer', () => { installGate(); describe('inner', () => { it('${marker} proves', () => {}) }) })`,
+      `describe.each([1])('suite %s', () => { installGate(); it('${marker} proves', () => {}) })`,
+      // Hooks hung off the test API skip like the plain ones.
+      `describe('suite', () => { test.beforeEach(({ skip }) => { skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { it.afterEach(({ skip }) => { skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { test.aroundEach(async (runTest, { skip }) => { skip(); await runTest() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { test.beforeAll(setup); it('${marker} proves', () => {}) })`,
     ]) {
       expect(proves(source), source).toBe(false)
     }

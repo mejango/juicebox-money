@@ -20,6 +20,12 @@ const HOOKS = new Map([
   ['aroundEach', 1],
 ])
 
+/** Hooks that get no test context. None can skip a test: one that fails, or never runs its callback, fails the suite. */
+const OTHER_HOOKS = new Set(['beforeAll', 'afterAll', 'aroundAll'])
+
+/** Vitest's own APIs, which register no hook that can skip a test. */
+const VITEST_API = new Set(['vi', 'expect'])
+
 /** An expression without the wrappers that leave its value alone: parentheses, `as`, `satisfies`, `<T>` and `!`. */
 function unwrap(node) {
   while (
@@ -154,17 +160,51 @@ function mayEnd(node) {
   return !ts.isFunctionLike(node) && ts.forEachChild(node, mayEnd) === true
 }
 
-/**
- * Whether a node holds, outside any nested function, a hook call that can skip
- * the tests of its suite. A hook in a nested suite's callback belongs to that
- * suite, which is walked on its own.
- */
-function hasSkippingHook(node) {
-  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && HOOKS.has(node.expression.text)) {
-    const callback = inlineCallback(node)
-    if (callback && skipsItself(callback, HOOKS.get(node.expression.text))) return true
+/** The name a chain of calls, members and indexes starts from: `vi` in `vi.mocked(x).mockReturnValue(1)`. */
+function rootName(node) {
+  while (ts.isCallExpression(node) || ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    node = node.expression
   }
-  return !ts.isFunctionLike(node) && ts.forEachChild(node, hasSkippingHook) === true
+  return ts.isIdentifier(node) ? node.text : null
+}
+
+/** The call a statement makes, through `await` and `void`: `helper()`, `await helper()`. Null for any other node. */
+function callOf(node) {
+  if (!ts.isExpressionStatement(node)) return null
+  let expression = unwrap(node.expression)
+  while (ts.isAwaitExpression(expression) || ts.isVoidExpression(expression)) expression = unwrap(expression.expression)
+  return ts.isCallExpression(expression) ? expression : null
+}
+
+/** Whether a call statement is one this check can see into: a test, suite or hook of Vitest's, or its own `vi` or `expect`. Any other call may register a hook that skips, and so does a hook hung off the test API (`test.beforeEach`). */
+function seesInto(call) {
+  const callee = call.expression
+  const name = ts.isIdentifier(callee) ? callee.text : null
+  const test = testCall(callee)
+  const hooksOffTestApi = test?.modifiers.some(modifier => HOOKS.has(modifier) || OTHER_HOOKS.has(modifier))
+  return (!!test && !hooksOffTestApi) || HOOKS.has(name) || OTHER_HOOKS.has(name) || VITEST_API.has(rootName(callee))
+}
+
+/** Whether a hook can skip its tests as far as this check can tell: an inline callback that skips, or any callback it cannot read. Only a direct `vi.name` is taken as safe. */
+function hookMaySkip(call) {
+  const callback = inlineCallback(call)
+  if (callback) return skipsItself(callback, HOOKS.get(call.expression.text))
+  const [hook] = call.arguments
+  return !(hook && ts.isPropertyAccessExpression(hook) && ts.isIdentifier(hook.expression) && hook.expression.text === 'vi')
+}
+
+/**
+ * Whether a node holds, outside any nested function, setup that can skip the tests of its suite without this check
+ * seeing how: a hook that skips through its context or cannot be read, or a call statement it cannot see into, which
+ * may register such a hook. A nested suite's callback belongs to that suite, which is walked on its own.
+ */
+function setupMaySkip(node) {
+  const call = callOf(node)
+  if (call && !seesInto(call)) return true
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && HOOKS.has(node.expression.text) && hookMaySkip(node)) {
+    return true
+  }
+  return !ts.isFunctionLike(node) && ts.forEachChild(node, setupMaySkip) === true
 }
 
 /**
@@ -174,8 +214,10 @@ function hasSkippingHook(node) {
  * that body early (a return or throw). A describe title proves nothing. Nothing
  * counts that is skipped, conditional or expected to fail, by a modifier or an
  * options object; that sits in a `.each` or `.for` whose table is not a literal
- * array with a row; that skips itself, or sits under a hook that skips, through
- * its context; or that has no inline callback.
+ * array with a row; that skips itself through its context; that has no inline
+ * callback; or whose suite, or any suite around it, has a hook that skips or
+ * cannot be read, or a call statement that is not a test, suite, hook, `vi` or
+ * `expect` call, since a helper may register such a hook.
  */
 export function provingTitleWords(text, fileName) {
   const source = ts.createSourceFile(
@@ -204,7 +246,7 @@ export function provingTitleWords(text, fileName) {
   }
 
   function walk(statements) {
-    if (statements.some(hasSkippingHook)) return
+    if (statements.some(setupMaySkip)) return
     for (const statement of statements) {
       if (mayEnd(statement)) return
       if (ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)) {
