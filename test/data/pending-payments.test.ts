@@ -61,21 +61,42 @@ beforeEach(() => {
 })
 
 describe('complete authenticated pending payment inventory', () => {
-  it('loads every page by source project, chain and v6 with a live policy', async () => {
+  it('loads every page by destination project, chain and v6 with a live policy', async () => {
     const rows = Array.from({ length: 101 }, (_, index) => payment(index + 1))
     mocks.bendystraw.mockResolvedValueOnce(page(rows.slice(0, 100), 101)).mockResolvedValueOnce(page(rows.slice(100), 101))
-    expect(await fetchPendingPayments(1, 17)).toEqual(rows)
+    expect(await fetchPendingPayments(1, 1)).toEqual(rows)
     expect(mocks.bendystraw.mock.calls.map(([, variables, options]) => ({ variables, options }))).toEqual([
-      { variables: { chainId: 1, sourceProjectId: 17, gateway: GATEWAY, limit: 100, offset: 0 }, options: { policy: 'live' } },
-      { variables: { chainId: 1, sourceProjectId: 17, gateway: GATEWAY, limit: 100, offset: 100 }, options: { policy: 'live' } },
+      { variables: { chainId: 1, projectId: 1, gateway: GATEWAY, limit: 100, offset: 0 }, options: { policy: 'live' } },
+      { variables: { chainId: 1, projectId: 1, gateway: GATEWAY, limit: 100, offset: 100 }, options: { policy: 'live' } },
     ])
     expect(mocks.bendystraw.mock.calls[0][0]).toContain('{ version: 6 }')
     expect(mocks.client.readContract).not.toHaveBeenCalled()
   })
 
+  it('shows a payment from project 6 on destination 1 only, including other valid origins', async () => {
+    const rows = [payment(1, { sourceProjectId: 6 }), payment(2, { sourceProjectId: 9 })]
+    mocks.bendystraw.mockImplementation(async (query: string, variables: { projectId: number }) => {
+      expect(query).toContain('{ projectId: $projectId }')
+      expect(query).not.toContain('{ sourceProjectId:')
+      return page(rows.filter(row => row.projectId === variables.projectId))
+    })
+    await expect(fetchPendingPayments(1, 1)).resolves.toEqual(rows)
+    await expect(fetchPendingPayments(1, 6)).resolves.toEqual([])
+  })
+
+  it('rejects an unrelated destination even when it originated on the viewed project', async () => {
+    mocks.bendystraw.mockResolvedValue(page([payment(1, { sourceProjectId: 6 })]))
+    await expect(fetchPendingPayments(1, 6)).rejects.toThrow('could not be verified')
+  })
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, undefined])('rejects malformed source project %s', async sourceProjectId => {
+    mocks.bendystraw.mockResolvedValue(page([{ ...payment(), sourceProjectId } as PendingPayment]))
+    await expect(fetchPendingPayments(1, 1)).rejects.toThrow('could not be verified')
+  })
+
   it('accepts a verified empty inventory without inventing an active count', async () => {
     mocks.bendystraw.mockResolvedValue(page([]))
-    await expect(fetchPendingPayments(1, 17)).resolves.toEqual([])
+    await expect(fetchPendingPayments(1, 1)).resolves.toEqual([])
   })
 
   it.each([
@@ -86,25 +107,25 @@ describe('complete authenticated pending payment inventory', () => {
     ['an oversized page', [page(Array.from({ length: 101 }, (_, index) => payment(index + 1)), 101)]],
   ])('rejects %s instead of batching a partial list', async (_name, pages) => {
     for (const result of pages) mocks.bendystraw.mockResolvedValueOnce(result)
-    await expect(fetchPendingPayments(1, 17)).rejects.toThrow(/incomplete|changed|duplicate|inconsistent/iu)
+    await expect(fetchPendingPayments(1, 1)).rejects.toThrow(/incomplete|changed|duplicate|inconsistent/iu)
   })
 
   it.each([
-    ['another chain', { chainId: 10 }], ['another source project', { sourceProjectId: 18 }],
+    ['another chain', { chainId: 10 }], ['another destination project', { projectId: 18 }],
     ['another protocol version', { version: 5 }], ['an unknown gateway', { gateway: OTHER }],
     ['a resolved status', { status: 'settled' }], ['a partially retained amount', { retainedAmount: '1' }],
   ])('rejects a valid commitment for %s', async (_name, changes) => {
     mocks.bendystraw.mockResolvedValue(page([payment(1, changes as Partial<PendingPayment>)]))
-    await expect(fetchPendingPayments(1, 17)).rejects.toThrow('could not be verified')
+    await expect(fetchPendingPayments(1, 1)).rejects.toThrow('could not be verified')
   })
 
   it.each([
     { amount: '25000000000000001', retainedAmount: '25000000000000001' }, { beneficiary: OTHER },
-    { refundTo: ACCOUNT }, { projectId: 2 }, { token: OTHER }, { memo: 'Different memo' },
+    { refundTo: ACCOUNT }, { projectId: 2 }, { sourceProjectId: 6 }, { token: OTHER }, { memo: 'Different memo' },
     { metadata: '0xabcd' as Hex }, { preferAddToBalance: true }, { shouldReturnHeldFees: true },
   ])('rejects indexed tuple, memo or metadata mutation: %j', async changes => {
     mocks.bendystraw.mockResolvedValue(page([{ ...payment(), ...changes }]))
-    await expect(fetchPendingPayments(1, 17)).rejects.toThrow('could not be verified')
+    await expect(fetchPendingPayments(1, 1)).rejects.toThrow('could not be verified')
   })
 })
 
@@ -117,7 +138,7 @@ describe('live custody and permissionless retry review', () => {
     expect(mocks.client.readContract.mock.calls).toHaveLength(4)
     for (const [request] of mocks.client.readContract.mock.calls) expect(request).toMatchObject({ address: GATEWAY, blockNumber: 123n })
     const call = pendingPaymentCall(review, ACCOUNT)
-    expect(call).toMatchObject({ authority: ACCOUNT, target: GATEWAY, value: 0n, relayr: false, projectId: 17, id: pendingPaymentId(row) })
+    expect(call).toMatchObject({ authority: ACCOUNT, target: GATEWAY, value: 0n, relayr: false, projectId: 1, id: pendingPaymentId(row) })
     const decoded = decodeFunctionData({ abi: routerGatewayAbi, data: call.data })
     expect(decoded).toEqual({ functionName: 'processPendingCall', args: [row.pendingCallId, tuple(row), row.memo, row.metadata] })
   })
@@ -169,6 +190,12 @@ describe('live custody and permissionless retry review', () => {
     await expect(reverifyPendingPayment(call)).resolves.toBeUndefined()
     live.failure = { ...live.failure, ...changes }
     await expect(reverifyPendingPayment(call)).rejects.toThrow('changed since review')
+  })
+
+  it('resumes legacy source-scoped saved attempts while rejecting unrelated project metadata', async () => {
+    const call = pendingPaymentCall((await reviewPendingPayment(payment()))!, ACCOUNT)
+    await expect(reverifyPendingPayment({ ...call, projectId: 17 })).resolves.toBeUndefined()
+    await expect(reverifyPendingPayment({ ...call, projectId: 999 })).rejects.toThrow('changed since review')
   })
 
   it('rejects a resolved payment or a modified reviewed destination before submission', async () => {

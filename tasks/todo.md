@@ -173,3 +173,12 @@ Final review: 90 focused tests pass; full suite has 1,722 passing and seven fail
 Rebase review: preserved current origin/main SDK 2.23.0 rules and shared MultiSend decoding; installed locked dependencies without changing manifests. The seven previously reported launch failures pass on this matching checkout and SDK. Source invariants, transaction inventory, dead-code check and changed-file ESLint pass.
 
 Rebased verification: full suite passed 2,512 tests with two concurrency fixtures requiring the upstream snapshot owners and object-form payment API; both fixtures corrected and all 13 queue tests now pass. Final typecheck and ESLint pass. No remaining test failures.
+
+## 2026-10-06 — Destination pending-payment inventory
+- [x] Query and authenticate pending payments by destination project; retain source in committed calldata.
+- [x] Refresh persisted operation registry and isolate destination query caches.
+- [x] Add destination/source regression coverage and run focused tests, types, lint and registry check.
+
+Plan review: keep inventory ownership in pending-payments.ts; unchanged permissionless retry and saved actions remain available.
+
+Review: destination inventory includes incoming calls from sources 6 and 9, excludes source-only pages, rejects unrelated destination and malformed source rows, and preserves original commitment/calldata. New retry activity belongs to the destination; legacy saved attempts accept their original source activity metadata. Registry regenerated. Focused data/component tests, typecheck, changed-file lint and offline registry check pass. Browser fixture updated for unequal source/destination; browser suite not run.

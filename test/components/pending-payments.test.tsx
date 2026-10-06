@@ -32,7 +32,7 @@ vi.mock('@/lib/pending-payments', () => ({
   pendingPaymentId: (payment: ReviewedPayment['payment']) => `${payment.chainId}:${payment.gateway}:${payment.pendingCallId}`,
   pendingPaymentCall: (review: ReviewedPayment, account: Address) => ({
     id: `${review.payment.chainId}:${review.payment.gateway}:${review.payment.pendingCallId}`, chainId: review.payment.chainId,
-    projectId: review.payment.sourceProjectId, authority: account, target: review.payment.gateway, value: 0n,
+    projectId: review.payment.projectId, authority: account, target: review.payment.gateway, value: 0n,
     data: '0x1234', label: 'Retry pending payment', context: review,
   }),
 }))
@@ -48,7 +48,7 @@ import { RelayrDiscardError } from '@/lib/relayr'
 
 function row(chainId: 1 | 10 = 1, ready = true): Row {
   const payment: ReviewedPayment['payment'] = { chainId, version: 6, gateway: '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901',
-    pendingCallId: `0x${chainId.toString(16).padStart(64, '0')}`, projectId: 1, sourceProjectId: chainId === 1 ? 17 : 42,
+    pendingCallId: `0x${chainId.toString(16).padStart(64, '0')}`, projectId: chainId === 1 ? 17 : 42, sourceProjectId: 6,
     token: '0x000000000000000000000000000000000000EEEe', amount: '25000000000000000', retainedAmount: '25000000000000000',
     preferAddToBalance: false, shouldReturnHeldFees: false, beneficiary: mocks.address, refundTo: mocks.address,
     memo: '', metadata: '0x', callCommitment: zeroHash, status: 'queued' }
@@ -83,7 +83,7 @@ describe('pending payment review above activity', () => {
     expect(tree!.root.findByType('h2').children).toEqual(['Payments awaiting routing'])
   })
 
-  it('hides an empty inventory and verifies every linked source project independently', async () => {
+  it('hides an empty inventory and verifies every linked destination project independently', async () => {
     await render()
     expect(tree!.toJSON()).toBeNull()
     const first = row(), second = row(10)
@@ -110,7 +110,7 @@ describe('pending payment review above activity', () => {
     expect(dialog().title).toBe('Review pending payments')
     expect(dialog().steps).toHaveLength(2)
     expect(dialog().stepsIntro).toContain('does not make them atomic')
-    expect(dialog().rows?.filter(item => item.label === 'From project').map(item => item.value)).toEqual(['#17', '#42'])
+    expect(dialog().rows?.filter(item => item.label === 'From project').map(item => item.value)).toEqual(['#6', '#6'])
     mocks.run.mockImplementation(async options => {
       expect(options.reverify).toBe(mocks.reverify)
       expect(options.calls).toHaveLength(2)
@@ -138,7 +138,7 @@ describe('pending payment review above activity', () => {
     expect(retries.map(item => item.props.disabled)).toEqual([false, true])
     await act(async () => retries[0].props.onClick())
     expect(dialog().steps).toHaveLength(1)
-    expect(dialog().rows?.find(item => item.label === 'From project')?.value).toBe('#17')
+    expect(dialog().rows?.find(item => item.label === 'From project')?.value).toBe('#6')
   })
 
   it.each(['nonzero', 'unknown'])('keeps a known Safe proposal when its commitment is %s', async state => {

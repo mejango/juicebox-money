@@ -13,3 +13,6 @@ sites should have the full queue-ruleset experience. The anchor WAS knowable (th
 read on-chain). Rule: a parity request covers create AND queue editors on both webclients; when a
 piece looks blocked, check whether the missing input is actually available before scoping it out,
 and if it truly is blocked, say so up front and ask rather than shipping around it.
+
+## 2026-10-06 — Pending routing belongs to the receiving project
+Show payments awaiting routing on the destination project, not the source that initiated them. Scope queries, validation and new activity to destination projectId; preserve sourceProjectId in committed on-chain call data. Test unequal source/destination IDs.

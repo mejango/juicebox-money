@@ -16,10 +16,10 @@ const readAbi = [...routerGatewayAbi, ...parseAbi([
 const parameters = parseAbiParameters('(uint256 amount, bool preferAddToBalance, bool shouldReturnHeldFees, address beneficiary, uint256 projectId, address refundTo, uint256 sourceProjectId, address token), string, bytes')
 const payments = [125_000_000_000_000_000n, 250_000_000_000_000_000n, 375_000_000_000_000_000n].map((amount, index) => {
   const call = { amount, preferAddToBalance: false, shouldReturnHeldFees: false, beneficiary: ACCOUNT,
-    projectId: 1n, refundTo: ACCOUNT, sourceProjectId: 1n, token: NATIVE_TOKEN } as const
+    projectId: 1n, refundTo: ACCOUNT, sourceProjectId: 6n, token: NATIVE_TOKEN } as const
   const memo = 'Retained protocol fee'
   const metadata = '0x1234' as const
-  return { ...call, amount: amount.toString(), projectId: 1, sourceProjectId: 1,
+  return { ...call, amount: amount.toString(), projectId: 1, sourceProjectId: 6,
     chainId: 1, version: 6, gateway: GATEWAY, pendingCallId: toHex(index + 1, { size: 32 }),
     retainedAmount: amount.toString(), memo, metadata,
     callCommitment: keccak256(encodeAbiParameters(parameters, [call, memo, metadata])),
@@ -42,12 +42,12 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     const verificationGate = new Promise<void>(resolve => { releaseVerification = resolve })
 
     await page.route('**/api/bendystraw/*/query', async route => {
-      const request = route.request().postDataJSON() as { operation: string; variables: { chainId: number; sourceProjectId: number; gateway: string; offset: number; limit: number } }
+      const request = route.request().postDataJSON() as { operation: string; variables: { chainId: number; projectId: number; gateway: string; offset: number; limit: number } }
       if (!(registry as Record<string, string>)[request.operation]?.startsWith('query PendingPayments(')) {
         await route.fallback()
         return
       }
-      expect(request.variables).toEqual({ chainId: 1, sourceProjectId: 1, gateway: GATEWAY, limit: 100, offset: 0 })
+      expect(request.variables).toEqual({ chainId: 1, projectId: 1, gateway: GATEWAY, limit: 100, offset: 0 })
       await route.fulfill({ json: { data: { routerPendingCalls: { items: payments, totalCount: payments.length } } } })
     })
 

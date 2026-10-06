@@ -47,7 +47,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   }, [scope])
 
   const pending = useQuery({
-    queryKey: ['pendingPayments', chainId, projectId, chains],
+    queryKey: ['pendingPayments', 'destination', chainId, projectId, chains],
     enabled: hydrated,
     staleTime: 15_000, refetchInterval: 30_000, retry: 1,
     queryFn: async ({ signal }) => {

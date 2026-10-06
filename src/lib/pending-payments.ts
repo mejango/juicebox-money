@@ -19,9 +19,9 @@ export type ReviewedPayment = {
   readyAt: bigint; ready: boolean; gas: bigint; decimals: number | null; symbol: string
 }
 
-const PENDING_PAYMENTS_QUERY = `query PendingPayments($chainId: Int!, $sourceProjectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
+const PENDING_PAYMENTS_QUERY = `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
   routerPendingCalls(
-    where: { AND: [{ chainId: $chainId }, { sourceProjectId: $sourceProjectId }, { gateway: $gateway }, { version: 6 }, { retainedAmount_gt: "0" }, { status_in: [queued, retried] }] }
+    where: { AND: [{ chainId: $chainId }, { projectId: $projectId }, { gateway: $gateway }, { version: 6 }, { retainedAmount_gt: "0" }, { status_in: [queued, retried] }] }
     orderBy: "pendingCallId", orderDirection: "asc", limit: $limit, offset: $offset
   ) {
     totalCount
@@ -49,9 +49,9 @@ export function paymentCommitment(payment: PendingPayment): Hex {
   return keccak256(encodeAbiParameters(PARAMETERS, [callTuple(payment), payment.memo, payment.metadata]))
 }
 
-function validatePayment(payment: PendingPayment, chainId: number, sourceProjectId: number): void {
-  if (!payment || payment.chainId !== chainId || payment.sourceProjectId !== sourceProjectId || payment.version !== 6 ||
-    !Number.isSafeInteger(payment.projectId) || payment.projectId <= 0 || !Number.isSafeInteger(sourceProjectId) || sourceProjectId <= 0 ||
+function validatePayment(payment: PendingPayment, chainId: number, projectId: number): void {
+  if (!payment || payment.chainId !== chainId || payment.projectId !== projectId || payment.version !== 6 ||
+    !Number.isSafeInteger(payment.projectId) || payment.projectId <= 0 || !Number.isSafeInteger(payment.sourceProjectId) || payment.sourceProjectId <= 0 ||
     !['queued', 'retried'].includes(payment.status) || ![payment.gateway, payment.token, payment.beneficiary, payment.refundTo].every(address => isAddress(address, { strict: false })) ||
     !word(payment.pendingCallId) || !word(payment.callCommitment) || !bytes(payment.metadata) || typeof payment.memo !== 'string' ||
     typeof payment.preferAddToBalance !== 'boolean' || typeof payment.shouldReturnHeldFees !== 'boolean' ||
@@ -63,25 +63,25 @@ function validatePayment(payment: PendingPayment, chainId: number, sourceProject
 }
 
 /**
- * Complete source-project inventory, independent of its current terminal
+ * Complete destination-project inventory, independent of its current terminal
  * selection. `signal` is the caller's, for every page's request.
  */
-export async function fetchPendingPayments(chainId: JBChainId, sourceProjectId: number, { signal }: { signal?: AbortSignal } = {}): Promise<PendingPayment[]> {
+export async function fetchPendingPayments(chainId: JBChainId, projectId: number, { signal }: { signal?: AbortSignal } = {}): Promise<PendingPayment[]> {
   const chain = rolloutChain(chainId)
   const gateways = [...new Set([chain?.contracts.JBRouterTerminalGateway, ...Object.values(chain?.history.JBRouterTerminalGateway ?? {})]
     .filter((address): address is string => !!address).map(address => address.toLowerCase()))]
-  return (await Promise.all(gateways.map(gateway => fetchGatewayPayments(chainId, sourceProjectId, gateway, signal)))).flat()
+  return (await Promise.all(gateways.map(gateway => fetchGatewayPayments(chainId, projectId, gateway, signal)))).flat()
 }
 
 // Pending IDs are monotonic within one gateway; gateway-scoped pagination also
 // stays deterministic when a previous generation still holds payments.
-async function fetchGatewayPayments(chainId: JBChainId, sourceProjectId: number, gateway: string, signal?: AbortSignal): Promise<PendingPayment[]> {
+async function fetchGatewayPayments(chainId: JBChainId, projectId: number, gateway: string, signal?: AbortSignal): Promise<PendingPayment[]> {
   const items: PendingPayment[] = []
   const seen = new Set<string>()
   let total: number | undefined
   do {
     const { routerPendingCalls: page } = await bendystraw<{ routerPendingCalls: { items: PendingPayment[]; totalCount: number } }>(
-      PENDING_PAYMENTS_QUERY, { chainId, sourceProjectId, gateway, limit: 100, offset: items.length }, { policy: 'live', signal })
+      PENDING_PAYMENTS_QUERY, { chainId, projectId, gateway, limit: 100, offset: items.length }, { policy: 'live', signal })
     if (!page || !Array.isArray(page.items) || !Number.isSafeInteger(page.totalCount) || page.totalCount < 0 ||
       (total !== undefined && total !== page.totalCount) || page.items.length > 100 ||
       (page.items.length === 0 && items.length !== page.totalCount)) {
@@ -89,7 +89,7 @@ async function fetchGatewayPayments(chainId: JBChainId, sourceProjectId: number,
     }
     total = page.totalCount
     for (const payment of page.items) {
-      validatePayment(payment, chainId, sourceProjectId)
+      validatePayment(payment, chainId, projectId)
       if (payment.gateway.toLowerCase() !== gateway) throw new Error('The indexed payment belongs to another gateway.')
       const id = pendingPaymentId(payment)
       if (seen.has(id)) throw new Error('The pending payment list contains duplicate records. Refresh to load all payments.')
@@ -102,7 +102,7 @@ async function fetchGatewayPayments(chainId: JBChainId, sourceProjectId: number,
 
 /** One block snapshot authenticates custody and determines the permitted next action. */
 export async function reviewPendingPayment(payment: PendingPayment, client: PublicClient = clientFor(payment.chainId)): Promise<ReviewedPayment | null> {
-  validatePayment(payment, payment.chainId, payment.sourceProjectId)
+  validatePayment(payment, payment.chainId, payment.projectId)
   const block = await client.getBlock()
   const shared = { address: payment.gateway, blockNumber: block.number }
   const [commitment, failure, delay, finalizationCount] = await Promise.all([
@@ -131,7 +131,7 @@ export function pendingPaymentCall(review: ReviewedPayment, account: Address): P
   if (!review.ready) throw new Error('This payment is still waiting for its next retry time.')
   const { payment, functionName } = review
   const args = [payment.pendingCallId, callTuple(payment), payment.memo, payment.metadata] as const
-  return { id: pendingPaymentId(payment), chainId: payment.chainId, projectId: payment.sourceProjectId,
+  return { id: pendingPaymentId(payment), chainId: payment.chainId, projectId: payment.projectId,
     authority: account, target: payment.gateway, value: 0n, gas: review.gas, relayr: false,
     abi: routerGatewayAbi, functionName, args, contractName: 'JBRouterTerminalGateway',
     data: encodeFunctionData({ abi: routerGatewayAbi, functionName, args }),
@@ -144,7 +144,8 @@ export async function reverifyPendingPayment(call: ProjectBatchCall): Promise<vo
   if (!fresh) throw new Error('This payment has already resolved. Refresh the pending payments.')
   const expected = pendingPaymentCall(fresh, call.authority)
   if (expected.data !== call.data || expected.target.toLowerCase() !== call.target.toLowerCase() || expected.chainId !== call.chainId ||
-    expected.projectId !== call.projectId || expected.id !== call.id || call.value !== 0n ||
+    // Saved attempts from before destination-scoped inventories used source project activity metadata.
+    (expected.projectId !== call.projectId && reviewed.payment.sourceProjectId !== call.projectId) || expected.id !== call.id || call.value !== 0n ||
     fresh.failure.errorHash !== reviewed.failure.errorHash || fresh.failure.count !== reviewed.failure.count ||
     fresh.failure.lastFailureAt !== reviewed.failure.lastFailureAt || fresh.failure.highestGasLimit !== reviewed.failure.highestGasLimit) {
     throw new Error('The pending payment changed since review. Refresh before retrying.')
