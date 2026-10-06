@@ -41,7 +41,7 @@ import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
-import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@bananapus/nana-sdk-core/review/relayr'
 import { getRevnetOperator } from '@/lib/bendystraw'
 import {
@@ -455,12 +455,8 @@ export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: Spl
           const alias = readSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))
           if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
         }
-        const saved = loadRelayrPendingSession(journal.scope)
-        if (!saved || relayrSessionAwaitsPayment(saved)) {
-          await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
-        } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => setStatus(progress.phase === 'executing'
-          ? `Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`
-          : 'Checking the saved payment and destination transactions…') })
+        // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
+        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
         clearSplitJournal(journal)
       })
       onComplete()

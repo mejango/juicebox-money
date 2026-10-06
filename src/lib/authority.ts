@@ -567,9 +567,9 @@ export async function runAuthorityCalls({
       onProgress: reportRelayrProgress,
       paymentChainId,
       preferredPaymentChainId: startChainId,
-      reverify: relayrSessionAwaitsPayment(pending)
-        ? () => reverifyRelayrGroup(reviewed.calls)
-        : undefined,
+      // A paid bundle is proven first; its calls are rechecked only once every
+      // request expired unused, before they are signed again (ruling R114).
+      reverify: () => reverifyRelayrGroup(reviewed.calls),
     })
     relayrResults.push({
       bundleUuid: recovered.quote.bundle_uuid,

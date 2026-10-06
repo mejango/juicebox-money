@@ -576,10 +576,12 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
-  it('recovers a paid bundle after remount without fetching or pinning a replacement profile', async () => {
+  it('recovers a paid bundle after remount through its original calls, without fetching or pinning a replacement profile', async () => {
     let scope = ''
+    let original: { chainId: number; target: string; data: string }[] = []
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
       scope = saveSession(calls, 'confirmed')
+      original = calls.map(({ chainId, target, data }) => ({ chainId, target, data }))
       throw new Error('Destination confirmation unavailable')
     })
     const first = await renderEditor([...ROWS, PEER])
@@ -605,10 +607,14 @@ describe('metadata editor per-chain review and recovery', () => {
     const renderer = await renderEditor([{ ...PEER, uri: 'ipfs://QmAlreadyExecuted' }], onDone)
     expect(renderedText(renderer.root)).toContain('Confirm project metadata')
     const resume = buttonWith(renderer, 'Retry') ?? buttonWith(renderer, 'Confirm & save')
+    mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
     await act(async () => resume.props.onClick())
 
-    expect(mocks.resumeRelayrSession).toHaveBeenCalledWith(expect.objectContaining({ scope, account: ALICE }))
-    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // The router resumes a paid bundle before any live read; its action can sign the
+    // calls again once every request expired unused (amended ruling R114).
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(submittedCalls().map(({ chainId, target, data }) => ({ chainId, target, data }))).toEqual(original)
+    expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
     expect(mocks.fetchProjectMetadataJson).not.toHaveBeenCalled()
     expect(mocks.pinJson).not.toHaveBeenCalled()
     expect(mocks.clientFor).not.toHaveBeenCalled()

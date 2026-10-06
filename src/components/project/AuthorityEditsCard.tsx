@@ -47,7 +47,7 @@ import {
   preservedMetadataKeys,
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
-import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope, withRelayrScopeLock } from '@/lib/relayr'
 import { RelayrDiscard, useRelayrDiscard } from '@/components/RelayrDiscard'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -863,18 +863,11 @@ export function MetadataEditor({
       await withMetadataReviewLocks(frozen.destinations, async () => {
         const account = getAccount(wagmiConfig).address
         if (!account || !isAddressEqual(account, frozen.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
-        const pending = loadRelayrPendingSession(frozen.scope)
-        if (pending && !relayrSessionAwaitsPayment(pending)) {
-          await resumeRelayrSession({ scope: frozen.scope, account, onProgress: progress => {
-            if (progress.phase === 'executing') setStatus(`Relayr reports ${progress.done}/${progress.total} complete; checking the original receipts…`)
-          } })
-          setStatus(`Project metadata updated on ${frozen.destinations.length} chains.`)
-        } else {
-          saveMetadataReview(frozen)
-          const calls = metadataReviewCalls(frozen)
-          const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
-          setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
-        }
+        // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
+        saveMetadataReview(frozen)
+        const calls = metadataReviewCalls(frozen)
+        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
+        setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         removeMetadataReview(frozen)
         setDone(true)
         onDone()

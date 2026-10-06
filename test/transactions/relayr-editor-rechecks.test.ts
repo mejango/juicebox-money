@@ -134,6 +134,27 @@ function saveUnpaidSession(calls: AuthorityCall[]): string {
   return scope
 }
 
+/** The bundle's quoted transaction IDs, one per chain. */
+const UUIDS = ['fedcba98-7654-3210-fedc-ba9876543210', 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']
+
+/**
+ * The session saveUnpaidSession leaves, after its quote was paid: Relayr ran
+ * the bundle and reports each call failed, naming no transaction.
+ */
+function savePaidSession(calls: AuthorityCall[]): string {
+  const scope = saveUnpaidSession(calls)
+  const saved = loadRelayrPendingSession(scope)!
+  const entries = saved.publishedEntries!
+  saveRelayrPendingSession(scope, { ...saved, paymentStatus: 'confirmed', paymentChainId: 1, paymentHash: `0x${'ab'.repeat(32)}`,
+    expectedTransactions: entries.map((entry, index) => ({ txUuid: UUIDS[index], chain: entry.chain, entry })) })
+  vi.mocked(fetch).mockImplementation(async (_input, init) => {
+    if (init?.method === 'POST') throw new Error('Relayr quote unavailable')
+    return new Response(JSON.stringify({ bundle_uuid: BUNDLE_UUID, payment_received: true, transactions: entries.map((entry, index) => ({
+      tx_uuid: UUIDS[index], request: entry, status: { state: 'failed' } })) }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  })
+  return scope
+}
+
 beforeEach(() => {
   for (const scope of listRelayrPendingScopes()) clearRelayrPendingSession(scope)
   storage = new Map()
@@ -193,6 +214,9 @@ describe('the split editor\'s recheck', () => {
     mocks.current.mockImplementation(async (_client, args) => ({ ruleset: { id: args.chainId === 1 ? 111 : 999 }, metadata: {} }))
   })
 
+  const splitReads = () => CHAINS.flatMap(chainId => (mocks.clients.get(chainId) as ReturnType<typeof chainClient>)
+    .readContract.mock.calls.filter(([request]) => request.functionName === 'splitsOf'))
+
   it('offers Discard with the changed line once every request expired unused and Base\'s recipients changed', async () => {
     const calls = reviewedSplitCalls(review())
     const scope = saveUnpaidSession(calls)
@@ -208,8 +232,6 @@ describe('the split editor\'s recheck', () => {
     const scope = saveUnpaidSession(calls)
     nonces = { 1: 5n, 8453: 5n }
     current = { 1: [split(HOOK)], 8453: [split(HOOK)] }
-    const splitReads = () => CHAINS.flatMap(chainId => (mocks.clients.get(chainId) as ReturnType<typeof chainClient>)
-      .readContract.mock.calls.filter(([request]) => request.functionName === 'splitsOf'))
     await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
     expect(splitReads()).toEqual([])
     expect(loadRelayrPendingSession(scope)).toMatchObject({ discardable: 'ran' })
@@ -221,6 +243,30 @@ describe('the split editor\'s recheck', () => {
     await expect(runAuthorityCalls({ calls })).rejects.toThrow('Relayr quote unavailable')
     expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
       .toEqual([[1, 4n], [8453, 4n]])
+  })
+
+  it('signs a paid update whose calls failed again at the saved nonces once every request expired unused and the recipients still match', async () => {
+    const calls = reviewedSplitCalls(review())
+    savePaidSession(calls)
+    // Its requests expired unused, whatever Relayr reports, so the recheck runs before new signatures (amended ruling R114).
+    await expect(runAuthorityCalls({ calls })).rejects.toThrow('Relayr quote unavailable')
+    expect(splitReads().length).toBeGreaterThan(0)
+    expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
+      .toEqual([[1, 4n], [8453, 4n]])
+  })
+
+  it('keeps a paid update pending, without rechecking the recipients, while its requests can still run', async () => {
+    const calls = reviewedSplitCalls(review())
+    const scope = savePaidSession(calls)
+    for (const chainId of CHAINS) {
+      (mocks.clients.get(chainId) as ReturnType<typeof chainClient>).getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) =>
+        blockTag === 'finalized' ? { number: 200n, hash: BLOCK_HASH, timestamp: BigInt(DEADLINE - 600) } : { hash: BLOCK_HASH })
+    }
+    await expect(runAuthorityCalls({ calls })).rejects.toThrow(/do not pay again/)
+    expect(splitReads()).toEqual([])
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'confirmed' })
+    expect(loadRelayrPendingSession(scope)?.discardable).toBeUndefined()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })
 })
 

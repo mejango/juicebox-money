@@ -522,18 +522,21 @@ describe('split replacement recovery', () => {
     expect(completed).toHaveBeenCalledOnce()
   })
 
-  it('resumes a paid partial bundle without resubmitting already completed split replacements', async () => {
+  it('resumes a paid partial bundle through its original calls, which the router proves before any recheck', async () => {
     mocks.loadSession.mockReturnValue({
       paymentStatus: 'confirmed',
       records: [{ chainId: 1, status: 'confirmed' }, { chainId: 8453, status: 'pending' }],
     })
-    const { journal, renderer, completed } = await mountSaved()
+    const { renderer, completed } = await mountSaved()
     mocks.current.mockRejectedValue(new Error('Current ruleset already changed'))
+    // The router proves a paid bundle before any recheck.
+    mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
-    expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({
-      scope: journal.scope, account: ACCOUNT,
-    }))
-    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // Its action can sign the calls again once every request expired unused (amended ruling R114).
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].calls.map((call: { data: string }) => call.data))
+      .toEqual(reviewedSplitCalls(review).map(call => call.data))
+    expect(mocks.resume).not.toHaveBeenCalled()
     expect(mocks.current).not.toHaveBeenCalled()
     expect(completed).toHaveBeenCalledOnce()
     expect(storage.size).toBe(0)
@@ -550,13 +553,16 @@ describe('split replacement recovery', () => {
     const restored = readSplitJournal(journalKey(84532, 303))!
     mocks.identity.mockResolvedValue({ kind: 'safe', owners: [ACCOUNT] })
     mocks.current.mockRejectedValue(new Error('Live reads are unavailable'))
+    mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
     const completed = vi.fn()
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(<SplitRecovery journal={restored} onComplete={completed} onDiscard={vi.fn()} />) })
     renderers.push(renderer)
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
-    expect(mocks.resume).toHaveBeenCalledWith(expect.objectContaining({ scope: journal.scope, account: ACCOUNT }))
-    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].calls.map((call: { data: string }) => call.data))
+      .toEqual(reviewedSplitCalls(journal.review).map(call => call.data))
+    expect(mocks.resume).not.toHaveBeenCalled()
     expect(mocks.current).not.toHaveBeenCalled()
     expect(completed).toHaveBeenCalledOnce()
   })

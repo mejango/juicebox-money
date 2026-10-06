@@ -30,6 +30,7 @@ import {
   RELAYR_API,
   RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_GAS,
+  RelayrDestinationRevertedError,
   RelayrPaymentRevertedError,
   RelayrProofError,
   TRUSTED_FORWARDER_ABI,
@@ -161,8 +162,6 @@ export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
     ? `This action's earlier signature can still run until ${formatDateTime(until)}. Try again after that.`
     : 'This action\'s earlier signature may still run. Try again in a few minutes.'
 }
-
-const RELAYR_UNCONFIRMED = 'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.'
 
 export type RelayrPendingSession = {
   bundleUuid: string
@@ -537,7 +536,7 @@ export function saveRelayrPendingSession(
     ...(payments ? { payments } : {}),
     ...(paymentOptions ? { paymentOptions } : {}),
     ...(session.released === true && session.paymentStatus === 'reverted' ? { released: true as const } : {}),
-    ...(relayrDiscardReason(session.discardable) && relayrSessionAwaitsPayment(session) ? { discardable: session.discardable } : {}),
+    ...(relayrDiscardReason(session.discardable) ? { discardable: session.discardable } : {}),
   }
   relayrClearedMemory.delete(scope)
   relayrPendingMemory.set(scope, safeSession)
@@ -651,8 +650,7 @@ export function loadRelayrPendingSession(
       payments: Array.isArray(value.payments) ? value.payments : undefined,
       paymentOptions: Array.isArray(value.paymentOptions) ? value.paymentOptions : undefined,
       ...(value.released === true && value.paymentStatus === 'reverted' ? { released: true as const } : {}),
-      ...(relayrDiscardReason(value.discardable) && (value.paymentStatus === 'unpaid' || value.paymentStatus === 'reverted')
-        ? { discardable: value.discardable } : {}),
+      ...(relayrDiscardReason(value.discardable) ? { discardable: value.discardable } : {}),
     }
     // Reading a tolerant UI view must not erase malformed durable evidence before
     // the authorization path can inspect the original record strictly.
@@ -710,7 +708,7 @@ export function readRelayrPendingSessionsForAuthorization(): { scope: string; se
           (value.paymentHash !== null && !/^0x[0-9a-fA-F]{64}$/u.test(value.paymentHash)) ||
           (value.paymentChainId !== null && (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId < 1)) ||
           (value.released !== undefined && (value.released !== true || value.paymentStatus !== 'reverted')) ||
-          (value.discardable !== undefined && (!relayrDiscardReason(value.discardable) || !relayrSessionAwaitsPayment(value)))) throw new Error()
+          (value.discardable !== undefined && !relayrDiscardReason(value.discardable))) throw new Error()
       for (const entries of [value.publishedEntries, value.expectedEntries]) {
         if (entries !== undefined && (!Array.isArray(entries) || entries.length !== value.expectedCount ||
             !entries.every(entry => relayrEntrySnapshot(entry) && value.chainIds.includes(entry.chain)))) throw new Error()
@@ -757,7 +755,7 @@ export async function fetchRelayrBundlesByAccount(
 export async function discardRelayrSession(scope: string): Promise<void> {
   return withRelayrScopeLock(scope, async () => {
     const saved = loadRelayrPendingSession(scope)
-    if (!saved?.discardable || !relayrSessionAwaitsPayment(saved)) {
+    if (!saved?.discardable) {
       throw new Error('Only an action whose earlier signatures can no longer run can be discarded.')
     }
     clearRelayrPendingSession(scope)
@@ -1406,13 +1404,15 @@ function relayrBundleUnrun(read: RelayrBundleRead): boolean {
 
 /**
  * One uncached, echo-checked read of the bundle must report a released quote
- * unpaid with every call pending and no destination hash before an authority
- * action signs its calls again (ruling R104) or a payer deployment quotes its
- * raw calls again.
+ * unpaid with every call pending and no destination hash before a payer
+ * deployment quotes its raw calls again (ruling R104). Its raw calls carry no
+ * forwarder nonce or deadline, so no chain read can show they cannot run.
  */
 export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void> {
   const bundle = await readRelayrBundleIfNamed(bundleUuid)
-  if (!bundle || !relayrBundleUnrun(bundle)) throw new Error(RELAYR_UNCONFIRMED)
+  if (!bundle || !relayrBundleUnrun(bundle)) {
+    throw new Error('Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+  }
 }
 
 /**
@@ -1438,15 +1438,60 @@ function discardableSession(scope: string, saved: RelayrPendingSession, reason: 
 }
 
 /**
- * Ruling R114 where the action and its recheck are not at hand, as in the
- * account view: a session whose requests are all dead, one of which may have
- * run, ends with Discard. One whose requests expired unused waits for its
- * action, which rechecks the project before signing again.
+ * Every request a session published expired unused at a canonical finalized
+ * block (ruling R114): none ran and none can, so only its action, which
+ * rechecks the project first, signs them again.
  */
-async function endSpentSession(scope: string, saved: RelayrPendingSession): Promise<void> {
-  if (!saved.account || !isAddress(saved.account)) return
-  const verdict = await savedRequestsVerdict(saved, saved.account)
-  if (verdict && !verdict.live && verdict.mayHaveRun) throw discardableSession(scope, saved, 'ran')
+class RelayrRequestsExpiredError extends Error {
+  readonly name = 'RelayrRequestsExpiredError'
+
+  constructor() {
+    super('This action\'s earlier signatures expired without running. Reopen the original action to sign it again.')
+  }
+}
+
+/**
+ * Ruling R114 once every request a saved session published is dead, whatever
+ * Relayr reports of its bundle, paid, reverted or unreadable: Discard after
+ * the "may already have run" line when a nonce moved or the session saved
+ * none. Otherwise none ran and none can, and the action's recheck decides:
+ * Discard after the "changed" line when it refuses, and otherwise the nonces
+ * its calls are signed again with (ruling R104). Without a recheck, as in the
+ * account view, it waits for its action. Known limit: a reorg that drops an
+ * earlier forwarded transaction can leave a finalized nonce below a saved
+ * one, and the session holds until the nonce catches up.
+ */
+async function deadSessionNonces(
+  scope: string,
+  saved: RelayrPendingSession,
+  verdict: Extract<RelayrRequestsVerdict, { live: false }>,
+  recheck?: () => Promise<void>,
+): Promise<string[]> {
+  if (verdict.mayHaveRun) throw discardableSession(scope, saved, 'ran')
+  if (!verdict.unused || !saved.publishedNonces) throw new Error(relayrHeldMessage(0))
+  if (!recheck) throw new RelayrRequestsExpiredError()
+  try {
+    await recheck()
+  } catch {
+    throw discardableSession(scope, saved, 'changed')
+  }
+  return saved.publishedNonces
+}
+
+/**
+ * Ruling R114 for a saved session whose calls are not proven to have run,
+ * which `error` says: while one of its requests can still run it holds,
+ * saying until when once a destination reverted, since a forwarder execute
+ * that reverts leaves its nonce unused. Once every request is dead,
+ * deadSessionNonces ends it without a recheck, which only its action runs.
+ */
+async function holdUnprovenSession(scope: string, saved: RelayrPendingSession, error: unknown): Promise<never> {
+  const verdict = saved.account && isAddress(saved.account) ? await savedRequestsVerdict(saved, saved.account) : null
+  if (verdict?.live === false) await deadSessionNonces(scope, saved, verdict)
+  if (verdict?.live && error instanceof RelayrDestinationRevertedError) {
+    throw new Error(relayrHeldMessage(verdict.until), { cause: error })
+  }
+  throw error
 }
 
 /**
@@ -1644,6 +1689,9 @@ async function verifySavedRelayrDestinations(
 /**
  * Resume a persisted payment attempt using only its original quote and exact
  * receipts. `reverted` is a read of a reverted session's bundle already made.
+ * Calls it cannot prove are held or ended by holdUnprovenSession (ruling
+ * R114), which throws RelayrRequestsExpiredError once every request expired
+ * unused, for the action to sign them again.
  */
 async function resumeSavedRelayrSession(
   pendingScope: string,
@@ -1668,8 +1716,8 @@ async function resumeSavedRelayrSession(
   }
   reportProgress(saved.records)
   if (saved.paymentStatus === 'unpaid') {
-    await endSpentSession(pendingScope, saved)
-    throw new Error('The original signatures are saved and no payment was attempted. Reopen the original action to continue with those exact authorizations.')
+    return holdUnprovenSession(pendingScope, saved, new Error(
+      'The original signatures are saved and no payment was attempted. Reopen the original action to continue with those exact authorizations.'))
   }
   const expectedTransactions = saved.expectedTransactions
   if (!expectedTransactions) {
@@ -1692,26 +1740,30 @@ async function resumeSavedRelayrSession(
   if (!verified && saved.paymentStatus === 'reverted') {
     // A quote whose payment reverted ran only if another payment funded it,
     // which one read of its bundle shows. Its original action pays it again.
-    const read = reverted ?? await revertedRelayrQuote({ bundleUuid: saved.bundleUuid, payments: saved.payments ?? [],
-      options: saved.paymentOptions ?? [], destinationChainIds: saved.chainIds, account: saved.account ?? '' })
+    // Relayr's answer matters only while a request can still run (ruling R114).
+    let read: Awaited<ReturnType<typeof revertedRelayrQuote>>
+    try {
+      read = reverted ?? await revertedRelayrQuote({ bundleUuid: saved.bundleUuid, payments: saved.payments ?? [],
+        options: saved.paymentOptions ?? [], destinationChainIds: saved.chainIds, account: saved.account ?? '' })
+    } catch (error) {
+      return holdUnprovenSession(pendingScope, saved, error)
+    }
     if (read.records) {
       records = read.records
-      const current = saveRelayrPendingSession(pendingScope, { ...saved, records, ...(read.state === 'released' ? { released: true } : {}) })
+      saved = saveRelayrPendingSession(pendingScope, { ...saved, records, ...(read.state === 'released' ? { released: true } : {}) })
       reportProgress(records)
+    }
+    if (read.state !== 'funded') {
       // Relayr reports nothing funded it; its own requests may still have run outside Relayr.
-      if (read.state !== 'funded') await endSpentSession(pendingScope, current)
-    }
-    if (read.state === 'released') {
-      throw new Error('This Relayr quote expired after its payment reverted, and nothing ran. Review the action again for a new quote.')
-    }
-    if (read.state === 'payable') {
-      throw new Error('This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
+      return holdUnprovenSession(pendingScope, saved, new Error(read.state === 'released'
+        ? 'This Relayr quote expired after its payment reverted, and nothing ran. Review the action again for a new quote.'
+        : 'This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.'))
     }
     try {
       await verifySavedRelayrDestinations(saved, records)
     } catch (error) {
-      if (error instanceof RelayrProofError) throw error
-      throw new Error('Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.')
+      return holdUnprovenSession(pendingScope, saved, error instanceof RelayrProofError ? error
+        : new Error('Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.'))
     }
     verified = true
   }
@@ -1727,7 +1779,11 @@ async function resumeSavedRelayrSession(
       // A provider failure or missing bundle never proves that signed calls cannot execute.
       // Receipts can nevertheless prove completion even if the provider's label is wrong.
     }
-    await verifySavedRelayrDestinations(saved, records)
+    try {
+      await verifySavedRelayrDestinations(saved, records)
+    } catch (error) {
+      return holdUnprovenSession(pendingScope, { ...saved, records }, error)
+    }
   }
   await onComplete?.(records)
   clearRelayrPendingSession(pendingScope)
@@ -1820,18 +1876,27 @@ async function executeRelayrCalls({
   if (!calls.length) throw new Error('Choose at least one chain.')
 
   let saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
-  /** Relayr cannot be read while another payment could still fund the reverted quote: that counts as live (ruling R114). */
-  let fundable = false
+  /** Ruling R114: the requests a saved session published, each at a canonical finalized block on its chain. */
+  let verdict: RelayrRequestsVerdict | null = null
   if (saved && pendingScope) {
     requireSessionAccount(saved, account)
-    if (!relayrSessionAwaitsPayment(saved)) return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
-    if (saved.paymentStatus === 'reverted' && !saved.released) {
-      // Another payment may have funded the quote: what Relayr ran is proven, never paid again.
+    if (!relayrSessionAwaitsPayment(saved)) {
+      try {
+        return await resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
+      } catch (error) {
+        // Every request it published expired unused, whatever Relayr reports: signed again below.
+        if (!(error instanceof RelayrRequestsExpiredError)) throw error
+      }
+    }
+    // Classified before the action's own recheck, which a request that ran would make refuse.
+    verdict = await savedRequestsVerdict(saved, account)
+    if (verdict?.live !== false && saved.paymentStatus === 'reverted' && !saved.released) {
+      // While a request can still run, another payment may have funded the
+      // quote: what Relayr ran is proven, never paid again.
       const reverted = await revertedRelayrQuote({ bundleUuid: saved.bundleUuid, payments: saved.payments ?? [],
         options: saved.paymentOptions ?? [], destinationChainIds: saved.chainIds, account })
       if (reverted.state === 'funded') return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete, reverted)
       if (reverted.state === 'released') saved = saveRelayrPendingSession(pendingScope, { ...saved, released: true })
-      fundable = reverted.state === 'payable' && !reverted.records
     }
   }
 
@@ -1868,17 +1933,11 @@ async function executeRelayrCalls({
       }
       requests.push(request)
     }
-    // Ruling R114: the requests it published are classified, each at a
-    // canonical finalized block on its chain, before the action's own recheck,
-    // which a request that ran would make refuse.
-    const verdict = await savedRequestsVerdict(saved, account)
     if (!verdict) throw new Error('The original published Relayr calls changed. Keep the original action pending.')
-    if (verdict.live || fundable) {
-      // An old request can still run, or Relayr cannot say another payment did
-      // not fund the quote: no new signature and no Discard. Its own requests
-      // may be quoted or paid again while every one still verifies, since
-      // their nonces let at most one bundle run.
-      if (!verdict.live) throw new Error(RELAYR_UNCONFIRMED)
+    if (verdict.live) {
+      // An old request can still run: no new signature and no Discard. Its
+      // own requests may be quoted or paid again while every one still
+      // verifies, since their nonces let at most one bundle run.
       if (verdict.mayHaveRun) throw new Error(relayrHeldMessage(verdict.until))
       try {
         await reverify?.()
@@ -1888,24 +1947,10 @@ async function executeRelayrCalls({
       }
       entries.push(...published)
       nonces = saved.publishedNonces
-    } else if (verdict.mayHaveRun) {
-      // A nonce moved, so another action used it or anyone holding the signed
-      // request ran it outside Relayr, and the app cannot tell which.
-      throw discardableSession(pendingScope, saved, 'ran')
     } else {
-      // Every request expired unused, so none ran and none can.
-      try {
-        await reverify?.()
-      } catch {
-        throw discardableSession(pendingScope, saved, 'changed')
-      }
-      // Ruling R104: signed again with the nonces they were signed with, after
-      // one uncached read reports the old bundle unpaid with every call
-      // pending. A publication whose quote never arrived has no bundle to read.
-      const savedNonces = saved.publishedNonces
-      if (!verdict.unused || !savedNonces) throw new Error(relayrHeldMessage(0))
-      if (RELAYR_UUID_RE.test(saved.bundleUuid)) await requireRelayrBundleUnrun(saved.bundleUuid)
-      resigning = savedNonces.map((nonce, index) => ({ nonce, gas: requests[index].gas }))
+      // Every request is dead, so none can run again whatever Relayr reports.
+      const again = await deadSessionNonces(pendingScope, saved, verdict, async () => { await reverify?.() })
+      resigning = again.map((nonce, index) => ({ nonce, gas: requests[index].gas }))
     }
   }
   if (entries.length < calls.length) {
@@ -1938,7 +1983,8 @@ async function executeRelayrCalls({
     nonces?.push(signed.nonce.toString())
     await reverify?.()
   }
-  const repaying = saved?.paymentStatus === 'reverted' && !saved.released ? saved : null
+  // Requests signed again need a new quote; the old one can no longer run.
+  const repaying = !resigning && saved?.paymentStatus === 'reverted' && !saved.released ? saved : null
   let session: RelayrPendingSession
   let quote: RelayrQuote
   let payment: RelayrPayment
@@ -2052,7 +2098,12 @@ async function executeRelayrCalls({
   } catch (error) {
     if (error instanceof RelayrExecutionError && error.records.length) records = error.records
   }
-  await verifySavedRelayrDestinations(session, records)
+  try {
+    await verifySavedRelayrDestinations(session, records)
+  } catch (error) {
+    if (!pendingScope) throw error
+    return holdUnprovenSession(pendingScope, session, error)
+  }
   await onComplete?.(records)
   if (pendingScope) clearRelayrPendingSession(pendingScope)
   return { quote, paymentHash, records }
