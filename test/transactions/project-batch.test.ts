@@ -499,6 +499,58 @@ describe('durable project batches', () => {
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
+  /** A Safe proposal the queue holds, saved by a first run at block 10. */
+  async function queuedProposal() {
+    const safeTx = proposal(3)
+    mocks.authority.mockImplementation(async ({ calls }) => {
+      await calls[0].onSafePrepared(safeTx)
+      return { directResults: [], safeResults: [{ status: 'queued', safeTxHash: safeTx.safeTxHash }], relayrGroups: 0, relayrResults: [] }
+    })
+    expect((await run([call()])).status).toBe('pending')
+    return safeTx
+  }
+
+  it('records a scan only to 500 blocks behind the latest, so the next look reads the newest blocks again', async () => {
+    await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(1_000n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(false)
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ fromBlock: 10n, scannedTo: 500n })
+    mocks.client.getLogs.mockClear()
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(mocks.client.getLogs.mock.calls[0][0]).toMatchObject({ fromBlock: 501n, toBlock: 1_000n })
+  })
+
+  it("keeps a saved proposal's scan when the queue offers the same proposal again", async () => {
+    const safeTx = await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(2_010n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(false)
+    expect((await run(undefined, { reconcileObsoleteSafe })).status).toBe('pending')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({
+      hash: safeTx.safeTxHash,
+      fromBlock: 10n,
+      scannedTo: 1_510n,
+    })
+    mocks.client.getLogs.mockClear()
+    await run(undefined, { reconcileObsoleteSafe })
+    expect(mocks.client.getLogs.mock.calls[0][0]).toMatchObject({ fromBlock: 1_511n })
+  })
+
+  it('stops a resume whose scan reached its bound before the obsolete and queue checks', async () => {
+    await queuedProposal()
+    mocks.client.getBlockNumber.mockResolvedValue(60_100n)
+    const reconcileObsoleteSafe = vi.fn().mockResolvedValue(true)
+    const onProgress = vi.fn()
+    expect((await run(undefined, { reconcileObsoleteSafe, onProgress })).status).toBe('pending')
+    expect(reconcileObsoleteSafe).not.toHaveBeenCalled()
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({
+      message: "This Safe proposal's history is still being read. Check this batch again to continue.",
+    }))
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ scannedTo: 50_009n })
+  })
+
   it('recovers an execution Safe{Wallet} returned at once only when it ran the saved call', async () => {
     // Safe{Wallet} executed at once and returned the execution's own hash; the
     // Safe's ExecutionSuccess names its safeTxHash, which the app never saw.

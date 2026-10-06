@@ -209,15 +209,29 @@ const LOG_WINDOW_BLOCKS = 500n
  * stops, records how far it read, and the next resume continues from there.
  */
 const LOG_WINDOWS_PER_LOOK = 100
+/**
+ * A scan records blocks as read only this far behind the latest one: a reorg
+ * there could still add the execution, so every look reads them again. One
+ * window (one more request a look) is deeper than Ethereum's 64-block finality
+ * and minutes of blocks on the L2s.
+ */
+const SCAN_SETTLED_DEPTH = LOG_WINDOW_BLOCKS
 
+/**
+ * The Safe's execution of `submission` in its logs since the submission,
+ * null when the scan read up to the latest block and found none, or
+ * 'unfinished' when it stopped at its bound first, so its absence proves
+ * nothing yet.
+ */
 async function safeExecution(
   call: ProjectBatchCall,
   submission: CallSubmission,
   recordScan: (scannedTo: bigint) => void,
-): Promise<Hex | null> {
+): Promise<Hex | null | 'unfinished'> {
   if (!submission.hash || submission.fromBlock === undefined) return null
   const client = clientFor(call.chainId)
   const latest = await client.getBlockNumber()
+  const settled = latest - SCAN_SETTLED_DEPTH
   // Event provenance is the Safe contract itself; a service status cannot complete a call.
   let start = submission.scannedTo !== undefined ? submission.scannedTo + 1n : submission.fromBlock
   for (let window = 0; window < LOG_WINDOWS_PER_LOOK && start <= latest; window += 1) {
@@ -226,10 +240,11 @@ async function safeExecution(
     // Its ExecutionFailure is a result too: a failed call is settled, never left pending.
     const log = logs.find(log => isSafeExecutionLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
-    recordScan(end)
+    const read = end < settled ? end : settled
+    if (read >= start) recordScan(read)
     start = end + 1n
   }
-  return null
+  return start <= latest ? 'unfinished' : null
 }
 
 export async function runProjectBatch({
@@ -394,9 +409,17 @@ export async function runProjectBatch({
             persist(journal)
           }
           if (saved.kind === 'direct') execution = saved.hash
-          else if (saved.kind === 'safe') execution = await safeExecution(call, saved, recordScan)
-          else {
-            execution = await safeExecution(call, saved, recordScan)
+          else if (saved.kind === 'safe') {
+            const scanned = await safeExecution(call, saved, recordScan)
+            // A scan stopped at its bound proves no absence: neither obsolete nor still queued yet.
+            if (scanned === 'unfinished') {
+              report("This Safe proposal's history is still being read. Check this batch again to continue.", round)
+              return journal
+            }
+            execution = scanned
+          } else {
+            const scanned = await safeExecution(call, saved, recordScan)
+            execution = scanned === 'unfinished' ? null : scanned
             try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
             catch (error) {
               // Safe's service says it ran and failed: its own receipt decides.
@@ -444,7 +467,8 @@ export async function runProjectBatch({
             if (saved?.hash && hash.toLowerCase() !== saved.hash.toLowerCase()) {
               throw new Error('The Safe nonce changed. Keep checking the exact original proposal before creating another one.')
             }
-            journal.submissions[call.id] = { kind: 'safe', hash, safeTx: tx,
+            // The same proposal again keeps what its submission already holds, its scan included.
+            journal.submissions[call.id] = { ...journal.submissions[call.id], kind: 'safe', hash, safeTx: tx,
               fromBlock }
             persist(journal)
           },
