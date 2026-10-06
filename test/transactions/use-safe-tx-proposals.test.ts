@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   switchChain: vi.fn(),
   waitForSafeExecutionHash: vi.fn(),
   findPendingSafeAppProposal: vi.fn(),
+  reportedSafeExecution: vi.fn(),
+  watchSafeProposal: vi.fn(),
+  executedAtOnce: vi.fn(),
   writeContract: vi.fn(),
 }))
 
@@ -59,6 +62,9 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => true,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
   findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
+  reportedSafeExecution: mocks.reportedSafeExecution,
+  watchSafeProposal: mocks.watchSafeProposal,
+  executedAtOnce: mocks.executedAtOnce,
 }))
 
 /** The connected Safe app's Safe, which reviewed every request below. */
@@ -167,6 +173,16 @@ beforeEach(async () => {
   mocks.requestReview.mockReset().mockResolvedValue(true)
   mocks.switchChain.mockResolvedValue(undefined)
   mocks.findPendingSafeAppProposal.mockReset().mockResolvedValue(null)
+  mocks.reportedSafeExecution.mockReset().mockResolvedValue(null)
+  // The watch ends nothing unless a test says so.
+  mocks.watchSafeProposal.mockReset().mockImplementation(() => new Promise(() => {}))
+  // One look at the chain, where the app's own probe looks a few times.
+  mocks.executedAtOnce.mockReset().mockImplementation((client: typeof mocks.publicClient, hash: Hex) =>
+    client.getTransaction({ hash }).then(
+      () => true,
+      () => false,
+    ),
+  )
   mocks.waitForSafeExecutionHash.mockReset().mockResolvedValue(EXECUTION)
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
@@ -205,7 +221,11 @@ describe('a Safe proposal', () => {
       safeProposalHash: PROPOSAL,
       safeNonceGuidance: 'Safe nonce guidance',
     })
-    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, PROPOSAL, { client: mocks.publicClient })
+    expect(mocks.executedAtOnce).toHaveBeenCalledWith(mocks.publicClient, PROPOSAL)
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, PROPOSAL, {
+      client: mocks.publicClient,
+      signal: expect.any(AbortSignal),
+    })
 
     execute()
     await settle()
@@ -306,7 +326,12 @@ describe('a Safe proposal', () => {
     expect(mocks.requestReview).not.toHaveBeenCalled()
     expect(mocks.writeContract).not.toHaveBeenCalled()
     expect(flow.tx).toMatchObject({ phase: 'success' })
-    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, hash, { client: mocks.publicClient })
+    // A proposal from the queue is no reply: the chain is not probed for it.
+    expect(mocks.executedAtOnce).not.toHaveBeenCalled()
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, hash, {
+      client: mocks.publicClient,
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it("asks no queue on a chain without Safe's service", async () => {
@@ -385,7 +410,30 @@ describe('a Safe proposal', () => {
     })
   })
 
-  it("fails a proposal Safe's service reports executed and failed", async () => {
+  it.each([
+    ['logged its failure', FAILURE, 'error'],
+    ['logged its success', SUCCESS, 'success'],
+  ] as const)(
+    "settles a proposal Safe's service reports failed by the receipt its record names, which %s",
+    async (_, topic, phase) => {
+      const reported = new Error('Safe executed the proposal, but the onchain transaction failed.')
+      mocks.waitForSafeExecutionHash.mockRejectedValue(reported)
+      mocks.reportedSafeExecution.mockResolvedValue(EXECUTION)
+      mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
+        receiptOf(hash, PROPOSAL, topic),
+      )
+      const flow = await mount()
+      await flow.send()
+      await settle()
+      expect(mocks.reportedSafeExecution).toHaveBeenCalledWith(reported, 10, SAFE, PROPOSAL)
+      expect(flow.tx).toMatchObject({ phase, hash: EXECUTION })
+      if (phase === 'error') {
+        expect(flow.tx.error).toBe(`Safe executed the proposal, but the onchain transaction failed (${EXECUTION}).`)
+      }
+    },
+  )
+
+  it("holds a proposal Safe's service reports failed without naming its execution, until Dismiss", async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(
       new Error('Safe executed the proposal, but the onchain transaction failed.'),
     )
@@ -393,10 +441,15 @@ describe('a Safe proposal', () => {
     await flow.send()
     await settle()
     expect(flow.tx).toMatchObject({
-      phase: 'error',
-      busy: false,
-      error: 'Safe executed the proposal, but the onchain transaction failed.',
+      phase: 'submitted',
+      confirmationUncertain: true,
+      notice: `${UNCONFIRMED} Safe executed the proposal, but the onchain transaction failed.`,
     })
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
   })
 
   it("holds an unproven result through an open handler's reset, and releases it on Dismiss", async () => {
@@ -511,5 +564,59 @@ describe('a call stamped at send time', () => {
     await expect(flow.send(build(NOW + 1_200n))).resolves.toBe(hash)
     expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
     expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+})
+
+describe('a Safe proposal awaiting its signers', () => {
+  const EXPIRED = "This Safe proposal's deadline passed. Review it again."
+  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+
+  it.each([
+    ['its deadline passed before the Safe ran it', 'expired', EXPIRED],
+    ["the Safe's nonce moved past it without running it", 'replaced', REPLACED],
+  ] as const)('ends when %s, and releases its action', async (_, end, line) => {
+    signersDecide()
+    let watchEnds!: (end: string) => void
+    mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    expect(mocks.watchSafeProposal).toHaveBeenCalledWith(mocks.publicClient, 10, SAFE, PROPOSAL, expect.any(AbortSignal))
+    const [, , , , watching] = mocks.watchSafeProposal.mock.lastCall!
+    const [, , { signal: waiting }] = mocks.waitForSafeExecutionHash.mock.lastCall!
+
+    watchEnds(end)
+    await settle()
+    expect(flow.tx).toMatchObject({ phase: 'error', busy: false, error: line, notice: null })
+    // The wait for its execution stops with it.
+    expect(waiting.aborted).toBe(true)
+    expect(watching.aborted).toBe(true)
+
+    await act(async () => flow.tx.reset())
+    await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops being watched once its execution is known', async () => {
+    const execute = signersDecide()
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    const [, , , , watching] = mocks.watchSafeProposal.mock.lastCall!
+    expect(watching.aborted).toBe(false)
+    execute()
+    await settle()
+    expect(flow.tx.phase).toBe('success')
+    expect(watching.aborted).toBe(true)
+  })
+
+  it("is not watched on a chain without Safe's service", async () => {
+    signersDecide()
+    const flow = await mount(11155420)
+    await flow.send({ ...request, chainId: 11155420 })
+    await settle()
+    expect(flow.tx.phase).toBe('submitted')
+    expect(mocks.watchSafeProposal).not.toHaveBeenCalled()
   })
 })
