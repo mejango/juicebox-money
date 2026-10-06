@@ -41,7 +41,8 @@ const budgets = {
     // connection carries the one copy of the SDK's safe-service module, which holds the
     // queue, signature and execution checks jbm uses: 501.3 KiB against 492.6 KiB.
     // Holding a Safe proposal's action whatever its send-time stamp, ending one that can
-    // no longer run, the at-once probe and the receipt hour measure 502.8 KiB.
+    // no longer run, the at-once probe and the receipt hour measure 502.8 KiB; binding an
+    // execution on the transaction already read, 502.9.
     '/create/page': 503 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
@@ -109,7 +110,8 @@ const budgets = {
   // Holding a Safe proposal's action whatever its send-time stamp, the expiry and
   // replaced watch, the at-once probe, the receipt hour and the pay panel's Safe stage
   // line measure 2492.2 KiB; round up to the next KiB. The chain's last word before an
-  // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5.
+  // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5;
+  // binding an execution on the transaction already read, 2492.7.
   allScripts: 2493 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
