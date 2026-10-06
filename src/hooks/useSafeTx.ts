@@ -162,6 +162,8 @@ type ProposalPhase =
   | 'awaiting'
   /** Executed: its receipt is being read. */
   | 'executing'
+  /** Executed, and its receipt still missing: held until it arrives, or an hour after the execution was seen. */
+  | 'confirming'
   | 'success'
   | 'failed'
   /** Over, but this app can't prove it ran: held until the user dismisses it. */
@@ -176,6 +178,7 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   checking: 'pending',
   executing: 'pending',
   awaiting: 'submitted',
+  confirming: 'submitted',
   unproven: 'submitted',
   success: 'success',
   failed: 'error',
@@ -183,8 +186,11 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   replaced: 'error',
 }
 
+const SAFE_RECEIPT_PENDING = 'Executed by your Safe. Its receipt is not available yet.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 const SAFE_PROPOSAL_REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+/** A receipt still missing this long after its execution was first seen is not coming. */
+const RECEIPT_HORIZON_MS = 60 * 60_000
 
 type SafeProposal = {
   chainId: number
@@ -299,12 +305,17 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   }
   updateProposal(key, { phase: 'executing', executionHash })
   const failed = `Safe executed the proposal, but the onchain transaction failed (${executionHash}).`
-  let receipt: TransactionReceipt
-  try {
-    receipt = await waitForTrackedReceipt(client, executionHash)
-  } catch {
-    updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED })
-    return
+  // The execution was first seen now: its receipt has an hour from here.
+  const seenAt = Date.now()
+  let receipt: TransactionReceipt | null = null
+  while (!receipt) {
+    receipt = await waitForTrackedReceipt(client, executionHash).catch(() => null)
+    if (receipt) break
+    if (Date.now() - seenAt >= RECEIPT_HORIZON_MS) {
+      updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED })
+      return
+    }
+    updateProposal(key, { phase: 'confirming' })
   }
   // Only the Safe's own event for this proposal decides it, and an execution
   // returned at once must also have run the reviewed call.
@@ -442,9 +453,11 @@ export function useSafeTx(chainId: number) {
   const notice =
     proposal?.phase === 'awaiting'
       ? SAFE_PROPOSAL_AWAITING
-      : proposal?.phase === 'unproven'
-        ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
-        : null
+      : proposal?.phase === 'confirming'
+        ? SAFE_RECEIPT_PENDING
+        : proposal?.phase === 'unproven'
+          ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
+          : null
   const effectiveError = proposal
     ? SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message

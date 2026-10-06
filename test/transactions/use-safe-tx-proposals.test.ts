@@ -620,3 +620,60 @@ describe('a Safe proposal awaiting its signers', () => {
     expect(mocks.watchSafeProposal).not.toHaveBeenCalled()
   })
 })
+
+describe('an executed Safe proposal', () => {
+  const PENDING_RECEIPT = 'Executed by your Safe. Its receipt is not available yet.'
+  /** Lets `ms` of time pass for the follow. */
+  const pass = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    // The node answers no receipt: each tracked wait gives up after its polls.
+    mocks.publicClient.waitForTransactionReceipt.mockReset().mockRejectedValue(new Error('timed out'))
+    mocks.publicClient.getTransactionReceipt.mockReset().mockRejectedValue(new Error('receipt not found'))
+  })
+
+  it('is held, shown with its line and never dismissed, while its receipt is missing for an hour, then ends unproven', async () => {
+    const flow = await mount()
+    await flow.send()
+    await pass(0)
+    expect(flow.tx).toMatchObject({ phase: 'pending', hash: EXECUTION })
+
+    // One tracked wait (about three minutes) found no receipt.
+    await pass(4 * 60_000)
+    expect(flow.tx).toMatchObject({
+      phase: 'submitted',
+      settled: true,
+      notice: PENDING_RECEIPT,
+      confirmationUncertain: false,
+      hash: EXECUTION,
+    })
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: PENDING_RECEIPT })
+
+    await pass(50 * 60_000)
+    expect(flow.tx.notice).toBe(PENDING_RECEIPT)
+    await pass(10 * 60_000)
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles once its receipt arrives within the hour', async () => {
+    const flow = await mount()
+    await flow.send()
+    await pass(30 * 60_000)
+    expect(flow.tx.notice).toBe(PENDING_RECEIPT)
+    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
+      receiptOf(hash, PROPOSAL),
+    )
+    await pass(5 * 60_000)
+    expect(flow.tx).toMatchObject({ phase: 'success', hash: EXECUTION, notice: null })
+  })
+})
