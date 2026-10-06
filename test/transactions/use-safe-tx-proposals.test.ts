@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => ({
   findPendingSafeAppProposal: vi.fn(),
   reportedSafeExecution: vi.fn(),
   watchSafeProposal: vi.fn(),
-  executedAtOnce: vi.fn(),
+  atOnceExecution: vi.fn(),
   writeContract: vi.fn(),
 }))
 
@@ -66,7 +66,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
   reportedSafeExecution: mocks.reportedSafeExecution,
   watchSafeProposal: mocks.watchSafeProposal,
-  executedAtOnce: mocks.executedAtOnce,
+  atOnceExecution: mocks.atOnceExecution,
 }))
 
 /** The connected Safe app's Safe, which reviewed every request below. */
@@ -179,10 +179,10 @@ beforeEach(async () => {
   // The watch ends nothing unless a test says so.
   mocks.watchSafeProposal.mockReset().mockImplementation(() => new Promise(() => {}))
   // One look at the chain, where the app's own probe looks a few times.
-  mocks.executedAtOnce.mockReset().mockImplementation((client: typeof mocks.publicClient, hash: Hex) =>
+  mocks.atOnceExecution.mockReset().mockImplementation((client: typeof mocks.publicClient, hash: Hex) =>
     client.getTransaction({ hash }).then(
-      () => true,
-      () => false,
+      (transaction: unknown) => transaction,
+      () => null,
     ),
   )
   mocks.waitForSafeExecutionHash.mockReset().mockResolvedValue(EXECUTION)
@@ -223,7 +223,7 @@ describe('a Safe proposal', () => {
       safeProposalHash: PROPOSAL,
       safeNonceGuidance: 'Safe nonce guidance',
     })
-    expect(mocks.executedAtOnce).toHaveBeenCalledWith(mocks.publicClient, PROPOSAL)
+    expect(mocks.atOnceExecution).toHaveBeenCalledWith(mocks.publicClient, PROPOSAL)
     expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, PROPOSAL, {
       client: mocks.publicClient,
       signal: expect.any(AbortSignal),
@@ -329,7 +329,7 @@ describe('a Safe proposal', () => {
     expect(mocks.writeContract).not.toHaveBeenCalled()
     expect(flow.tx).toMatchObject({ phase: 'success' })
     // A proposal from the queue is no reply: the chain is not probed for it.
-    expect(mocks.executedAtOnce).not.toHaveBeenCalled()
+    expect(mocks.atOnceExecution).not.toHaveBeenCalled()
     expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(10, hash, {
       client: mocks.publicClient,
       signal: expect.any(AbortSignal),
@@ -625,7 +625,7 @@ describe('a Safe proposal awaiting its signers', () => {
 })
 
 describe('an executed Safe proposal', () => {
-  const PENDING_RECEIPT = 'Executed by your Safe. Its receipt is not available yet.'
+  const PENDING_RECEIPT = 'Executed by your Safe. Confirming it onchain.'
   /** Lets `ms` of time pass for the follow. */
   const pass = (ms: number) =>
     act(async () => {
@@ -734,14 +734,15 @@ describe("a Safe proposal's last look at the chain", () => {
 
   it('settles an execution returned at once that the probe missed, before it could end unproven', async () => {
     // Safe{Wallet} executed at once, and the node learned the execution only after the probe.
-    mocks.executedAtOnce.mockResolvedValue(false)
+    mocks.atOnceExecution.mockResolvedValue(null)
     mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
-    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
-      hash,
-      from: BOB,
-      to: SAFE,
-      input: execTransaction(),
-    }))
+    // A replica behind it answers every later read: the execution is bound on the one the look read.
+    let reads = 0
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      reads += 1
+      if (reads > 1) throw new TransactionNotFoundError({ hash })
+      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+    })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
     )
@@ -751,6 +752,7 @@ describe("a Safe proposal's last look at the chain", () => {
     await settle()
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL, confirmationUncertain: false })
     expect(flow.tx.notice).toBeNull()
+    expect(reads).toBe(1)
   })
 
   it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
@@ -790,7 +792,7 @@ describe("a Safe proposal's last look at the chain", () => {
     const flow = await mount()
     await flow.send()
     await pass(57 * 60_000)
-    expect(flow.tx.notice).toBe('Executed by your Safe. Its receipt is not available yet.')
+    expect(flow.tx.notice).toBe('Executed by your Safe. Confirming it onchain.')
     nodeUp = false
     await pass(10 * 60_000)
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false })
@@ -799,23 +801,69 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
   })
 
-  it("binds an execution returned at once to its call only on the chain's answer", async () => {
-    vi.useFakeTimers()
+  it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
+    mocks.atOnceExecution.mockResolvedValue({ hash: PROPOSAL, from: BOB, to: SAFE, input: execTransaction() })
+    // A replica that hasn't imported the receipt's block has no transaction for it.
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      throw new TransactionNotFoundError({ hash })
+    })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
     )
-    let looks = 0
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL })
+  })
+
+  it('asks a node behind the receipt again, held and able to end on Done, when no transaction is in hand', async () => {
+    vi.useFakeTimers()
+    // The SDK's wait found the reply on the chain: it was the execution, read by nobody here.
+    mocks.atOnceExecution.mockResolvedValue(null)
+    mocks.waitForSafeExecutionHash.mockResolvedValue(PROPOSAL)
+    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
+      receiptOf(hash, UNSEEN),
+    )
+    let caughtUp = false
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
-      looks += 1
-      // The probe finds it; the node then can't answer the look that binds it.
-      if (looks === 2) throw new Error('fetch failed')
+      // The receipt is in hand, so a not-found says only that this node is behind.
+      if (!caughtUp) throw new TransactionNotFoundError({ hash })
       return { hash, from: BOB, to: SAFE, input: execTransaction() }
     })
     const flow = await mount()
     await flow.send()
     await pass(0)
-    expect(flow.tx).toMatchObject({ phase: 'pending', confirmationUncertain: false })
+    expect(flow.tx).toMatchObject({
+      phase: 'submitted',
+      settled: true,
+      confirmationUncertain: false,
+      notice: 'Executed by your Safe. Confirming it onchain.',
+    })
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+
+    caughtUp = true
     await pass(60_000)
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL })
+  })
+
+  it('fails a reverted execution returned at once without waiting on its transaction', async () => {
+    mocks.atOnceExecution.mockResolvedValue(null)
+    mocks.waitForSafeExecutionHash.mockResolvedValue(PROPOSAL)
+    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+      ...receiptOf(hash, UNSEEN),
+      status: 'reverted' as const,
+    }))
+    mocks.publicClient.getTransaction.mockImplementation(async () => {
+      throw new Error('fetch failed')
+    })
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    expect(flow.tx).toMatchObject({
+      phase: 'error',
+      error: `Safe executed the proposal, but the onchain transaction failed (${PROPOSAL}).`,
+    })
   })
 })

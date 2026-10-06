@@ -28,8 +28,8 @@ import {
 import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
+  atOnceExecution,
   chainAnswer,
-  executedAtOnce,
   findPendingSafeAppProposal,
   heldCall,
   isSafeConnection,
@@ -163,7 +163,11 @@ type ProposalPhase =
   | 'awaiting'
   /** Executed: its receipt is being read. */
   | 'executing'
-  /** Executed, and its receipt still missing: held until it arrives, or an hour after the execution was seen. */
+  /**
+   * Executed, and not confirmed yet: its receipt still missing (held until it
+   * arrives, or an hour after the execution was seen), or its transaction not
+   * yet shown by a node behind its receipt.
+   */
   | 'confirming'
   | 'success'
   | 'failed'
@@ -187,7 +191,7 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   replaced: 'error',
 }
 
-const SAFE_RECEIPT_PENDING = 'Executed by your Safe. Its receipt is not available yet.'
+const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 const SAFE_PROPOSAL_REPLACED = 'Safe moved past this proposal without running it. Review it again.'
 /** A receipt still missing this long after its execution was first seen is not coming. */
@@ -297,8 +301,10 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   const proposal = proposals.get(key)
   if (!proposal) return
   const { safe, call, proposalHash } = proposal
-  // A reply the chain knows as a transaction is the execution itself.
-  let executionHash = reply && (await executedAtOnce(client, proposalHash)) ? proposalHash : null
+  // A reply the chain knows as a transaction is the execution itself; the
+  // transaction read here is the one the execution is bound on.
+  let execution = reply ? await atOnceExecution(client, proposalHash) : null
+  let executionHash = execution ? proposalHash : null
   if (!executionHash) {
     updateProposal(key, { phase: 'awaiting' })
     const awaited = await awaitExecution(proposal, client)
@@ -307,7 +313,7 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     // is the execution: the chain is asked once more before the proposal ends.
     else if (
       awaited.phase === 'unproven' &&
-      (await chainAnswer(() => client.getTransaction({ hash: proposalHash })))
+      (execution = await chainAnswer(() => client.getTransaction({ hash: proposalHash })))
     ) {
       executionHash = proposalHash
     } else {
@@ -334,25 +340,34 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     }
     updateProposal(key, { phase: 'confirming' })
   }
+  if (receipt.status !== 'success') {
+    updateProposal(key, { phase: 'failed', receipt, message: failed })
+    return
+  }
   // Only the Safe's own event for this proposal decides it, and an execution
-  // returned at once must also have run the reviewed call, as the chain shows it.
+  // returned at once must also have run the reviewed call. Its receipt proves
+  // its transaction exists, so with none read yet, a node that shows none is
+  // only behind: the proposal stays held, and can end its confirm on Done.
   const atOnce = receipt.transactionHash.toLowerCase() === proposalHash.toLowerCase()
-  const transaction = atOnce ? await chainAnswer(() => client.getTransaction({ hash: proposalHash })) : null
-  const { status } =
-    receipt.status === 'success'
-      ? await readSafeAppExecution({
-          client: {
-            getTransaction: async () => {
-              if (!transaction) throw new Error(`The chain has no transaction ${proposalHash}.`)
-              return transaction
-            },
-          },
-          receipt,
-          safe,
-          proposalHash,
-          calls: [call],
-        }).catch(() => ({ status: 'unproven' as const }))
-      : { status: 'reverted' as const }
+  const transaction =
+    atOnce && !execution
+      ? await chainAnswer(() => client.getTransaction({ hash: proposalHash }), {
+          exists: true,
+          onRetry: () => updateProposal(key, { phase: 'confirming' }),
+        })
+      : execution
+  const { status } = await readSafeAppExecution({
+    client: {
+      getTransaction: async () => {
+        if (!transaction) throw new Error(`The chain has no transaction ${proposalHash}.`)
+        return transaction
+      },
+    },
+    receipt,
+    safe,
+    proposalHash,
+    calls: [call],
+  }).catch(() => ({ status: 'unproven' as const }))
   updateProposal(
     key,
     status === 'success'
@@ -485,7 +500,7 @@ export function useSafeTx(chainId: number) {
     proposal?.phase === 'awaiting'
       ? SAFE_PROPOSAL_AWAITING
       : proposal?.phase === 'confirming'
-        ? SAFE_RECEIPT_PENDING
+        ? SAFE_EXECUTION_CONFIRMING
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null

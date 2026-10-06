@@ -67,7 +67,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => m.safe,
   findPendingSafeAppProposal: async () => null,
   // The reply is the Safe app's proposal, never an execution.
-  executedAtOnce: async () => false,
+  atOnceExecution: async () => null,
   waitForSafeExecutionHash: (...args: unknown[]) => m.waitForSafeExecutionHash(...args),
   watchSafeProposal: (...args: unknown[]) => m.watchSafeProposal(...args),
 }))

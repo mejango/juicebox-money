@@ -367,21 +367,20 @@ const AT_ONCE_LOOKS = 5
 const AT_ONCE_LOOK_MS = 2_000
 
 /**
- * Whether the chain knows `hash` as a transaction: Safe{Wallet} replies with
- * the execution's own hash when the owner executes at once, and the node may
- * learn it a moment later. It looks up to 5 times, 2 seconds apart (8 seconds
- * at most), before the reply counts as a proposal.
+ * The transaction `hash` names on the chain, or null: Safe{Wallet} replies
+ * with the execution's own hash when the owner executes at once, and the node
+ * may learn it a moment later. It looks up to 5 times, 2 seconds apart (8
+ * seconds at most), before the reply counts as a proposal.
  */
-export async function executedAtOnce(
-  client: { getTransaction(args: { hash: Hex }): Promise<unknown> },
+export async function atOnceExecution<T>(
+  client: { getTransaction(args: { hash: Hex }): Promise<T> },
   hash: Hex,
-): Promise<boolean> {
+): Promise<T | null> {
   for (let look = 1; ; look += 1) {
     try {
-      await client.getTransaction({ hash })
-      return true
+      return await client.getTransaction({ hash })
     } catch {
-      if (look >= AT_ONCE_LOOKS) return false
+      if (look >= AT_ONCE_LOOKS) return null
     }
     await abortable(AT_ONCE_LOOK_MS)
   }
@@ -391,17 +390,22 @@ export async function executedAtOnce(
  * The chain's last word before a proposal ends unproven: what `read` returns,
  * or null when the chain says there is none (viem's transaction or receipt
  * not-found). A node that can't answer says nothing, so it is asked again a
- * minute later, for as long as it takes.
+ * minute later, for as long as it takes, with `onRetry` called first. With
+ * `exists`, the chain already proved the thing exists (its receipt is in
+ * hand), so a not-found only says the node is behind, and is asked again too.
  */
-export async function chainAnswer<T>(read: () => Promise<T>): Promise<T | null> {
+export async function chainAnswer<T>(
+  read: () => Promise<T>,
+  { exists = false, onRetry }: { exists?: boolean; onRetry?: () => void } = {},
+): Promise<T | null> {
   for (;;) {
     try {
       return await read()
     } catch (error) {
-      if (error instanceof TransactionNotFoundError || error instanceof TransactionReceiptNotFoundError) {
-        return null
-      }
+      const notFound = error instanceof TransactionNotFoundError || error instanceof TransactionReceiptNotFoundError
+      if (notFound && !exists) return null
     }
+    onRetry?.()
     await abortable(SAFE_LOOK_MS)
   }
 }
