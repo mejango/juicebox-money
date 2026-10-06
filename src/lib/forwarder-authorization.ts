@@ -8,6 +8,26 @@ import type { RelayrPendingSession } from '@/lib/relayr'
 
 type Pending = { scope: string; session: RelayrPendingSession | null }
 
+/** A signed forward request as ruling R114 classifies it: its chain, deadline and, when saved, the nonce it was signed with. */
+export type SignedForwardRequest = { chainId: number; deadline: number | bigint; nonce?: string | bigint }
+
+/**
+ * The forward requests a saved session published, each with the nonce it
+ * was signed with when the session saved one for every request. Null when
+ * it published none, or one is not a forwarder execute this app can read.
+ */
+export function savedForwardRequests(
+  session: Pick<RelayrPendingSession, 'publishedEntries' | 'publishedNonces'>,
+): SignedForwardRequest[] | null {
+  const published = session.publishedEntries ?? []
+  const nonces = session.publishedNonces?.length === published.length ? session.publishedNonces : undefined
+  const requests = published.flatMap((entry, index) => {
+    const request = relayrForwardRequest(entry)
+    return request ? [{ chainId: entry.chain, deadline: request.deadline, nonce: nonces?.[index] }] : []
+  })
+  return published.length && requests.length === published.length ? requests : null
+}
+
 /** Only forwarded authorizations consume this nonce; raw payer and Safe calls do not. */
 function authorizes(entry: RelayrEntry, account: Address, chains: Set<number>): boolean {
   if (!chains.has(entry.chain)) return false

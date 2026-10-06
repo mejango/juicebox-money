@@ -24,7 +24,7 @@ import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
+import { savedForwardRequests, withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import {
   FORWARD_REQUEST_TYPES,
   RELAYR_API,
@@ -1421,14 +1421,8 @@ export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void
  * when one of them is not a forwarder request it can read.
  */
 async function savedRequestsVerdict(saved: RelayrPendingSession, account: Address): Promise<RelayrRequestsVerdict | null> {
-  const published = saved.publishedEntries ?? []
-  const nonces = saved.publishedNonces?.length === published.length ? saved.publishedNonces : undefined
-  const requests = published.flatMap((entry, index) => {
-    const request = relayrForwardRequest(entry)
-    return request ? [{ chainId: entry.chain, deadline: request.deadline, nonce: nonces?.[index] }] : []
-  })
-  if (!published.length || requests.length !== published.length) return null
-  return relayrRequestsVerdict(await relayrRequestStates(account, requests))
+  const requests = savedForwardRequests(saved)
+  return requests && relayrRequestsVerdict(await relayrRequestStates(account, requests))
 }
 
 /** Mark a session for Discard (ruling R114), and the error its action throws until it is discarded. */
