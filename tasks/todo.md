@@ -125,3 +125,5 @@ Review: published core 2.19.0 has identical distributed SDK code to the preview.
 - [x] Allow GHSA-86w9-cpqp-85rv by advisory id at high severity, only while the source check of Para's node-forge usage matches that audit (jango, 2026-10-05: Para's audit findings don't block merges until Signa replaces Para).
 - [x] Move source-map-js to 1.2.2 for GHSA-68fv-2mgg-jv7q with a lockfile-only update; postcss already accepts ^1.2.1.
 - [x] Prove an unknown advisory still fails: unit cases, and the live audit on the old lockfile, which names only source-map-js.
+
+Review: Para's own JavaScript is identical in jbm and revnet, so one audit covers both. The new gate failed live on the old lockfile and named only source-map-js, then passed on 1.2.2. `npm run check` passed with Node 26.7.0 / npm 12.0.1: dependency, dead-code, audit, container, lint, typecheck, source, protocol (fixture mode), schema (38 documents), transaction inventory, coverage (179 files, 1,995 tests), browser build, client budgets and browser checks (57 passed, inside the shared gate lock).
