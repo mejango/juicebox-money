@@ -1,5 +1,7 @@
 'use client'
 
+import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
+
 import { getAccount } from '@wagmi/core'
 import {
   decodeFunctionResult,
@@ -878,6 +880,7 @@ export async function executeSafeTx(
           args,
           label: `Execute Safe transaction #${tx.nonce}`,
           contractName: 'Safe',
+          calls: [queuedSafeReviewCall(chainId, verifiedTx)],
         },
       ],
     },

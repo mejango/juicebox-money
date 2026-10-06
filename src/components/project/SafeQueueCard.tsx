@@ -1,16 +1,16 @@
 "use client";
 
+import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
+export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
+
+import { mapConcurrentChecks } from '@/lib/concurrent-checks'
+import { requireTransactionReview } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
   RevnetCoreContracts,
-  jbBuybackHookAbi,
-  jbBuybackHookRegistryAbi,
   jbContractAddress,
-  jbControllerAbi,
-  jbPermissionsAbi,
   jbProjectsAbi,
-  jbRouterTerminalRegistryAbi,
   revOwnerAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
@@ -20,12 +20,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   decodeFunctionData,
   encodeFunctionData,
-  getAbiItem,
   isAddressEqual,
   stringToBytes,
-  toFunctionSelector,
   zeroAddress,
-  type Abi,
   type Address,
   type Hex,
 } from "viem";
@@ -84,7 +81,6 @@ import {
   usableSafeConfirmations,
   type SafeQueuedTransaction,
 } from "@bananapus/nana-sdk-core/safe-service";
-import { truncateAddress } from "@/lib/format";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useSafeConnection } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
@@ -110,9 +106,7 @@ import {
 } from '@/lib/project-handles'
 import { readMatchingAuthorityIdentities, UnprovenSafeError } from '@/lib/cross-chain-authority'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
-import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
-import { rolloutContractName } from '@/lib/protocol-rollout'
-import { routerGatewayAbi } from '@/lib/router-gateway-abi'
+import { readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 
 export type SafeQueueChain = {
   chainId: JBChainId;
@@ -848,73 +842,6 @@ async function freshCanonicalQueuedTx(
   return fresh;
 }
 
-/**
- * Selectors are derived from the SAME SDK ABIs the send path encodes with,
- * never from a hand-written signature string: a restated signature drifts
- * silently (`initializePoolFor`'s twapWindow is uint256, not uint32 — the
- * hand-written form produced a selector that matched nothing, so every queued
- * buyback-pool init rendered to co-signers as a bare selector).
- */
-const LABELLED_CALLS: [Abi, string, string][] = [
-  [jbPermissionsAbi, "setPermissionsFor", "Set permissions"],
-  [revOwnerAbi, "setOperatorOf", "Transfer operator"],
-  [jbProjectsAbi, "transferFrom", "Transfer ownership"],
-  [jbControllerAbi, "setUriOf", "Set project metadata"],
-  [jbControllerAbi, "deployERC20For", "Deploy ERC-20"],
-  [jbControllerAbi, "setTokenMetadataOf", "Set token metadata"],
-  [jbBuybackHookRegistryAbi, "setHookFor", "Set buyback hook"],
-  [jbRouterTerminalRegistryAbi, "setTerminalFor", "Set router terminal"],
-  [jbBuybackHookRegistryAbi, "initializePoolFor", "Initialize buyback pool"],
-  [jbBuybackHookRegistryAbi, "setPoolFor", "Set buyback pool"],
-  [jbBuybackHookAbi, "setTwapWindowOf", "Set buyback TWAP window"],
-  [routerGatewayAbi, "processPendingCall", "Retry retained router call"],
-  [routerGatewayAbi, "processPendingCallWithGas", "Retry retained router call with gas"],
-  [routerGatewayAbi, "finalizePendingCall", "Finalize retained router call"],
-  [routerGatewayAbi, "finalizePendingCallWithGas", "Finalize retained router call with gas"],
-];
-
-export const SELECTOR_LABELS = new Map<string, string>(
-  LABELLED_CALLS.flatMap(([abi, name, label]) => {
-    const item = getAbiItem({ abi, name });
-    return item && item.type === "function"
-      ? [[toFunctionSelector(item), label] as [string, string]]
-      : [];
-  }),
-);
-
-function contractName(chainId: JBChainId, address: Address): string | null {
-  const rolloutName = rolloutContractName(chainId, address)
-  if (rolloutName) return rolloutName
-  const contracts = jbContractAddress["6"] as unknown as Record<
-    string,
-    Partial<Record<JBChainId, Address>>
-  >;
-  for (const [name, deployments] of Object.entries(contracts)) {
-    if (deployments?.[chainId]?.toLowerCase() === address.toLowerCase())
-      return name;
-  }
-  return null;
-}
-
-function callLabel(chainId: JBChainId, to: Address, data: Hex | null | undefined): string {
-  const selector = data?.slice(0, 10) ?? "0x";
-  const action = SELECTOR_LABELS.get(selector);
-  const target = contractName(chainId, to) ?? truncateAddress(to);
-  return action ? `${action} | ${target}` : `${selector} | ${target}`;
-}
-
-/** The labelled inner calls of a queued operator batch, or null for any other row. */
-export function batchCallLabels(chainId: JBChainId, tx: SafeQueuedTransaction): string[] | null {
-  const calls = multiSendCallsOf(tx);
-  return calls ? calls.map(call => callLabel(chainId, call.to, call.data)) : null;
-}
-
-/** The queue row's label: a known action and target, or a decoded operator batch. */
-export function transactionLabel(chainId: JBChainId, tx: SafeQueuedTransaction): string {
-  const batch = batchCallLabels(chainId, tx);
-  if (batch) return `Batch (${batch.length} call${batch.length === 1 ? "" : "s"}) | MultiSendCallOnly`;
-  return callLabel(chainId, tx.to, tx.data);
-}
 
 function executionPlan(
   currentNonce: number | null,
@@ -1291,7 +1218,7 @@ export function SafeQueueCard({
         safe,
         fresh,
         address,
-        undefined,
+        queuedSafeReviewCall(chain.chainId, fresh),
         reverifyAuthority,
       );
       setNotice(`Signed transaction #${tx.nonce} on ${chain.name}.`);
@@ -1397,28 +1324,39 @@ export function SafeQueueCard({
 
       // Check 1 of 2: every chain's current transaction is re-fetched and
       // simulated before quoting. Later nonces need a new review after these
-      // land. ponytail: one chain at a time — every RPC read goes through one
-      // rate-limited JB Center host, and concurrent chains trip its 429s.
+      // land. Bound independent chain checks because their RPC reads share
+      // one rate-limited JB Center host.
       setBatchRows(relayrRows.map(batchDialogRow));
       setBatchStatus({});
       setBatchDone(false);
       setBatchReview(null);
       setBatchOpen(true);
-      const verifiedRows: VerifiedReadyTx[] = [];
-      for (const row of relayrRows) {
+      const verifiedRows = await mapConcurrentChecks(relayrRows, async (row) => {
         setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Checking…" }));
         try {
-          verifiedRows.push(await verifyReadyTx(row));
+          const verified = await verifyReadyTx(row);
+          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
+          return verified;
         } catch (checkError) {
           setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Check failed" }));
           throw checkError;
         }
-        setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
-      }
+      });
       setNotice("Getting one Relayr quote for every chain…");
       const entries = verifiedRows.map((row) =>
         safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx, row.snapshot.owners),
       );
+      await requireTransactionReview({
+        title: `Review ${entries.length} Safe executions`,
+        confirmLabel: 'Agree & request Relayr quote',
+        calls: entries.map((entry, index) => ({
+          chainId: entry.chain, to: entry.target, data: entry.data, value: BigInt(entry.value),
+          abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
+          args: decodeFunctionData({ abi: SAFE_EXEC_ABI, data: entry.data }).args,
+          contractName: 'Safe',
+          calls: [queuedSafeReviewCall(verifiedRows[index].chain.chainId, verifiedRows[index].snapshot.tx)],
+        })),
+      });
       const quote = await relayrPostBundle(entries);
       const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
       setPaymentIndex(initialPaymentIndex(payments));
@@ -1447,8 +1385,7 @@ export function SafeQueueCard({
     try {
       // Check 2 of 2, run by relayrPay right before the payment is sent.
       const reverifyBatch = async () => {
-        for (let index = 0; index < batchReview.rows.length; index++) {
-          const row = batchReview.rows[index];
+        await mapConcurrentChecks(batchReview.rows, async (row, index) => {
           const entry = batchReview.entries[index];
           if (!entry) throw new Error("The reviewed Relayr bundle changed.");
           setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Re-checking…" }));
@@ -1459,7 +1396,7 @@ export function SafeQueueCard({
             throw checkError;
           }
           setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
-        }
+        });
       };
       // A quote about to expire would be rejected at payment time anyway —
       // refresh it here so the flow re-reviews a live payment instead of

@@ -152,3 +152,24 @@ Review: no jbm test called a moved function by itself, so none was deleted. Seve
 - [x] Pin each difference the SDK states, in this app's own flows: amounts and deadlines the SDK reads as numbers, lists, bundle IDs, the unreadable twin, the clock after the bundle and a clock that is not a time, the saved deadline bound to its calldata, and a payment of another bundle.
 
 Review: no jbm test called a moved function by itself, so none was deleted, and no existing test changed beyond taking sentRelayrPayment from the SDK. Eleven of the twelve new tests fail on the old copies and pass on the SDK's; the twelfth pins the clock read after the bundle, which both read. Budgets on the same toolchain: main 435.3/503.3/2509.5 KiB (home/create/all), this branch 435.3/503.3/2509.7; caps 436/504/2510. Gate: lint, types, knip, audit, container, source, protocol, schema, transaction inventory, 2,481 unit tests with coverage, 57 browser tests in the shared gate lock, production build last.
+
+## Concurrent Safe execution checks (2026-10-06)
+- [x] Trace initial checks and payment rechecks; inspect shared RPC quota.
+- [x] Run independent chains with at most two concurrent checks, preserving each chain's safety sequence and batch order.
+- [x] Drain all checks before releasing busy state; any failure prevents quoting/payment.
+- [x] Verify overlap, ordering, failure gating, and existing Safe flow tests.
+
+Plan review: use a bounded worker owner for both check phases; keep transport and nonce-dependent wallet writes unchanged. Center quotas are shared by origin/IP and site, so concurrency cannot guarantee avoiding rate limits.
+
+Concurrency review: combined 90 tests passed across nine files (Safe queue/review, worker bounds/order/drain, Safe orchestration and authority); changed-file ESLint passed. `npm run ts:check` passed after removing one obsolete generated route type for the absent project-diagnostics endpoint. No RPC transport changes; provider rate-limit failures still prevent quote/payment.
+
+## 2026-10-06 — Readable Safe confirmations, final verification
+- [x] Reuse queue labels and exact queued calldata for signing, direct execution, and Relayr batch review.
+- [x] Show nested actions before Safe execution arguments; preserve raw fallback.
+- [x] Test canonical decoding, actual batch rendering, consent, and both concurrency phases.
+
+Final review: 90 focused tests pass; full suite has 1,722 passing and seven failures in unchanged launch encoding tests (the installed SDK requires an explicit 721 configuration/defaults choice). No launch source or dependency files changed in this task. Typecheck and changed-file ESLint pass. Both requested UX changes are implemented locally; not deployed.
+
+Rebase review: preserved current origin/main SDK 2.23.0 rules and shared MultiSend decoding; installed locked dependencies without changing manifests. The seven previously reported launch failures pass on this matching checkout and SDK. Source invariants, transaction inventory, dead-code check and changed-file ESLint pass.
+
+Rebased verification: full suite passed 2,512 tests with two concurrency fixtures requiring the upstream snapshot owners and object-form payment API; both fixtures corrected and all 13 queue tests now pass. Final typecheck and ESLint pass. No remaining test failures.

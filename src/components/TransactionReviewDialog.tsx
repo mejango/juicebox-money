@@ -457,6 +457,13 @@ function PrettyCall({
         ) : null}
       </dl>
 
+      {batched ? (
+        <div className="mt-5 border-t border-smoke-200 pt-4">
+          <p className="text-xs font-medium text-smoke-600">Calls it makes, in order</p>
+          <NestedCalls calls={batched} />
+        </div>
+      ) : null}
+
       {fn ? (
         <div className="mt-5 border-t border-smoke-200 pt-4">
           <p className="text-xs font-medium text-smoke-600">Contract function</p>
@@ -518,13 +525,6 @@ function PrettyCall({
           </p>
         </div>
       )}
-
-      {batched ? (
-        <div className="mt-5 border-t border-smoke-200 pt-4">
-          <p className="text-xs font-medium text-smoke-600">Calls it makes, in order</p>
-          <NestedCalls calls={batched} />
-        </div>
-      ) : null}
 
       <p className="mt-3 text-[11px] text-smoke-500">
         Calldata: {byteLength.toLocaleString('en-US')} byte{byteLength === 1 ? '' : 's'}

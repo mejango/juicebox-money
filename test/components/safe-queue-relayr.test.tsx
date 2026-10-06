@@ -214,6 +214,62 @@ afterEach(async () => {
 })
 
 describe('Safe queue Relayr execution', () => {
+  it('checks independent chains concurrently before quoting and before payment', async () => {
+    await renderQueue()
+    const checkPhase = async (run: () => Promise<void>) => {
+      const started: number[] = []
+      const releases = new Map<number, () => void>()
+      mocks.simulate.mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTransaction) => {
+        started.push(chainId)
+        await new Promise<void>(resolve => releases.set(chainId, resolve))
+        return { tx, safeTxHash: canonicalSafeTxHash(chainId, safe, tx), policyFingerprint: 'unchanged', owners: [OWNER] }
+      })
+      await act(async () => {
+        const pending = run()
+        await vi.waitFor(() => expect(started).toEqual([1, 10]))
+        releases.get(10)!()
+        releases.get(1)!()
+        await pending
+      })
+    }
+    await checkPhase(() => button(/Execute 2 ready/).props.onClick())
+    expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual([1, 10])
+    await selectPayment(0)
+    mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
+      await args[0].reverify?.()
+      throw new Error('Stopped before wallet payment')
+    })
+    await checkPhase(() => button(/Pay once and execute 2/).props.onClick())
+    expect(mocks.simulate).toHaveBeenCalledTimes(4)
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it('does not quote a batch if any concurrent chain check fails', async () => {
+    mocks.simulate.mockRejectedValueOnce(new Error('Safe policy changed'))
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    expect(mocks.simulate).toHaveBeenCalledTimes(2)
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('blocks payment when a concurrent recheck detects changed Safe policy', async () => {
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    await selectPayment(0)
+    mocks.simulate.mockRejectedValueOnce(new Error('Safe policy changed'))
+    const submit = vi.fn()
+    mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
+      await args[0].reverify?.()
+      submit()
+      return HASH
+    })
+    await click(/Pay once and execute 2/)
+    expect(mocks.simulate).toHaveBeenCalledTimes(4)
+    expect(submit).not.toHaveBeenCalled()
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
   it('relays only the executable nonce on each testnet and offers no mainnet payment', async () => {
     const testnets = [11155111, 11155420, 84532, 421614] as const
     mocks.rows = testnets.map(id => chain(id, [5, 6]))
@@ -229,7 +285,12 @@ describe('Safe queue Relayr execution', () => {
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [...testnets], reverifyBeforeSendOnly: true }))
     // Check 1 ran at review; check 2 belongs to relayrPay right before sending.
     expect(mocks.simulate).toHaveBeenCalledTimes(4)
-    expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(mocks.review.mock.calls[0][0].calls).toEqual(testnets.map(chainId => expect.objectContaining({
+      chainId, to: SAFE, functionName: 'execTransaction',
+      calls: [expect.objectContaining({ data: '0x1234', value: 0n })],
+    })))
+    expect(mocks.review.mock.invocationCallOrder[0]).toBeLessThan(mocks.post.mock.invocationCallOrder[0])
     expect(mocks.execute).not.toHaveBeenCalled()
     expect(mocks.session).toMatchObject({ paymentStatus: 'sending', chainIds: [...testnets], paymentChainId: 84532 })
   })
@@ -285,7 +346,7 @@ describe('Safe queue Relayr execution', () => {
     await click(/Pay once and execute 2/)
     expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.pay).not.toHaveBeenCalled()
-    expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.review).toHaveBeenCalledTimes(1)
     expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(1)
     expect(renderer.root.findByType('select').props.value).toBe(0)
     expect(button(/Pay once and execute 2/).props.disabled).toBe(false)

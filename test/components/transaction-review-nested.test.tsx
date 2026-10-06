@@ -19,6 +19,9 @@ import {
   type TransactionReviewCall,
 } from '@/lib/transaction-review'
 import '../dialog-shim'
+import { jbBuybackHookRegistryAbi } from '@bananapus/nana-sdk-core'
+import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 
 const SAFE = '0x1111111111111111111111111111111111111111'
 const TOKEN = '0x2222222222222222222222222222222222222222'
@@ -82,6 +85,20 @@ async function review(call: TransactionReviewCall) {
 const count = (text: string, part: string) => text.split(part).length - 1
 
 describe('transaction review nested calls', () => {
+  it('renders decoded queued batch arguments ahead of the Safe envelope', async () => {
+    const data = encodeFunctionData({ abi: jbBuybackHookRegistryAbi, functionName: 'setHookFor', args: [42n, SPENDER] })
+    const batch = queuedSafeReviewCall(1, {
+      to: MULTI_SEND_CALL_ONLY, value: '0', operation: 1,
+      data: encodeMultiSend([{ to: TOKEN, data, value: 0n }]),
+    })
+    const text = await review(execTransaction([batch]))
+    expect(text).toContain('Set buyback hook')
+    expect(text).toContain('setHookFor(uint256, address)')
+    expect(text).toContain('42')
+    expect(text).toContain(SPENDER)
+    expect(text.indexOf('setHookFor(uint256, address)')).toBeLessThan(text.indexOf('execTransaction(address'))
+  })
+
   it('shows the calls an execTransaction makes, in order', async () => {
     const text = await review(execTransaction([approval(5n), approval(6n)]))
     expect(count(text, HEADING)).toBe(1)
@@ -89,6 +106,7 @@ describe('transaction review nested calls', () => {
     expect(count(text, 'Call 2 of 2')).toBe(1)
     expect(count(text, 'approve(address, uint256)')).toBe(2)
     expect(text.indexOf(HEADING)).toBeLessThan(text.indexOf('Call 1 of 2'))
+    expect(text.indexOf('approve(address, uint256)')).toBeLessThan(text.indexOf('execTransaction(address'))
   })
 
   it('shows the call an approved Safe hash authorizes', async () => {
