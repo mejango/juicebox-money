@@ -34,6 +34,8 @@ import {
 } from '@/lib/relayr'
 import {
   RelayrDestinationRevertedError,
+  RelayrPaymentRevertedError,
+  RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   proveSavedRelayrPayment,
   relayrDeadlinePassed,
@@ -81,6 +83,8 @@ class LaunchSignaturesNeedRefresh extends Error {}
 
 /** The one line a launch shows once every request it published is dead and one may have run (ruling R114). */
 const LAUNCH_MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel this deployment to start over.'
+/** The line a launch shows once every request it published is dead and unused, and the payment it saved is another transaction. */
+const LAUNCH_PAYMENT_UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel this deployment to start over.'
 
 type SignedLaunch = {
   chainId: number
@@ -451,10 +455,19 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // A send with no hash yet stays as it is, since it may still land.
       if (journal.phase === 'submitted' || journal.phase === 'executing') {
         const resumed = journal
-        await proveSavedRelayrPayment(relayrChainClient, resumed.payments, account, () => {
-          resumed.phase = 'payment-reverted'
-          persist()
-        })
+        try {
+          await proveSavedRelayrPayment(relayrChainClient, resumed.payments, account, () => {
+            resumed.phase = 'payment-reverted'
+            persist()
+          })
+        } catch (error) {
+          if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
+          // The saved hash is another transaction, which no later resume can change. While a request of the launch can
+          // still run, the refusal stands; once every one is dead, the launch can be cancelled (ruling R114).
+          const outcome = await outstandingOutcome(publishedRequests(resumed))
+          if (outcome?.kind === 'discard') abandon(resumed, outcome.reason === 'ran' ? LAUNCH_MAY_HAVE_RUN : LAUNCH_PAYMENT_UNMATCHED, error)
+          throw error
+        }
       }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
       try {
