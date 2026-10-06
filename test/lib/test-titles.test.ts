@@ -61,6 +61,56 @@ describe('test titles that can prove a wallet action', () => {
     }
   })
 
+  it('counts a test or suite whose options leave it running: a timeout, a retry, a number after the callback', () => {
+    for (const source of [
+      `it('${marker} proves', { retry: 2, timeout: 1000 }, () => {})`,
+      `it('${marker} proves', { timeout: LIMIT }, () => {})`,
+      `it('${marker} proves', { timeout }, () => {})`,
+      `it('${marker} proves', { 'timeout': 5 }, () => {})`,
+      `it('${marker} proves', { concurrent: true, tags: ['wallet'] }, () => {})`,
+      `it('${marker} proves', { timeout: 5 } as const, () => {})`,
+      `it('${marker} proves', {}, () => {})`,
+      `it('${marker} proves', () => {}, 15_000)`,
+      `test('${marker} proves', { timeout: 5_000 }, () => {})`,
+      `it.each([1])('${marker} proves %s', { retry: 1 }, () => {})`,
+      `it.for([1])('${marker} proves %s', { timeout: 1 }, () => {})`,
+      `describe('suite', { timeout: 5_000 }, () => { it('${marker} proves', () => {}) })`,
+      `describe.each([1])('suite %s', { sequential: true }, () => { it('${marker} proves', () => {}) })`,
+    ]) {
+      expect(proves(source), source).toBe(true)
+    }
+  })
+
+  it('counts a test whose context is only read as ctx.name, and table rows that have a skip field', () => {
+    for (const source of [
+      `it('${marker} proves', (ctx) => {})`,
+      `it('${marker} proves', (ctx) => { ctx.task.meta.ran = true })`,
+      `it('${marker} proves', (ctx) => { ctx?.expect(1).toBe(1) })`,
+      `it('${marker} proves', (ctx) => { (ctx as Context).expect(1).toBe(1) })`,
+      `it('${marker} proves', (ctx) => { ctx!.expect(1).toBe(1) })`,
+      `it('${marker} proves', async (ctx) => { await ctx.expect(1).resolves.toBe(1) })`,
+      `it('${marker} proves', (ctx) => { const run = () => ctx.expect(1); run() })`,
+      `it('${marker} proves', (ctx) => { run(ctx.expect) })`,
+      `it('${marker} proves', ({ task: { meta } }) => { expect(meta).toBeDefined() })`,
+      `it('${marker} proves', ({ expect = fallback }) => { expect(1).toBe(1) })`,
+      // A member or a key that merely shares the context's name is not the context.
+      `it('${marker} proves', (ctx) => { expect(page.ctx).toBe(1) })`,
+      `it('${marker} proves', (ctx) => { render({ ctx: 1 }) })`,
+      `describe('suite', () => { aroundEach(async (runTest) => { await runTest() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundEach(async (runTest, ctx) => { await runTest(); ctx.task.meta.ran = true }); it('${marker} proves', () => {}) })`,
+      // The context is the first parameter of a plain test, the second of .for, and absent from .each, which passes only row values.
+      `it.each([{ skip: 0 }])('${marker} proves %j', ({ skip }) => { expect(skip).toBe(0) })`,
+      `it.each([{ skip: 0 }])('${marker} proves %j', row => { expect(row.skip).toBe(0) })`,
+      `it.each([[1, 2]])('${marker} proves %s', (...row) => { expect(row.length).toBe(2) })`,
+      `it.for([{ skip: 0 }])('${marker} proves %j', ({ skip }) => { expect(skip).toBe(0) })`,
+      `it.for([{ skip() {} }])('${marker} proves', row => { row.skip() })`,
+      `it.for([[1, 2]])('${marker} proves %s', ([first, ...others], { expect }) => { expect(others.length).toBe(1) })`,
+      `it.for([1])('${marker} proves %s', (row, ctx) => { ctx.expect(row).toBe(1) })`,
+    ]) {
+      expect(proves(source), source).toBe(true)
+    }
+  })
+
   it('ignores suite titles and anything skipped, conditional or expected to fail', () => {
     for (const source of [
       `describe('${marker} suite', () => { it('proves', () => {}) })`,
@@ -166,6 +216,84 @@ describe('test titles that can prove a wallet action', () => {
     }
   })
 
+  it('ignores a test or suite whose options skip it, mark it todo or expect it to fail, or cannot be read', () => {
+    for (const source of [
+      `it('${marker} proves', { skip: true }, () => {})`,
+      `it('${marker} proves', { todo: true }, () => {})`,
+      `it('${marker} proves', { fails: true }, () => {})`,
+      `it('${marker} proves', { skip: false }, () => {})`,
+      `it('${marker} proves', { timeout: 1000, skip: true }, () => {})`,
+      `it('${marker} proves', { 'skip': true }, () => {})`,
+      `it('${marker} proves', { skip }, () => {})`,
+      `it('${marker} proves', { get skip() { return true } }, () => {})`,
+      `it('${marker} proves', { skip() { return true } }, () => {})`,
+      `it('${marker} proves', { skip: true } as const, () => {})`,
+      `it('${marker} proves', () => {}, { skip: true })`,
+      `test('${marker} proves', { skip: true }, () => {})`,
+      `it.concurrent('${marker} proves', { skip: true }, () => {})`,
+      `it.each([1])('${marker} proves %s', { skip: true }, () => {})`,
+      `it.for([1])('${marker} proves %s', { skip: true }, () => {})`,
+      `describe('suite', { skip: true }, () => { it('${marker} proves', () => {}) })`,
+      `describe('suite', { todo: true }, () => { it('${marker} proves', () => {}) })`,
+      `suite('suite', { skip: true }, () => { it('${marker} proves', () => {}) })`,
+      `describe.each([1])('suite %s', { skip: true }, () => { it('${marker} proves', () => {}) })`,
+      // Options that cannot be read: a spread, a variable, a computed key, a title that is not a literal.
+      `it('${marker} proves', { ...options }, () => {})`,
+      `it('${marker} proves', { timeout: 1000, ...options }, () => {})`,
+      `it('${marker} proves', options, () => {})`,
+      `it('${marker} proves', { ['skip']: true }, () => {})`,
+      `it('${marker} proves', { [name]: true }, () => {})`,
+      `describe('suite', options, () => { it('${marker} proves', () => {}) })`,
+      `describe(name, () => { it('${marker} proves', () => {}) })`,
+      `describe(\`suite \${name}\`, () => { it('${marker} proves', () => {}) })`,
+    ]) {
+      expect(proves(source), source).toBe(false)
+    }
+  })
+
+  it('ignores a test whose context reaches skip without naming it: aliased, passed on, indexed, spread or assigned', () => {
+    for (const source of [
+      `it('${marker} proves', (ctx) => { const c = ctx; c.skip() })`,
+      `it('${marker} proves', (ctx) => { gate(ctx) })`,
+      `it('${marker} proves', (ctx) => { return ctx })`,
+      `it('${marker} proves', (ctx) => ctx)`,
+      `it('${marker} proves', (ctx) => { run({ ctx }) })`,
+      `it('${marker} proves', (ctx) => { run([ctx]) })`,
+      `it('${marker} proves', (ctx) => { run({ [gate(ctx)]: 1 }) })`,
+      `it('${marker} proves', (ctx) => { Object.assign({}, ctx).skip() })`,
+      `it('${marker} proves', (ctx) => { Reflect.get(ctx, 'skip')() })`,
+      `it('${marker} proves', (ctx) => { let stop; ({ skip: stop } = ctx); stop() })`,
+      // Only ctx.name is read, so even a harmless destructure or index is refused.
+      `it('${marker} proves', (ctx) => { const { expect } = ctx })`,
+      `it('${marker} proves', (ctx) => { ctx['expect'] })`,
+      `it('${marker} proves', (ctx) => { ctx[key]() })`,
+      `it('${marker} proves', (ctx) => { const key = 'skip'; ctx[key]() })`,
+      // A default value runs with the test.
+      `it('${marker} proves', (ctx, other = ctx.skip()) => {})`,
+      `it('${marker} proves', (ctx, other = gate(ctx)) => {})`,
+      // A rest parameter or element holds skip, and so does a computed key or an array pattern.
+      `it('${marker} proves', ({ ...rest }) => { rest.skip() })`,
+      `it('${marker} proves', ({ expect, ...rest }) => { rest.skip() })`,
+      `it('${marker} proves', ({ task: { ...rest } }) => { rest.skip })`,
+      `it('${marker} proves', ({ [name]: member }) => { member() })`,
+      `it('${marker} proves', ({ ['expect']: member }) => {})`,
+      `it('${marker} proves', (...args) => { args[0].skip() })`,
+      `it('${marker} proves', async (...args) => {})`,
+      `it('${marker} proves', ([ctx]) => {})`,
+      // For .for the context is the second parameter.
+      `it.for([1])('${marker} proves %s', (row, ...rest) => { rest[0].skip() })`,
+      `it.for([1])('${marker} proves %s', (...args) => { args[1].skip() })`,
+      `it.for([1])('${marker} proves %s', (row, ctx) => { gate(ctx) })`,
+      `it.for([1])('${marker} proves %s', (row, { skip }) => { skip() })`,
+      `it.for([1])('${marker} proves %s', (row, { ...rest }) => {})`,
+      // Fixtures can skip the test and are not read here.
+      `test.extend({ gate: async ({ skip }, use) => { skip(); await use(1) } })('${marker} proves', ({ gate }) => {})`,
+      `test.extend({ a: 1 })('${marker} proves', ({ a }) => {})`,
+    ]) {
+      expect(proves(source), source).toBe(false)
+    }
+  })
+
   it('ignores every test under a hook that skips at run time', () => {
     for (const source of [
       `beforeEach((ctx) => { ctx.skip() }); it('${marker} proves', () => {})`,
@@ -176,6 +304,12 @@ describe('test titles that can prove a wallet action', () => {
       `describe('suite', () => { aroundEach((runTest, ctx) => { ctx.skip() }); it('${marker} proves', () => {}) })`,
       `describe('suite', () => { if (!ready) { beforeEach((ctx) => { ctx.skip() }) } it('${marker} proves', () => {}) })`,
       `describe('suite', () => { for (const row of rows) beforeEach((ctx) => { ctx.skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach((ctx) => { const c = ctx; c.skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach((ctx) => { gate(ctx) }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { beforeEach(({ ...rest }) => { rest.skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { afterEach((...args) => { args[0].skip() }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundEach((runTest, ctx) => { gate(ctx) }); it('${marker} proves', () => {}) })`,
+      `describe('suite', () => { aroundEach((...args) => { args[1].skip() }); it('${marker} proves', () => {}) })`,
       `describe('outer', () => { beforeEach((ctx) => { ctx.skip() }); describe('inner', () => { it('${marker} proves', () => {}) }) })`,
     ]) {
       expect(proves(source), source).toBe(false)
@@ -187,6 +321,7 @@ describe('test titles that can prove a wallet action', () => {
       `it(\`${marker} \${suffix}\`, () => {})`,
       `it(title, () => {})`,
       `it('${marker} ' + suffix, () => {})`,
+      `it({ timeout: 5 }, () => {})`,
     ]) {
       expect(proves(source), source).toBe(false)
     }

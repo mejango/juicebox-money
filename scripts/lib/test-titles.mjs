@@ -1,7 +1,11 @@
 import ts from 'typescript'
 
-/** Modifiers under which nothing runs, or nothing proves an action: a skipped, conditional or expected-to-fail test or suite. */
-const NOT_PROVING = new Set(['skip', 'todo', 'skipIf', 'runIf', 'fails'])
+/**
+ * Modifiers (`it.skip`) and option keys (`{ skip: true }`) under which nothing runs, or nothing proves an action: a
+ * skipped, conditional or expected-to-fail test or suite, or one with fixtures (`extend`), which can skip it from
+ * code that is not read here.
+ */
+const NOT_PROVING = new Set(['skip', 'todo', 'skipIf', 'runIf', 'fails', 'extend'])
 
 /** Suites: their titles prove nothing. `suite` is Vitest's alias for `describe`. */
 const SUITES = new Set(['describe', 'suite'])
@@ -9,8 +13,12 @@ const SUITES = new Set(['describe', 'suite'])
 /** Modifiers that register a test or suite once per row of the table they are called with, so an empty table registers nothing. */
 const TABLES = new Set(['each', 'for'])
 
-/** Hooks that receive the context of each test of their suite, and so can skip it. */
-const HOOKS = new Set(['beforeEach', 'afterEach', 'aroundEach'])
+/** Hooks that receive the context of each test of their suite, and so can skip it, with the position of that context among their parameters. */
+const HOOKS = new Map([
+  ['beforeEach', 0],
+  ['afterEach', 0],
+  ['aroundEach', 1],
+])
 
 /** An expression without the wrappers that leave its value alone: parentheses, `as`, `satisfies`, `<T>` and `!`. */
 function unwrap(node) {
@@ -69,48 +77,75 @@ function inlineCallback(call) {
   return call.arguments.find(argument => ts.isArrowFunction(argument) || ts.isFunctionExpression(argument))
 }
 
-const isSkipLiteral = node => ts.isStringLiteralLike(node) && node.text === 'skip'
+/**
+ * Whether a call's arguments leave its test or suite running as written. Besides the callback, each is a string or a
+ * number, or an options object of plain keys without `skip`, `todo` or `fails` (`{ timeout: 5_000 }`). A spread, a
+ * variable, a computed key or any other argument is not read, so it counts as one that can skip.
+ */
+function runsAsWritten(call, callback) {
+  return call.arguments.every(argument => {
+    if (argument === callback || ts.isStringLiteralLike(argument) || ts.isNumericLiteral(argument)) return true
+    const options = unwrap(argument)
+    return (
+      ts.isObjectLiteralExpression(options) &&
+      options.properties.every(
+        property => property.name && !ts.isComputedPropertyName(property.name) && !NOT_PROVING.has(property.name.text),
+      )
+    )
+  })
+}
 
-/** Whether an object pattern takes `skip` out of its object: `{ skip }`, `{ skip: stop }`, `{ 'skip': stop }`. */
-function takesSkip(pattern) {
+/** Where the test context sits among a callback's parameters: first for a plain test, after the row for `.for`, and nowhere for `.each`, which passes only row values. */
+function contextIndex(test) {
+  if (test.modifiers.includes('each')) return -1
+  return test.modifiers.includes('for') ? 1 : 0
+}
+
+/** Whether an object pattern taken from the context can hold `skip`: it names it, or has a rest element or a computed key. Any other kind of pattern is taken to hold it. */
+function holdsSkip(pattern) {
   return (
-    ts.isObjectBindingPattern(pattern) &&
+    !ts.isObjectBindingPattern(pattern) ||
     pattern.elements.some(element => {
       const key = element.propertyName ?? element.name
-      if (ts.isIdentifier(key)) return key.text === 'skip'
-      return isSkipLiteral(ts.isComputedPropertyName(key) ? key.expression : key)
+      if (element.dotDotDotToken || ts.isComputedPropertyName(key)) return true
+      if ((ts.isIdentifier(key) || ts.isStringLiteralLike(key)) && key.text === 'skip') return true
+      return ts.isBindingPattern(element.name) && holdsSkip(element.name)
     })
   )
 }
 
-/**
- * Whether a test or hook callback can skip at run time: it takes `skip` out of
- * one of its parameters (`ctx.skip`, `ctx['skip']`, `{ skip }` or
- * `const { skip } = ctx`).
- */
-function skipsItself(callback) {
-  const contexts = new Set()
-  for (const { name } of callback.parameters) {
-    if (ts.isIdentifier(name)) contexts.add(name.text)
-    else if (takesSkip(name)) return true
-  }
-  let skips = false
+/** Whether the context `name` is used in `root` other than as `name.member` with a member other than `skip`: aliased, passed on, indexed, spread, destructured or assigned. */
+function escapes(root, name) {
   function visit(node) {
-    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const named = ts.isPropertyAccessExpression(node)
-        ? node.name.text === 'skip'
-        : isSkipLiteral(node.argumentExpression)
+    if (ts.isPropertyAccessExpression(node)) {
       const object = unwrap(node.expression)
-      if (named && ts.isIdentifier(object) && contexts.has(object.text)) skips = true
+      if (ts.isIdentifier(object) && object.text === name) return node.name.text === 'skip'
+      return visit(node.expression)
     }
-    if (ts.isVariableDeclaration(node) && node.initializer && takesSkip(node.name)) {
-      const object = unwrap(node.initializer)
-      if (ts.isIdentifier(object) && contexts.has(object.text)) skips = true
+    if (ts.isPropertyAssignment(node)) {
+      return (ts.isComputedPropertyName(node.name) && visit(node.name.expression)) || visit(node.initializer)
     }
-    ts.forEachChild(node, visit)
+    if (ts.isIdentifier(node)) return node.text === name
+    return ts.forEachChild(node, visit) === true
   }
-  visit(callback.body)
-  return skips
+  return visit(root)
+}
+
+/**
+ * Whether a test or hook callback can skip at run time through its context, the parameter at `index` (none when it
+ * is -1). Only `ctx.name` reads of the context are followed, so anything else counts as skipping: a rest parameter or
+ * element that holds it, `skip` named or computed, or the context aliased, passed on or indexed.
+ */
+function skipsItself(callback, index) {
+  if (index < 0) return false
+  const { parameters } = callback
+  if (parameters.slice(0, index + 1).some(parameter => parameter.dotDotDotToken)) return true
+  const context = parameters[index]
+  if (!context) return false
+  if (!ts.isIdentifier(context.name)) return holdsSkip(context.name)
+  return [callback.body, ...parameters.map(parameter => parameter.initializer)].some(
+    node => node && escapes(node, context.name.text),
+  )
 }
 
 /** Whether a statement can end its enclosing body early: a return or throw, outside any nested function. */
@@ -127,7 +162,7 @@ function mayEnd(node) {
 function hasSkippingHook(node) {
   if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && HOOKS.has(node.expression.text)) {
     const callback = inlineCallback(node)
-    if (callback && skipsItself(callback)) return true
+    if (callback && skipsItself(callback, HOOKS.get(node.expression.text))) return true
   }
   return !ts.isFunctionLike(node) && ts.forEachChild(node, hasSkippingHook) === true
 }
@@ -137,9 +172,10 @@ function hasSkippingHook(node) {
  * action. A test counts only when it is a statement written directly in a
  * describe body or at the top of the file, with nothing before it that can end
  * that body early (a return or throw). A describe title proves nothing. Nothing
- * counts that is skipped, conditional or expected to fail; that sits in a
- * `.each` or `.for` whose table is not a literal array with a row; that skips
- * itself or sits under a hook that skips; or that has no inline callback.
+ * counts that is skipped, conditional or expected to fail, by a modifier or an
+ * options object; that sits in a `.each` or `.for` whose table is not a literal
+ * array with a row; that skips itself, or sits under a hook that skips, through
+ * its context; or that has no inline callback.
  */
 export function provingTitleWords(text, fileName) {
   const source = ts.createSourceFile(
@@ -156,13 +192,13 @@ export function provingTitleWords(text, fileName) {
     if (!test || test.modifiers.some(modifier => NOT_PROVING.has(modifier))) return
     if (!test.tables.every(hasRow)) return
     const callback = inlineCallback(call)
-    if (!callback) return
+    if (!callback || !runsAsWritten(call, callback)) return
     if (SUITES.has(test.name)) {
       if (ts.isBlock(callback.body)) walk(callback.body.statements)
       return
     }
     const [title] = call.arguments
-    if (title && ts.isStringLiteralLike(title) && !skipsItself(callback)) {
+    if (title && ts.isStringLiteralLike(title) && !skipsItself(callback, contextIndex(test))) {
       for (const word of title.text.split(/\s+/)) words.add(word)
     }
   }
