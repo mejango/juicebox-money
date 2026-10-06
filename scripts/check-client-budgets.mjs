@@ -108,7 +108,8 @@ const budgets = {
   // creation-record cache and the canonical-handle rule measure 2490.7 KiB.
   // Holding a Safe proposal's action whatever its send-time stamp, the expiry and
   // replaced watch, the at-once probe, the receipt hour and the pay panel's Safe stage
-  // line measure 2492.2 KiB; round up to the next KiB.
+  // line measure 2492.2 KiB; round up to the next KiB. The chain's last word before an
+  // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5.
   allScripts: 2493 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
