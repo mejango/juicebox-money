@@ -24,37 +24,38 @@ import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type Laun
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   buildForwardedTx,
-  proveSavedRelayrPayment,
   readRelayrPendingSessionsForAuthorization,
   relayrChainClient,
   relayrPay,
-  relayrPaymentAttemptOutcome,
   relayrPaymentLabel,
   relayrPoll,
   relayrHeldMessage,
   relayrPostBundle,
-  relayrRetryOption,
-  revertedRelayrQuote,
 } from '@/lib/relayr'
-import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import {
   RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
+  proveSavedRelayrPayment,
   relayrDeadlinePassed,
   relayrDestinationHash,
   relayrForwardRequest,
+  relayrPaymentAttemptOutcome,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
   relayrRequestStates,
   relayrRequestsDead,
   relayrRequestsVerdict,
+  relayrRetryOption,
+  relayrSentPaymentsSnapshot,
   relayrSessionOutcome,
   relayrSupportsChains,
+  revertedRelayrQuote,
   verifyRelayrDestination,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrQuote,
+  type RelayrSentPayment,
   type RelayrSignedRequest,
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
@@ -265,7 +266,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     let unreleased: unknown = null
     if (journal?.phase === 'payment-reverted' && journal.quote) {
       try {
-        const reverted = await revertedRelayrQuote({ bundleUuid: journal.quote.bundle_uuid, payments: journal.payments ?? [],
+        const reverted = await revertedRelayrQuote(relayrChainClient, { bundleUuid: journal.quote.bundle_uuid, payments: journal.payments ?? [],
           options: journal.quote.payment_info, destinationChainIds: journal.signed.map(item => item.chainId), account })
         if (reverted.records) journal.records = reverted.records
         fundedElsewhere = reverted.state === 'funded'
@@ -449,7 +450,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // A send with no hash yet stays as it is, since it may still land.
       if (journal.phase === 'submitted' || journal.phase === 'executing') {
         const resumed = journal
-        await proveSavedRelayrPayment(resumed.payments, account, () => {
+        await proveSavedRelayrPayment(relayrChainClient, resumed.payments, account, () => {
           resumed.phase = 'payment-reverted'
           persist()
         })
