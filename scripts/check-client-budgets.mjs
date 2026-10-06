@@ -142,6 +142,10 @@ const budgets = {
   // the request classification, the session outcome and ruling R118's recheck
   // rule) measures 2509.4, with home (435.3) and create (503.3) unchanged.
   // The cap stays.
+  // SDK 2.23.0's quote release, retry and payment-proof rules take the place of jbm's
+  // copies (the release and retry rules, the sent-payment record and its snapshot):
+  // 2509.7 KiB against 2509.5 on main with the same toolchain, with home (435.3), the
+  // project route (168.5) and create (503.3) unchanged. The cap stays.
   allScripts: 2510 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
