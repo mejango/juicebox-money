@@ -240,6 +240,11 @@ describe('WalletButton view-as state', () => {
 })
 
 describe('write seams refuse while view-as is active', () => {
+  it('say how to send in two plain sentences', async () => {
+    const viewAs = await loadViewAs()
+    expect(viewAs.VIEW_AS_WRITE_BLOCKED).toBe("You're viewing the site as another account. Exit View as to transact.")
+  })
+
   it('submitReviewedContractWrite rejects before review', async () => {
     const { window } = fakeWindow()
     vi.stubGlobal('window', window)
