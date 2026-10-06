@@ -10,7 +10,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
 import { fetchSafeInfo, readSafeQueue } from '@/lib/safe'
-import { MULTI_SEND_CALL_ONLY, multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
+import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
 import {
   hasSafeService,
   safeTransactionMatchesCall,
@@ -32,8 +32,10 @@ function callsKey(calls: readonly BatchCall[]): string {
 
 /**
  * The pending zero-refund Safe proposal whose MultiSend holds exactly these
- * queued calls, with the Safe's live policy, if one is already queued. Only
- * a Safe on a chain with Safe's transaction service has a queue to read.
+ * queued calls, with the Safe's live policy, if one is already queued: a
+ * DELEGATECALL into any MultiSendCallOnly the SDK recognizes, since
+ * Safe{Wallet} batches a 1.4.1 Safe through 1.4.1's. Only a Safe on a chain
+ * with Safe's transaction service has a queue to read.
  */
 function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: BatchStep[]) {
   const key = steps.length ? callsKey(composeBatch(steps).calls) : null
@@ -53,12 +55,13 @@ function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: 
       const { pending } = await readSafeQueue(chainId, authority!)
       return (
         pending.find(candidate => {
+          // multiSendCallsOf reads only a recognized MultiSendCallOnly.
           const calls = multiSendCallsOf(candidate)
           return (
             !!calls &&
             callsKey(calls) === key &&
             safeTransactionMatchesCall(candidate, {
-              to: MULTI_SEND_CALL_ONLY,
+              to: candidate.to,
               data: candidate.data ?? '0x',
               operation: 1,
             })

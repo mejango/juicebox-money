@@ -50,7 +50,7 @@ vi.mock('@/lib/safe-batch-presets', async original => ({
 
 import { SafeBatchProvider } from '@/components/project/SafeBatchProvider'
 import { SafeBatchTray } from '@/components/project/SafeBatchTray'
-import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY_DEPLOYMENTS } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, readSafeBatch, safeBatchStorageKey, writeSafeBatch } from '@/lib/safe-batch'
 import '../dialog-shim'
 
@@ -162,12 +162,12 @@ describe('Safe batch tray', () => {
     expect(button('Copy the Ethereum batch to every chain')).toBeTruthy()
   })
 
-  it('shows a queued proposal in place of the review button, whatever order the tray holds', async () => {
-    seed()
+  /** The tray's calls, in reverse, queued as one zero-refund DELEGATECALL into `to`. */
+  function queueBatch(to: string) {
     const { calls } = composeBatch([...readSafeBatch(1, 2)].reverse())
     mocks.readSafeQueue.mockResolvedValue({ nonce: 10, pending: [
       {
-        to: MULTI_SEND_CALL_ONLY,
+        to,
         value: '0',
         data: encodeMultiSend(calls),
         operation: 1,
@@ -186,6 +186,13 @@ describe('Safe batch tray', () => {
         ],
       },
     ] })
+  }
+
+  // Safe{Wallet} batches a 1.4.1 Safe through MultiSendCallOnly 1.4.1, and a
+  // 1.3.0 Safe through 1.3.0's canonical or EIP-155 deployment.
+  it.each(MULTI_SEND_CALL_ONLY_DEPLOYMENTS)('shows a queued proposal through MultiSendCallOnly %s in place of the review button, whatever order the tray holds', async multiSend => {
+    seed()
+    queueBatch(multiSend)
     render()
     await settle()
     expect(container.textContent).toContain('Already proposed on Ethereum as Safe transaction #10 (1/2 signatures)')
@@ -196,6 +203,15 @@ describe('Safe batch tray', () => {
     await settle()
     expect(readSafeBatch(1, 2)).toEqual([])
     expect(container.textContent).toContain('Nothing queued')
+  })
+
+  it('takes no batch DELEGATECALLed into another contract for the proposal', async () => {
+    seed()
+    queueBatch(TERMINAL)
+    render()
+    await settle()
+    expect(container.textContent).not.toContain('Already proposed')
+    expect(button('Review and propose on Ethereum')).toBeTruthy()
   })
 
   it("asks nothing of Safe's service for a chain without one", async () => {
