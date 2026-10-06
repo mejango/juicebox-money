@@ -46,6 +46,7 @@ import {
   reviewedSplitCalls,
   saveSplitJournal,
   SplitRecovery,
+  submitSplitReview,
   splitSnapshotFingerprint,
   splitToDraft,
   type SplitReview,
@@ -398,6 +399,26 @@ describe('split replacement validation before signing and funding', () => {
   })
 })
 
+describe('submitting a reviewed split update', () => {
+  it('keeps no saved review when its submission published nothing', async () => {
+    mocks.loadSession.mockReturnValue(null)
+    mocks.runAuthorityCalls.mockRejectedValueOnce(new Error('Signature declined'))
+    await expect(submitSplitReview(review, vi.fn())).rejects.toThrow('Signature declined')
+    expect(storage.size).toBe(0)
+  })
+
+  it('keeps the saved review while the bundle it published is pending', async () => {
+    mocks.loadSession.mockReturnValue(null)
+    mocks.runAuthorityCalls.mockImplementationOnce(async () => {
+      mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [] })
+      throw new Error('Funding chain selection cancelled. Nothing was sent.')
+    })
+    await expect(submitSplitReview(review, vi.fn())).rejects.toThrow(/cancelled/)
+    expect(readSplitJournal(journalKey(1, 101))?.review).toEqual(review)
+    expect(storage.size).toBe(2)
+  })
+})
+
 describe('split replacement recovery', () => {
   async function mountSaved() {
     const journal = { scope: relayrCallsScope(reviewedSplitCalls(review)), review }
@@ -414,16 +435,45 @@ describe('split replacement recovery', () => {
     return { journal, restored, renderer, completed, discarded }
   }
 
-  it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
+  const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
+  const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
+
+  it('offers only Discard, with its one line, once the earlier signature may already have run, and keeps the saved review', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'ran' })
     const { journal, renderer, completed, discarded } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
-    expect(renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))).toEqual(['"Discard"'])
+    expect(labels(renderer)).toEqual(['"Discard"'])
+    mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
-    expect(storage.size).toBe(0)
+    expect(storage.size).toBe(2)
     expect(discarded).toHaveBeenCalledOnce()
     expect(completed).not.toHaveBeenCalled()
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // The saved review is the draft: reviewed again with new signatures, or set aside to edit afresh.
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('may already have run')
+    expect(labels(renderer)).toEqual(['"Review again"', '"Edit recipients"'])
+    await act(async () => { await button(renderer, 'Review again').props.onClick() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].calls.map((call: { data: string }) => call.data))
+      .toEqual(reviewedSplitCalls(review).map(call => call.data))
+    expect(mocks.resume).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
+    expect(storage.size).toBe(0)
+  })
+
+  it('offers Discard after the changed line, and sets the saved review aside only when asked', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'changed' })
+    const { journal, renderer, discarded } = await mountSaved()
+    expect(JSON.stringify(renderer.toJSON())).toContain('The project changed since this review.')
+    expect(labels(renderer)).toEqual(['"Discard"'])
+    mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
+    expect(storage.size).toBe(2)
+    await act(async () => { await button(renderer, 'Edit recipients').props.onClick() })
+    expect(storage.size).toBe(0)
+    expect(discarded).toHaveBeenCalledTimes(2)
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
   })
 

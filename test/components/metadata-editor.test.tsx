@@ -671,7 +671,7 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
-  it('offers Discard instead of a retry once the earlier signature may already have run, then reviews afresh', async () => {
+  it('offers Discard instead of a retry once the earlier signature may already have run, then keeps the review to confirm afresh', async () => {
     let scope = ''
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
       scope = saveSession(calls, 'unpaid')
@@ -680,14 +680,35 @@ describe('metadata editor per-chain review and recovery', () => {
     })
     const renderer = await renderEditor()
     await saveAndReadPin(renderer)
+    const originalData = submittedCalls().map(call => call.data)
     const text = renderedText(renderer.root)
     expect(text.match(/may already have run/g)).toHaveLength(1)
     expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBe(true)
     await act(async () => buttonWith(renderer, 'Discard').props.onClick())
     expect(loadRelayrPendingSession(scope)).toBeNull()
-    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(false)
-    expect(renderedText(renderer.root)).toContain('Save project details')
+    // The saved review is the draft: confirmed again, it signs afresh.
+    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
     expect(renderedText(renderer.root)).not.toContain('may already have run')
+    expect(buttonWith(renderer, 'Confirm & save').props.disabled).toBeFalsy()
+    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
+    expect(submittedCalls().map(call => call.data)).toEqual(originalData)
+    await act(async () => renderer.unmount())
+  })
+
+  it('shows the changed line with Discard once every earlier signature is dead and the project changed', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: 'changed' })
+      throw new Error('The project changed since this review.')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    expect(renderedText(renderer.root).match(/The project changed since this review\./g)).toHaveLength(1)
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(loadRelayrPendingSession(scope)).toBeNull()
+    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
     await act(async () => renderer.unmount())
   })
 

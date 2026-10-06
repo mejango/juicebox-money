@@ -411,7 +411,7 @@ async function withSplitLocks<T>(destinations: SplitReview['destinations'], run:
 /**
  * Send a reviewed split update under its destinations' locks. A multichain
  * update is saved before any signature can be published, so it can be
- * resumed, and cleared once it completes.
+ * resumed, and cleared once it completes or when it published nothing.
  */
 export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void): Promise<AuthorityResult> {
   const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
@@ -420,49 +420,68 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
       if (pendingSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))) throw new Error(`Resume the pending split update on ${chainName(destination.chainId)} first.`)
     }
     if (plan.destinations.length > 1) saveSplitJournal(journal)
-    const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message) })
-    clearSplitJournal(journal)
-    return result
+    try {
+      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message) })
+      clearSplitJournal(journal)
+      return result
+    } catch (error) {
+      // A submission that published nothing leaves no saved review: the editor still holds it.
+      if (!loadRelayrPendingSession(journal.scope)) clearSplitJournal(journal)
+      throw error
+    }
   })
 }
 
+/**
+ * A saved split update: its pending bundle, or the saved review alone once
+ * the bundle is gone (Discard ends only the session). That review is the
+ * editor's draft: reviewed again it signs afresh, and the recheck refuses it
+ * if the recipients changed.
+ */
 export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [status, setStatus] = useState('A split update is saved. Resume it before editing these recipients again.')
-  const discardable = loadRelayrPendingSession(journal.scope)?.discardable
-  if (discardable) {
+  const [status, setStatus] = useState<string | null>(null)
+  const [, setDiscards] = useState(0)
+  const session = loadRelayrPendingSession(journal.scope)
+  const resume = async () => {
+    if (!address) return
+    setBusy(true); setError(null)
+    try {
+      if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('Connect the wallet that reviewed this split update.')
+      await withSplitLocks(journal.review.destinations, async () => {
+        for (const destination of journal.review.destinations) {
+          const alias = readSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))
+          if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
+        }
+        const saved = loadRelayrPendingSession(journal.scope)
+        if (!saved || relayrSessionAwaitsPayment(saved)) {
+          await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
+        } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => setStatus(progress.phase === 'executing'
+          ? `Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`
+          : 'Checking the saved payment and destination transactions…') })
+        clearSplitJournal(journal)
+      })
+      onComplete()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not resume the split update.') }
+    finally { setBusy(false) }
+  }
+  if (session?.discardable) {
     return <div className="mt-3 rounded-xl border border-smoke-200 p-4">
-      <RelayrDiscard scope={journal.scope} reason={discardable} onDiscarded={() => { clearSplitJournal(journal); onDiscard() }} />
+      <RelayrDiscard scope={journal.scope} reason={session.discardable} onDiscarded={() => { setDiscards(count => count + 1); onDiscard() }} />
     </div>
   }
   return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4">
-    <p className="text-sm text-smoke-700">{status}</p>
+    <p className="text-sm text-smoke-700">{status ?? (session ? 'A split update is saved. Resume it before editing these recipients again.' : 'A split update is saved.')}</p>
     <TxError error={error} />
-    <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={async () => {
-      if (!address) return
-      setBusy(true); setError(null)
-      try {
-        if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('Connect the wallet that reviewed this split update.')
-        await withSplitLocks(journal.review.destinations, async () => {
-          for (const destination of journal.review.destinations) {
-            const alias = readSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))
-            if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
-          }
-          const saved = loadRelayrPendingSession(journal.scope)
-          if (!saved) throw new Error('This saved bundle is no longer pending. Reload to read the current recipients.')
-          if (relayrSessionAwaitsPayment(saved)) {
-            await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
-          } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => setStatus(progress.phase === 'executing'
-            ? `Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`
-            : 'Checking the saved payment and destination transactions…') })
-          clearSplitJournal(journal)
-        })
-        onComplete()
-      } catch (err) { setError(err instanceof Error ? err.message : 'Could not resume the split update.') }
-      finally { setBusy(false) }
-    }}>{busy ? 'Checking saved update…' : 'Resume split update'}</button>
+    <div className="flex flex-wrap gap-2">
+      <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>
+        {busy ? 'Checking saved update…' : session ? 'Resume split update' : 'Review again'}
+      </button>
+      {session ? null : <button className="btn-secondary min-h-[44px] px-5 text-sm" disabled={busy}
+        onClick={() => { clearSplitJournal(journal); onDiscard() }}>Edit recipients</button>}
+    </div>
   </div>
 }
 
@@ -595,7 +614,7 @@ export function EditSplitsFlow({
     queryKey: ['editSplitsRecovery', chainId, projectId, groupId.toString(), address],
     enabled: mounted && !!address,
     staleTime: 0,
-    queryFn: () => pendingSplitJournal(splitJournalKey(chainId, projectId, groupId)),
+    queryFn: () => readSplitJournal(splitJournalKey(chainId, projectId, groupId)),
   })
   const [recovered, setRecovered] = useState(false)
   if (pending) return <SplitRecovery journal={pending} onComplete={() => { setRecovered(true); void refreshPending() }}

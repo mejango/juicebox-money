@@ -700,12 +700,10 @@ export function MetadataEditor({
   )
 
   const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
-  // Its signature may already have run: only Discard ends it, and the form is reviewed afresh.
+  // Every earlier signature is dead: only Discard ends the session. The saved
+  // review stays as the draft, and confirming it again signs afresh.
   const discardable = frozen ? loadRelayrPendingSession(frozen.scope)?.discardable : undefined
   const discarded = () => {
-    if (frozen) removeMetadataReview(frozen)
-    setFrozen(null)
-    setReviewed(false)
     setDone(false)
     setStatus(null)
     setError(null)

@@ -32,7 +32,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'ETH' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getUpcomingRuleset: mocks.upcoming, getAccountingContexts: mocks.contexts }))
 
-import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
+import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { relayrCallsScope } from '@/lib/relayr'
 
 type Rules = Parameters<typeof rulesForQueueDestination>[0]
@@ -241,18 +241,55 @@ describe('queue recovery after cancellation or partial execution', () => {
     return { renderer, completed, discarded, journal }
   }
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
-  it('offers only Discard, with its one line, once the earlier signature may already have run', async () => {
+  const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
+  it('offers only Discard, with its one line, once the earlier signature may already have run, and keeps the saved review', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: 'ran' })
     const { renderer, completed, discarded, journal } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
     expect(labels(renderer)).toEqual(['"Discard"'])
+    mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
     await act(async () => { await renderer.root.findByType('button').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
-    expect(storage.size).toBe(0)
+    expect(storage.size).toBe(2)
     expect(discarded).toHaveBeenCalledOnce()
     expect(completed).not.toHaveBeenCalled()
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // The saved review is the draft: reviewed again with new signatures, or set aside to edit afresh.
+    expect(labels(renderer)).toEqual(['"Review again"', '"Edit rules"'])
+    await act(async () => { await button(renderer, 'Review again').props.onClick() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].calls.map((call: { data: string }) => call.data))
+      .toEqual(reviewedQueueCalls(currentReview, 'current').map(call => call.data))
+    expect(mocks.resume).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
+    expect(storage.size).toBe(0)
     await act(async () => renderer.unmount())
+  })
+  it('offers Discard after the changed line, and sets the saved review aside only when asked', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: 'changed' })
+    const { renderer, discarded, journal } = await mountSaved()
+    expect(JSON.stringify(renderer.toJSON())).toContain('The project changed since this review.')
+    mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
+    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
+    expect(storage.size).toBe(2)
+    await act(async () => { await button(renderer, 'Edit rules').props.onClick() })
+    expect(storage.size).toBe(0)
+    expect(discarded).toHaveBeenCalledTimes(2)
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+  it('keeps no saved review when its submission published nothing, and keeps it while its bundle is pending', async () => {
+    mocks.loadSession.mockReturnValue(null)
+    mocks.runAuthorityCalls.mockRejectedValueOnce(new Error('Signature declined'))
+    await expect(submitQueueReview(currentReview, 'current', vi.fn())).rejects.toThrow('Signature declined')
+    expect(storage.size).toBe(0)
+    mocks.runAuthorityCalls.mockImplementationOnce(async () => {
+      mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })
+      throw new Error('Funding chain selection cancelled. Nothing was sent.')
+    })
+    await expect(submitQueueReview(currentReview, 'current', vi.fn())).rejects.toThrow(/cancelled/)
+    expect(storage.size).toBe(2)
   })
   it('never offers Discard while the saved signature could still run', async () => {
     const { renderer } = await mountSaved()

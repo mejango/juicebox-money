@@ -429,7 +429,7 @@ export function QueueRulesetFlow({
     queryKey: ["queueRulesetRecovery", chainId, projectId, open],
     enabled: !isRevnet && !!address,
     staleTime: 0,
-    queryFn: () => pendingQueueScope(recoveryKey),
+    queryFn: () => readQueueJournal(recoveryKey),
   });
   const [recovered, setRecovered] = useState(false);
 
@@ -710,7 +710,7 @@ function clearQueueJournal(journal: QueueRecoveryJournal): void {
 /**
  * Send reviewed rules under their destinations' locks. Rules for several
  * chains are saved before any signature can be published, so they can be
- * resumed, and cleared once they complete.
+ * resumed, and cleared once they complete or when they published nothing.
  */
 export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void): Promise<AuthorityResult> {
   const calls = reviewedQueueCalls(review, action);
@@ -721,41 +721,61 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
     }
     // Freeze every destination before any signature can be published.
     if (calls.length > 1) saveQueueJournal(journal);
-    const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message) });
-    clearQueueJournal(journal);
-    return result;
+    try {
+      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message) });
+      clearQueueJournal(journal);
+      return result;
+    } catch (error) {
+      // A submission that published nothing leaves no saved review: the editor still holds it.
+      if (!loadRelayrPendingSession(journal.scope)) clearQueueJournal(journal);
+      throw error;
+    }
   });
 }
 
+/**
+ * A saved ruleset update: its pending bundle, or the saved review alone once
+ * the bundle is gone (Discard ends only the session). That review is the
+ * editor's draft: reviewed again it signs afresh, and the recheck refuses it
+ * if the queue changed.
+ */
 export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules.");
-  const discardable = loadRelayrPendingSession(journal.scope)?.discardable;
-  if (discardable) {
-    return <RelayrDiscard scope={journal.scope} reason={discardable} onDiscarded={() => { clearQueueJournal(journal); onDiscard(); }} />;
+  const [status, setStatus] = useState<string | null>(null);
+  const [, setDiscards] = useState(0);
+  const session = loadRelayrPendingSession(journal.scope);
+  const resume = async () => {
+    if (!address) return;
+    setBusy(true); setError(null);
+    try {
+      if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
+      const saved = loadRelayrPendingSession(journal.scope);
+      if (!saved || relayrSessionAwaitsPayment(saved)) {
+        await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
+      } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => {
+        if (progress.phase === "executing") setStatus(`Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`);
+        else setStatus("Checking the saved payment and destination transactions…");
+      } });
+      clearQueueJournal(journal);
+      onComplete();
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
+    finally { setBusy(false); }
+  };
+  if (session?.discardable) {
+    return <RelayrDiscard scope={journal.scope} reason={session.discardable} onDiscarded={() => { setDiscards(count => count + 1); onDiscard(); }} />;
   }
   return <div className="space-y-3">
-    <p className="text-sm text-smoke-700">{status}</p>
+    <p className="text-sm text-smoke-700">{status ?? (session ? "A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules." : "A ruleset update is saved.")}</p>
     <TxError error={error} />
-    <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={async () => {
-      if (!address) return;
-      setBusy(true); setError(null);
-      try {
-        if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
-        const saved = loadRelayrPendingSession(journal.scope);
-        if (saved && relayrSessionAwaitsPayment(saved)) {
-          await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
-        } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => {
-          if (progress.phase === "executing") setStatus(`Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`);
-          else setStatus("Checking the saved payment and destination transactions…");
-        } });
-        clearQueueJournal(journal);
-        onComplete();
-      } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
-      finally { setBusy(false); }
-    }}>{busy ? "Checking saved update…" : "Resume ruleset update"}</button>
+    <div className="flex flex-wrap gap-2">
+      <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>
+        {busy ? "Checking saved update…" : session ? "Resume ruleset update" : "Review again"}
+      </button>
+      {session ? null : <button className="btn-secondary min-h-[44px] px-5 text-sm" disabled={busy}
+        onClick={() => { clearQueueJournal(journal); onDiscard(); }}>Edit rules</button>}
+    </div>
   </div>;
 }
 
