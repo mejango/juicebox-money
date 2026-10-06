@@ -15,12 +15,16 @@ import {
   readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
-import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'
+import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
   type SequenceCall,
 } from '@/lib/safe-batch-connector'
-import { isSafeConnection } from '@/lib/safe-connector'
+import {
+  isSafeConnection,
+  requireSafeProposalSuccess,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 import {
   buildBuybackHookAuthorityCall,
   buildInitializeBuybackPoolAuthorityCall,
@@ -292,17 +296,23 @@ export async function submitSafeBatch({
   const sequence = sequenceOf(steps)
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
-    const proposal = await proposeSafeBatch({
+    const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
-      onProposed,
     })
-    if (!proposal.executionHash) {
-      throw new Error('The batch was proposed but its execution was not tracked.')
-    }
-    return { kind: 'safe-app', safeTxHash: proposal.safeTxHash, executionHash: proposal.executionHash }
+    await onProposed?.(safeTxHash)
+    // Tracked to its execution, as a single Safe app authority call is.
+    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash)
+    const receipt = await waitForTrackedReceipt(client, executionHash)
+    const failure = 'The batch reverted after Safe execution.'
+    if (receipt.status !== 'success') throw new Error(failure)
+    await requireSafeProposalSuccess(
+      { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
+      failure,
+    )
+    return { kind: 'safe-app', safeTxHash, executionHash }
   }
 
   onProgress?.(`Simulating ${calls.length} calls from the Safe…`)
