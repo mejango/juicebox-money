@@ -190,10 +190,14 @@ and the check fails on a missing marker.
   the editors route such a bundle, and a paid one, back to its original calls
   (`components/metadata-editor.test.tsx`,
   `components/edit-splits-multichain.test.tsx`,
-  `components/queue-ruleset-multichain.test.tsx`). An unpaid quote that nothing
-  can fund (it offers no option the app can authenticate, its options
-  expired, or every request it published did) stops reserving the forwarder
-  nonce, and the account view reads it as expired. A saved session whose
+  `components/queue-ruleset-multichain.test.tsx`). A saved session or launch
+  reserves the wallet's forwarder nonces exactly while one of its requests is
+  live by the classification below, never by the clock or a quote's expiry
+  (ruling R117): each relayed action classifies every session that would
+  reserve its chains before it signs (`transactions/forwarder-authorization.test.ts`,
+  `transactions/relayr-orchestration.test.ts`, for unpaid, paid and
+  wallet-held sessions). An unpaid quote that nothing can fund reads as
+  expired in the account view, which offers the check that classifies it. A saved session whose
   bundle will not run as signed, a paid one whose calls reverted or cannot be
   proven included, is classified before its action's recheck (ruling R114):
   each published request at one canonical finalized block on its chain, dead
@@ -203,12 +207,18 @@ and the check fails on a missing marker.
   While a request is live the action signs nothing new and offers no Discard:
   it quotes or pays again with its published requests while every one
   verifies and the recheck passes, and otherwise says until when its last
-  live request can run, as a paid bundle whose calls reverted does. Once all
-  are dead, Relayr's report (paid, reverted or unreadable) no longer matters:
+  live request can run, as a paid or wallet-held bundle whose calls are not
+  proven does, and a reverted quote whose release is unproven. Once all are
+  dead, Relayr's report (paid, reverted or unreadable) no longer matters:
   none moved and the recheck passing signs again at the saved nonces and gas,
-  for a new quote; none moved and the recheck failing offers Discard after
-  "The project changed since this review."; a moved nonce or no saved nonces
-  offers Discard after the "may already have run" line. Covered for two-chain
+  for a new quote, whose payment review says why a paid bundle's payment
+  can't be reused; none moved and the recheck failing offers Discard after
+  "The project changed since this review.", unless the recheck could not
+  reach the chain; a moved nonce or no saved nonces offers Discard after the
+  "may already have run" line; and the account view, which cannot recheck,
+  offers Discard after "This action's earlier signatures expired without
+  running." (ruling R114 (e)) while the action still signs them again. A
+  marked session that ran still completes when its action runs again. Covered for two-chain
   sessions, sessions saved without nonces, a deadline equal to the block's
   timestamp, paid bundles whose calls reverted, quotes whose release is
   unproven or that another payment funded, and the account view in
@@ -218,11 +228,16 @@ and the check fails on a missing marker.
   metadata editors' own recheck callbacks, paid sessions included, in
   `transactions/relayr-editor-rechecks.test.ts`; and for launches, which
   refresh at the saved nonces while none moved, in
-  `transactions/launch-relayr.test.ts`. Discard removes only the session: the
-  editors keep their saved review, to review again with new signatures or set
-  aside (`components/queue-ruleset-multichain.test.tsx`,
+  `transactions/launch-relayr.test.ts`, a launch whose finalized nonce fell
+  below a saved one included. Discard removes the session: the editors keep
+  their saved review, to review again with new signatures or set aside, with
+  their resume action beside Discard (`components/queue-ruleset-multichain.test.tsx`,
   `components/edit-splits-multichain.test.tsx`,
-  `components/metadata-editor.test.tsx`), and every flow that can show a
+  `components/metadata-editor.test.tsx`); after a "may already have run"
+  Discard a batch abandons its saved journal (`transactions/project-batch.test.ts`),
+  the payout recheck refuses a payout whose limit was used since the review
+  (`data/project-distributions.test.ts`), and an action with no recheck of
+  its own closes its review (ruling R114 (f)); and every flow that can show a
   discard line shows Discard in place of its error
   (`components/relayr-discard-flows.test.tsx`,
   `components/power-accounting-multichain.test.tsx`,
@@ -237,7 +252,8 @@ and the check fails on a missing marker.
   (`transactions/payer-relayr.test.ts`). A session refuses to save
   payments or payment options it cannot keep exactly, and saves every option
   it can authenticate, several on one chain included; a quote offering more
-  than it can keep is never paid and is released at once.
+  than it can keep is never paid, and is quoted again with its same signed
+  requests.
   Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
