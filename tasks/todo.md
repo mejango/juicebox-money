@@ -233,3 +233,16 @@ Review: saved recovery now explains its evidence and offers Re-check saved batch
 Plan review: keep wallet submissions sequential and all-check gates intact. One browser scheduler serves every chain; server requests do not share a process-wide queue.
 
 Review: browser RPC requests now start at least 125ms apart across every chain and provider retry, independent of response completion. Abort removes unsent work and HTTP429 cooldown applies across chains. Independent checks start together and drain before quote/payment decisions. Full unit suite passes 2,576 tests across 191 files, including real SDK browser transport overlap; full typecheck, changed-file ESLint, source invariants and diff check pass. The existing Center retry fixture now advances fake wall time with timers so pacing can progress. No commit or push.
+
+## 2026-10-06 — Safe quote recovery account and storage checks
+- [x] Trace the unavailable-session error and exercise actual journal serialization through the rendered flow.
+- [x] Bind read-only checks to the saved account while keeping funding tied to the connected wallet.
+- [x] Show shared recovery results for missing quotes and canonically consumed Safe nonces.
+- [x] Cover reload, legacy account mismatch and missing-quote recovery; run focused tests, types and source checks.
+- [x] Build in an isolated checkout and measure client budgets.
+
+Plan review: current quote/create/reload/fund path must retain its original journal identity. Safe-scoped records can belong to a different wallet; status checks use their saved identity and payment requires the original wallet. The shared SDK remains the only owner of release decisions.
+
+Review: opening a saved bundle clears stale errors and immediately checks its saved account. A payable saved quote still requires explicit call review; journal replacement or removal cannot open the wallet. The shared SDK supplies missing-quote explanations and canonical nonce results, and consumed-nonce release refreshes the queue without claiming successful execution or payment expiry. Recovery rows retain the saved transaction identity. Complete legacy proofs keep exact reservations; partial funding evidence remains unresolved and malformed financial history fails closed before normalization. Real browser-storage caller tests reproduce the legacy account error and cover fresh four-chain quote identity through reload/funding/recovery; fresh preparation alone did not reproduce the reported automatic error. Focused caller/transaction tests, full types, changed-file lint, source invariants, transaction inventory and diff checks pass. Isolated production builds with identical SDK dependencies measure 2518.4 KiB on HEAD versus 2519.2 KiB with the fix (+770 bytes); 2520 KiB is the minimum rounded aggregate ceiling. All route, largest-chunk, style and lazy-loading gates pass unchanged. No wallet transaction, commit or push.
+
+Published-package verification: both apps now pin SDK2.24.1; all745 installed SDK dist files match the tested preview. Removed temporary vendor files. Final346 focused JBM tests, full typecheck, source/transaction gates and whitespace checks pass; the full2617-test suite passed before the final targeted regressions. The final missing-ID button label passes46 modal tests. No wallet transaction or client push performed.

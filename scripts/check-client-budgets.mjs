@@ -156,7 +156,10 @@ const budgets = {
   // recovery and legacy receipt adapter measure 2517.6 KiB against 2513.4 on
   // unchanged main with the same toolchain. Round up to the next KiB; route,
   // largest-chunk, style and lazy-loading limits stay fixed.
-  allScripts: 2518 * KIB,
+  // Safe recovery checks saved accounts/nonces and preserves malformed funding
+  // history. With the same SDK patch, unchanged main measures 2518.4 KiB and
+  // these client changes 2519.2 KiB. Round up only the aggregate ceiling.
+  allScripts: 2520 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

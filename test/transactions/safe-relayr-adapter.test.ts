@@ -117,7 +117,17 @@ describe('Safe Relayr journal adapter', () => {
       { chain: 1, entry: entries[0], txUuid: secondId },
       { chain: 10, entry: entries[1], txUuid: firstId },
     ])
+    expect(restored.reservationKeys).toEqual([`1:${SAFE}:1`, `10:${SAFE}:1`])
     expect(mocks.saved.expectedSafeExecutions?.[0].txUuid).toBe(firstId)
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { paymentHash: HASH, paymentChainId: null },
+    { paymentHash: null, paymentChainId: 1 },
+  ])('keeps partial legacy funding evidence unresolved: %j', evidence => {
+    mocks.saved = { ...legacy(), paymentStatus: 'unpaid', ...evidence }
+    expect(safeRelayrSession(SCOPE)).toMatchObject({ paymentStatus: 'sending', payments: [] })
     expect(mocks.save).not.toHaveBeenCalled()
   })
 

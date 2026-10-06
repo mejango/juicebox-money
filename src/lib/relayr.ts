@@ -626,6 +626,7 @@ export function hasRelayrPendingEvidence(scope: string): boolean {
 
 export function loadRelayrPendingSession(
   scope: string,
+  requireExactFunding = false,
 ): RelayrPendingSession | null {
   if (relayrClearedMemory.has(scope)) return null
   const memory = relayrPendingMemory.get(scope)
@@ -635,6 +636,17 @@ export function loadRelayrPendingSession(
     const raw = window.localStorage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`)
     if (!raw) return null
     const value = JSON.parse(raw) as Partial<RelayrPendingSession>
+    // A tolerant display read may omit malformed optional fields. Safe recovery
+    // must distinguish missing history from unreadable history before the SDK
+    // can decide that an unfunded publication is obsolete.
+    if (requireExactFunding && (
+      (value.paymentHash !== undefined && value.paymentHash !== null && !isHash(value.paymentHash)) ||
+      (value.paymentChainId !== undefined && value.paymentChainId !== null &&
+        (!Number.isSafeInteger(value.paymentChainId) || value.paymentChainId <= 0)) ||
+      (value.payments !== undefined && !relayrSentPaymentsSnapshot(value.payments)) ||
+      (value.paymentOptions !== undefined && !(Array.isArray(value.paymentOptions) && !value.paymentOptions.length) &&
+        !exactSnapshots(value.paymentOptions, relayrPaymentOptionSnapshot))
+    )) throw new Error('The saved Safe bundle has unreadable funding information. Keep it saved and check its original payment.')
     if (
       typeof value.bundleUuid !== 'string' ||
       !value.bundleUuid ||
@@ -697,7 +709,8 @@ export function loadRelayrPendingSession(
     // the authorization path can inspect the original record strictly.
     relayrPendingMemory.set(scope, restored)
     return restored
-  } catch {
+  } catch (error) {
+    if (requireExactFunding) throw error
     return relayrPendingMemory.get(scope) ?? null
   }
 }

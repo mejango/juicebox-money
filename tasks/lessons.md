@@ -31,3 +31,6 @@ Explain the persisted state that requires resume, rather than repeating zero com
 
 ## 2026-10-06 — Pace egress, not response completion
 A two-worker chain-check limit makes unrelated chains wait for slow responses. Pace actual browser RPC request starts in the shared transport, let independent checks overlap, and still drain every check before quote/payment decisions.
+
+## 2026-10-06 — Exercise persisted recovery through the actual caller
+Mocked journal storage cannot verify serialization or reload identity. Cover quote creation, modal reopening, funding and recovery with the real writer/reader. Safe-scoped status checks use the saved funding identity; connecting a different wallet must not prevent read-only reconciliation or authorize that wallet to fund. Reproduce the reported click sequence before attributing an automatic error to a payment click.

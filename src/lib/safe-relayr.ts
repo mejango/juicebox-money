@@ -41,7 +41,7 @@ export function legacySafeRelayrBindings(entries: readonly RelayrEntry[], proofs
 
 /** Keep the old Safe-scoped journal readable while the SDK owns every decision. */
 export function safeRelayrSession(scope: string): SafeRelayrSession | null {
-  const saved = loadRelayrPendingSession(scope)
+  const saved = loadRelayrPendingSession(scope, true)
   if (!saved) {
     if (typeof window !== 'undefined' && hasRelayrPendingEvidence(scope)) {
       throw new Error('The saved Safe bundle could not be read. Keep it pending and check its original receipt.')
@@ -64,6 +64,10 @@ export function safeRelayrSession(scope: string): SafeRelayrSession | null {
   if (!saved.chainIds.length) {
     throw new Error('The older Safe bundle has no chain information. Keep it pending and check its original receipt.')
   }
+  const complete = executions.length === saved.expectedCount &&
+    saved.chainIds.length === executions.length && new Set(saved.chainIds).size === executions.length &&
+    saved.chainIds.every(chainId => executions.some(execution => execution.entry.chain === chainId))
+  const unknownFunding = !saved.payments?.length && (saved.paymentHash !== null || saved.paymentChainId !== null)
   return {
     id: `legacy:${scope}:${saved.bundleUuid}`,
     account: (saved.account ?? zeroAddress) as Address,
@@ -77,12 +81,15 @@ export function safeRelayrSession(scope: string): SafeRelayrSession | null {
         expectedTransactions: legacySafeRelayrBindings(executions.map(item => item.entry), saved.expectedSafeExecutions ?? [], saved.records),
       },
     } : {}),
-    paymentStatus: saved.paymentStatus === 'unpaid' ? 'unfunded' : saved.paymentStatus,
+    paymentStatus: saved.paymentStatus === 'unpaid' ? unknownFunding ? 'sending' : 'unfunded' : saved.paymentStatus,
     payments: saved.payments ?? [],
     state: 'active',
     createdAt: saved.createdAt,
     records: saved.records,
-    reservationKeys: saved.chainIds.map(chainId => `${chainId}:${scope.slice('safe-queue:'.length)}:*`),
+    reservationKeys: saved.chainIds.map(chainId => {
+      const execution = complete ? executions.find(item => item.entry.chain === chainId) : undefined
+      return `${chainId}:${scope.slice('safe-queue:'.length)}:${execution?.nonce ?? '*'}`
+    }),
     context: { legacy: true },
   }
 }

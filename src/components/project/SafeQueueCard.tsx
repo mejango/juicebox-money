@@ -38,6 +38,7 @@ import {
   type RelayrSafeExecutionProof,
 } from "@/lib/relayr";
 import {
+  RELAYR_UUID_RE,
   relayrDestinationHash,
   relayrRecordChain,
   relayrStateIsFailed,
@@ -818,6 +819,7 @@ export function SafeQueueCard({
   const activeAccount = useRef(address);
   activeAccount.current = address;
   const [recovery, setRecovery] = useState<SafeRelayrSession | null>(null);
+  const [recoveryResult, setRecoveryResult] = useState<SafeRelayrResult | null>(null);
   useEffect(() => {
     batchRun.current?.abort();
     setBusy(null);
@@ -829,6 +831,7 @@ export function SafeQueueCard({
     setNotice(null);
     setError(null);
     setRecovery(null);
+    setRecoveryResult(null);
     return () => batchRun.current?.abort();
   }, [address, safe]);
   // The queue loads once the card is on screen, then refreshes on focus and
@@ -1025,7 +1028,16 @@ export function SafeQueueCard({
     setBatchDone(true);
   };
 
+  const savedAccountNotice = (session: SafeRelayrSession) => {
+    if (session.account.toLowerCase() === zeroAddress) {
+      return "This older bundle has no saved funding account. Its status can still be checked, but its payment cannot be resumed.";
+    }
+    return session.account.toLowerCase() === address?.toLowerCase() ? null
+      : `This bundle was saved by ${session.account}. Connect that wallet to resume its payment.`;
+  };
+
   const applyResult = async (result: SafeRelayrResult) => {
+    setRecoveryResult(result);
     if (result.state === "complete") {
       setPendingSession(null);
       setRecovery(null);
@@ -1041,24 +1053,33 @@ export function SafeQueueCard({
       setPendingSession(null);
       setRecovery(null);
       setBatchReview(null);
-      setNotice("The previous quote expired without funding. Review the current Safe transactions again.");
+      if (result.session.releaseReason === "safe-nonces-consumed") {
+        setBatchOpen(false);
+        setNotice(result.recovery?.message ?? "The saved Safe nonces have already been used. The current queue has been refreshed.");
+        await refetchQueues();
+      } else if (result.session.releaseReason === "quote-expired" || result.session.paymentStatus === "expired") {
+        setNotice("The previous quote expired without funding. Review the current Safe transactions again.");
+      } else {
+        setNotice("Review the current Safe transactions again.");
+      }
     } else {
       setRecovery(result.session);
-      setNotice("The existing bundle is still pending. Check its status before submitting another payment.");
+      if (result.session.executions.length) setBatchRows(result.session.executions.map(savedBatchDialogRow));
+      setNotice(result.recovery?.message ?? "The existing bundle is still pending. Check its status before submitting another payment.");
     }
   };
 
   const watchExistingBundle = (session: SafeRelayrSession, run: AbortController) => {
-    if (!address) return;
     void makeController(run.signal).watch({
-      account: address, sessionId: session.id, signal: run.signal,
+      account: session.account, sessionId: session.id, signal: run.signal,
       onUpdate: async result => {
         if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
         if (result.state === "ready") {
           // A background status check does not replace explicit review of the
           // saved calls. The recovery action opens that review when requested.
           setRecovery(result.session);
-          setNotice("The existing quote can be resumed. Review its saved calls to continue.");
+          setRecoveryResult(result);
+          setNotice(savedAccountNotice(result.session) ?? "The existing quote can be resumed. Review its saved calls to continue.");
         } else {
           await applyResult(result);
         }
@@ -1070,25 +1091,36 @@ export function SafeQueueCard({
     });
   };
 
-  const recoverPaidBundle = async () => {
-    if (!address) return;
+  const recoverPaidBundle = async (reviewSavedCalls = true) => {
     const run = new AbortController();
     batchRun.current?.abort();
     batchRun.current = run;
     setBusy("recover-bundle");
     setError(null);
+    setRecoveryResult(null);
     try {
-      const session = recovery ?? safeRelayrSession(pendingScope);
-      if (!session) return;
+      // A Safe-scoped record can be created by another wallet or tab. Read the
+      // current journal and check its saved identity without authorizing payment.
+      const session = safeRelayrSession(pendingScope);
+      if (!session) throw new Error("The saved Safe bundle is no longer available on this device. Reopen the Safe queue to review its current status.");
       const controller = makeController(run.signal);
-      let result = await controller.check({ account: address, sessionId: session.id });
+      let result = await controller.check({ account: session.account, sessionId: session.id });
+      if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
       if (result.state === "ready" && !run.signal.aborted) {
         setBatchRows(result.session.executions.map(savedBatchDialogRow));
+        const accountNotice = savedAccountNotice(result.session);
+        if (!reviewSavedCalls || accountNotice || !address) {
+          setRecovery(result.session);
+          setRecoveryResult(result);
+          setBatchReview(null);
+          setNotice(accountNotice ?? "The existing quote can be resumed. Review its saved calls to continue.");
+          return;
+        }
         result = await controller.prepare({ account: address, executions: result.session.executions, signal: run.signal });
       }
       if (!run.signal.aborted && activeAccount.current === address) {
         await applyResult(result);
-        if (result.state === "pending") watchExistingBundle(result.session, run);
+        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run);
       }
     } catch (checkError) {
       if (!run.signal.aborted) setError(checkError instanceof Error ? checkError.message : "Could not check the existing bundle.");
@@ -1227,6 +1259,7 @@ export function SafeQueueCard({
       setBatchDone(false);
       setBatchReview(null);
       setRecovery(null);
+      setRecoveryResult(null);
       setBatchOpen(true);
       const executions: SafeRelayrExecution[] = relayrRows.map(row => ({
         entry: safeExecRelayrEntry(row.chain.chainId, safe, row.tx, row.chain.info?.owners ?? []),
@@ -1242,7 +1275,19 @@ export function SafeQueueCard({
       if (!run.signal.aborted && activeAccount.current === address) await applyResult(result);
     } catch (batchError) {
       if (run.signal.aborted || batchRun.current !== run) return;
-      if (batchError instanceof SafeRelayrRecoveryError) setRecovery(batchError.session);
+      if (batchError instanceof SafeRelayrRecoveryError) {
+        setRecovery(batchError.session);
+        if (batchError.session.executions.length) setBatchRows(batchError.session.executions.map(savedBatchDialogRow));
+        if (batchError.recovery) {
+          await applyResult({ state: batchError.session.state === "released" ? "released" : "pending", session: batchError.session, payments: [], recovery: batchError.recovery });
+          return;
+        }
+        const accountNotice = savedAccountNotice(batchError.session);
+        if (accountNotice) {
+          setNotice(accountNotice);
+          return;
+        }
+      }
       setError(batchError instanceof Error ? batchError.message : "Could not review the Safe transactions.");
     } finally {
       if (!run.signal.aborted && batchRun.current === run) setBusy(null);
@@ -1257,6 +1302,7 @@ export function SafeQueueCard({
     batchRun.current = run;
     setBusy("execute-all");
     setError(null);
+    setRecoveryResult(null);
     setNotice(null);
     try {
       const result = await makeController(run.signal).fund({
@@ -1267,14 +1313,33 @@ export function SafeQueueCard({
       });
       if (!run.signal.aborted && activeAccount.current === address) {
         await applyResult(result);
-        if (result.state === "pending") watchExistingBundle(result.session, run);
+        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run);
       }
     } catch (batchError) {
       if (run.signal.aborted) return;
-      if (batchError instanceof SafeRelayrRecoveryError) setRecovery(batchError.session);
+      if (batchError instanceof SafeRelayrRecoveryError) {
+        setRecovery(batchError.session);
+        if (batchError.session.executions.length) setBatchRows(batchError.session.executions.map(savedBatchDialogRow));
+        if (batchError.recovery) {
+          await applyResult({ state: batchError.session.state === "released" ? "released" : "pending", session: batchError.session, payments: [], recovery: batchError.recovery });
+          return;
+        }
+      }
       else {
-        const saved = safeRelayrSession(pendingScope);
-        if (saved && saved.paymentStatus !== "unfunded") setRecovery(saved);
+        let saved: SafeRelayrSession | null;
+        try {
+          saved = safeRelayrSession(pendingScope);
+        } catch {
+          // Retain the reviewed recovery identity when the current durable
+          // journal cannot be read. A failed read cannot authorize a new quote.
+          saved = null;
+        }
+        if (!saved || saved.id !== batchReview.session.id ||
+            saved.account.toLowerCase() !== address.toLowerCase() || saved.paymentStatus !== "unfunded") {
+          setRecovery(saved ?? batchReview.session);
+          if (saved?.executions.length) setBatchRows(saved.executions.map(savedBatchDialogRow));
+          setBatchReview(null);
+        }
       }
       setError(batchError instanceof Error ? batchError.message : "Could not execute the Safe transactions.");
     } finally {
@@ -1282,8 +1347,11 @@ export function SafeQueueCard({
     }
   };
 
-  const openPaidBundle = () => {
+  const openPaidBundle = async () => {
     if (!pendingSession) return;
+    setError(null);
+    setNotice(null);
+    setRecoveryResult(null);
     if (!batchRows.length) {
       setBatchRows(
         pendingSession.chainIds.map((chainId, index) => {
@@ -1305,6 +1373,7 @@ export function SafeQueueCard({
       setError(savedError instanceof Error ? savedError.message : "Could not read the saved bundle.");
     }
     setBatchOpen(true);
+    await recoverPaidBundle(false);
   };
 
   const closeExecuteAll = () => {
@@ -1317,6 +1386,7 @@ export function SafeQueueCard({
     setBatchDone(false);
     setNotice(null);
     setError(null);
+    setRecoveryResult(null);
   };
 
   // A paid bundle's rows follow Relayr's per-chain records, matched by chain
@@ -1336,7 +1406,12 @@ export function SafeQueueCard({
     return matches.length === 1 ? matches[0] : undefined;
   };
 
-  const rowStatus = (chainId: number): string => {
+  const rowStatus = ({ chainId, nonce }: BatchDialogRow): string => {
+    if (busy === "recover-bundle") return "Checking…";
+    const nonceCheck = recoveryResult?.recovery?.checks?.find(check => check.chainId === chainId && check.nonce === nonce);
+    if (nonceCheck) return nonceCheck.state === "consumed" ? "Nonce already used"
+      : nonceCheck.state === "live" ? "Still queued" : "Could not check nonce";
+    if (recoveryResult?.recovery) return "Status unavailable";
     if (!pendingSession || batchDone || (pendingSession.safeLifecycle?.paymentStatus === "unfunded" && !recovery)) return batchStatus[chainId] ?? "Waiting";
     const state = paidRecord(chainId)?.status?.state;
     if (relayrStateIsSuccess(state)) return "Landed | verifying";
@@ -1363,7 +1438,7 @@ export function SafeQueueCard({
         ) : recovery ? (
           <div className="flex justify-end">
             <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null} className="btn-primary min-h-[42px] px-5 text-sm">
-              {busy ? "Checking…" : "Check existing bundle"}
+              {busy ? "Checking…" : recoveryResult?.state === "ready" && !savedAccountNotice(recoveryResult.session) ? "Review saved quote" : RELAYR_UUID_RE.test(recovery.bundleUuid ?? "") ? "Check existing bundle" : "Check Safe nonces"}
             </button>
           </div>
         ) : error && !batchReview && !busy ? (
@@ -1417,7 +1492,7 @@ export function SafeQueueCard({
     >
       <ul className="divide-y divide-smoke-200 rounded-lg border border-smoke-200">
         {batchRows.map((row) => {
-          const status = rowStatus(row.chainId);
+          const status = rowStatus(row);
           const record = paidRecord(row.chainId);
           const hash = record ? relayrDestinationHash(record) : null;
           const failed = status === "Failed" || status === "Check failed" || status === "Changed";
@@ -1471,6 +1546,20 @@ export function SafeQueueCard({
         </a>
       ) : null}
       {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {recoveryResult?.recovery ? (
+        <ul className="mt-3 space-y-1 text-sm">
+          {batchRows.map(row => {
+            const queueUrl = safeQueueUrl(row.chainId, safe);
+            return queueUrl ? (
+              <li key={row.chainId}>
+                <a href={queueUrl} target="_blank" rel="noreferrer" className="text-bluebs-600 underline">
+                  Open {chainName(row.chainId)} queue in Safe ↗
+                </a>
+              </li>
+            ) : null;
+          })}
+        </ul>
+      ) : null}
       <TxError error={error} />
     </ModalShell>
   );
@@ -1498,7 +1587,7 @@ export function SafeQueueCard({
             </p>
           ) : null}
         </div>
-        {pendingSession && pendingSession.safeLifecycle?.paymentStatus !== "unfunded" ? (
+        {pendingSession && (!pendingSession.safeLifecycle?.quote || pendingSession.safeLifecycle.paymentStatus !== "unfunded") ? (
           <button
             type="button"
             onClick={openPaidBundle}

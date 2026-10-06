@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
     error: null
   }>,
   session: null as RelayrPendingSession | null,
+  realStorage: false,
   refetch: vi.fn(),
   simulate: vi.fn(),
   simulateFrozen: vi.fn(),
@@ -44,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   getBlock: vi.fn(),
   getTransaction: vi.fn(),
   getTransactionReceipt: vi.fn(),
+  request: vi.fn(),
 }))
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address }) }))
@@ -81,23 +83,31 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requireTransactionReview: mocks.review,
 }))
-vi.mock('@/lib/relayr', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/relayr')>()),
-  loadRelayrPendingSession: () => mocks.session,
-  saveRelayrPendingSession: mocks.save,
-  saveRelayrPendingSessionDurably: mocks.save,
-  clearRelayrPendingSession: mocks.clear,
-  relayrPostBundle: mocks.post,
-  relayrPay: mocks.pay,
-  relayrPoll: mocks.poll,
-  relayrChainClient: () => ({
-    getBlock: mocks.getBlock,
-    getTransaction: mocks.getTransaction,
-    getTransactionReceipt: mocks.getTransactionReceipt,
-  }),
-}))
+vi.mock('@/lib/relayr', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/relayr')>()
+  return {
+    ...actual,
+    loadRelayrPendingSession: (scope: string, requireExactFunding = false) => mocks.realStorage
+      ? actual.loadRelayrPendingSession(scope, requireExactFunding) : mocks.session,
+    saveRelayrPendingSession: (scope: string, session: RelayrPendingSession) => mocks.realStorage
+      ? actual.saveRelayrPendingSession(scope, session) : mocks.save(scope, session),
+    saveRelayrPendingSessionDurably: (scope: string, session: RelayrPendingSession, preserveOnFailure?: boolean) => mocks.realStorage
+      ? actual.saveRelayrPendingSessionDurably(scope, session, preserveOnFailure) : mocks.save(scope, session, preserveOnFailure),
+    clearRelayrPendingSession: (scope: string) => mocks.realStorage ? actual.clearRelayrPendingSession(scope) : mocks.clear(scope),
+    relayrPostBundle: mocks.post,
+    relayrPay: mocks.pay,
+    relayrPoll: mocks.poll,
+    relayrChainClient: (chainId: number) => ({
+      getBlock: mocks.getBlock,
+      getTransaction: mocks.getTransaction,
+      getTransactionReceipt: mocks.getTransactionReceipt,
+      request: (args: unknown) => mocks.request(chainId, args),
+    }),
+  }
+})
 
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
+import { safeExecRelayrEntry } from '@/lib/safe'
 import { canonicalSafeTxHash } from '@bananapus/nana-sdk-core/safe-service'
 import {
   RELAYR_NATIVE_TOKEN,
@@ -108,6 +118,9 @@ import {
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   RelayrPaymentSendingError,
+  clearRelayrPendingSession,
+  loadRelayrPendingSession,
+  saveRelayrPendingSession,
   relayrPay,
   relayrPaymentLabel,
 } from '@/lib/relayr'
@@ -217,6 +230,37 @@ async function updateQueue() {
   })
 }
 
+function setupRealRelayrStorage() {
+  const records = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => records.get(key) ?? null,
+    setItem: (key: string, value: string) => { records.set(key, value) },
+    removeItem: (key: string) => { records.delete(key) },
+    key: (index: number) => [...records.keys()][index] ?? null,
+    get length() { return records.size },
+  }
+  vi.stubGlobal('window', { localStorage: storage })
+  mocks.realStorage = true
+  const scope = `safe-queue:${SAFE}`
+  clearRelayrPendingSession(scope)
+  return { scope, storage }
+}
+
+async function publicationWithLostQuote() {
+  const { scope } = setupRealRelayrStorage()
+  mocks.post.mockRejectedValueOnce(new Error('The quote response was lost.'))
+  await renderQueue()
+  await click(/Execute 2 ready/)
+  expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({
+    state: 'publishing', paymentStatus: 'unfunded',
+  })
+  expect(loadRelayrPendingSession(scope)?.safeLifecycle?.quote).toBeUndefined()
+  await closeBatch()
+  await act(async () => renderer.unmount())
+  await renderQueue()
+  return scope
+}
+
 beforeEach(() => {
   mocks.viaSafeApp = false
   mocks.chainId = undefined
@@ -224,6 +268,7 @@ beforeEach(() => {
   mocks.bundle = null
   mocks.rows = [chain(1, [5, 6]), chain(10, [5, 6])]
   mocks.session = null
+  mocks.realStorage = false
   mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTransaction) => ({
     tx,
     safeTxHash: canonicalSafeTxHash(chainId, safe, tx),
@@ -234,6 +279,7 @@ beforeEach(() => {
   mocks.getBlock.mockReset().mockImplementation(async () => ({ number: 10n, hash: HASH, timestamp: BigInt(Math.floor(Date.now() / 1_000)) }))
   mocks.getTransaction.mockReset().mockRejectedValue(new Error('Payment has not been mined.'))
   mocks.getTransactionReceipt.mockReset().mockRejectedValue(new Error('Payment has not been mined.'))
+  mocks.request.mockReset().mockResolvedValue(`0x${'5'.padStart(64, '0')}`)
   mocks.execute.mockReset().mockResolvedValue({ status: 'confirmed', hash: HASH })
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quote(entries))
   vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
@@ -262,6 +308,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (renderer) await act(async () => renderer.unmount())
+  if (mocks.realStorage) clearRelayrPendingSession(`safe-queue:${SAFE}`)
 })
 
 describe('Safe queue Relayr execution', () => {
@@ -464,6 +511,25 @@ describe('Safe queue Relayr execution', () => {
     expect(textOf(renderer.root)).toMatch(/another account|unavailable|immutable execution proof/)
   })
 
+  it.each(['replaced', 'missing'] as const)('offers recovery when the reviewed journal is %s before funding', async state => {
+    const { scope } = setupRealRelayrStorage()
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const saved = loadRelayrPendingSession(scope)!
+    await selectPayment(0)
+    if (state === 'missing') clearRelayrPendingSession(scope)
+    else saveRelayrPendingSession(scope, {
+      ...saved, safeLifecycle: { ...saved.safeLifecycle!, id: 'replacement-session' },
+    })
+    await click(/Pay once and execute 2/)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(button(/Check existing bundle/).props.disabled).toBe(false)
+    expect(() => button(/Pay once and execute 2/)).toThrow()
+    if (state === 'missing') expect(loadRelayrPendingSession(scope)).toBeNull()
+    else expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe('replacement-session')
+  })
+
   it('keeps a confirmed payment and every chain outcome when Relayr reports a partial failure', async () => {
     mocks.pay.mockImplementation(async ({ payment, bundleUuid, destinationChainIds, reverify, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
       const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
@@ -533,7 +599,9 @@ describe('Safe queue Relayr execution', () => {
     expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
     expect(mocks.session?.safeLifecycle).toMatchObject({ state: 'active', bundleUuid: BUNDLE, paymentStatus: 'unfunded' })
     expect(mocks.pay).not.toHaveBeenCalled()
-    await click(/Execute 2 ready/)
+    await click(/View existing bundle/)
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    await click(/Review saved quote/)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.review).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: 'Use saved quote' }))
     expect(renderer.root.findAllByType('select')).toHaveLength(1)
@@ -629,7 +697,6 @@ describe('Safe queue Relayr execution', () => {
     await act(async () => renderer.unmount())
     await renderQueue()
     await click(/View existing bundle/)
-    await click(/Check existing bundle/)
     expect(mocks.session?.bundleUuid).toBe(BUNDLE)
     expect(mocks.session?.paymentStatus).toBe('confirmed')
     expect(mocks.post).toHaveBeenCalledTimes(1)
@@ -650,6 +717,252 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.session).toEqual(saved)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(button(/Check existing bundle/).props.disabled).toBe(false)
+  })
+
+  it('retains a four-chain session ID through real browser storage, remount, funding, and recovery', async () => {
+    const { scope, storage } = setupRealRelayrStorage()
+    mocks.rows = [1, 10, 8453, 42161].map(chainId => chain(chainId as JBChainId, [5, 6]))
+    await renderQueue()
+    await click(/Execute 4 ready/)
+    const published = loadRelayrPendingSession(scope)!
+    expect(published.safeLifecycle).toMatchObject({ state: 'active', account: OWNER, bundleUuid: BUNDLE })
+    vi.useFakeTimers()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    vi.useRealTimers()
+    expect(textOf(renderer.root)).not.toMatch(/another account or is unavailable/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    const sessionId = published.safeLifecycle!.id
+    const serialized = JSON.parse(storage.getItem(`jb-relayr-pending-v1:${scope}`)!) as RelayrPendingSession
+    expect(serialized.safeLifecycle?.id).toBe(sessionId)
+
+    await closeBatch()
+    await act(async () => renderer.unmount())
+    await renderQueue()
+    await click(/Execute 4 ready/)
+    expect(mocks.review).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: 'Use saved quote' }))
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(sessionId)
+    await selectPayment(0)
+    await click(/Pay once and execute 4/)
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'sending', paymentChainId: 1 })
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(sessionId)
+    await click(/Check existing bundle/)
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(sessionId)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(textOf(renderer.root)).not.toMatch(/another account or is unavailable/)
+  })
+
+  it.each([
+    { account: TARGET, paymentStatus: 'confirmed' as const, legacy: true },
+    { account: null, paymentStatus: 'confirmed' as const, legacy: true },
+    { account: TARGET, paymentStatus: 'unpaid' as const, legacy: true },
+    { account: TARGET, paymentStatus: 'confirmed' as const, legacy: false },
+    { account: TARGET, paymentStatus: 'unpaid' as const, legacy: false },
+  ])('checks a $paymentStatus bundle from saved account $account (legacy=$legacy) without paying from the current wallet', async ({ account, paymentStatus, legacy }) => {
+    const { scope } = setupRealRelayrStorage()
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const published = loadRelayrPendingSession(scope)!
+    saveRelayrPendingSession(scope, {
+      ...published, account, paymentStatus,
+      safeLifecycle: legacy ? undefined : {
+        ...published.safeLifecycle!, account: account as Address,
+        paymentStatus: paymentStatus === 'unpaid' ? 'unfunded' : 'confirmed',
+      },
+      paymentHash: paymentStatus === 'confirmed' ? HASH : null,
+    })
+    await closeBatch()
+    await act(async () => renderer.unmount())
+    await renderQueue()
+    if (legacy || paymentStatus === 'confirmed') await click(/View existing bundle/)
+    else {
+      await click(/Execute 2 ready/)
+      await click(/Check existing bundle/)
+    }
+    expect(textOf(renderer.root)).not.toMatch(/another account or is unavailable/)
+    expect(loadRelayrPendingSession(scope)?.bundleUuid).toBe(BUNDLE)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(() => button(/Pay once and execute 2/)).toThrow()
+  })
+
+  it('clears a previous action error when opening the saved bundle and checks it without another click', async () => {
+    const { scope } = setupRealRelayrStorage()
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const published = loadRelayrPendingSession(scope)!
+    saveRelayrPendingSession(scope, {
+      ...published, safeLifecycle: undefined, account: TARGET,
+      paymentStatus: 'confirmed', paymentHash: HASH,
+    })
+    await closeBatch()
+    await act(async () => renderer.unmount())
+    await renderQueue()
+    mocks.execute.mockRejectedValueOnce(new Error('Previous execution error.'))
+    await click(/^Execute$/)
+    expect(textOf(renderer.root)).toMatch(/Previous execution error/)
+    const readsBeforeOpen = vi.mocked(globalThis.fetch).mock.calls.length
+    await click(/View existing bundle/)
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThan(readsBeforeOpen)
+    expect(textOf(renderer.root)).not.toMatch(/Previous execution error|another account or is unavailable/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['live', 'mixed', 'unavailable'] as const)(
+    'explains %s Safe nonces automatically when the saved publication has no quote',
+    async state => {
+      mocks.request.mockImplementation(async (chainId: number) => {
+        if (state === 'unavailable' && chainId === 10) throw new Error('RPC unavailable')
+        return `0x${(state === 'mixed' && chainId === 1 ? '6' : '5').padStart(64, '0')}`
+      })
+      const scope = await publicationWithLostQuote()
+      await click(/View existing bundle/)
+      const text = textOf(renderer.root)
+      expect(text).toMatch(state === 'unavailable' ? /Some Safe nonces could not be verified/
+        : state === 'mixed' ? /Some saved Safe nonces have been used/
+          : /saved Safe nonces are still unused/)
+      expect(text).toMatch(/Still queued/)
+      if (state === 'mixed') expect(text).toMatch(/Nonce already used/)
+      if (state === 'unavailable') expect(text).toMatch(/Could not check nonce/)
+      expect(loadRelayrPendingSession(scope)?.safeLifecycle?.state).toBe('publishing')
+      expect(mocks.post).toHaveBeenCalledTimes(1)
+      expect(mocks.review).toHaveBeenCalledTimes(1)
+      expect(mocks.pay).not.toHaveBeenCalled()
+      expect(button(/Check Safe nonces/).props.disabled).toBe(false)
+    },
+  )
+
+  it('releases an unfunded quote-less publication only after every saved nonce is canonically consumed', async () => {
+    mocks.request.mockResolvedValue(`0x${'6'.padStart(64, '0')}`)
+    const scope = await publicationWithLostQuote()
+    await click(/View existing bundle/)
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({
+      state: 'released', paymentStatus: 'unfunded', releaseReason: 'safe-nonces-consumed',
+    })
+    expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
+    expect(textOf(renderer.root)).toMatch(/Every saved Safe nonce has been used/)
+    expect(textOf(renderer.root)).not.toMatch(/Executed 2 Safe transactions/)
+    expect(mocks.getBlock).toHaveBeenCalledWith({ blockTag: 'finalized' })
+    expect(mocks.getBlock).toHaveBeenCalledWith({ blockNumber: 10n })
+    expect(mocks.refetch).toHaveBeenCalledOnce()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('explains missing legacy execution proof without pretending its rows are checking', async () => {
+    const scope = await publicationWithLostQuote()
+    const saved = loadRelayrPendingSession(scope)!
+    saveRelayrPendingSession(scope, {
+      ...saved, safeLifecycle: undefined, expectedEntries: undefined,
+      expectedTransactions: undefined, expectedSafeExecutions: undefined,
+    })
+    await click(/View existing bundle/)
+    expect(textOf(renderer.root)).toMatch(/missing complete Safe transaction details/)
+    expect(textOf(renderer.root)).toMatch(/Status unavailable/)
+    expect(textOf(renderer.root)).not.toMatch(/Checking…/)
+    expect(loadRelayrPendingSession(scope)?.bundleUuid).toBe(saved.bundleUuid)
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('refreshes an obsolete saved selection discovered during Execute all without requesting another quote', async () => {
+    const scope = await publicationWithLostQuote()
+    const saved = loadRelayrPendingSession(scope)!
+    await act(async () => renderer.unmount())
+    clearRelayrPendingSession(scope)
+    await renderQueue()
+    // Another tab restores a journal after this card rendered its ready queue.
+    saveRelayrPendingSession(scope, saved)
+    mocks.request.mockResolvedValue(`0x${'6'.padStart(64, '0')}`)
+    await click(/Execute 2 ready/)
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({
+      id: saved.safeLifecycle!.id, state: 'released', releaseReason: 'safe-nonces-consumed',
+    })
+    expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
+    expect(textOf(renderer.root)).toMatch(/Every saved Safe nonce has been used/)
+    expect(mocks.refetch).toHaveBeenCalledOnce()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('shows the saved calls and nonces when Execute all discovers a partially overlapping publication', async () => {
+    const scope = await publicationWithLostQuote()
+    const saved = loadRelayrPendingSession(scope)!
+    await act(async () => renderer.unmount())
+    clearRelayrPendingSession(scope)
+    mocks.rows = [chain(1, [5]), {
+      ...chain(10, [20]), transactions: [{ ...queued(20), data: '0xabcd' as Hex }],
+    }]
+    await renderQueue()
+    // Another tab restores the original nonce-5 selection after the new queue renders.
+    saveRelayrPendingSession(scope, saved)
+    mocks.request.mockImplementation(async (chainId: number) => `0x${(chainId === 10 ? '14' : '5').padStart(64, '0')}`)
+    await click(/Execute 2 ready/)
+    const dialog = renderer.root.findByType('dialog')
+    const rows = dialog.findAllByType('ul')[0].findAllByType('li')
+    expect(rows).toHaveLength(2)
+    expect(textOf(rows[0])).toMatch(/Ethereum#5Still queued/)
+    expect(textOf(rows[1])).toMatch(/Optimism#5Nonce already used/)
+    for (const row of rows) expect(textOf(row)).toContain('0x1234')
+    expect(textOf(dialog)).not.toMatch(/#20|0xabcd/)
+    expect(textOf(dialog)).toMatch(/Some saved Safe nonces have been used/)
+    expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({
+      id: saved.safeLifecycle!.id, state: 'publishing',
+    })
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(button(/Check Safe nonces/).props.disabled).toBe(false)
+  })
+
+  it.each([
+    { label: 'payment history object', malformed: { payments: {} } },
+    { label: 'invalid payment history array', malformed: { payments: [{ hash: HASH }] } },
+    { label: 'non-hex payment hash', malformed: { paymentHash: 'not-a-hash' } },
+    { label: 'truncated payment hash', malformed: { paymentHash: '0x12' } },
+    { label: 'payment chain string', malformed: { paymentChainId: '1' } },
+    { label: 'negative payment chain', malformed: { paymentChainId: -1 } },
+    { label: 'payment options object', malformed: { paymentOptions: {} } },
+    { label: 'invalid payment options array', malformed: { paymentOptions: [{ chain: 1, amount: 1000, target: RELAYR_PAYMENT_ADDRESS, calldata: '0x' }] } },
+  ])('keeps a legacy journal with $label intact before attempting recovery', async ({ malformed }) => {
+    const { scope, storage } = setupRealRelayrStorage()
+    const entries = [1, 10].map(chainId => safeExecRelayrEntry(chainId as JBChainId, SAFE, queued(5), [OWNER]))
+    const quoted = quote(entries)
+    const legacy: RelayrPendingSession = {
+      bundleUuid: BUNDLE, paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      chainIds: [1, 10], expectedCount: 2, itemCount: 2, account: OWNER, createdAt: Date.now(),
+      records: quoted.transactions, expectedEntries: entries, payments: [], paymentOptions: [],
+      expectedSafeExecutions: entries.map((entry, index) => ({
+        chainId: entry.chain, safe: SAFE, nonce: 5,
+        safeTxHash: canonicalSafeTxHash(entry.chain, SAFE, queued(5)),
+        txUuid: quoted.expectedTransactions[index].txUuid,
+      })),
+    }
+    const raw = JSON.stringify({ ...legacy, ...malformed })
+    const key = `jb-relayr-pending-v1:${scope}`
+    storage.setItem(key, raw)
+    mocks.request.mockResolvedValue(`0x${'6'.padStart(64, '0')}`)
+    mocks.bundle = { bundle_uuid: BUNDLE, payment_received: false, transactions: quoted.transactions }
+    await renderQueue()
+    // Mount first exercises the tolerant display reader and its memory cache.
+    await click(/View existing bundle/)
+    expect(textOf(renderer.root)).toMatch(/unreadable funding information/)
+    expect(storage.getItem(key)).toBe(raw)
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(mocks.getBlock).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(() => button(/Pay once and execute/)).toThrow()
   })
 
   it('refuses a queued transaction that pays a gas refund, in one line', async () => {
