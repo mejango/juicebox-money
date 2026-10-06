@@ -1409,8 +1409,9 @@ function relayrBundleUnrun(read: RelayrBundleRead): boolean {
 
 /**
  * One uncached, echo-checked read of the bundle must report a released quote
- * unpaid with every call pending and no destination hash before its calls are
- * signed or quoted again.
+ * unpaid with every call pending and no destination hash before an authority
+ * action signs its calls again (ruling R104) or a payer deployment quotes its
+ * raw calls again.
  */
 export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void> {
   const bundle = await readRelayrBundleIfNamed(bundleUuid)
