@@ -44,8 +44,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
   hasPermissions: mocks.hasPermissions,
 }))
-vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
-  ...await importOriginal<typeof import('@/lib/cross-chain-authority')>(),
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
 vi.mock('@/components/ChainIcon', () => ({

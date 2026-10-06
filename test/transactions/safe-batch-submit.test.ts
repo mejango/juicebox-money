@@ -1,4 +1,4 @@
-import { toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     simulateCalls: vi.fn(),
     readContract: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
+    getTransaction: vi.fn(),
   },
   wallet: { signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -41,13 +42,10 @@ vi.mock('@/lib/transaction-review', () => ({
   requireTransactionReview: mocks.requireReview,
   requireContractTransactionReview: mocks.requireReview,
 }))
-vi.mock('@/lib/cross-chain-authority', async original => ({
-  ...(await original<typeof import('@/lib/cross-chain-authority')>()),
-  readAuthorityIdentity: mocks.readAuthorityIdentity,
-}))
-vi.mock('@/lib/safe-reads', async original => ({
-  ...(await original<typeof import('@/lib/safe-reads')>()),
+vi.mock('@bananapus/nana-sdk-core/safe', async original => ({
+  ...(await original<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
 }))
 vi.mock('@/lib/safe-connector', async original => ({
   ...(await original<typeof import('@/lib/safe-connector')>()),
@@ -60,20 +58,18 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
 }))
 
 import {
-  buildStep,
-  composeBatch,
   encodeMultiSend,
   MULTI_SEND_CALL_ONLY,
   packMultiSend,
-  type BatchStep,
-} from '@/lib/safe-batch'
+} from '@bananapus/nana-sdk-core/safe'
+import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
 import {
   authorityCallForStep,
   batchActionLabel,
   resolveSafeBatchRoute,
   submitSafeBatch,
 } from '@/lib/safe-batch-submit'
-import { safeTxHashOf } from '@/lib/safe'
+import { SAFE_EXEC_ABI, safeTransactionHash } from '@bananapus/nana-sdk-core/safe-service'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -86,6 +82,7 @@ const PROPOSAL = `0x${'ab'.repeat(32)}` as Hex
 const EXECUTION = `0x${'cd'.repeat(32)}` as Hex
 const SIGNATURE = `0x${'11'.repeat(65)}` as Hex
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
+const EXECUTION_SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
 
 function safeIdentity(owners = [ALICE], threshold = 1) {
   return {
@@ -136,7 +133,11 @@ beforeEach(() => {
   mocks.client.request.mockResolvedValue('0x')
   mocks.wallet.signTypedData.mockResolvedValue(SIGNATURE)
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION)
-  mocks.waitForTrackedReceipt.mockResolvedValue({ status: 'success', transactionHash: EXECUTION, logs: [] })
+  mocks.waitForTrackedReceipt.mockResolvedValue({
+    status: 'success',
+    transactionHash: EXECUTION,
+    logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` }],
+  })
   mocks.sendCalls.mockResolvedValue({ id: PROPOSAL })
   mocks.runAuthorityCalls.mockImplementation(async ({ calls }: { calls: { data: Hex }[] }) => ({
     directResults: calls.map(call => `0x${call.data.slice(2, 10).padEnd(64, '0')}` as Hex),
@@ -223,7 +224,7 @@ describe('Safe owner batch', () => {
       onProposed,
     })
 
-    const expectedHash = safeTxHashOf(1, SAFE, {
+    const expectedHash = safeTransactionHash(1, SAFE, {
       to: MULTI_SEND_CALL_ONLY,
       value: '0',
       data,
@@ -419,7 +420,23 @@ describe('Safe app batch', () => {
       topics: [EXECUTION_FAILURE, safeTxHash],
       data: `0x${'00'.repeat(32)}` as Hex,
     })
+    const success = { address: SAFE, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` as Hex }
     // Another proposal of the same Safe failing in one execution is not this batch failing.
+    mocks.waitForTrackedReceipt.mockResolvedValueOnce({
+      status: 'success',
+      transactionHash: EXECUTION,
+      logs: [failure(`0x${'ef'.repeat(32)}`), success],
+    })
+    await expect(
+      submitSafeBatch({
+        chainId: 1,
+        authority: SAFE,
+        steps: presetSteps(),
+        route: { kind: 'safe-app', authorityKind: 'safe' },
+      }),
+    ).resolves.toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
+
+    // Nor does it prove this batch ran.
     mocks.waitForTrackedReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: EXECUTION,
@@ -432,7 +449,9 @@ describe('Safe app batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
-    ).resolves.toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
+    ).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
 
     mocks.waitForTrackedReceipt.mockResolvedValueOnce({
       status: 'success',
@@ -447,6 +466,48 @@ describe('Safe app batch', () => {
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
     ).rejects.toThrow('The batch reverted after Safe execution.')
+  })
+
+  it('confirms a batch Safe{Wallet} executed at once only when it ran exactly these calls, in order', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    const { calls } = composeBatch(presetSteps())
+    // Safe{Wallet} executed at once and returned the execution's own hash; the
+    // Safe's event names a safeTxHash this app never saw.
+    mocks.sendCalls.mockResolvedValue({ id: EXECUTION })
+    mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION)
+    mocks.waitForTrackedReceipt.mockResolvedValue({
+      status: 'success',
+      transactionHash: EXECUTION,
+      logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS, `0x${'ef'.repeat(32)}`], data: `0x${'00'.repeat(32)}` }],
+    })
+    const ran = (batch: typeof calls) =>
+      mocks.client.getTransaction.mockResolvedValue({
+        hash: EXECUTION,
+        from: ALICE,
+        to: SAFE,
+        input: encodeFunctionData({
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args: [MULTI_SEND_CALL_ONLY, 0n, encodeMultiSend(batch), 1, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+        }),
+      })
+    const submit = () =>
+      submitSafeBatch({
+        chainId: 1,
+        authority: SAFE,
+        steps: presetSteps(),
+        route: { kind: 'safe-app', authorityKind: 'safe' },
+      })
+
+    ran(calls)
+    await expect(submit()).resolves.toEqual({ kind: 'safe-app', safeTxHash: EXECUTION, executionHash: EXECUTION })
+    expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
+
+    ran([...calls].reverse())
+    await expect(submit()).rejects.toThrow(
+      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
+    )
   })
 
   it('does not send when the review is refused or the wallet returns no hash', async () => {

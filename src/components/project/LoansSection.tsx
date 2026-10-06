@@ -490,8 +490,8 @@ function RepayFlow({
     if (busy) return
     setPlan(null)
     setFlowError(null)
-    approveTx.reset()
-    if (repayTx.phase !== 'success') repayTx.reset()
+    approveTx.dismiss()
+    if (repayTx.phase !== 'success') repayTx.dismiss()
   }
 
   const repayStep = plan?.approve ? 1 : 0
@@ -551,11 +551,14 @@ function RepayFlow({
       }
       onConfirm={() => void handleConfirm()}
       busy={checking || busy}
-      complete={repayTx.phase === 'success'}
+      complete={repayTx.settled || approveTx.phase === 'submitted'}
       status={
         !plan
           ? 'Reading the loan and its current fee…'
-          : (repayTx.safeNonceGuidance ?? approveTx.safeNonceGuidance)
+          : (repayTx.notice ??
+            approveTx.notice ??
+            repayTx.safeNonceGuidance ??
+            approveTx.safeNonceGuidance)
       }
       error={error}
       onClose={closeDialog}

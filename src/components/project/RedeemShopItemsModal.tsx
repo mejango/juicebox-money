@@ -588,13 +588,13 @@ export function RedeemShopItemsModal({
           action={tx.phase === 'error' ? 'Retry' : 'Confirm & redeem'}
           onConfirm={() => void redeem()}
           busy={busy}
-          complete={tx.phase === 'success'}
-          status={!plan ? 'Getting a fresh redemption quote…' : tx.safeNonceGuidance}
+          complete={tx.settled}
+          status={!plan ? 'Getting a fresh redemption quote…' : (tx.notice ?? tx.safeNonceGuidance)}
           error={prepareError ?? tx.error}
           onClose={() => {
             setPlan(null)
             setPrepareError(null)
-            if (tx.phase !== 'success') tx.reset()
+            if (tx.phase !== 'success') tx.dismiss()
           }}
         />
       ) : null}

@@ -10,7 +10,8 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { receiptHasSafeExecutionSuccess, SAFE_EXEC_ABI } from '@/lib/safe'
+import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { relayrDestinationHash, relayrPay, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRecordChain, withRelayrScopeLock, type RelayrEntry, type RelayrQuote, type RelayrTransactionRecord } from '@/lib/relayr'
 import { relayrSupportsChains } from '@/lib/relayr-chains'
 
@@ -282,7 +283,7 @@ export async function verifyPayerDeployment(call: PayerDeploymentCall, hash: Hex
   const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (canonical.hash !== receipt.blockHash) throw new Error('The payer deployment receipt is no longer canonical.')
   if (safe) {
-    if (!account || !safeProposalHash || !receiptHasSafeExecutionSuccess(receipt, account, safeProposalHash)) {
+    if (!account || !safeProposalHash || safeExecutionResult(receipt, account, safeProposalHash).status !== 'success') {
       throw new Error('The receipt does not prove the exact original Safe payer proposal executed successfully.')
     }
     if (!account || !transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer deployment did not execute through the reviewed Safe.')
@@ -358,7 +359,7 @@ async function findSafePayerExecution(call: PayerDeploymentCall, outcome: PayerD
   for (let start = BigInt(outcome.fromBlock); start <= latest; start += 10_000n) {
     const end = start + 9_999n < latest ? start + 9_999n : latest
     const logs = await client.getLogs({ address: account, fromBlock: start, toBlock: end })
-    const match = logs.find(log => receiptHasSafeExecutionSuccess({ logs: [log] }, account, outcome.safeProposalHash!))
+    const match = logs.find(log => isSafeExecutionSuccessLog(log, account, outcome.safeProposalHash!))
     if (match?.transactionHash) return match.transactionHash
   }
   return null

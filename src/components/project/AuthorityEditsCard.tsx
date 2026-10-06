@@ -49,7 +49,7 @@ import {
 } from '@/lib/project-metadata'
 import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
 import { wagmiConfig } from '@/providers/Providers'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   buildDeployTokenAuthorityCall,
   buildTokenMetadataAuthorityCall,

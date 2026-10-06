@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import type { Address, Hex } from 'viem'
+import { TransactionNotFoundError, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
 type Receipt = { status: 'success'; blockNumber: bigint; transactionHash: Hex }
@@ -48,6 +48,10 @@ function createFakeWallet() {
       return new Promise<Receipt>(resolve => awaiting.set(key, [...(awaiting.get(key) ?? []), resolve]))
     }),
     getBalance: vi.fn(async () => 10n ** 30n),
+    /** No write is a transaction the chain shows: a Safe app's reply is its proposal's hash. */
+    getTransaction: vi.fn(async ({ hash }: { hash: Hex }): Promise<never> => {
+      throw new TransactionNotFoundError({ hash })
+    }),
     /** A flow's own reads; each test answers the ones its flow makes. */
     readContract: vi.fn(async (request: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
       throw new Error(`Unexpected read ${request.functionName}`)

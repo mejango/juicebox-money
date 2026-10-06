@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ clientFor: vi.fn(), current: vi.fn(), contexts: vi.fn(), token: vi.fn(), permission: vi.fn(), identity: vi.fn() }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor }))
-vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.identity }))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.identity,
+}))
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'USDC' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getAccountingContexts: mocks.contexts, getTokenAddress: mocks.token, hasPermissions: mocks.permission }))
 
@@ -138,31 +141,54 @@ describe('selected destination distributions', () => {
     await expect(reverifyDistribution(review, ACCOUNT)).rejects.toThrow('recipients changed')
   })
 
-  it('requires an exact successful payout event and rejects soft recipient failures despite receipt success', async () => {
+  // The SDK's tests prove each receipt rule; these prove this app hands it the
+  // reviewed distribution: its splits, ruleset, owner, sender and amounts.
+  const payoutReceipt = async () => {
     const review = await reviewPayout(projects[1], USDC_ADDRESSES[8453], 12_000_000n, 2, ACCOUNT)
-    const success = eventLog(jbMultiTerminalAbi, 'SendPayouts', review.terminal, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, projectOwner: ACCOUNT, amount: 12_000_000n, amountPaidOut: 12_000_000n, fee: 300_000n, netLeftoverPayoutAmount: 5_850_000n, caller: ACCOUNT })
-    expect(() => verifyDistributionCompletion(review, receipt([success]))).not.toThrow()
-    expect(() => verifyDistributionCompletion(review, receipt([]))).toThrow('no matching distribution event')
+    const split = eventLog(jbMultiTerminalAbi, 'SendPayoutToSplit', review.terminal, { projectId: 303n, rulesetId: 79n, group: BigInt(USDC_ADDRESSES[8453]), split: review.splits[0], amount: 6_000_000n, netAmount: 5_850_000n, caller: ACCOUNT })
+    const total = eventLog(jbMultiTerminalAbi, 'SendPayouts', review.terminal, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, projectOwner: ACCOUNT, amount: 12_000_000n, amountPaidOut: 12_000_000n, fee: 300_000n, netLeftoverPayoutAmount: 5_850_000n, caller: ACCOUNT })
+    return { review, split, total }
+  }
+  const reservedReceipt = async () => {
+    const review = await reviewReserved(projects[1], ACCOUNT)
+    const split = eventLog(jbControllerAbi, 'SendReservedTokensToSplit', review.controller, { projectId: 303n, rulesetId: 79n, groupId: RESERVED_TOKEN_SPLIT_GROUP_ID, split: review.splits[0], tokenCount: review.pending / 2n, caller: ACCOUNT })
+    const total = eventLog(jbControllerAbi, 'SendReservedTokensToSplits', review.controller, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, owner: ACCOUNT, tokenCount: review.pending, leftoverAmount: review.pending / 2n, caller: ACCOUNT })
+    return { review, split, total }
+  }
+
+  it('proves a payout from its receipt, and refuses one missing a split’s event', async () => {
+    const { review, split, total } = await payoutReceipt()
+    expect(() => verifyDistributionCompletion(review, receipt([split, total]))).not.toThrow()
+    expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow("Base: Project 303's payouts")
+    expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow('the receipt pays 0 splits, not the reviewed 1')
+    expect(() => verifyDistributionCompletion(review, receipt([]))).toThrow('0 SendPayouts events')
+  })
+
+  it('refuses a payout receipt with a recipient failure or a log of the terminal it cannot read', async () => {
+    const { review, split, total } = await payoutReceipt()
     const failed = eventLog(jbMultiTerminalAbi, 'PayoutReverted', review.terminal, { projectId: 303n, split: review.splits[0], amount: 6_000_000n, reason: '0x', caller: ACCOUNT })
-    expect(() => verifyDistributionCompletion(review, receipt([failed, success]))).toThrow('recipient or hook failed')
-    const foreignFailure = { ...failed, address: OTHER }
-    expect(() => verifyDistributionCompletion(review, receipt([foreignFailure, success]))).not.toThrow()
+    expect(() => verifyDistributionCompletion(review, receipt([failed, split, total]))).toThrow('a recipient failed (PayoutReverted)')
+    // Another contract's failure is not this distribution's.
+    expect(() => verifyDistributionCompletion(review, receipt([{ ...failed, address: OTHER }, split, total]))).not.toThrow()
+    const unreadable = { ...total, topics: [`0x${'99'.repeat(32)}`] } as TransactionReceipt['logs'][number]
+    expect(() => verifyDistributionCompletion(review, receipt([unreadable, split, total]))).toThrow('its ABI cannot read')
   })
 
   it('detects hook underconsumption, including fee-free partial pulls smaller than the ordinary fee', async () => {
-    const review = await reviewPayout(projects[1], USDC_ADDRESSES[8453], 12_000_000n, 2, ACCOUNT)
+    const { review, total } = await payoutReceipt()
     review.hookFeeless[OTHER.toLowerCase()] = true
-    const partial = eventLog(jbMultiTerminalAbi, 'SendPayoutToSplit', review.terminal, { projectId: 303n, rulesetId: 79n, group: BigInt(USDC_ADDRESSES[8453]), split: { ...review.splits[0], hook: OTHER }, amount: 6_000_000n, netAmount: 5_990_000n, caller: ACCOUNT })
-    expect(() => verifyDistributionCompletion(review, receipt([partial]))).toThrow('partial payout')
+    const hooked = { ...review, splits: [{ ...review.splits[0], hook: OTHER }] }
+    const partial = eventLog(jbMultiTerminalAbi, 'SendPayoutToSplit', review.terminal, { projectId: 303n, rulesetId: 79n, group: BigInt(USDC_ADDRESSES[8453]), split: hooked.splits[0], amount: 6_000_000n, netAmount: 5_990_000n, caller: ACCOUNT })
+    expect(() => verifyDistributionCompletion(hooked, receipt([partial, total]))).toThrow('received 5,990,000 of its 6,000,000')
   })
 
-  it('rejects reserved fallback failures and unconsumed hook burns while retaining successful distribution receipts', async () => {
-    const review = await reviewReserved(projects[1], ACCOUNT)
-    const success = eventLog(jbControllerAbi, 'SendReservedTokensToSplits', review.controller, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, owner: ACCOUNT, tokenCount: review.pending, leftoverAmount: review.pending / 2n, caller: ACCOUNT })
-    expect(() => verifyDistributionCompletion(review, receipt([success]))).not.toThrow()
+  it('proves reserved tokens from their receipt, and refuses one missing a split’s event, a failure or an unconsumed burn', async () => {
+    const { review, split, total } = await reservedReceipt()
+    expect(() => verifyDistributionCompletion(review, receipt([split, total]))).not.toThrow()
+    expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow('the receipt sends to 0 splits, not the reviewed 1')
     const failed = eventLog(jbControllerAbi, 'ReservedDistributionReverted', review.controller, { projectId: 303n, split: review.splits[0], tokenCount: review.pending / 2n, reason: '0x', caller: ACCOUNT })
-    expect(() => verifyDistributionCompletion(review, receipt([success, failed]))).toThrow('recipient or hook failed')
+    expect(() => verifyDistributionCompletion(review, receipt([split, total, failed]))).toThrow('a recipient failed (ReservedDistributionReverted)')
     const burned = eventLog(jbTokensAbi, 'Burn', jbContractAddress['6'][JBCoreContracts.JBTokens][8453], { holder: review.controller, projectId: 303n, count: 1n, creditBalance: 0n, tokenBalance: 0n, caller: review.controller })
-    expect(() => verifyDistributionCompletion(review, receipt([burned, success]))).toThrow('hook did not consume')
+    expect(() => verifyDistributionCompletion(review, receipt([burned, split, total]))).toThrow('a hook did not take its share')
   })
 })

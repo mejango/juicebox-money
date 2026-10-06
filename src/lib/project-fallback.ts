@@ -21,8 +21,9 @@ import {
   type Address,
   type PublicClient,
 } from 'viem'
+import type { SafeServiceOptions } from '@bananapus/nana-sdk-core/safe-service'
 import { getProject, type BsProject } from '@/lib/bendystraw'
-import { readMatchingAuthorityIdentities } from '@/lib/cross-chain-authority'
+import { readCrossChainHandleAuthority } from '@/lib/cross-chain-authority'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 
 /**
@@ -173,8 +174,27 @@ export async function readLiveProjectAuthorityContext({
 }
 
 /**
+ * Safe's transaction service as the page server reads it: one attempt within
+ * 4 seconds, and a 429 refused rather than waited out, so a service the server
+ * cannot reach leaves a Safe's creation unproven instead of holding the page.
+ */
+const serverSafeService: SafeServiceOptions = {
+  fetch: async (input, init) => {
+    const response = await fetch(input, {
+      ...init,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4_000),
+    })
+    if (response.status !== 429) return response
+    await response.body?.cancel()
+    return new Response(null, { status: 503 })
+  },
+}
+
+/**
  * A mainnet handle setter is trusted for an L2 authority only when control of
- * that address is chain-independent under the narrow supported policy.
+ * that address is chain-independent: the same EOA, or a plain Safe with the
+ * same policy whose creation its chain's Safe service proves.
  */
 export async function projectAuthorityMatchesMainnet({
   chainId,
@@ -195,12 +215,14 @@ export async function projectAuthorityMatchesMainnet({
     chain: mainnetChain,
     transport: jbCenterRpcTransport(1, 4_000),
   })
-  const identities = await readMatchingAuthorityIdentities({
+  const handle = await readCrossChainHandleAuthority({
+    sourceChainId: chainId,
     sourceClient,
-    destinationClient,
+    mainnetClient: destinationClient,
     authority,
+    service: serverSafeService,
   })
-  return identities?.matches ?? false
+  return handle.allowed
 }
 
 /**

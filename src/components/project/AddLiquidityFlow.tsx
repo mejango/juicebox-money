@@ -817,6 +817,7 @@ function AddLiquidityForm({
   // Closing the dialog drops the frozen plan; the inputs and any success stay.
   const closePlan = () => {
     if (run.isRunning() || tx.busy) return
+    tx.dismiss()
     replacePlan(null)
     setBatchStatus(null)
     setBatchError(null)
@@ -917,8 +918,8 @@ function AddLiquidityForm({
           <TxConfirmDialog
             open
             title={
-              done
-                ? batchStatus
+              done || run.proposed
+                ? batchStatus || run.proposed
                   ? 'Proposed to Safe'
                   : plan.market
                     ? 'Market made'
@@ -958,8 +959,8 @@ function AddLiquidityForm({
             }
             onConfirm={stopped ? resume : startRun}
             busy={run.running || tx.busy}
-            complete={done}
-            status={batchStatus ?? tx.safeNonceGuidance}
+            complete={done || run.proposed}
+            status={batchStatus ?? tx.notice ?? tx.safeNonceGuidance}
             error={batchError ?? tx.error}
             onClose={closePlan}
           >

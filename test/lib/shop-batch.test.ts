@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ shop: vi.fn(), permissions: vi.fn(), client: vi.fn(), load: vi.fn(), identity: vi.fn() }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProject721Shop: mocks.shop, hasPermissions: mocks.permissions }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.client }))
-vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: mocks.identity }))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.identity,
+}))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}` }))
 
 import { newDraftSplit } from '@/components/create/SplitsEditor'

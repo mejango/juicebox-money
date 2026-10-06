@@ -13,6 +13,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import {
+  encodeFunctionData,
   isAddress,
   zeroAddress,
   type Address,
@@ -35,8 +36,8 @@ import {
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
+  readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
-  safeExecutionFailed,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import { buildMint721TierRequest } from '@/lib/transaction-builders'
@@ -244,11 +245,23 @@ export function MintShopItemModal({
         setHash(submitted)
       }
       const receipt = await waitForTrackedReceipt(client, submitted)
-      if (
-        receipt.status !== 'success' ||
-        (proposal && safeExecutionFailed(receipt, address, proposal))
-      ) {
-        throw new Error('The mint failed.')
+      if (receipt.status !== 'success') throw new Error('The mint failed.')
+      if (proposal) {
+        // Only the Safe's ExecutionSuccess for this proposal confirms the
+        // mint. A receipt without it may still have minted, so the form will
+        // not submit it again.
+        const { status: outcome } = await readSafeAppExecution({
+          client,
+          receipt,
+          safe: address,
+          proposalHash: proposal,
+          calls: [{ to: request.address, data: encodeFunctionData(request) }],
+        })
+        if (outcome === 'unproven') {
+          setPhase('uncertain')
+          return
+        }
+        if (outcome !== 'success') throw new Error('The mint failed.')
       }
 
       await Promise.all([

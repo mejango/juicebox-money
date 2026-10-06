@@ -71,7 +71,7 @@ import {
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
-import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
+import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
 import { resolveMarket } from "@/components/project/MarketSection";
@@ -1204,18 +1204,26 @@ export function PayPanel({
     }
   }, [approveTx.phase, refetchAllowance, refetchPermit2Allowance, routerApproveTx.phase]);
 
-  const sequenceSafePhase =
+  const sequenceSafeTx =
     sequenceSafeStage === "token-approval"
-      ? approveTx.phase
+      ? approveTx
       : sequenceSafeStage === "router-approval"
-        ? routerApproveTx.phase
-        : tx.phase;
-  const sequenceSafeError =
-    sequenceSafeStage === "token-approval"
-      ? approveTx.error
-      : sequenceSafeStage === "router-approval"
-        ? routerApproveTx.error
-        : tx.error;
+        ? routerApproveTx
+        : tx;
+  const sequenceSafePhase = sequenceSafeTx.phase;
+  const sequenceSafeError = sequenceSafeTx.error;
+  // A Safe stage with the Safe says where it is in place of the stage's own line:
+  // awaiting its signers, executed with its receipt still missing, or unproven.
+  const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
+  // A stage another flow dismissed shows nothing any more.
+  const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
+  // An unproven or lost stage ends with its line: Dismiss releases its call and frees the panel.
+  const sequenceSafeReleasable =
+    !!sequenceSafeStage && (sequenceSafeTx.confirmationUncertain || sequenceSafeLost);
+  const dismissSequenceSafeStage = () => {
+    sequenceSafeTx.dismiss();
+    setSequenceSafeStage(null);
+  };
 
   useEffect(() => {
     if (!sequenceSafeStage) return;
@@ -2387,10 +2395,28 @@ export function PayPanel({
           . This form only sends to a recognized Juicebox payment contract.
         </p>
       ) : null}
-      {(approveTx.error ?? tx.error) ? (
+      {(approveTx.error ?? routerApproveTx.error ?? tx.error) ? (
         <p className="mt-3 text-sm text-red-600">
-          {approveTx.error ?? tx.error}
+          {approveTx.error ?? routerApproveTx.error ?? tx.error}
         </p>
+      ) : null}
+      {/* A Safe stage outlives its dialog: its line stays until it ends or is dismissed. */}
+      {sequenceSafeStage && !sequenceOpen ? (
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <p className="text-sm text-smoke-700">
+            {sequenceSafeNotice ??
+              (sequenceSafeLost ? SAFE_PROPOSAL_UNCONFIRMED : "Submitted. Confirming onchain…")}
+          </p>
+          {sequenceSafeReleasable ? (
+            <button
+              type="button"
+              onClick={dismissSequenceSafeStage}
+              className="shrink-0 text-xs font-medium text-bluebs-600 hover:underline"
+            >
+              Dismiss
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {sequenceOpen ? (
         <TxConfirmDialog
@@ -2446,22 +2472,17 @@ export function PayPanel({
               sequenceCompletedKinds.includes(action.kind),
             ).length,
           )}
-          status={sequenceStatus}
+          status={sequenceSafeNotice ?? sequenceStatus}
           error={sequenceError ?? routerApproveTx.error}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
-          complete={sequenceComplete}
-          cancelLabel={sequenceSafeStage ? "Close" : "Cancel"}
-          actionDisabled={!!sequenceSafeStage}
-          action={
-            sequenceSafeStage
-              ? "Waiting for Safe"
-              : mode === "pay"
-                ? "Confirm & Pay"
-                : "Confirm & Add"
-          }
+          complete={sequenceComplete || !!sequenceSafeStage}
+          action={mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
           onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
+            // An unproven or lost Safe stage ends with its line: Done dismisses it,
+            // so its call is the user's again and the panel is free.
+            if (sequenceSafeReleasable) dismissSequenceSafeStage();
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);

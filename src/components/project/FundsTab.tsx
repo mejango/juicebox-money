@@ -873,7 +873,7 @@ function FundsTxFlow({
     setAmount('')
     setFlowError(null)
     setReview(null)
-    tx.reset()
+    tx.dismiss()
   }
 
   /** Re-read live state, validate, and get the quote by simulating the call
@@ -1000,7 +1000,7 @@ function FundsTxFlow({
 
   const closeReview = () => {
     setReview(null)
-    if (tx.phase !== 'success') tx.reset()
+    if (tx.phase !== 'success') tx.dismiss()
   }
 
   if (!line) return null
@@ -1046,7 +1046,7 @@ function FundsTxFlow({
           : []
       }
       activeIndex={sending ? 0 : -1}
-      complete={tx.phase === 'success'}
+      complete={tx.settled}
       busy={busy}
       action={
         tx.phase === 'error' ? 'Retry' : 'Confirm & withdraw'
@@ -1055,6 +1055,8 @@ function FundsTxFlow({
       status={
         !review ? (
           'Checking what you can withdraw…'
+        ) : tx.notice ? (
+          tx.notice
         ) : tx.phase === 'pending' ? (
           <>
             Waiting for confirmation

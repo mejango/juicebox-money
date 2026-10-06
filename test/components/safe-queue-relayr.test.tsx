@@ -3,7 +3,7 @@ import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { zeroAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SafeQueuedTx } from '@/lib/safe'
+import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
 import type { RelayrEntry, RelayrPendingSession } from '@/lib/relayr'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => ({
     handleTuples: Array<{ chainId: number; projectId: number }>
     info: { owners: Address[]; threshold: number }
     currentNonce: number
-    transactions: SafeQueuedTx[]
+    transactions: SafeQueuedTransaction[]
+    blocked: Record<string, string>
     error: null
   }>,
   session: null as RelayrPendingSession | null,
@@ -57,11 +58,16 @@ vi.mock('@/lib/authority', () => ({
 }))
 vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
-  listPendingSafeTxs: async (chainId: number) =>
-    mocks.rows.find(row => row.chainId === chainId)?.transactions ?? [],
-  hasSafeService: () => true,
+  readSafeQueue: async (chainId: number) => {
+    const row = mocks.rows.find(candidate => candidate.chainId === chainId)
+    return { nonce: row?.currentNonce ?? 0, pending: row?.transactions ?? [] }
+  },
   simulateSafeExecution: mocks.simulate,
   executeSafeTx: mocks.execute,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
+  hasSafeService: () => true,
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
@@ -79,7 +85,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 }))
 
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
-import { canonicalSafeTxHash } from '@/lib/safe'
+import { canonicalSafeTxHash } from '@bananapus/nana-sdk-core/safe-service'
 import {
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
@@ -89,7 +95,7 @@ import {
   relayrPaymentLabel,
 } from '@/lib/relayr'
 
-function queued(nonce: number): SafeQueuedTx {
+function queued(nonce: number): SafeQueuedTransaction {
   return {
     to: TARGET,
     data: '0x1234',
@@ -115,6 +121,7 @@ function chain(chainId: JBChainId, nonces: number[]) {
     info: { owners: [OWNER], threshold: 1 },
     currentNonce: nonces[0],
     transactions: nonces.map(queued),
+    blocked: {},
     error: null,
   }
 }
@@ -176,10 +183,11 @@ beforeEach(() => {
   mocks.chainId = undefined
   mocks.rows = [chain(1, [5, 6]), chain(10, [5, 6])]
   mocks.session = null
-  mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTx) => ({
+  mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTransaction) => ({
     tx,
     safeTxHash: canonicalSafeTxHash(chainId, safe, tx),
     policyFingerprint: 'unchanged',
+    owners: [OWNER],
   }))
   mocks.execute.mockReset().mockResolvedValue({ status: 'confirmed', hash: HASH })
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quote(entries))
@@ -346,6 +354,14 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
+  })
+
+  it('refuses a queued transaction that pays a gas refund, in one line', async () => {
+    mocks.rows = [{ ...chain(1, [5]), transactions: [{ ...queued(5), gasPrice: '1', confirmations: [] }] }]
+    await renderQueue()
+    expect(textOf(renderer.root)).toContain("This transaction pays a gas refund, so it can't be executed here.")
+    expect(renderer.root.findAllByType('button').filter(node => /^(Sign|Execute)$/.test(textOf(node)))).toHaveLength(0)
+    expect(() => button(/ready/)).toThrow()
   })
 
   it('hands execution to Safe{Wallet} when the site is opened as a Safe App', async () => {

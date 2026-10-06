@@ -386,6 +386,7 @@ export function MarketEditPanel({
   }
 
   const back = () => {
+    tx.dismiss()
     replaceReviewed(null)
     setBatchProposed(false)
     setBatchError(null)
@@ -461,7 +462,7 @@ export function MarketEditPanel({
     <TxConfirmDialog
       open
       preparing={!reviewed}
-      title={batchProposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
+      title={batchProposed || run.proposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
       steps={(reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label }))}
       activeIndex={run.running || stopped ? run.index : -1}
@@ -479,8 +480,8 @@ export function MarketEditPanel({
       }
       onConfirm={stopped ? resume : startRun}
       busy={busy}
-      complete={done !== null || batchProposed}
-      status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : tx.safeNonceGuidance}
+      complete={done !== null || batchProposed || run.proposed}
+      status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}
     >

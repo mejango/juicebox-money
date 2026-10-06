@@ -9,7 +9,8 @@ import {
   type SafeOwnership,
 } from '@/components/account/AccountProjectCard'
 import { getProjectsOwnedBy, type BsProject } from '@/lib/bendystraw'
-import { fetchSafeInfo, hasSafeService, safesForOwner } from '@/lib/safe'
+import { fetchSafesOwnedBy } from '@bananapus/nana-sdk-core/safe-service'
+import { fetchSafeInfo, SAFE_SERVICE } from '@/lib/safe'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
 export type SafeOwnedProject = { project: BsProject; viaSafe: SafeOwnership }
@@ -54,19 +55,13 @@ export function AccountSafeProjects({
     let stopped = false
     ;(async () => {
       try {
-        const chainIds = SUPPORTED_CHAINS.map(chain => chain.id).filter(
-          chainId => hasSafeService(chainId),
+        // Chains without Safe's transaction service contribute nothing.
+        const owned = await fetchSafesOwnedBy(
+          address,
+          SUPPORTED_CHAINS.map(chain => chain.id),
+          SAFE_SERVICE,
         )
-        const perChain = await Promise.all(
-          chainIds.map(chainId =>
-            safesForOwner(address as Address, chainId).then(safes =>
-              safes.map(safe => ({ chainId, safe })),
-            ),
-          ),
-        )
-        const safes = [
-          ...new Set(perChain.flat().map(entry => entry.safe)),
-        ]
+        const safes = [...new Set(owned.map(entry => entry.safe))]
         if (!safes.length) {
           if (!stopped) setRows([])
           return

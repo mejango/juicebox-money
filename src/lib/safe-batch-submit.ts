@@ -5,17 +5,16 @@ import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
-import { readAuthorityIdentity } from '@/lib/cross-chain-authority'
-import { hasSafeService, runSafeCalls, type SafeCallResult } from '@/lib/safe'
+import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
+import { runSafeCalls, type SafeCallResult } from '@/lib/safe'
 import {
-  composeBatch,
-  dependsOnPrior,
   encodeMultiSend,
+  MULTI_SEND_ABI,
   MULTI_SEND_CALL_ONLY,
-  multiSendAbi,
   packMultiSend,
-  type BatchStep,
-} from '@/lib/safe-batch'
+  readAuthorityIdentity,
+} from '@bananapus/nana-sdk-core/safe'
+import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
 import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
@@ -327,7 +326,7 @@ export async function submitSafeBatch({
         value: 0n,
         operation: 1,
         label: `Batch (${calls.length} calls)`,
-        abi: multiSendAbi,
+        abi: MULTI_SEND_ABI,
         functionName: 'multiSend',
         args: [packed],
         contractName: 'MultiSendCallOnly',

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeErrorResult, encodeFunctionResult } from 'viem'
 import {
   JBCoreContracts,
@@ -8,7 +8,17 @@ import {
   jbProjectsAbi,
 } from '@bananapus/nana-sdk-core'
 import type { BsProject } from '@/lib/bendystraw'
-import { getProjectPageData, readOnChainProject } from '@/lib/project-fallback'
+import {
+  getProjectPageData,
+  readOnChainProject,
+} from '@/lib/project-fallback'
+import {
+  creationRecord,
+  creationUrl,
+  PROVEN_SAFE,
+  provenSafeChain,
+} from '../support/proven-safe'
+import { rpcAnswer } from '../support/safe-chain'
 
 // Digit-only addresses so viem's checksumming round-trips them verbatim.
 const OWNER = '0x1111111111111111111111111111111111111111'
@@ -275,5 +285,82 @@ describe('on-chain project shell read', () => {
       metadataUri: null,
       metadataUriResolved: false,
     })
+  })
+})
+
+describe('handle authority on the server', () => {
+  // Ethereum and the project's chain show PROVEN_SAFE with one policy, read
+  // over JSON-RPC; only its creation record from the Safe service decides.
+  // The server keeps creation records per chain and Safe; each test starts with none.
+  let projectAuthorityMatchesMainnet: typeof import('@/lib/project-fallback').projectAuthorityMatchesMainnet
+  beforeEach(async () => {
+    vi.resetModules()
+    ;({ projectAuthorityMatchesMainnet } = await import('@/lib/project-fallback'))
+  })
+  function serve(service: (url: string) => Response) {
+    const chains = { 1: provenSafeChain(), 8453: provenSafeChain(), 11155420: provenSafeChain() }
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) =>
+      (await rpcAnswer(chains, input, init)) ?? service(String(input)),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+  const answer = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
+
+  it("trusts a Safe on another chain once its chain's Safe service proves how it was made", async () => {
+    const fetchMock = serve(url => (url === creationUrl('base') ? answer(creationRecord()) : answer({}, 404)))
+
+    await expect(
+      projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE }),
+    ).resolves.toBe(true)
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(creationUrl('base'))
+  })
+
+  it.each([
+    ['its chain has no Safe service', 11155420, () => answer(creationRecord())],
+    ['the Safe service fails', 8453, () => answer({}, 503)],
+    ['the request to the Safe service fails', 8453, () => { throw new TypeError('fetch failed') }],
+    ['the Safe service is rate limited', 8453, () => answer({}, 429, { 'retry-after': '60' })],
+  ] as const)('returns unproven, never trusted, when %s', async (_, chainId, service) => {
+    const fetchMock = serve(service)
+
+    await expect(
+      projectAuthorityMatchesMainnet({ chainId, authority: PROVEN_SAFE }),
+    ).resolves.toBe(false)
+    // The Safe was read on both chains: the creation proof alone refused it.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/v1/rpc/${chainId}`))).toBe(true)
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/v1/rpc/1'))).toBe(true)
+  })
+
+  it("asks Safe's service once across renders for a record that proves the Safe, and again after a minute for a missing one", async () => {
+    vi.useFakeTimers()
+    let record = true
+    const fetchMock = serve(url =>
+      url === creationUrl('base') && record ? answer(creationRecord()) : answer({}, 404),
+    )
+    const creationReads = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input) === creationUrl('base')).length
+
+    for (let render = 0; render < 3; render += 1) {
+      await expect(
+        projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE }),
+      ).resolves.toBe(true)
+    }
+    await vi.advanceTimersByTimeAsync(60 * 60_000)
+    await projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE })
+    expect(creationReads()).toBe(1)
+
+    vi.resetModules()
+    ;({ projectAuthorityMatchesMainnet } = await import('@/lib/project-fallback'))
+    record = false
+    await expect(
+      projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE }),
+    ).resolves.toBe(false)
+    await projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE })
+    expect(creationReads()).toBe(2)
+    await vi.advanceTimersByTimeAsync(61_000)
+    await projectAuthorityMatchesMainnet({ chainId: 8453, authority: PROVEN_SAFE })
+    expect(creationReads()).toBe(3)
   })
 })
