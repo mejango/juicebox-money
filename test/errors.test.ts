@@ -1,7 +1,7 @@
 import { UnknownRpcError, InvalidInputRpcError, UserRejectedRequestError } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { friendlyError, shortError } from '@/lib/errors'
+import { FlowError, friendlyError, shortError } from '@/lib/errors'
 import { TransactionReviewCancelledError } from '@/lib/transaction-review'
 
 describe('rpc error text', () => {
@@ -18,6 +18,12 @@ describe('rpc error text', () => {
     expect(shortError(rejected)).toBe('Transaction cancelled.')
     expect(friendlyError(rejected)).toBe('You cancelled in your wallet.')
     expect(shortError(new Error('plain\nsecond line'))).toBe('plain')
+  })
+
+  it('reports copy that is already user-ready as itself, even when it names cancelling', () => {
+    const line = 'This launch\'s earlier signature may already have run. Check the project, then cancel this deployment to start over.'
+    expect(friendlyError(new FlowError(line))).toBe(line)
+    expect(friendlyError(new Error(line))).toBe('You cancelled in your wallet.')
   })
 
   it('reports a closed review or fee picker as itself, not as a wallet cancel', () => {

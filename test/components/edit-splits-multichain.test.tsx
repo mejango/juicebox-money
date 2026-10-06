@@ -465,6 +465,15 @@ describe('split replacement recovery', () => {
     expect(storage.size).toBe(0)
   })
 
+  it('says the saved payment could not be matched, beside resuming, once every request expired unused', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'submitted', records: [], discardable: 'expired', paymentUnmatched: true })
+    const { renderer } = await mountSaved()
+    const text = JSON.stringify(renderer.toJSON())
+    expect(text).toContain('The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.')
+    expect(text).not.toContain('expired without running')
+    expect(labels(renderer)).toEqual(['"Discard"', '"Resume split update"'])
+  })
+
   it('offers Discard after the changed line, and sets the saved review aside only when asked', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'changed' })
     const { journal, renderer, discarded } = await mountSaved()

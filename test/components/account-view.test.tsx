@@ -91,6 +91,7 @@ import {
   AccountSafeProjects,
   dedupeSafeProjects,
 } from '@/components/account/AccountSafeProjects'
+import { RelayrDiscardError } from '@/lib/relayr'
 import type {
   BsAccountActivityEvent,
   BsAccountNft,
@@ -481,6 +482,44 @@ describe('AccountPendingRelayr', () => {
     await act(async () => buttonWith(renderer, 'Discard').props.onClick())
     expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
     expect(renderedText(renderer.root)).not.toContain('earlier signature')
+  })
+
+  it('says the saved payment could not be matched, with Discard, once every request expired unused', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'submitted', discardable: 'expired', paymentUnmatched: true, records: [],
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.')
+    expect(text).not.toContain('expired without running')
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+  })
+
+  it('shows a discardable session\'s line once after its check, not again as the check\'s message', async () => {
+    mocks.connectedAddress = ALICE
+    const session = pendingSession({ paymentStatus: 'unpaid', records: [] })
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session }])
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+    // The check ends the session: its requests are dead, so it is marked for Discard, and the card reads the mark.
+    mocks.resumeRelayrSession.mockRejectedValue(new RelayrDiscardError('authority:0xaaa', 'ran'))
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: { ...session, discardable: 'ran' } }])
+    await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
+
+    const line = 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.'
+    expect(renderedText(renderer.root).split(line)).toHaveLength(2)
+    expect(buttonWith(renderer, 'Discard')).toBeDefined()
   })
 
   it('shows the changed line with Discard when the project changed since the review', async () => {

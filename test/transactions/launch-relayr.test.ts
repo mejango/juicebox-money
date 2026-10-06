@@ -57,6 +57,7 @@ import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR, R
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { relayrHeldMessage } from '@/lib/relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
+import { friendlyError } from '@/lib/errors'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
@@ -834,6 +835,16 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).not.toHaveBeenCalled()
   })
 
+  it('shows the line that ends a launch as it reads, never as a wallet cancel', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : functionName !== 'verify')
+    const failure = await run().catch(error => error)
+    expect(failure).toMatchObject({ message: MAY_HAVE_RUN })
+    expect(friendlyError(failure)).toBe(MAY_HAVE_RUN)
+  })
+
   it('holds a published launch while another chain\'s request can still run, and says until when', async () => {
     m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
     await expect(run()).rejects.toThrow('cancelled')
@@ -1104,5 +1115,104 @@ describe('paying a reverted launch quote again', () => {
     await run()
     expect(m.pay.mock.calls[1][0]).toMatchObject({ payment: { chain: 8453 }, sent: [expect.objectContaining({ hash: HASH })] })
     expect(m.quote).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('a saved launch payment the funding chain shows to be another transaction', () => {
+  const REFUSED = 'does not match the reviewed Relayr payment'
+  const UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel this deployment to start over.'
+
+  /** The launch is paid and none of its destinations is proven: Relayr names no hash and cannot be polled. */
+  async function paidUnproven() {
+    m.poll.mockImplementation(async () => { records = []; throw new Error('provider unavailable') })
+    await expect(run()).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'executing', payments: [expect.objectContaining({ hash: HASH, chainId: 8453 })] })
+  }
+  /** The hash the launch saved for its payment is mined on the funding chain as a call to another contract. */
+  function anotherTransaction() {
+    const funding = clients.get(8453)!
+    funding.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: TARGET, input: '0x', value: 200n,
+      blockHash: BLOCK, blockNumber: 123n } as never))
+    funding.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, to: TARGET, blockHash: BLOCK, blockNumber: 123n,
+      status: 'success', logs: [] } as never))
+  }
+  /** Every destination's finalized block is past its request's deadline (NOW + 3600). */
+  function pastDeadlines() {
+    for (const chainId of [1, 10]) clients.get(chainId)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+  }
+  /** The forwarder's nonce for the account, once its saved one (0) has moved. */
+  function nonceMoved(chainId: number) {
+    clients.get(chainId)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
+  }
+
+  it('keeps refusing while a request of the launch can still run', async () => {
+    await paidUnproven()
+    anotherTransaction()
+    await expect(run()).rejects.toThrow(REFUSED)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps refusing while one request can still run and another one moved', async () => {
+    await paidUnproven()
+    anotherTransaction()
+    nonceMoved(1)
+    await expect(run()).rejects.toThrow(REFUSED)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+  })
+
+  it('keeps refusing while the node cannot say whether a request ran', async () => {
+    await paidUnproven()
+    anotherTransaction()
+    for (const chainId of [1, 10]) clients.get(chainId)!.getBlock.mockRejectedValue(new Error('No finalized block'))
+    await expect(run()).rejects.toThrow(REFUSED)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+  })
+
+  it('offers cancelling once every request is dead and unused, and says the payment could not be matched', async () => {
+    await paidUnproven()
+    anotherTransaction()
+    pastDeadlines()
+    const failure = await run().catch(error => error)
+    expect(failure).toMatchObject({ message: UNMATCHED, cause: expect.objectContaining({ name: 'RelayrProofError', message: expect.stringContaining(REFUSED) }) })
+    expect(friendlyError(failure)).toBe(UNMATCHED)
+    const saved = loadLaunchSession()!
+    expect(saved.relayr).toMatchObject({ phase: 'executing', abandonable: true })
+    expect(canAbandonRelayrLaunch(saved)).toBe(true)
+    await expect(run()).rejects.toThrow(UNMATCHED)
+    expect(abandonLaunchSession(saved.salt)).toBe(true)
+    expect(loadLaunchSession()).toBeNull()
+    // The saved payment is never proven, polled or paid again, and nothing is signed or quoted again.
+    expect(m.poll).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.quote).toHaveBeenCalledTimes(1)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+  })
+
+  it('still takes a payment that reverted for a reverted one, with every request dead and unused', async () => {
+    await paidUnproven()
+    const funding = clients.get(8453)!
+    const option = paymentFor(8453)
+    funding.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: RELAYR_PAYMENT_ADDRESS,
+      input: option.calldata, value: 200n, blockHash: BLOCK, blockNumber: 123n } as never))
+    funding.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, to: RELAYR_PAYMENT_ADDRESS, blockHash: BLOCK,
+      blockNumber: 123n, status: 'reverted', logs: [] } as never))
+    pastDeadlines()
+    await expect(run()).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted' })
+    expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
+  })
+
+  it('settles it as ran when a request\'s nonce moved, whatever the payment is', async () => {
+    await paidUnproven()
+    anotherTransaction()
+    pastDeadlines()
+    nonceMoved(1)
+    nonceMoved(10)
+    await expect(run()).rejects.toMatchObject({ message: MAY_HAVE_RUN, cause: expect.objectContaining({ name: 'RelayrProofError' }) })
+    expect(loadLaunchSession()?.relayr?.abandonable).toBe(true)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.forward).toHaveBeenCalledTimes(2)
   })
 })

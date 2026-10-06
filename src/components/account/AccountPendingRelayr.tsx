@@ -14,6 +14,7 @@ import {
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
+  RelayrDiscardError,
   fetchRelayrBundlesByAccount,
   relayrQuoteReleased,
   relayrSessionExpired,
@@ -101,9 +102,11 @@ export function AccountPendingRelayr({ address }: { address: string }) {
         [scope]: 'Completed on every chain.',
       }))
     } catch (error) {
+      // A session that can only be discarded shows its own line, once, in place of the error that says the same.
       setNotices(previous => ({
         ...previous,
         [scope]:
+          error instanceof RelayrDiscardError ? '' :
           error instanceof Error ? error.message : 'Could not resume.',
       }))
     } finally {
@@ -133,7 +136,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
         if (session.discardable) {
           return (
             <div key={scope} className="card space-y-2 p-4">
-              <RelayrDiscard scope={scope} reason={session.discardable} onDiscarded={refresh} />
+              <RelayrDiscard scope={scope} reason={session.discardable} paymentUnmatched={session.paymentUnmatched} onDiscarded={refresh} />
               {check}
               {notice}
             </div>

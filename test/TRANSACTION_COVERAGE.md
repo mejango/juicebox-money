@@ -236,7 +236,20 @@ and the check fails on a missing marker.
   or no saved nonces offers Discard after the "may already have run" line;
   and the account view, which cannot recheck, offers Discard after "This
   action's earlier signatures expired without running." (ruling R114 (e))
-  while the action still signs them again. A
+  while the action still signs them again. A payment the chain shows to be
+  another transaction is classified the same way, and never read as a revert:
+  while a request can still run, or the node cannot say, it stays refused;
+  once every one is dead and unused, a session offers Discard after a line
+  that says the payment couldn't be matched and isn't refunded, and its action
+  signs again with that line in its payment review, and a launch offers
+  cancelling after a line that says the same; once a nonce moved, both follow
+  the "may already have run" line. A payer's raw calls carry no nonce or deadline, so theirs stay
+  pending (`transactions/relayr-orchestration.test.ts`,
+  `transactions/launch-relayr.test.ts`, `transactions/payer-relayr.test.ts`,
+  `components/account-view.test.tsx`, `components/edit-splits-multichain.test.tsx`,
+  `components/queue-ruleset-multichain.test.tsx`,
+  `components/metadata-editor.test.tsx`,
+  `components/relayr-discard-flows.test.tsx`). A
   marked session that ran still completes when its action runs again. Covered for two-chain
   sessions, sessions saved without nonces, a deadline equal to the block's
   timestamp, a finalized block that is not a block (unknown, so live), a

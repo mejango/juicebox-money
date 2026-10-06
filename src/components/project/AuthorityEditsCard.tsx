@@ -705,7 +705,8 @@ export function MetadataEditor({
   const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
   // Every earlier signature is dead: only Discard ends the session. The saved
   // review stays as the draft, and confirming it again signs afresh.
-  const discardable = frozen ? loadRelayrPendingSession(frozen.scope)?.discardable : undefined
+  const discardSession = frozen ? loadRelayrPendingSession(frozen.scope) : undefined
+  const discardable = discardSession?.discardable
   const discarded = () => {
     setDone(false)
     setStatus(null)
@@ -1102,7 +1103,7 @@ export function MetadataEditor({
           onClose={closeReview}
         >
           {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
-          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} onDiscarded={discarded} /> : null}
+          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} paymentUnmatched={discardSession?.paymentUnmatched} onDiscarded={discarded} /> : null}
         </TxConfirmDialog>
       ) : null}
     </div>

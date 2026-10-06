@@ -677,6 +677,24 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
+  it('says the saved payment could not be matched, beside a retry, once every request expired unused', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'submitted')
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: 'expired', paymentUnmatched: true })
+      throw new Error('The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    const text = renderedText(renderer.root)
+    expect(text.match(/couldn't be matched to this action/g)).toHaveLength(1)
+    expect(text).not.toContain('expired without running')
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(loadRelayrPendingSession(scope)).toBeNull()
+    expect(renderedText(renderer.root)).not.toContain('couldn\'t be matched')
+    await act(async () => renderer.unmount())
+  })
+
   it('offers Discard beside a retry once the earlier signature may already have run, then keeps the review to confirm afresh', async () => {
     let scope = ''
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {

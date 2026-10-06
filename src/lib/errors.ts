@@ -1,7 +1,7 @@
 import { BaseError, ContractFunctionRevertedError } from 'viem'
 import { TransactionReviewCancelledError } from '@/lib/transaction-review'
 
-/** A validation failure with copy that's already user-ready. */
+/** A failure with copy that's already user-ready: friendlyError shows it as it reads. */
 export class FlowError extends Error {}
 
 /** A revert means the chain answered, so a missing feed (or similar) is a fact about the
@@ -48,7 +48,7 @@ export function shortError(
 
 /** A friendly one-line message out of a viem/wagmi error. */
 export function friendlyError(e: unknown): string {
-  if (e instanceof TransactionReviewCancelledError) return e.message
+  if (e instanceof TransactionReviewCancelledError || e instanceof FlowError) return e.message
   const message =
     e instanceof BaseError
       ? viemMessage(e)

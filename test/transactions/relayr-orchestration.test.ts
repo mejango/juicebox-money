@@ -1161,6 +1161,7 @@ describe('Relayr funding choice and exact execution proof', () => {
     ['a payment with no transaction hash', { payments: [{ chainId: 1, target: RELAYR_PAYMENT_ADDRESS, calldata: payment.calldata,
       amount: '100', deadline: String(PAYMENT_DEADLINE), bundleUuid: BUNDLE_UUID, hash: '0x1234' }] }],
     ['a payment option that is not one', { paymentOptions: [{ chain: '1' }] }],
+    ['an unmatched-payment mark that is not true', { paymentUnmatched: 'yes' }],
   ])('reads a saved publication with %s as unreadable, never as an unused nonce', async (_, field) => {
     const storage = localStorageWindow()
     storage.values.set('jb-relayr-pending-v1:other-action', JSON.stringify({ bundleUuid: BUNDLE_UUID, paymentHash: null,
@@ -2637,6 +2638,121 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       await expect(other()).resolves.toMatchObject({ paymentHash: HASH })
       expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
       expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'confirmed' })
+    })
+  })
+
+  describe('a saved payment the chain shows to be another transaction', () => {
+    const SECOND_PAYMENT = `0x${'5c'.repeat(32)}` as Hex
+    const UNMATCHED = 'The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.'
+    const REFUSED = { name: 'RelayrProofError', message: expect.stringContaining('does not match the reviewed Relayr payment') }
+
+    /**
+     * Sign, quote and send the payment. The wallet replaced it with a zero-value transaction to itself, mined under the
+     * hash the session saved, so the session stays submitted, never proven.
+     */
+    async function paidUnmatched() {
+      installSuccessfulBundle(quotes)
+      const chain = mocks.client.getTransaction.getMockImplementation()!
+      mocks.client.getTransaction.mockImplementation(async (input: { hash: Hex }) =>
+        input.hash === HASH ? { ...await chain(input), to: ALICE, input: '0x', value: 0n } : chain(input))
+      await expect(action()).rejects.toMatchObject(REFUSED)
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'submitted', payments: [expect.objectContaining({ hash: HASH })] })
+      reverify.mockClear()
+    }
+
+    it('keeps refusing while a request can still run, with no Discard and no new signature', async () => {
+      await paidUnmatched()
+      await expect(action()).rejects.toMatchObject(REFUSED)
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(REFUSED)
+      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+      await expect(discardRelayrSession('r114')).rejects.toThrow(DISCARD_REFUSED)
+      expect(reverify).not.toHaveBeenCalled()
+      expect(signed()).toEqual([[1, 4n], [10, 4n]])
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps refusing while the node cannot say whether a request ran', async () => {
+      await paidUnmatched()
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalized = { 1: null, 10: REQUESTS_EXPIRED / 1_000 }
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(REFUSED)
+      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+      expect(signed()).toEqual([[1, 4n], [10, 4n]])
+    })
+
+    it('keeps refusing while one request can still run and another one moved', async () => {
+      await paidUnmatched()
+      nonces = { 1: 5n, 10: 4n }
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(REFUSED)
+      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    })
+
+    it('keeps refusing a session whose requests cannot be read', async () => {
+      await paidUnmatched()
+      const { publishedEntries: _entries, publishedNonces: _nonces, ...legacy } = loadRelayrPendingSession('r114')!
+      saveRelayrPendingSession('r114', legacy)
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(REFUSED)
+      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    })
+
+    it('offers Discard from the account view once every request expired unused, and says the payment could not be matched', async () => {
+      await paidUnmatched()
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject({
+        name: 'RelayrDiscardError', scope: 'r114', reason: 'expired', paymentUnmatched: true, message: UNMATCHED, cause: expect.objectContaining(REFUSED) })
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'submitted', discardable: 'expired', paymentUnmatched: true })
+      // It reserves no forwarder nonce any more (ruling R117), and the saved payment is never paid or polled again.
+      expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+      await discardRelayrSession('r114')
+      expect(loadRelayrPendingSession('r114')).toBeNull()
+      expect(signed()).toEqual([[1, 4n], [10, 4n]])
+    })
+
+    it('offers Discard after the "may already have run" line once a nonce moved, whatever the payment is', async () => {
+      await paidUnmatched()
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      nonces = { 1: 5n, 10: 4n }
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject({
+        name: 'RelayrDiscardError', reason: 'ran', message: DISCARDABLE, cause: expect.objectContaining(REFUSED) })
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ discardable: 'ran' })
+      await discardRelayrSession('r114')
+      expect(loadRelayrPendingSession('r114')).toBeNull()
+    })
+
+    it('signs again at the saved nonces from its action, and its payment review says the earlier payment could not be matched', async () => {
+      await paidUnmatched()
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      mocks.wallet.sendTransaction.mockResolvedValue(SECOND_PAYMENT)
+      await expect(action()).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+      expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
+      expect(reverify.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[2])
+      const payments = mocks.requireReview.mock.calls.filter(([review]) => review.title === 'Review Relayr payment')
+      expect(payments).toHaveLength(2)
+      expect(payments[0][0].description).not.toContain('earlier payment')
+      expect(payments[1][0].description).toContain('The earlier payment couldn\'t be matched to this action and isn\'t refunded.')
+      expect(loadRelayrPendingSession('r114')).toBeNull()
+    })
+
+    it('still takes a payment that reverted for a reverted one, with every request dead and unused', async () => {
+      await paidUnmatched()
+      // The chain holds the reviewed payment under that hash, reverted.
+      const sent = loadRelayrPendingSession('r114')!.payments![0]
+      const chain = mocks.client.getTransaction.getMockImplementation()!
+      mocks.client.getTransaction.mockImplementation(async (input: { hash: Hex }) => ({ ...await chain(input), to: sent.target,
+        input: sent.calldata, value: BigInt(sent.amount) }))
+      mocks.paymentStatuses.set(HASH, 'reverted')
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'reverted' })
+      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+      expect(loadRelayrPendingSession('r114')?.paymentUnmatched).toBeUndefined()
     })
   })
 
