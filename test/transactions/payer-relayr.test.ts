@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, relayrPaymentDetails, sentRelayrPayment, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, relayrPaymentDetails, relayrSignedRequests, sentRelayrPayment, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -306,6 +306,35 @@ describe('payer deployment review and raw Relayr execution', () => {
     })
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/disconnected/)
     await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a saved payment the chain shows to be another transaction pending, since raw calls carry no nonce or deadline to prove them dead', async () => {
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+      onSending?.(details)
+      onSent?.([sentRelayrPayment(details, PAYMENT_HASH)])
+      throw new RelayrPaymentSubmittedError(PAYMENT_HASH, payment.chain)
+    })
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    const sent = loadPayerDeployment(review.scope)!.payments![0]
+    // The SDK reads no signed request in them, so none can ever be dead.
+    expect(relayrSignedRequests(loadPayerDeployment(review.scope)!.quote!.expectedTransactions!.map(binding => binding.entry))).toBeNull()
+    // The funding chain holds a call to another contract under the saved hash.
+    const transaction = mocks.getTransaction.getMockImplementation()!
+    const receipt = mocks.getReceipt.getMockImplementation()!
+    mocks.getTransaction.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
+      ? { hash: PAYMENT_HASH, chainId: sent.chainId, from: ALICE, to: ADMIN, input: '0x', value: BigInt(sent.amount), blockHash: BLOCK, blockNumber: 100n }
+      : transaction(chain, args))
+    mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
+      ? { transactionHash: PAYMENT_HASH, to: ADMIN, blockHash: BLOCK, blockNumber: 100n, status: 'success' }
+      : receipt(chain, args))
+    for (let resume = 0; resume < 2; resume += 1) {
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrProofError' })
+    }
+    expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+    expect(mocks.poll).not.toHaveBeenCalled()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
