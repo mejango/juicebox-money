@@ -187,32 +187,37 @@ and the check fails on a missing marker.
   launches in
   `transactions/relayr-orchestration.test.ts`,
   `transactions/payer-relayr.test.ts` and `transactions/launch-relayr.test.ts`;
-  the editors route such a bundle back to its original calls
+  the editors route such a bundle, and a paid one, back to its original calls
   (`components/metadata-editor.test.tsx`,
   `components/edit-splits-multichain.test.tsx`,
   `components/queue-ruleset-multichain.test.tsx`). An unpaid quote that nothing
   can fund (it offers no option the app can authenticate, its options
   expired, or every request it published did) stops reserving the forwarder
   nonce, and the account view reads it as expired. A saved session whose
-  bundle will not run as signed is classified before its action's recheck
-  (ruling R114): each published request at one canonical finalized block on
-  its chain, dead once its nonce moved past the saved one or its deadline is
-  strictly earlier than the block's timestamp, and live while anything is
-  unknown, a reverted quote Relayr cannot confirm unfunded included. While
-  one is live the action signs nothing new and offers no Discard: it quotes
-  or pays again with its published requests while every one verifies and the
-  recheck passes, and otherwise says until when its last live request can
-  run. Once all are dead, none moved and the recheck passing signs again at
-  the saved nonces and gas after one uncached read reports the old bundle
-  unpaid and unrun; none moved and the recheck failing offers Discard after
+  bundle will not run as signed, a paid one whose calls reverted or cannot be
+  proven included, is classified before its action's recheck (ruling R114):
+  each published request at one canonical finalized block on its chain, dead
+  once its nonce moved past the saved one or its deadline is strictly earlier
+  than the block's timestamp, and live while anything is unknown. A paid
+  bundle is proven from its destinations first, so one that ran completes.
+  While a request is live the action signs nothing new and offers no Discard:
+  it quotes or pays again with its published requests while every one
+  verifies and the recheck passes, and otherwise says until when its last
+  live request can run, as a paid bundle whose calls reverted does. Once all
+  are dead, Relayr's report (paid, reverted or unreadable) no longer matters:
+  none moved and the recheck passing signs again at the saved nonces and gas,
+  for a new quote; none moved and the recheck failing offers Discard after
   "The project changed since this review."; a moved nonce or no saved nonces
   offers Discard after the "may already have run" line. Covered for two-chain
   sessions, sessions saved without nonces, a deadline equal to the block's
-  timestamp, and the account view in `transactions/relayr-orchestration.test.ts`;
-  through the real authority router, before the review pass's recheck, in
+  timestamp, paid bundles whose calls reverted, quotes whose release is
+  unproven or that another payment funded, and the account view in
+  `transactions/relayr-orchestration.test.ts`; through the real authority
+  router, before the review pass's recheck, in
   `transactions/authority-gas.test.ts`; with the split, ruleset-queue and
-  metadata editors' own recheck callbacks in
-  `transactions/relayr-editor-rechecks.test.ts`; and for launches in
+  metadata editors' own recheck callbacks, paid sessions included, in
+  `transactions/relayr-editor-rechecks.test.ts`; and for launches, which
+  refresh at the saved nonces while none moved, in
   `transactions/launch-relayr.test.ts`. Discard removes only the session: the
   editors keep their saved review, to review again with new signatures or set
   aside (`components/queue-ruleset-multichain.test.tsx`,

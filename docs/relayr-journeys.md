@@ -113,33 +113,42 @@ atomic.
   reservation until it finds every outstanding request dead, since it quotes
   again on its own.
 - A saved project action whose bundle will not run as signed (an unpaid quote
-  released, a payment that reverted, a nonce that moved) is classified before
-  its own recheck runs (ruling R114). Each request it published is read at one
-  canonical finalized block on its chain. A request is dead once the
-  forwarder's nonce for the signer moved past the nonce it was signed with, or
-  once its deadline is strictly earlier than that block's timestamp, since the
-  forwarder runs a request only while its deadline is at least the block's
-  timestamp. Anything unknown counts as live: a failed read, no finalized
-  block, a block no longer canonical, and a reverted quote another payment
-  could still fund while Relayr cannot be read.
+  released, a payment that reverted, a paid bundle whose calls reverted or
+  cannot be proven, a nonce that moved) is classified before its own recheck
+  runs (ruling R114). A paid bundle is first proven from its destinations, so
+  one that ran completes. Each request it published is read at one canonical
+  finalized block on its chain. A request is dead once the forwarder's nonce
+  for the signer moved past the nonce it was signed with, or once its deadline
+  is strictly earlier than that block's timestamp, since the forwarder runs a
+  request only while its deadline is at least the block's timestamp. Anything
+  unknown counts as live: a failed read, no finalized block, and a block no
+  longer canonical. A forwarder execute that reverts leaves its nonce unused,
+  so a paid bundle whose calls reverted stays live until their deadlines.
 - While any request is live, the action signs nothing new and offers no
   Discard. It quotes or pays again with the requests it published while every
   one still verifies and its recheck passes. That needs no read of the old
   bundle: the new bundle carries the same signed requests, so their nonces let
-  at most one of the two run. Otherwise it says until when its last live
-  request can run.
-- Once every request is dead, nothing old can run again. If no nonce moved and
-  the recheck passes, the action signs its calls again with the nonce and gas
-  each request was signed with (ruling R104), after one uncached, echo-checked
-  read reports the old bundle unpaid with every call pending. If no nonce moved
-  and the recheck fails, it offers Discard after "The project changed since
-  this review." If a nonce moved, or the session saved no nonces, another
-  action used the nonce or anyone holding the request ran it outside Relayr,
-  and the app cannot tell which, so it offers Discard after "This action's
-  earlier signature may already have run. Check the project, then discard it
-  to review it again." The account view applies the same classification when
-  it checks such a session: one that may have run ends with Discard, and any
-  other goes back to its action, which rechecks the project first.
+  at most one of the two run. Only now does Relayr's report of the bundle
+  matter: another payment that funded a reverted quote is proven, never paid
+  again. Otherwise it says until when its last live request can run, as a
+  paid bundle whose calls reverted does.
+- Once every request is dead, nothing old can run again, whatever Relayr
+  reports of the old bundle: paid, reverted or unreadable. If no nonce moved
+  and the recheck passes, the action signs its calls again with the nonce and
+  gas each request was signed with (ruling R104), and quotes and pays a new
+  bundle. If no nonce moved and the recheck fails, it offers Discard after
+  "The project changed since this review." If a nonce moved, or the session
+  saved no nonces, another action used the nonce or anyone holding the request
+  ran it outside Relayr, and the app cannot tell which, so it offers Discard
+  after "This action's earlier signature may already have run. Check the
+  project, then discard it to review it again." The account view applies the
+  same classification when it checks such a session: one that may have run
+  ends with Discard, and one whose requests expired unused goes back to its
+  action, which rechecks the project first. The editors resume a saved session
+  through their own action, so they can sign it again.
+- Known limit: a reorg that drops an earlier forwarded transaction can leave
+  the forwarder's finalized nonce below a saved one. Such a request is neither
+  unused nor moved, so the session holds until the nonce catches up.
 - Every flow that can show one of these lines shows Discard with it, in place
   of its error: the editors, the owner actions, the project batches and the
   account view. Discard removes only the session. An editor keeps its saved
@@ -147,8 +156,13 @@ atomic.
   batch keeps its journal. A fresh review signs at the live nonces, which no
   old request can use.
 - A launch classifies its outstanding requests the same way, after Relayr's
-  read of a reverted quote. While one can still run it signs nothing new, a
-  changed creation fee included, and says until when. Once all expired unused
+  read of a reverted quote, which matters only while a request can still run.
+  While one can still run, and none moved, it signs again only at the saved
+  nonces: a changed creation fee or signatures near expiry refresh every
+  request at its own nonce, since the forwarder runs one request per nonce, so
+  the old and new signatures cannot both run. Anything else waits and says
+  until when. A destination it cannot prove, its record naming another
+  transaction included, is classified the same way. Once all expired unused
   it can sign again at the saved nonces or be cancelled. Once all are dead with
   a nonce moved, it offers only cancelling, after "This launch's earlier
   signature may already have run. Check the project, then cancel this
