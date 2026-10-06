@@ -82,6 +82,11 @@ import {
 } from '@/lib/safe'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import {
+  encodeMultiSend,
+  MULTI_SEND_CALL_ONLY,
+  MULTI_SEND_CALL_ONLY_DEPLOYMENTS,
+} from '@bananapus/nana-sdk-core/safe'
+import {
   canonicalSafeTxHash,
   SAFE_EXEC_ABI,
   safeProposalFor,
@@ -894,6 +899,27 @@ describe('Safe retry and terminal-state orchestration', () => {
     ])
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
+  it('proposes a batch only through MultiSendCallOnly 1.3.0, the release it builds batches for', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockImplementation(
+      async (_client, _safe, owner) => (owner === ALICE ? 1n : 0n),
+    )
+    const data = encodeMultiSend([{ to: TARGET, data: '0x1234', value: 0n }])
+    const batch = (target: Address) => runSafeCalls({
+      signer: ALICE,
+      calls: [{ chainId: 999 as never, safe: SAFE, target, data, operation: 1 }],
+    })
+
+    for (const other of MULTI_SEND_CALL_ONLY_DEPLOYMENTS.filter(address => address !== MULTI_SEND_CALL_ONLY)) {
+      await expect(batch(other)).rejects.toThrow('A Safe DELEGATECALL must be a MultiSendCallOnly 1.3.0 batch.')
+    }
+    await expect(batch(MULTI_SEND_CALL_ONLY)).resolves.toEqual([
+      expect.objectContaining({ status: 'waiting', mode: 'onchain' }),
+    ])
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
   it('gives each call in a batch its own nonce on the no-service path', async () => {
     // The onchain nonce only advances at EXECUTION, so approving two calls
     // against the same nonce would waste one of them.

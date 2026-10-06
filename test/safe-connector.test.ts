@@ -10,7 +10,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY_DEPLOYMENTS } from '@bananapus/nana-sdk-core/safe'
 import {
   canonicalSafeTxHash,
   SAFE_EXEC_ABI,
@@ -285,13 +285,23 @@ describe('Safe app execution', () => {
     await expect(atOnce(client as unknown as ReturnType<typeof chain>)).resolves.toMatchObject({ status: 'unproven' })
   })
 
-  it('binds a batch to MultiSendCallOnly running exactly the reviewed calls, in order', async () => {
-    const batch = (calls: (typeof CALL)[], value = 0n) =>
-      chain(execTransaction(MULTI_SEND_CALL_ONLY, value, encodeMultiSend(calls), 1))
-    await expect(atOnce(batch([CALL, SECOND]), [CALL, SECOND])).resolves.toMatchObject({ status: 'success' })
-    await expect(atOnce(batch([SECOND, CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
-    await expect(atOnce(batch([CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
-    await expect(atOnce(batch([CALL, SECOND], 1n), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+  // Safe{Wallet} batches a 1.4.1 Safe through MultiSendCallOnly 1.4.1, and a
+  // 1.3.0 Safe through 1.3.0's canonical or EIP-155 deployment.
+  it.each(MULTI_SEND_CALL_ONLY_DEPLOYMENTS)(
+    'binds a batch to MultiSendCallOnly %s running exactly the reviewed calls, in order',
+    async multiSend => {
+      const batch = (calls: (typeof CALL)[], value = 0n) =>
+        chain(execTransaction(multiSend, value, encodeMultiSend(calls), 1))
+      await expect(atOnce(batch([CALL, SECOND]), [CALL, SECOND])).resolves.toMatchObject({ status: 'success' })
+      await expect(atOnce(batch([SECOND, CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+      await expect(atOnce(batch([CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+      await expect(atOnce(batch([CALL, SECOND], 1n), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+    },
+  )
+
+  it('leaves a batch DELEGATECALLed into any other contract unproven', async () => {
+    const client = chain(execTransaction(OTHER, 0n, encodeMultiSend([CALL, SECOND]), 1))
+    await expect(atOnce(client, [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
   })
 
   it("reads a proposal executed later from the Safe's event for it, without the transaction", async () => {

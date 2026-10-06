@@ -586,9 +586,9 @@ describe('Relayr quote and payment boundaries', () => {
   it.each<[string, Partial<RelayrPayment>, RegExp]>([
     ['target', { target: '0x1C05f7841379d4393574c0ffa17908ec40ffd97D' as Address }, /unrecognized payment contract/],
     ['token', { token: '0xEEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeE' as Address }, /unsupported payment token/],
-  ])('refuses a payment %s whose mixed case fails its checksum, which the SDK accepts', async (_, change, message) => {
+  ])('refuses a payment %s whose mixed case fails its checksum, as the SDK does', async (_, change, message) => {
     const bound = { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] }
-    expect(sdkRelayrPaymentDetails({ ...payment, ...change }, bound)).toMatchObject({ target: RELAYR_PAYMENT_ADDRESS })
+    expect(() => sdkRelayrPaymentDetails({ ...payment, ...change }, bound)).toThrow(message)
     expect(() => relayrPaymentDetails({ ...payment, ...change }, bound)).toThrow(message)
     expect(relayrPaymentOptions({ bundle_uuid: BUNDLE_UUID, payment_info: [{ ...payment, ...change }] }, [1])).toEqual([])
     await expect(pay({ ...payment, ...change }, [1])).rejects.toThrow(message)

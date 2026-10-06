@@ -177,6 +177,11 @@ export function verifyDistributionCompletion(snapshot: Distribution, receipt: Tr
         splits: snapshot.splits.map(split => ({ ...split, feeless: snapshot.hookFeeless[split.hook.toLowerCase()] === true })),
       })
     } else {
+      // Reserves accrue until the distribution runs, and a Safe can execute it
+      // days after the review, so the receipt may distribute more than was
+      // reviewed: any count at or above the reviewed one confirms (jango,
+      // 2026-10-05), each split's share checked against the count distributed.
+      // A smaller count (another distribution ran first) is refused.
       verifyReservedDistributionReceipt(receipt, {
         ...reviewed,
         controller: snapshot.controller,

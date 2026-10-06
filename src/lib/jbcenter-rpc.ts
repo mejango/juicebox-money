@@ -77,6 +77,9 @@ export function jbCenterRpcTransport(
     retryWhileBehindHead(
       createJBCenterRpcProvider(chainId, {
         baseUrl: jbCenterBaseUrl(),
+        // retryWhileBehindHead retries a lagging node; the provider's own retry
+        // would compound with it.
+        blockLagRetryDelaysMs: [],
         fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
         timeoutMs,
       }),

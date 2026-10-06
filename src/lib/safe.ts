@@ -21,6 +21,7 @@ import {
   TRANSACTION_SIMULATION_GAS,
 } from '@bananapus/nana-sdk-core/review'
 import {
+  MULTI_SEND_CALL_ONLY,
   multiSendCallsOf,
   prepareSafeSameAddressDeployment,
   readAuthorityIdentity,
@@ -423,7 +424,10 @@ export async function readSafeQueue(
 
 /**
  * The zero-refund proposal of `call`: one CALL, or one DELEGATECALL into
- * MultiSendCallOnly with a canonical batch, never another DELEGATECALL.
+ * MultiSendCallOnly 1.3.0 with a canonical batch, never another DELEGATECALL.
+ * A batch is proposed through 1.3.0 (safeBatchProposalFor), so a batch that
+ * names another MultiSendCallOnly is refused, not proposed through one it
+ * does not name.
  */
 function proposalFor(
   call: Pick<SafeCall, 'target' | 'data' | 'value' | 'operation'>,
@@ -434,9 +438,11 @@ function proposalFor(
   if ((call.operation ?? 0) === 0) {
     return safeProposalFor({ to, data: call.data, value }, nonce)
   }
-  const calls = multiSendCallsOf({ to, data: call.data, operation: 1 })
+  const calls = isAddressEqual(to, MULTI_SEND_CALL_ONLY)
+    ? multiSendCallsOf({ to, data: call.data, operation: 1 })
+    : null
   if (!calls || value !== 0n) {
-    throw new Error('A Safe DELEGATECALL must be a MultiSendCallOnly batch.')
+    throw new Error('A Safe DELEGATECALL must be a MultiSendCallOnly 1.3.0 batch.')
   }
   return safeBatchProposalFor(calls, nonce)
 }
