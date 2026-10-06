@@ -698,6 +698,15 @@ describe('paying a reverted payer quote again', () => {
       sent: [expect.objectContaining({ hash: PAYMENT_HASH })] })
   })
 
+  it('keeps a saved quote pending whose payment names a deadline its calldata does not pay until', async () => {
+    mocks.pay.mockImplementationOnce(revertingPay)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
+    const key = `jb-payer-deploy-v1:journal:${review.id}`
+    const saved = JSON.parse(window.localStorage.getItem(key)!)
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, payments: [{ ...saved.payments[0], deadline: '1' }] }))
+    expect(() => loadPayerDeployment(review.scope)).toThrow('The saved payer payments are malformed. Keep it pending.')
+  })
+
   it('proves a quote another payment funded after its own payment reverted, and never pays it again', async () => {
     mocks.pay.mockImplementationOnce(revertingPay)
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
@@ -745,6 +754,16 @@ describe('paying a reverted payer quote again', () => {
       expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
       expect(mocks.funding).toHaveBeenCalledTimes(2)
       expect(mocks.pay.mock.calls[1][0].sent).toEqual([])
+    })
+
+    it('keeps the quote when its saved options are not a list', async () => {
+      await expired()
+      const key = `jb-payer-deploy-v1:journal:${review.id}`
+      const saved = JSON.parse(window.localStorage.getItem(key)!)
+      window.localStorage.setItem(key, JSON.stringify({ ...saved, quote: { ...saved.quote, payment_info: {} } }))
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(WAITING)
+      expect(mocks.post).toHaveBeenCalledTimes(1)
+      expect(mocks.pay).toHaveBeenCalledTimes(1)
     })
 
     it('keeps the quote while its deadline is not past the finalized block', async () => {

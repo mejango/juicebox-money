@@ -1519,10 +1519,28 @@ describe('paying a reverted Relayr payment again', () => {
   const SECOND_PAYMENT = `0x${'5c'.repeat(32)}` as Hex
   const calls: RelayrCall[] = [{ chainId: 1, target: TARGET, data: '0x1234', value: 5n }]
   const options = { calls, account: ALICE, pendingScope: 'reverted-payment' }
+  /** The browser's saved sessions, which a test edits the way a corrupted or hand-edited record would read. */
+  let stored: Map<string, string>
 
   beforeEach(() => {
-    vi.stubGlobal('window', localStorageWindow().window)
+    const storage = localStorageWindow()
+    stored = storage.values
+    vi.stubGlobal('window', storage.window)
   })
+
+  type SavedRecord = {
+    bundleUuid: string
+    payments: { bundleUuid: string; calldata: string; deadline: string }[]
+    paymentOptions: unknown[]
+  }
+
+  /** Rewrites the saved session of `options`, which the account view reads as it is stored. */
+  function tamper(change: (saved: SavedRecord) => void) {
+    const key = `jb-relayr-pending-v1:${options.pendingScope}`
+    const saved = JSON.parse(stored.get(key)!) as SavedRecord
+    change(saved)
+    stored.set(key, JSON.stringify(saved))
+  }
 
   /**
    * Relayr: the quote binds the posted call. Until a payment the session sent
@@ -1631,6 +1649,19 @@ describe('paying a reverted Relayr payment again', () => {
     expect(mocks.wallet.sendTransaction.mock.calls[1][0]).toMatchObject({ value: 100n, data: payment.calldata })
   })
 
+  it.each<[string, () => RelayrPayment[]]>([
+    ['an amount BigInt reads and the SDK does not', () => [paymentFor({ amount: '100 ' })]],
+    ['an earlier twin with such an amount, with the exact option after it', () => [paymentFor({ amount: ' 100' }), payment]],
+  ])('never pays again from saved options that hold %s', async (_, saved) => {
+    relayr()
+    await revertedPayment()
+    saveRelayrPendingSession(options.pendingScope, { ...loadRelayrPendingSession(options.pendingScope)!, paymentOptions: saved() })
+    await expect(runRelayrCalls(options)).rejects.toThrow(
+      'This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+  })
+
   it('leaves a saved quote as it was when the wallet declines before it holds the payment', async () => {
     installSuccessfulBundle()
     const scope = 'declined-before-payment'
@@ -1713,6 +1744,37 @@ describe('paying a reverted Relayr payment again', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
+  describe('a saved journal the SDK reads strictly', () => {
+    it('holds a quote whose payment deadline is padded, a number BigInt reads and the SDK does not', async () => {
+      relayr()
+      await revertedPayment()
+      tamper(saved => { saved.payments[0].deadline = ` ${saved.payments[0].deadline}` })
+      // The quote is open by the clock, which makes it payable only on a deadline the SDK reads.
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(HELD_RE)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it('never reads a bundle whose saved ID is not a Relayr ID', async () => {
+      relayr()
+      await revertedPayment()
+      tamper(saved => { saved.bundleUuid = 'not-a-bundle'; saved.payments[0].bundleUuid = 'not-a-bundle' })
+      vi.mocked(fetch).mockClear()
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(
+        'This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('signs and pays nothing while a payment names a deadline its calldata does not pay until', async () => {
+      relayr()
+      await revertedPayment()
+      // A later deadline than the one the payment pays until keeps the quote open, and payable.
+      tamper(saved => { saved.payments[0].deadline = String(BigInt(saved.payments[0].deadline) + 1n) })
+      await expect(runRelayrCalls(options)).rejects.toThrow('Saved Relayr authorization records could not be read completely')
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('once its quote expired (ruling R104)', () => {
     const START = 1_900_000_000_000
     const DEADLINE = START / 1_000 + 600
@@ -1793,6 +1855,50 @@ describe('paying a reverted Relayr payment again', () => {
       expect(read).toBe(2)
       expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
       expect(posts).toHaveLength(1)
+    })
+
+    it('reads the clock after Relayr answers, so a quote whose window closes during the read is released', async () => {
+      const { posts, reads } = await expired()
+      vi.mocked(Date.now).mockReturnValue((DEADLINE - 30) * 1_000)
+      const answer = reads.getMockImplementation()!
+      reads.mockImplementation(async signal => {
+        vi.mocked(Date.now).mockReturnValue((DEADLINE + 1) * 1_000)
+        return answer(signal)
+      })
+      mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
+      await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
+      expect(posts).toHaveLength(2)
+    })
+
+    it('keeps the quote, with its old request possibly still running, when the clock is not a time', async () => {
+      const { posts } = await expired()
+      vi.mocked(Date.now).mockReturnValue(NaN)
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toMatchObject({
+        message: HELD_UNCONFIRMED, cause: expect.objectContaining({ message: WAITING }) })
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+    })
+
+    it("waits for the deadline its payment's calldata pays until, whatever deadline the journal saved", async () => {
+      const { posts } = await expired()
+      tamper(saved => { saved.paymentOptions = []; saved.payments[0].deadline = '1' })
+      finalizedAt = DEADLINE
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toMatchObject(holds())
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+    })
+
+    it("holds a quote whose journal files another bundle's payment under it", async () => {
+      const { posts } = await expired()
+      const foreign = paymentCalldata(OTHER_UUID, DEADLINE)
+      tamper(saved => { Object.assign(saved.payments[0], { bundleUuid: OTHER_UUID, calldata: foreign }) })
+      // The chain holds that payment as saved, reverted, so only its bundle keeps the quote.
+      const chain = mocks.client.getTransaction.getMockImplementation()!
+      mocks.client.getTransaction.mockImplementation(async input => ({ ...await chain(input), input: foreign }))
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
+      expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
+      expect(posts).toHaveLength(1)
+      expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     })
 
     it('keeps the quote while another option on the paid chain is still open at its finalized block', async () => {

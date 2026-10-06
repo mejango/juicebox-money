@@ -201,6 +201,18 @@ describe('saved launch payments', () => {
     await expect(run()).rejects.toThrow('The saved Relayr launch is invalid.')
     expect(m.poll).not.toHaveBeenCalled()
   })
+
+  it('refuses a saved launch whose payment names a deadline its calldata does not pay until', async () => {
+    m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
+      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+    })
+    await expect(run()).rejects.toThrow('reload after funding submission')
+    const saved = loadLaunchSession()!
+    saved.relayr!.payments = [{ ...saved.relayr!.payments![0], deadline: '1' }]
+    saveLaunchSession(saved)
+    await expect(run()).rejects.toThrow('The saved Relayr launch is invalid.')
+    expect(m.poll).not.toHaveBeenCalled()
+  })
 })
 
 describe('relayed launch execution and recovery', () => {

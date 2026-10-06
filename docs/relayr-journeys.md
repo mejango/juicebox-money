@@ -219,6 +219,15 @@ atomic.
   run means another payment funded it, so its destinations are proven and it
   is never paid again. Once its quote expires, it is released as above, and
   until then every flow asks to try again later.
+- Those rules are the SDK's (`@bananapus/nana-sdk-core/review/relayr`):
+  `revertedRelayrQuote` (funded, payable or released), `relayrRetryOption`,
+  `requireRelayrRetry`, `proveSavedRelayrPayment`,
+  `relayrPaymentAttemptOutcome` and the saved record of a payment
+  (`sentRelayrPayment`, `relayrSentPaymentsSnapshot`). This app supplies the
+  clients and stores the journals. A journal the SDK cannot read exactly holds
+  the quote: a padded amount or deadline, a payment of another bundle, a saved
+  deadline that is not the one its calldata pays until, a bundle ID that is
+  not a Relayr ID (never read), and a clock that is not a time.
 - Relayr's response supplies candidate transaction hashes. Completion requires
   checking the exact destination transaction and its canonical receipt. Safe
   execution additionally needs its Safe transaction proof.
@@ -255,7 +264,7 @@ successful live Relayr deployment.
 
 ## Implementation references
 
-- Money: `src/lib/authority.ts`, `src/lib/relayr.ts`, `src/lib/relayr-payments.ts`
+- Money: `src/lib/authority.ts`, `src/lib/relayr.ts`
   (on the SDK's `@bananapus/nana-sdk-core/review/relayr`),
   `src/lib/project-batch.ts`, `src/lib/payer-relayr.ts`,
   `src/lib/project-distributions.ts`, `src/lib/project-token-batch.ts`,

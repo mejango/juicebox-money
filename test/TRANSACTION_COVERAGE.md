@@ -281,7 +281,19 @@ and the check fails on a missing marker.
   payments or payment options it cannot keep exactly, and saves every option
   it can authenticate, several on one chain included; a quote offering more
   than it can keep is never paid, and is quoted again with its same signed
-  requests.
+  requests. The SDK owns the release, the retry option and rule, the attempt
+  outcome and the payment record (`revertedRelayrQuote`, `relayrRetryOption`,
+  `requireRelayrRetry`, `relayrPaymentAttemptOutcome`,
+  `relayrSentPaymentsSnapshot`), and these flows pin what it reads strictly:
+  an option whose amount, or a payment whose deadline, is padded; an earlier
+  twin option with such an amount; a bundle ID that is not a Relayr ID, which
+  is never read; a payment of another bundle filed under the quote; a saved
+  deadline that is not the one its calldata pays until, which holds a release
+  and refuses a launch, a payer deployment or an authorization that saved it;
+  options that are not a list; and a clock that is not a time, which holds the
+  quote where the old copies released it. The clock is read after the bundle
+  (`transactions/relayr-orchestration.test.ts`,
+  `transactions/payer-relayr.test.ts`, `transactions/launch-relayr.test.ts`).
   Quotes bind each posted call to
   the quoted ID whose record carries its exact request, with records exactly
   the quoted IDs and the bundle read echoing its ID
