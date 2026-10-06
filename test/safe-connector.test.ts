@@ -47,6 +47,7 @@ import {
   heldCall,
   isSafeConnection,
   readSafeAppExecution,
+  reportedSafeExecution,
   stampedDeadline,
   useSafeConnection,
   waitForSafeExecutionHash,
@@ -393,5 +394,37 @@ describe("the Safe's queue, asked before a proposal", () => {
 
   it.each(STAMPED_SITES)('never finds %s queued with any other field changed', async (_, build) => {
     await expect(lookup(callOf(build(LATER)), [callOf(build(NOW + 600n, 1n))])).resolves.toBeNull()
+  })
+})
+
+describe("an execution Safe's service reports failed", () => {
+  const SAFE = '0x1111111111111111111111111111111111111111' as Address
+  const FAILED = new Error('Safe executed the proposal, but the onchain transaction failed.')
+  const call = { to: '0x2222222222222222222222222222222222222222' as Address, data: '0x1234' as Hex, value: 0n }
+  const tx = safeProposalFor(call, 5)
+  const hash = canonicalSafeTxHash(STAMPED_CHAIN, SAFE, tx)
+  const service = (record: Record<string, unknown>) => ({
+    fetch: vi.fn(async () => new Response(JSON.stringify({ ...tx, safe: SAFE, safeTxHash: hash, ...record }))),
+  })
+
+  it("is the execution the service's authenticated record names, for its receipt to decide", async () => {
+    const options = service({ isExecuted: true, isSuccessful: false, transactionHash: HASH })
+    await expect(reportedSafeExecution(FAILED, STAMPED_CHAIN, SAFE, hash, options)).resolves.toBe(HASH)
+  })
+
+  it('is unknown when the record names none, or cannot be read', async () => {
+    await expect(
+      reportedSafeExecution(FAILED, STAMPED_CHAIN, SAFE, hash, service({ isExecuted: true, transactionHash: null })),
+    ).resolves.toBeNull()
+    const down = { fetch: vi.fn(async () => new Response('', { status: 503 })) }
+    await expect(reportedSafeExecution(FAILED, STAMPED_CHAIN, SAFE, hash, down)).resolves.toBeNull()
+  })
+
+  it('is never read for any other error', async () => {
+    const options = service({ isExecuted: true, transactionHash: HASH })
+    await expect(
+      reportedSafeExecution(new Error('Safe service unavailable'), STAMPED_CHAIN, SAFE, hash, options),
+    ).resolves.toBeNull()
+    expect(options.fetch).not.toHaveBeenCalled()
   })
 })

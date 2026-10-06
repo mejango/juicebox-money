@@ -18,6 +18,7 @@ import {
   canonicalSafeTxHash,
   isSafeWalletPeer,
   listPendingSafeTransactions,
+  readSafeTransaction,
   SAFE_EXEC_ABI,
   safeExecutionResult,
   safeTransactionMatchesCall,
@@ -287,6 +288,24 @@ export async function findPendingSafeAppProposal(
   return live
     ? { tx: live.tx, proposalHash: canonicalSafeTxHash(chainId, safe, live.tx), call: live.call }
     : null
+}
+
+/**
+ * The execution Safe's authenticated record names for `safeTxHash` when
+ * `error` is its service's report that the proposal ran and failed, or null.
+ * Only that execution's receipt decides the proposal, never the report alone.
+ */
+export async function reportedSafeExecution(
+  error: unknown,
+  chainId: number,
+  safe: Address,
+  safeTxHash: Hex,
+  service?: SafeServiceOptions,
+): Promise<Hex | null> {
+  if (!(error instanceof Error) || !/executed the proposal.*failed/i.test(error.message)) return null
+  const record = await readSafeTransaction(chainId, safe, safeTxHash, service).catch(() => null)
+  const hash = (record as { transactionHash?: unknown } | null)?.transactionHash
+  return typeof hash === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(hash) ? (hash as Hex) : null
 }
 
 /** How often a look at the chain asks again when the node can't answer. */
