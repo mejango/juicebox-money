@@ -259,6 +259,96 @@ describe('a payment reviewed for one account', () => {
 })
 
 describe('a payment from a Safe', () => {
+  /** Two pay panels for the same project, as when one is open beside another. */
+  async function reviewInTwoPanels() {
+    await act(async () =>
+      root.render(
+        <>
+          {['first', 'second'].map(name => (
+            <div key={name} data-panel={name}>
+              <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+            </div>
+          ))}
+        </>,
+      ),
+    )
+    for (const name of ['first', 'second']) {
+      const input = panel(name).querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 450))
+    })
+  }
+  const panel = (name: string) => host.querySelector<HTMLElement>(`[data-panel="${name}"]`)!
+  const panelButton = (name: string, label: string) =>
+    [...panel(name).querySelectorAll('button')].find(item => item.textContent === label)
+  const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
+
+  const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
+  const UNCONFIRMED =
+    'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
+  const panelSays = (line: string) => host.textContent?.includes(line) ?? false
+
+  it("keeps a proposed payment's line on the panel after Done, and frees the panel by Dismiss once it can't be proven", async () => {
+    m.safe = true
+    let lose!: (reason: Error) => void
+    m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+
+    await click('Done')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    // The signers decide: the payment stays held, with its line, and nothing to dismiss.
+    await waitUntil(() => panelSays(AWAITING))
+    expect(panelSays(AWAITING)).toBe(true)
+    expect(button('Pay').disabled).toBe(true)
+    expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Dismiss')).toBe(false)
+
+    // Safe's service is lost before its execution can be read.
+    await act(async () => lose(new Error('Safe service unavailable')))
+    await waitUntil(() => panelSays('Safe service unavailable'))
+    expect(panelSays(`${UNCONFIRMED} Safe service unavailable`)).toBe(true)
+    expect(button('Pay').disabled).toBe(true)
+
+    await click('Dismiss')
+    expect(panelSays(UNCONFIRMED)).toBe(false)
+    expect(button('Pay').disabled).toBe(false)
+  })
+
+  it('frees a panel whose proposed payment another panel dismissed, by its own Dismiss', async () => {
+    m.safe = true
+    let lose!: (reason: Error) => void
+    m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
+    await reviewInTwoPanels()
+    await clickIn('first', 'Pay')
+    await clickIn('first', 'Confirm & Pay')
+    await waitUntil(() => !!panelButton('first', 'Done'))
+    await clickIn('first', 'Done')
+
+    // The second panel's same payment is the first's proposal, never a second one.
+    await clickIn('second', 'Pay')
+    await clickIn('second', 'Confirm & Pay')
+    await waitUntil(() => !!panelButton('second', 'Done'))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await act(async () => lose(new Error('Safe service unavailable')))
+    await waitUntil(() => panel('second').textContent?.includes('Safe service unavailable') ?? false)
+    await clickIn('second', 'Done')
+    expect(panelButton('second', 'Pay')!.disabled).toBe(false)
+
+    // Released there, the first panel's stage is lost: its line says so, and Dismiss frees it.
+    await waitUntil(() => !!panelButton('first', 'Dismiss'))
+    expect(panel('first').textContent).toContain(UNCONFIRMED)
+    expect(panelButton('first', 'Pay')!.disabled).toBe(true)
+    await clickIn('first', 'Dismiss')
+    expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+  })
+
   it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
     m.safe = true
     m.token = 'erc20'

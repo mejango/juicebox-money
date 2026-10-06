@@ -71,7 +71,7 @@ import {
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
-import { isSafeConnection, swapDeadline } from "@/lib/safe-connector";
+import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
 import { resolveMarket } from "@/components/project/MarketSection";
@@ -1215,6 +1215,15 @@ export function PayPanel({
   // A Safe stage whose result can't be proven here says so in place of the stage's own line.
   const sequenceSafeNotice =
     sequenceSafeStage && sequenceSafeTx.confirmationUncertain ? sequenceSafeTx.notice : null;
+  // A stage another flow dismissed shows nothing any more.
+  const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
+  // An unproven or lost stage ends with its line: Dismiss releases its call and frees the panel.
+  const sequenceSafeReleasable =
+    !!sequenceSafeStage && (sequenceSafeTx.confirmationUncertain || sequenceSafeLost);
+  const dismissSequenceSafeStage = () => {
+    sequenceSafeTx.dismiss();
+    setSequenceSafeStage(null);
+  };
 
   useEffect(() => {
     if (!sequenceSafeStage) return;
@@ -2391,6 +2400,24 @@ export function PayPanel({
           {approveTx.error ?? tx.error}
         </p>
       ) : null}
+      {/* A Safe stage outlives its dialog: its line stays until it ends or is dismissed. */}
+      {sequenceSafeStage && !sequenceOpen ? (
+        <div className="mt-3 flex items-start justify-between gap-3">
+          <p className="text-sm text-smoke-700">
+            {sequenceSafeTx.notice ??
+              (sequenceSafeLost ? SAFE_PROPOSAL_UNCONFIRMED : "Submitted. Confirming onchain…")}
+          </p>
+          {sequenceSafeReleasable ? (
+            <button
+              type="button"
+              onClick={dismissSequenceSafeStage}
+              className="shrink-0 text-xs font-medium text-bluebs-600 hover:underline"
+            >
+              Dismiss
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {sequenceOpen ? (
         <TxConfirmDialog
           open
@@ -2453,12 +2480,9 @@ export function PayPanel({
           onConfirm={() => void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
-            // A Safe stage whose result can't be proven here ends with its line:
-            // Done dismisses it, so its call is the user's again and the panel is free.
-            if (sequenceSafeStage && sequenceSafeTx.confirmationUncertain) {
-              sequenceSafeTx.dismiss();
-              setSequenceSafeStage(null);
-            }
+            // An unproven or lost Safe stage ends with its line: Done dismisses it,
+            // so its call is the user's again and the panel is free.
+            if (sequenceSafeReleasable) dismissSequenceSafeStage();
             setSequenceOpen(false);
             setSequenceActions([]);
             setSequenceActionIndex(0);
