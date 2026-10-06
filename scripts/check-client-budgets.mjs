@@ -112,22 +112,18 @@ const budgets = {
   // line measure 2492.2 KiB; round up to the next KiB. The chain's last word before an
   // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5;
   // binding an execution on the transaction already read, 2492.7.
-  // SDK 2.17's Relayr binding, payment proofs and retry rule, and the unpaid
-  // quote release, measure 2493.8 KiB against 2486.0 KiB on main with the same
-  // toolchain (+7.8). About 5 KiB of that is the launch journal, its Safe checks
-  // and the create draft, which webpack now emits both in create's page chunk
-  // and in a shared lazy chunk; importing the SDK's Relayr family check on create
-  // instead would avoid that copy but load the whole Relayr module there (+6.2
-  // KiB on create's first load). Create stays at 491.9 KiB and home at 429.5
-  // KiB. The review's fixes (the R104 release of a reverted quote, the proof of
-  // a quote another payment funded, the exact retry option, the bundle read
-  // before a release, and the strict session saves) measure 2495.0 KiB (+1.2),
-  // in the shared Relayr chunk, the launch and payer flows and the account
-  // card. The second review's nonce proof before signing a released quote
-  // again brings it to 2495.4 KiB, and the third's Discard for a session
-  // whose nonce was spent, on the account card and three editors, to 2496.1
-  // KiB. Allow 1.9 KiB of headroom.
-  allScripts: 2498 * KIB,
+  // SDK 2.17's Relayr binding, payment proofs and retry rule, the release of a
+  // quote nothing can fund (ruling R104), the request classification, holds and
+  // Discard of ruling R114 and the reservations of ruling R117 measure 2507.0 KiB
+  // against 2492.7 KiB on main with the same toolchain (+14.3): +13.6 before
+  // rulings R117 and R114 (e), (f), which add 0.7. On main before the SDK's Safe
+  // checks the same branch measured +10.9, so 2.7 KiB appear with that merge.
+  // About 5 KiB is the launch journal, its Safe checks and the create draft,
+  // which webpack emits both in create's page chunk and in a shared lazy chunk;
+  // importing the SDK's Relayr family check on create instead would load the
+  // whole Relayr module there (+6.2 KiB on create's first load). Round up to the
+  // next KiB.
+  allScripts: 2508 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
