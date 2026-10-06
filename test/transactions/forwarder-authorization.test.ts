@@ -1,19 +1,19 @@
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeFunctionData, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrEntry, RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import type { RelayrPendingSession } from '@/lib/relayr'
 
 const mocks = vi.hoisted(() => ({ launch: vi.fn() }))
 vi.mock('@/lib/launch-session', () => ({ loadLaunchSession: mocks.launch }))
-import { withForwarderAuthorizationLock, type SignedForwardRequest } from '@/lib/forwarder-authorization'
+import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
 let pending: { scope: string; session: RelayrPendingSession | null }[]
 let names: string[]
 /** Whether every request a reservation published is dead, as ruling R114 classifies it. */
-let requestsDead: Mock<(requests: readonly SignedForwardRequest[]) => Promise<boolean>>
+let requestsDead: Mock<(requests: readonly RelayrSignedRequest[]) => Promise<boolean>>
 
 function entry(chain: JBChainId = 1, from = ALICE): RelayrEntry {
   return { chain, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain], value: '0',
@@ -98,7 +98,7 @@ describe('shared forwarder nonce ownership', () => {
       publishedNonces: ['4', '7'] } }]
     await expect(run()).rejects.toThrow('Another published action')
     // Each of its requests, Optimism's included, is classified once before the run.
-    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, deadline: 4_000_000_000, nonce: '4' }, { chainId: 10, deadline: 4_000_000_000, nonce: '7' }])
+    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, signer: ALICE, deadline: 4_000_000_000, nonce: '4' }, { chainId: 10, signer: ALICE, deadline: 4_000_000_000, nonce: '7' }])
     requestsDead.mockResolvedValue(true)
     await expect(run()).resolves.toBe('signed')
     // A session that published again is read afresh.
@@ -117,7 +117,7 @@ describe('shared forwarder nonce ownership', () => {
       relayr: { published: true, signed: [{ chainId: 1, entry: entry(), nonce: '0', deadline: 4_000_000_000 }], superseded: [] } }
     mocks.launch.mockReturnValue(launch)
     await expect(run()).rejects.toThrow('Another published action')
-    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, deadline: 4_000_000_000, nonce: '0' }])
+    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, signer: ALICE, deadline: 4_000_000_000, nonce: '0' }])
     requestsDead.mockResolvedValue(true)
     await expect(run()).resolves.toBe('signed')
   })

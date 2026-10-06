@@ -26,16 +26,13 @@ import {
   buildForwardedTx,
   proveSavedRelayrPayment,
   readRelayrPendingSessionsForAuthorization,
-  relayrDeadlinePassed,
+  relayrChainClient,
   relayrPay,
   relayrPaymentAttemptOutcome,
   relayrPaymentLabel,
   relayrPoll,
   relayrHeldMessage,
   relayrPostBundle,
-  relayrRequestStates,
-  relayrRequestsDead,
-  relayrRequestsVerdict,
   relayrRetryOption,
   revertedRelayrQuote,
 } from '@/lib/relayr'
@@ -43,16 +40,22 @@ import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr
 import {
   RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
+  relayrDeadlinePassed,
   relayrDestinationHash,
   relayrForwardRequest,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
+  relayrRequestStates,
+  relayrRequestsDead,
+  relayrRequestsVerdict,
+  relayrSessionOutcome,
   relayrSupportsChains,
   verifyRelayrDestination,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrQuote,
+  type RelayrSignedRequest,
   type RelayrTransactionRecord,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import { isSafeConnection } from '@/lib/safe-connector'
@@ -160,7 +163,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       if (!lock) throw new Error('This launch is already running in another tab.')
       await withForwarderAuthorizationLock({ account, chainIds: session.chains, owner: `launch:${session.salt}`,
         pendingSessions: readRelayrPendingSessionsForAuthorization,
-        requestsDead: requests => relayrRequestsDead(account, requests),
+        requestsDead: requests => relayrRequestsDead(relayrChainClient, requests),
         execute: run })
     })
   } finally {
@@ -236,16 +239,24 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     for (const signed of journal?.signed ?? []) pinnedRequest(signed)
     for (const signed of journal?.superseded ?? []) pinnedRequest(signed)
+    /** A launch's signed request as the SDK classifies it, signed by the launching wallet. */
+    const signedLaunchRequest = ({ chainId, nonce, deadline }: SignedLaunch): RelayrSignedRequest => ({ chainId, signer: account, nonce, deadline })
     /**
-     * Ruling R114: the launch requests not yet done, each at a canonical
-     * finalized block on its chain. Null when every chain is done.
+     * Ruling R114: what the launch requests not yet done allow, each at a
+     * canonical finalized block on its chain. Null when every chain is done.
+     * There is no recheck here, so requests that expired unused read as
+     * `expired`.
      */
-    const outstandingVerdict = async (signed: SignedLaunch[]) => {
+    const outstandingOutcome = async (signed: SignedLaunch[]) => {
       const outstanding = signed.filter(item => current.statuses[item.chainId]?.phase !== 'done')
-      return outstanding.length ? relayrRequestsVerdict(await relayrRequestStates(account, outstanding)) : null
+      if (!outstanding.length) return null
+      const verdict = relayrRequestsVerdict(await relayrRequestStates(relayrChainClient, outstanding.map(signedLaunchRequest)))
+      return relayrSessionOutcome(verdict, { nonces: outstanding.map(item => item.nonce) })
     }
-    const originalPaymentExpired = async (): Promise<boolean> => !!journal?.paymentDeadline &&
-      journal.paymentChainId !== undefined && relayrDeadlinePassed(journal.paymentChainId, journal.paymentDeadline)
+    const originalPaymentExpired = async (): Promise<boolean> => {
+      const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
+      return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
+    }
 
     // Another payment may have funded a quote whose own payment reverted: what
     // Relayr ran is reconciled below, never paid again.
@@ -281,25 +292,26 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
      */
     let heldUntil: number | null = null
     if (journal?.published && !fundedElsewhere && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase)) {
-      const verdict = await outstandingVerdict([...journal.signed, ...(journal.superseded ?? [])])
-      if (verdict?.live) {
+      const outcome = await outstandingOutcome([...journal.signed, ...(journal.superseded ?? [])])
+      if (outcome?.kind === 'hold') {
         // A dead request may have run while another can, so nothing is signed again until every one is dead.
-        if (verdict.mayHaveRun) throw new Error(relayrHeldMessage(verdict.until))
-        heldUntil = verdict.until
-      } else if (verdict?.mayHaveRun) {
+        throw new Error(relayrHeldMessage(outcome.until))
+      } else if (outcome?.kind === 'refresh') {
+        heldUntil = outcome.until
+      } else if (outcome?.kind === 'discard' && outcome.reason === 'ran') {
         journal.abandonable = true
         persist()
         throw new Error(LAUNCH_MAY_HAVE_RUN)
-      } else if (verdict && !verdict.unused) {
+      } else if (outcome?.kind === 'reorg-hold') {
         // A reorg left a finalized nonce below a saved one: it holds until the nonce catches up (ruling R114).
         throw new Error(relayrHeldMessage(0))
-      } else if (verdict && !journal.abandonable) {
+      } else if (outcome?.kind === 'discard' && !journal.abandonable) {
         journal.abandonable = true
         persist()
         throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
       }
       // Relayr's answer matters only while a request can still run (ruling R114), which holds until when.
-      if (verdict?.live === false) unreleased = null
+      if (outcome && outcome.kind !== 'refresh') unreleased = null
       if (unreleased && heldUntil !== null) throw new Error(relayrHeldMessage(heldUntil), { cause: unreleased })
     }
     if (unreleased) throw unreleased
@@ -384,7 +396,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         // authorization may have run. A reverted execute leaves the nonce
         // unused, so its old authorization can only compete with a retry of
         // that SAME nonce, never create an additional project after a success.
-        const [state] = await relayrRequestStates(account, [{ chainId: signed.chainId, nonce: signed.nonce, deadline: request.deadline }])
+        const [state] = await relayrRequestStates(relayrChainClient, [{ chainId: signed.chainId, signer: account, nonce: signed.nonce, deadline: request.deadline }])
         const reverted = unproven instanceof RelayrDestinationRevertedError
         const named = hash ? { txHash: hash } : {}
         allDone = false
@@ -460,8 +472,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       if (journal.phase === 'payment-signing') {
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
-        const verdict = await outstandingVerdict([...journal.signed, ...(journal.superseded ?? [])])
-        if (verdict && !verdict.live && verdict.unused && await originalPaymentExpired()) journal.abandonable = true
+        const outcome = await outstandingOutcome([...journal.signed, ...(journal.superseded ?? [])])
+        if (outcome?.kind === 'discard' && outcome.reason === 'expired' && await originalPaymentExpired()) journal.abandonable = true
         persist()
         throw new Error(journal.abandonable
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'

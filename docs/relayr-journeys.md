@@ -153,6 +153,10 @@ atomic.
 - Known limit: a reorg that drops an earlier forwarded transaction can leave
   the forwarder's finalized nonce below a saved one. Such a request is neither
   unused nor moved, so the session holds until the nonce catches up.
+- The classification, the verdict and what a session does next are the SDK's
+  (`@bananapus/nana-sdk-core/review/relayr`: `relayrRequestStates`,
+  `relayrRequestsVerdict` and `relayrSessionOutcome`). This app supplies the
+  clients, the lines, the storage and each action's recheck.
 - Every flow that can show one of these lines shows Discard with it, in place
   of its error: the editors, the owner actions, the project batches and the
   account view. Discard removes the session. A fresh review signs at the live
