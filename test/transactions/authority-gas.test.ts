@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   requireReview: vi.fn(),
   chooseFunding: vi.fn(),
   runSafeCalls: vi.fn(),
-  findPendingSafeTransaction: vi.fn(),
+  listPendingSafeTransactions: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
   isSafeConnection: vi.fn(),
@@ -53,7 +53,7 @@ vi.mock('@/lib/safe', async importOriginal => ({
 }))
 vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
-  findPendingSafeTransaction: mocks.findPendingSafeTransaction,
+  listPendingSafeTransactions: mocks.listPendingSafeTransactions,
 }))
 vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
@@ -136,7 +136,7 @@ beforeEach(() => {
   mocks.chooseFunding.mockResolvedValue(1)
   mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'eoa' })
   mocks.isSafeConnection.mockReturnValue(false)
-  mocks.findPendingSafeTransaction.mockResolvedValue(null)
+  mocks.listPendingSafeTransactions.mockResolvedValue([])
   mocks.waitForSafeExecutionHash.mockResolvedValue(DESTINATION_HASH)
   mocks.readMatchingAuthorityIdentities.mockResolvedValue({
     source: { kind: 'eoa' },
@@ -717,7 +717,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       refundReceiver: '0x0000000000000000000000000000000000000000' as Address,
       nonce: 7,
     }
-    mocks.findPendingSafeTransaction.mockResolvedValue(pending)
+    mocks.listPendingSafeTransactions.mockResolvedValue([pending])
 
     const result = await runAuthorityCalls({
       calls: [
@@ -730,11 +730,10 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       ],
     })
 
-    expect(mocks.findPendingSafeTransaction).toHaveBeenCalledWith(
+    expect(mocks.listPendingSafeTransactions).toHaveBeenCalledWith(
       1,
       SAFE,
       7,
-      { to: TARGET, data: '0x1234', value: undefined },
       expect.objectContaining({ fetch: expect.any(Function) }),
     )
     expect(result.safeResults).toEqual([

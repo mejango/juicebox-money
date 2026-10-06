@@ -19,7 +19,7 @@ import {
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
-import { canonicalSafeTxHash, hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
+import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
   requestContractTransactionReview,
@@ -29,6 +29,7 @@ import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   findPendingSafeAppProposal,
+  heldCall,
   isSafeConnection,
   readSafeAppExecution,
   SAFE_NONCE_GUIDANCE,
@@ -177,11 +178,13 @@ type SafeProposal = {
 }
 
 /**
- * Every Safe proposal made here this session, by chain, Safe and exact call.
- * Every useSafeTx shares it and the registry follows each proposal itself, so
- * a flow that closes, remounts or changes chain never drops one, and the same
- * call is never proposed twice while one is pending. Nothing is persisted: a
- * reload starts empty, and Safe's own queue answers for what it holds.
+ * Every Safe proposal made here this session, by chain, Safe and the call it
+ * holds: the exact call, with any field stamped at send time blanked
+ * ({@link heldCall}). Every useSafeTx shares it and the registry follows each
+ * proposal itself, so a flow that closes, remounts or changes chain never
+ * drops one, and the same action is never proposed twice while one is
+ * pending. Nothing is persisted: a reload starts empty, and Safe's own queue
+ * answers for what it holds.
  */
 const proposals = new Map<string, SafeProposal>()
 const proposalListeners = new Set<() => void>()
@@ -198,7 +201,8 @@ function notifyProposals(): void {
 }
 
 function proposalKey(chainId: number, safe: Address, call: SafeAppCall): string {
-  return `${chainId}:${safe.toLowerCase()}:${call.to.toLowerCase()}:${call.value ?? 0n}:${call.data.toLowerCase()}`
+  const held = heldCall(call)
+  return `${chainId}:${safe.toLowerCase()}:${held.to.toLowerCase()}:${held.value ?? 0n}:${held.data.toLowerCase()}`
 }
 
 function updateProposal(key: string, next: Partial<SafeProposal>): void {
@@ -450,8 +454,8 @@ export function useSafeTx(chainId: number) {
         /** The exact call simulated and sent, which a Safe execution must run. */
         let sentCall = callOf(request)
         if (viaSafe) {
-          // A call the Safe already has, from this session or its own queue, is
-          // shown as it is and never proposed again.
+          // An action the Safe already has, from this session or its own queue,
+          // is shown as it is and never proposed again.
           const key = proposalKey(request.chainId, account, sentCall)
           const held = proposals.get(key)
           const queued =
@@ -460,16 +464,8 @@ export function useSafeTx(chainId: number) {
               : null
           if (holdsCall(held) || queued) {
             if (queued) {
-              recordProposal(
-                {
-                  chainId: request.chainId,
-                  safe: account,
-                  call: sentCall,
-                  proposalHash: canonicalSafeTxHash(request.chainId, account, queued),
-                },
-                publicClient,
-                false,
-              )
+              const { proposalHash, call } = queued
+              recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
             }
             inFlightRef.current = false
             setShownKey(key)

@@ -2,9 +2,12 @@
 
 import { useSyncExternalStore } from 'react'
 import {
+  decodeAbiParameters,
   decodeFunctionData,
+  encodeAbiParameters,
   isAddressEqual,
   TransactionNotFoundError,
+  type AbiParameter,
   type Address,
   type Hex,
 } from 'viem'
@@ -12,10 +15,13 @@ import type { Config } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import { multiSendCallsOf, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import {
-  findPendingSafeTransaction,
+  canonicalSafeTxHash,
   isSafeWalletPeer,
+  listPendingSafeTransactions,
   SAFE_EXEC_ABI,
   safeExecutionResult,
+  safeTransactionMatchesCall,
+  safeTransactionMessage,
   type SafeExecutionResult,
   type SafeQueuedTransaction,
   type SafeServiceOptions,
@@ -163,29 +169,124 @@ export async function requireSafeProposalSuccess(
 }
 
 /**
- * The exact pending proposal of `call` in `safe`'s queue, read from Safe's
- * service at the Safe's onchain nonce, or null: a Safe app never proposes a
- * call that is already queued, whoever queued it. Throws when the nonce or
- * the queue can't be read.
+ * The calls this app stamps with a field at send time, by selector: the
+ * stamp's argument, and whether the contract refuses the call once the chain
+ * passes it. Universal Router's `execute` and PositionManager's
+ * `modifyLiquidities` check a deadline; the expiration Permit2's `approve`
+ * sets only bounds the allowance it grants.
+ */
+const STAMPED_CALLS: Record<string, { params: readonly AbiParameter[]; stamp: number; reverts: boolean }> = {
+  // execute(bytes commands, bytes[] inputs, uint256 deadline)
+  '0x3593564c': { params: [{ type: 'bytes' }, { type: 'bytes[]' }, { type: 'uint256' }], stamp: 2, reverts: true },
+  // modifyLiquidities(bytes unlockData, uint256 deadline)
+  '0xdd46508f': { params: [{ type: 'bytes' }, { type: 'uint256' }], stamp: 1, reverts: true },
+  // approve(address token, address spender, uint160 amount, uint48 expiration)
+  '0x87517c45': {
+    params: [{ type: 'address' }, { type: 'address' }, { type: 'uint160' }, { type: 'uint48' }],
+    stamp: 3,
+    reverts: false,
+  },
+}
+
+/** A stamped call's shape and arguments, when its data is exactly their ABI encoding. */
+function stampedArgs(call: SafeAppCall) {
+  const shape = STAMPED_CALLS[call.data.slice(0, 10).toLowerCase()]
+  if (!shape) return null
+  const encoded = `0x${call.data.slice(10)}` as Hex
+  try {
+    const args = decodeAbiParameters(shape.params, encoded) as readonly unknown[]
+    // Any other encoding of the same arguments is held exactly as sent.
+    return encodeAbiParameters(shape.params, args).toLowerCase() === encoded.toLowerCase()
+      ? { shape, args }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The call a Safe proposal of `call` holds: `call` with the field it is
+ * stamped with at send time zeroed, so the same action sent again with a later
+ * stamp is the action the proposal already holds. Any other call is held
+ * exactly as sent.
+ */
+export function heldCall(call: SafeAppCall): SafeAppCall {
+  const stamped = stampedArgs(call)
+  if (!stamped) return call
+  const args = [...stamped.args]
+  args[stamped.shape.stamp] = 0n
+  return {
+    ...call,
+    data: `${call.data.slice(0, 10)}${encodeAbiParameters(stamped.shape.params, args).slice(2)}` as Hex,
+  }
+}
+
+/** The deadline after which the contract refuses `call`, or null for a call without one. */
+export function stampedDeadline(call: SafeAppCall): bigint | null {
+  const stamped = stampedArgs(call)
+  return stamped?.shape.reverts ? BigInt(stamped.args[stamped.shape.stamp] as bigint) : null
+}
+
+function sameCall(a: SafeAppCall, b: SafeAppCall): boolean {
+  return (
+    isAddressEqual(a.to, b.to) &&
+    (a.value ?? 0n) === (b.value ?? 0n) &&
+    a.data.toLowerCase() === b.data.toLowerCase()
+  )
+}
+
+/** A Safe app proposal's one call, or null for any other Safe transaction. */
+function proposedCall(tx: SafeQueuedTransaction): SafeAppCall | null {
+  try {
+    const { to, data, value } = safeTransactionMessage(tx)
+    // A zero-refund CALL, as a Safe app proposes it.
+    return safeTransactionMatchesCall(tx, { to, data, value }) ? { to, data, value } : null
+  } catch {
+    return null
+  }
+}
+
+/** A chain client that reads the Safe's nonce and the latest block. */
+type SafeQueueClient = Parameters<typeof readBoundedSafeNonce>[0] & {
+  getBlock(): Promise<{ timestamp: bigint }>
+}
+
+/**
+ * A pending proposal of the action `call` makes in `safe`'s queue (its
+ * service record, its safeTxHash and the call it runs), read from Safe's
+ * service at the Safe's onchain nonce, or null: a Safe app never proposes an
+ * action that is already queued, whoever queued it, whatever its stamp
+ * ({@link heldCall}). A queued call the contract refuses once its deadline
+ * passed is passed over once the latest block is past that deadline: it can
+ * no longer run. Throws when the nonce, the queue or the latest block can't
+ * be read.
  */
 export async function findPendingSafeAppProposal(
-  client: Parameters<typeof readBoundedSafeNonce>[0],
+  client: SafeQueueClient,
   chainId: number,
   safe: Address,
   call: SafeAppCall,
   service?: SafeServiceOptions,
-): Promise<SafeQueuedTransaction | null> {
+): Promise<{ tx: SafeQueuedTransaction; proposalHash: Hex; call: SafeAppCall } | null> {
   const nonce = await readBoundedSafeNonce(client, safe).catch(() => null)
   if (nonce === null || nonce > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('Could not read the Safe nonce.')
   }
-  return findPendingSafeTransaction(
-    chainId,
-    safe,
-    Number(nonce),
-    { to: call.to, data: call.data, value: call.value },
-    service,
-  )
+  const held = heldCall(call)
+  const queued = (await listPendingSafeTransactions(chainId, safe, Number(nonce), service)).flatMap(tx => {
+    const proposed = proposedCall(tx)
+    return proposed && sameCall(heldCall(proposed), held)
+      ? [{ tx, call: proposed, deadline: stampedDeadline(proposed) }]
+      : []
+  })
+  if (!queued.length) return null
+  const latest = queued.some(({ deadline }) => deadline !== null)
+    ? (await client.getBlock()).timestamp
+    : 0n
+  const live = queued.find(({ deadline }) => deadline === null || deadline >= latest)
+  return live
+    ? { tx: live.tx, proposalHash: canonicalSafeTxHash(chainId, safe, live.tx), call: live.call }
+    : null
 }
 
 /** How often a look at the chain asks again when the node can't answer. */

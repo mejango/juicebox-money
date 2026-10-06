@@ -14,6 +14,7 @@ import {
   safeProposalFor,
 } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { STAMPED_CHAIN, STAMPED_SITES } from '../support/stamped-sites'
 
 // Safe proposals through useSafeTx. One registry holds every proposal made
 // this session, shared by every flow, and follows each to its result: a flow
@@ -106,6 +107,7 @@ const receiptOf = (transactionHash: Hex, safeTxHash: Hex, topic = SUCCESS) => ({
 })
 
 let useSafeTx: typeof import('@/hooks/useSafeTx').useSafeTx
+type TxRequest = import('@/hooks/useSafeTx').TxRequest
 type Value = ReturnType<typeof useSafeTx>
 
 const Harness = forwardRef<Value, { chainId: number; phases?: string[] }>(function Harness(
@@ -129,7 +131,7 @@ async function mount(chainId = 10, phases?: string[]) {
     get tx() {
       return ref.current!
     },
-    send: async (sent = request) => {
+    send: async (sent: TxRequest = request) => {
       let result: Hex | null = null
       await act(async () => {
         result = await ref.current!.send(sent, reviewedBySafe)
@@ -283,9 +285,11 @@ describe('a Safe proposal', () => {
   })
 
   it("is never proposed again when the Safe's queue already holds it, here, after a reload or from another device", async () => {
-    const queued = { ...safeProposalFor({ to: BOB, data: callData, value: 7n }, 5), safe: SAFE }
-    const hash = canonicalSafeTxHash(10, SAFE, queued)
-    mocks.findPendingSafeAppProposal.mockResolvedValue(queued)
+    const hash = canonicalSafeTxHash(10, SAFE, safeProposalFor({ to: BOB, data: callData, value: 7n }, 5))
+    mocks.findPendingSafeAppProposal.mockResolvedValue({
+      proposalHash: hash,
+      call: { to: BOB, data: callData, value: 7n },
+    })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash: execution }: { hash: Hex }) =>
       receiptOf(execution, hash),
     )
@@ -445,5 +449,67 @@ describe('a Safe proposal', () => {
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a call stamped at send time', () => {
+  /** A first send's stamp; the same action sent again takes a later one. */
+  const NOW = 1_800_000_000n
+
+  it.each(STAMPED_SITES)(
+    'is refused while proposed: %s, sent again with a later stamp after Done and after closing',
+    async (_, build) => {
+      signersDecide()
+      const flow = await mount(STAMPED_CHAIN)
+      await flow.send(build(NOW))
+      await settle()
+      expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
+
+      // Done with the flow still open, then the same action reviewed and confirmed again.
+      await act(async () => flow.tx.reset())
+      await expect(flow.send(build(NOW + 600n))).resolves.toBe(PROPOSAL)
+      expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
+
+      await flow.close()
+      const reopened = await mount(STAMPED_CHAIN)
+      await expect(reopened.send(build(NOW + 1_200n))).resolves.toBe(PROPOSAL)
+      expect(reopened.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(mocks.requestReview).toHaveBeenCalledOnce()
+      // Held here, the action is never looked up in the queue again.
+      expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(STAMPED_SITES)('never holds %s against the same site with any other field changed', async (_, build) => {
+    signersDecide()
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount(STAMPED_CHAIN)
+    await flow.send(build(NOW))
+    await act(async () => flow.tx.reset())
+    await expect(flow.send(build(NOW, 1n))).resolves.toBe(SECOND_PROPOSAL)
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it("follows the queue's proposal of the action with an older stamp, and holds the action by it", async () => {
+    signersDecide()
+    const [, build] = STAMPED_SITES[0]
+    const older = build(NOW)
+    const call = {
+      to: older.address,
+      data: encodeFunctionData(older as Parameters<typeof encodeFunctionData>[0]),
+      value: older.value ?? 0n,
+    }
+    const hash = canonicalSafeTxHash(STAMPED_CHAIN, SAFE, safeProposalFor(call, 5))
+    mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: hash, call })
+    const flow = await mount(STAMPED_CHAIN)
+    await expect(flow.send(build(NOW + 600n))).resolves.toBe(hash)
+    await settle()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING, safeProposalHash: hash })
+
+    await act(async () => flow.tx.reset())
+    await expect(flow.send(build(NOW + 1_200n))).resolves.toBe(hash)
+    expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
   })
 })

@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import {
   encodeFunctionData,
+  getAddress,
   toEventSelector,
   TransactionNotFoundError,
   zeroAddress,
@@ -9,7 +10,11 @@ import {
   type Hex,
 } from 'viem'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
-import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import {
+  canonicalSafeTxHash,
+  SAFE_EXEC_ABI,
+  safeProposalFor,
+} from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type FakeConnector = { id: string; name: string; getProvider?: () => Promise<unknown> }
@@ -36,13 +41,19 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
   waitForSafeExecutionHash: runtime.waitForSafeExecutionHash,
 }))
 
+import type { TxRequest } from '@/hooks/useSafeTx'
 import {
+  findPendingSafeAppProposal,
+  heldCall,
   isSafeConnection,
   readSafeAppExecution,
+  stampedDeadline,
   useSafeConnection,
   waitForSafeExecutionHash,
+  type SafeAppCall,
 } from '@/lib/safe-connector'
 import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
+import { revertsOnceStampPasses, STAMPED_CHAIN, STAMPED_SITES } from './support/stamped-sites'
 
 const config = { tag: 'config' } as never
 const HASH = `0x${'ab'.repeat(32)}` as Hex
@@ -283,5 +294,104 @@ describe('Safe app execution', () => {
       readSafeAppExecution({ client, receipt: receipt(SAFE_TX), safe: SAFE, proposalHash: SAFE_TX, calls: [CALL] }),
     ).resolves.toMatchObject({ status: 'success' })
     expect(client.getTransaction).not.toHaveBeenCalled()
+  })
+})
+
+/** The call a request makes. */
+const callOf = (request: TxRequest): SafeAppCall => ({
+  to: request.address,
+  data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]),
+  value: request.value,
+})
+
+/** A send's stamp, and the stamp the same action takes when it is sent 30 days later. */
+const NOW = 1_800_000_000n
+const LATER = NOW + 30n * 86_400n
+
+describe('the call a Safe proposal holds', () => {
+  it.each(STAMPED_SITES)('is %s whatever its send-time stamp', (_, build) => {
+    const first = callOf(build(NOW))
+    const later = callOf(build(LATER))
+    expect(later.data).not.toBe(first.data)
+    expect(heldCall(later)).toEqual(heldCall(first))
+  })
+
+  it.each(STAMPED_SITES)('tells %s apart by any other field', (_, build) => {
+    expect(heldCall(callOf(build(NOW, 1n)))).not.toEqual(heldCall(callOf(build(NOW))))
+  })
+
+  it.each(STAMPED_SITES)(
+    'names the deadline of %s only where the contract refuses the call once it passes',
+    (site, build) => {
+      expect(stampedDeadline(callOf(build(NOW)))).toBe(revertsOnceStampPasses(site) ? NOW : null)
+    },
+  )
+
+  it('holds any other call, or a stamped call encoded any other way, exactly as sent', () => {
+    const transfer = {
+      to: '0x2222222222222222222222222222222222222222' as Address,
+      data: '0xa9059cbb' as Hex,
+      value: 0n,
+    }
+    expect(heldCall(transfer)).toEqual(transfer)
+    expect(stampedDeadline(transfer)).toBeNull()
+    const sale = callOf(STAMPED_SITES[0][1](NOW))
+    const padded = { ...sale, data: `${sale.data}00` as Hex }
+    expect(heldCall(padded)).toEqual(padded)
+    expect(stampedDeadline(padded)).toBeNull()
+  })
+})
+
+describe("the Safe's queue, asked before a proposal", () => {
+  const SAFE = '0x1111111111111111111111111111111111111111' as Address
+  const word = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`
+  /** The chain, with the Safe at nonce 5 and its latest block at `timestamp`. */
+  const chain = (timestamp = NOW) => ({
+    request: vi.fn(async ({ method }: { method: string }) => {
+      if (method !== 'eth_call') throw new Error(`unexpected ${method}`)
+      return word(5n)
+    }),
+    getBlock: vi.fn(async () => ({ number: 100n, timestamp })),
+  })
+  /** Safe's service, queueing `calls` from nonce 5 on. */
+  const queue = (calls: SafeAppCall[]) => ({
+    fetch: vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          next: null,
+          results: calls.map((call, index) => {
+            const tx = safeProposalFor(call, 5 + index)
+            return { ...tx, safeTxHash: canonicalSafeTxHash(STAMPED_CHAIN, SAFE, tx) }
+          }),
+        }),
+      ),
+    ),
+  })
+  const lookup = (call: SafeAppCall, queued: SafeAppCall[], timestamp = NOW) =>
+    findPendingSafeAppProposal(chain(timestamp) as never, STAMPED_CHAIN, SAFE, call, queue(queued))
+
+  it.each(STAMPED_SITES)('finds %s queued with an older stamp', async (_, build) => {
+    const queued = callOf(build(NOW + 600n))
+    await expect(lookup(callOf(build(LATER)), [queued])).resolves.toMatchObject({
+      tx: { nonce: 5 },
+      proposalHash: canonicalSafeTxHash(STAMPED_CHAIN, SAFE, safeProposalFor(queued, 5)),
+      call: { ...queued, to: getAddress(queued.to), value: queued.value ?? 0n },
+    })
+  })
+
+  it.each(STAMPED_SITES)(
+    'passes over %s queued with a deadline the chain passed, only where it reverts',
+    async (site, build) => {
+      const passed = callOf(build(NOW - 1n))
+      const live = callOf(build(NOW + 600n))
+      const found = await lookup(callOf(build(LATER)), [passed, live])
+      expect(found?.call.data).toBe(revertsOnceStampPasses(site) ? live.data : passed.data)
+      // A deadline the latest block only reached may still run in the next block.
+      await expect(lookup(callOf(build(LATER)), [callOf(build(NOW))])).resolves.not.toBeNull()
+    },
+  )
+
+  it.each(STAMPED_SITES)('never finds %s queued with any other field changed', async (_, build) => {
+    await expect(lookup(callOf(build(LATER)), [callOf(build(NOW + 600n, 1n))])).resolves.toBeNull()
   })
 })

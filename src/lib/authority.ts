@@ -40,7 +40,6 @@ import {
   type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import {
-  canonicalSafeTxHash,
   hasSafeService,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
@@ -658,17 +657,13 @@ export async function runAuthorityCalls({
           )
         : null
       if (existing) {
-        await call.onSafePrepared?.(existing)
+        await call.onSafePrepared?.(existing.tx)
         safeResults.push({
           chainId: call.chainId,
           mode: 'service',
           status: 'queued',
-          nonce: existing.nonce,
-          safeTxHash: canonicalSafeTxHash(
-            call.chainId,
-            call.authority,
-            existing,
-          ),
+          nonce: existing.tx.nonce,
+          safeTxHash: existing.proposalHash,
         })
         onProgress?.({
           kind: 'safe',
