@@ -39,7 +39,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { TxError } from '@/components/ui/TxError'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
-import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from '@/lib/authority'
+import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@bananapus/nana-sdk-core/review/relayr'
@@ -406,6 +406,24 @@ async function withSplitLocks<T>(destinations: SplitReview['destinations'], run:
     return next(index + 1)
   })
   return next(0)
+}
+
+/**
+ * Send a reviewed split update under its destinations' locks. A multichain
+ * update is saved before any signature can be published, so it can be
+ * resumed, and cleared once it completes.
+ */
+export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void): Promise<AuthorityResult> {
+  const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
+  return withSplitLocks(plan.destinations, async () => {
+    for (const destination of plan.destinations) {
+      if (pendingSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))) throw new Error(`Resume the pending split update on ${chainName(destination.chainId)} first.`)
+    }
+    if (plan.destinations.length > 1) saveSplitJournal(journal)
+    const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message) })
+    clearSplitJournal(journal)
+    return result
+  })
 }
 
 export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
@@ -846,17 +864,8 @@ function EditSplitsModal({
       setPlan(null); setFlowError('Your connected account changed. Review these recipients again.'); return
     }
     setFlowError(null); setBusy(true); setStatus('Rechecking the split recipients…')
-    const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
     try {
-      const result = await withSplitLocks(plan.destinations, async () => {
-        for (const destination of plan.destinations) {
-          if (pendingSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))) throw new Error(`Resume the pending split update on ${chainName(destination.chainId)} first.`)
-        }
-        if (plan.destinations.length > 1) saveSplitJournal(journal)
-        const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => setStatus(progress.message) })
-        clearSplitJournal(journal)
-        return result
-      })
+      const result = await submitSplitReview(plan, setStatus)
       setStatus(safeOutcomeMessage(result, `${title} updated. This page picks it up in about a minute.`))
       setSuccess(true)
     } catch (err) {

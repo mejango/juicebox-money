@@ -44,7 +44,7 @@ import { RelayrDiscard } from "@/components/RelayrDiscard";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
-import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
+import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
 import { loadRelayrPendingSession, relayrCallsScope, relayrSessionAwaitsPayment, resumeRelayrSession } from "@/lib/relayr";
 import { relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
@@ -707,6 +707,26 @@ function clearQueueJournal(journal: QueueRecoveryJournal): void {
   }
 }
 
+/**
+ * Send reviewed rules under their destinations' locks. Rules for several
+ * chains are saved before any signature can be published, so they can be
+ * resumed, and cleared once they complete.
+ */
+export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void): Promise<AuthorityResult> {
+  const calls = reviewedQueueCalls(review, action);
+  const journal = { scope: relayrCallsScope(calls), review, action };
+  return withQueueDestinationLocks(review.destinations, async () => {
+    for (const destination of review.destinations) {
+      if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
+    }
+    // Freeze every destination before any signature can be published.
+    if (calls.length > 1) saveQueueJournal(journal);
+    const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message) });
+    clearQueueJournal(journal);
+    return result;
+  });
+}
+
 export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet();
   const [busy, setBusy] = useState(false);
@@ -1265,19 +1285,7 @@ function RulesetEditorForm({
     const recoveryKey = queueRecoveryKey(chainId, projectId);
     try {
       if (pendingQueueScope(recoveryKey)) { onPending(); return; }
-      const calls = reviewedQueueCalls(review, action);
-      const result = await withQueueDestinationLocks(review.destinations, async () => {
-        for (const destination of review.destinations) {
-          if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
-        }
-        if (calls.length > 1) {
-          // Freeze every destination before any signature can be published.
-          saveQueueJournal({ scope: relayrCallsScope(calls), review, action });
-        }
-        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) });
-        clearQueueJournal({ scope: relayrCallsScope(calls), review, action });
-        return result;
-      });
+      const result = await submitQueueReview(review, action, setStatus);
       setTxHash(result.directResults[0] ?? null);
       setStatus(safeOutcomeMessage(result, queueSuccessCopy(action, review.configs[0].mustStartAtOrAfter)));
       setSuccess(true);
