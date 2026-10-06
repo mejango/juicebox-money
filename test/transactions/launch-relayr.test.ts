@@ -55,6 +55,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError } from '@bananapus/nana-sdk-core/review/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
+import { relayrHeldMessage } from '@/lib/relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -65,6 +66,7 @@ const ABI = parseAbi(['function deploy(address owner, bytes32 salt) payable'])
 const NOW = 1_900_000_000
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
+const MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel this deployment to start over.'
 const SAFE_INPUT: Omit<SafeDeploymentPlan, 'address'> = {
   owners: [ACCOUNT, TARGET], threshold: 2, saltNonce: `0x${'ef'.repeat(32)}`,
   proxyCreationCode: safeArtifacts.contracts.proxy.creationCode as Hex,
@@ -592,11 +594,14 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.statuses[1].projectId).toBe(101)
   })
 
-  it('refuses a retry if the prior authorization nonce was consumed between attempts', async () => {
+  it('refuses a retry if the prior authorization nonce was consumed between attempts, and offers cancelling', async () => {
     failed.add(10)
     await expect(run()).rejects.toThrow('unfinished')
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
     clients.get(10)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
-    await expect(run()).rejects.toThrow('earlier launch authorization')
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
+    expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -729,15 +734,65 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
-  it('does not infer non-execution from elapsed time when the forwarder nonce was consumed', async () => {
+  it('ends a paid launch whose forwarder nonces moved, with no destination hash, with cancelling only, never a retry', async () => {
     m.poll.mockImplementation(async () => { records = []; throw new Error('provider unavailable') })
     await expect(run()).rejects.toThrow('unfinished')
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
     for (const client of clients.values()) {
       client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
       client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
     }
-    await expect(run()).rejects.toThrow('unresolved')
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
     expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a paid launch unresolved while one chain\'s request moved and another can still run', async () => {
+    m.poll.mockImplementation(async () => { records = []; throw new Error('provider unavailable') })
+    await expect(run()).rejects.toThrow('unfinished')
+    clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
+    await expect(run()).rejects.toThrow('unresolved')
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers only cancelling, after one line, once every published launch request is dead and one nonce moved', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    // Ethereum's nonce moved: another action used it, or anyone holding the request ran it.
+    for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : functionName !== 'verify')
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.quote).toHaveBeenCalledTimes(1)
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('holds a published launch while another chain\'s request can still run, and says until when', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    // Ethereum's nonce moved; Optimism's request can run until NOW + 3600.
+    clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : functionName !== 'verify')
+    await expect(run()).rejects.toThrow(relayrHeldMessage(NOW + 3600))
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.funding).toHaveBeenCalledTimes(1)
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('holds a published launch whose creation fee changed while its requests can still run, instead of signing again', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    m.fee.mockResolvedValue(18n)
+    await expect(run()).rejects.toThrow(relayrHeldMessage(NOW + 3600))
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'quoted', signed: [expect.anything(), expect.anything()] })
+    expect(m.pay).not.toHaveBeenCalled()
   })
 
   it('retains independently observed destination hashes when a later provider response omits them', async () => {

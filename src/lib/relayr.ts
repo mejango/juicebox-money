@@ -1207,22 +1207,6 @@ export function relayrRequestsVerdict(states: readonly RelayrRequestState[]): Re
   }
 }
 
-/**
- * Whether a signed forward request can no longer run and never ran: at a
- * canonical finalized block its deadline has passed and the forwarder still
- * expects its nonce. Wall-clock expiry alone proves neither. False while that
- * cannot be read.
- */
-export async function relayrRequestExpiredUnused({ chainId, account, nonce, deadline }: {
-  chainId: number
-  account: Address
-  nonce: string | bigint
-  deadline: number | bigint
-}): Promise<boolean> {
-  const [state] = await relayrRequestStates(account, [{ chainId, nonce, deadline }])
-  return !state.live && state.unused
-}
-
 /** Whether the chain's finalized block, still canonical, is past `deadline` (seconds). False while that is unknown. */
 export async function relayrDeadlinePassed(chainId: number, deadline: string | bigint): Promise<boolean> {
   const finalized = await atCanonicalFinalizedBlock(chainId, async () => undefined)

@@ -33,8 +33,10 @@ import {
   relayrPaymentOptions,
   relayrPaymentLabel,
   relayrPoll,
+  relayrHeldMessage,
   relayrPostBundle,
-  relayrRequestExpiredUnused,
+  relayrRequestStates,
+  relayrRequestsVerdict,
   relayrRetryOption,
   revertedRelayrQuote,
 } from '@/lib/relayr'
@@ -70,6 +72,9 @@ import {
 
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
+
+/** The one line a launch shows once every request it published is dead and one may have run (ruling R114). */
+const LAUNCH_MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel this deployment to start over.'
 
 type SignedLaunch = {
   chainId: number
@@ -229,22 +234,56 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     for (const signed of journal?.signed ?? []) pinnedRequest(signed)
     for (const signed of journal?.superseded ?? []) pinnedRequest(signed)
-    const unusedSignaturesExpired = async (signed: SignedLaunch[]): Promise<boolean> => {
-      if (!signed.length) return false
-      for (const item of signed) {
-        if (current.statuses[item.chainId]?.phase === 'done') continue
-        if (!await relayrRequestExpiredUnused({ chainId: item.chainId, account, nonce: item.nonce, deadline: item.deadline })) return false
-      }
-      return true
+    /**
+     * Ruling R114: the launch requests not yet done, each at a canonical
+     * finalized block on its chain. Null when every chain is done.
+     */
+    const outstandingVerdict = async (signed: SignedLaunch[]) => {
+      const outstanding = signed.filter(item => current.statuses[item.chainId]?.phase !== 'done')
+      return outstanding.length ? relayrRequestsVerdict(await relayrRequestStates(account, outstanding)) : null
     }
     const originalPaymentExpired = async (): Promise<boolean> => !!journal?.paymentDeadline &&
       journal.paymentChainId !== undefined && relayrDeadlinePassed(journal.paymentChainId, journal.paymentDeadline)
-    if (journal?.published && !journal.abandonable &&
-        ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) &&
-        await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])])) {
-      journal.abandonable = true
+
+    // Another payment may have funded a quote whose own payment reverted: what
+    // Relayr ran is reconciled below, never paid again.
+    let fundedElsewhere = false
+    if (journal?.phase === 'payment-reverted' && journal.quote) {
+      const reverted = await revertedRelayrQuote({ bundleUuid: journal.quote.bundle_uuid, payments: journal.payments ?? [],
+        options: journal.quote.payment_info, destinationChainIds: journal.signed.map(item => item.chainId), account })
+      if (reverted.records) journal.records = reverted.records
+      fundedElsewhere = reverted.state === 'funded'
+      if (reverted.state === 'released') {
+        // Ruling R104: nothing can fund the quote any more, so the same signed
+        // calls are quoted again below, with a new funding choice. The old
+        // quote goes now: a device clock behind the chain must never offer it.
+        journal.phase = 'quoted'
+        delete journal.quote
+        delete journal.payments
+        delete journal.paymentHash
+        delete journal.paymentChainId
+        delete journal.paymentDeadline
+        delete current.paymentChainId
+      }
       persist()
-      throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
+    }
+    /** While a published request can still run (ruling R114), when its last one stops: no new signature until then. */
+    let heldUntil: number | null = null
+    if (journal?.published && !fundedElsewhere && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase)) {
+      const verdict = await outstandingVerdict([...journal.signed, ...(journal.superseded ?? [])])
+      if (verdict?.live) {
+        // One request is dead while another can run, so the bundle can no longer run as signed.
+        if (verdict.spent) throw new Error(relayrHeldMessage(verdict.until))
+        heldUntil = verdict.until
+      } else if (verdict?.mayHaveRun) {
+        journal.abandonable = true
+        persist()
+        throw new Error(LAUNCH_MAY_HAVE_RUN)
+      } else if (verdict && !journal.abandonable) {
+        journal.abandonable = true
+        persist()
+        throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
+      }
     }
     if (journal?.abandonable && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) && journal.signed.length) {
       const previous = journal
@@ -278,6 +317,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       let allDone = true
       let allRemainingRetryable = true
       let allRemainingExpired = true
+      /** An outstanding request can still run, or its outcome is unknown. */
+      let held = false
+      /** An outstanding request is dead and may have run (ruling R114). */
+      let ran = false
       for (const signed of original.signed) {
         const request = pinnedRequest(signed)
         const client = publicClient(signed.chainId as JBChainId)
@@ -301,12 +344,20 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
               if (!(error instanceof RelayrDestinationRevertedError)) throw error
               // A reverted execute leaves the nonce unused. Its old authorization can only compete
               // with a retry of that SAME nonce, never create an additional project after a success.
-              const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-                functionName: 'nonces', args: [account] })
-              if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
-              status(signed.chainId, { phase: 'failed', txHash: hash, error: 'The destination launch reverted.' })
+              const [state] = await relayrRequestStates(account, [{ chainId: signed.chainId, nonce: signed.nonce, deadline: request.deadline }])
               allDone = false
-              allRemainingExpired = false
+              if (!state.live && state.mayHaveRun) {
+                // Its nonce moved since: another action used it, or anyone holding the authorization ran it.
+                ran = true
+                allRemainingRetryable = false
+                status(signed.chainId, { phase: 'uncertain', txHash: hash, error: LAUNCH_MAY_HAVE_RUN })
+                continue
+              }
+              status(signed.chainId, { phase: 'failed', txHash: hash, error: 'The destination launch reverted.' })
+              if (state.live) {
+                held = true
+                allRemainingExpired = false
+              }
               continue
             }
             await verifyCreatedLaunchMultisigs(client, current.plans[signed.chainId], receipt.blockNumber)
@@ -315,22 +366,34 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
             status(signed.chainId, { phase: 'done', txHash: hash, projectId })
             continue
           } catch (error) {
+            held = true
             status(signed.chainId, { phase: 'uncertain', txHash: hash,
               error: error instanceof Error ? error.message : 'Destination confirmation is unavailable.' })
           }
         } else {
-          // An unavailable RPC cannot prove absence of execution.
-          if (await relayrRequestExpiredUnused({ chainId: signed.chainId, account, nonce: signed.nonce, deadline: request.deadline })) {
+          // Ruling R114: an unavailable RPC cannot prove absence of execution, and a nonce that
+          // moved means the authorization may have run.
+          const [state] = await relayrRequestStates(account, [{ chainId: signed.chainId, nonce: signed.nonce, deadline: request.deadline }])
+          if (!state.live && state.unused) {
             status(signed.chainId, { phase: 'failed', error: 'The unexecuted launch authorization expired.' })
             allDone = false
             continue
           }
-          status(signed.chainId, { phase: 'uncertain', error: 'Waiting for the original Relayr destination transaction.' })
+          const spent = !state.live && state.mayHaveRun
+          if (spent) ran = true
+          else held = true
+          status(signed.chainId, { phase: 'uncertain', error: spent ? LAUNCH_MAY_HAVE_RUN : 'Waiting for the original Relayr destination transaction.' })
         }
         allDone = false
         allRemainingRetryable = false
       }
       if (allDone) return true
+      if (ran && !held) {
+        // Every outstanding request is dead and one may have run: only cancelling ends the launch.
+        original.abandonable = true
+        persist()
+        throw new Error(LAUNCH_MAY_HAVE_RUN)
+      }
       if (allRemainingRetryable) {
         current.relayr = {
           account, phase: 'signing', signed: [], records: [],
@@ -347,28 +410,6 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       return false
     }
 
-    // Another payment may have funded a quote whose own payment reverted: what
-    // Relayr ran is reconciled below, never paid again.
-    let fundedElsewhere = false
-    if (journal?.phase === 'payment-reverted' && journal.quote) {
-      const reverted = await revertedRelayrQuote({ bundleUuid: journal.quote.bundle_uuid, payments: journal.payments ?? [],
-        options: journal.quote.payment_info, destinationChainIds: journal.signed.map(item => item.chainId), account })
-      if (reverted.records) journal.records = reverted.records
-      fundedElsewhere = reverted.state === 'funded'
-      if (reverted.state === 'released') {
-        // Ruling R104: nothing can fund the quote any more, so the same signed
-        // calls are quoted again below, with a new funding choice. The old
-        // quote goes now: a device clock behind the chain must never offer it.
-        journal.phase = 'quoted'
-        delete journal.quote
-        delete journal.payments
-        delete journal.paymentHash
-        delete journal.paymentChainId
-        delete journal.paymentDeadline
-        delete current.paymentChainId
-      }
-      persist()
-    }
     if (journal && (['payment-signing', 'submitted', 'executing'].includes(journal.phase) || fundedElsewhere)) {
       // A payment that reverted funded nothing: the quote waits on the retry rule.
       // A send with no hash yet stays as it is, since it may still land.
@@ -397,8 +438,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       if (journal.phase === 'payment-signing') {
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
-        if (await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])]) &&
-            await originalPaymentExpired()) journal.abandonable = true
+        const verdict = await outstandingVerdict([...journal.signed, ...(journal.superseded ?? [])])
+        if (verdict && !verdict.live && !verdict.mayHaveRun && await originalPaymentExpired()) journal.abandonable = true
         persist()
         throw new Error(journal.abandonable
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'
@@ -499,6 +540,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     try {
       await verifySigned()
     } catch (error) {
+      // Ruling R114: a published request that can still run holds the launch, with no new signature.
+      if (heldUntil !== null) throw new Error(relayrHeldMessage(heldUntil), { cause: error })
       if (error instanceof LaunchSignaturesNeedRefresh) {
         // No payment has been attempted here. Old and new authorizations retain the SAME
         // per-chain nonce, so even previously published signatures cannot create duplicates.
