@@ -102,6 +102,20 @@ describe('aggregate token action reviews', () => {
     expect(mocks.invalidate).not.toHaveBeenCalled()
   })
 
+  it("keeps the batch's own line when it comes back pending, so a scan still reading says so", async () => {
+    const renderer = await render()
+    await click(renderer, 'Claim credits as ERC-20')
+    await click(renderer, 'Review selected chains')
+    const line = "This Safe proposal's history is still being read. Check this batch again to continue."
+    mocks.run.mockImplementation(async ({ calls, onProgress }) => {
+      onProgress({ message: line, completed: 0, total: 2, round: 1, rounds: 1 })
+      return { id: 'batch-1', status: 'pending', account: ACCOUNT, calls }
+    })
+    await click(renderer, 'Confirm claims')
+    expect(text(renderer.root)).toContain(line)
+    expect(text(renderer.root)).not.toContain('remaining calls')
+  })
+
   it('shows a different batch saved by another tab before allowing its recovery', async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')

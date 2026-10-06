@@ -140,16 +140,18 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       setReview(null); setError('The connected wallet changed. Review the distributions again.'); return
     }
     setBusy(true); setError(null)
+    // The batch's last line says why it is still pending, such as a scan still reading.
+    const reported = { line: null as string | null }
     try {
       const result = await runProjectBatch({ scope, action, account: address,
         ...(batch ? { calls: batch.calls, expectedBatchId: batch.id } : { calls: distributionBatchCalls(review!), title: kind === 'payouts' ? 'Distribute payouts' : 'Distribute reserved tokens' }),
         reverify: call => reverifyDistribution(call.context as Distribution, address),
         verifyCompletion: async (call, receipt) => verifyDistributionCompletion(call.context as Distribution, receipt),
-        onProgress: progress => setStatus(progress.message),
+        onProgress: progress => { reported.line = progress.message; setStatus(progress.message) },
       })
       setBatch(result)
       if (result.status === 'complete') { setComplete(true); setStatus('All selected distributions are confirmed.'); void queryClient.invalidateQueries({ queryKey: ['readContract'] }); onDone?.() }
-      else setStatus('Some distributions are still pending. Resume this saved review to check them.')
+      else setStatus(reported.line ?? 'Some distributions are still pending. Resume this saved review to check them.')
     } catch (err) {
       const saved = loadProjectBatch(scope)
       setBatch(saved?.status === 'pending' ? saved : null)
