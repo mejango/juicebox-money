@@ -40,7 +40,9 @@ const budgets = {
     // The SDK's Safe checks add the same safe-module copy as home, and create's Safe app
     // connection carries the one copy of the SDK's safe-service module, which holds the
     // queue, signature and execution checks jbm uses: 501.3 KiB against 492.6 KiB.
-    '/create/page': 502 * KIB,
+    // Holding a Safe proposal's action whatever its send-time stamp, ending one that can
+    // no longer run, the at-once probe and the receipt hour measure 502.8 KiB.
+    '/create/page': 503 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -104,7 +106,10 @@ const budgets = {
   // main with the same toolchain; round up to the next KiB. Binding a Safe app's
   // execution to its reviewed call, the Safe proposal end state and registry, the
   // creation-record cache and the canonical-handle rule measure 2490.7 KiB.
-  allScripts: 2491 * KIB,
+  // Holding a Safe proposal's action whatever its send-time stamp, the expiry and
+  // replaced watch, the at-once probe, the receipt hour and the pay panel's Safe stage
+  // line measure 2492.2 KiB; round up to the next KiB.
+  allScripts: 2493 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
