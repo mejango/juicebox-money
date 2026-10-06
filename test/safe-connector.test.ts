@@ -43,14 +43,17 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
 
 import type { TxRequest } from '@/hooks/useSafeTx'
 import {
+  executedAtOnce,
   findPendingSafeAppProposal,
   heldCall,
   isSafeConnection,
+  lookAtSafeProposal,
   readSafeAppExecution,
   reportedSafeExecution,
   stampedDeadline,
   useSafeConnection,
   waitForSafeExecutionHash,
+  watchSafeProposal,
   type SafeAppCall,
 } from '@/lib/safe-connector'
 import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
@@ -394,6 +397,151 @@ describe("the Safe's queue, asked before a proposal", () => {
 
   it.each(STAMPED_SITES)('never finds %s queued with any other field changed', async (_, build) => {
     await expect(lookup(callOf(build(LATER)), [callOf(build(NOW + 600n, 1n))])).resolves.toBeNull()
+  })
+})
+
+describe('a proposal awaiting its signers', () => {
+  const SAFE = '0x1111111111111111111111111111111111111111' as Address
+  const word = (value: bigint) => `0x${value.toString(16).padStart(64, '0')}`
+  const [, sale] = STAMPED_SITES[0]
+  const authorization = STAMPED_SITES.find(([site]) => site.includes('authorization'))![1]
+  const chainState = { nonce: 5n, timestamp: NOW, failing: false }
+  /** The chain: the Safe's nonce and the latest block (number 100) as `chainState` has them. */
+  const chain = () => ({
+    request: vi.fn(async ({ method }: { method: string; params: unknown[] }) => {
+      if (method !== 'eth_call' || chainState.failing) throw new Error('fetch failed')
+      return word(chainState.nonce)
+    }),
+    getBlock: vi.fn(async () => ({ number: 100n, timestamp: chainState.timestamp })),
+  })
+  /** Safe's service, with its record of `call` proposed at nonce 5. */
+  const service = (call: SafeAppCall, record: Record<string, unknown> = {}) => {
+    const tx = safeProposalFor(call, 5)
+    const hash = canonicalSafeTxHash(STAMPED_CHAIN, SAFE, tx)
+    return {
+      hash,
+      options: {
+        fetch: vi.fn(async () => new Response(JSON.stringify({ ...tx, safe: SAFE, safeTxHash: hash, isExecuted: false, ...record }))),
+      },
+    }
+  }
+  const look = (call: SafeAppCall, record?: Record<string, unknown>, client = chain()) => {
+    const { hash, options } = service(call, record)
+    return lookAtSafeProposal(client as never, STAMPED_CHAIN, SAFE, hash, options)
+  }
+
+  beforeEach(() => {
+    Object.assign(chainState, { nonce: 5n, timestamp: NOW, failing: false })
+  })
+
+  it('is expired once the latest block passed its deadline with the Safe short of its nonce', async () => {
+    const client = chain()
+    await expect(look(callOf(sale(NOW - 1n)), undefined, client)).resolves.toBe('expired')
+    // The nonce is the Safe's in the block whose time passed the deadline.
+    expect(client.request.mock.calls[0][0].params[1]).toBe('0x64')
+  })
+
+  it('is live while the next block can still run it, and whatever a Permit2 expiration says', async () => {
+    await expect(look(callOf(sale(NOW)))).resolves.toBe('live')
+    await expect(look(callOf(authorization(NOW - 1n)))).resolves.toBe('live')
+  })
+
+  it("is passed once the Safe's nonce is past it with no execution of it listed", async () => {
+    chainState.nonce = 6n
+    await expect(look(callOf(authorization(NOW + 600n)))).resolves.toBe('passed')
+    await expect(look(callOf(sale(NOW - 1n)))).resolves.toBe('passed')
+    await expect(
+      look(callOf(sale(NOW + 600n)), { isExecuted: true, transactionHash: HASH }),
+    ).resolves.toBe('live')
+  })
+
+  it('is live when the chain or the service cannot answer', async () => {
+    chainState.failing = true
+    await expect(look(callOf(sale(NOW - 1n)))).resolves.toBe('live')
+    chainState.failing = false
+    const { hash } = service(callOf(sale(NOW - 1n)))
+    const down = { fetch: vi.fn(async () => new Response('unavailable', { status: 503 })) }
+    await expect(lookAtSafeProposal(chain() as never, STAMPED_CHAIN, SAFE, hash, down)).resolves.toBe('live')
+  })
+
+  describe('watched', () => {
+    const watch = (call: SafeAppCall, client = chain(), signal = new AbortController().signal) => {
+      const { hash, options } = service(call)
+      return watchSafeProposal(client as never, STAMPED_CHAIN, SAFE, hash, signal, options)
+    }
+
+    it('ends expired at the first look, a minute in, that finds its deadline passed', async () => {
+      vi.useFakeTimers()
+      chainState.timestamp = NOW + 30n
+      let ended: string | undefined
+      void watch(callOf(sale(NOW + 60n))).then(end => (ended = end))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ended).toBeUndefined()
+      chainState.timestamp = NOW + 61n
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ended).toBe('expired')
+    })
+
+    it('ends replaced once looks have found the Safe past it for ten minutes in a row, a live look starting the count again', async () => {
+      vi.useFakeTimers()
+      chainState.nonce = 6n
+      const client = chain()
+      let ended: string | undefined
+      void watch(callOf(authorization(NOW + 600n)), client).then(end => (ended = end))
+      // Passed at minutes 1 to 3, then live at minute 4: the run starts over at minute 5.
+      await vi.advanceTimersByTimeAsync(3 * 60_000)
+      chainState.nonce = 5n
+      await vi.advanceTimersByTimeAsync(60_000)
+      chainState.nonce = 6n
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(ended).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ended).toBe('replaced')
+      // One look a minute: the Safe's nonce is read at most once a minute.
+      expect(client.request).toHaveBeenCalledTimes(15)
+    })
+
+    it('stops looking when its signal aborts', async () => {
+      vi.useFakeTimers()
+      const client = chain()
+      const controller = new AbortController()
+      const watching = watch(callOf(sale(NOW + 600n)), client, controller.signal)
+      const settled = expect(watching).rejects.toThrow(/aborted/i)
+      await vi.advanceTimersByTimeAsync(60_000)
+      controller.abort()
+      await settled
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(client.getBlock).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+describe('an execution Safe{Wallet} returned at once', () => {
+  it('is found when the node learns it within five looks, two seconds apart', async () => {
+    vi.useFakeTimers()
+    const client = {
+      getTransaction: vi
+        .fn()
+        .mockRejectedValueOnce(new TransactionNotFoundError({ hash: HASH }))
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValue({ hash: HASH }),
+    }
+    const found = executedAtOnce(client, HASH)
+    await vi.advanceTimersByTimeAsync(4_000)
+    await expect(found).resolves.toBe(true)
+    expect(client.getTransaction).toHaveBeenCalledTimes(3)
+  })
+
+  it('is taken as a proposal once five looks over eight seconds find no transaction', async () => {
+    vi.useFakeTimers()
+    const client = { getTransaction: vi.fn().mockRejectedValue(new TransactionNotFoundError({ hash: HASH })) }
+    let answer: boolean | undefined
+    void executedAtOnce(client, HASH).then(found => (answer = found))
+    await vi.advanceTimersByTimeAsync(7_999)
+    expect(answer).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(answer).toBe(false)
+    expect(client.getTransaction).toHaveBeenCalledTimes(5)
   })
 })
 

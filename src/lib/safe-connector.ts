@@ -249,7 +249,7 @@ function proposedCall(tx: SafeQueuedTransaction): SafeAppCall | null {
 
 /** A chain client that reads the Safe's nonce and the latest block. */
 type SafeQueueClient = Parameters<typeof readBoundedSafeNonce>[0] & {
-  getBlock(): Promise<{ timestamp: bigint }>
+  getBlock(): Promise<{ number: bigint | null; timestamp: bigint }>
 }
 
 /**
@@ -288,6 +288,100 @@ export async function findPendingSafeAppProposal(
   return live
     ? { tx: live.tx, proposalHash: canonicalSafeTxHash(chainId, safe, live.tx), call: live.call }
     : null
+}
+
+/**
+ * What one look at a proposal awaiting its signers finds:
+ *
+ * - `expired`: the latest block is past its deadline and the Safe's nonce in
+ *   that block is not past the proposal's, so it never ran, and the contract
+ *   refuses it in any later block;
+ * - `passed`: the Safe's nonce is past the proposal's and Safe's service lists
+ *   no execution of it: another transaction took its nonce, or the service has
+ *   yet to list its own execution;
+ * - `live`: it can still run, it ran, or the look could not tell.
+ */
+export type SafeProposalLook = 'expired' | 'passed' | 'live'
+
+/**
+ * One look at `safe`'s proposal `proposalHash`: the latest block, the Safe's
+ * nonce in that block, and Safe's authenticated record of the proposal. A read
+ * that fails makes the look live.
+ */
+export async function lookAtSafeProposal(
+  client: SafeQueueClient,
+  chainId: number,
+  safe: Address,
+  proposalHash: Hex,
+  service?: SafeServiceOptions,
+): Promise<SafeProposalLook> {
+  try {
+    const block = await client.getBlock()
+    const nonce = await readBoundedSafeNonce(client, safe, { blockNumber: block.number ?? undefined })
+    const record = await readSafeTransaction(chainId, safe, proposalHash, service)
+    if (nonce === null || record.isExecuted) return 'live'
+    if (nonce > safeTransactionMessage(record).nonce) return 'passed'
+    const call = proposedCall(record)
+    const deadline = call && stampedDeadline(call)
+    return deadline !== null && block.timestamp > deadline ? 'expired' : 'live'
+  } catch {
+    return 'live'
+  }
+}
+
+/** A watch looks at its proposal once a minute, so it reads the Safe's nonce at most that often. */
+const SAFE_LOOK_MS = 60_000
+/** How long looks in a row must find the Safe past a proposal before it counts as replaced. */
+const SAFE_REPLACED_AFTER_MS = 10 * 60_000
+
+/**
+ * Watches a proposal awaiting its signers, one {@link lookAtSafeProposal} a
+ * minute, until `signal` aborts. It ends `expired` at the first look that
+ * finds it expired, and `replaced` once looks in a row have found it passed
+ * for ten minutes: one such look proves nothing, since Safe's service may list
+ * the proposal's own execution later. Any other look starts that count again.
+ */
+export async function watchSafeProposal(
+  client: SafeQueueClient,
+  chainId: number,
+  safe: Address,
+  proposalHash: Hex,
+  signal: AbortSignal,
+  service?: SafeServiceOptions,
+): Promise<'expired' | 'replaced'> {
+  let passedSince: number | null = null
+  for (;;) {
+    await abortable(SAFE_LOOK_MS, signal)
+    const look = await lookAtSafeProposal(client, chainId, safe, proposalHash, service)
+    if (look === 'expired') return look
+    passedSince = look === 'passed' ? (passedSince ?? Date.now()) : null
+    if (passedSince !== null && Date.now() - passedSince >= SAFE_REPLACED_AFTER_MS) return 'replaced'
+  }
+}
+
+/** Looks at the chain for an execution returned at once, and the pause between them. */
+const AT_ONCE_LOOKS = 5
+const AT_ONCE_LOOK_MS = 2_000
+
+/**
+ * Whether the chain knows `hash` as a transaction: Safe{Wallet} replies with
+ * the execution's own hash when the owner executes at once, and the node may
+ * learn it a moment later. It looks up to 5 times, 2 seconds apart (8 seconds
+ * at most), before the reply counts as a proposal.
+ */
+export async function executedAtOnce(
+  client: { getTransaction(args: { hash: Hex }): Promise<unknown> },
+  hash: Hex,
+): Promise<boolean> {
+  for (let look = 1; ; look += 1) {
+    try {
+      await client.getTransaction({ hash })
+      return true
+    } catch {
+      if (look >= AT_ONCE_LOOKS) return false
+    }
+    await abortable(AT_ONCE_LOOK_MS)
+  }
 }
 
 /**
