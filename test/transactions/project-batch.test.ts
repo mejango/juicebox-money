@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
   relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
-  readRecord: vi.fn(), beforeLock: vi.fn(),
+  releaseRaw: vi.fn(), readRecord: vi.fn(), beforeLock: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -43,11 +43,12 @@ vi.mock('@/lib/relayr', () => ({
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => { mocks.beforeLock(_scope); return run() },
 }))
 vi.mock('@/lib/raw-relayr', () => ({
+  isRawRelayrSessionReleased: mocks.releaseRaw,
   loadRawRelayrSession: (scope: string) => mocks.rawPending.get(scope) ?? null,
   runRawRelayrCalls: mocks.rawRelayr,
 }))
 
-import { isProjectBatchDraft, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
+import { projectBatchRecoveryReason, recheckProjectBatch, isProjectBatchDraft, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
   type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 /** A flow that never ends, for runs whose signal is not under test. */
@@ -868,6 +869,29 @@ describe('untouched draft replacement', () => {
     window.localStorage.setItem(`jb-project-batch:v1:alias:${scope}`, 'draft')
     return draft
   }
+  it('releases only a raw quote proven expired and unfunded under the batch and raw locks', async () => {
+    const draft = seed({ relayrRounds: [0], relayrCallIds: { '0': [call().id] } })
+    mocks.releaseRaw.mockResolvedValue(true)
+    expect(await recheckProjectBatch(scope, draft.id)).toBe(true)
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect(mocks.beforeLock).toHaveBeenCalledWith('raw:project-batch:draft:0')
+    expect(mocks.authority).not.toHaveBeenCalled()
+    expect(mocks.rawRelayr).not.toHaveBeenCalled()
+  })
+  it('preserves an unproven quote and explains why zero handled still needs recovery', async () => {
+    const draft = seed({ relayrRounds: [0] })
+    mocks.rawPending.set('project-batch:draft:0', { phase: 'quoted' })
+    mocks.releaseRaw.mockResolvedValue(false)
+    expect(await recheckProjectBatch(scope, draft.id)).toBe(false)
+    expect(projectBatchRecoveryReason(draft)).toContain('quote is saved')
+    expect(loadProjectBatch(scope)?.id).toBe(draft.id)
+  })
+  it('never releases a wallet send without a hash', async () => {
+    const draft = seed({ submissions: { [call().id]: { kind: 'direct' } } })
+    expect(await recheckProjectBatch(scope, draft.id)).toBe(false)
+    expect(projectBatchRecoveryReason(draft)).toContain('without a saved transaction hash')
+    expect(mocks.releaseRaw).not.toHaveBeenCalled()
+  })
   it('replaces an untouched subset and reviews every newly selected call', async () => {
     const draft = seed()
     expect(isProjectBatchDraft(draft)).toBe(true)

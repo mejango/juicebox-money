@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
-  run: vi.fn(), draft: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
+  recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
@@ -48,6 +48,8 @@ vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
   runProjectBatch: mocks.run,
   isProjectBatchDraft: mocks.draft,
+  projectBatchRecoveryReason: () => 'A saved attempt needs recovery.',
+  recheckProjectBatch: mocks.recheckBatch,
 }))
 
 import { PendingPayments } from '@/components/project/PendingPayments'
@@ -138,6 +140,16 @@ describe('pending payment review above activity', () => {
     await act(async () => dialog().onConfirm())
     await act(async () => dialog().onConfirm())
     expect(mocks.run.mock.calls[1][0]).toMatchObject({ scope: 'legacy', expectedBatchId: 'original' })
+  })
+  it('rechecks saved recovery without starting a payment and then offers the full live batch', async () => {
+    mocks.rows = [row(), row(10)]
+    mocks.load.mockReturnValue({ id: 'saved', scope: 'legacy', calls: [], completedIds: [] })
+    await render()
+    mocks.recheckBatch.mockImplementation(async () => { mocks.load.mockReturnValue(null); return true })
+    await act(async () => button('Re-check saved batch').props.onClick())
+    expect(mocks.recheckBatch).toHaveBeenCalledWith('legacy', 'saved')
+    expect(button('Batch all pending')).toBeDefined()
+    expect(mocks.run).not.toHaveBeenCalled()
   })
   it('keeps persisted pending rows out of server markup until hydration', async () => {
     mocks.rows = [row()]

@@ -214,3 +214,13 @@ Review: inventory and two-worker RPC verification now have independent caches, w
 Plan review: absence of confirmed receipts is insufficient. Require absence of submissions, Relayr publications/rounds/bindings and sessions; reread under locks before replacement. Retain the abandoned draft tombstone.
 
 Review: an untouched saved selection now reviews all currently eligible payments. Replacement retains the old tombstone and rechecks submission/publication/session evidence under every original and new alias lock. In-flight or ambiguous records still resume unchanged, including malformed retained Relayr data. The modal binds its original recovery identity and requires reopening after a replacement consumes that identity. 163 focused tests (including empty raw-session corruption), full typecheck, changed-file ESLint, source invariants and diff check pass. No commit or push.
+
+## 2026-10-06 — Explain and recheck saved pending-payment recovery
+- [x] Inspect raw quote release and persisted recovery evidence owners.
+- [x] Show the reason a saved batch remains recoverable despite zero handled calls.
+- [x] Reuse the raw lifecycle expired/unfunded proof for a read-only recheck under original alias and raw-session locks.
+- [x] Verify recovery guards, focused tests, typecheck, and lint.
+
+Plan review: rechecking never quotes, signs or pays. Only a quote with authenticated payment options whose deadlines are past at canonical finalized blocks and whose SDK bundle read proves unpaid/pending permits abandoning the old project intent. Paid, unknown-send, malformed, and forwarded records retain recovery.
+
+Review: saved recovery now explains its evidence and offers Re-check saved batch without starting any signature or payment. The shared raw lifecycle release predicate verifies every authenticated payment deadline on finalized canonical blocks and then SDK unpaid/pending proof; both fresh re-quoting and recovery release use it. Advanced local clocks and unsupported quote options cannot authorize release. 155 focused tests, typecheck, changed-file ESLint, source invariants and diff check pass. No push.

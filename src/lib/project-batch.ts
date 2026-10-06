@@ -26,7 +26,7 @@ import {
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
+import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -125,6 +125,45 @@ export function isProjectBatchDraft(batch: ProjectBatch): boolean {
       batch.rounds.every((_round, index) => !hasRelayrPendingEvidence(relayrScopeOf(batch, index)) &&
         !loadRawRelayrSession(relayrScopeOf(batch, index)))
   } catch { return false }
+}
+
+/** Explain persisted evidence, never infer unpaid status from a zero completion count. */
+export function projectBatchRecoveryReason(batch: ProjectBatch): string {
+  if (batch.completedIds.length) return 'This batch has handled attempts. Resume it to finish checking the remaining outcomes.'
+  if (Object.values(batch.submissions).some(submission => !submission.hash)) return 'A wallet request was opened without a saved transaction hash. It may still be submitted.'
+  if (Object.keys(batch.submissions).length) return 'A transaction or Safe proposal was submitted. Its final outcome still needs checking.'
+  try {
+    for (let round = 0; round < batch.rounds.length; round++) {
+      const session = loadRawRelayrSession(relayrScopeOf(batch, round))
+      if (session?.phase === 'quoted') return 'A Relayr quote is saved. Re-check it to see whether it expired without funding.'
+      if (session?.phase === 'publishing') return 'The Relayr request started, but its quote response was not saved. Its outcome is unknown.'
+      if (session) return 'A Relayr funding or execution attempt is saved. Resume it to verify its outcome before starting another batch.'
+    }
+  } catch { return 'Saved recovery data could not be verified. Keep it until its status can be checked.' }
+  return 'This saved batch contains submission or relay evidence. Its status must be checked before replacing it.'
+}
+
+/** Reconcile expired, provably unfunded raw quotes without requesting signatures or payments. */
+export async function recheckProjectBatch(scope: string, expectedId: string): Promise<boolean> {
+  const original = readBatch(scope)
+  if (!original || original.id !== expectedId) throw new Error('This saved batch changed. Reopen pending payments.')
+  return locked(aliases(original), async () => {
+    const batch = readBatch(scope)
+    if (!batch || batch.id !== expectedId || encode(aliases(batch)) !== encode(aliases(original))) throw new Error('This saved batch changed. Reopen pending payments.')
+    if (isProjectBatchDraft(batch)) return true
+    if (batch.status !== 'pending' || batch.abandoned || batch.completedIds.length || Object.keys(batch.submissions).length) return false
+    const scopes = batch.rounds.map((_round, index) => relayrScopeOf(batch, index))
+    const verify = async (index: number): Promise<boolean> => {
+      if (index < scopes.length) return withRelayrScopeLock(`raw:${scopes[index]}`, () => verify(index + 1))
+      for (const pendingScope of scopes) {
+        if (hasRelayrPendingEvidence(pendingScope) || !await isRawRelayrSessionReleased(pendingScope)) return false
+      }
+      batch.abandoned = true
+      persist(batch)
+      return true
+    }
+    return verify(0)
+  })
 }
 
 /**

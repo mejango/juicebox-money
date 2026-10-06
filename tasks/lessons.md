@@ -25,3 +25,6 @@ Show indexed pending payments while RPC checks run; state loading/errors explici
 
 ## 2026-10-06 — Untouched drafts should not constrain a refreshed selection
 Separate local intent from potentially exposed execution using the journal owner’s conservative classifier. Zero handled calls does not prove no submission. Replace proven untouched drafts only after locking and rechecking every original and replacement alias.
+
+## 2026-10-06 — Recovery restrictions need observable reasons
+Explain the persisted state that requires resume, rather than repeating zero completed attempts. Offer a read-only recheck through the owning release proof when safely available; never infer that the actual user batch is unfunded.

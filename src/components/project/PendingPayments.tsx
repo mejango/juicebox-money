@@ -12,7 +12,7 @@ import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
-import { isProjectBatchDraft, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { isProjectBatchDraft, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 const subscribeHydration = () => () => {}
 const clientHydrated = () => true
@@ -83,6 +83,17 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const checking = rows.some(item => !verified.has(pendingPaymentId(item.payment)))
   const available = rows.flatMap(item => item.review?.ready ? [item.review] : [])
   const unreadable = !!pending.error || !!verification.error || rows.some(item => item.error)
+
+  const recheckSaved = async () => {
+    if (!recovery || busy) return
+    setBusy(true); setError(null)
+    try {
+      const released = await recheckProjectBatch(recovery.scope, recovery.id)
+      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      setStatus(released ? 'The old quote expired without funding. Review all available payments in a new batch.' : 'The saved batch still needs recovery. Resume it to check its original attempts.')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not check saved batch.') }
+    finally { setBusy(false) }
+  }
 
   const begin = (payments: ReviewedPayment[]) => {
     if (!isConnected || !address) { openSignIn(); return }
@@ -169,7 +180,9 @@ export function PendingPayments({ chainId, projectId, chains }: {
       </button>
     </div>
     <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments through Relayr and pay the quoted fees once.</p>
-    {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. This selection is separate from the full pending list. Finish it before starting another batch.</p> : null}
+    {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
+    {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
+    {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status">{status}</p> : null}
     <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing. ${available.length} ready`}</p>
     {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
     {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}

@@ -9,7 +9,7 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { withRelayrScopeLock } from '@/lib/relayr'
 import { relayrBundleRequest, relayrDestinationHash, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
-import { assertRawQuoteBindings, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
+import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
 
 export type RawRelayrCall = { chainId: number; target: Address; data: Hex; value?: bigint; gas?: bigint }
 type SavedCall = { chainId: number; target: Address; data: Hex; value: '0'; gas?: string }
@@ -55,6 +55,15 @@ function save(session: RawRelayrSession, beforeWrite = false): void {
   }
   memory.set(saved.scope, saved)
   authoritative.delete(saved.scope)
+}
+
+/** Caller holds the raw scope lock while consuming this read-only proof. */
+export async function isRawRelayrSessionReleased(scope: string): Promise<boolean> {
+  const session = loadRawRelayrSession(scope)
+  if (!session?.quote) return false
+  const entries = relayrBundleRequest(session.calls.map(entryOf)).transactions
+  assertRawQuoteBindings(session.quote, entries)
+  return isExpiredUnfundedRawQuote(session, [...new Set(session.calls.map(call => call.chainId))])
 }
 
 const entryOf = (call: SavedCall): RelayrEntry => ({ chain: call.chainId, target: call.target, data: call.data, value: '0' })

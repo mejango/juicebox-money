@@ -3,7 +3,7 @@
 import { isAddressEqual, type Address, type Hex } from 'viem'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
-import { proveSavedRelayrPayment, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type RawRelayrState = {
   account: Address
@@ -28,6 +28,20 @@ export function assertRawQuoteBindings(quote: RelayrQuote, entries: RelayrEntry[
       throw new Error(changedCallMessage)
     }
   })
+}
+
+/** A read-only proof that an unfunded raw quote can no longer accept payment. */
+export async function isExpiredUnfundedRawQuote(session: RawRelayrState, chains: number[]): Promise<boolean> {
+  if (!session.quote || session.phase !== 'quoted' || session.payments?.length || session.paymentHash ||
+      session.paymentChainId !== undefined || relayrPaymentOptions(session.quote, chains).length) return false
+  const options = relayrQuotedOptions(session.quote, chains)
+  if (!options.length) return false
+  for (const { option, details } of options) {
+    const client = relayrChainClient(option.chain)
+    if (!client || !await relayrDeadlinePassed(client, details.deadline)) return false
+  }
+  await requireRelayrBundleUnpaid(session.quote.bundle_uuid)
+  return true
 }
 
 /** Shared raw-call funding lifecycle. Owners durably save every transition before external writes. */
@@ -75,14 +89,10 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           await requestQuote()
         }
       }
-      if (session.quote && session.phase === 'quoted' && !session.payments?.length &&
-          !relayrPaymentOptions(session.quote, chains).length) {
-        // No option of the unpaid quote passes relayrPaymentDetails any more,
-        // so nothing here can fund it. Once Relayr confirms it unpaid with
-        // every call pending (ruling R104; its raw calls carry no forwarder
-        // nonce or deadline for a chain read to show they cannot run), the
-        // same raw calls are quoted again.
-        await requireRelayrBundleUnpaid(session.quote.bundle_uuid)
+      if (await isExpiredUnfundedRawQuote(session, chains)) {
+        // Every authenticated payment deadline is past at a canonical finalized
+        // block, and Relayr confirms the quote unpaid with every call pending.
+        // Only that proof permits quoting these raw calls again.
         await requestQuote()
       }
       const quote = session.quote

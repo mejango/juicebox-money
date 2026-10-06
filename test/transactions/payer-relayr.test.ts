@@ -66,6 +66,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
   payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
+import { isExpiredUnfundedRawQuote } from '@/lib/raw-relayr-lifecycle'
 import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -144,7 +145,8 @@ beforeEach(() => {
     }
   })
   mocks.getReceipt.mockReset().mockImplementation(async (chain: number) => receipt(chain))
-  mocks.getBlock.mockReset().mockResolvedValue({ hash: BLOCK })
+  mocks.getBlock.mockReset().mockImplementation(async (_chain: number, args?: { blockTag?: string }) => args?.blockTag === 'finalized'
+    ? { number: 100n, hash: BLOCK, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: BLOCK })
   mocks.getBlockNumber.mockReset().mockResolvedValue(100n)
   mocks.getLogs.mockReset().mockResolvedValue([])
   mocks.getCode.mockReset().mockResolvedValue(`0x363d3d373d3d3d363d73${IMPLEMENTATION.slice(2)}5af43d82803e903d91602b57fd5bf3`)
@@ -192,7 +194,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       transactions: records().map(({ status: _, ...record }) => ({ ...record, status: { state: 'Pending' } })), ...body }), { status: 200 }))
   }
 
-  it('asks once more, then keeps the raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
+  it('keeps the raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
     review = makeReview([11155111, 11155420])
     relayrReports()
     mocks.post.mockImplementation(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
@@ -200,16 +202,42 @@ describe('payer deployment review and raw Relayr execution', () => {
     }))
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/network family/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
-    expect(mocks.post).toHaveBeenCalledTimes(2)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.funding).not.toHaveBeenCalled()
     expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('does not release an apparently expired quote while canonical finalized time can still fund it', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
+    const saved = loadPayerDeployment(review.scope)!
+    const chainTime = Math.floor(Date.now() / 1_000)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_601_000)
+    mocks.getBlock.mockImplementation(async (_chain: number, args?: { blockTag?: string }) => args?.blockTag === 'finalized'
+      ? { number: 100n, hash: BLOCK, timestamp: BigInt(chainTime) } : { hash: BLOCK })
+    relayrReports()
+    expect(await isExpiredUnfundedRawQuote(saved, [1, 10])).toBe(false)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('proves an expired unfunded quote releasable without publishing or paying again', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
+    const saved = loadPayerDeployment(review.scope)!
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_601_000)
+    relayrReports()
+    expect(await isExpiredUnfundedRawQuote(saved, [1, 10])).toBe(true)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
   })
 
   it('quotes the same raw calls again once the saved unpaid quote can no longer be paid, after Relayr confirms none ran', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_601_000)
     relayrReports()
     const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
     expect(result.phase).toBe('complete')
@@ -231,7 +259,7 @@ describe('payer deployment review and raw Relayr execution', () => {
   ])('keeps an unpaid quote that can no longer be paid while Relayr %s, saying why', async (_, body, reason, message) => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_601_000)
     relayrReports(body)
     await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({
       name: 'RelayrPaymentRetryError', reason, message })
