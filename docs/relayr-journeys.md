@@ -192,11 +192,24 @@ atomic.
   signature may already have run. Check the project, then cancel this
   deployment to start over." A launch whose finalized nonce fell below a
   saved one holds, as the known limit above says.
+- A saved payment that the chain shows to be another transaction is never
+  read as a revert: it is never paid or polled on again. A session or launch
+  resumed with one classifies its requests the same way, without the action's
+  recheck. While one can still run, or the node cannot say, the refusal
+  stands. Once all expired unused, a session offers Discard after "The saved
+  payment couldn't be matched to this action and isn't refunded. Discard it to
+  review it again."; opening its action still signs again at the saved nonces,
+  and the new payment's review carries the same note. A launch offers only
+  cancelling after "The saved payment couldn't be matched to this launch and
+  isn't refunded. Cancel this deployment to start over." Once a nonce moved,
+  both follow their "may already have run" line.
 - A payer deployment publishes raw factory calls, which carry no forwarder
   nonce or deadline and run only through a paid bundle, so there is nothing
   per request to classify. It quotes its raw calls again only once an
   uncached bundle read reports the old quote unpaid with every call pending,
-  after the R104 proof when its payment reverted.
+  after the R104 proof when its payment reverted. A saved payment that the
+  chain shows to be another transaction keeps it pending: nothing can show
+  its calls dead, and it has no cancelling.
 - Funding options must match the validated Relayr payment contract, native token,
   bundle identity, deadline, and destination network family. An unavailable
   selected chain cannot silently become another funding chain. Testnet calls
