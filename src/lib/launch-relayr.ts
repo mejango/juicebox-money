@@ -65,6 +65,7 @@ import { publicClient } from '@/lib/wallet-core'
 import { chainName } from '@/lib/urn'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
+import { FlowError } from '@/lib/errors'
 import {
   bundleLaunchMultisigs,
   checkLaunchMultisigs,
@@ -260,7 +261,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     const abandon: (target: LaunchRelayrJournal, line: string, cause?: unknown) => never = (target, line, cause) => {
       target.abandonable = true
       persist()
-      throw new Error(line, cause === undefined ? undefined : { cause })
+      throw new FlowError(line, cause === undefined ? undefined : { cause })
     }
     const originalPaymentExpired = async (): Promise<boolean> => {
       const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)

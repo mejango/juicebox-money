@@ -57,6 +57,7 @@ import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR, R
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { relayrHeldMessage } from '@/lib/relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
+import { friendlyError } from '@/lib/errors'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
@@ -832,6 +833,16 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('shows the line that ends a launch as it reads, never as a wallet cancel', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : functionName !== 'verify')
+    const failure = await run().catch(error => error)
+    expect(failure).toMatchObject({ message: MAY_HAVE_RUN })
+    expect(friendlyError(failure)).toBe(MAY_HAVE_RUN)
   })
 
   it('holds a published launch while another chain\'s request can still run, and says until when', async () => {
