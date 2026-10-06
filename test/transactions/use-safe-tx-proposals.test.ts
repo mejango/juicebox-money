@@ -518,8 +518,9 @@ describe('a call stamped at send time', () => {
       await settle()
       expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
 
-      // Done with the flow still open, then the same action reviewed and confirmed again.
-      await act(async () => flow.tx.reset())
+      // Done with the flow still open, as every flow's Done handler ends it,
+      // then the same action reviewed and confirmed again.
+      await act(async () => flow.tx.dismiss())
       await expect(flow.send(build(NOW + 600n))).resolves.toBe(PROPOSAL)
       expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
 
