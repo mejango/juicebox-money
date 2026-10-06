@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
   relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
-  readRecord: vi.fn(),
+  readRecord: vi.fn(), beforeLock: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -36,18 +36,19 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
 vi.mock('@/lib/relayr', () => ({
+  hasRelayrPendingEvidence: (scope: string) => mocks.pending.has(scope) || window.localStorage.getItem(`jb-relayr-pending-v1:${scope}`) !== null,
   loadRelayrPendingSession: (scope: string) => mocks.pending.get(scope) ?? null,
   relayrTargetSupportsForwarder: async () => true,
   runRelayrCalls: mocks.relayr,
-  withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
+  withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => { mocks.beforeLock(_scope); return run() },
 }))
 vi.mock('@/lib/raw-relayr', () => ({
   loadRawRelayrSession: (scope: string) => mocks.rawPending.get(scope) ?? null,
   runRawRelayrCalls: mocks.rawRelayr,
 }))
 
-import { loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
-  type ProjectBatchCall } from '@/lib/project-batch'
+import { isProjectBatchDraft, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
+  type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
@@ -853,5 +854,73 @@ describe('durable project batches', () => {
     await expect(run([call()])).rejects.toThrow('recovery')
     expect(mocks.authority).not.toHaveBeenCalled()
     expect(mocks.review).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('untouched draft replacement', () => {
+  function seed(overrides: Partial<ProjectBatch> = {}) {
+    const draft: ProjectBatch = { version: 1, id: 'draft', scope, action, account: ACCOUNT,
+      title: 'Draft', status: 'pending', calls: [call()], completedIds: [], rounds: [[call().id]],
+      submissions: {}, relayrRounds: [], ...overrides }
+    const encoded = JSON.stringify(draft, (_key, value) => typeof value === 'bigint' ? { $projectBatchBigInt: String(value) } : value)
+    window.localStorage.setItem('jb-project-batch:v1:journal:draft', encoded)
+    window.localStorage.setItem(`jb-project-batch:v1:alias:${scope}`, 'draft')
+    return draft
+  }
+  it('replaces an untouched subset and reviews every newly selected call', async () => {
+    const draft = seed()
+    expect(isProjectBatchDraft(draft)).toBe(true)
+    // Pause after the new intent is stored and before any submission.
+    mocks.review.mockRejectedValue(new Error('stop at review'))
+    await expect(run([call(), call(1, 'second')], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('stop at review')
+    expect(mocks.review.mock.calls[0][0].calls).toHaveLength(2)
+    expect(JSON.parse(window.localStorage.getItem('jb-project-batch:v1:journal:draft')!).abandoned).toBe(true)
+    expect(mocks.authority).not.toHaveBeenCalled()
+  })
+  it.each([
+    { submissions: { [call().id]: { kind: 'direct' as const } } },
+    { submissions: { [call().id]: { kind: 'safe' as const, hash: HASH } } },
+    { completedIds: [call().id] },
+    { relayrRounds: [0] },
+    { relayrPublished: [0] },
+    { relayrCallIds: { '0': [call().id] } },
+  ])('preserves potentially exposed journals despite zero or few receipts: %j', async changes => {
+    const draft = seed(changes)
+    expect(isProjectBatchDraft(draft)).toBe(false)
+    await expect(run([call(), call(1, 'second')], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('may already be underway')
+    expect(JSON.parse(window.localStorage.getItem('jb-project-batch:v1:journal:draft')!).abandoned).toBeUndefined()
+    expect(mocks.review).not.toHaveBeenCalled()
+  })
+  it('rechecks exposure after acquiring locks when another tab started submitting', async () => {
+    const draft = seed()
+    mocks.beforeLock.mockImplementationOnce(() => seed({ submissions: { [call().id]: { kind: 'direct' } } }))
+    await expect(run([call(), call(1, 'second')], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('changed in another tab')
+    expect(JSON.parse(window.localStorage.getItem('jb-project-batch:v1:journal:draft')!).submissions).toHaveProperty(call().id)
+    expect(mocks.review).not.toHaveBeenCalled()
+  })
+  it('locks old source and new destination aliases before replacing a legacy draft', async () => {
+    const draft = seed()
+    mocks.review.mockRejectedValue(new Error('stop at review'))
+    await expect(run([{ ...call(), projectId: 9 }], {
+      scope: 'route-destination-payments:1:9', action: 'route-destination-payments',
+      replaceDraft: { scope, id: draft.id },
+    })).rejects.toThrow('stop at review')
+    expect(mocks.beforeLock.mock.calls.map(([key]) => key)).toEqual([
+      'project-batch:route-destination-payments:1:9',
+      `project-batch:${scope}`,
+    ])
+  })
+  it('does not treat a malformed retained forwarded session as an untouched draft', async () => {
+    const draft = seed()
+    window.localStorage.setItem('jb-relayr-pending-v1:project-batch:draft:0', '{invalid')
+    expect(isProjectBatchDraft(draft)).toBe(false)
+    await expect(run([call()], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('may already be underway')
+  })
+  it.each(['pending', 'rawPending'] as const)('preserves a saved %s session even without journal publication markers', async store => {
+    const draft = seed()
+    mocks[store].set('project-batch:draft:0', {})
+    expect(isProjectBatchDraft(draft)).toBe(false)
+    await expect(run([call()], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('may already be underway')
   })
 })

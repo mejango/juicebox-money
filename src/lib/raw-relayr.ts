@@ -35,7 +35,7 @@ function snapshot(value: RawRelayrSession): RawRelayrSession {
 export function loadRawRelayrSession(scope: string): RawRelayrSession | null {
   if (authoritative.has(scope)) return snapshot(memory.get(scope)!)
   const raw = typeof window === 'undefined' ? null : window.localStorage.getItem(PREFIX + scope)
-  if (!raw) return memory.has(scope) ? snapshot(memory.get(scope)!) : null
+  if (raw === null) return memory.has(scope) ? snapshot(memory.get(scope)!) : null
   if (raw.length > MAX_BYTES) throw new Error('The saved routing bundle is too large. Keep it pending.')
   const saved = snapshot(JSON.parse(raw) as RawRelayrSession)
   if (saved.scope !== scope) throw new Error('The saved routing scope changed. Keep it pending.')

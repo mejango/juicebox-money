@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
-  run: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
+  run: vi.fn(), draft: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
@@ -47,6 +47,7 @@ vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/
 vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
   runProjectBatch: mocks.run,
+  isProjectBatchDraft: mocks.draft,
 }))
 
 import { PendingPayments } from '@/components/project/PendingPayments'
@@ -83,6 +84,61 @@ beforeEach(() => {
 afterEach(async () => { if (tree) await act(async () => tree!.unmount()); tree = null })
 
 describe('pending payment review above activity', () => {
+  it('reviews the full live inventory instead of an untouched saved subset', async () => {
+    mocks.rows = [row(), row(10)]
+    const saved = { id: 'draft', scope: 'route-pending-payments:1:6', action: 'route-pending-payments',
+      calls: [{ context: mocks.rows[0].review }], completedIds: [], account: mocks.address } as unknown as ProjectBatch
+    mocks.load.mockReturnValue(saved)
+    mocks.draft.mockReturnValue(true)
+    await render()
+    expect(button('Resume saved batch')).toBeUndefined()
+    await act(async () => button('Batch all pending').props.onClick())
+    expect(dialog().steps).toHaveLength(2)
+    expect(dialog().action).toBe('Confirm attempts')
+    mocks.run.mockResolvedValue({ ...saved, status: 'complete' })
+    await act(async () => dialog().onConfirm())
+    expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({
+      scope: 'route-destination-payments:1:17', action: 'route-destination-payments',
+      expectedBatchId: undefined, replaceDraft: { id: 'draft', scope: saved.scope },
+      calls: expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]),
+    }))
+  })
+
+  it('requires a new review after a replacement fails rather than resubmitting its consumed token', async () => {
+    mocks.rows = [row()]
+    mocks.load.mockReturnValue({ id: 'draft', scope: 'legacy', calls: [], completedIds: [] })
+    mocks.draft.mockReturnValue(true)
+    await render()
+    await act(async () => button('Batch all pending').props.onClick())
+    mocks.run.mockRejectedValue(new Error('preflight failed'))
+    await act(async () => dialog().onConfirm())
+    expect(dialog().actionDisabled).toBe(true)
+    expect(dialog().status).toContain('reopen pending payments')
+    await act(async () => dialog().onConfirm())
+    expect(mocks.run).toHaveBeenCalledTimes(1)
+    await act(async () => dialog().onClose())
+    mocks.load.mockReturnValue(null)
+    await act(async () => button('Batch all pending').props.onClick())
+    expect(dialog().actionDisabled).toBe(false)
+    await act(async () => dialog().onConfirm())
+    expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
+  })
+  it('keeps the reviewed recovery identity despite live progress discovering another journal', async () => {
+    mocks.rows = [row()]
+    const saved = { id: 'original', scope: 'legacy', action: 'route-pending-payments', account: mocks.address,
+      calls: [{ id: 'call', chainId: 1, context: mocks.rows[0].review }], completedIds: [], status: 'pending' }
+    mocks.load.mockReturnValue(saved)
+    await render()
+    await act(async () => button('Resume saved batch').props.onClick())
+    mocks.run.mockImplementation(async options => {
+      mocks.load.mockReturnValue({ ...saved, id: 'different', scope: 'different' })
+      options.onProgress({ message: 'checking' })
+      throw new Error('wait again')
+    })
+    await act(async () => dialog().onConfirm())
+    await act(async () => dialog().onConfirm())
+    expect(mocks.run.mock.calls[1][0]).toMatchObject({ scope: 'legacy', expectedBatchId: 'original' })
+  })
   it('keeps persisted pending rows out of server markup until hydration', async () => {
     mocks.rows = [row()]
     expect(renderToString(createElement(PendingPayments, { chainId: 1, projectId: 17, chains: [] }))).toBe('')

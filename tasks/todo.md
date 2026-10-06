@@ -204,3 +204,13 @@ Destination recovery follow-up: enumerate and authenticate old source-scoped jou
 Plan review: retain the two-worker verification owner and exact saved recovery set. Inventory refresh invalidates discovery and verification together.
 
 Review: inventory and two-worker RPC verification now have independent caches, with a new inventory namespace for the changed response shape. Indexed rows stay visible while checks run; errors retain their rows and disable unverified attempts. Saved progress appears separately from the full inventory total. 69 focused component/data tests pass, including saved3/live7, delayed two-worker checks, failed checks and initial loading; full typecheck and changed-file ESLint pass. No commits or pushes.
+
+## 2026-10-06 — Replace untouched pending-payment drafts
+- [x] Inspect journal exposure markers and shared alias locks.
+- [x] Classify untouched drafts in the journal owner; replace only under old/new locks.
+- [x] Let untouched selections review the current inventory; preserve in-flight recovery.
+- [x] Add race/exposure regressions and verify tests, types, and lint.
+
+Plan review: absence of confirmed receipts is insufficient. Require absence of submissions, Relayr publications/rounds/bindings and sessions; reread under locks before replacement. Retain the abandoned draft tombstone.
+
+Review: an untouched saved selection now reviews all currently eligible payments. Replacement retains the old tombstone and rechecks submission/publication/session evidence under every original and new alias lock. In-flight or ambiguous records still resume unchanged, including malformed retained Relayr data. The modal binds its original recovery identity and requires reopening after a replacement consumes that identity. 163 focused tests (including empty raw-session corruption), full typecheck, changed-file ESLint, source invariants and diff check pass. No commit or push.

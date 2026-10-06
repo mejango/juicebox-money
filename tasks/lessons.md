@@ -22,3 +22,6 @@ When moving an action between project pages, migrate discovery of durable recove
 
 ## 2026-10-06 — Saved progress is not the pending inventory
 Show indexed pending payments while RPC checks run; state loading/errors explicitly. Label saved batch counts as saved selections and never imply they represent every pending payment.
+
+## 2026-10-06 — Untouched drafts should not constrain a refreshed selection
+Separate local intent from potentially exposed execution using the journal owner’s conservative classifier. Zero handled calls does not prove no submission. Replace proven untouched drafts only after locking and rechecking every original and replacement alias.

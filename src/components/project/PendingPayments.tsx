@@ -12,7 +12,7 @@ import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
-import { projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { isProjectBatchDraft, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 const subscribeHydration = () => () => {}
 const clientHydrated = () => true
@@ -36,6 +36,10 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [calls, setCalls] = useState<ProjectBatchCall[] | null>(null)
   const [account, setAccount] = useState<Address | null>(null)
   const [saved, setSaved] = useState<ProjectBatch | null>(null)
+  const [savedSelection, setSavedSelection] = useState<ProjectBatch | null>(null)
+  const [needsReview, setNeedsReview] = useState(false)
+  const [replaceDraft, setReplaceDraft] = useState<{ scope: string; id: string } | undefined>()
+  const recovery = saved && !isProjectBatchDraft(saved) ? saved : null
   const [error, setError] = useState<string | null>(null)
   // Discard abandons the saved batch, so the payments are reviewed again from live state (ruling R114 (f)).
   const discard = useRelayrDiscard(() => setError(null), () => { setOpen(false); setCalls(null); setSaved(null) })
@@ -83,8 +87,11 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const begin = (payments: ReviewedPayment[]) => {
     if (!isConnected || !address) { openSignIn(); return }
     try {
-      const journal = loadPendingPaymentBatch([[chainId, projectId], ...chains])
-      setSaved(journal)
+      const found = loadPendingPaymentBatch([[chainId, projectId], ...chains])
+      const journal = found && !isProjectBatchDraft(found) ? found : null
+      setReplaceDraft(found && !journal ? { scope: found.scope, id: found.id } : undefined)
+      setSaved(found)
+      setSavedSelection(journal); setNeedsReview(false)
       setCalls(journal?.calls ?? payments.map(payment => pendingPaymentCall(payment, address)))
       setAccount(journal?.account ?? address)
       setOpen(true); setComplete(false); setError(null); setStatus(null)
@@ -92,11 +99,11 @@ export function PendingPayments({ chainId, projectId, chains }: {
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not review pending payments.') }
   }
   const submit = async () => {
-    if (!address || !calls?.length || busy) return
+    if (!address || !calls?.length || busy || needsReview) return
     if (!account || !isAddressEqual(account, address)) { setError('Reconnect the wallet that reviewed these payments.'); return }
     setBusy(true); setError(null); discard.capture(null)
     try {
-      const result = await runProjectBatch({ scope: saved?.scope ?? scope, action: saved?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: saved?.id,
+      const result = await runProjectBatch({ scope: savedSelection?.scope ?? scope, action: savedSelection?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: savedSelection?.id, replaceDraft,
         title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
@@ -126,13 +133,15 @@ export function PendingPayments({ chainId, projectId, chains }: {
       discard.capture(failure)
       setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
     } finally {
+      // Replacement consumes the old draft identity. Reopen to bind any new recovery journal.
+      if (replaceDraft) { setNeedsReview(true); setReplaceDraft(undefined) }
       setBusy(false)
       await queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
     }
   }
 
   if (!hydrated) return null
-  if (!rows.length && !saved && !open) {
+  if (!rows.length && !recovery && !open) {
     if (pending.isPending) return <p className="mb-5 text-sm text-smoke-500" role="status">Loading pending payments…</p>
     return pending.error || error ? <p className="mb-5 text-sm text-smoke-500" role="status">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void pending.refetch()}>Retry</button></p> : null
   }
@@ -155,20 +164,20 @@ export function PendingPayments({ chainId, projectId, chains }: {
   return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments awaiting routing">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="font-agrandir text-lg">Payments awaiting routing</h2>
-      <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || (!saved && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
-        {saved ? 'Resume saved batch' : checking && !verification.error ? 'Checking pending payments…' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
+      <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || (!recovery && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
+        {recovery ? 'Resume saved batch' : checking && !verification.error ? 'Checking pending payments…' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
       </button>
     </div>
     <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments through Relayr and pay the quoted fees once.</p>
-    {saved ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {saved.completedIds.length} of {saved.calls.length} attempts handled. This selection is separate from the full pending list. Finish it before starting another batch.</p> : null}
-    <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing · ${available.length} ready`}</p>
+    {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. This selection is separate from the full pending list. Finish it before starting another batch.</p> : null}
+    <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing. ${available.length} ready`}</p>
     {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
     {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
     <ul className="mt-3 divide-y divide-smoke-200">
       {rows.map(item => <li key={pendingPaymentId(item.payment)} className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0 text-sm">
           <p className="font-medium">{item.review ? amountLabel(item.review) : `${item.payment.amount} base units of ${truncateAddress(item.payment.token)}`}</p>
-          <p className="text-smoke-500">{chainName(item.payment.chainId)} · project #{item.payment.sourceProjectId} → #{item.payment.projectId}</p>
+          <p className="text-smoke-500">{chainName(item.payment.chainId)}: project #{item.payment.sourceProjectId} → #{item.payment.projectId}</p>
           {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500">{verification.error ? 'Could not check this payment.' : 'Checking availability…'}</p> : null}
           {item.error ? <p className="mt-1 text-red-600">{item.error}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
         </div>
@@ -179,10 +188,10 @@ export function PendingPayments({ chainId, projectId, chains }: {
     </ul>
     {error && !open ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
     <TxConfirmDialog open={open} title={complete ? 'Payment batch finished' : 'Review pending payments'} rows={reviewedRows}
-      steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
+      steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)}: ${call.label}` }))}
       stepsIntro="Relayr bundles available payments into one fee payment, including payments on the same chain. Each routing attempt has its own outcome; the batch does not make them atomic. Safe wallets and unsupported networks use separate transactions."
-      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
-      action={saved ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={!calls?.length || discard.active}
+      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={needsReview && !complete ? 'Close this review and reopen pending payments to review the current batch.' : status} error={discard.active ? null : error}
+      action={savedSelection ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={needsReview || !calls?.length || discard.active}
       onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>
   </section>
 }

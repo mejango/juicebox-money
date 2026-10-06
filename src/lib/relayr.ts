@@ -612,6 +612,12 @@ function persistRelayrPublication(scope: string, session: RelayrPendingSession):
   return saved
 }
 
+/** Evidence checks must preserve malformed records and propagate storage failures. */
+export function hasRelayrPendingEvidence(scope: string): boolean {
+  if (typeof window === 'undefined') throw new Error('Browser storage is required to verify a saved Relayr action.')
+  return relayrPendingMemory.has(scope) || window.localStorage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`) !== null
+}
+
 export function loadRelayrPendingSession(
   scope: string,
 ): RelayrPendingSession | null {

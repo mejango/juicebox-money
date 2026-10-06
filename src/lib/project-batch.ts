@@ -20,7 +20,7 @@ import {
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import {
-  loadRelayrPendingSession, relayrTargetSupportsForwarder,
+  hasRelayrPendingEvidence, loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
 } from '@/lib/relayr'
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
@@ -115,6 +115,17 @@ function readBatch(scope: string): ProjectBatch | null {
 
 const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
 const savedRelayrRound = (scope: string) => loadRelayrPendingSession(scope) ?? loadRawRelayrSession(scope)
+
+/** Only an untouched local intent may be replaced; zero receipts alone proves nothing. */
+export function isProjectBatchDraft(batch: ProjectBatch): boolean {
+  try {
+    return batch.status === 'pending' && !batch.abandoned && batch.completedIds.length === 0 &&
+      Object.keys(batch.submissions).length === 0 && batch.relayrRounds.length === 0 &&
+      (batch.relayrPublished?.length ?? 0) === 0 && Object.keys(batch.relayrCallIds ?? {}).length === 0 &&
+      batch.rounds.every((_round, index) => !hasRelayrPendingEvidence(relayrScopeOf(batch, index)) &&
+        !loadRawRelayrSession(relayrScopeOf(batch, index)))
+  } catch { return false }
+}
 
 /**
  * A round whose published Relayr session is gone before its calls completed
@@ -295,7 +306,7 @@ async function safeExecution(
 }
 
 export async function runProjectBatch({
-  scope, action, account, calls, expectedBatchId, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress, signal,
+  scope, action, account, calls, expectedBatchId, replaceDraft, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress, signal,
 }: {
   scope: string
   action: string
@@ -308,6 +319,8 @@ export async function runProjectBatch({
   calls?: ProjectBatchCall[]
   /** Bind an open recovery review to its original journal, even if another tab completes it. */
   expectedBatchId?: string
+  /** Replace only this untouched intent, revalidated under every old and new alias lock. */
+  replaceDraft?: { scope: string; id: string }
   title?: string
   reverify?: (call: ProjectBatchCall) => Promise<void>
   /** Permissionless actions may change elsewhere. Never applies to a submitted call. */
@@ -334,12 +347,22 @@ export async function runProjectBatch({
   if (new Set(proposedCalls.map(call => call.id)).size !== proposedCalls.length) {
     throw new Error('Each reviewed project call must have a unique identifier.')
   }
-  const scopes = aliases({ scope, action, calls: proposedCalls })
+  const draft = replaceDraft ? readBatch(replaceDraft.scope) : null
+  if (replaceDraft && (!calls || expectedBatchId || draft?.id !== replaceDraft.id || !isProjectBatchDraft(draft))) {
+    throw new Error('This saved batch may already be underway. Reopen pending payments to resume it.')
+  }
+  const scopes = [...new Set([...aliases({ scope, action, calls: proposedCalls }), ...(draft ? aliases(draft) : [])])].sort()
   return locked(scopes, async () => {
+    const replacing = replaceDraft ? readBatch(replaceDraft.scope) : null
+    if (replaceDraft && (replacing?.id !== replaceDraft.id || !isProjectBatchDraft(replacing) ||
+      encode(aliases(replacing)) !== encode(aliases(draft!)))) {
+      throw new Error('This saved batch changed in another tab. Reopen pending payments to resume it.')
+    }
     let batch = loadProjectBatch(scope)
+    if (batch?.id === replacing?.id) batch = null
     for (const alias of scopes) {
       const saved = loadProjectBatch(alias)
-      if (!saved) continue
+      if (!saved || saved.id === replacing?.id) continue
       if (batch && batch.id !== saved.id) throw new Error('Another selected project already has an unfinished action. Resume it first.')
       batch = saved
     }
@@ -356,6 +379,7 @@ export async function runProjectBatch({
       if (!live || !isAddressEqual(live, account)) throw new Error('Connected wallet changed. Switch back to the wallet that reviewed this action.')
     }
     checkAccount()
+    if (replacing) { replacing.abandoned = true; persist(replacing) }
     // Whether this run's batch review showed every call as a Safe-app proposal.
     let reviewedViaSafe: boolean | undefined
     try {
@@ -617,9 +641,7 @@ export async function runProjectBatch({
         }
         // A cancelled review or failed preflight exposes no executable request.
         // Published signatures, unknown sends, and completed calls remain recoverable.
-        const exposed = batch.completedIds.length > 0 || Object.keys(batch.submissions).length > 0 ||
-          batch.rounds.some((_round, index) => savedRelayrRound(relayrScopeOf(batch!, index)))
-        if (!exposed) { batch.abandoned = true; persist(batch) }
+        if (isProjectBatchDraft(batch)) { batch.abandoned = true; persist(batch) }
       }
       throw error
     }

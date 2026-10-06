@@ -85,3 +85,12 @@ it('fails closed on owner preflight failure before publishing', async () => {
   expect(complete).not.toHaveBeenCalled()
   expect(loadRawRelayrSession(String(scope))).toBeNull()
 })
+
+
+it('keeps an empty retained recovery record ambiguous instead of treating it as absent', async () => {
+  window.localStorage.setItem(`jb-raw-relayr-v1:${scope}`, '')
+  expect(() => loadRawRelayrSession(String(scope))).toThrow()
+  await expect(run()).rejects.toThrow()
+  expect(mocks.lifecycle).not.toHaveBeenCalled()
+  expect(window.localStorage.getItem(`jb-raw-relayr-v1:${scope}`)).toBe('')
+})

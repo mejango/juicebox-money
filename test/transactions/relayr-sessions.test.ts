@@ -10,6 +10,7 @@ vi.mock('@/providers/Providers', () => ({
 
 import {
   fetchRelayrBundlesByAccount,
+  hasRelayrPendingEvidence,
   listRelayrPendingScopes,
   resumeRelayrSession,
   type RelayrPendingSession,
@@ -201,5 +202,20 @@ describe('resume-by-session entry point', () => {
     seed(scope, session())
     await expect(resumeRelayrSession({ scope, account: ALICE })).rejects.toThrow('original project action')
     expect(storage.getItem(`${PREFIX}${scope}`)).not.toBeNull()
+  })
+})
+
+
+describe('strict saved-session evidence', () => {
+  it('retains malformed and empty stored records as possible publication evidence', () => {
+    expect(hasRelayrPendingEvidence('evidence-only')).toBe(false)
+    storage.setItem(`${PREFIX}evidence-only`, '{broken')
+    expect(hasRelayrPendingEvidence('evidence-only')).toBe(true)
+    storage.setItem(`${PREFIX}evidence-only`, '')
+    expect(hasRelayrPendingEvidence('evidence-only')).toBe(true)
+  })
+  it('propagates unavailable storage instead of proving an empty draft', () => {
+    vi.spyOn(storage, 'getItem').mockImplementation(() => { throw new Error('storage unavailable') })
+    expect(() => hasRelayrPendingEvidence('unreadable-evidence')).toThrow('storage unavailable')
   })
 })
